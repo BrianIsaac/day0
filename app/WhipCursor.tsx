@@ -13,7 +13,7 @@ interface Point {
 const SEGMENTS = 24;
 const BASE_REST_LEN = 7.6;
 const TIP_REST_LEN = 3.8;
-const DAMPING = 0.958;
+const DAMPING = 0.954;
 const BASE_GRAVITY = 0.2;
 const TIP_GRAVITY = 0.42;
 const ITERATIONS = 12;
@@ -156,7 +156,7 @@ export function WhipCursor() {
           const ddx = b.x - a.x;
           const ddy = b.y - a.y;
           const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.001;
-          const corr = ((dist - segmentRestLen(i)) / dist) * 0.53;
+          const corr = ((dist - segmentRestLen(i)) / dist) * 0.54;
           if (!a.fixed) {
             a.x += ddx * corr;
             a.y += ddy * corr;
