@@ -5,7 +5,10 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
 import { useUser, Show, SignInButton } from '@clerk/nextjs';
 import Link from 'next/link';
+import Image from 'next/image';
 import { api } from '@convex/_generated/api';
+import type { Doc } from '@convex/_generated/dataModel';
+import { avatarForAgentSeed, type AgentAvatarPet } from '@/agent/avatar-pets';
 
 export default function LandingPage() {
   return (
@@ -168,14 +171,7 @@ function SurfaceOrbitSvg() {
       </g>
 
       <SurfaceNode cx={300} cy={110} label="docs" anchor="middle" labelDx={0} labelDy={-22} />
-      <SurfaceNode
-        cx={465}
-        cy={190}
-        label="spreadsheet"
-        anchor="start"
-        labelDx={20}
-        labelDy={4}
-      />
+      <SurfaceNode cx={465} cy={190} label="spreadsheet" anchor="start" labelDx={20} labelDy={4} />
       <SurfaceNode cx={500} cy={380} label="slack" anchor="start" labelDx={20} labelDy={4} />
       <SurfaceNode cx={180} cy={455} label="tickets" anchor="end" labelDx={-20} labelDy={4} />
       <SurfaceNode cx={115} cy={265} label="twitter" anchor="end" labelDx={-20} labelDy={4} />
@@ -310,43 +306,56 @@ function SignedInDashboard() {
 
   return (
     <div className="flex-1 px-6 py-10 max-w-4xl mx-auto w-full">
-      <h1 className="text-3xl font-semibold tracking-tight mb-2">
-        Welcome{user?.firstName ? `, ${user.firstName}` : ''}.
-      </h1>
-      <p className="text-sm text-[var(--color-muted)] mb-8">
-        Each agent runs the new-hire loop independently. Deploy as many as you like; reset wipes
-        the slate clean.
-      </p>
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight mb-2">
+            Welcome{user?.firstName ? `, ${user.firstName}` : ''}.
+          </h1>
+          <p className="text-sm text-[var(--color-muted)]">
+            Each agent runs the new-hire loop independently. Deploy as many as you like; reset wipes
+            the slate clean.
+          </p>
+        </div>
+        <AgentAvatarRail agents={agents ?? []} previewSeed={workerName} />
+      </div>
 
       <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5 mb-6">
-        <h2 className="text-sm font-semibold mb-3">Deploy a new Day0 agent</h2>
-        <form onSubmit={onDeploy} className="flex gap-3">
-          <input
-            type="text"
-            required
-            disabled={submitting}
-            placeholder="worker 1"
-            value={workerName}
-            onChange={(e) => setWorkerName(e.target.value)}
-            className="flex-1 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm"
+        <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-center">
+          <AgentPixelAvatar
+            avatar={avatarForAgentSeed(workerName)}
+            state="deployed"
+            label={workerName}
+            size="lg"
           />
-          <button
-            type="submit"
-            disabled={submitting}
-            className="px-5 py-2.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
-          >
-            {submitting ? 'Deploying…' : 'Deploy'}
-          </button>
-        </form>
+          <div>
+            <h2 className="text-sm font-semibold mb-3">Deploy a new Day0 agent</h2>
+            <form onSubmit={onDeploy} className="flex flex-col gap-3 sm:flex-row">
+              <input
+                type="text"
+                required
+                disabled={submitting}
+                placeholder="worker 1"
+                value={workerName}
+                onChange={(e) => setWorkerName(e.target.value)}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm"
+              />
+              <button
+                type="submit"
+                disabled={submitting}
+                className="px-5 py-2.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
+              >
+                {submitting ? 'Deploying…' : 'Deploy'}
+              </button>
+            </form>
+          </div>
+        </div>
         {error ? <p className="text-xs text-[var(--color-danger)] mt-2">{error}</p> : null}
       </section>
 
       <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5 mb-6">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold">Your agents</h2>
-          <span className="text-[10px] text-[var(--color-muted)]">
-            {agents?.length ?? 0} total
-          </span>
+          <span className="text-[10px] text-[var(--color-muted)]">{agents?.length ?? 0} total</span>
         </div>
         {!agents ? (
           <p className="text-xs text-[var(--color-muted)]">loading…</p>
@@ -358,10 +367,17 @@ function SignedInDashboard() {
               <li key={a._id}>
                 <Link
                   href={`/agent/${a._id}`}
-                  className="flex items-center justify-between p-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] transition"
+                  className="flex items-center gap-3 p-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] transition"
                 >
-                  <div>
-                    <div className="text-sm font-medium text-[var(--color-fg)]">{a.name}</div>
+                  <AgentPixelAvatar
+                    avatar={avatarForAgentSeed(`${a._id}:${a.name}`)}
+                    state={a.state}
+                    label={a.name}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-[var(--color-fg)] truncate">
+                      {a.name}
+                    </div>
                     <div className="text-[10px] text-[var(--color-muted)]">
                       reports to {a.bossEmail} · deployed {new Date(a.createdAt).toLocaleString()}
                     </div>
@@ -402,4 +418,102 @@ function SignedInDashboard() {
       </section>
     </div>
   );
+}
+
+function AgentAvatarRail({
+  agents,
+  previewSeed,
+}: {
+  agents: Doc<'agents'>[];
+  previewSeed: string;
+}) {
+  const shownAgents = agents.slice(0, 5);
+  const hasAgents = shownAgents.length > 0;
+
+  return (
+    <div className="flex min-h-14 items-center justify-start -space-x-2 sm:justify-end">
+      {hasAgents ? (
+        shownAgents.map((agent) => (
+          <AgentPixelAvatar
+            key={agent._id}
+            avatar={avatarForAgentSeed(`${agent._id}:${agent.name}`)}
+            state={agent.state}
+            label={agent.name}
+            compact
+          />
+        ))
+      ) : (
+        <AgentPixelAvatar
+          avatar={avatarForAgentSeed(previewSeed)}
+          state="deployed"
+          label={previewSeed}
+          compact
+        />
+      )}
+    </div>
+  );
+}
+
+function AgentPixelAvatar({
+  avatar,
+  state,
+  label,
+  size = 'md',
+  compact = false,
+}: {
+  avatar: AgentAvatarPet;
+  state: Doc<'agents'>['state'];
+  label: string;
+  size?: 'md' | 'lg';
+  compact?: boolean;
+}) {
+  const pixelSize = size === 'lg' ? 96 : 56;
+  const sizeClass = size === 'lg' ? 'h-24 w-24' : 'h-14 w-14';
+  const tone = agentStateTone(state);
+
+  return (
+    <div
+      className={`relative grid shrink-0 place-items-center rounded-lg border ${tone.border} ${tone.bg} ${
+        compact ? 'shadow-[0_0_0_2px_var(--color-bg)]' : ''
+      }`}
+      title={`${label} - ${avatar.name} ${avatar.handle}`}
+    >
+      <Image
+        src={avatar.src}
+        alt=""
+        width={pixelSize}
+        height={pixelSize}
+        unoptimized
+        aria-hidden="true"
+        className={`${sizeClass} object-contain p-1 [image-rendering:pixelated]`}
+        draggable={false}
+      />
+      <span
+        className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-[var(--color-card)] ${tone.dot}`}
+        aria-label={state}
+      />
+    </div>
+  );
+}
+
+function agentStateTone(state: Doc<'agents'>['state']) {
+  if (state === 'active') {
+    return {
+      bg: 'bg-[var(--color-ok)]/10',
+      border: 'border-[var(--color-ok)]/35',
+      dot: 'bg-[var(--color-ok)]',
+    };
+  }
+  if (state === 'day-one-in-progress') {
+    return {
+      bg: 'bg-[var(--color-accent)]/10',
+      border: 'border-[var(--color-accent)]/35',
+      dot: 'bg-[var(--color-accent)]',
+    };
+  }
+  return {
+    bg: 'bg-[var(--color-warn)]/10',
+    border: 'border-[var(--color-warn)]/35',
+    dot: 'bg-[var(--color-warn)]',
+  };
 }
