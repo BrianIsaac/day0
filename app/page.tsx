@@ -437,11 +437,11 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
           no agents yet - deploy one above
         </p>
       ) : (
-        <div className="relative min-h-[390px] overflow-hidden bg-[linear-gradient(rgba(39,39,42,.45)_1px,transparent_1px),linear-gradient(90deg,rgba(39,39,42,.45)_1px,transparent_1px)] bg-[length:24px_24px]">
-          <div className="absolute left-0 right-0 top-0 h-16 border-b border-[var(--color-border)] bg-[var(--color-bg)]/50" />
-          <div className="absolute bottom-0 left-0 right-0 h-12 border-t border-[var(--color-border)] bg-[var(--color-bg)]/45" />
-          <div className="absolute left-[6%] top-5 h-8 w-24 rounded border border-[var(--color-border)] bg-[var(--color-card)]" />
-          <div className="absolute right-[8%] top-5 h-8 w-32 rounded border border-[var(--color-border)] bg-[var(--color-card)]" />
+        <div className="day0-pixel-office relative min-h-[390px] overflow-hidden">
+          <div className="day0-pixel-wall absolute left-0 right-0 top-0 h-16" />
+          <div className="day0-pixel-wall absolute bottom-0 left-0 right-0 h-12" />
+          <div className="day0-pixel-window absolute left-[6%] top-5 h-8 w-24" />
+          <div className="day0-pixel-window absolute right-[8%] top-5 h-8 w-32" />
 
           {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
             <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} x={desk.x} y={desk.y} />
@@ -459,15 +459,15 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
 function OfficeDesk({ x, y }: { x: number; y: number }) {
   return (
     <div
-      className="absolute h-16 w-24 -translate-x-1/2 -translate-y-1/2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/80 shadow-[0_10px_0_rgba(0,0,0,.16)]"
+      className="day0-pixel-desk absolute h-16 w-24 -translate-x-1/2 -translate-y-1/2"
       style={{ left: `${x}%`, top: `${y}%` }}
       aria-hidden="true"
     >
-      <div className="absolute left-3 right-3 top-2 h-4 rounded-sm border border-[var(--color-border)] bg-[var(--color-card)]">
-        <span className="absolute left-2 top-1 h-1 w-8 rounded bg-[var(--color-accent)]/60" />
+      <div className="day0-pixel-monitor absolute left-3 right-3 top-2 h-4">
+        <span className="absolute left-2 top-1 h-1 w-8 bg-[var(--color-accent)]/70" />
       </div>
-      <div className="absolute bottom-2 left-4 h-3 w-7 rounded-sm bg-[var(--color-muted)]/20" />
-      <div className="absolute bottom-2 right-4 h-3 w-5 rounded-sm bg-[var(--color-muted)]/15" />
+      <div className="absolute bottom-2 left-4 h-3 w-7 bg-[var(--color-muted)]/20" />
+      <div className="absolute bottom-2 right-4 h-3 w-5 bg-[var(--color-muted)]/15" />
     </div>
   );
 }
@@ -506,7 +506,7 @@ function OfficeAgent({ agent, index }: { agent: Doc<'agents'>; index: number }) 
           state={agent.state}
           label={agent.name}
         />
-        <div className="mt-1 max-w-28 truncate rounded bg-[var(--color-bg)]/85 px-2 py-1 text-center text-[10px] text-[var(--color-fg)] shadow-sm">
+        <div className="day0-pixel-nameplate mt-1 max-w-28 truncate px-2 py-1 text-center text-[10px] text-[var(--color-fg)]">
           {agent.name}
         </div>
       </div>
@@ -611,16 +611,16 @@ function AgentPixelAvatar({
 
   return (
     <div
-      className={`relative grid shrink-0 place-items-center overflow-hidden rounded-lg border p-1 ${tone.border} ${tone.bg} ${
+      className={`relative grid shrink-0 place-items-center overflow-hidden rounded-sm border p-1 ${tone.border} ${tone.bg} ${
         compact ? 'shadow-[0_0_0_2px_var(--color-bg)]' : ''
       }`}
       title={`${label} - ${avatar.name} ${avatar.handle}`}
     >
-      <div className={`${sizeClass} overflow-hidden rounded-md bg-[var(--color-bg)]`}>
+      <div className={`${sizeClass} overflow-hidden rounded-sm bg-[var(--color-bg)]`}>
         <PixelAvatarSprite avatar={avatar} className="h-full w-full" />
       </div>
       <span
-        className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-[var(--color-card)] ${tone.dot}`}
+        className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-[1px] border border-[var(--color-card)] ${tone.dot}`}
         aria-label={state}
       />
     </div>
