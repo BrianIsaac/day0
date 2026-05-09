@@ -17,7 +17,6 @@ docs/
 docs-fixture/
 AGENTS.md
 CLAUDE.md
-README.md
 
 # local tooling state and logs
 .claude/
