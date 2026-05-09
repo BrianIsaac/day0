@@ -16,6 +16,8 @@ import { defaultSoul, day1Script } from '../src/agent/day-one-prompts';
 import { mergeGoodHabits, researchAndDistil } from '../src/agent/good-habits';
 import { generateWorkItemsFromCharter } from '../src/agent/work-generator';
 import type { Charter } from '../src/agent/charter';
+import type { MockSurfaceSnapshot } from '../src/work/types';
+import type { Doc } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { assertOwnsAgentAction } from './ownership';
 
@@ -233,9 +235,13 @@ export const postCharterApproval = action({
       payload: { norms, role },
     });
 
-    // Generate role-specific work items from the charter and seed them
-    // into the queue. Replaces the hardcoded RevOps demo seed.
-    const generated = await generateWorkItemsFromCharter(charterBody);
+    // Generate role-specific work items grounded in BOTH the charter AND
+    // the agent's actual mock environment. The work-generator LLM sees
+    // real surface slugs (channels, spreadsheets, docs, tweets, tickets)
+    // and emits contentRefs the executor can later mutate against real
+    // rows. No hardcoded slugs in the prompt.
+    const mockEnv = await loadMockEnvSnapshot(ctx, args.agentId);
+    const generated = await generateWorkItemsFromCharter(charterBody, mockEnv);
     let workItemsGenerated = 0;
     for (const item of generated) {
       await ctx.runMutation(internal.work.seedItem, {
@@ -260,3 +266,81 @@ export const postCharterApproval = action({
     return { norms, workItemsGenerated };
   },
 });
+
+/**
+ * Compact snapshot of the per-agent mock environment for the
+ * work-generator prompt. Mirrors the loader in workActions.ts so the
+ * LLM sees the same surface identifiers the executor will later act on.
+ */
+async function loadMockEnvSnapshot(
+  ctx: { runQuery: (fn: any, args: any) => Promise<any> },
+  agentId: Doc<'agents'>['_id'],
+): Promise<MockSurfaceSnapshot> {
+  const docs: Doc<'mockDocs'>[] = await ctx.runQuery(api.mock.listDocs, { agentId });
+  const sheets: Doc<'mockSpreadsheets'>[] = await ctx.runQuery(api.mock.listSpreadsheets, {
+    agentId,
+  });
+  const channels: Doc<'mockSlackChannels'>[] = await ctx.runQuery(api.mock.listChannels, {
+    agentId,
+  });
+  const tweets: Doc<'mockTweets'>[] = await ctx.runQuery(api.mock.listTweets, { agentId });
+  const tickets: Doc<'mockTickets'>[] = await ctx.runQuery(api.mock.listTickets, { agentId });
+
+  const spreadsheetsHydrated = await Promise.all(
+    sheets.map(async (s) => {
+      const detail = await ctx.runQuery(api.mock.getSpreadsheet, { agentId, slug: s.slug });
+      const rows = (detail?.rows ?? []) as Doc<'mockSpreadsheetRows'>[];
+      return {
+        slug: s.slug,
+        title: s.title,
+        tabs: s.tabs,
+        rows: rows.map((r) => ({
+          tabName: r.tabName,
+          cells: r.cells as Record<string, string>,
+        })),
+      };
+    }),
+  );
+
+  const channelsHydrated = await Promise.all(
+    channels.map(async (c) => {
+      const messages = (await ctx.runQuery(api.mock.listMessages, {
+        agentId,
+        channelSlug: c.slug,
+      })) as Doc<'mockSlackMessages'>[];
+      return {
+        slug: c.slug,
+        displayName: c.displayName,
+        kind: c.kind,
+        recentMessages: messages.slice(-12).map((m) => ({
+          sender: m.sender,
+          body: m.body,
+          threadKey: m.threadKey,
+        })),
+      };
+    }),
+  );
+
+  return {
+    howToGuides: docs
+      .filter((d) => d.category === 'how-to-guide')
+      .map((d) => ({ slug: d.slug, title: d.title, body: d.body })),
+    teamDocs: docs
+      .filter((d) => d.category === 'team-doc')
+      .map((d) => ({ slug: d.slug, title: d.title, body: d.body })),
+    spreadsheets: spreadsheetsHydrated,
+    slackChannels: channelsHydrated,
+    tweets: tweets.map((t) => ({
+      slug: t.slug,
+      author: t.author,
+      handle: t.handle,
+      body: t.body,
+    })),
+    tickets: tickets.map((t) => ({
+      slug: t.slug,
+      title: t.title,
+      status: t.status,
+      body: t.body,
+    })),
+  };
+}
