@@ -73,6 +73,7 @@ body {
 
 .day0-pixel-office {
   isolation: isolate;
+  animation: day0-office-grid-drift 9s steps(4, end) infinite;
   background-color: #050506;
   background-image:
     linear-gradient(90deg, rgba(34, 211, 238, 0.06) 0 2px, transparent 2px 100%),
@@ -91,7 +92,13 @@ body {
   pointer-events: none;
   background:
     linear-gradient(90deg, transparent 0 calc(100% - 10px), rgba(34, 211, 238, 0.14)),
-    linear-gradient(transparent 0 calc(100% - 10px), rgba(244, 244, 245, 0.04));
+    linear-gradient(transparent 0 calc(100% - 10px), rgba(244, 244, 245, 0.04)),
+    linear-gradient(180deg, transparent 0 42%, rgba(34, 211, 238, 0.12) 46%, transparent 52% 100%);
+  animation: day0-office-scan 6s steps(8, end) infinite;
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 220%;
   z-index: 2;
 }
 
@@ -192,9 +199,21 @@ body {
   box-shadow: 3px 3px 0 #000;
 }
 
+.day0-pixel-signal {
+  z-index: 2;
+  width: 8px;
+  height: 8px;
+  background: #22d3ee;
+  box-shadow:
+    0 0 0 2px #050506,
+    0 0 12px rgba(34, 211, 238, 0.55);
+  animation: day0-signal-blip 2.8s steps(4, end) infinite;
+}
+
 .day0-pixel-server {
   width: 38px;
   height: 54px;
+  animation: day0-server-blink 2.4s steps(3, end) infinite;
   background:
     linear-gradient(90deg, #22d3ee 0 6px, transparent 6px 100%) 8px 10px / 18px 4px no-repeat,
     linear-gradient(90deg, #34d399 0 6px, transparent 6px 100%) 8px 20px / 20px 4px no-repeat,
@@ -206,6 +225,7 @@ body {
 .day0-pixel-console {
   width: 46px;
   height: 34px;
+  animation: day0-console-glow 3.2s steps(3, end) infinite;
   background:
     linear-gradient(#22d3ee 0 5px, transparent 5px 100%) 10px 8px / 26px 10px no-repeat,
     linear-gradient(90deg, #3f3f46 0 5px, transparent 5px 9px) 10px 24px / 28px 4px no-repeat,
@@ -309,9 +329,24 @@ body {
 }
 
 .day0-pixel-monitor {
+  position: relative;
+  overflow: hidden;
+  animation: day0-monitor-flicker 2.2s steps(4, end) infinite;
   background: #0a0a0b;
   border: 2px solid #3f3f46;
   box-shadow: 2px 2px 0 #000;
+}
+
+.day0-pixel-monitor::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 3px;
+  width: 9px;
+  height: 2px;
+  background: #22d3ee;
+  box-shadow: 12px 0 0 rgba(34, 211, 238, 0.45);
+  animation: day0-monitor-scan 1.8s steps(4, end) infinite;
 }
 
 .day0-pixel-keyboard {
@@ -329,9 +364,22 @@ body {
   box-shadow: 2px 2px 0 #000;
 }
 
+.day0-office-agent {
+  transition:
+    left var(--walk-duration, 2800ms) steps(8, end),
+    top var(--walk-duration, 2800ms) steps(8, end);
+}
+
+.day0-office-agent-walking {
+  will-change: left, top;
+}
+
+.day0-office-agent-seated {
+  transition-duration: 700ms;
+}
+
 .day0-office-agent-roaming {
-  animation: day0-office-wander var(--wander-duration, 12s) ease-in-out infinite;
-  animation-delay: var(--wander-delay, 0s);
+  animation: day0-agent-step 680ms steps(2, end) infinite;
   will-change: transform;
 }
 
@@ -339,23 +387,112 @@ body {
   transform: translateY(0);
 }
 
-@keyframes day0-office-wander {
+@keyframes day0-office-grid-drift {
   0%,
   100% {
-    transform: translate(0, 0);
-  }
-  25% {
-    transform: translate(var(--wander-x1, 18px), var(--wander-y1, -14px));
+    background-position:
+      0 0,
+      0 0;
   }
   50% {
-    transform: translate(var(--wander-x2, -22px), var(--wander-y2, 12px));
+    background-position:
+      32px 0,
+      0 32px;
   }
-  75% {
-    transform: translate(var(--wander-x3, 12px), var(--wander-y3, 18px));
+}
+
+@keyframes day0-office-scan {
+  0% {
+    background-position:
+      0 0,
+      0 0,
+      0 -160%;
+  }
+  100% {
+    background-position:
+      0 0,
+      0 0,
+      0 160%;
+  }
+}
+
+@keyframes day0-signal-blip {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes day0-server-blink {
+  0%,
+  100% {
+    filter: brightness(0.95);
+  }
+  50% {
+    filter: brightness(1.25);
+  }
+}
+
+@keyframes day0-console-glow {
+  0%,
+  100% {
+    box-shadow: 3px 3px 0 #000;
+  }
+  50% {
+    box-shadow:
+      3px 3px 0 #000,
+      0 0 12px rgba(34, 211, 238, 0.22);
+  }
+}
+
+@keyframes day0-monitor-flicker {
+  0%,
+  100% {
+    background-color: #0a0a0b;
+  }
+  50% {
+    background-color: #07181c;
+  }
+}
+
+@keyframes day0-monitor-scan {
+  0%,
+  100% {
+    transform: translateX(0);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateX(28px);
+    opacity: 1;
+  }
+}
+
+@keyframes day0-agent-step {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .day0-pixel-office,
+  .day0-pixel-office::before,
+  .day0-pixel-signal,
+  .day0-pixel-server,
+  .day0-pixel-console,
+  .day0-pixel-monitor,
+  .day0-pixel-monitor::after,
+  .day0-office-agent {
+    animation: none;
+    transition: none;
+  }
+
   .day0-office-agent-roaming {
     animation: none;
   }

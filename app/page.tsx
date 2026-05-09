@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type CSSProperties, type FormEvent } from 'react';
+import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
 import { useUser, Show, SignInButton } from '@clerk/nextjs';
@@ -413,6 +413,14 @@ const OFFICE_DECOR = [
   { kind: 'table', x: 18, y: 84 },
 ] as const;
 
+const OFFICE_SIGNALS = [
+  { x: 49, y: 12, delay: 0 },
+  { x: 49, y: 34, delay: 0.8 },
+  { x: 39, y: 57, delay: 1.6 },
+  { x: 58, y: 57, delay: 2.2 },
+  { x: 49, y: 82, delay: 1.1 },
+] as const;
+
 const OFFICE_IDLE_SPOTS = [
   { x: 49, y: 17 },
   { x: 49, y: 32 },
@@ -425,6 +433,11 @@ const OFFICE_IDLE_SPOTS = [
   { x: 74, y: 37 },
   { x: 19, y: 37 },
 ] as const;
+
+type OfficePoint = {
+  x: number;
+  y: number;
+};
 
 const OFFICE_DESKS = [
   { x: 14, y: 17, seatX: 14, seatY: 25, variant: 'wide' },
@@ -450,18 +463,37 @@ const OFFICE_DESKS = [
 ] as const;
 
 type OfficeStyle = CSSProperties & {
-  '--wander-x1'?: string;
-  '--wander-y1'?: string;
-  '--wander-x2'?: string;
-  '--wander-y2'?: string;
-  '--wander-x3'?: string;
-  '--wander-y3'?: string;
-  '--wander-duration'?: string;
-  '--wander-delay'?: string;
+  '--walk-duration'?: string;
 };
 
 function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, agents?.length ?? 0));
+  const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
+
+  useEffect(() => {
+    if (!agents?.length) {
+      setAgentDestinations({});
+      return;
+    }
+
+    function updateDestinations() {
+      setAgentDestinations((current) => {
+        const next: Record<string, OfficePoint> = {};
+
+        for (const agent of agents ?? []) {
+          if (!agentIsWorking(agent.state)) {
+            next[agent._id] = randomOfficePoint(current[agent._id]);
+          }
+        }
+
+        return next;
+      });
+    }
+
+    updateDestinations();
+    const timer = window.setInterval(updateDestinations, 3400);
+    return () => window.clearInterval(timer);
+  }, [agents]);
 
   return (
     <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
@@ -490,12 +522,21 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
             <OfficeDecor key={`${decor.kind}-${decor.x}-${decor.y}-${index}`} decor={decor} />
           ))}
 
+          {OFFICE_SIGNALS.map((signal) => (
+            <OfficeSignal key={`${signal.x}-${signal.y}`} signal={signal} />
+          ))}
+
           {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
             <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} desk={desk} />
           ))}
 
           {agents.map((agent, index) => (
-            <OfficeAgent key={agent._id} agent={agent} index={index} />
+            <OfficeAgent
+              key={agent._id}
+              agent={agent}
+              destination={agentDestinations[agent._id]}
+              index={index}
+            />
           ))}
         </div>
       )}
@@ -533,6 +574,20 @@ function OfficeDecor({ decor }: { decor: (typeof OFFICE_DECOR)[number] }) {
   );
 }
 
+function OfficeSignal({ signal }: { signal: (typeof OFFICE_SIGNALS)[number] }) {
+  return (
+    <div
+      className="day0-pixel-signal absolute"
+      style={{
+        left: `${signal.x}%`,
+        top: `${signal.y}%`,
+        animationDelay: `${signal.delay}s`,
+      }}
+      aria-hidden="true"
+    />
+  );
+}
+
 function OfficeDesk({ desk }: { desk: (typeof OFFICE_DESKS)[number] }) {
   return (
     <>
@@ -565,32 +620,35 @@ function rectStyle(rect: { left: number; top: number; width: number; height: num
   };
 }
 
-function OfficeAgent({ agent, index }: { agent: Doc<'agents'>; index: number }) {
-  const working = agent.state !== 'deployed';
+function OfficeAgent({
+  agent,
+  destination,
+  index,
+}: {
+  agent: Doc<'agents'>;
+  destination: OfficePoint | undefined;
+  index: number;
+}) {
+  const working = agentIsWorking(agent.state);
   const desk = OFFICE_DESKS[index % OFFICE_DESKS.length];
   const seed = hashString(`${agent._id}:${agent.name}`);
   const idleSpot = OFFICE_IDLE_SPOTS[seed % OFFICE_IDLE_SPOTS.length];
-  const idleX = clamp(idleSpot.x + ((seed >> 5) % 13) - 6, 8, 92);
-  const idleY = clamp(idleSpot.y + ((seed >> 11) % 11) - 5, 12, 90);
+  const idleX = destination?.x ?? clamp(idleSpot.x + ((seed >> 5) % 13) - 6, 8, 92);
+  const idleY = destination?.y ?? clamp(idleSpot.y + ((seed >> 11) % 11) - 5, 12, 90);
   const x = working ? desk.seatX : idleX;
   const y = working ? desk.seatY : idleY;
   const style: OfficeStyle = {
     left: `${x}%`,
     top: `${y}%`,
-    '--wander-x1': `${16 + (seed % 24)}px`,
-    '--wander-y1': `${-10 - ((seed >> 4) % 18)}px`,
-    '--wander-x2': `${-18 - ((seed >> 8) % 26)}px`,
-    '--wander-y2': `${8 + ((seed >> 12) % 18)}px`,
-    '--wander-x3': `${8 + ((seed >> 16) % 24)}px`,
-    '--wander-y3': `${10 + ((seed >> 20) % 14)}px`,
-    '--wander-duration': `${10 + (seed % 7)}s`,
-    '--wander-delay': `-${seed % 9}s`,
+    '--walk-duration': `${2700 + (seed % 700)}ms`,
   };
 
   return (
     <Link
       href={`/agent/${agent._id}`}
-      className="absolute z-10 -translate-x-1/2 -translate-y-1/2 outline-none"
+      className={`day0-office-agent absolute z-10 -translate-x-1/2 -translate-y-1/2 outline-none ${
+        working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
+      }`}
       style={style}
       title={`${agent.name} - ${working ? 'at desk' : 'roaming'}`}
     >
@@ -619,6 +677,26 @@ function hashString(value: string): number {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function randomOfficePoint(previous: OfficePoint | undefined): OfficePoint {
+  const candidates = previous
+    ? OFFICE_IDLE_SPOTS.filter(
+        (spot) => Math.abs(spot.x - previous.x) + Math.abs(spot.y - previous.y) > 18,
+      )
+    : OFFICE_IDLE_SPOTS;
+  const spot = candidates[Math.floor(Math.random() * candidates.length)] ?? OFFICE_IDLE_SPOTS[0];
+  const jitterX = Math.floor(Math.random() * 13) - 6;
+  const jitterY = Math.floor(Math.random() * 11) - 5;
+
+  return {
+    x: clamp(spot.x + jitterX, 8, 92),
+    y: clamp(spot.y + jitterY, 12, 90),
+  };
+}
+
+function agentIsWorking(state: Doc<'agents'>['state']) {
+  return state === 'day-one-in-progress';
 }
 
 function AvatarPicker({
