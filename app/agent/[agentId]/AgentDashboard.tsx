@@ -70,13 +70,13 @@ export function AgentDashboard({ agentId }: Props) {
               <VoiceRoom
                 agentId={agentId}
                 bossLabel={agent.bossEmail}
-                onSwitchMode={() => setMode('pick')}
+                onSwitchMode={() => setMode('chat')}
               />
             ) : (
               <ChatRoom
                 agentId={agentId}
                 bossLabel={agent.bossEmail}
-                onSwitchMode={() => setMode('pick')}
+                onSwitchMode={() => setMode('voice')}
               />
             )
           ) : null}
