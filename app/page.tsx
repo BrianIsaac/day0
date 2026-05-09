@@ -386,27 +386,67 @@ function SignedInDashboard() {
   );
 }
 
+const OFFICE_ROOMS = [
+  { left: 2, top: 4, width: 39, height: 31, tone: 'ops' },
+  { left: 58, top: 4, width: 40, height: 31, tone: 'briefing' },
+  { left: 2, top: 41, width: 31, height: 24, tone: 'archive' },
+  { left: 64, top: 41, width: 34, height: 24, tone: 'studio' },
+  { left: 2, top: 72, width: 31, height: 23, tone: 'lounge' },
+  { left: 43, top: 70, width: 55, height: 25, tone: 'lab' },
+] as const;
+
+const OFFICE_CORRIDORS = [
+  { left: 41, top: 4, width: 17, height: 91, axis: 'vertical' },
+  { left: 33, top: 51, width: 31, height: 12, axis: 'horizontal' },
+  { left: 33, top: 78, width: 10, height: 11, axis: 'horizontal' },
+] as const;
+
+const OFFICE_DECOR = [
+  { kind: 'server', x: 8, y: 51 },
+  { kind: 'server', x: 24, y: 51 },
+  { kind: 'plant', x: 7, y: 88 },
+  { kind: 'plant', x: 38, y: 74 },
+  { kind: 'plant', x: 94, y: 36 },
+  { kind: 'console', x: 52, y: 18 },
+  { kind: 'console', x: 52, y: 83 },
+  { kind: 'table', x: 77, y: 53 },
+  { kind: 'table', x: 18, y: 84 },
+] as const;
+
+const OFFICE_IDLE_SPOTS = [
+  { x: 49, y: 17 },
+  { x: 49, y: 32 },
+  { x: 48, y: 48 },
+  { x: 49, y: 62 },
+  { x: 39, y: 57 },
+  { x: 58, y: 56 },
+  { x: 38, y: 83 },
+  { x: 50, y: 86 },
+  { x: 74, y: 37 },
+  { x: 19, y: 37 },
+] as const;
+
 const OFFICE_DESKS = [
-  { x: 14, y: 18 },
-  { x: 34, y: 18 },
-  { x: 54, y: 18 },
-  { x: 74, y: 18 },
-  { x: 20, y: 45 },
-  { x: 42, y: 45 },
-  { x: 64, y: 45 },
-  { x: 84, y: 45 },
-  { x: 14, y: 72 },
-  { x: 34, y: 72 },
-  { x: 54, y: 72 },
-  { x: 74, y: 72 },
-  { x: 90, y: 20 },
-  { x: 90, y: 70 },
-  { x: 8, y: 46 },
-  { x: 24, y: 82 },
-  { x: 44, y: 82 },
-  { x: 64, y: 82 },
-  { x: 82, y: 82 },
-  { x: 50, y: 30 },
+  { x: 14, y: 17, seatX: 14, seatY: 25, variant: 'wide' },
+  { x: 29, y: 17, seatX: 29, seatY: 25, variant: 'wide' },
+  { x: 67, y: 17, seatX: 67, seatY: 25, variant: 'wide' },
+  { x: 86, y: 17, seatX: 86, seatY: 25, variant: 'wide' },
+  { x: 68, y: 31, seatX: 68, seatY: 37, variant: 'compact' },
+  { x: 87, y: 31, seatX: 87, seatY: 37, variant: 'compact' },
+  { x: 13, y: 50, seatX: 13, seatY: 58, variant: 'console' },
+  { x: 27, y: 50, seatX: 27, seatY: 58, variant: 'console' },
+  { x: 73, y: 50, seatX: 73, seatY: 58, variant: 'compact' },
+  { x: 90, y: 50, seatX: 90, seatY: 58, variant: 'compact' },
+  { x: 53, y: 79, seatX: 53, seatY: 87, variant: 'wide' },
+  { x: 67, y: 79, seatX: 67, seatY: 87, variant: 'wide' },
+  { x: 83, y: 79, seatX: 83, seatY: 87, variant: 'wide' },
+  { x: 13, y: 82, seatX: 13, seatY: 90, variant: 'compact' },
+  { x: 28, y: 82, seatX: 28, seatY: 90, variant: 'compact' },
+  { x: 15, y: 30, seatX: 15, seatY: 36, variant: 'compact' },
+  { x: 30, y: 30, seatX: 30, seatY: 36, variant: 'compact' },
+  { x: 55, y: 31, seatX: 51, seatY: 33, variant: 'console' },
+  { x: 55, y: 65, seatX: 50, seatY: 63, variant: 'console' },
+  { x: 93, y: 83, seatX: 89, seatY: 88, variant: 'console' },
 ] as const;
 
 type OfficeStyle = CSSProperties & {
@@ -421,7 +461,7 @@ type OfficeStyle = CSSProperties & {
 };
 
 function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
-  const deskCount = Math.max(6, Math.min(OFFICE_DESKS.length, agents?.length ?? 0));
+  const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, agents?.length ?? 0));
 
   return (
     <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
@@ -437,14 +477,21 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
           no agents yet - deploy one above
         </p>
       ) : (
-        <div className="day0-pixel-office relative min-h-[390px] overflow-hidden">
-          <div className="day0-pixel-wall absolute left-0 right-0 top-0 h-16" />
-          <div className="day0-pixel-wall absolute bottom-0 left-0 right-0 h-12" />
-          <div className="day0-pixel-window absolute left-[6%] top-5 h-8 w-24" />
-          <div className="day0-pixel-window absolute right-[8%] top-5 h-8 w-32" />
+        <div className="day0-pixel-office relative min-h-[560px] overflow-hidden">
+          {OFFICE_ROOMS.map((room) => (
+            <OfficeRoom key={`${room.left}-${room.top}`} room={room} />
+          ))}
+
+          {OFFICE_CORRIDORS.map((corridor) => (
+            <OfficeCorridor key={`${corridor.left}-${corridor.top}`} corridor={corridor} />
+          ))}
+
+          {OFFICE_DECOR.map((decor, index) => (
+            <OfficeDecor key={`${decor.kind}-${decor.x}-${decor.y}-${index}`} decor={decor} />
+          ))}
 
           {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
-            <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} x={desk.x} y={desk.y} />
+            <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} desk={desk} />
           ))}
 
           {agents.map((agent, index) => (
@@ -456,30 +503,77 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
   );
 }
 
-function OfficeDesk({ x, y }: { x: number; y: number }) {
+function OfficeRoom({ room }: { room: (typeof OFFICE_ROOMS)[number] }) {
   return (
     <div
-      className="day0-pixel-desk absolute h-16 w-24 -translate-x-1/2 -translate-y-1/2"
-      style={{ left: `${x}%`, top: `${y}%` }}
+      className={`day0-pixel-room day0-pixel-room-${room.tone} absolute`}
+      style={rectStyle(room)}
       aria-hidden="true"
-    >
-      <div className="day0-pixel-monitor absolute left-3 right-3 top-2 h-4">
-        <span className="absolute left-2 top-1 h-1 w-8 bg-[var(--color-accent)]/70" />
-      </div>
-      <div className="absolute bottom-2 left-4 h-3 w-7 bg-[var(--color-muted)]/20" />
-      <div className="absolute bottom-2 right-4 h-3 w-5 bg-[var(--color-muted)]/15" />
-    </div>
+    />
   );
+}
+
+function OfficeCorridor({ corridor }: { corridor: (typeof OFFICE_CORRIDORS)[number] }) {
+  return (
+    <div
+      className={`day0-pixel-corridor day0-pixel-corridor-${corridor.axis} absolute`}
+      style={rectStyle(corridor)}
+      aria-hidden="true"
+    />
+  );
+}
+
+function OfficeDecor({ decor }: { decor: (typeof OFFICE_DECOR)[number] }) {
+  return (
+    <div
+      className={`day0-pixel-decor day0-pixel-${decor.kind} absolute -translate-x-1/2 -translate-y-1/2`}
+      style={{ left: `${decor.x}%`, top: `${decor.y}%` }}
+      aria-hidden="true"
+    />
+  );
+}
+
+function OfficeDesk({ desk }: { desk: (typeof OFFICE_DESKS)[number] }) {
+  return (
+    <>
+      <div
+        className={`day0-pixel-chair day0-pixel-chair-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2`}
+        style={{ left: `${desk.seatX}%`, top: `${desk.seatY}%` }}
+        aria-hidden="true"
+      />
+      <div
+        className={`day0-pixel-desk day0-pixel-desk-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2`}
+        style={{ left: `${desk.x}%`, top: `${desk.y}%` }}
+        aria-hidden="true"
+      >
+        <div className="day0-pixel-monitor absolute left-3 right-3 top-2 h-4">
+          <span className="absolute left-2 top-1 h-1 w-8 bg-[var(--color-accent)]/70" />
+        </div>
+        <div className="day0-pixel-keyboard absolute bottom-2 left-4 h-3 w-7" />
+        <div className="day0-pixel-notepad absolute bottom-2 right-4 h-3 w-5" />
+      </div>
+    </>
+  );
+}
+
+function rectStyle(rect: { left: number; top: number; width: number; height: number }) {
+  return {
+    left: `${rect.left}%`,
+    top: `${rect.top}%`,
+    width: `${rect.width}%`,
+    height: `${rect.height}%`,
+  };
 }
 
 function OfficeAgent({ agent, index }: { agent: Doc<'agents'>; index: number }) {
   const working = agent.state !== 'deployed';
   const desk = OFFICE_DESKS[index % OFFICE_DESKS.length];
   const seed = hashString(`${agent._id}:${agent.name}`);
-  const idleX = 12 + (seed % 74);
-  const idleY = 25 + ((seed >> 8) % 48);
-  const x = working ? desk.x : idleX;
-  const y = working ? Math.min(desk.y + 9, 88) : idleY;
+  const idleSpot = OFFICE_IDLE_SPOTS[seed % OFFICE_IDLE_SPOTS.length];
+  const idleX = clamp(idleSpot.x + ((seed >> 5) % 13) - 6, 8, 92);
+  const idleY = clamp(idleSpot.y + ((seed >> 11) % 11) - 5, 12, 90);
+  const x = working ? desk.seatX : idleX;
+  const y = working ? desk.seatY : idleY;
   const style: OfficeStyle = {
     left: `${x}%`,
     top: `${y}%`,
@@ -521,6 +615,10 @@ function hashString(value: string): number {
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function AvatarPicker({
