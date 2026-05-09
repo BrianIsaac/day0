@@ -10,21 +10,27 @@ interface Point {
   fixed: boolean;
 }
 
-const SEGMENTS = 16;
-const REST_LEN = 8;
-const DAMPING = 0.96;
-const GRAVITY = 0.32;
-const ITERATIONS = 6;
-const HANDLE_FRACTION = 0.18;
+const SEGMENTS = 24;
+const BASE_REST_LEN = 7.6;
+const TIP_REST_LEN = 3.8;
+const DAMPING = 0.965;
+const BASE_GRAVITY = 0.2;
+const TIP_GRAVITY = 0.42;
+const ITERATIONS = 11;
+const HANDLE_LENGTH = 24;
+const HANDLE_OVERHANG = 5;
+const HANDLE_ANGLE = Math.PI - 0.08;
+const HANDLE_UX = Math.cos(HANDLE_ANGLE);
+const HANDLE_UY = Math.sin(HANDLE_ANGLE);
+const BASE_EXIT_STRENGTH = 0.1;
 
 /**
- * Sitewide custom cursor — a Verlet-integrated rope that trails the mouse
- * with whip-like physics. The head is pinned to the pointer; the body
- * lags behind, the tip flicks on mousedown.
+ * Sitewide custom cursor - a Verlet-integrated cord attached to a held
+ * handle. The cursor sits at the grip; the whip exits from the left end and
+ * drapes down-left like the reference silhouette.
  *
  * Bails on touch / prefers-reduced-motion. Hides the native cursor only
- * while this component is mounted and active, so the static SVG fallback
- * still applies if JavaScript fails to load.
+ * while this component is mounted and active.
  */
 export function WhipCursor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -59,13 +65,25 @@ export function WhipCursor() {
 
     const initX = window.innerWidth / 2;
     const initY = window.innerHeight / 2;
-    pointsRef.current = Array.from({ length: SEGMENTS }, (_, i) => ({
-      x: initX,
-      y: initY + i * REST_LEN,
-      oldX: initX,
-      oldY: initY + i * REST_LEN,
-      fixed: i === 0,
-    }));
+    const initAnchor = handleAnchor(initX, initY);
+    let segmentX = initAnchor.x;
+    let segmentY = initAnchor.y;
+    pointsRef.current = Array.from({ length: SEGMENTS }, (_, i) => {
+      if (i > 0) {
+        const dir = restingDirection(i - 1);
+        const restLen = segmentRestLen(i - 1);
+        segmentX += dir.x * restLen;
+        segmentY += dir.y * restLen;
+      }
+
+      return {
+        x: segmentX,
+        y: segmentY,
+        oldX: segmentX,
+        oldY: segmentY,
+        fixed: i === 0,
+      };
+    });
 
     // Inject a global rule that hides the cursor on every element. The
     // browser user-agent stylesheet sets `cursor: pointer` on <button>
@@ -108,33 +126,26 @@ export function WhipCursor() {
 
       const pts = pointsRef.current;
       const m = mouseRef.current;
+      const anchor = handleAnchor(m.x, m.y);
 
-      // Pin head to mouse, but cap displacement per frame so a
-      // fast cross-screen swipe doesn't snap the rope into a stretched
-      // line — the body catches up over a few frames instead.
-      const hdx = m.x - pts[0].x;
-      const hdy = m.y - pts[0].y;
-      const hd = Math.sqrt(hdx * hdx + hdy * hdy);
-      const maxStep = REST_LEN * 4;
-      if (hd > maxStep) {
-        pts[0].x += (hdx / hd) * maxStep;
-        pts[0].y += (hdy / hd) * maxStep;
-      } else {
-        pts[0].x = m.x;
-        pts[0].y = m.y;
-      }
+      // Pin the cord to the left end of the held handle.
+      // A fast cross-screen swipe lets the trailing cord catch up over time.
+      pts[0].x = anchor.x;
+      pts[0].y = anchor.y;
       pts[0].oldX = pts[0].x;
       pts[0].oldY = pts[0].y;
 
       // Verlet integrate the trailing points.
       for (let i = 1; i < pts.length; i++) {
         const p = pts[i];
+        const t = pointT(i);
         const vx = (p.x - p.oldX) * DAMPING;
         const vy = (p.y - p.oldY) * DAMPING;
+        const gravity = lerp(BASE_GRAVITY, TIP_GRAVITY, t);
         p.oldX = p.x;
         p.oldY = p.y;
         p.x += vx;
-        p.y += vy + GRAVITY * dt;
+        p.y += vy + gravity * dt * dt;
       }
 
       // Constraint solving — Gauss-Seidel, multi-pass.
@@ -145,7 +156,7 @@ export function WhipCursor() {
           const ddx = b.x - a.x;
           const ddy = b.y - a.y;
           const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.001;
-          const corr = ((dist - REST_LEN) / dist) * 0.5;
+          const corr = ((dist - segmentRestLen(i)) / dist) * 0.5;
           if (!a.fixed) {
             a.x += ddx * corr;
             a.y += ddy * corr;
@@ -155,29 +166,46 @@ export function WhipCursor() {
         }
       }
 
+      const first = pts[1];
+      const exitDir = restingDirection(0);
+      first.x = lerp(first.x, pts[0].x + exitDir.x * segmentRestLen(0), BASE_EXIT_STRENGTH);
+      first.y = lerp(first.y, pts[0].y + exitDir.y * segmentRestLen(0), BASE_EXIT_STRENGTH);
+
       // Render — clear in CSS pixel space (transform is scaled by dpr).
       ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
+      const buttX = m.x - HANDLE_UX * HANDLE_OVERHANG;
+      const buttY = m.y - HANDLE_UY * HANDLE_OVERHANG;
+
+      ctx.beginPath();
+      ctx.moveTo(buttX, buttY);
+      ctx.lineTo(anchor.x, anchor.y);
+      ctx.strokeStyle = '#1a0e07';
+      ctx.lineWidth = 8;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(buttX, buttY);
+      ctx.lineTo(anchor.x, anchor.y);
+      ctx.strokeStyle = '#a16240';
+      ctx.lineWidth = 4.8;
+      ctx.stroke();
+
       for (let i = 0; i < pts.length - 1; i++) {
-        const t = i / (pts.length - 1);
-        const w = 5.5 * (1 - t * 0.95) + 0.4;
-        let color: string;
-        if (t < HANDLE_FRACTION) {
-          // Handle — warm brown
-          const ht = t / HANDLE_FRACTION;
-          color = `rgba(161,98,64,${0.95 - ht * 0.05})`;
-        } else {
-          // Body → tip — cyan accent fading
-          const bt = (t - HANDLE_FRACTION) / (1 - HANDLE_FRACTION);
-          const alpha = 0.95 - bt * 0.55;
-          color = `rgba(34,211,238,${alpha})`;
-        }
+        const t = segmentT(i);
+        const w = segmentWidth(i);
+        const alpha = 0.95 - t * 0.48;
         ctx.beginPath();
         ctx.moveTo(pts[i].x, pts[i].y);
         ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
-        ctx.strokeStyle = color;
+        ctx.strokeStyle = `rgba(8,17,20,${0.85 - t * 0.25})`;
+        ctx.lineWidth = w + 2.1;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(pts[i].x, pts[i].y);
+        ctx.lineTo(pts[i + 1].x, pts[i + 1].y);
+        ctx.strokeStyle = `rgba(34,211,238,${alpha})`;
         ctx.lineWidth = w;
         ctx.stroke();
       }
@@ -222,4 +250,40 @@ export function WhipCursor() {
       }}
     />
   );
+}
+
+function handleAnchor(gripX: number, gripY: number) {
+  return {
+    x: gripX + HANDLE_UX * HANDLE_LENGTH,
+    y: gripY + HANDLE_UY * HANDLE_LENGTH,
+  };
+}
+
+function pointT(index: number) {
+  return index / (SEGMENTS - 1);
+}
+
+function segmentT(index: number) {
+  return index / (SEGMENTS - 2);
+}
+
+function segmentRestLen(index: number) {
+  return lerp(BASE_REST_LEN, TIP_REST_LEN, Math.pow(segmentT(index), 1.4));
+}
+
+function restingDirection(index: number) {
+  const t = Math.pow(segmentT(index), 0.72);
+  const x = lerp(-0.34, -0.08, t);
+  const y = lerp(0.94, 1, t);
+  const length = Math.sqrt(x * x + y * y) || 1;
+
+  return { x: x / length, y: y / length };
+}
+
+function segmentWidth(index: number) {
+  return lerp(4.2, 0.72, Math.pow(segmentT(index), 0.7));
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
 }
