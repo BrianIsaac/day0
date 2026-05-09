@@ -1,0 +1,25 @@
+node_modules
+.next
+.env.local
+.env
+*.tsbuildinfo
+.DS_Store
+.convex
+dist
+out
+coverage
+
+# clerk configuration (can include secrets)
+/.clerk/
+
+# internal planning docs, fixture content, and AI agent meta — not part of the public repo
+docs/
+docs-fixture/
+AGENTS.md
+CLAUDE.md
+README.md
+
+# local tooling state and logs
+.claude/
+.playwright-mcp/
+*.log
