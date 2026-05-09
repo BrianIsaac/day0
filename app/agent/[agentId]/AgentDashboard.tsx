@@ -24,13 +24,17 @@ export function AgentDashboard({ agentId }: Props) {
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
 
-  // Sync local mode with server state. If the boss reloaded mid-session,
-  // route them back into the room they were in (voice or chat). If the
-  // agent transitioned back to `deployed` (e.g. via Request Changes on
-  // the charter), reset to the picker so they can choose again.
+  // Sync local mode with server state. Two cases:
+  //   1. Reload mid-session — route back into the room they were in
+  //      (uses the voiceSession row to figure out which).
+  //   2. Request Changes on the charter — agent.state flips back to
+  //      `deployed` AND a prior voiceSession exists. Reset to picker.
+  // The `voiceSession` guard is critical: without it, the moment a fresh
+  // user picks a mode (state is still `deployed`, mode flips off `pick`)
+  // this effect would race the user's click and snap them back to picker.
   useEffect(() => {
     if (!agent) return;
-    if (agent.state === 'deployed' && mode !== 'pick') {
+    if (agent.state === 'deployed' && mode !== 'pick' && voiceSession) {
       setMode('pick');
       return;
     }

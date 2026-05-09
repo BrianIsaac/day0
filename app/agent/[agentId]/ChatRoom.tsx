@@ -89,9 +89,17 @@ export function ChatRoom({
         <h2 className="text-sm font-semibold">Day-1 1:1 · chat mode</h2>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-[var(--color-muted)]">GPT-5.5 · streaming</span>
-          {onSwitchMode && messages.length <= 1 && !done ? (
+          {onSwitchMode && !done ? (
             <button
-              onClick={onSwitchMode}
+              onClick={() => {
+                if (
+                  messages.length > 1 &&
+                  !confirm('Switch to voice? The current chat will be discarded.')
+                ) {
+                  return;
+                }
+                onSwitchMode();
+              }}
               className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent)] underline underline-offset-2"
             >
               switch to voice
