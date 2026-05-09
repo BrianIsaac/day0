@@ -14,6 +14,7 @@
 
 html,
 body {
+  cursor: url('/cursor-whip.svg') 27 27, auto;
   background: var(--color-bg);
   color: var(--color-fg);
   font-family:
@@ -36,6 +37,21 @@ body {
 
 * {
   box-sizing: border-box;
+}
+
+button,
+a,
+[role='button'],
+summary,
+label[for],
+[tabindex='0'] {
+  cursor: url('/cursor-whip.svg') 27 27, pointer;
+}
+
+input,
+textarea,
+[contenteditable='true'] {
+  cursor: text;
 }
 
 /* Custom scrollbars — blend with the dark shell, never feel default */
