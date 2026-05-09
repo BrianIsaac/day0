@@ -1,3 +1,0 @@
-{
-  "name": "pw-pull-test"
-}
