@@ -56,7 +56,9 @@ function VoiceRoomInner({
   const [start, setStart] = useState<StartResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<InboundMessage[]>([]);
-  const [muted, setMuted] = useState(false);
+  // Push-to-talk: start muted so the agent isn't constantly listening.
+  // The boss taps "Tap to speak" to send audio, taps again to stop.
+  const [muted, setMuted] = useState(true);
 
   const conversation = useConversation({
     micMuted: muted,
@@ -166,26 +168,26 @@ function VoiceRoomInner({
         </p>
       ) : null}
 
-      <div className="flex items-center gap-3 mb-3">
-        <button
-          onClick={onStart}
-          disabled={isConnected || !start}
-          className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
-        >
-          {isConnected ? 'Connected' : 'Start voice 1:1'}
-        </button>
-        <MicToggle
-          muted={muted}
-          disabled={!isConnected}
-          onToggle={() => setMuted((m) => !m)}
-        />
-        <button
-          onClick={onStop}
-          disabled={!isConnected}
-          className="px-4 py-2 rounded-lg border border-[var(--color-border)] disabled:opacity-50 text-sm"
-        >
-          End call
-        </button>
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        {!isConnected ? (
+          <button
+            onClick={onStart}
+            disabled={!start}
+            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
+          >
+            Start voice 1:1
+          </button>
+        ) : (
+          <>
+            <SpeakToggle muted={muted} onToggle={() => setMuted((m) => !m)} />
+            <button
+              onClick={onStop}
+              className="px-4 py-2 rounded-lg border border-[var(--color-border)] text-sm"
+            >
+              End call
+            </button>
+          </>
+        )}
         <StatusPill status={status} isSpeaking={isSpeaking} isListening={isListening} muted={muted} />
       </div>
 
@@ -207,27 +209,29 @@ function VoiceRoomInner({
   );
 }
 
-function MicToggle({
+function SpeakToggle({
   muted,
-  disabled,
   onToggle,
 }: {
   muted: boolean;
-  disabled: boolean;
   onToggle: () => void;
 }) {
   return (
     <button
       onClick={onToggle}
-      disabled={disabled}
-      title={muted ? 'mic muted — click to unmute' : 'mic live — click to mute'}
-      className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium transition disabled:opacity-50 ${
+      title={muted ? 'tap to start speaking' : 'tap to stop speaking'}
+      className={`px-5 py-2.5 rounded-lg font-medium text-sm transition flex items-center gap-2 ${
         muted
-          ? 'bg-[var(--color-danger)]/20 text-[var(--color-danger)] border border-[var(--color-danger)]/40'
+          ? 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
           : 'bg-[var(--color-ok)]/20 text-[var(--color-ok)] border border-[var(--color-ok)]/40'
       }`}
     >
-      {muted ? '🔇' : '🎙'}
+      <span
+        className={`w-2 h-2 rounded-full ${
+          muted ? 'bg-[var(--color-bg)]/80' : 'bg-[var(--color-ok)] animate-pulse'
+        }`}
+      />
+      {muted ? 'Tap to speak' : 'Tap to stop'}
     </button>
   );
 }
