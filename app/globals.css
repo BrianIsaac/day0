@@ -14,6 +14,8 @@
 
 html,
 body {
+  /* Static SVG whip is the JS-disabled fallback; the WhipCursor canvas
+     overlay sets `cursor: none` on mount and restores on unmount. */
   cursor: url('/cursor-whip.svg') 27 27, auto;
   background: var(--color-bg);
   color: var(--color-fg);
@@ -46,12 +48,6 @@ summary,
 label[for],
 [tabindex='0'] {
   cursor: url('/cursor-whip.svg') 27 27, pointer;
-}
-
-input,
-textarea,
-[contenteditable='true'] {
-  cursor: text;
 }
 
 /* Custom scrollbars — blend with the dark shell, never feel default */

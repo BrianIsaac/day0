@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import './globals.css';
 import { Providers } from './providers';
+import { WhipCursor } from './WhipCursor';
 
 export const metadata: Metadata = {
   title: 'Day0',
@@ -52,6 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </header>
           {children}
         </Providers>
+        <WhipCursor />
       </body>
     </html>
   );
