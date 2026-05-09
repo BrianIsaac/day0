@@ -175,14 +175,19 @@ export const synthesiseFromTranscriptForWebhook = action({
     elevenLabsConversationId: v.string(),
   },
   handler: async (ctx, args): Promise<{ charterId: string; version: string }> => {
-    const session = await ctx.runQuery(internal.voice.findActiveByConversation, {
-      agentId: args.agentId,
-      conversationId: args.elevenLabsConversationId,
-    });
+    // Strict lookup first (uses the conversationId attached by the
+    // browser's onConnect handler); fall back to the most recent active
+    // session for the agent if the attach call didn't land.
+    const session =
+      (await ctx.runQuery(internal.voice.findActiveByConversation, {
+        agentId: args.agentId,
+        conversationId: args.elevenLabsConversationId,
+      })) ??
+      (await ctx.runQuery(internal.voice.findLatestActiveForAgent, {
+        agentId: args.agentId,
+      }));
     if (!session) {
-      throw new Error(
-        'no active voice session for that agent + conversation id — webhook denied',
-      );
+      throw new Error('no active voice session for that agent — webhook denied');
     }
     const answers = await extractAnswersFromTranscript(args.transcript);
     await ctx.runMutation(internal.voice.complete, {

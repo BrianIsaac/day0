@@ -5,6 +5,11 @@ import { env } from '@/env';
  * Hand the browser the agent id so it can mount the ElevenLabs widget,
  * plus a one-time signed URL for private agents. Public agents return
  * the agent id directly and the widget connects with no signed URL.
+ *
+ * On any non-OK response from ElevenLabs we surface the actual error to
+ * the browser. Silent fallbacks made it impossible to tell whether the
+ * failure was a wrong API key, a wrong agent id, or an allowlist that
+ * doesn't include this domain.
  */
 export async function GET(): Promise<NextResponse> {
   if (!env.ELEVENLABS_API_KEY || !env.ELEVENLABS_AGENT_ID) {
@@ -21,13 +26,12 @@ export async function GET(): Promise<NextResponse> {
       },
     );
     if (!res.ok) {
+      const body = await res.text();
       return NextResponse.json(
         {
-          agentId: env.ELEVENLABS_AGENT_ID,
-          signedUrl: null,
-          public: true,
+          error: `ElevenLabs returned ${res.status} ${res.statusText}: ${body.slice(0, 200)}`,
         },
-        { status: 200 },
+        { status: 502 },
       );
     }
     const data = (await res.json()) as { signed_url?: string };

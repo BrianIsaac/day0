@@ -22,9 +22,11 @@ interface InboundMessage {
  * SDK migration:
  *   - useConversation requires a ConversationProvider ancestor.
  *   - startSession() is sync and returns void; errors come via onError.
- *   - Custom data flows via dynamicVariables (Record).
- *   - micMuted is a controlled prop on useConversation; isSpeaking /
- *     isListening expose the agent's turn state.
+ *   - onConnect receives `{ conversationId }`.
+ *   - onError receives `(message: string, context?: any)` — first arg
+ *     is the plain string, not an object with `.message`.
+ *   - micMuted is a controlled prop; isSpeaking / isListening expose
+ *     the agent's turn state.
  */
 export function VoiceRoom(props: { agentId: Id<'agents'>; bossLabel: string }) {
   return (
@@ -36,6 +38,7 @@ export function VoiceRoom(props: { agentId: Id<'agents'>; bossLabel: string }) {
 
 function VoiceRoomInner({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLabel: string }) {
   const startSession = useMutation(api.voice.start);
+  const attachConversationId = useMutation(api.voice.attachConversationId);
   const [voiceSessionId, setVoiceSessionId] = useState<Id<'voiceSessions'> | null>(null);
   const [start, setStart] = useState<StartResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +47,17 @@ function VoiceRoomInner({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLab
 
   const conversation = useConversation({
     micMuted: muted,
-    onConnect: () => setError(null),
+    onConnect: ({ conversationId }: { conversationId: string }) => {
+      setError(null);
+      if (voiceSessionId && conversationId) {
+        attachConversationId({
+          sessionId: voiceSessionId,
+          elevenLabsConversationId: conversationId,
+        }).catch(() => {
+          // Non-fatal — webhook can fall back to latest-active lookup.
+        });
+      }
+    },
     onDisconnect: () => {
       setTranscript((current) => {
         const text = current
@@ -68,7 +81,7 @@ function VoiceRoomInner({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLab
     onMessage: (m: InboundMessage) => {
       setTranscript((prev) => [...prev, m]);
     },
-    onError: (err: { message?: string }) => setError(err.message ?? 'voice error'),
+    onError: (message: string) => setError(message || 'voice error'),
   });
 
   useEffect(() => {
@@ -115,7 +128,7 @@ function VoiceRoomInner({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLab
       </div>
 
       {error ? (
-        <p className="text-xs text-[var(--color-danger)] mb-3">
+        <p className="text-xs text-[var(--color-danger)] mb-3 break-words">
           {error}. Switch to chat mode if voice setup is unavailable.
         </p>
       ) : null}

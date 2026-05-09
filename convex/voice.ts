@@ -59,6 +59,28 @@ export const start = mutation({
   },
 });
 
+/**
+ * Patch the ElevenLabs conversation id onto an existing voice session
+ * row. Called from the browser's `onConnect` callback once the SDK
+ * assigns a conversation id — the row was created earlier (in
+ * `voice.start`) before the WebSocket connected, so we couldn't store
+ * the id at that point. Storing it now lets the post-call webhook do
+ * a strict (agentId, conversationId) lookup.
+ */
+export const attachConversationId = mutation({
+  args: {
+    sessionId: v.id('voiceSessions'),
+    elevenLabsConversationId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await assertOwnsVoiceSession(ctx, args.sessionId);
+    await ctx.db.patch(args.sessionId, {
+      elevenLabsConversationId: args.elevenLabsConversationId,
+    });
+    return { ok: true };
+  },
+});
+
 export const recordAnswer = mutation({
   args: {
     sessionId: v.id('voiceSessions'),
@@ -104,6 +126,24 @@ export const findActiveByConversation = internalQuery({
         (s) => s.elevenLabsConversationId === args.conversationId && s.state === 'active',
       ) ?? null
     );
+  },
+});
+
+/**
+ * Fallback lookup for the webhook path. If `attachConversationId`
+ * never landed (browser closed before `onConnect` fired, race lost),
+ * fall back to the most recent active session for the agent. Each user
+ * has one active voice session at a time so this is unambiguous.
+ */
+export const findLatestActiveForAgent = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args) => {
+    const sessions = await ctx.db
+      .query('voiceSessions')
+      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+      .order('desc')
+      .collect();
+    return sessions.find((s) => s.state === 'active') ?? null;
   },
 });
 
