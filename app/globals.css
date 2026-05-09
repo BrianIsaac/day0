@@ -26,11 +26,7 @@ body {
     'Helvetica Neue',
     Arial,
     sans-serif;
-  font-feature-settings:
-    'cv02',
-    'cv03',
-    'cv04',
-    'cv11';
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
 }
 
@@ -73,4 +69,36 @@ body {
   outline: 2px solid color-mix(in oklab, var(--color-accent) 75%, transparent);
   outline-offset: 1px;
   border-radius: 6px;
+}
+
+.day0-office-agent-roaming {
+  animation: day0-office-wander var(--wander-duration, 12s) ease-in-out infinite;
+  animation-delay: var(--wander-delay, 0s);
+  will-change: transform;
+}
+
+.day0-office-agent-working {
+  transform: translateY(0);
+}
+
+@keyframes day0-office-wander {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(var(--wander-x1, 18px), var(--wander-y1, -14px));
+  }
+  50% {
+    transform: translate(var(--wander-x2, -22px), var(--wander-y2, 12px));
+  }
+  75% {
+    transform: translate(var(--wander-x3, 12px), var(--wander-y3, 18px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .day0-office-agent-roaming {
+    animation: none;
+  }
 }

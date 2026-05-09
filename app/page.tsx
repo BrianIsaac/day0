@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useState, type CSSProperties, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
 import { useUser, Show, SignInButton } from '@clerk/nextjs';
@@ -362,60 +362,7 @@ function SignedInDashboard() {
         {error ? <p className="text-xs text-[var(--color-danger)] mt-2">{error}</p> : null}
       </section>
 
-      <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
-        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
-          <h2 className="text-sm font-semibold">All agents office</h2>
-          <span className="text-[10px] text-[var(--color-muted)]">{agents?.length ?? 0} total</span>
-        </div>
-        {!agents ? (
-          <p className="text-xs text-[var(--color-muted)]">loading…</p>
-        ) : agents.length === 0 ? (
-          <p className="text-xs text-[var(--color-muted)]">no agents yet — deploy one above</p>
-        ) : (
-          <ul className="grid gap-px bg-[var(--color-border)] p-px sm:grid-cols-2 lg:grid-cols-3">
-            {agents.map((a) => (
-              <li key={a._id} className="bg-[var(--color-card)]">
-                <Link
-                  href={`/agent/${a._id}`}
-                  className="group flex min-h-44 flex-col justify-between overflow-hidden bg-[linear-gradient(rgba(39,39,42,.55)_1px,transparent_1px),linear-gradient(90deg,rgba(39,39,42,.55)_1px,transparent_1px)] bg-[length:18px_18px] p-4 transition hover:bg-[var(--color-bg)]"
-                >
-                  <div className="relative grid min-h-28 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]/80">
-                    <div className="absolute right-3 top-3 grid h-9 w-12 gap-1 rounded border border-[var(--color-border)] bg-[var(--color-card)] p-1.5">
-                      <span className="h-1 rounded bg-[var(--color-accent)]/70" />
-                      <span className="h-1 rounded bg-[var(--color-muted)]/50" />
-                      <span className="h-1 rounded bg-[var(--color-muted)]/35" />
-                    </div>
-                    <div className="absolute bottom-3 left-5 right-5 h-4 rounded-sm border border-[var(--color-border)] bg-[var(--color-card)]" />
-                    <AgentPixelAvatar
-                      avatar={avatarById(a.avatarId)}
-                      state={a.state}
-                      label={a.name}
-                      size="lg"
-                    />
-                  </div>
-                  <div className="mt-3 min-w-0 border-t border-[var(--color-border)] pt-3">
-                    <div className="text-sm font-medium text-[var(--color-fg)] truncate">
-                      {a.name}
-                    </div>
-                    <div className="text-[10px] text-[var(--color-muted)]">
-                      reports to {a.bossEmail} · deployed {new Date(a.createdAt).toLocaleString()}
-                    </div>
-                  </div>
-                  <span
-                    className={`text-[10px] px-2 py-1 rounded-full ${
-                      a.state === 'active'
-                        ? 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]'
-                        : 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]'
-                    }`}
-                  >
-                    {a.state}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <OfficeWorld agents={agents} />
 
       <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5">
         <div className="flex items-center justify-between">
@@ -437,6 +384,143 @@ function SignedInDashboard() {
       </section>
     </div>
   );
+}
+
+const OFFICE_DESKS = [
+  { x: 14, y: 18 },
+  { x: 34, y: 18 },
+  { x: 54, y: 18 },
+  { x: 74, y: 18 },
+  { x: 20, y: 45 },
+  { x: 42, y: 45 },
+  { x: 64, y: 45 },
+  { x: 84, y: 45 },
+  { x: 14, y: 72 },
+  { x: 34, y: 72 },
+  { x: 54, y: 72 },
+  { x: 74, y: 72 },
+  { x: 90, y: 20 },
+  { x: 90, y: 70 },
+  { x: 8, y: 46 },
+  { x: 24, y: 82 },
+  { x: 44, y: 82 },
+  { x: 64, y: 82 },
+  { x: 82, y: 82 },
+  { x: 50, y: 30 },
+] as const;
+
+type OfficeStyle = CSSProperties & {
+  '--wander-x1'?: string;
+  '--wander-y1'?: string;
+  '--wander-x2'?: string;
+  '--wander-y2'?: string;
+  '--wander-x3'?: string;
+  '--wander-y3'?: string;
+  '--wander-duration'?: string;
+  '--wander-delay'?: string;
+};
+
+function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
+  const deskCount = Math.max(6, Math.min(OFFICE_DESKS.length, agents?.length ?? 0));
+
+  return (
+    <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
+        <h2 className="text-sm font-semibold">Mini office world</h2>
+        <span className="text-[10px] text-[var(--color-muted)]">{agents?.length ?? 0} total</span>
+      </div>
+
+      {!agents ? (
+        <p className="px-5 py-8 text-xs text-[var(--color-muted)]">loading...</p>
+      ) : agents.length === 0 ? (
+        <p className="px-5 py-8 text-xs text-[var(--color-muted)]">
+          no agents yet - deploy one above
+        </p>
+      ) : (
+        <div className="relative min-h-[390px] overflow-hidden bg-[linear-gradient(rgba(39,39,42,.45)_1px,transparent_1px),linear-gradient(90deg,rgba(39,39,42,.45)_1px,transparent_1px)] bg-[length:24px_24px]">
+          <div className="absolute left-0 right-0 top-0 h-16 border-b border-[var(--color-border)] bg-[var(--color-bg)]/50" />
+          <div className="absolute bottom-0 left-0 right-0 h-12 border-t border-[var(--color-border)] bg-[var(--color-bg)]/45" />
+          <div className="absolute left-[6%] top-5 h-8 w-24 rounded border border-[var(--color-border)] bg-[var(--color-card)]" />
+          <div className="absolute right-[8%] top-5 h-8 w-32 rounded border border-[var(--color-border)] bg-[var(--color-card)]" />
+
+          {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
+            <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} x={desk.x} y={desk.y} />
+          ))}
+
+          {agents.map((agent, index) => (
+            <OfficeAgent key={agent._id} agent={agent} index={index} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function OfficeDesk({ x, y }: { x: number; y: number }) {
+  return (
+    <div
+      className="absolute h-16 w-24 -translate-x-1/2 -translate-y-1/2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/80 shadow-[0_10px_0_rgba(0,0,0,.16)]"
+      style={{ left: `${x}%`, top: `${y}%` }}
+      aria-hidden="true"
+    >
+      <div className="absolute left-3 right-3 top-2 h-4 rounded-sm border border-[var(--color-border)] bg-[var(--color-card)]">
+        <span className="absolute left-2 top-1 h-1 w-8 rounded bg-[var(--color-accent)]/60" />
+      </div>
+      <div className="absolute bottom-2 left-4 h-3 w-7 rounded-sm bg-[var(--color-muted)]/20" />
+      <div className="absolute bottom-2 right-4 h-3 w-5 rounded-sm bg-[var(--color-muted)]/15" />
+    </div>
+  );
+}
+
+function OfficeAgent({ agent, index }: { agent: Doc<'agents'>; index: number }) {
+  const working = agent.state !== 'deployed';
+  const desk = OFFICE_DESKS[index % OFFICE_DESKS.length];
+  const seed = hashString(`${agent._id}:${agent.name}`);
+  const idleX = 12 + (seed % 74);
+  const idleY = 25 + ((seed >> 8) % 48);
+  const x = working ? desk.x : idleX;
+  const y = working ? Math.min(desk.y + 9, 88) : idleY;
+  const style: OfficeStyle = {
+    left: `${x}%`,
+    top: `${y}%`,
+    '--wander-x1': `${16 + (seed % 24)}px`,
+    '--wander-y1': `${-10 - ((seed >> 4) % 18)}px`,
+    '--wander-x2': `${-18 - ((seed >> 8) % 26)}px`,
+    '--wander-y2': `${8 + ((seed >> 12) % 18)}px`,
+    '--wander-x3': `${8 + ((seed >> 16) % 24)}px`,
+    '--wander-y3': `${10 + ((seed >> 20) % 14)}px`,
+    '--wander-duration': `${10 + (seed % 7)}s`,
+    '--wander-delay': `-${seed % 9}s`,
+  };
+
+  return (
+    <Link
+      href={`/agent/${agent._id}`}
+      className="absolute z-10 -translate-x-1/2 -translate-y-1/2 outline-none"
+      style={style}
+      title={`${agent.name} - ${working ? 'at desk' : 'roaming'}`}
+    >
+      <div className={working ? 'day0-office-agent-working' : 'day0-office-agent-roaming'}>
+        <AgentPixelAvatar
+          avatar={avatarById(agent.avatarId)}
+          state={agent.state}
+          label={agent.name}
+        />
+        <div className="mt-1 max-w-28 truncate rounded bg-[var(--color-bg)]/85 px-2 py-1 text-center text-[10px] text-[var(--color-fg)] shadow-sm">
+          {agent.name}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function hashString(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function AvatarPicker({
