@@ -550,7 +550,7 @@ function PixelAvatarSprite({ avatar, className }: { avatar: AgentAvatarPet; clas
       className={`block bg-center bg-no-repeat [image-rendering:pixelated] ${className}`}
       style={{
         backgroundImage: `url("${avatar.src}")`,
-        backgroundSize: '148% 148%',
+        backgroundSize: 'contain',
       }}
     />
   );

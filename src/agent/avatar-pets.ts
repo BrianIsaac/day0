@@ -44,7 +44,7 @@ function avatar(id: string, name: string, handle: string): AgentAvatarPet {
     id,
     name,
     handle,
-    src: `/agent-avatars/singapore-ai-builders/${id}.gif`,
+    src: `/agent-avatars/singapore-ai-builders/${id}.webp`,
   };
 }
 
