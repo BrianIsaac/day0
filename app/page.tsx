@@ -467,11 +467,14 @@ type OfficeStyle = CSSProperties & {
 };
 
 function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
-  const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, agents?.length ?? 0));
+  const visibleAgents = agents ?? [];
+  const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
 
   useEffect(() => {
-    if (!agents?.length) {
+    const currentAgents = agents ?? [];
+
+    if (!currentAgents.length) {
       setAgentDestinations({});
       return;
     }
@@ -480,7 +483,7 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
       setAgentDestinations((current) => {
         const next: Record<string, OfficePoint> = {};
 
-        for (const agent of agents ?? []) {
+        for (const agent of currentAgents) {
           if (!agentIsWorking(agent.state)) {
             next[agent._id] = randomOfficePoint(current[agent._id]);
           }
@@ -499,47 +502,45 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
     <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
         <h2 className="text-sm font-semibold">Mini office world</h2>
-        <span className="text-[10px] text-[var(--color-muted)]">{agents?.length ?? 0} total</span>
+        <span className="text-[10px] text-[var(--color-muted)]">{visibleAgents.length} total</span>
       </div>
 
-      {!agents ? (
-        <p className="px-5 py-8 text-xs text-[var(--color-muted)]">loading...</p>
-      ) : agents.length === 0 ? (
-        <p className="px-5 py-8 text-xs text-[var(--color-muted)]">
-          no agents yet - deploy one above
-        </p>
-      ) : (
-        <div className="day0-pixel-office relative min-h-[560px] overflow-hidden">
-          {OFFICE_ROOMS.map((room) => (
-            <OfficeRoom key={`${room.left}-${room.top}`} room={room} />
-          ))}
+      <div className="day0-pixel-office relative min-h-[560px] overflow-hidden">
+        {OFFICE_ROOMS.map((room) => (
+          <OfficeRoom key={`${room.left}-${room.top}`} room={room} />
+        ))}
 
-          {OFFICE_CORRIDORS.map((corridor) => (
-            <OfficeCorridor key={`${corridor.left}-${corridor.top}`} corridor={corridor} />
-          ))}
+        {OFFICE_CORRIDORS.map((corridor) => (
+          <OfficeCorridor key={`${corridor.left}-${corridor.top}`} corridor={corridor} />
+        ))}
 
-          {OFFICE_DECOR.map((decor, index) => (
-            <OfficeDecor key={`${decor.kind}-${decor.x}-${decor.y}-${index}`} decor={decor} />
-          ))}
+        {OFFICE_DECOR.map((decor, index) => (
+          <OfficeDecor key={`${decor.kind}-${decor.x}-${decor.y}-${index}`} decor={decor} />
+        ))}
 
-          {OFFICE_SIGNALS.map((signal) => (
-            <OfficeSignal key={`${signal.x}-${signal.y}`} signal={signal} />
-          ))}
+        {OFFICE_SIGNALS.map((signal) => (
+          <OfficeSignal key={`${signal.x}-${signal.y}`} signal={signal} />
+        ))}
 
-          {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
-            <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} desk={desk} />
-          ))}
+        {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
+          <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} desk={desk} />
+        ))}
 
-          {agents.map((agent, index) => (
-            <OfficeAgent
-              key={agent._id}
-              agent={agent}
-              destination={agentDestinations[agent._id]}
-              index={index}
-            />
-          ))}
-        </div>
-      )}
+        {visibleAgents.length === 0 ? (
+          <div className="day0-pixel-office-empty absolute left-5 top-5 z-10 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-[var(--color-muted)]">
+            {agents ? 'office ready' : 'syncing office'}
+          </div>
+        ) : null}
+
+        {visibleAgents.map((agent, index) => (
+          <OfficeAgent
+            key={agent._id}
+            agent={agent}
+            destination={agentDestinations[agent._id]}
+            index={index}
+          />
+        ))}
+      </div>
     </section>
   );
 }
@@ -629,7 +630,8 @@ function OfficeAgent({
   destination: OfficePoint | undefined;
   index: number;
 }) {
-  const working = agentIsWorking(agent.state);
+  const openWorkCount = useQuery(api.work.countOpenForAgent, { agentId: agent._id });
+  const working = agentIsWorking(agent.state, openWorkCount);
   const desk = OFFICE_DESKS[index % OFFICE_DESKS.length];
   const seed = hashString(`${agent._id}:${agent.name}`);
   const idleSpot = OFFICE_IDLE_SPOTS[seed % OFFICE_IDLE_SPOTS.length];
@@ -650,7 +652,7 @@ function OfficeAgent({
         working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
       }`}
       style={style}
-      title={`${agent.name} - ${working ? 'at desk' : 'roaming'}`}
+      title={`${agent.name} - ${working ? 'working at desk' : 'roaming'}`}
     >
       <div className={working ? 'day0-office-agent-working' : 'day0-office-agent-roaming'}>
         <AgentPixelAvatar
@@ -695,8 +697,8 @@ function randomOfficePoint(previous: OfficePoint | undefined): OfficePoint {
   };
 }
 
-function agentIsWorking(state: Doc<'agents'>['state']) {
-  return state === 'day-one-in-progress';
+function agentIsWorking(state: Doc<'agents'>['state'], openWorkCount = 0) {
+  return state === 'day-one-in-progress' || openWorkCount > 0;
 }
 
 function AvatarPicker({

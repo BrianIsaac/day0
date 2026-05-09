@@ -376,6 +376,12 @@ label[for],
   box-shadow: 2px 2px 0 #000;
 }
 
+.day0-pixel-office-empty {
+  background: #0a0a0b;
+  border: 2px solid #27272a;
+  box-shadow: 2px 2px 0 #000;
+}
+
 .day0-office-agent {
   transition:
     left var(--walk-duration, 2800ms) steps(8, end),
