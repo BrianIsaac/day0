@@ -14,6 +14,8 @@ import {
 import type { DayOneTopic } from '../src/agent/charter';
 import { defaultSoul, day1Script } from '../src/agent/day-one-prompts';
 import { mergeGoodHabits, researchAndDistil } from '../src/agent/good-habits';
+import { generateWorkItemsFromCharter } from '../src/agent/work-generator';
+import type { Charter } from '../src/agent/charter';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { assertOwnsAgentAction } from './ownership';
 
@@ -205,11 +207,15 @@ export const synthesiseFromTranscriptForWebhook = action({
 
 export const postCharterApproval = action({
   args: { agentId: v.id('agents'), charterId: v.id('charters') },
-  handler: async (ctx, args): Promise<{ norms: number }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ norms: number; workItemsGenerated: number }> => {
     await assertOwnsAgentAction(ctx, args.agentId);
     const charter = await ctx.runQuery(api.charters.latest, { agentId: args.agentId });
     if (!charter) throw new Error('postCharterApproval: no charter');
-    const role = extractRole(charter.body as Parameters<typeof extractRole>[0]);
+    const charterBody = charter.body as Charter;
+    const role = extractRole(charterBody);
     const { fragment, norms } = await researchAndDistil(role);
     const existing = await ctx.runQuery(api.workspace.readFile, {
       agentId: args.agentId,
@@ -226,6 +232,31 @@ export const postCharterApproval = action({
       type: 'good-habits.distilled',
       payload: { norms, role },
     });
-    return { norms };
+
+    // Generate role-specific work items from the charter and seed them
+    // into the queue. Replaces the hardcoded RevOps demo seed.
+    const generated = await generateWorkItemsFromCharter(charterBody);
+    let workItemsGenerated = 0;
+    for (const item of generated) {
+      await ctx.runMutation(internal.work.seedItem, {
+        agentId: args.agentId,
+        sourceCategory: item.sourceCategory,
+        sourceSystem: item.sourceSystem,
+        externalId: item.externalId,
+        title: item.title,
+        contentSummary: item.contentSummary,
+        contentRefs: item.contentRefs,
+        priority: item.priority,
+        requesterLabel: item.requesterLabel,
+      });
+      workItemsGenerated += 1;
+    }
+    await ctx.runMutation(internal.events.log, {
+      agentId: args.agentId,
+      type: 'work.generated-from-charter',
+      payload: { count: workItemsGenerated, role },
+    });
+
+    return { norms, workItemsGenerated };
   },
 });
