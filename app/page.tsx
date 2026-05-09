@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
-import { useUser, Show } from '@clerk/nextjs';
+import { useUser, Show, SignInButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
 
@@ -22,26 +22,248 @@ export default function LandingPage() {
 
 function SignedOutHero() {
   return (
-    <div className="flex-1 flex items-center justify-center px-6">
-      <div className="max-w-2xl w-full">
-        <h1 className="text-5xl font-semibold tracking-tight leading-[1.05] mb-6">
-          Hire an agent. Don&apos;t configure one.
-        </h1>
-        <p className="text-lg text-[var(--color-muted)] mb-8 leading-relaxed">
-          Day0 joins on day zero with no role, no skills, no scope. You give it a name and sign in
-          as the boss it reports to. From there it runs the new-hire week as an autonomous loop: a
-          Day-1 1:1 over voice, a charter you approve, work it claims under your eye, and skills it
-          proposes when it hits a gap.
+    <div className="flex-1 flex flex-col">
+      <section className="px-6 pt-16 lg:pt-24 pb-16 max-w-6xl mx-auto w-full">
+        <div className="grid lg:grid-cols-[1.15fr_1fr] gap-12 lg:gap-16 items-center">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-accent)] mb-5">
+              Day0 · autonomous teammate
+            </p>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight leading-[1.05] mb-6">
+              Enterprise Digital Employees{' '}
+              <span className="text-[var(--color-muted)]">that just works.</span>
+            </h1>
+            <p className="text-lg text-[var(--color-muted)] mb-10 leading-relaxed max-w-xl">
+              One name in. Everything else is learned state. The agent runs its own Day-1 1:1 with
+              its boss, drafts a charter for approval, then claims work under your eye — proposing
+              new skills when it hits a gap, and authoring them in a sandbox.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <SignInButton mode="modal">
+                <button className="px-6 py-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90 transition">
+                  Deploy your first agent
+                </button>
+              </SignInButton>
+              <a
+                href="https://github.com/BrianIsaac/day0"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-6 py-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] text-sm transition"
+              >
+                View source
+              </a>
+            </div>
+          </div>
+          <div className="relative order-first lg:order-last">
+            <SurfaceOrbitSvg />
+          </div>
+        </div>
+      </section>
+
+      <section className="px-6 py-14 border-t border-[var(--color-border)]">
+        <div className="max-w-6xl mx-auto w-full">
+          <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-muted)] mb-8 text-center">
+            The new-hire loop
+          </p>
+          <ol className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <LoopStep
+              n="01"
+              title="Day-1 1:1"
+              body="Voice or chat. The agent walks the boss through seven topics in one sitting."
+            />
+            <LoopStep
+              n="02"
+              title="Charter"
+              body="GPT-5.5 distils the conversation into a typed charter. Boss approves before anything ships."
+            />
+            <LoopStep
+              n="03"
+              title="Work loop"
+              body="A seven-criterion evaluator gates every candidate. Plans drafted, work boss-approved, output landed."
+            />
+            <LoopStep
+              n="04"
+              title="Skill creation"
+              body="When the agent hits a gap it proposes a skill — authored in a Daytona sandbox, smoke-tested, and registered."
+            />
+          </ol>
+        </div>
+      </section>
+
+      <footer className="px-6 py-10 border-t border-[var(--color-border)] mt-auto">
+        <p className="text-xs text-[var(--color-muted)] text-center">
+          Built on OpenAI GPT-5.5 · ElevenLabs Conversational AI · Convex · Mastra · Exa · Daytona ·
+          Vercel · Cloudflare · Clerk
         </p>
-        <p className="text-sm text-[var(--color-muted)] mb-2">
-          Sign in (top right) to deploy your own demo agent.
-        </p>
-        <p className="mt-12 text-xs text-[var(--color-muted)]">
-          Built on OpenAI GPT-5.5 · ElevenLabs Conversational AI · Convex · Mastra · Exa · Daytona
-          · Vercel · Cloudflare · Clerk
-        </p>
-      </div>
+      </footer>
     </div>
+  );
+}
+
+function LoopStep({ n, title, body }: { n: string; title: string; body: string }) {
+  return (
+    <li className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5 hover:border-[var(--color-accent)]/40 transition">
+      <div className="text-[10px] tracking-[0.2em] text-[var(--color-accent)] mb-3">{n}</div>
+      <div className="text-sm font-semibold mb-2">{title}</div>
+      <p className="text-xs text-[var(--color-muted)] leading-relaxed">{body}</p>
+    </li>
+  );
+}
+
+function SurfaceOrbitSvg() {
+  return (
+    <svg
+      viewBox="0 0 600 600"
+      xmlns="http://www.w3.org/2000/svg"
+      className="w-full h-auto max-w-md mx-auto"
+      role="img"
+      aria-label="Day0 agent at the centre of mock work surfaces: docs, spreadsheet, slack, tickets, twitter."
+    >
+      <defs>
+        <radialGradient id="agent-glow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.22" />
+          <stop offset="55%" stopColor="#22d3ee" stopOpacity="0.04" />
+          <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
+      <circle cx="300" cy="300" r="290" fill="url(#agent-glow)" />
+
+      <circle
+        cx="300"
+        cy="300"
+        r="240"
+        fill="none"
+        stroke="#22d3ee"
+        strokeOpacity="0.18"
+        strokeWidth="1"
+        strokeDasharray="3 12"
+      >
+        <animateTransform
+          attributeName="transform"
+          type="rotate"
+          from="0 300 300"
+          to="360 300 300"
+          dur="60s"
+          repeatCount="indefinite"
+        />
+      </circle>
+
+      <circle
+        cx="300"
+        cy="300"
+        r="170"
+        fill="none"
+        stroke="#22d3ee"
+        strokeOpacity="0.1"
+        strokeWidth="1"
+      />
+
+      <g stroke="#22d3ee" strokeOpacity="0.25" strokeWidth="0.75" strokeDasharray="2 5">
+        <line x1="300" y1="300" x2="300" y2="110" />
+        <line x1="300" y1="300" x2="465" y2="190" />
+        <line x1="300" y1="300" x2="500" y2="380" />
+        <line x1="300" y1="300" x2="180" y2="455" />
+        <line x1="300" y1="300" x2="115" y2="265" />
+      </g>
+
+      <SurfaceNode cx={300} cy={110} label="docs" anchor="middle" labelDx={0} labelDy={-22} />
+      <SurfaceNode
+        cx={465}
+        cy={190}
+        label="spreadsheet"
+        anchor="start"
+        labelDx={20}
+        labelDy={4}
+      />
+      <SurfaceNode cx={500} cy={380} label="slack" anchor="start" labelDx={20} labelDy={4} />
+      <SurfaceNode cx={180} cy={455} label="tickets" anchor="end" labelDx={-20} labelDy={4} />
+      <SurfaceNode cx={115} cy={265} label="twitter" anchor="end" labelDx={-20} labelDy={4} />
+
+      <circle
+        cx="300"
+        cy="300"
+        r="48"
+        fill="#22d3ee"
+        fillOpacity="0.06"
+        stroke="#22d3ee"
+        strokeOpacity="0.3"
+        strokeWidth="1"
+      />
+      <circle
+        cx="300"
+        cy="300"
+        r="22"
+        fill="#22d3ee"
+        fillOpacity="0.18"
+        stroke="#22d3ee"
+        strokeOpacity="0.55"
+        strokeWidth="1"
+      >
+        <animate attributeName="r" values="20;26;20" dur="3.2s" repeatCount="indefinite" />
+        <animate
+          attributeName="fill-opacity"
+          values="0.18;0.32;0.18"
+          dur="3.2s"
+          repeatCount="indefinite"
+        />
+      </circle>
+      <circle cx="300" cy="300" r="6" fill="#22d3ee" />
+      <text
+        x="300"
+        y="338"
+        textAnchor="middle"
+        fill="#22d3ee"
+        fillOpacity="0.75"
+        fontSize="10"
+        fontFamily="ui-sans-serif, system-ui"
+        letterSpacing="3"
+      >
+        DAY0
+      </text>
+    </svg>
+  );
+}
+
+function SurfaceNode({
+  cx,
+  cy,
+  label,
+  anchor,
+  labelDx,
+  labelDy,
+}: {
+  cx: number;
+  cy: number;
+  label: string;
+  anchor: 'start' | 'middle' | 'end';
+  labelDx: number;
+  labelDy: number;
+}) {
+  return (
+    <g>
+      <circle
+        cx={cx}
+        cy={cy}
+        r="16"
+        fill="#0a0a0b"
+        stroke="#22d3ee"
+        strokeOpacity="0.4"
+        strokeWidth="1"
+      />
+      <circle cx={cx} cy={cy} r="5" fill="#22d3ee" fillOpacity="0.7" />
+      <text
+        x={cx + labelDx}
+        y={cy + labelDy}
+        textAnchor={anchor}
+        fill="#a1a1aa"
+        fontSize="11"
+        fontFamily="ui-sans-serif, system-ui"
+        letterSpacing="0.5"
+      >
+        {label}
+      </text>
+    </g>
   );
 }
 
