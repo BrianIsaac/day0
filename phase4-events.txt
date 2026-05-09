@@ -1,0 +1,5 @@
+{
+  "workQueue": "Work queue · 3 items",
+  "agentsMdSize": "5037b",
+  "events": "Live event feed\n05:19:56\nwork.evaluated\n05:19:56\nwork.plan-drafted\n05:19:53\nwork.evaluated\n05:19:52\nwork.evaluated\n05:19:48\nwork.evaluated\n05:19:43\nwork.generated-from-charter\n05:19:43\nwork.seeded\n05:19:43\nwork.seeded\n05:19:43\nwork.seeded\n05:19:17\ngood-habits.distilled\n05:18:49\ncharter.approved\n05:17:43\ncharter.drafted\n05:14:51\nvoice.started\n05:14:25\nskill.builtin-installed\n05:14:23\nagent.deployed"
+}

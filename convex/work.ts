@@ -65,7 +65,7 @@ export const seedItem = internalMutation({
     });
     await ctx.db.insert('events', {
       agentId: args.agentId,
-      type: 'work.seeded',
+      type: 'work.discovered',
       payload: { workItemId: id, title: args.title },
       createdAt: Date.now(),
     });

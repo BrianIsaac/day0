@@ -14,9 +14,6 @@
 
 html,
 body {
-  /* Static SVG whip is the JS-disabled fallback; the WhipCursor canvas
-     overlay sets `cursor: none` on mount and restores on unmount. */
-  cursor: url('/cursor-whip.svg') 27 27, auto;
   background: var(--color-bg);
   color: var(--color-fg);
   font-family:
@@ -37,14 +34,11 @@ body {
   box-sizing: border-box;
 }
 
-button,
-a,
-[role='button'],
-summary,
-label[for],
-[tabindex='0'] {
-  cursor: url('/cursor-whip.svg') 27 27, pointer;
-}
+/* Cursor is fully owned by `app/WhipCursor.tsx`. It hides the native
+   cursor on mount via inline body style and renders a Verlet-physics
+   canvas whip on top. Element-level cursor rules removed deliberately —
+   they would have higher specificity than the inline body style and
+   would render a second cursor on hover. */
 
 /* Custom scrollbars — blend with the dark shell, never feel default */
 *::-webkit-scrollbar {

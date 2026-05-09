@@ -253,7 +253,7 @@ export const postCharterApproval = action({
     }
     await ctx.runMutation(internal.events.log, {
       agentId: args.agentId,
-      type: 'work.generated-from-charter',
+      type: 'work.charter-derived',
       payload: { count: workItemsGenerated, role },
     });
 
