@@ -10,10 +10,10 @@ interface Point {
   fixed: boolean;
 }
 
-const SEGMENTS = 22;
-const REST_LEN = 13;
+const SEGMENTS = 16;
+const REST_LEN = 8;
 const DAMPING = 0.96;
-const GRAVITY = 0.45;
+const GRAVITY = 0.32;
 const ITERATIONS = 6;
 const HANDLE_FRACTION = 0.18;
 
@@ -155,7 +155,7 @@ export function WhipCursor() {
 
       for (let i = 0; i < pts.length - 1; i++) {
         const t = i / (pts.length - 1);
-        const w = 9 * (1 - t * 0.95) + 0.6;
+        const w = 5.5 * (1 - t * 0.95) + 0.4;
         let color: string;
         if (t < HANDLE_FRACTION) {
           // Handle — warm brown
@@ -178,11 +178,11 @@ export function WhipCursor() {
       // Bright tip dot — the click hotspot.
       const tip = pts[pts.length - 1];
       ctx.beginPath();
-      ctx.arc(tip.x, tip.y, 2.4, 0, Math.PI * 2);
+      ctx.arc(tip.x, tip.y, 1.7, 0, Math.PI * 2);
       ctx.fillStyle = '#22d3ee';
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(tip.x, tip.y, 1, 0, Math.PI * 2);
+      ctx.arc(tip.x, tip.y, 0.7, 0, Math.PI * 2);
       ctx.fillStyle = '#0a0a0b';
       ctx.fill();
 
