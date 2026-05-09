@@ -12,6 +12,7 @@ export default defineSchema({
   agents: defineTable({
     bossEmail: v.string(),
     name: v.string(),
+    avatarId: v.optional(v.string()),
     /** Clerk user id (`identity.subject`). Optional for legacy rows; new
      * deploys must populate it. Queries scope by this so each judge's
      * agents are isolated. */
@@ -47,11 +48,7 @@ export default defineSchema({
 
   voiceSessions: defineTable({
     agentId: v.id('agents'),
-    mode: v.union(
-      v.literal('elevenlabs'),
-      v.literal('gemini-live'),
-      v.literal('chat'),
-    ),
+    mode: v.union(v.literal('elevenlabs'), v.literal('gemini-live'), v.literal('chat')),
     state: v.union(
       v.literal('pending'),
       v.literal('active'),

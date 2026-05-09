@@ -37,6 +37,8 @@ export const SINGAPORE_AI_BUILDER_AVATARS: AgentAvatarPet[] = [
   avatar('tw-danieltskk', 'DanielTsk', '@danieltskk'),
 ];
 
+export const DEFAULT_AGENT_AVATAR = SINGAPORE_AI_BUILDER_AVATARS[0];
+
 function avatar(id: string, name: string, handle: string): AgentAvatarPet {
   return {
     id,
@@ -46,16 +48,6 @@ function avatar(id: string, name: string, handle: string): AgentAvatarPet {
   };
 }
 
-export function avatarForAgentSeed(seed: string): AgentAvatarPet {
-  const value = stableHash(seed.trim().toLowerCase() || 'day0-agent');
-  return SINGAPORE_AI_BUILDER_AVATARS[value % SINGAPORE_AI_BUILDER_AVATARS.length];
-}
-
-function stableHash(value: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
+export function avatarById(id: string | undefined): AgentAvatarPet {
+  return SINGAPORE_AI_BUILDER_AVATARS.find((avatar) => avatar.id === id) ?? DEFAULT_AGENT_AVATAR;
 }

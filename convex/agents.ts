@@ -59,13 +59,18 @@ export const getInternal = internalQuery({
 });
 
 export const deploy = mutation({
-  args: { bossEmail: v.string(), name: v.optional(v.string()) },
+  args: {
+    bossEmail: v.string(),
+    name: v.optional(v.string()),
+    avatarId: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error('not authenticated');
     const agentId = await ctx.db.insert('agents', {
       bossEmail: args.bossEmail,
       name: args.name ?? 'Day0',
+      avatarId: args.avatarId,
       userId: identity.subject,
       state: 'deployed',
       createdAt: Date.now(),
@@ -101,9 +106,7 @@ export const grantScopes = mutation({
     for (const scope of args.scopes) {
       const existing = await ctx.db
         .query('permissionGrants')
-        .withIndex('by_agent_scope', (q) =>
-          q.eq('agentId', args.agentId).eq('scope', scope),
-        )
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId).eq('scope', scope))
         .first();
       if (existing) continue;
       await ctx.db.insert('permissionGrants', {

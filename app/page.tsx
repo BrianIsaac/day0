@@ -8,7 +8,12 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
-import { avatarForAgentSeed, type AgentAvatarPet } from '@/agent/avatar-pets';
+import {
+  DEFAULT_AGENT_AVATAR,
+  SINGAPORE_AI_BUILDER_AVATARS,
+  avatarById,
+  type AgentAvatarPet,
+} from '@/agent/avatar-pets';
 
 export default function LandingPage() {
   return (
@@ -270,9 +275,11 @@ function SignedInDashboard() {
   const deploy = useMutation(api.agents.deploy);
   const reset = useMutation(api.reset.deleteMyData);
   const [workerName, setWorkerName] = useState('worker 1');
+  const [selectedAvatarId, setSelectedAvatarId] = useState(DEFAULT_AGENT_AVATAR.id);
   const [submitting, setSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedAvatar = avatarById(selectedAvatarId);
 
   async function onDeploy(ev: FormEvent<HTMLFormElement>) {
     ev.preventDefault();
@@ -285,7 +292,11 @@ function SignedInDashboard() {
     setSubmitting(true);
     setError(null);
     try {
-      const agentId = await deploy({ bossEmail, name: workerName.trim() });
+      const agentId = await deploy({
+        bossEmail,
+        name: workerName.trim(),
+        avatarId: selectedAvatar.id,
+      });
       fetch(`/api/seed?agentId=${agentId}`, { method: 'POST' }).catch(() => {});
       router.push(`/agent/${agentId}`);
     } catch (err) {
@@ -316,19 +327,19 @@ function SignedInDashboard() {
             the slate clean.
           </p>
         </div>
-        <AgentAvatarRail agents={agents ?? []} previewSeed={workerName} />
+        <AgentAvatarRail
+          agents={agents ?? []}
+          previewAvatar={selectedAvatar}
+          previewLabel={workerName}
+        />
       </div>
 
       <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5 mb-6">
         <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-center">
-          <AgentPixelAvatar
-            avatar={avatarForAgentSeed(workerName)}
-            state="deployed"
-            label={workerName}
-            size="lg"
-          />
+          <AgentPixelAvatar avatar={selectedAvatar} state="deployed" label={workerName} size="lg" />
           <div>
             <h2 className="text-sm font-semibold mb-3">Deploy a new Day0 agent</h2>
+            <AvatarPicker selectedId={selectedAvatarId} onSelect={setSelectedAvatarId} />
             <form onSubmit={onDeploy} className="flex flex-col gap-3 sm:flex-row">
               <input
                 type="text"
@@ -352,9 +363,9 @@ function SignedInDashboard() {
         {error ? <p className="text-xs text-[var(--color-danger)] mt-2">{error}</p> : null}
       </section>
 
-      <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5 mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">Your agents</h2>
+      <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
+          <h2 className="text-sm font-semibold">All agents office</h2>
           <span className="text-[10px] text-[var(--color-muted)]">{agents?.length ?? 0} total</span>
         </div>
         {!agents ? (
@@ -362,19 +373,28 @@ function SignedInDashboard() {
         ) : agents.length === 0 ? (
           <p className="text-xs text-[var(--color-muted)]">no agents yet — deploy one above</p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="grid gap-px bg-[var(--color-border)] p-px sm:grid-cols-2 lg:grid-cols-3">
             {agents.map((a) => (
-              <li key={a._id}>
+              <li key={a._id} className="bg-[var(--color-card)]">
                 <Link
                   href={`/agent/${a._id}`}
-                  className="flex items-center gap-3 p-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] transition"
+                  className="group flex min-h-44 flex-col justify-between overflow-hidden bg-[linear-gradient(rgba(39,39,42,.55)_1px,transparent_1px),linear-gradient(90deg,rgba(39,39,42,.55)_1px,transparent_1px)] bg-[length:18px_18px] p-4 transition hover:bg-[var(--color-bg)]"
                 >
-                  <AgentPixelAvatar
-                    avatar={avatarForAgentSeed(`${a._id}:${a.name}`)}
-                    state={a.state}
-                    label={a.name}
-                  />
-                  <div className="min-w-0 flex-1">
+                  <div className="relative grid min-h-28 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]/80">
+                    <div className="absolute right-3 top-3 grid h-9 w-12 gap-1 rounded border border-[var(--color-border)] bg-[var(--color-card)] p-1.5">
+                      <span className="h-1 rounded bg-[var(--color-accent)]/70" />
+                      <span className="h-1 rounded bg-[var(--color-muted)]/50" />
+                      <span className="h-1 rounded bg-[var(--color-muted)]/35" />
+                    </div>
+                    <div className="absolute bottom-3 left-5 right-5 h-4 rounded-sm border border-[var(--color-border)] bg-[var(--color-card)]" />
+                    <AgentPixelAvatar
+                      avatar={avatarById(a.avatarId)}
+                      state={a.state}
+                      label={a.name}
+                      size="lg"
+                    />
+                  </div>
+                  <div className="mt-3 min-w-0 border-t border-[var(--color-border)] pt-3">
                     <div className="text-sm font-medium text-[var(--color-fg)] truncate">
                       {a.name}
                     </div>
@@ -420,12 +440,62 @@ function SignedInDashboard() {
   );
 }
 
+function AvatarPicker({
+  selectedId,
+  onSelect,
+}: {
+  selectedId: string;
+  onSelect: (avatarId: string) => void;
+}) {
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-muted)]">
+          Choose avatar
+        </span>
+        <span className="text-[10px] text-[var(--color-muted)]">Singaporean AI Builders - 29</span>
+      </div>
+      <div className="grid max-h-40 grid-cols-6 gap-1 overflow-y-auto pr-1 sm:grid-cols-10">
+        {SINGAPORE_AI_BUILDER_AVATARS.map((avatar) => {
+          const selected = avatar.id === selectedId;
+          return (
+            <button
+              key={avatar.id}
+              type="button"
+              onClick={() => onSelect(avatar.id)}
+              title={`${avatar.name} ${avatar.handle}`}
+              className={`grid h-12 w-full place-items-center rounded-md border bg-[var(--color-bg)] transition ${
+                selected
+                  ? 'border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]'
+                  : 'border-[var(--color-border)] hover:border-[var(--color-muted)]'
+              }`}
+            >
+              <Image
+                src={avatar.src}
+                alt=""
+                width={40}
+                height={40}
+                unoptimized
+                aria-hidden="true"
+                className="h-10 w-10 scale-[1.08] object-contain p-1 [image-rendering:pixelated]"
+                draggable={false}
+              />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AgentAvatarRail({
   agents,
-  previewSeed,
+  previewAvatar,
+  previewLabel,
 }: {
   agents: Doc<'agents'>[];
-  previewSeed: string;
+  previewAvatar: AgentAvatarPet;
+  previewLabel: string;
 }) {
   const shownAgents = agents.slice(0, 5);
   const hasAgents = shownAgents.length > 0;
@@ -436,19 +506,14 @@ function AgentAvatarRail({
         shownAgents.map((agent) => (
           <AgentPixelAvatar
             key={agent._id}
-            avatar={avatarForAgentSeed(`${agent._id}:${agent.name}`)}
+            avatar={avatarById(agent.avatarId)}
             state={agent.state}
             label={agent.name}
             compact
           />
         ))
       ) : (
-        <AgentPixelAvatar
-          avatar={avatarForAgentSeed(previewSeed)}
-          state="deployed"
-          label={previewSeed}
-          compact
-        />
+        <AgentPixelAvatar avatar={previewAvatar} state="deployed" label={previewLabel} compact />
       )}
     </div>
   );
@@ -473,21 +538,23 @@ function AgentPixelAvatar({
 
   return (
     <div
-      className={`relative grid shrink-0 place-items-center rounded-lg border ${tone.border} ${tone.bg} ${
+      className={`relative grid shrink-0 place-items-center overflow-hidden rounded-lg border p-1 ${tone.border} ${tone.bg} ${
         compact ? 'shadow-[0_0_0_2px_var(--color-bg)]' : ''
       }`}
       title={`${label} - ${avatar.name} ${avatar.handle}`}
     >
-      <Image
-        src={avatar.src}
-        alt=""
-        width={pixelSize}
-        height={pixelSize}
-        unoptimized
-        aria-hidden="true"
-        className={`${sizeClass} object-contain p-1 [image-rendering:pixelated]`}
-        draggable={false}
-      />
+      <div className={`${sizeClass} overflow-hidden rounded-md bg-[var(--color-bg)]`}>
+        <Image
+          src={avatar.src}
+          alt=""
+          width={pixelSize}
+          height={pixelSize}
+          unoptimized
+          aria-hidden="true"
+          className="h-full w-full scale-[1.08] object-contain p-1.5 [image-rendering:pixelated]"
+          draggable={false}
+        />
+      </div>
       <span
         className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-[var(--color-card)] ${tone.dot}`}
         aria-label={state}
