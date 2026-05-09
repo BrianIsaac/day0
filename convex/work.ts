@@ -1,10 +1,14 @@
 import { v } from 'convex/values';
 import { mutation, query, internalMutation } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 
 /**
- * Work items CRUD + state transitions. The state machine:
+ * Work items CRUD + state transitions. Public surfaces enforce
+ * per-account ownership; internal transitions called by actions/scheduler
+ * skip the check.
  *
+ * State machine:
  *   discovered → claimed → plan-pending → plan-approved → executing
  *                                                       ↓
  *                                                   completed | failed
@@ -16,6 +20,7 @@ import type { Doc, Id } from './_generated/dataModel';
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'workItems'>[]> => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
@@ -27,7 +32,7 @@ export const listForAgent = query({
 export const get = query({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.workItemId);
+    return await assertOwnsWorkItem(ctx, args.workItemId);
   },
 });
 
@@ -118,8 +123,7 @@ export const setPlan = internalMutation({
 export const approvePlan = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
     if (row.state !== 'plan-pending') {
       throw new Error(`workItem state is ${row.state}; expected plan-pending`);
     }
@@ -134,20 +138,10 @@ export const approvePlan = mutation({
   },
 });
 
-/**
- * Resume a non-progressing work item back to a state that the
- * dashboard's auto-progress effect will pick up. Accepts `failed`
- * (transient executor crash), `skipped` (stale guard or evaluator
- * misclassification), or `cancelled` (boss reverted then changed
- * mind). The row's plan is preserved when present, so the cleanest
- * recovery is to flip back to `plan-approved` and let
- * executeApprovedPlan run again.
- */
 export const retryFailed = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
     const recoverable = ['failed', 'skipped', 'cancelled'];
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
@@ -171,8 +165,7 @@ export const retryFailed = mutation({
 export const cancelPlan = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
     await ctx.db.patch(args.workItemId, { state: 'cancelled' });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -231,6 +224,7 @@ export const setProposedSkill = internalMutation({
 export const countOpenForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<number> => {
+    await assertOwnsAgent(ctx, args.agentId);
     const open = await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
@@ -247,6 +241,7 @@ export const findExistingClaim = query({
     externalId: v.string(),
   },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     const row = await ctx.db
       .query('workItems')
       .withIndex('by_extId', (q) =>
@@ -255,9 +250,6 @@ export const findExistingClaim = query({
       .filter((q) => q.eq(q.field('agentId'), args.agentId))
       .first();
     if (!row) return null;
-    // Only treat the row as "claimed" if it's already in a downstream lifecycle
-    // state. discovered/deferred/needs-skill/skipped/cancelled/failed/completed
-    // all mean the candidate is fair game for re-evaluation.
     const claimedStates = ['claimed', 'plan-pending', 'plan-approved', 'executing'];
     if (!claimedStates.includes(row.state)) return null;
     return { state: row.state };

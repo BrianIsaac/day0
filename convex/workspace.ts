@@ -1,8 +1,10 @@
 import { v } from 'convex/values';
 import { mutation, query, internalMutation } from './_generated/server';
+import { assertOwnsAgent } from './ownership';
 
 /**
- * 8-file workspace storage. One row per (agentId, fileName).
+ * 8-file workspace storage. One row per (agentId, fileName). All public
+ * surfaces enforce per-account ownership.
  */
 
 const WORKSPACE_FILE_NAMES = [
@@ -23,6 +25,7 @@ function isKnown(name: string): boolean {
 export const read = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Record<string, string>> => {
+    await assertOwnsAgent(ctx, args.agentId);
     const rows = await ctx.db
       .query('workspace')
       .withIndex('by_agent_file', (q) => q.eq('agentId', args.agentId))
@@ -39,6 +42,7 @@ export const read = query({
 export const readFile = query({
   args: { agentId: v.id('agents'), fileName: v.string() },
   handler: async (ctx, args): Promise<string> => {
+    await assertOwnsAgent(ctx, args.agentId);
     if (!isKnown(args.fileName)) {
       throw new Error(`workspace.readFile: unknown ${args.fileName}`);
     }
@@ -55,6 +59,7 @@ export const readFile = query({
 export const writeFile = mutation({
   args: { agentId: v.id('agents'), fileName: v.string(), content: v.string() },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await writeFileImpl(ctx, args);
   },
 });

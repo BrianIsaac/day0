@@ -28,9 +28,17 @@ interface ElevenLabsPostCallPayload {
  * sent in the original `startSession({ dynamicVariables })` call from
  * the browser.
  *
- * For the hackathon we skip HMAC verification. Production should
- * verify the `elevenlabs-signature` header against the agent's
- * webhook secret via `elevenlabs.webhooks.constructEvent(rawBody, ...)`.
+ * Trust model: this route is unauthenticated (no Clerk JWT), so we hand
+ * off to `synthesiseFromTranscriptForWebhook` rather than the
+ * ownership-checked `synthesiseFromTranscript`. The Convex action
+ * verifies the (agentId, conversation_id) pair matches an active voice
+ * session — sessions can only be started by the legitimate user via
+ * the ownership-checked `voice.start` mutation, so a forged webhook
+ * payload pointing at someone else's agentId will fail the lookup.
+ *
+ * For production hardening, also verify the `elevenlabs-signature`
+ * header against the agent's webhook secret via
+ * `elevenlabs.webhooks.constructEvent(rawBody, ...)`.
  */
 export async function POST(req: Request): Promise<NextResponse> {
   const rawBody = await req.text();
@@ -45,10 +53,17 @@ export async function POST(req: Request): Promise<NextResponse> {
   const dyn = data?.conversation_initiation_client_data?.dynamic_variables ?? {};
   const agentId = typeof dyn.internal_agent_id === 'string' ? dyn.internal_agent_id : undefined;
   const bossLabel = typeof dyn.boss_label === 'string' ? dyn.boss_label : 'boss';
+  const conversationId = typeof data?.conversation_id === 'string' ? data.conversation_id : undefined;
 
   if (!agentId) {
     return NextResponse.json(
       { error: 'dynamic_variables.internal_agent_id not provided' },
+      { status: 400 },
+    );
+  }
+  if (!conversationId) {
+    return NextResponse.json(
+      { error: 'data.conversation_id not provided' },
       { status: 400 },
     );
   }
@@ -61,10 +76,11 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   const client = convexClient();
-  const result = await client.action(api.onboarding.synthesiseFromTranscript, {
+  const result = await client.action(api.onboarding.synthesiseFromTranscriptForWebhook, {
     agentId: agentId as Id<'agents'>,
     bossLabel,
     transcript,
+    elevenLabsConversationId: conversationId,
   });
   return NextResponse.json(result);
 }

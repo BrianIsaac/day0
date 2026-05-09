@@ -1,11 +1,13 @@
 import { v } from 'convex/values';
 import { mutation, query, internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { assertOwnsAgent } from './ownership';
 
 /**
  * Agent CRUD + state transitions. Each agent is owned by a Clerk user;
- * `list` filters by the signed-in user so concurrent demos stay
- * isolated.
+ * `listForUser` filters by the signed-in user so concurrent demos stay
+ * isolated. All other public functions that take an `agentId` enforce
+ * ownership via `assertOwnsAgent` before reading or writing.
  */
 
 export const listForUser = query({
@@ -21,28 +23,38 @@ export const listForUser = query({
   },
 });
 
-export const list = query({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db.query('agents').order('desc').take(10);
-  },
-});
-
 export const get = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.agentId);
+    return await assertOwnsAgent(ctx, args.agentId);
   },
 });
 
 export const getByEmail = query({
   args: { bossEmail: v.string() },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const row = await ctx.db
       .query('agents')
       .withIndex('by_bossEmail', (q) => q.eq('bossEmail', args.bossEmail))
       .order('desc')
       .first();
+    if (!row) return null;
+    if (row.userId !== identity.subject) return null;
+    return row;
+  },
+});
+
+/**
+ * Internal-only fetch used by action-side ownership assertions; bypasses
+ * the public `get` so that `assertOwnsAgentAction` doesn't recurse through
+ * its own ownership check before it can compare userId.
+ */
+export const getInternal = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.agentId);
   },
 });
 
@@ -50,10 +62,11 @@ export const deploy = mutation({
   args: { bossEmail: v.string(), name: v.optional(v.string()) },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error('not authenticated');
     const agentId = await ctx.db.insert('agents', {
       bossEmail: args.bossEmail,
       name: args.name ?? 'Day0',
-      userId: identity?.subject,
+      userId: identity.subject,
       state: 'deployed',
       createdAt: Date.now(),
     });
@@ -63,9 +76,6 @@ export const deploy = mutation({
       payload: { bossEmail: args.bossEmail },
       createdAt: Date.now(),
     });
-    // Seed the always-on base permission grants — read across the mock
-    // surfaces. Write scopes stay locked so the autonomous skill-creation
-    // demo can demonstrate the propose-author-register loop.
     for (const scope of [
       'boss:message',
       'docs:read',
@@ -83,13 +93,10 @@ export const deploy = mutation({
   },
 });
 
-/**
- * One-off helper to add scopes to an existing agent. Useful when patching
- * the seed scopes mid-demo without redeploying a fresh agent.
- */
 export const grantScopes = mutation({
   args: { agentId: v.id('agents'), scopes: v.array(v.string()) },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     let added = 0;
     for (const scope of args.scopes) {
       const existing = await ctx.db
@@ -128,6 +135,7 @@ export const setState = internalMutation({
 export const recentEvents = query({
   args: { agentId: v.id('agents'), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     const limit = args.limit ?? 50;
     return await ctx.db
       .query('events')

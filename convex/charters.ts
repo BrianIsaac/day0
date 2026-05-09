@@ -1,13 +1,16 @@
 import { v } from 'convex/values';
 import { mutation, query, internalMutation } from './_generated/server';
+import { assertOwnsAgent, assertOwnsCharter } from './ownership';
 
 /**
- * Charter CRUD + binary-plus-edit approval mutation.
+ * Charter CRUD + binary-plus-edit approval mutation. Every public
+ * function asserts the caller owns the agent the charter belongs to.
  */
 
 export const latest = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('charters')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
@@ -19,6 +22,7 @@ export const latest = query({
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('charters')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
@@ -54,8 +58,7 @@ export const persist = internalMutation({
 export const approve = mutation({
   args: { charterId: v.id('charters') },
   handler: async (ctx, args) => {
-    const charter = await ctx.db.get(args.charterId);
-    if (!charter) throw new Error(`Charter ${args.charterId} not found`);
+    const charter = await assertOwnsCharter(ctx, args.charterId);
     await ctx.db.patch(args.charterId, {
       approved: true,
       approvedAt: Date.now(),
@@ -74,8 +77,7 @@ export const approve = mutation({
 export const requestChanges = mutation({
   args: { charterId: v.id('charters'), notes: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const charter = await ctx.db.get(args.charterId);
-    if (!charter) throw new Error(`Charter ${args.charterId} not found`);
+    const charter = await assertOwnsCharter(ctx, args.charterId);
     await ctx.db.insert('events', {
       agentId: charter.agentId,
       type: 'charter.request_changes',

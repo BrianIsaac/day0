@@ -15,20 +15,21 @@ import type { DayOneTopic } from '../src/agent/charter';
 import { defaultSoul, day1Script } from '../src/agent/day-one-prompts';
 import { mergeGoodHabits, researchAndDistil } from '../src/agent/good-habits';
 import { agentJson, makeAgent } from '../src/lib/mastra';
+import { assertOwnsAgentAction } from './ownership';
 
 /**
- * Day-1 onboarding actions. Two surfaces:
+ * Day-1 onboarding actions. Surfaces:
  *
- *   - `synthesiseFromAnswers` — given the seven topic answers (collected
- *     via voice transcript or chat), produces a Charter v0.0, persists
- *     it, and seeds the 8-file workspace.
- *
- *   - `synthesiseFromTranscript` — given a free-form transcript (e.g.
- *     from ElevenLabs post-call webhook), GPT-5.5 first extracts the
- *     seven topic answers, then we hand off to the same flow.
- *
- *   - `postCharterApproval` — runs after the boss clicks Approve on the
- *     charter. Kicks off Exa good-habits research, distils into AGENTS.md.
+ *   - `synthesiseFromAnswers` — chat-friendly entry: given the seven topic
+ *     answers, produces Charter v0.0, persists, seeds the 8-file workspace.
+ *   - `synthesiseFromTranscript` — chat-mode entry: given a transcript,
+ *     extracts the seven answers via GPT-5.5, then hands off to the same
+ *     pipeline. Ownership-checked.
+ *   - `synthesiseFromTranscriptForWebhook` — webhook entry: same logic,
+ *     but the caller is the unauthenticated ElevenLabs post-call webhook.
+ *     The trust model is documented at the action's call site.
+ *   - `postCharterApproval` — runs after the boss clicks Approve. Kicks
+ *     off Exa good-habits research; distils into AGENTS.md.
  *
  * All wrapped in Convex Node actions because they call external APIs.
  */
@@ -114,12 +115,14 @@ export const synthesiseFromAnswers = action({
     bossLabel: v.string(),
     answers: v.any(),
   },
-  handler: async (ctx, args): Promise<{ charterId: string; version: string }> =>
-    doSynthesise(ctx, {
+  handler: async (ctx, args): Promise<{ charterId: string; version: string }> => {
+    await assertOwnsAgentAction(ctx, args.agentId);
+    return await doSynthesise(ctx, {
       agentId: args.agentId,
       bossLabel: args.bossLabel,
       answers: args.answers as Record<DayOneTopic, string>,
-    }),
+    });
+  },
 });
 
 export const synthesiseFromTranscript = action({
@@ -130,6 +133,7 @@ export const synthesiseFromTranscript = action({
     voiceSessionId: v.optional(v.id('voiceSessions')),
   },
   handler: async (ctx, args): Promise<{ charterId: string; version: string }> => {
+    await assertOwnsAgentAction(ctx, args.agentId);
     const answers = await extractAnswersFromTranscript(args.transcript);
     if (args.voiceSessionId) {
       await ctx.runMutation(internal.voice.complete, {
@@ -146,9 +150,58 @@ export const synthesiseFromTranscript = action({
   },
 });
 
+/**
+ * Webhook entry — called by the ElevenLabs post-call webhook with no
+ * Clerk JWT on the request. Skipping the per-user ownership check here
+ * is deliberate; the trust signal is the voice session itself:
+ *
+ *   - The legitimate user started this session via the ownership-checked
+ *     `voice.start` mutation, which stamped (agentId, conversationId) on
+ *     a fresh voiceSessions row in `active` state.
+ *   - We look that row up by (agentId, conversationId) and refuse to
+ *     proceed if no active session matches. A malicious signed-in user
+ *     calling this action directly with someone else's agentId can't
+ *     forge an active session for it, so the lookup fails.
+ *
+ * This is HMAC-signature-equivalent without HMAC — the database lookup
+ * carries the trust. A production hardening pass should still add HMAC
+ * verification at the route level using the ElevenLabs webhook secret.
+ */
+export const synthesiseFromTranscriptForWebhook = action({
+  args: {
+    agentId: v.id('agents'),
+    bossLabel: v.string(),
+    transcript: v.string(),
+    elevenLabsConversationId: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ charterId: string; version: string }> => {
+    const session = await ctx.runQuery(internal.voice.findActiveByConversation, {
+      agentId: args.agentId,
+      conversationId: args.elevenLabsConversationId,
+    });
+    if (!session) {
+      throw new Error(
+        'no active voice session for that agent + conversation id — webhook denied',
+      );
+    }
+    const answers = await extractAnswersFromTranscript(args.transcript);
+    await ctx.runMutation(internal.voice.complete, {
+      sessionId: session._id,
+      transcriptText: args.transcript,
+      answers,
+    });
+    return await doSynthesise(ctx, {
+      agentId: args.agentId,
+      bossLabel: args.bossLabel,
+      answers,
+    });
+  },
+});
+
 export const postCharterApproval = action({
   args: { agentId: v.id('agents'), charterId: v.id('charters') },
   handler: async (ctx, args): Promise<{ norms: number }> => {
+    await assertOwnsAgentAction(ctx, args.agentId);
     const charter = await ctx.runQuery(api.charters.latest, { agentId: args.agentId });
     if (!charter) throw new Error('postCharterApproval: no charter');
     const role = extractRole(charter.body as Parameters<typeof extractRole>[0]);

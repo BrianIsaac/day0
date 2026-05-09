@@ -1,9 +1,13 @@
 import { v } from 'convex/values';
 import { internalMutation, mutation, query } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
+import { assertOwnsAgent } from './ownership';
 
 /**
  * Read + write API for the mock work environment.
+ *
+ * Public read queries enforce per-account ownership. Internal write
+ * mutations are only callable from actions, which do their own check.
  *
  * The agent's executor emits a typed actions[] array; `applyActions`
  * (in workActions.ts) interprets each action and calls one of the
@@ -16,6 +20,7 @@ import type { Doc } from './_generated/dataModel';
 export const listDocs = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('mockDocs')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
@@ -26,6 +31,7 @@ export const listDocs = query({
 export const getDoc = query({
   args: { agentId: v.id('agents'), slug: v.string() },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('mockDocs')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.slug))
@@ -65,6 +71,7 @@ export const upsertDoc = internalMutation({
 export const listSpreadsheets = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('mockSpreadsheets')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
@@ -75,6 +82,7 @@ export const listSpreadsheets = query({
 export const getSpreadsheet = query({
   args: { agentId: v.id('agents'), slug: v.string() },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     const sheet = await ctx.db
       .query('mockSpreadsheets')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.slug))
@@ -146,6 +154,7 @@ export const appendSpreadsheetRow = internalMutation({
 export const listChannels = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('mockSlackChannels')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
@@ -156,6 +165,7 @@ export const listChannels = query({
 export const listMessages = query({
   args: { agentId: v.id('agents'), channelSlug: v.string() },
   handler: async (ctx, args): Promise<Doc<'mockSlackMessages'>[]> => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('mockSlackMessages')
       .withIndex('by_agent_channel', (q) =>
@@ -222,6 +232,7 @@ export const postSlackMessage = internalMutation({
 export const listTweets = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('mockTweets')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
@@ -232,6 +243,7 @@ export const listTweets = query({
 export const listTweetReplies = query({
   args: { agentId: v.id('agents'), tweetSlug: v.string() },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('mockTweetReplies')
       .withIndex('by_agent_tweet', (q) =>
@@ -293,6 +305,7 @@ export const postTweetReply = internalMutation({
 export const listTickets = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('mockTickets')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))

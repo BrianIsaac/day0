@@ -3,6 +3,7 @@
 import { v } from 'convex/values';
 import { action } from './_generated/server';
 import { internal } from './_generated/api';
+import { assertOwnsAgentAction } from './ownership';
 
 /**
  * Seed the demo environment for an agent. Idempotent — safe to call
@@ -89,6 +90,7 @@ export const seedDemo = action({
     ctx,
     args,
   ): Promise<{ skillsInstalled: number; workItemsSeeded: number; mockEnvSeeded: boolean }> => {
+    await assertOwnsAgentAction(ctx, args.agentId);
     const skillId = await ctx.runMutation(internal.skills.installBuiltin, {
       agentId: args.agentId,
       name: 'see-internal-docs',

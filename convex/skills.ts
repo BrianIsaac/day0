@@ -1,11 +1,14 @@
 import { v } from 'convex/values';
 import { mutation, query, internalMutation } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 
 /**
- * Skill registry + propose-author-register lifecycle. The state
- * machine:
+ * Skill registry + propose-author-register lifecycle. Public surfaces
+ * enforce per-account ownership; internal transitions called by actions
+ * skip the check.
  *
+ * State machine:
  *   proposed → approved → authoring → verified → registered
  *                       ↓                    ↓
  *                   rejected              failed
@@ -17,6 +20,7 @@ import type { Doc, Id } from './_generated/dataModel';
 export const registered = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('skills')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'registered'))
@@ -27,6 +31,7 @@ export const registered = query({
 export const proposed = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('skills')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'proposed'))
@@ -37,13 +42,14 @@ export const proposed = query({
 export const get = query({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.skillId);
+    return await assertOwnsSkill(ctx, args.skillId);
   },
 });
 
 export const findByAgentName = query({
   args: { agentId: v.id('agents'), name: v.string() },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     return await ctx.db
       .query('skills')
       .withIndex('by_agent_name', (q) => q.eq('agentId', args.agentId).eq('name', args.name))
@@ -94,10 +100,6 @@ export const propose = internalMutation({
     requiredScopes: v.array(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'skills'>> => {
-    // Dedup: re-evaluation can race and re-propose the same skill name
-    // for the same agent. If a non-rejected/failed proposal already
-    // exists, return its id so callers progress without creating a
-    // duplicate row.
     const existing = await ctx.db
       .query('skills')
       .withIndex('by_agent_name', (q) =>
@@ -137,13 +139,11 @@ export const propose = internalMutation({
 export const approve = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.skillId);
-    if (!row) throw new Error('skill not found');
+    const row = await assertOwnsSkill(ctx, args.skillId);
     if (row.state !== 'proposed') {
       throw new Error(`skill state is ${row.state}; expected proposed`);
     }
     await ctx.db.patch(args.skillId, { state: 'approved' });
-    // Issue the required scopes as live grants.
     for (const scope of row.requiredScopes ?? []) {
       const existing = await ctx.db
         .query('permissionGrants')
@@ -170,8 +170,7 @@ export const approve = mutation({
 export const reject = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.skillId);
-    if (!row) throw new Error('skill not found');
+    const row = await assertOwnsSkill(ctx, args.skillId);
     await ctx.db.patch(args.skillId, { state: 'rejected' });
     if (row.proposedFor) {
       await ctx.db.patch(row.proposedFor, { state: 'cancelled' });

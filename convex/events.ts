@@ -1,13 +1,16 @@
 import { v } from 'convex/values';
 import { internalMutation, query } from './_generated/server';
+import { assertOwnsAgent } from './ownership';
 
 /**
- * Events feed — append-only, drives the live UI ticker.
+ * Events feed — append-only, drives the live UI ticker. The reading side
+ * enforces per-account ownership; the writing side is internal-only.
  */
 
 export const recent = query({
   args: { agentId: v.id('agents'), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
     const limit = args.limit ?? 50;
     return await ctx.db
       .query('events')
