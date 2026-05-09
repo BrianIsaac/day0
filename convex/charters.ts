@@ -74,12 +74,23 @@ export const approve = mutation({
   },
 });
 
+/**
+ * Boss rejected the charter and wants to redo the Day-1 1:1. We flip
+ * the agent back to `deployed` so the dashboard re-renders the mode
+ * picker (voice / chat) — a fresh session creates a new voice session
+ * row and overwrites the workspace files on synthesis. The old
+ * charter row stays in the table for audit but stops being "latest"
+ * once a new one is persisted.
+ */
 export const requestChanges = mutation({
   args: { charterId: v.id('charters'), notes: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
+    const agentId = charter.agentId;
+    await ctx.db.delete(args.charterId);
+    await ctx.db.patch(agentId, { state: 'deployed' });
     await ctx.db.insert('events', {
-      agentId: charter.agentId,
+      agentId,
       type: 'charter.request_changes',
       payload: { charterId: args.charterId, notes: args.notes ?? '' },
       createdAt: Date.now(),
