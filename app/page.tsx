@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
 import { useUser, Show, SignInButton } from '@clerk/nextjs';
 import Link from 'next/link';
-import Image from 'next/image';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import {
@@ -470,16 +469,7 @@ function AvatarPicker({
                   : 'border-[var(--color-border)] hover:border-[var(--color-muted)]'
               }`}
             >
-              <Image
-                src={avatar.src}
-                alt=""
-                width={40}
-                height={40}
-                unoptimized
-                aria-hidden="true"
-                className="h-10 w-10 scale-[1.08] object-contain p-1 [image-rendering:pixelated]"
-                draggable={false}
-              />
+              <PixelAvatarSprite avatar={avatar} className="h-10 w-10" />
             </button>
           );
         })}
@@ -532,7 +522,6 @@ function AgentPixelAvatar({
   size?: 'md' | 'lg';
   compact?: boolean;
 }) {
-  const pixelSize = size === 'lg' ? 96 : 56;
   const sizeClass = size === 'lg' ? 'h-24 w-24' : 'h-14 w-14';
   const tone = agentStateTone(state);
 
@@ -544,22 +533,26 @@ function AgentPixelAvatar({
       title={`${label} - ${avatar.name} ${avatar.handle}`}
     >
       <div className={`${sizeClass} overflow-hidden rounded-md bg-[var(--color-bg)]`}>
-        <Image
-          src={avatar.src}
-          alt=""
-          width={pixelSize}
-          height={pixelSize}
-          unoptimized
-          aria-hidden="true"
-          className="h-full w-full scale-[1.08] object-contain p-1.5 [image-rendering:pixelated]"
-          draggable={false}
-        />
+        <PixelAvatarSprite avatar={avatar} className="h-full w-full" />
       </div>
       <span
         className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-[var(--color-card)] ${tone.dot}`}
         aria-label={state}
       />
     </div>
+  );
+}
+
+function PixelAvatarSprite({ avatar, className }: { avatar: AgentAvatarPet; className: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`block bg-center bg-no-repeat [image-rendering:pixelated] ${className}`}
+      style={{
+        backgroundImage: `url("${avatar.src}")`,
+        backgroundSize: '148% 148%',
+      }}
+    />
   );
 }
 
