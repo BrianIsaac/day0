@@ -25,11 +25,18 @@
     "endOfLine": "lf"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3",
     "@clerk/nextjs": "^7",
+    "@mastra/core": "^1.32",
+    "@t3-oss/env-nextjs": "^0.13",
+    "ai": "^6",
     "convex": "^1.37",
+    "exa-js": "^2",
     "next": "^16.2.6",
+    "openai": "^6",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "zod": "^4"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

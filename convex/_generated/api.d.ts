@@ -9,7 +9,13 @@
  */
 
 import type * as agents from "../agents.js";
+import type * as charters from "../charters.js";
+import type * as coworker from "../coworker.js";
+import type * as events from "../events.js";
+import type * as onboarding from "../onboarding.js";
 import type * as reset from "../reset.js";
+import type * as voice from "../voice.js";
+import type * as workspace from "../workspace.js";
 
 import type {
   ApiFromModules,
@@ -19,7 +25,13 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
+  charters: typeof charters;
+  coworker: typeof coworker;
+  events: typeof events;
+  onboarding: typeof onboarding;
   reset: typeof reset;
+  voice: typeof voice;
+  workspace: typeof workspace;
 }>;
 
 /**
