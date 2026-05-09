@@ -232,10 +232,26 @@ export const executeApprovedPlan = action({
     const skills: Doc<'skills'>[] = await ctx.runQuery(api.skills.registered, {
       agentId: args.agentId,
     });
-    const lower = (candidate.title + ' ' + candidate.contentSummary + ' ' + candidate.sourceSystem).toLowerCase();
-    let pickedSkill = skills.find((s) =>
-      lower.includes(s.name.toLowerCase().split('-')[0] ?? ''),
-    );
+    // Use the same token-scoring as the evaluator's findMatchingSkill so
+    // the executor picks the matched skill rather than blindly falling
+    // back to skills[0]. Source-system tokens count 4× content tokens.
+    const tokenise = (s: string): Set<string> =>
+      new Set(s.toLowerCase().split(/\W+/).filter((t) => t.length >= 4));
+    const candidateTokens = tokenise(`${candidate.title} ${candidate.contentSummary}`);
+    const sourceTokens = candidate.sourceSystem.toLowerCase().split(/\W+/).filter(Boolean);
+    let pickedSkill: Doc<'skills'> | undefined;
+    let pickedScore = 0;
+    for (const skill of skills) {
+      const skillTokens = tokenise(`${skill.name} ${skill.description}`);
+      let score = 0;
+      for (const t of candidateTokens) if (skillTokens.has(t)) score += 1;
+      for (const t of sourceTokens) if (skillTokens.has(t)) score += 4;
+      if (score > pickedScore) {
+        pickedSkill = skill;
+        pickedScore = score;
+      }
+    }
+    // Last-resort fallback only if nothing scored at all.
     if (!pickedSkill) pickedSkill = skills[0];
     if (!pickedSkill) {
       await ctx.runMutation(internal.work.setFailed, {
