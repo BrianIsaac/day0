@@ -4,6 +4,8 @@ A Next.js 16 + Convex single-tenant agent that runs the new-hire week as an auto
 
 **Live:** https://day0-olive.vercel.app
 
+**Dashboard:** signed-in users deploy agents into a live mini office world.
+
 ## Stack
 
 | Layer | Choice |
