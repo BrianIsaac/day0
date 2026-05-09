@@ -67,10 +67,17 @@ export function WhipCursor() {
       fixed: i === 0,
     }));
 
-    const prevHtmlCursor = document.documentElement.style.cursor;
-    const prevBodyCursor = document.body.style.cursor;
-    document.documentElement.style.cursor = 'none';
-    document.body.style.cursor = 'none';
+    // Inject a global rule that hides the cursor on every element. The
+    // browser user-agent stylesheet sets `cursor: pointer` on <button>
+    // and <a[href]>, so inline `cursor: none` on <body> isn't enough —
+    // children inherit `none` but UA defaults override that for
+    // interactive elements. A stylesheet rule at higher specificity
+    // covers everything, and unmount removes the tag so the no-JS /
+    // reduced-motion fallback is unaffected.
+    const styleEl = document.createElement('style');
+    styleEl.id = 'day0-whip-cursor-suppress';
+    styleEl.textContent = `*, *::before, *::after { cursor: none !important; }`;
+    document.head.appendChild(styleEl);
 
     const onMouseMove = (e: MouseEvent) => {
       mouseRef.current.x = e.clientX;
@@ -196,8 +203,7 @@ export function WhipCursor() {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('resize', resize);
-      document.documentElement.style.cursor = prevHtmlCursor;
-      document.body.style.cursor = prevBodyCursor;
+      styleEl.remove();
     };
   }, []);
 
