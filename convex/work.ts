@@ -81,6 +81,18 @@ export const setVerdict = internalMutation({
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
+
+    // Late-arriving verdict guard: setVerdict is the entry transition
+    // from `discovered` (initial evaluation) or `needs-skill`
+    // (pending-reevaluation after a skill registers). If the row has
+    // already advanced past these — claimed, plan-pending,
+    // plan-approved, executing, completed, etc. — a stale verdict
+    // call must NOT stomp the row's state, which would wipe a drafted
+    // plan or running execution. Ignore silently.
+    if (row.state !== 'discovered' && row.state !== 'needs-skill') {
+      return;
+    }
+
     const decision = (args.verdict as { decision: string }).decision;
     let nextState: Doc<'workItems'>['state'] = 'discovered';
     let skipReason: string | undefined;
