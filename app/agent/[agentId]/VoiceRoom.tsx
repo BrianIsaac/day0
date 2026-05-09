@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useConversation, ConversationProvider } from '@elevenlabs/react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -56,6 +56,7 @@ function VoiceRoomInner({
   const [start, setStart] = useState<StartResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<InboundMessage[]>([]);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   // Push-to-talk: start muted so the agent isn't constantly listening.
   // The boss taps "Tap to speak" to send audio, taps again to stop.
   const [muted, setMuted] = useState(true);
@@ -98,6 +99,13 @@ function VoiceRoomInner({
     },
     onError: (message: string) => setError(message || 'voice error'),
   });
+
+  // Auto-scroll transcript to newest utterance.
+  useEffect(() => {
+    const el = transcriptRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, [transcript]);
 
   useEffect(() => {
     if (!start) {
@@ -191,7 +199,10 @@ function VoiceRoomInner({
         <StatusPill status={status} isSpeaking={isSpeaking} isListening={isListening} muted={muted} />
       </div>
 
-      <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-3 max-h-64 overflow-y-auto text-xs space-y-1">
+      <div
+        ref={transcriptRef}
+        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-3 max-h-64 overflow-y-auto text-xs space-y-1"
+      >
         {transcript.length === 0 ? (
           <p className="text-[var(--color-muted)]">live transcript will appear here…</p>
         ) : (

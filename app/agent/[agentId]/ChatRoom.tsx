@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
 import { useMutation } from 'convex/react';
@@ -19,6 +19,7 @@ export function ChatRoom({
   const startSession = useMutation(api.voice.start);
   const [draft, setDraft] = useState('');
   const [synthFired, setSynthFired] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const transport = new DefaultChatTransport({
     api: '/api/voice/chat',
@@ -47,6 +48,19 @@ export function ChatRoom({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Pin transcript to the bottom on every token tick. `useChat` mutates
+  // the messages array on every streamed chunk, so the dep covers both
+  // new messages and updates to the in-flight assistant turn. RAF wraps
+  // the call so layout has settled before we read scrollHeight.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [messages]);
 
   const done = messages.some((m) => m.parts.some((p) => p.type === 'tool-dayOneComplete'));
 
@@ -107,7 +121,7 @@ export function ChatRoom({
           ) : null}
         </div>
       </header>
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 text-sm">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 text-sm">
         {messages
           .filter((m) => !(m.role === 'user' && m.id === messages[0]?.id))
           .map((m) => (
