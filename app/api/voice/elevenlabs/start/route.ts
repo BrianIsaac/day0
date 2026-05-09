@@ -26,13 +26,18 @@ export async function GET(): Promise<NextResponse> {
       },
     );
     if (!res.ok) {
+      // Common case: API key lacks `convai_write` permission, or the
+      // agent is configured for public access (no signed URL needed).
+      // Either way, fall back to passing the agent id directly to the
+      // browser so it can connect over the public WebSocket. The browser
+      // surfaces the warning but still lets the user click Start.
       const body = await res.text();
-      return NextResponse.json(
-        {
-          error: `ElevenLabs returned ${res.status} ${res.statusText}: ${body.slice(0, 200)}`,
-        },
-        { status: 502 },
-      );
+      return NextResponse.json({
+        agentId: env.ELEVENLABS_AGENT_ID,
+        signedUrl: null,
+        public: true,
+        warning: `signed-url fetch returned ${res.status} ${res.statusText}: ${body.slice(0, 200)}`,
+      });
     }
     const data = (await res.json()) as { signed_url?: string };
     return NextResponse.json({

@@ -10,6 +10,7 @@ interface StartResponse {
   agentId: string;
   signedUrl: string | null;
   public: boolean;
+  warning?: string;
 }
 
 interface InboundMessage {
@@ -89,8 +90,16 @@ function VoiceRoomInner({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLab
       fetch('/api/voice/elevenlabs/start')
         .then((r) => r.json())
         .then((data: StartResponse | { error: string }) => {
-          if ('error' in data) setError(data.error);
-          else setStart(data);
+          if ('error' in data) {
+            setError(data.error);
+          } else {
+            setStart(data);
+            if (data.warning) {
+              setError(
+                `${data.warning}. Falling back to public agent mode — voice will work if the agent is configured for public access.`,
+              );
+            }
+          }
         })
         .catch((err: Error) => setError(err.message));
     }
