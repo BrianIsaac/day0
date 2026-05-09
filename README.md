@@ -2,6 +2,8 @@
 
 A Next.js 16 + Convex single-tenant agent that runs the new-hire week as an autonomous loop: a Day-1 1:1 over voice, a charter the boss approves, a 7-criterion work evaluator, and an autonomous skill-creation loop that spins a Daytona sandbox to author and verify new skills the agent proposes.
 
+**Live:** https://day0-brianisaac-brian-isaac-kams-projects.vercel.app
+
 ## Stack
 
 | Layer | Choice |
