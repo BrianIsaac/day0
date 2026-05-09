@@ -24,6 +24,25 @@ export function AgentDashboard({ agentId }: Props) {
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
 
+  // Sync local mode with server state. If the boss reloaded mid-session,
+  // route them back into the room they were in (voice or chat). If the
+  // agent transitioned back to `deployed` (e.g. via Request Changes on
+  // the charter), reset to the picker so they can choose again.
+  useEffect(() => {
+    if (!agent) return;
+    if (agent.state === 'deployed' && mode !== 'pick') {
+      setMode('pick');
+      return;
+    }
+    if (
+      agent.state === 'day-one-in-progress' &&
+      mode === 'pick' &&
+      voiceSession
+    ) {
+      setMode(voiceSession.mode === 'chat' ? 'chat' : 'voice');
+    }
+  }, [agent, voiceSession, mode]);
+
   if (!agent) {
     return (
       <main className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">
@@ -41,12 +60,20 @@ export function AgentDashboard({ agentId }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 space-y-4">
           {showOnboarding ? (
-            mode === 'pick' && !voiceSession ? (
+            mode === 'pick' ? (
               <ModePicker onPick={(m) => setMode(m)} />
-            ) : mode === 'voice' || voiceSession?.mode === 'elevenlabs' ? (
-              <VoiceRoom agentId={agentId} bossLabel={agent.bossEmail} />
+            ) : mode === 'voice' ? (
+              <VoiceRoom
+                agentId={agentId}
+                bossLabel={agent.bossEmail}
+                onSwitchMode={() => setMode('pick')}
+              />
             ) : (
-              <ChatRoom agentId={agentId} bossLabel={agent.bossEmail} />
+              <ChatRoom
+                agentId={agentId}
+                bossLabel={agent.bossEmail}
+                onSwitchMode={() => setMode('pick')}
+              />
             )
           ) : null}
 

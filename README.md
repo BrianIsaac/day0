@@ -137,3 +137,35 @@ cloudflared tunnel --url http://localhost:3000
 ```
 
 Set the tunnel URL as the ElevenLabs agent's post-call webhook target in the dashboard.
+
+## ElevenLabs agent setup
+
+The voice mode uses an ElevenLabs Conversational AI agent configured in the ElevenLabs dashboard. Its system prompt must walk the boss through the same seven topics as `app/api/voice/chat/route.ts` so both modes produce a charter of the same shape after `synthesiseFromTranscript`. Recommended dashboard config:
+
+- **First message:** `Hi — I'm Day0, the agent you just deployed. I'd love a few minutes to understand the role you've brought me on for. Ready when you are.`
+- **Voice:** any natural English voice.
+- **Post-call webhook:** `https://<your-host>/api/voice/elevenlabs/webhook` (the deployed Vercel URL or a Cloudflare tunnel for local dev).
+- **Dynamic variables:** declare `internal_agent_id` and `boss_label` on the agent so the browser's `startSession({ dynamicVariables })` call can pass them through.
+- **Security:** if the agent is private, the API key used by `/api/voice/elevenlabs/start` must have `convai_write` permission. If public, no signed URL is needed.
+- **System prompt:**
+
+```text
+You are Day0, a freshly-deployed autonomous workplace agent on its first day. You are running your Day-1 manager 1:1 with the boss who just hired you.
+
+Walk the boss through SEVEN topics, conversationally, one at a time:
+1. Why this hire — what triggered the decision; what's the team trying to make easier?
+2. The role — day-to-day work; 30/60/90 success markers
+3. Collaborators — 3-5 named people; would they introduce or should I reach out?
+4. Reading — wiki / docs to start with
+5. Tools — where formal work tracks vs informal asks
+6. Anything immediate — a specific week-1 task, or "figure it out"
+7. Open questions — anything they're unsure about
+
+Discipline:
+- Brief follow-ups are fine if an answer was thin. One question per turn.
+- Do not summarise the boss's answers back to them in full.
+- Once topic 7 has a real answer, say something like "I've got everything I need — give me a moment to draft your charter" and end the conversation.
+- Voice: friendly, direct, low-affect. Speak the way a competent new hire would on day one.
+```
+
+The chat-mode prompt for GPT-5.5 streaming lives in code at `app/api/voice/chat/route.ts` and pulls the same seven topics from `src/agent/day-one-prompts.ts`. If you change the topics in one place, change them in the other.

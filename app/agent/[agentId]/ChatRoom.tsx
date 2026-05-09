@@ -7,7 +7,15 @@ import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 
-export function ChatRoom({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLabel: string }) {
+export function ChatRoom({
+  agentId,
+  bossLabel,
+  onSwitchMode,
+}: {
+  agentId: Id<'agents'>;
+  bossLabel: string;
+  onSwitchMode?: () => void;
+}) {
   const startSession = useMutation(api.voice.start);
   const [draft, setDraft] = useState('');
   const [synthFired, setSynthFired] = useState(false);
@@ -79,7 +87,17 @@ export function ChatRoom({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLa
     <section className="bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl flex flex-col h-[28rem]">
       <header className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <h2 className="text-sm font-semibold">Day-1 1:1 · chat mode</h2>
-        <span className="text-[10px] text-[var(--color-muted)]">GPT-5.5 · streaming</span>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-[var(--color-muted)]">GPT-5.5 · streaming</span>
+          {onSwitchMode && messages.length <= 1 && !done ? (
+            <button
+              onClick={onSwitchMode}
+              className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent)] underline underline-offset-2"
+            >
+              switch to voice
+            </button>
+          ) : null}
+        </div>
       </header>
       <div className="flex-1 overflow-y-auto p-4 space-y-3 text-sm">
         {messages

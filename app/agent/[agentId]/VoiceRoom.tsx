@@ -29,7 +29,11 @@ interface InboundMessage {
  *   - micMuted is a controlled prop; isSpeaking / isListening expose
  *     the agent's turn state.
  */
-export function VoiceRoom(props: { agentId: Id<'agents'>; bossLabel: string }) {
+export function VoiceRoom(props: {
+  agentId: Id<'agents'>;
+  bossLabel: string;
+  onSwitchMode?: () => void;
+}) {
   return (
     <ConversationProvider>
       <VoiceRoomInner {...props} />
@@ -37,7 +41,15 @@ export function VoiceRoom(props: { agentId: Id<'agents'>; bossLabel: string }) {
   );
 }
 
-function VoiceRoomInner({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLabel: string }) {
+function VoiceRoomInner({
+  agentId,
+  bossLabel,
+  onSwitchMode,
+}: {
+  agentId: Id<'agents'>;
+  bossLabel: string;
+  onSwitchMode?: () => void;
+}) {
   const startSession = useMutation(api.voice.start);
   const attachConversationId = useMutation(api.voice.attachConversationId);
   const [voiceSessionId, setVoiceSessionId] = useState<Id<'voiceSessions'> | null>(null);
@@ -133,7 +145,19 @@ function VoiceRoomInner({ agentId, bossLabel }: { agentId: Id<'agents'>; bossLab
     <section className="bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold">Day-1 1:1 · voice mode</h2>
-        <span className="text-[10px] text-[var(--color-muted)]">ElevenLabs Conversational AI</span>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-[var(--color-muted)]">
+            ElevenLabs Conversational AI
+          </span>
+          {onSwitchMode && !isConnected ? (
+            <button
+              onClick={onSwitchMode}
+              className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent)] underline underline-offset-2"
+            >
+              switch to chat
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {error ? (
