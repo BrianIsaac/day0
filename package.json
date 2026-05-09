@@ -14,7 +14,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "seed": "tsx seed/seed.ts"
   },
   "prettier": {
     "semi": true,
@@ -25,23 +26,25 @@
     "endOfLine": "lf"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3",
-    "@clerk/nextjs": "^7",
-    "@elevenlabs/elevenlabs-js": "^2",
-    "@google/genai": "^2",
-    "@mastra/core": "^1.32",
-    "@t3-oss/env-nextjs": "^0.13",
-    "ai": "^6",
-    "convex": "^1.37",
-    "exa-js": "^2",
+    "@ai-sdk/openai": "^3.0.63",
+    "@ai-sdk/react": "^3.0.0",
+    "@clerk/nextjs": "^7.0.0",
+    "@daytona/sdk": "^0.173.0",
+    "@elevenlabs/elevenlabs-js": "^2.46.0",
+    "@elevenlabs/react": "^1.5.0",
+    "@google/genai": "^2.0.0",
+    "@mastra/core": "^1.32.1",
+    "@t3-oss/env-nextjs": "^0.13.11",
+    "ai": "^6.0.176",
+    "convex": "^1.37.0",
+    "exa-js": "^2.12.1",
     "next": "^16.2.6",
-    "openai": "^6",
+    "openai": "^6.37.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "zod": "^4"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3.2.0",
     "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.0",
@@ -51,6 +54,7 @@
     "postcss": "^8.5.0",
     "prettier": "^3.4.2",
     "tailwindcss": "^4.2.4",
+    "tsx": "^4.20.0",
     "typescript": "^6.0.3"
   }
 }

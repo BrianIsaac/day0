@@ -38,6 +38,7 @@ body {
   box-sizing: border-box;
 }
 
+/* Custom scrollbars — blend with the dark shell, never feel default */
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -62,10 +63,12 @@ body {
   scrollbar-color: var(--color-border) transparent;
 }
 
+/* Cross-browser fade on overflowing edges (subtle hint there's more) */
 .fade-bottom {
   mask-image: linear-gradient(to bottom, black 88%, transparent 100%);
 }
 
+/* Drop a quiet inset ring on focusable surfaces so accessibility holds */
 :where(button, input, textarea, [tabindex='0']):focus-visible {
   outline: 2px solid color-mix(in oklab, var(--color-accent) 75%, transparent);
   outline-offset: 1px;

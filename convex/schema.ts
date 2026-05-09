@@ -141,6 +141,9 @@ export default defineSchema({
   }).index('by_agent', ['agentId']),
 
   // ---- Mock work environment (per-agent) ----
+  // Agent-readable docs (Confluence-style). Includes both team docs (the
+  // existing onboarding/team-overview content) and machine-readable
+  // "how-to-update-X" guides that describe the action API the executor emits.
   mockDocs: defineTable({
     agentId: v.id('agents'),
     slug: v.string(),
@@ -150,6 +153,7 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_agent_slug', ['agentId', 'slug']),
 
+  // A spreadsheet has named tabs; rows belong to a (sheetSlug, tabName).
   mockSpreadsheets: defineTable({
     agentId: v.id('agents'),
     slug: v.string(),
@@ -167,8 +171,8 @@ export default defineSchema({
     agentId: v.id('agents'),
     sheetSlug: v.string(),
     tabName: v.string(),
-    cells: v.any(),
-    addedBy: v.optional(v.string()),
+    cells: v.any(), // { headerName: stringValue }
+    addedBy: v.optional(v.string()), // 'agent' | 'manual' | display label
     addedAt: v.number(),
   }).index('by_agent_sheet_tab', ['agentId', 'sheetSlug', 'tabName']),
 

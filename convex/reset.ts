@@ -19,6 +19,7 @@ export const deleteMyData = mutation({
     let deleted = 0;
     for (const agent of agents) {
       const agentId = agent._id;
+      // Delete all rows that reference this agentId across every per-agent table.
       const tableDeletions: Array<Promise<unknown>> = [];
 
       const collectAndDelete = async (

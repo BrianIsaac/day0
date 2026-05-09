@@ -1,12 +1,14 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 
 /**
- * Next.js 16 renamed `middleware.ts` to `proxy.ts`. Public routes include
- * Clerk's own sign-in/sign-up pages plus webhook endpoints called by external
- * services (added phase-by-phase as their routes land). `auth.protect()` only
- * fires when Clerk has a real publishable key in the environment — keyless
- * dev mode bootstraps keys on the client but not on the server, so the
- * middleware passes through until real keys are wired.
+ * Next.js 16 renamed `middleware.ts` to `proxy.ts`. Public routes
+ * include Clerk's own sign-in/sign-up pages plus webhook endpoints
+ * called by external services.
+ *
+ * `auth.protect()` only fires when Clerk has a real publishable key in
+ * the environment. Keyless dev mode bootstraps keys on the client but
+ * not on the server, so the middleware passes through until the user
+ * claims their Clerk keys.
  */
 const isPublicRoute = createRouteMatcher([
   '/',
