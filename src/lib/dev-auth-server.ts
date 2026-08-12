@@ -1,5 +1,8 @@
 /// <reference types="node" />
 
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { auth } from '@clerk/nextjs/server';
 import {
   DEV_NO_AUTH_ALGORITHM,
   DEV_NO_AUTH_AUDIENCE,
@@ -7,6 +10,7 @@ import {
   DEV_NO_AUTH_KEY_ID,
   DEV_NO_AUTH_SUBJECT,
 } from '@convex/devAuth';
+import { DEV_NO_AUTH } from './dev-auth';
 
 /**
  * No-auth development mode — possession of this machine's local key.
@@ -73,6 +77,48 @@ export function isDevNoAuthSecret(candidate: string | null | undefined): boolean
     difference |= (a[i] ?? 0) ^ (b[i] ?? 0);
   }
   return difference === 0;
+}
+
+/** The caller a handler is running for, or the refusal to answer with. */
+export type Caller = { ok: true; userId: string } | { ok: false; refusal: NextResponse };
+
+/**
+ * Who this request is running as, established the way the running mode
+ * establishes callers.
+ *
+ * Both modes authenticate somebody before a handler runs; they differ only in
+ * who did it. Under Clerk it is the session `clerkMiddleware` resolved. In
+ * no-auth mode it is `proxy.ts`, which refuses everyone who cannot show this
+ * machine's unlock secret and deliberately never invokes Clerk at all - so
+ * `auth()` there does not answer "anonymous", it throws for want of middleware
+ * state. Every handler that spends the owner's provider keys asks this instead
+ * of picking one of the two checks, so the boundary holds in whichever mode is
+ * running rather than in the one the handler was written for.
+ *
+ * The no-auth branch re-reads the cookie the proxy already checked, as the
+ * routes that mint Convex tokens do: a boundary this far in front of the
+ * owner's keys should not rest on a matcher pattern continuing to cover it.
+ */
+export async function establishCaller(): Promise<Caller> {
+  if (DEV_NO_AUTH) {
+    const jar = await cookies();
+    if (!isDevNoAuthSecret(jar.get(DEV_NO_AUTH_COOKIE)?.value)) {
+      return {
+        ok: false,
+        refusal: NextResponse.json({ error: 'not authenticated' }, { status: 403 }),
+      };
+    }
+    return { ok: true, userId: DEV_NO_AUTH_SUBJECT };
+  }
+
+  const { userId } = await auth();
+  if (!userId) {
+    return {
+      ok: false,
+      refusal: NextResponse.json({ error: 'not authenticated' }, { status: 401 }),
+    };
+  }
+  return { ok: true, userId };
 }
 
 /**
