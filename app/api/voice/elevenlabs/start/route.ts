@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { establishCaller } from '@/lib/dev-auth-server';
 import { env } from '@/env';
 
 /**
@@ -32,10 +32,8 @@ const UNCONFIGURED_REASON =
   'Voice mode needs ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID. Chat mode runs the same Day-1 1:1 without them.';
 
 export async function GET(req: Request): Promise<NextResponse> {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: 'not authenticated' }, { status: 401 });
-  }
+  const caller = await establishCaller();
+  if (!caller.ok) return caller.refusal;
 
   const apiKey = env.ELEVENLABS_API_KEY;
   const voiceAgentId = env.ELEVENLABS_AGENT_ID;
