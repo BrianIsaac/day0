@@ -16,7 +16,7 @@
     "convex:down": "docker compose --env-file .env.local down",
     "convex:restart": "docker compose --env-file .env.local restart backend",
     "convex:admin-key": "docker compose --env-file .env.local exec backend ./generate_admin_key.sh",
-    "model:up": "docker compose --env-file .env.local --profile model up -d model",
+    "model:up": "tsx scripts/model-up.ts",
     "model:down": "docker compose --env-file .env.local --profile model rm -sf model",
     "model:pull": "docker compose --env-file .env.local --profile model exec model ollama pull",
     "check:setup": "tsx scripts/check-setup.ts",
