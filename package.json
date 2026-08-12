@@ -11,6 +11,9 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "convex:dev": "convex dev",
+    "convex:up": "docker compose up -d",
+    "convex:down": "docker compose down",
+    "convex:admin-key": "docker compose exec backend ./generate_admin_key.sh",
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint .",
