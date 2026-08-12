@@ -4,7 +4,7 @@ import { v } from 'convex/values';
 import { z } from 'zod';
 import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
-import type { Doc } from './_generated/dataModel';
+import type { Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { authorAndVerifySkill } from '../src/lib/daytona';
 
@@ -57,59 +57,52 @@ const authorSchema = z.object({
 });
 
 /**
- * Where a run may start. `approved` is the boss's first go-ahead; `authoring`,
- * `verified` and `failed` are retries of a skill that never registered, so
- * re-authoring cannot pull the ground out from under an executor already
- * calling it. A retry re-authors rather than re-verifying the stored body,
- * because the smoke test that would verify it is not persisted - and an
- * unverified body has no claim to being the one worth keeping.
- *
- * `verified` is in the list for rows stranded there by the earlier split
- * registration path; nothing writes it now.
+ * What a run reports when the skill it was authoring is no longer its own. The
+ * result is discarded rather than written, so the state the boss sees is
+ * whichever decision replaced this run: another run's, or the boss's own
+ * rejection.
  */
-const RETRYABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
+const SUPERSEDED =
+  'this authoring run no longer holds the skill - it was rejected or taken over, ' +
+  "so this run's result was discarded";
 
 /**
  * Park a skill that did not reach `registered`. Every no-registration exit goes
  * through here so the boss is never left guessing: the row lands in `failed`
  * (listed, with a Retry, in the skills panel), the event feed carries the
  * reason, and the work item that asked for the skill says why it is still
- * waiting.
+ * waiting. All three in one fenced transaction — a failing run that has lost
+ * its claim writes none of them.
  */
 async function recordAuthoringFailure(
   ctx: ActionCtx,
-  skill: Doc<'skills'>,
+  skillId: Id<'skills'>,
+  runId: Id<'events'>,
   args: { rowReason: string; reason: string; eventType: string },
 ): Promise<{ ok: false; reason: string }> {
-  await ctx.runMutation(internal.skills.setFailed, {
-    skillId: skill._id,
-    reason: args.rowReason,
+  const { recorded } = await ctx.runMutation(internal.skills.failAuthoringRun, {
+    skillId,
+    runId,
+    ...args,
   });
-  await ctx.runMutation(internal.events.log, {
-    agentId: skill.agentId,
-    type: args.eventType,
-    payload: { skillId: skill._id, name: skill.name, reason: args.reason },
-  });
-  if (skill.proposedFor) {
-    await ctx.runMutation(internal.work.setVerdict, {
-      workItemId: skill.proposedFor,
-      verdict: { decision: 'needs-skill', reason: args.reason },
-    });
-  }
-  return { ok: false, reason: args.reason };
+  return { ok: false, reason: recorded ? args.reason : SUPERSEDED };
 }
 
 export const authorAndRegisterSkill = action({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
-    const skill = await ctx.runQuery(api.skills.get, { skillId: args.skillId });
-    if (!skill) throw new Error('skill not found');
-    if (!RETRYABLE_STATES.includes(skill.state as (typeof RETRYABLE_STATES)[number])) {
-      throw new Error(
-        `authorAndRegisterSkill: skill state is ${skill.state}; expected one of ` +
-          RETRYABLE_STATES.join(', '),
-      );
-    }
+    // Ownership first, so a caller who does not own the skill cannot even learn
+    // whether a run is holding it.
+    await ctx.runQuery(api.skills.get, { skillId: args.skillId });
+    // One exclusive run at a time, and one id every write below carries. The
+    // state this run acts on is the state the claim took, not a state read
+    // before it — nothing can have moved between the two.
+    const claim = await ctx.runMutation(internal.skills.claimAuthoringRun, {
+      skillId: args.skillId,
+    });
+    if (!claim.claimed) return { ok: false, reason: claim.reason };
+    const { runId, skill } = claim;
+
     const userPrompt = [
       `Skill name: ${skill.name}`,
       `Description: ${skill.description}`,
@@ -133,7 +126,7 @@ export const authorAndRegisterSkill = action({
       });
     } catch (err) {
       const reason = `authoring failed before any sandbox ran: ${(err as Error).message}`;
-      return await recordAuthoringFailure(ctx, skill, {
+      return await recordAuthoringFailure(ctx, args.skillId, runId, {
         rowReason: reason,
         reason,
         eventType: 'skill.author-failed',
@@ -144,7 +137,7 @@ export const authorAndRegisterSkill = action({
     const smokeTest = authored.smokeTest.trim();
     if (!body || !smokeTest) {
       const reason = 'the model returned an empty SKILL.md body or smoke test';
-      return await recordAuthoringFailure(ctx, skill, {
+      return await recordAuthoringFailure(ctx, args.skillId, runId, {
         rowReason: reason,
         reason,
         eventType: 'skill.author-failed',
@@ -173,11 +166,15 @@ export const authorAndRegisterSkill = action({
         sandboxId = result.sandboxId;
         // Store the body as soon as a sandbox exists: whichever way the check
         // goes, the boss can read what was written and decide about a retry.
-        await ctx.runMutation(internal.skills.setAuthoring, {
+        // A run that has already lost its claim stops here rather than spending
+        // the rest of the ladder on a result nothing will accept.
+        const progress = await ctx.runMutation(internal.skills.recordAuthoringProgress, {
           skillId: args.skillId,
+          runId,
           sandboxId,
           body,
         });
+        if (!progress.held) return { ok: false, reason: SUPERSEDED };
         verificationLog = `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
         if (!result.ok) {
           verificationFailure = result.failureReason ?? 'sandbox verification failed';
@@ -191,7 +188,7 @@ export const authorAndRegisterSkill = action({
     // Recorded outside the try: a failure while recording a failure must not be
     // reported as the sandbox throwing.
     if (verificationFailure) {
-      return await recordAuthoringFailure(ctx, skill, {
+      return await recordAuthoringFailure(ctx, args.skillId, runId, {
         rowReason: `Daytona verification failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`,
         reason: `skill authored but verification failed - ${verificationFailure}`,
         eventType: 'skill.verification-failed',
@@ -199,38 +196,29 @@ export const authorAndRegisterSkill = action({
     }
 
     if (skipReason) {
-      await ctx.runMutation(internal.skills.setAuthoring, {
+      const { recorded } = await ctx.runMutation(internal.skills.parkUnverified, {
         skillId: args.skillId,
+        runId,
         sandboxId,
         body,
         verificationLog,
+        reason: skipReason,
       });
-      await ctx.runMutation(internal.events.log, {
-        agentId: skill.agentId,
-        type: 'skill.sandbox-skipped',
-        payload: { skillId: args.skillId, name: skill.name, reason: skipReason },
-      });
-      if (skill.proposedFor) {
-        await ctx.runMutation(internal.work.setVerdict, {
-          workItemId: skill.proposedFor,
-          verdict: {
-            decision: 'needs-skill',
-            reason: `skill authored but not verified - ${skipReason}`,
-          },
-        });
-      }
+      if (!recorded) return { ok: false, reason: SUPERSEDED };
       return { ok: false, reason: `sandbox verification unavailable: ${skipReason}` };
     }
 
     // One call, one transaction: the verified body, the callable row and the
     // requeue of the work item that asked for the skill either all land or none
-    // of them do. Anything that fails here leaves the row in a state the retry
-    // above accepts and the skills panel lists.
-    await ctx.runMutation(internal.skills.completeRegistration, {
+    // of them do. Anything that fails here leaves the row in a state the skills
+    // panel lists and the next claim accepts.
+    const { registered } = await ctx.runMutation(internal.skills.completeRegistration, {
       skillId: args.skillId,
+      runId,
       body,
       verificationLog,
     });
+    if (!registered) return { ok: false, reason: SUPERSEDED };
 
     return { ok: true };
   },

@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation } from './_generated/server';
+import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { applyVerdict } from './work';
@@ -24,10 +24,100 @@ import { applyVerdict } from './work';
  * `authoring` and accepted as a retry.
  *
  * `authoring`, `verified` and `failed` are all resumable: none has ever been
- * registered, so `authorAndRegisterSkill` accepts them as a retry (see the
- * retryable-state list there). That is the way back for a skill authored
- * before Daytona was configured, or one whose sandbox check failed.
+ * registered, so a new authoring run may claim them (see `claimAuthoringRun`).
+ * That is the way back for a skill authored before Daytona was configured, or
+ * one whose sandbox check failed.
+ *
+ * Authoring is an exclusive, fenced run, because the transitions above are made
+ * by an action that spends minutes in a model and a sandbox between reading the
+ * state and writing its result:
+ *
+ *   - exclusive: `claimAuthoringRun` decides and takes the skill in one
+ *     transaction, so a second run cannot start alongside the first;
+ *   - fenced: every mutation on that path carries the run's id and is refused
+ *     unless the skill still carries it, so a run that lost its claim — to a
+ *     takeover, or to the boss rejecting the skill underneath it — cannot write
+ *     a result the current state has moved past.
  */
+
+/**
+ * How long a claim is honoured before another run may take the skill over. An
+ * action that dies mid-run cannot release its own claim, and a skill no run can
+ * ever take again would be exactly the dead end this file exists to avoid. Long
+ * enough that a live run holding a model call and a sandbox is never taken over
+ * while it is still working.
+ */
+const AUTHORING_LEASE_MS = 10 * 60 * 1000;
+
+/**
+ * Where an authoring run may start. `approved` is the boss's first go-ahead;
+ * `authoring`, `verified` and `failed` are retries of a skill that never
+ * registered, so re-authoring cannot pull the ground out from under an executor
+ * already calling it.
+ *
+ * `registered` and `rejected` are absent on purpose. Both are decisions —
+ * one the sandbox made, one the boss made — and a run that could reopen either
+ * is the race this claim exists to close.
+ */
+const CLAIMABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
+
+/** Where the boss may still reject. `registered` is out: a callable skill whose
+ * source work has already been requeued is not a proposal any more. */
+const REJECTABLE_STATES = ['proposed', 'approved', 'authoring', 'verified', 'failed'] as const;
+
+type AuthoringClaim =
+  | { claimed: true; runId: Id<'events'>; skill: Doc<'skills'> }
+  | { claimed: false; reason: string };
+
+/**
+ * The fence. A run's write is applied only while the skill still carries that
+ * run's id; anything else is a late writer whose result describes a skill that
+ * has since moved on, and is refused.
+ *
+ * The refusal is recorded rather than silent. A discarded result is a real
+ * thing that happened to a skill the boss is watching, and the alternative is a
+ * run that reports failure with nothing in the feed to say why.
+ */
+async function claimHolder(
+  ctx: MutationCtx,
+  skillId: Id<'skills'>,
+  runId: Id<'events'>,
+  attempted: string,
+): Promise<Doc<'skills'> | null> {
+  const row = await ctx.db.get(skillId);
+  if (!row) return null;
+  if (row.authoringRunId === runId) return row;
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'skill.authoring-refused',
+    payload: { skillId, name: row.name, attempted, state: row.state },
+    createdAt: Date.now(),
+  });
+  return null;
+}
+
+/** Everything a run releases when it stops holding the skill. */
+const RELEASED = { authoringRunId: undefined, authoringClaimedAt: undefined } as const;
+
+/**
+ * Put the work item that asked for this skill back where the boss can see what
+ * it is waiting for. Always inside the same transaction as the skill write that
+ * caused it: a callable skill whose work item is still parked, or a parked work
+ * item whose skill never landed, is a state nothing in the product knows how to
+ * leave.
+ */
+async function requeueSourceWork(
+  ctx: MutationCtx,
+  skill: Doc<'skills'>,
+  verdict: { decision: string; reason: string },
+): Promise<void> {
+  if (!skill.proposedFor) return;
+  const item = await ctx.db.get(skill.proposedFor);
+  if (item && item.agentId !== skill.agentId) {
+    throw new Error('skill and work item belong to different agents');
+  }
+  await applyVerdict(ctx, skill.proposedFor, verdict);
+}
 
 export const registered = query({
   args: { agentId: v.id('agents') },
@@ -42,7 +132,9 @@ export const registered = query({
 
 /**
  * Authored but not callable: the sandbox could not run, so the body exists and
- * nothing has attested that it works. Deliberately not part of `registered`,
+ * nothing has attested that it works. A skill an authoring run is holding right
+ * now is here too, which is what keeps a run that dies mid-flight from taking
+ * the skill out of every panel with it. Deliberately not part of `registered`,
  * which is what the executor picks from.
  *
  * `verified` rows join them. Nothing writes that state any more, but a row
@@ -220,11 +312,25 @@ export const approve = mutation({
   },
 });
 
+/**
+ * The boss's refusal, and the end of the line for this skill.
+ *
+ * Rejecting releases any authoring run holding the skill, which is what makes
+ * the refusal final: the released run is fenced out of its own result, so a
+ * sandbox that finishes after this cannot register the skill the boss just
+ * turned down and leave its source work cancelled underneath it.
+ */
 export const reject = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
     const row = await assertOwnsSkill(ctx, args.skillId);
-    await ctx.db.patch(args.skillId, { state: 'rejected' });
+    if (row.state === 'rejected') return { ok: true };
+    if (!REJECTABLE_STATES.includes(row.state as (typeof REJECTABLE_STATES)[number])) {
+      throw new Error(
+        `skill state is ${row.state}; expected one of ${REJECTABLE_STATES.join(', ')}`,
+      );
+    }
+    await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
     if (row.proposedFor) {
       await ctx.db.patch(row.proposedFor, { state: 'cancelled' });
     }
@@ -238,31 +344,93 @@ export const reject = mutation({
   },
 });
 
-export const setAuthoring = internalMutation({
-  args: {
-    skillId: v.id('skills'),
-    sandboxId: v.string(),
-    // Written when the authored body is all there is to keep: no sandbox ran,
-    // so the skill stops here rather than continuing to `verified`.
-    body: v.optional(v.string()),
-    verificationLog: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.patch(args.skillId, {
-      state: 'authoring',
-      daytonaSandboxId: args.sandboxId,
-      ...(args.body !== undefined ? { body: args.body } : {}),
-      ...(args.verificationLog !== undefined ? { verificationLog: args.verificationLog } : {}),
-    });
+/**
+ * Take exclusive ownership of a skill for one authoring run, or report that
+ * somebody else has it.
+ *
+ * This is the whole of the concurrency control for authoring, and it is the
+ * same shape as `work.claimForExecution`: a mutation is a transaction, so the
+ * state check and the move to `authoring` cannot be split by a second caller,
+ * where an action that reads the state and writes it back as two calls can be —
+ * and both callers then author, verify and write a result for the same skill.
+ *
+ * The winner gets a `runId`: the id of the claim event, durable, unique per
+ * claim and derived from nothing the caller supplies. Every later write on this
+ * path presents it and is refused once it is no longer the id on the row.
+ *
+ * A claim that has outlived the lease is taken over rather than honoured. The
+ * skill stays listed and retryable throughout, so a run that dies mid-flight
+ * costs a lease rather than the skill.
+ */
+export const claimAuthoringRun = internalMutation({
+  args: { skillId: v.id('skills') },
+  handler: async (ctx, args): Promise<AuthoringClaim> => {
     const row = await ctx.db.get(args.skillId);
-    if (row) {
+    if (!row) throw new Error('skill not found');
+    if (!CLAIMABLE_STATES.includes(row.state as (typeof CLAIMABLE_STATES)[number])) {
+      return {
+        claimed: false,
+        reason:
+          row.state === 'registered'
+            ? 'this skill is already registered'
+            : row.state === 'rejected'
+              ? 'this skill was rejected'
+              : `skill state is ${row.state}; expected one of ${CLAIMABLE_STATES.join(', ')}`,
+      };
+    }
+    if (row.authoringRunId) {
+      const heldFor = Date.now() - (row.authoringClaimedAt ?? 0);
+      if (heldFor < AUTHORING_LEASE_MS) {
+        return {
+          claimed: false,
+          reason: `another authoring run has held this skill for ${Math.round(heldFor / 1000)}s; it can be taken over after ${Math.round(AUTHORING_LEASE_MS / 60000)} minutes`,
+        };
+      }
       await ctx.db.insert('events', {
         agentId: row.agentId,
-        type: 'skill.authoring',
-        payload: { skillId: args.skillId, sandboxId: args.sandboxId },
+        type: 'skill.authoring-superseded',
+        payload: { skillId: args.skillId, name: row.name, heldForMs: heldFor },
         createdAt: Date.now(),
       });
     }
+    const runId = await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'skill.authoring-claimed',
+      payload: { skillId: args.skillId, name: row.name, fromState: row.state },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(args.skillId, {
+      state: 'authoring',
+      authoringRunId: runId,
+      authoringClaimedAt: Date.now(),
+    });
+    return { claimed: true, runId, skill: row };
+  },
+});
+
+/**
+ * Store the authored body as soon as a sandbox exists, so the boss can read
+ * what was written whichever way the check goes. The run keeps its claim: this
+ * is progress, not a result.
+ */
+export const recordAuthoringProgress = internalMutation({
+  args: {
+    skillId: v.id('skills'),
+    runId: v.id('events'),
+    sandboxId: v.string(),
+    body: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ held: boolean }> => {
+    const row = await claimHolder(ctx, args.skillId, args.runId, 'authoring-progress');
+    if (!row) return { held: false };
+    await ctx.db.patch(args.skillId, { daytonaSandboxId: args.sandboxId, body: args.body });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'skill.authoring',
+      payload: { skillId: args.skillId, sandboxId: args.sandboxId },
+      createdAt: Date.now(),
+    });
+    return { held: true };
   },
 });
 
@@ -277,17 +445,26 @@ export const setAuthoring = internalMutation({
  * `needs-skill`, which nothing auto-progresses. One transaction has no gap to
  * fail in: either the skill is callable and its work item is queued, or
  * neither happened and the row is still where the retry can pick it up.
+ *
+ * The run releases its claim here, which is what lets the next run — a retry
+ * after a later problem — start at all.
  */
 export const completeRegistration = internalMutation({
-  args: { skillId: v.id('skills'), body: v.string(), verificationLog: v.string() },
-  handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.skillId);
-    if (!row) throw new Error('skill not found');
+  args: {
+    skillId: v.id('skills'),
+    runId: v.id('events'),
+    body: v.string(),
+    verificationLog: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ registered: boolean }> => {
+    const row = await claimHolder(ctx, args.skillId, args.runId, 'register');
+    if (!row) return { registered: false };
     await ctx.db.patch(args.skillId, {
       state: 'registered',
       body: args.body,
       verificationLog: args.verificationLog,
       registeredAt: row.registeredAt ?? Date.now(),
+      ...RELEASED,
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -295,34 +472,92 @@ export const completeRegistration = internalMutation({
       payload: { skillId: args.skillId, name: row.name },
       createdAt: Date.now(),
     });
-    if (row.proposedFor) {
-      const item = await ctx.db.get(row.proposedFor);
-      if (item && item.agentId !== row.agentId) {
-        throw new Error('skill and work item belong to different agents');
-      }
-      await applyVerdict(ctx, row.proposedFor, {
-        decision: 'pending-reevaluation',
-        reason: 'skill registered, ready to retry',
-      });
-    }
+    await requeueSourceWork(ctx, row, {
+      decision: 'pending-reevaluation',
+      reason: 'skill registered, ready to retry',
+    });
+    return { registered: true };
   },
 });
 
-export const setFailed = internalMutation({
-  args: { skillId: v.id('skills'), reason: v.string() },
-  handler: async (ctx, args) => {
+/**
+ * The run failed, and the skill is parked where the boss can see why: `failed`
+ * is listed with a Retry, the feed carries the reason, and the work item that
+ * asked for the skill says what it is still waiting for.
+ *
+ * One transaction for the same reason as registration. A failing run that could
+ * write the skill and the work item separately is a failing run that can put
+ * the work item back at `needs-skill` after somebody else has already moved it
+ * on.
+ */
+export const failAuthoringRun = internalMutation({
+  args: {
+    skillId: v.id('skills'),
+    runId: v.id('events'),
+    /** Kept on the row, so it is what the skills panel shows. */
+    rowReason: v.string(),
+    /** The shorter form for the event feed and the work item. */
+    reason: v.string(),
+    eventType: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ recorded: boolean }> => {
+    const row = await claimHolder(ctx, args.skillId, args.runId, 'fail');
+    if (!row) return { recorded: false };
     await ctx.db.patch(args.skillId, {
       state: 'failed',
-      verificationLog: args.reason,
+      verificationLog: args.rowReason,
+      ...RELEASED,
     });
-    const row = await ctx.db.get(args.skillId);
-    if (row) {
+    for (const type of ['skill.failed', args.eventType]) {
       await ctx.db.insert('events', {
         agentId: row.agentId,
-        type: 'skill.failed',
-        payload: { skillId: args.skillId, reason: args.reason },
+        type,
+        payload: { skillId: args.skillId, name: row.name, reason: args.reason },
         createdAt: Date.now(),
       });
     }
+    await requeueSourceWork(ctx, row, { decision: 'needs-skill', reason: args.reason });
+    return { recorded: true };
+  },
+});
+
+/**
+ * No sandbox ran, so the body is all there is to keep. The skill stops at
+ * `authoring` — listed, uncallable, retryable — because registering is what
+ * claims the body was checked, and nothing checked it.
+ *
+ * The claim is released: this run is over, and the retry that follows a
+ * DAYTONA_API_KEY appearing must be able to start.
+ */
+export const parkUnverified = internalMutation({
+  args: {
+    skillId: v.id('skills'),
+    runId: v.id('events'),
+    sandboxId: v.string(),
+    body: v.string(),
+    verificationLog: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ recorded: boolean }> => {
+    const row = await claimHolder(ctx, args.skillId, args.runId, 'park-unverified');
+    if (!row) return { recorded: false };
+    await ctx.db.patch(args.skillId, {
+      state: 'authoring',
+      body: args.body,
+      daytonaSandboxId: args.sandboxId,
+      verificationLog: args.verificationLog,
+      ...RELEASED,
+    });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'skill.sandbox-skipped',
+      payload: { skillId: args.skillId, name: row.name, reason: args.reason },
+      createdAt: Date.now(),
+    });
+    await requeueSourceWork(ctx, row, {
+      decision: 'needs-skill',
+      reason: `skill authored but not verified - ${args.reason}`,
+    });
+    return { recorded: true };
   },
 });
