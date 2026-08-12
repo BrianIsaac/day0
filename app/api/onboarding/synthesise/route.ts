@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { auth } from '@clerk/nextjs/server';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
+import {
+  DEV_NO_AUTH_COOKIE,
+  isDevNoAuthSecret,
+  mintDevNoAuthToken,
+} from '@/lib/dev-auth-server';
 
 interface Body {
   agentId: string;
@@ -16,8 +22,8 @@ interface Body {
  * Browser-callable charter-synthesis trigger — used by the chat-mode
  * 1:1 once the agent emits the `dayOneComplete` tool call. Authenticated
  * via the caller's Clerk JWT; the Convex action enforces that the caller
- * owns the agent. In no-auth dev mode there is no token to send; the backend
- * resolves the caller itself and the same ownership check runs.
+ * owns the agent. In no-auth dev mode the token is minted here with this
+ * machine's local key instead, and the same ownership check runs.
  */
 export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json()) as Body;
@@ -26,7 +32,13 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   const client = convexClient();
-  if (!DEV_NO_AUTH) {
+  if (DEV_NO_AUTH) {
+    const jar = await cookies();
+    if (!isDevNoAuthSecret(jar.get(DEV_NO_AUTH_COOKIE)?.value)) {
+      return NextResponse.json({ error: 'not authenticated' }, { status: 403 });
+    }
+    client.setAuth(await mintDevNoAuthToken());
+  } else {
     const { getToken } = await auth();
     const token = await getToken({ template: 'convex' });
     if (!token) {

@@ -1,6 +1,12 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { DEV_NO_AUTH, isLoopbackHostHeader } from '@/lib/dev-auth';
+import {
+  DEV_NO_AUTH_COOKIE,
+  DEV_NO_AUTH_UNLOCK_PARAM,
+  devNoAuthKeyGaps,
+  isDevNoAuthSecret,
+} from '@/lib/dev-auth-server';
 
 /**
  * Next.js 16 renamed `middleware.ts` to `proxy.ts`. Public routes
@@ -15,9 +21,9 @@ import { DEV_NO_AUTH, isLoopbackHostHeader } from '@/lib/dev-auth';
  * In no-auth dev mode Clerk's middleware never runs at all — invoking it
  * without a `ClerkProvider` anywhere in the app would only manufacture a
  * dependency the rest of that mode has deliberately dropped. What runs
- * in its place is the boundary that mode actually claims: every request
- * must have arrived for a loopback host, so the one synthetic user is
- * only ever handed to somebody sitting at this machine.
+ * in its place is the boundary that mode actually claims: the caller must
+ * hold this machine's unlock secret, so the one synthetic user is only
+ * ever handed to somebody who read it off this machine's terminal.
  */
 const isPublicRoute = createRouteMatcher([
   '/',
@@ -50,18 +56,72 @@ const isExternallyCalledRoute = createRouteMatcher(['/api/voice/elevenlabs/webho
 export default function proxy(...args: Parameters<typeof clerkProxy>) {
   if (DEV_NO_AUTH) {
     const [request] = args;
-    if (!isLoopbackHostHeader(request.headers.get('host')) && !isExternallyCalledRoute(request)) {
-      return new NextResponse(
-        'NEXT_PUBLIC_DEV_NO_AUTH=true serves every request as one fixed user with no ' +
-          'sign-in, so it is refused for any host other than localhost. This request ' +
-          `arrived for "${request.headers.get('host') ?? '(no host header)'}". Reach the ` +
-          'app on http://localhost instead, or turn the flag off and use Clerk.',
-        { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8' } },
-      );
-    }
-    return NextResponse.next();
+    return isExternallyCalledRoute(request) ? NextResponse.next() : devNoAuthGate(request);
   }
   return clerkProxy(...args);
+}
+
+const COOKIE_LIFETIME_SECONDS = 60 * 60 * 24 * 30;
+
+function refuse(message: string, status = 403): NextResponse {
+  return new NextResponse(message, {
+    status,
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
+  });
+}
+
+/**
+ * Refuses anyone who cannot show the unlock secret. The secret arrives once on
+ * the URL `pnpm dev` prints and is kept in an httpOnly cookie from then on;
+ * no refusal here ever echoes it back, so a caller guessing at the boundary
+ * learns only that it was wrong.
+ */
+function devNoAuthGate(request: NextRequest): NextResponse {
+  const gaps = devNoAuthKeyGaps();
+  if (gaps) {
+    return refuse(
+      'NEXT_PUBLIC_DEV_NO_AUTH=true serves every request as one fixed user, so it is ' +
+        `refused until this machine has a local key. Missing: ${gaps.join(', ')}. Run ` +
+        '`pnpm dev:no-auth-key`, then `./scripts/sync-convex-env.sh`, then restart `pnpm dev`.',
+      503,
+    );
+  }
+
+  const offered = request.nextUrl.searchParams.get(DEV_NO_AUTH_UNLOCK_PARAM);
+  if (offered !== null) {
+    if (!isDevNoAuthSecret(offered)) {
+      return refuse('That is not the no-auth key for this machine.');
+    }
+    const cleaned = request.nextUrl.clone();
+    cleaned.searchParams.delete(DEV_NO_AUTH_UNLOCK_PARAM);
+    const unlocked = NextResponse.redirect(cleaned);
+    unlocked.cookies.set(DEV_NO_AUTH_COOKIE, offered, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: COOKIE_LIFETIME_SECONDS,
+    });
+    return unlocked;
+  }
+
+  if (!isDevNoAuthSecret(request.cookies.get(DEV_NO_AUTH_COOKIE)?.value)) {
+    return refuse(
+      'NEXT_PUBLIC_DEV_NO_AUTH=true serves every request as one fixed user with no ' +
+        'sign-in, so it is refused for callers who cannot show the no-auth key for this ' +
+        'machine. Open the unlock URL `pnpm dev` printed on the machine running this ' +
+        'server, or turn the flag off and use Clerk.',
+    );
+  }
+
+  if (!isLoopbackHostHeader(request.headers.get('host'))) {
+    return refuse(
+      'This request holds the no-auth key but arrived for ' +
+        `"${request.headers.get('host') ?? '(no host header)'}" rather than localhost. ` +
+        'Reach the app on http://localhost instead.',
+    );
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {

@@ -3,14 +3,13 @@
 /**
  * No-auth development mode — the Next.js half.
  *
- * When it is on, Clerk is skipped end to end: no `ClerkProvider`, no proxy
- * protection, no JWT minting in the API routes. Convex resolves every caller to
- * one fixed synthetic user instead (see `convex/devAuth.ts`), so ownership
- * checks and the per-user data model are unchanged — there is simply only ever
- * one user. It exists so the project can be run from a fresh clone with no
- * third-party accounts.
+ * When it is on, Clerk is skipped end to end: no `ClerkProvider`, no Clerk JWT
+ * minting in the API routes. Convex resolves every caller to one fixed synthetic
+ * user instead, so ownership checks and the per-user data model are unchanged —
+ * there is simply only ever one user. It exists so the project can be run from a
+ * fresh clone with no third-party accounts.
  *
- * Four properties hold it shut in production, and none of them can be
+ * Three properties hold it shut in production, and none of them can be
  * overridden by an environment variable:
  *
  *   1. It must be asked for explicitly. `NEXT_PUBLIC_DEV_NO_AUTH` must equal the
@@ -22,10 +21,13 @@
  *   3. Asking for it anywhere production-like throws at module load. A stray
  *      `NEXT_PUBLIC_DEV_NO_AUTH=true` in a Vercel project fails the build with
  *      this message rather than shipping an open deployment.
- *   4. Only loopback callers are served. `next dev` binds loopback (see the
- *      `dev` script), and `proxy.ts` refuses any request that arrived for a
- *      non-loopback host, which is what a tunnel or a reverse proxy in front of
- *      a loopback dev server looks like from here.
+ *
+ * Those three decide whether the mode may run at all. Who may then use it is a
+ * separate question with a separate answer, because a dev server that is running
+ * can be reached through a tunnel, a reverse proxy or a relay no matter what
+ * address it binds: a caller must hold this machine's local key. That check, and
+ * the key itself, live in `src/lib/dev-auth-server.ts` — deliberately not here,
+ * because this module is imported by client components and secrets must not be.
  */
 
 const FLAG = 'NEXT_PUBLIC_DEV_NO_AUTH';
@@ -56,10 +58,11 @@ export const DEV_NO_AUTH: boolean = requested && isDevelopment && !onVercel;
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '::1', '0:0:0:0:0:0:0:1']);
 
 /**
- * Whether a `Host` header names this machine. The header is caller-controlled,
- * so this is not a substitute for binding the dev server to loopback - it is
- * the half that catches what binding cannot: a tunnel or reverse proxy that
- * forwards a public hostname to a loopback dev server.
+ * Whether a `Host` header names this machine. The header is caller-controlled
+ * and a forwarder rewrites it freely, so this establishes nothing on its own and
+ * nothing depends on it: it is a cheap refusal for the accidental cases (a
+ * colleague browsing your LAN address, a page that rebound DNS to loopback)
+ * ahead of the check that does hold, which is possession of the local key.
  */
 export function isLoopbackHostHeader(host: string | null | undefined): boolean {
   if (!host) return false;

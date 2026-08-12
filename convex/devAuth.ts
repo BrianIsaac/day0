@@ -1,52 +1,58 @@
-import type { UserIdentity } from 'convex/server';
-
 /**
- * No-auth development mode — the Convex half.
+ * No-auth development mode — the shared definition of the local issuer.
  *
- * When it is on, every caller resolves to one fixed synthetic identity instead
- * of a Clerk one. Nothing downstream changes: `assertOwnsAgent` and friends
+ * When it is on, Clerk is not involved. The deployment accepts one locally
+ * issued token instead, and every caller who presents it resolves to one fixed
+ * synthetic subject. Nothing downstream changes: `assertOwnsAgent` and friends
  * still compare `agent.userId` against `identity.subject`, rows are still
  * stamped with a `userId`, and the per-user data model is untouched. There is
  * simply only ever one user.
  *
- * Because that one subject owns everything, minting it for a caller who is not
- * sitting at this machine hands them every agent, every charter and
- * `reset.deleteMyData`. So the guard has to establish that the backend is
- * unreachable from anywhere else, and three properties are asked for together:
+ * Because that one subject owns everything, the question is what a caller must
+ * have before it may present as it. Two earlier versions of this file answered
+ * "the backend must be unreachable from anywhere else", and inferred that from
+ * a declared bind address. A Convex isolate cannot observe the socket it is
+ * served over or the peer address of its caller, so that answer was an
+ * inference from a declaration, and a declaration can diverge from the thing it
+ * describes. Twice it did: the socket is opened by a different file, in a
+ * different process, from a different variable.
  *
- *   1. It must be asked for explicitly. `NEXT_PUBLIC_DEV_NO_AUTH` must be set on
- *      this deployment (`npx convex env set …`) and equal the exact string
- *      `true`. Deployment env vars are per-deployment, so the flag never travels
- *      with a `convex deploy`.
- *   2. The published bind address must be declared, and must be loopback.
- *      `CONVEX_BIND_ADDR` is the single value `docker-compose.yml` interpolates
- *      into every `ports:` entry, so it is the address the backend's sockets are
- *      actually published on rather than a guess about them. Opening the backend
- *      to the LAN means changing that one variable, which closes this guard in
- *      the same edit. An undeclared binding is refused too - the guard never
- *      assumes loopback on the operator's behalf.
- *   3. Nothing may contradict it. The deployment's own origins must be loopback
- *      and the environment must carry no hosted-platform markers, so a flag that
- *      reaches a cloud deployment fails loudly rather than opening it up.
+ * So reachability is no longer the question, and this file no longer mints
+ * anything. The deployment holds only the public half of a keypair generated on
+ * the operator's machine (`DEV_NO_AUTH_JWKS`), declared here as a custom JWT
+ * provider. Convex then accepts a caller only if it presents a token signed by
+ * the private half, which never leaves `.env.local`. A caller who reaches the
+ * socket from anywhere at all still cannot present as the local boss without
+ * that key, so the backend is checking a fact it can observe — a signature —
+ * rather than inferring one it cannot.
  *
- * A Convex isolate cannot observe the socket it is served over or the peer
- * address of its caller, so (2) is the strongest available statement about
- * reachability: it is a declaration, but by the file that decides the binding.
- * The Next.js half enforces its own boundary directly - see `proxy.ts`.
+ * The Next.js half mints those tokens and gates who may ask for one; see
+ * `src/lib/dev-auth-server.ts`.
  */
 
 const FLAG = 'NEXT_PUBLIC_DEV_NO_AUTH';
-const BIND_FLAG = 'CONVEX_BIND_ADDR';
+const JWKS_VAR = 'DEV_NO_AUTH_JWKS';
 
 /** The single subject the whole per-user data model hangs off in no-auth mode. */
 export const DEV_NO_AUTH_SUBJECT = 'dev-no-auth|local-boss';
 
-const LOOPBACK_HOSTNAMES = new Set(['localhost', '::1', '[::1]', '0:0:0:0:0:0:0:1']);
+/** Names the local issuer. Never resolved over the network by either half. */
+export const DEV_NO_AUTH_ISSUER = 'https://dev-no-auth.day0.local';
+
+/** Checked against the token's `aud` claim by the deployment. */
+export const DEV_NO_AUTH_AUDIENCE = 'day0-dev-no-auth';
+
+export const DEV_NO_AUTH_KEY_ID = 'day0-dev-no-auth';
+
+export const DEV_NO_AUTH_ALGORITHM = 'ES256';
 
 /**
  * Env names set by the platforms this could plausibly be deployed to by
  * accident. None of them can be true of a backend running on the operator's own
- * machine, so any of them present is a contradiction of no-auth mode.
+ * machine, so any of them present is a contradiction of no-auth mode. Possession
+ * already holds without this check; it exists so a flag that reaches a hosted
+ * deployment fails the push loudly instead of quietly configuring an issuer
+ * nobody meant to run there.
  */
 const HOSTED_PLATFORM_MARKERS = [
   'VERCEL',
@@ -72,78 +78,67 @@ function readEnv(name: string): string | undefined {
   }
 }
 
-function isLoopbackHost(host: string): boolean {
-  const hostname = host.trim().toLowerCase();
-  if (LOOPBACK_HOSTNAMES.has(hostname)) return true;
-  // The whole of 127.0.0.0/8 is loopback; 127.0.0.1 is only its usual member.
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
-}
-
-function originIsLoopback(url: string): boolean {
-  try {
-    return isLoopbackHost(new URL(url).hostname);
-  } catch {
-    return false;
-  }
-}
-
-/** Why this deployment must not mint the synthetic identity, or null if it may. */
-function refusalReason(): string | null {
-  const hosted = HOSTED_PLATFORM_MARKERS.filter((name) => !!readEnv(name));
-  if (hosted.length > 0) {
-    return `this environment carries hosted-platform markers (${hosted.join(', ')})`;
-  }
-
-  const bindAddr = readEnv(BIND_FLAG)?.trim();
-  if (!bindAddr) {
-    return (
-      `${BIND_FLAG} is not set on this deployment, so the address the backend's ` +
-      'ports are published on has not been declared'
-    );
-  }
-  if (!isLoopbackHost(bindAddr)) {
-    return (
-      `${BIND_FLAG}=${bindAddr} publishes the backend beyond loopback, so callers ` +
-      'off this machine can reach it'
-    );
-  }
-
-  const cloudUrl = readEnv('CONVEX_CLOUD_URL');
-  if (!cloudUrl) return 'this deployment is not reporting its own origin';
-  if (!originIsLoopback(cloudUrl)) return `CONVEX_CLOUD_URL=${cloudUrl} is not a loopback origin`;
-
-  const siteUrl = readEnv('CONVEX_SITE_URL');
-  if (siteUrl && !originIsLoopback(siteUrl)) {
-    return `CONVEX_SITE_URL=${siteUrl} is not a loopback origin`;
-  }
-
-  return null;
+/** Whether this deployment has been asked to run without Clerk. */
+export function devNoAuthRequested(): boolean {
+  return readEnv(FLAG) === 'true';
 }
 
 /**
- * The synthetic identity, or `null` when no-auth mode is off. Throws when the
- * flag is set on a deployment that has not established it is local-only.
+ * The auth provider no-auth mode runs on. Throws rather than returning a
+ * provider-less config, so a deployment that has been asked for no-auth mode
+ * without a key refuses the push instead of coming up with authentication
+ * silently disabled.
  */
-export function devNoAuthIdentity(): UserIdentity | null {
-  if (readEnv(FLAG) !== 'true') return null;
-
-  const refusal = refusalReason();
-  if (refusal) {
+export function devNoAuthProvider(): {
+  type: 'customJwt';
+  applicationID: string;
+  issuer: string;
+  jwks: string;
+  algorithm: string;
+} {
+  const hosted = HOSTED_PLATFORM_MARKERS.filter((name) => !!readEnv(name));
+  if (hosted.length > 0) {
     throw new Error(
-      `${FLAG}=true disables authentication and is refused on this deployment ` +
-        `because ${refusal}. It is only allowed on a self-hosted backend whose ` +
-        `ports are published on loopback - set ${BIND_FLAG}=127.0.0.1 in ` +
-        '`.env.local` and re-run `./scripts/sync-convex-env.sh`, or run ' +
-        `\`npx convex env remove ${FLAG}\` against this deployment.`,
+      `${FLAG}=true serves every caller as one fixed user and is refused on this ` +
+        `deployment because it carries hosted-platform markers (${hosted.join(', ')}). ` +
+        `Run \`npx convex env remove ${FLAG}\` against this deployment.`,
+    );
+  }
+
+  const jwks = readEnv(JWKS_VAR)?.trim();
+  if (!jwks) {
+    throw new Error(
+      `${FLAG}=true requires ${JWKS_VAR} on this deployment: it is the public half ` +
+        'of the local key that no-auth callers must sign their token with. Run ' +
+        '`pnpm dev:no-auth-key` and then `./scripts/sync-convex-env.sh`.',
+    );
+  }
+  if (!jwks.startsWith('data:') && !jwks.startsWith('https://') && !jwks.startsWith('http://')) {
+    throw new Error(
+      `${JWKS_VAR} must be a JWKS URI - either a data: URI holding the key set or a ` +
+        'URL serving one. Re-run `pnpm dev:no-auth-key` to regenerate it.',
     );
   }
 
   return {
-    tokenIdentifier: `day0-dev-no-auth|${DEV_NO_AUTH_SUBJECT}`,
-    subject: DEV_NO_AUTH_SUBJECT,
-    issuer: 'https://dev-no-auth.day0.local',
-    name: 'Local boss',
-    email: readEnv('NEXT_PUBLIC_DEMO_BOSS_EMAIL') ?? 'boss@day0.local',
-    emailVerified: true,
+    type: 'customJwt',
+    applicationID: DEV_NO_AUTH_AUDIENCE,
+    issuer: DEV_NO_AUTH_ISSUER,
+    jwks,
+    algorithm: DEV_NO_AUTH_ALGORITHM,
   };
+}
+
+/**
+ * What to tell a caller the deployment could not identify. In no-auth mode the
+ * usual cause is a browser that never presented a local token, which is the
+ * boundary doing its job rather than a fault.
+ */
+export function notAuthenticatedMessage(): string {
+  if (!devNoAuthRequested()) return 'not authenticated';
+  return (
+    'not authenticated: no-auth dev mode accepts only callers holding this ' +
+    "machine's local key. Start the app with `pnpm dev` and open the unlock URL " +
+    'it prints.'
+  );
 }
