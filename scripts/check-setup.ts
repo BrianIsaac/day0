@@ -180,11 +180,24 @@ function backendSection(v: Values): Section {
     return { title: titleFor(status, 'Backend: self-hosted'), status, lines };
   }
 
+  // `pnpm convex:dev` will make an anonymous deployment - a local backend the
+  // CLI runs for you, with no Convex account behind it - so a CONVEX_DEPLOYMENT
+  // is not by itself evidence of a cloud one.
+  const anonymous = v.CONVEX_DEPLOYMENT.startsWith('anonymous:');
   return {
-    title: 'Backend: Convex cloud',
+    title: anonymous ? 'Backend: anonymous local deployment' : 'Backend: Convex cloud',
     status: v.NEXT_PUBLIC_CONVEX_URL ? 'ok' : 'gap',
     lines: v.NEXT_PUBLIC_CONVEX_URL
-      ? [`Deployment ${v.CONVEX_DEPLOYMENT}, reached at ${v.NEXT_PUBLIC_CONVEX_URL}.`]
+      ? [
+          `Deployment ${v.CONVEX_DEPLOYMENT}, reached at ${v.NEXT_PUBLIC_CONVEX_URL}.`,
+          ...(anonymous
+            ? [
+                'Run by the Convex CLI on this machine with no account behind it, and',
+                'not persistent the way the self-hosted backend is. `npx convex login`',
+                'links it to an account if you later want one.',
+              ]
+            : []),
+        ]
       : ['CONVEX_DEPLOYMENT is set but NEXT_PUBLIC_CONVEX_URL is not. Re-run `pnpm convex:dev`.'],
   };
 }

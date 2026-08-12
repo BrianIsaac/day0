@@ -20,19 +20,24 @@ KEYS=(
   EXA_API_KEY
   DAYTONA_API_KEY
   DAYTONA_API_URL
-  NEXT_PUBLIC_DEV_NO_AUTH
-  DEV_NO_AUTH_JWKS
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
   CLERK_JWT_ISSUER_DOMAIN
 )
 
-# Keys whose absence is meaningful: leaving a stale value on the deployment
-# would be a silent security downgrade, so an empty local value removes them.
-# These are the two `convex/auth.config.ts` reads to decide who may call it.
-CLEAR_IF_EMPTY=(
-  NEXT_PUBLIC_DEV_NO_AUTH
-  DEV_NO_AUTH_JWKS
-)
+# The two `convex/auth.config.ts` reads to decide who may call the deployment.
+# They are handled apart from KEYS because their order is load-bearing and it
+# is not the same order in both directions: a deployment that already has
+# functions on it validates its auth config on *every* env change, and rejects
+# any single step that would leave the config invalid. So the flag may never be
+# set before the key exists, nor the key removed while the flag still says to
+# use it. Getting this wrong fails only once functions are pushed, which is why
+# it survived a self-hosted backend that had not been pushed to yet.
+NO_AUTH_FLAG=NEXT_PUBLIC_DEV_NO_AUTH
+NO_AUTH_JWKS=DEV_NO_AUTH_JWKS
+
+# Their absence is also meaningful, which is why they are the only two removed
+# rather than skipped when empty: leaving a stale flag on the deployment would
+# be a silent security downgrade rather than an inconvenience.
 
 # Keys the deployment must see under a different name than .env.local uses.
 # OPENAI_BASE_URL is the only one so far, and it exists because the deployment
@@ -71,14 +76,14 @@ if [ "$(read_local NEXT_PUBLIC_DEV_NO_AUTH)" = "true" ] && [ -z "$(read_local DE
   exit 1
 fi
 
-# Clearing a CLEAR_IF_EMPTY key is the one step whose silent failure is a
-# security downgrade rather than an inconvenience - an expired credential or the
-# wrong deployment would otherwise print `clear …` and `done.` while the flag
-# that disables authentication stays set. So the deployment's current env is
-# read up front (a failure here is fatal), each clear is checked, and the
-# absence is confirmed afterwards rather than assumed.
+# Clearing the no-auth pair is the one step whose silent failure is a security
+# downgrade rather than an inconvenience - an expired credential or the wrong
+# deployment would otherwise print `clear …` and `done.` while the flag that
+# disables authentication stays set. So the deployment's current env is read up
+# front (a failure here is fatal), each clear is checked, and the absence is
+# confirmed afterwards rather than assumed.
 if ! deployment_env=$(npx convex env list 2>&1); then
-  echo "error: could not read this deployment's env vars, so the ${CLEAR_IF_EMPTY[*]}" >&2
+  echo "error: could not read this deployment's env vars, so the ${NO_AUTH_FLAG}/${NO_AUTH_JWKS}" >&2
   echo "       clears below cannot be confirmed. Check your Convex credentials and" >&2
   echo "       deployment selection, then re-run." >&2
   printf '%s\n' "$deployment_env" >&2
@@ -108,39 +113,48 @@ clear_key() {
   fi
 }
 
-for key in "${RETIRED[@]}"; do
-  clear_key "$key" "no longer read by the deployment"
-done
-
-for key in "${KEYS[@]}"; do
-  value=$(read_local "$key")
-  override_var="${ALIASED[$key]:-}"
-  if [ -n "$override_var" ]; then
-    override=$(read_local "$override_var")
-    if [ -n "$override" ]; then
-      echo "set  ${key} (from ${override_var})"
-      if ! output=$(npx convex env set "$key" "$override" 2>&1); then
-        echo "error: failed to set ${key} on the deployment." >&2
-        printf '%s\n' "$output" >&2
-        exit 1
-      fi
-      continue
-    fi
-  fi
-  if [ -z "$value" ]; then
-    if [[ " ${CLEAR_IF_EMPTY[*]} " == *" ${key} "* ]]; then
-      clear_key "$key"
-    else
-      echo "skip ${key} (empty in $ENV_FILE)"
-    fi
-    continue
-  fi
-  echo "set  ${key}"
+set_key() {
+  local key="$1" value="$2" note="${3:-}" output
+  echo "set  ${key}${note:+ (${note})}"
   if ! output=$(npx convex env set "$key" "$value" 2>&1); then
     echo "error: failed to set ${key} on the deployment." >&2
     printf '%s\n' "$output" >&2
     exit 1
   fi
+}
+
+for key in "${RETIRED[@]}"; do
+  clear_key "$key" "no longer read by the deployment"
+done
+
+# The no-auth pair, in whichever order keeps the auth config valid at every
+# single step: turning the mode on means the key first, turning it off means
+# the flag first.
+no_auth_flag_value=$(read_local "$NO_AUTH_FLAG")
+no_auth_jwks_value=$(read_local "$NO_AUTH_JWKS")
+if [ "$no_auth_flag_value" = "true" ]; then
+  set_key "$NO_AUTH_JWKS" "$no_auth_jwks_value" "before the flag that requires it"
+  set_key "$NO_AUTH_FLAG" "$no_auth_flag_value"
+else
+  [ -n "$no_auth_flag_value" ] && set_key "$NO_AUTH_FLAG" "$no_auth_flag_value" || clear_key "$NO_AUTH_FLAG"
+  [ -n "$no_auth_jwks_value" ] && set_key "$NO_AUTH_JWKS" "$no_auth_jwks_value" ||
+    clear_key "$NO_AUTH_JWKS" "after the flag that required it"
+fi
+
+for key in "${KEYS[@]}"; do
+  override_var="${ALIASED[$key]:-}"
+  override=""
+  [ -n "$override_var" ] && override=$(read_local "$override_var")
+  if [ -n "$override" ]; then
+    set_key "$key" "$override" "from ${override_var}"
+    continue
+  fi
+  value=$(read_local "$key")
+  if [ -z "$value" ]; then
+    echo "skip ${key} (empty in $ENV_FILE)"
+    continue
+  fi
+  set_key "$key" "$value"
 done
 
 # A self-hosted deployment runs its Node actions inside a container, so a model

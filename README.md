@@ -206,6 +206,8 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
 Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and approve the charter it writes. No provider was called and no account exists.
 
+The bundled model runs on the CPU, which works and is slow - an 8B model answers in minutes rather than seconds, and charter synthesis is several calls. If you have an NVIDIA GPU and the container toolkit, uncomment the `deploy.resources` block on the `model` service in `docker-compose.yml` and `pnpm model:up` again; it is the difference between a demo you watch and a demo you wait for.
+
 Five things about that sequence are load-bearing:
 
 - **`pnpm install` comes first.** Every command after it - `tsx`, `convex`, `next` - is a binary in `node_modules`. Skip it and `pnpm dev:no-auth-key` fails with `tsx: not found` and no hint as to why.
@@ -217,6 +219,22 @@ Five things about that sequence are load-bearing:
 `pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
 
 Stop the stack with `pnpm convex:down`, which leaves the data volume in place. To throw the data away too: `docker compose --env-file .env.local --profile model down -v`.
+
+### Without Docker for Convex
+
+`pnpm convex:dev` with nobody logged in does not stop to ask for an account: it creates an **anonymous deployment**, a backend the Convex CLI runs on this machine, and prints `Run npx convex login at any time to create an account and link this deployment`. That is a second account-free route to a backend, and a shorter one - no compose project, no admin key, and no second model address, because a backend running as an ordinary process on this machine reaches `127.0.0.1` the same way Next does:
+
+```bash
+pnpm install
+cp .env.example .env.local
+# NEXT_PUBLIC_DEV_NO_AUTH=true, OPENAI_BASE_URL=http://127.0.0.1:11434/v1, OPENAI_MODEL=qwen3:8b
+pnpm convex:dev                  # anonymous local deployment; writes the Convex keys itself
+pnpm dev:no-auth-key
+./scripts/sync-convex-env.sh
+pnpm dev
+```
+
+You still need a model - a native `ollama serve` on 11434, or `pnpm model:up` and `MODEL_PORT` for the bundled one. What you give up against the self-hosted stack is a deployment you own and can keep: the compose backend has its own volume, its own dashboard, and survives independently of the CLI. Use this route to see the thing run; use the one above to keep working on it.
 
 ### Using a model server you already have
 

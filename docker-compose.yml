@@ -124,6 +124,17 @@ services:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${MODEL_PORT:-11434}:11434'
     volumes:
       - model_data:/root/.ollama
+    # CPU by default, because that is what every machine has. It works, and an
+    # 8B model answers in minutes rather than seconds - enough to see the loop
+    # run, slow enough to be tiring. Uncomment for an NVIDIA GPU with the
+    # container toolkit installed; leaving it on without one refuses to start.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
 volumes:
   convex_data:
