@@ -101,7 +101,6 @@ export function AgentDashboard({ agentId }: Props) {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <WorkQueue
-              agentId={agentId}
               workItems={workItems ?? []}
               registeredSkillCount={(registeredSkills ?? []).length}
               charterApproved={!!charter?.approved}
@@ -545,12 +544,10 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 }
 
 function WorkQueue({
-  agentId,
   workItems,
   registeredSkillCount,
   charterApproved,
 }: {
-  agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
   registeredSkillCount: number;
   charterApproved: boolean;
@@ -577,22 +574,22 @@ function WorkQueue({
     if (!charterApproved) return;
     for (const it of workItems) {
       if (it.state === 'discovered') {
-        evaluate({ agentId, workItemId: it._id }).catch(() => {});
+        evaluate({ workItemId: it._id }).catch(() => {});
         break;
       }
     }
-  }, [charterApproved, workItems, agentId, evaluate]);
+  }, [charterApproved, workItems, evaluate]);
 
   useEffect(() => {
     for (const it of workItems) {
       if (it.state === 'claimed' && !it.plan) {
-        draftPlan({ agentId, workItemId: it._id }).catch(() => {});
+        draftPlan({ workItemId: it._id }).catch(() => {});
       }
       if (it.state === 'plan-approved') {
-        executePlan({ agentId, workItemId: it._id }).catch(() => {});
+        executePlan({ workItemId: it._id }).catch(() => {});
       }
     }
-  }, [workItems, agentId, draftPlan, executePlan]);
+  }, [workItems, draftPlan, executePlan]);
 
   return (
     <Card

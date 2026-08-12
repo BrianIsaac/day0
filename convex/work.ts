@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation } from './_generated/server';
+import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 
@@ -16,6 +16,27 @@ import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
  *   discovered → skipped | deferred | needs-skill
  *   plan-pending → cancelled
  */
+
+/**
+ * A skill id may only be attached to a work item belonging to the same agent.
+ * The public actions derive the agent from the work item, so a mismatch here
+ * means an internal caller has crossed two agents' contexts, not that a boss
+ * pressed the wrong button.
+ */
+async function assertSameAgent(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  skillId: Id<'skills'>,
+): Promise<{ item: Doc<'workItems'>; skill: Doc<'skills'> }> {
+  const item = await ctx.db.get(workItemId);
+  if (!item) throw new Error('workItem not found');
+  const skill = await ctx.db.get(skillId);
+  if (!skill) throw new Error('skill not found');
+  if (skill.agentId !== item.agentId) {
+    throw new Error('skill and work item belong to different agents');
+  }
+  return { item, skill };
+}
 
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
@@ -192,6 +213,7 @@ export const cancelPlan = mutation({
 export const setExecutingWithSkill = internalMutation({
   args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
   handler: async (ctx, args) => {
+    await assertSameAgent(ctx, args.workItemId, args.skillId);
     await ctx.db.patch(args.workItemId, { state: 'executing', skillId: args.skillId });
   },
 });
@@ -239,6 +261,7 @@ export const setFailed = internalMutation({
 export const setProposedSkill = internalMutation({
   args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
   handler: async (ctx, args) => {
+    await assertSameAgent(ctx, args.workItemId, args.skillId);
     await ctx.db.patch(args.workItemId, { proposedSkillId: args.skillId });
   },
 });
