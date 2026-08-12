@@ -48,26 +48,88 @@ const schema = z.object({
   NEXT_PUBLIC_DEV_NO_AUTH: z.string().optional(),
 });
 
-export const env = schema.parse({
-  NODE_ENV: process.env.NODE_ENV,
-  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-  OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
-  OPENAI_MODEL: process.env.OPENAI_MODEL,
-  OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL,
-  OPENAI_JSON_MODE: process.env.OPENAI_JSON_MODE,
-  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
-  ELEVENLABS_AGENT_ID: process.env.ELEVENLABS_AGENT_ID,
-  ELEVENLABS_WEBHOOK_SECRET: process.env.ELEVENLABS_WEBHOOK_SECRET,
-  GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
-  GEMINI_LIVE_MODEL: process.env.GEMINI_LIVE_MODEL,
-  EXA_API_KEY: process.env.EXA_API_KEY,
-  DAYTONA_API_KEY: process.env.DAYTONA_API_KEY,
-  DAYTONA_API_URL: process.env.DAYTONA_API_URL,
-  CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
-  NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
-  CONVEX_SELF_HOSTED_URL: process.env.CONVEX_SELF_HOSTED_URL,
-  CONVEX_SELF_HOSTED_ADMIN_KEY: process.env.CONVEX_SELF_HOSTED_ADMIN_KEY,
-  NEXT_PUBLIC_DEMO_BOSS_EMAIL: process.env.NEXT_PUBLIC_DEMO_BOSS_EMAIL,
-  NEXT_PUBLIC_DEMO_TENANT_SLUG: process.env.NEXT_PUBLIC_DEMO_TENANT_SLUG,
-  NEXT_PUBLIC_DEV_NO_AUTH: process.env.NEXT_PUBLIC_DEV_NO_AUTH,
-});
+/**
+ * `.env.local` spells "not configured" as `KEY=`, and Next hands that
+ * through as an empty string rather than dropping the variable. Every
+ * reader means *absent* by it, so it is normalised once here rather than
+ * re-checked at each call site.
+ *
+ * The difference is not cosmetic, and it is what the OpenAI-key route runs
+ * into: `.env.example` ships `OPENAI_BASE_URL=`, and coming from a local
+ * model you are told to clear it back to exactly that. An empty base URL is
+ * not an absent one - it is a base to resolve against, and resolving
+ * `/responses` against it yields a relative URL that fails before a request
+ * is made, with `Failed to parse URL from /responses`.
+ */
+const OPTIONAL_STRINGS = [
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_MODEL',
+  'OPENAI_IMAGE_MODEL',
+  'OPENAI_JSON_MODE',
+  'ELEVENLABS_API_KEY',
+  'ELEVENLABS_AGENT_ID',
+  'ELEVENLABS_WEBHOOK_SECRET',
+  'GOOGLE_API_KEY',
+  'GEMINI_LIVE_MODEL',
+  'EXA_API_KEY',
+  'DAYTONA_API_KEY',
+  'DAYTONA_API_URL',
+  'CONVEX_DEPLOYMENT',
+  'NEXT_PUBLIC_CONVEX_URL',
+  'CONVEX_SELF_HOSTED_URL',
+  'CONVEX_SELF_HOSTED_ADMIN_KEY',
+  'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
+  'NEXT_PUBLIC_DEMO_TENANT_SLUG',
+  'NEXT_PUBLIC_DEV_NO_AUTH',
+] as const;
+
+/**
+ * Normalising the parsed contract is not enough on its own, because the
+ * provider SDKs do not read it: `@ai-sdk/openai` looks `OPENAI_BASE_URL` up
+ * in `process.env` itself whenever no explicit `baseURL` is passed, and
+ * takes `''` at face value. So the empty variables are dropped from the
+ * environment as well, which is the only place a third-party client will
+ * agree with us about what "not configured" means.
+ */
+function dropEmptyFromProcessEnv(): void {
+  for (const key of OPTIONAL_STRINGS) {
+    if (process.env[key] === '') delete process.env[key];
+  }
+}
+
+function absentIfEmpty(
+  raw: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  return Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => [key, value === '' ? undefined : value]),
+  );
+}
+
+dropEmptyFromProcessEnv();
+
+export const env = schema.parse(
+  absentIfEmpty({
+    NODE_ENV: process.env.NODE_ENV,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+    OPENAI_MODEL: process.env.OPENAI_MODEL,
+    OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL,
+    OPENAI_JSON_MODE: process.env.OPENAI_JSON_MODE,
+    ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
+    ELEVENLABS_AGENT_ID: process.env.ELEVENLABS_AGENT_ID,
+    ELEVENLABS_WEBHOOK_SECRET: process.env.ELEVENLABS_WEBHOOK_SECRET,
+    GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
+    GEMINI_LIVE_MODEL: process.env.GEMINI_LIVE_MODEL,
+    EXA_API_KEY: process.env.EXA_API_KEY,
+    DAYTONA_API_KEY: process.env.DAYTONA_API_KEY,
+    DAYTONA_API_URL: process.env.DAYTONA_API_URL,
+    CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
+    NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
+    CONVEX_SELF_HOSTED_URL: process.env.CONVEX_SELF_HOSTED_URL,
+    CONVEX_SELF_HOSTED_ADMIN_KEY: process.env.CONVEX_SELF_HOSTED_ADMIN_KEY,
+    NEXT_PUBLIC_DEMO_BOSS_EMAIL: process.env.NEXT_PUBLIC_DEMO_BOSS_EMAIL,
+    NEXT_PUBLIC_DEMO_TENANT_SLUG: process.env.NEXT_PUBLIC_DEMO_TENANT_SLUG,
+    NEXT_PUBLIC_DEV_NO_AUTH: process.env.NEXT_PUBLIC_DEV_NO_AUTH,
+  }),
+);
