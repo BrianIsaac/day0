@@ -34,6 +34,17 @@ CLEAR_IF_EMPTY=(
   DEV_NO_AUTH_JWKS
 )
 
+# Keys the deployment must see under a different name than .env.local uses.
+# OPENAI_BASE_URL is the only one so far, and it exists because the deployment
+# is somewhere else: Node actions dial the model from inside the backend
+# container, where the loopback address Next uses means the container itself.
+# CONVEX_OPENAI_BASE_URL is that same endpoint as the backend must address it.
+# Unset, the local value is pushed unchanged, which is right for Convex cloud
+# and for any endpoint both sides can reach by the same name.
+declare -A ALIASED=(
+  [OPENAI_BASE_URL]=CONVEX_OPENAI_BASE_URL
+)
+
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
 # is inert, but it is the declaration two versions of the no-auth guard mistook
 # for the socket, so it should not sit on a deployment looking meaningful.
@@ -103,6 +114,19 @@ done
 
 for key in "${KEYS[@]}"; do
   value=$(read_local "$key")
+  override_var="${ALIASED[$key]:-}"
+  if [ -n "$override_var" ]; then
+    override=$(read_local "$override_var")
+    if [ -n "$override" ]; then
+      echo "set  ${key} (from ${override_var})"
+      if ! output=$(npx convex env set "$key" "$override" 2>&1); then
+        echo "error: failed to set ${key} on the deployment." >&2
+        printf '%s\n' "$output" >&2
+        exit 1
+      fi
+      continue
+    fi
+  fi
   if [ -z "$value" ]; then
     if [[ " ${CLEAR_IF_EMPTY[*]} " == *" ${key} "* ]]; then
       clear_key "$key"
@@ -119,4 +143,26 @@ for key in "${KEYS[@]}"; do
   fi
 done
 
-echo "done."
+# A self-hosted deployment runs its Node actions inside a container, so a model
+# endpoint on loopback resolves to the container and not to your machine. The
+# resulting failure is a quiet one - the Day-1 chat streams from Next and works,
+# and only the charter, which is synthesised in an action, never arrives.
+backend_model_url=$(read_local CONVEX_OPENAI_BASE_URL)
+[ -z "$backend_model_url" ] && backend_model_url=$(read_local OPENAI_BASE_URL)
+if [ -n "$(read_local CONVEX_SELF_HOSTED_URL)" ] &&
+  grep -qE '^https?://(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)([:/]|$)' <<<"$backend_model_url"; then
+  echo
+  echo "warning: the deployment will call the model at ${backend_model_url}, which inside" >&2
+  echo "         the backend container means the container itself. Set" >&2
+  echo "         CONVEX_OPENAI_BASE_URL to an address that resolves in there -" >&2
+  echo "         http://model:11434/v1 with \`pnpm model:up\`, or" >&2
+  echo "         http://host.docker.internal:11434/v1 for a server on this host." >&2
+fi
+
+# Deployment env is read when a function module is first evaluated, and a
+# backend that has already run one keeps the values it started with. Changing
+# them later without restarting leaves the deployment reporting the new value
+# while the running action still uses the old one.
+echo
+echo "done. If the backend has already run an action since these values last changed,"
+echo "restart it so they take effect: \`pnpm convex:restart\` (self-hosted)."
