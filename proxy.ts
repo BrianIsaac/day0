@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
-import { DEV_NO_AUTH } from '@/lib/dev-auth';
+import { DEV_NO_AUTH, isLoopbackHostHeader } from '@/lib/dev-auth';
 
 /**
  * Next.js 16 renamed `middleware.ts` to `proxy.ts`. Public routes
@@ -14,7 +14,10 @@ import { DEV_NO_AUTH } from '@/lib/dev-auth';
  *
  * In no-auth dev mode Clerk's middleware never runs at all — invoking it
  * without a `ClerkProvider` anywhere in the app would only manufacture a
- * dependency the rest of that mode has deliberately dropped.
+ * dependency the rest of that mode has deliberately dropped. What runs
+ * in its place is the boundary that mode actually claims: every request
+ * must have arrived for a loopback host, so the one synthetic user is
+ * only ever handed to somebody sitting at this machine.
  */
 const isPublicRoute = createRouteMatcher([
   '/',
@@ -34,8 +37,30 @@ const clerkProxy = clerkMiddleware(async (auth, req) => {
   }
 });
 
+/**
+ * The one route that is meant to be reached from off this machine even in
+ * no-auth mode. ElevenLabs posts call transcripts to it, it carries no caller
+ * identity, and the Convex action behind it authenticates the payload by
+ * matching (agentId, conversationId) against an active voice session rather
+ * than by trusting the caller - so a tunnel pointed at it grants nothing that
+ * the deployed Vercel app does not already expose.
+ */
+const isExternallyCalledRoute = createRouteMatcher(['/api/voice/elevenlabs/webhook(.*)']);
+
 export default function proxy(...args: Parameters<typeof clerkProxy>) {
-  if (DEV_NO_AUTH) return NextResponse.next();
+  if (DEV_NO_AUTH) {
+    const [request] = args;
+    if (!isLoopbackHostHeader(request.headers.get('host')) && !isExternallyCalledRoute(request)) {
+      return new NextResponse(
+        'NEXT_PUBLIC_DEV_NO_AUTH=true serves every request as one fixed user with no ' +
+          'sign-in, so it is refused for any host other than localhost. This request ' +
+          `arrived for "${request.headers.get('host') ?? '(no host header)'}". Reach the ` +
+          'app on http://localhost instead, or turn the flag off and use Clerk.',
+        { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8' } },
+      );
+    }
+    return NextResponse.next();
+  }
   return clerkProxy(...args);
 }
 

@@ -10,7 +10,7 @@
  * one user. It exists so the project can be run from a fresh clone with no
  * third-party accounts.
  *
- * Three properties hold it shut in production, and none of them can be
+ * Four properties hold it shut in production, and none of them can be
  * overridden by an environment variable:
  *
  *   1. It must be asked for explicitly. `NEXT_PUBLIC_DEV_NO_AUTH` must equal the
@@ -22,6 +22,10 @@
  *   3. Asking for it anywhere production-like throws at module load. A stray
  *      `NEXT_PUBLIC_DEV_NO_AUTH=true` in a Vercel project fails the build with
  *      this message rather than shipping an open deployment.
+ *   4. Only loopback callers are served. `next dev` binds loopback (see the
+ *      `dev` script), and `proxy.ts` refuses any request that arrived for a
+ *      non-loopback host, which is what a tunnel or a reverse proxy in front of
+ *      a loopback dev server looks like from here.
  */
 
 const FLAG = 'NEXT_PUBLIC_DEV_NO_AUTH';
@@ -48,6 +52,27 @@ if (requested && (!isDevelopment || onVercel)) {
 
 /** True only under `next dev` with the flag explicitly set to `true`. */
 export const DEV_NO_AUTH: boolean = requested && isDevelopment && !onVercel;
+
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '::1', '0:0:0:0:0:0:0:1']);
+
+/**
+ * Whether a `Host` header names this machine. The header is caller-controlled,
+ * so this is not a substitute for binding the dev server to loopback - it is
+ * the half that catches what binding cannot: a tunnel or reverse proxy that
+ * forwards a public hostname to a loopback dev server.
+ */
+export function isLoopbackHostHeader(host: string | null | undefined): boolean {
+  if (!host) return false;
+  const trimmed = host.trim().toLowerCase();
+  // `[::1]:3000` - an IPv6 literal keeps its brackets, so the port is what
+  // follows the closing one.
+  const hostname = trimmed.startsWith('[')
+    ? trimmed.slice(1, trimmed.indexOf(']'))
+    : trimmed.split(':')[0];
+  if (LOOPBACK_HOSTNAMES.has(hostname)) return true;
+  // The whole of 127.0.0.0/8 is loopback; 127.0.0.1 is only its usual member.
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+}
 
 /**
  * The boss the synthetic user presents as. Mirrors the identity
