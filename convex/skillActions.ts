@@ -55,13 +55,26 @@ const authorSchema = z.object({
   smokeTest: z.string(),
 });
 
+/**
+ * Where a run may start. `approved` is the boss's first go-ahead; `authoring`
+ * and `failed` are retries of a skill that never registered, so re-authoring
+ * cannot pull the ground out from under an executor already calling it. A retry
+ * re-authors rather than re-verifying the stored body, because the smoke test
+ * that would verify it is not persisted - and an unverified body has no claim
+ * to being the one worth keeping.
+ */
+const RETRYABLE_STATES = ['approved', 'authoring', 'failed'] as const;
+
 export const authorAndRegisterSkill = action({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
     const skill = await ctx.runQuery(api.skills.get, { skillId: args.skillId });
     if (!skill) throw new Error('skill not found');
-    if (skill.state !== 'approved') {
-      throw new Error(`authorAndRegisterSkill: skill state is ${skill.state}; expected approved`);
+    if (!RETRYABLE_STATES.includes(skill.state as (typeof RETRYABLE_STATES)[number])) {
+      throw new Error(
+        `authorAndRegisterSkill: skill state is ${skill.state}; expected one of ` +
+          RETRYABLE_STATES.join(', '),
+      );
     }
     const userPrompt = [
       `Skill name: ${skill.name}`,

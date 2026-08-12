@@ -20,6 +20,7 @@ export function AgentDashboard({ agentId }: Props) {
   const proposedSkills = useQuery(api.skills.proposed, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
+  const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: 30 });
   const voiceSession = useQuery(api.voice.latest, { agentId });
 
@@ -112,7 +113,7 @@ export function AgentDashboard({ agentId }: Props) {
           <WorkspacePanel workspace={workspace ?? {}} />
           <RegisteredSkillsPanel
             skills={registeredSkills ?? []}
-            unverified={unverifiedSkills ?? []}
+            unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
           />
           <EventTicker events={events ?? []} />
         </div>
@@ -391,11 +392,31 @@ function ProposedSkillsPanel({
 
 function RegisteredSkillsPanel({
   skills,
-  unverified,
+  unregistered,
 }: {
   skills: Doc<'skills'>[];
-  unverified: Doc<'skills'>[];
+  /** Authored but never registered: `authoring` (no sandbox ran) and `failed`. */
+  unregistered: Doc<'skills'>[];
 }) {
+  const author = useAction(api.skillActions.authorAndRegisterSkill);
+  const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  async function onRetry(skillId: Id<'skills'>) {
+    setRetrying(skillId);
+    setErrors((prev) => ({ ...prev, [skillId]: '' }));
+    try {
+      const result = await author({ skillId });
+      if (!result.ok) {
+        setErrors((prev) => ({ ...prev, [skillId]: result.reason ?? 'retry did not succeed' }));
+      }
+    } catch (err) {
+      setErrors((prev) => ({ ...prev, [skillId]: (err as Error).message }));
+    } finally {
+      setRetrying(null);
+    }
+  }
+
   return (
     <Card title={`Skills · ${skills.length} registered`}>
       {skills.length === 0 ? (
@@ -422,21 +443,40 @@ function RegisteredSkillsPanel({
         </ul>
       )}
 
-      {unverified.length > 0 ? (
+      {unregistered.length > 0 ? (
         <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
           <p className="text-[10px] uppercase tracking-wider text-[var(--color-warn)] mb-1.5">
             authored · not verified · not callable
           </p>
-          <ul className="space-y-2 text-sm">
-            {unverified.map((s) => (
+          <ul className="space-y-3 text-sm">
+            {unregistered.map((s) => (
               <li key={s._id}>
-                <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
-                <div className="text-[var(--color-muted)] text-xs">
-                  {s.verificationLog ?? s.description}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
+                    <div className="text-[var(--color-muted)] text-xs">
+                      {s.state === 'failed' ? 'verification failed — ' : ''}
+                      {s.verificationLog ?? s.description}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onRetry(s._id)}
+                    disabled={retrying === s._id}
+                    className="px-2.5 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
+                  >
+                    {retrying === s._id ? 'Retrying…' : 'Retry'}
+                  </button>
                 </div>
+                {errors[s._id] ? (
+                  <p className="text-[10px] text-[var(--color-danger)] mt-1">{errors[s._id]}</p>
+                ) : null}
               </li>
             ))}
           </ul>
+          <p className="text-[10px] text-[var(--color-muted)] mt-2">
+            Retry re-authors the skill and re-runs the sandbox check. Set DAYTONA_API_KEY on the
+            deployment first if the sandbox was skipped.
+          </p>
         </div>
       ) : null}
     </Card>

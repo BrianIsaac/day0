@@ -15,6 +15,11 @@ import { assertOwnsAgent, assertOwnsSkill } from './ownership';
  *
  * `builtin` skills come straight in at `registered`. `agent-authored`
  * skills walk the full path.
+ *
+ * `authoring` and `failed` are both resumable: neither has ever been
+ * registered, so `authorAndRegisterSkill` accepts them as a retry (see the
+ * retryable-state list there). That is the way back for a skill authored
+ * before Daytona was configured, or one whose sandbox check failed.
  */
 
 export const registered = query({
@@ -40,6 +45,22 @@ export const awaitingVerification = query({
     return await ctx.db
       .query('skills')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'authoring'))
+      .collect();
+  },
+});
+
+/**
+ * Authored and checked, and the check said no. Kept out of `registered` for the
+ * same reason as `awaitingVerification`, and retryable for the same reason:
+ * nothing has ever called this body.
+ */
+export const verificationFailed = query({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    return await ctx.db
+      .query('skills')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'failed'))
       .collect();
   },
 });
