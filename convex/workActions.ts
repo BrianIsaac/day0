@@ -211,10 +211,13 @@ export const draftPlan = action({
       candidate: rowToCandidate(item),
       charter: charterRow.body as Charter,
     });
-    await ctx.runMutation(internal.work.setPlan, {
+    const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
       plan,
     });
+    if (!stored.stored) {
+      return { ok: false, reason: 'another draft stored a plan for this work item first' };
+    }
     return { ok: true };
   },
 });

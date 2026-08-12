@@ -154,11 +154,21 @@ export const setVerdict = internalMutation({
   },
 });
 
+/**
+ * Store a drafted plan, if the row is still waiting for one.
+ *
+ * Same shape as `claimForExecution`: two callers can both read `claimed`
+ * before either writes, and the second would otherwise replace a plan the boss
+ * may already be reading — with a second plan-drafted event to match. The
+ * state check and the write share one transaction, so the second caller is
+ * told its draft was not needed.
+ */
 export const setPlan = internalMutation({
   args: { workItemId: v.id('workItems'), plan: v.any() },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ stored: boolean }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
+    if (row.state !== 'claimed') return { stored: false };
     await ctx.db.patch(args.workItemId, { plan: args.plan, state: 'plan-pending' });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -166,6 +176,7 @@ export const setPlan = internalMutation({
       payload: { workItemId: args.workItemId, plan: args.plan },
       createdAt: Date.now(),
     });
+    return { stored: true };
   },
 });
 
