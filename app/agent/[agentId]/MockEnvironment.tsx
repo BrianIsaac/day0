@@ -39,7 +39,10 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   };
 
   return (
-    <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl overflow-hidden">
+    /* Every width question in this panel is about the panel, not the window:
+       it sits in a column whose width the viewport does not predict. Hence a
+       container, and `@` variants below rather than `lg:`/`xl:`. */
+    <section className="@container bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
         <div>
           <h2 className="text-sm font-semibold tracking-tight">Mock work environment</h2>
@@ -49,7 +52,11 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
         </div>
       </div>
 
-      <nav className="flex gap-0 px-2 pt-2 border-b border-[var(--color-border)] overflow-x-auto">
+      {/* Wraps rather than scrolls. A tab strip that overflows hides whole
+          surfaces behind a gesture nothing on the page suggests, and the two
+          it hid here — Twitter and Tickets — are two fifths of the environment
+          the agent works in. */}
+      <nav className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]">
         {TABS.map((t) => {
           const isActive = active === t.key;
           const count = counts[t.key];
@@ -57,7 +64,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
             <button
               key={t.key}
               onClick={() => setActive(t.key)}
-              className={`px-4 py-2 mr-1 rounded-t-md text-xs flex items-center gap-2 transition border-b-2 ${
+              className={`px-3 py-2 rounded-t-md text-xs flex items-center gap-1.5 transition border-b-2 ${
                 isActive
                   ? 'border-[var(--color-accent)] text-[var(--color-fg)] bg-[var(--color-bg)]'
                   : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'
@@ -75,7 +82,9 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
                   {count}
                 </span>
               ) : null}
-              <span className="hidden lg:inline xl:hidden 2xl:inline text-[10px] text-[var(--color-muted)]">{t.sublabel}</span>
+              <span className="hidden @3xl:inline text-[10px] text-[var(--color-muted)]">
+                {t.sublabel}
+              </span>
             </button>
           );
         })}

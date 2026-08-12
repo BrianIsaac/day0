@@ -104,7 +104,15 @@ export function ChatRoom({
       <header className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <h2 className="text-sm font-semibold">Day-1 1:1 · chat mode</h2>
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-[var(--color-muted)]">streaming</span>
+          {/* Said "streaming" whatever was happening, including after the
+              conversation had closed and the charter was on the page. */}
+          <span className="text-[10px] text-[var(--color-muted)]">
+            {done
+              ? 'complete'
+              : status === 'streaming' || status === 'submitted'
+                ? 'streaming'
+                : 'ready'}
+          </span>
           {onSwitchMode && !done ? (
             <button
               onClick={() => {

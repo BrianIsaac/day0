@@ -7,6 +7,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { ChatRoom } from './ChatRoom';
 import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
+import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -65,11 +66,16 @@ export function AgentDashboard({ agentId }: Props) {
     );
   }
 
-  const showOnboarding = agent.state === 'deployed' || agent.state === 'day-one-in-progress';
+  // A drafted charter ends the 1:1, whatever the agent row still says. The
+  // room stayed open under the charter it had just produced — badge reading
+  // "streaming", footer reading "drafting your charter…" — because both were
+  // keyed to a state the chat route never moved on.
+  const showOnboarding =
+    !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
 
   return (
     <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
-      <Header agent={agent} />
+      <Header agent={agent} charter={charter ?? null} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 space-y-4">
@@ -99,15 +105,11 @@ export function AgentDashboard({ agentId }: Props) {
             onAuthoringFailed={setAuthoringFailure}
           />
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <WorkQueue
-              workItems={workItems ?? []}
-              registeredSkillCount={(registeredSkills ?? []).length}
-              charterApproved={!!charter?.approved}
-            />
-
-            <MockEnvironment agentId={agentId} />
-          </div>
+          <WorkQueue
+            workItems={workItems ?? []}
+            registeredSkillCount={(registeredSkills ?? []).length}
+            charterApproved={!!charter?.approved}
+          />
         </div>
 
         <div className="space-y-4">
@@ -120,11 +122,23 @@ export function AgentDashboard({ agentId }: Props) {
           <EventTicker events={events ?? []} />
         </div>
       </div>
+
+      {/* Full width, and not half of two thirds of the page. Five work
+          surfaces, a channel list and a conversation do not fit in 400px, and
+          this panel is the whole of what the agent's work is done against. */}
+      <MockEnvironment agentId={agentId} />
     </main>
   );
 }
 
-function Header({ agent }: { agent: Doc<'agents'> }) {
+function Header({
+  agent,
+  charter,
+}: {
+  agent: Doc<'agents'>;
+  /** What the page is showing, which outranks the row when the two disagree. */
+  charter: Doc<'charters'> | null;
+}) {
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
     'day-one-in-progress': {
@@ -137,7 +151,14 @@ function Header({ agent }: { agent: Doc<'agents'> }) {
     },
     active: { text: 'Active · cold-start posture', tone: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]' },
   };
-  const s = stateLabel[agent.state];
+  // A charter on the page is the more recent fact: a pill reading "Day-1 1:1
+  // in progress" above a drafted charter is wrong however the row got there.
+  const displayState: Doc<'agents'>['state'] = charter
+    ? charter.approved
+      ? 'active'
+      : 'charter-pending'
+    : agent.state;
+  const s = stateLabel[displayState];
   return (
     <header className="mb-6">
       <div className="flex items-center justify-between">
@@ -683,10 +704,15 @@ function WorkItemCard({
       }
     | undefined;
   const output = item.output as
-    | { draft: string; notes: string; applied?: Array<{ tool: string; ok: boolean; reason?: string }> }
+    | {
+        draft: string;
+        notes: string;
+        applied?: Array<{ tool: string; ok: boolean; effect?: string; reason?: string }>;
+      }
     | undefined;
   const appliedActions = output?.applied ?? [];
   const failedActions = appliedActions.filter((a) => !a.ok);
+  const landedActions = appliedActions.filter((a) => a.ok);
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -747,10 +773,32 @@ function WorkItemCard({
         </div>
       ) : null}
 
+      {/* The record of the run, ahead of the prose that describes it. The draft
+          is written before a single action is applied, so it is the agent's
+          account of the work; this list is what the work environment actually
+          received. A reader who only ever sees the draft cannot tell the two
+          apart, which is the whole of the failure this panel answers. */}
+      {landedActions.length > 0 ? (
+        <div className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs">
+          <p className="text-[var(--color-ok)] font-medium mb-1">
+            {landedActions.length} {landedActions.length === 1 ? 'change' : 'changes'} reached the
+            work environment
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-fg)]">
+            {landedActions.map((a, i) => (
+              <li key={i}>
+                <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
+                {a.effect ?? '(applied)'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {output ? (
         <details className="mt-2 text-xs">
           <summary className="cursor-pointer text-[var(--color-accent)]">
-            Draft output ({output.draft.length} chars)
+            Draft the agent wrote ({output.draft.length} chars)
           </summary>
           <pre className="mt-2 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap text-[var(--color-fg)]">
             {output.draft}
@@ -758,6 +806,10 @@ function WorkItemCard({
           {output.notes ? (
             <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
           ) : null}
+          <p className="mt-1 text-[10px] text-[var(--color-muted)]">
+            The agent&apos;s own words, written before anything was applied. Only the changes listed
+            above reached the work environment.
+          </p>
         </details>
       ) : null}
 
@@ -809,12 +861,17 @@ function WorkItemCard({
 }
 
 function EventTicker({ events }: { events: Doc<'events'>[] }) {
+  const now = useNow();
   return (
     <Card title="Live event feed">
       <ul className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto">
         {events.map((e) => (
           <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
-            <span>{new Date(e.createdAt).toISOString().slice(11, 19)}</span>
+            {/* Was a UTC clock beside the Slack panel's local one — the same
+                event stamped eight hours apart on one page. */}
+            <span className="shrink-0 tabular-nums" title={clockTimeWithSeconds(e.createdAt)}>
+              {relativeTime(e.createdAt, now)}
+            </span>
             <span className="text-[var(--color-accent)]">{e.type}</span>
           </li>
         ))}
