@@ -2,7 +2,11 @@ import OpenAI from 'openai';
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
 import { env } from '../env';
 import { log } from './logger';
-import { createFallbackMemo, isStructuredOutputRefusal } from './structured-fallback';
+import {
+  classifyStructuredFailure,
+  createFallbackMemo,
+  StructuredContractError,
+} from './structured-fallback';
 
 /**
  * Provider-agnostic model client. Every raw-SDK call and every AI-SDK
@@ -98,7 +102,7 @@ function jsonModeKey(model: string): string {
 
 /** The rung the next `auto` call will start on for this model. */
 export function jsonModeFor(model: string = MODEL): JsonMode {
-  return jsonModeMemo.isDemoted(jsonModeKey(model)) ? 'prompt' : 'native';
+  return jsonModeMemo.rungFor(jsonModeKey(model));
 }
 
 /** Test seam, and what the endpoint probe calls between rungs. */
@@ -191,11 +195,12 @@ export interface JsonCompleteResult<TParsed> {
  *
  * `OPENAI_JSON_MODE` pins a strategy (`native` / `prompt`) for testing
  * or for a server whose behaviour is already known. The default `auto`
- * tries native, and demotes to prompt when the server either declines
- * `response_format` or accepts it and ignores it (unparseable reply).
- * Any other failure is rethrown: prompt injection recovers from a rate
- * limit or a bad key no better than native did, and a second doomed
- * round-trip would only hide the real cause.
+ * tries native; when that fails for a reason `response_format` could
+ * explain, the prompt attempt doubles as the experiment that settles it,
+ * and only its success demotes the endpoint. A failure the parameter
+ * cannot explain — a rate limit, a bad key, an overlong context, a sick
+ * server — is rethrown untried: prompt injection recovers from none of
+ * them and a second doomed round-trip would only hide the real cause.
  *
  * The demotion is memoised per endpoint-and-model and expires, so one
  * wasted round-trip pays for a run of calls rather than one per call,
@@ -217,43 +222,65 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
   }
   const model = args.model ?? MODEL;
   const key = jsonModeKey(model);
-  if (jsonModeMemo.isDemoted(key)) {
+  const endpoint = env.OPENAI_BASE_URL ?? 'api.openai.com';
+  if (jsonModeMemo.begin(key) === 'prompt') {
     return { value: await runJsonCompletion('prompt', args), mode: 'prompt', fellBack: false };
   }
+  let native: TParsed;
   try {
-    return { value: await runJsonCompletion('native', args), mode: 'native', fellBack: false };
+    native = await runJsonCompletion('native', args);
   } catch (err) {
-    if (!isJsonModeFallbackWorthy(err)) {
+    const failure = classifyStructuredFailure(err);
+    if (failure.verdict === 'unrelated') {
+      jsonModeMemo.inconclusive(key);
       log.warn('json-mode: native response_format failed for a reason prompt mode cannot fix', {
-        baseUrl: env.OPENAI_BASE_URL ?? 'api.openai.com',
+        baseUrl: endpoint,
         model,
+        evidence: failure.evidence,
         cause: (err as Error).message,
         hint: 'set OPENAI_JSON_MODE=prompt to pin the fallback if this server never honours it',
       });
       throw err;
     }
-    jsonModeMemo.demote(key);
-    log.warn('json-mode fallback: server did not honour response_format, switching to prompt mode', {
-      baseUrl: env.OPENAI_BASE_URL ?? 'api.openai.com',
-      model,
-      cause: (err as Error).message,
-      retriesNativeInMs: jsonModeMemo.retriesNativeIn(key),
-    });
-    return { value: await runJsonCompletion('prompt', args), mode: 'prompt', fellBack: true };
+    let value: TParsed;
+    try {
+      value = await runJsonCompletion('prompt', args);
+    } catch (withoutParameter) {
+      // Dropping the parameter changed nothing, so the parameter was not the
+      // problem. The original failure is the one worth reporting; the second
+      // is a symptom of the same cause.
+      jsonModeMemo.inconclusive(key);
+      log.warn(
+        'json-mode: dropping response_format did not help, so the failure was not about it',
+        {
+          baseUrl: endpoint,
+          model,
+          evidence: failure.evidence,
+          cause: (err as Error).message,
+          promptModeCause: (withoutParameter as Error).message,
+        },
+      );
+      throw err;
+    }
+    jsonModeMemo.refused(key);
+    log.warn(
+      'json-mode fallback: server did not honour response_format, switching to prompt mode',
+      {
+        baseUrl: endpoint,
+        model,
+        evidence: failure.evidence,
+        cause: (err as Error).message,
+        retriesNativeInMs: jsonModeMemo.retriesNativeIn(key),
+      },
+    );
+    return { value, mode: 'prompt', fellBack: true };
   }
-}
-
-/**
- * A native-mode failure the prompt ladder can plausibly recover from: the
- * server declined the parameter, or it took the parameter and ignored it,
- * which lands here as an unparseable reply rather than an error.
- */
-function isJsonModeFallbackWorthy(err: unknown): boolean {
-  return isStructuredOutputRefusal(err) || err instanceof JsonParseError;
+  jsonModeMemo.worked(key);
+  return { value: native, mode: 'native', fellBack: false };
 }
 
 /** Raised when a reply carried no parseable JSON, whatever the mode. */
-export class JsonParseError extends Error {
+export class JsonParseError extends StructuredContractError {
   constructor(
     readonly mode: JsonMode,
     readonly raw: string,
@@ -273,7 +300,10 @@ async function runJsonCompletion<TParsed>(
     max_completion_tokens: args.maxTokens ?? 4000,
     ...(mode === 'native' ? { response_format: { type: 'json_object' as const } } : {}),
     messages: [
-      { role: 'system', content: mode === 'native' ? args.system : args.system + JSON_ONLY_INSTRUCTION },
+      {
+        role: 'system',
+        content: mode === 'native' ? args.system : args.system + JSON_ONLY_INSTRUCTION,
+      },
       { role: 'user', content: args.user },
     ],
   });
