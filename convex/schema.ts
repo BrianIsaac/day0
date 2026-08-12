@@ -58,9 +58,17 @@ export default defineSchema({
     answers: v.any(),
     transcriptText: v.optional(v.string()),
     elevenLabsConversationId: v.optional(v.string()),
+    /** Per-session capability minted by `voice.start`. It rides out to
+     * ElevenLabs as a dynamic variable and comes back on the post-call
+     * webhook, which is how that unauthenticated route proves which session
+     * a transcript belongs to. Optional only for rows written before it
+     * existed; those can no longer be completed by webhook. */
+    webhookToken: v.optional(v.string()),
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
-  }).index('by_agent', ['agentId']),
+  })
+    .index('by_agent', ['agentId'])
+    .index('by_webhook_token', ['webhookToken']),
 
   workItems: defineTable({
     agentId: v.id('agents'),

@@ -55,7 +55,11 @@ function VoiceRoomInner({
 }) {
   const startSession = useMutation(api.voice.start);
   const attachConversationId = useMutation(api.voice.attachConversationId);
-  const [voiceSessionId, setVoiceSessionId] = useState<Id<'voiceSessions'> | null>(null);
+  const [session, setSession] = useState<{
+    id: Id<'voiceSessions'>;
+    webhookToken: string;
+  } | null>(null);
+  const voiceSessionId = session?.id ?? null;
   const [start, setStart] = useState<StartResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<InboundMessage[]>([]);
@@ -73,7 +77,8 @@ function VoiceRoomInner({
           sessionId: voiceSessionId,
           elevenLabsConversationId: conversationId,
         }).catch(() => {
-          // Non-fatal — webhook can fall back to latest-active lookup.
+          // Non-fatal — the post-call webhook records the conversation id
+          // itself when this never lands.
         });
       }
     },
@@ -132,15 +137,22 @@ function VoiceRoomInner({
 
   async function onStart() {
     if (!start || !start.configured || !start.agentId) return;
-    if (!voiceSessionId) {
-      const id = await startSession({ agentId, mode: 'elevenlabs' });
-      setVoiceSessionId(id);
+    let current = session;
+    if (!current) {
+      const started = await startSession({ agentId, mode: 'elevenlabs' });
+      current = { id: started.sessionId, webhookToken: started.webhookToken };
+      setSession(current);
     }
+    // `internal_session_token` round-trips through ElevenLabs and comes back on
+    // the post-call webhook, which is how that route proves the transcript
+    // belongs to this session. Read from `current`, not state: the connection
+    // can be up before React has committed the setState above.
     conversation.startSession({
       ...(start.signedUrl ? { signedUrl: start.signedUrl } : { agentId: start.agentId }),
       dynamicVariables: {
         boss_label: bossLabel,
         internal_agent_id: agentId,
+        internal_session_token: current.webhookToken,
       },
     });
   }

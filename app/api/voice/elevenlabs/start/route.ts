@@ -17,6 +17,11 @@ import { env } from '@/env';
  * deployment shape, not a fault. `?probe=1` answers that question
  * alone, so the mode picker can grey out voice without minting a
  * signed URL it will never use.
+ *
+ * The post-call webhook needs a third variable, ELEVENLABS_WEBHOOK_SECRET,
+ * and refuses every delivery without it. Voice itself still runs: the
+ * browser posts the transcript on disconnect, so the webhook only matters
+ * when the tab dies mid-call.
  */
 const UNCONFIGURED_REASON =
   'Voice mode needs ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID. Chat mode runs the same Day-1 1:1 without them.';
