@@ -3,7 +3,11 @@ import type { MastraModelConfig } from '@mastra/core/llm';
 import { env } from '../env';
 import { languageModel, MODEL } from './openai';
 import { log } from './logger';
-import { createFallbackMemo, isStructuredOutputRefusal } from './structured-fallback';
+import {
+  classifyStructuredFailure,
+  createFallbackMemo,
+  StructuredContractError,
+} from './structured-fallback';
 
 /**
  * Mastra-fronted agent helpers.
@@ -58,7 +62,10 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
       lastErr = err;
       if (!isTransientApiError(err) || attempt === MAX_ATTEMPTS - 1) throw err;
       const delay = Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
-      console.warn(`[mastra] ${label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`, err);
+      console.warn(
+        `[mastra] ${label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`,
+        err,
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -89,12 +96,13 @@ export function makeAgent(name: string, instructions: string): Agent {
 export type StructuredMode = 'native' | 'prompt';
 
 /**
- * Raised when the server accepted the request and returned no object. That is
- * how "took `response_format` and ignored it" arrives - as a well-formed reply
- * with nothing in it rather than as an error - so it is the one non-error
- * signal the ladder acts on.
+ * Raised when the server accepted the request and returned no object. Mastra
+ * more often raises its own inside `agent.generate()` first - a schema
+ * validation failure against the prose-prefixed text a server returns when it
+ * takes `response_format` and ignores it - which is why the classifier decides
+ * on the shape of the failure rather than on this type alone.
  */
-export class StructuredOutputMissingError extends Error {
+export class StructuredOutputMissingError extends StructuredContractError {
   constructor(
     readonly agentName: string,
     readonly mode: StructuredMode,
@@ -120,7 +128,7 @@ function structuredModeKey(agentName: string): string {
 
 /** The rung the next `auto` call will start on for this agent. */
 export function structuredModeFor(agentName: string): StructuredMode {
-  return structuredModeMemo.isDemoted(structuredModeKey(agentName)) ? 'prompt' : 'native';
+  return structuredModeMemo.rungFor(structuredModeKey(agentName));
 }
 
 /** Test seam, and what the endpoint probe calls between rungs. */
@@ -128,11 +136,10 @@ export function resetStructuredModeMemo(): void {
   structuredModeMemo.reset();
 }
 
-function initialStructuredMode(agentName: string, override?: StructuredMode): StructuredMode {
+/** The strategy this call is pinned to, or undefined when the ladder is free to move. */
+function pinnedStructuredMode(override?: StructuredMode): StructuredMode | undefined {
   if (override) return override;
-  if (env.OPENAI_JSON_MODE === 'prompt') return 'prompt';
-  if (env.OPENAI_JSON_MODE === 'native') return 'native';
-  return structuredModeFor(agentName);
+  return env.OPENAI_JSON_MODE === 'auto' ? undefined : env.OPENAI_JSON_MODE;
 }
 
 export interface AgentJsonArgs {
@@ -152,45 +159,85 @@ export interface AgentJsonResult<T> {
 }
 
 /**
- * The Mastra twin of `jsonCompleteWithMode`. `auto` starts native and drops to
- * prompt injection only when the server declined the parameter or returned no
- * object; every other failure is rethrown, because prompt injection recovers
- * from a rate limit, a bad key or a 5xx no better than native did and would
- * only bury the real cause under a second failure.
+ * The Mastra twin of `jsonCompleteWithMode`, and the same experiment: when a
+ * native attempt fails for a reason `response_format` could explain, the prompt
+ * attempt is what settles whether it did, and only its success demotes the
+ * agent. A failure the parameter cannot explain - a rate limit, a bad key, a
+ * 5xx - is rethrown untried, because prompt injection recovers from none of
+ * them and would only bury the real cause under a second failure.
  */
 export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJsonResult<T>> {
   const label = `agentJson(${args.agent.name})`;
-  const mode = initialStructuredMode(args.agent.name, args.mode);
+  const pinned = pinnedStructuredMode(args.mode);
+  if (pinned) {
+    return {
+      value: await withRetry(label, () => generateObject<T>(args, pinned)),
+      mode: pinned,
+      fellBack: false,
+    };
+  }
+
+  const key = structuredModeKey(args.agent.name);
+  const endpoint = env.OPENAI_BASE_URL ?? 'api.openai.com';
+  if (structuredModeMemo.begin(key) === 'prompt') {
+    return {
+      value: await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt')),
+      mode: 'prompt',
+      fellBack: false,
+    };
+  }
+
+  let native: T;
   try {
-    return { value: await withRetry(label, () => generateObject<T>(args, mode)), mode, fellBack: false };
+    native = await withRetry(label, () => generateObject<T>(args, 'native'));
   } catch (err) {
-    // Only unpinned `auto` may change strategy; anything else fails loudly.
-    if (mode === 'prompt' || args.mode || env.OPENAI_JSON_MODE !== 'auto') throw err;
-    if (!isStructuredOutputRefusal(err) && !(err instanceof StructuredOutputMissingError)) {
+    const failure = classifyStructuredFailure(err);
+    if (failure.verdict === 'unrelated') {
+      structuredModeMemo.inconclusive(key);
       log.warn('structured-output: native failed for a reason prompt injection cannot fix', {
         agent: args.agent.name,
-        baseUrl: env.OPENAI_BASE_URL ?? 'api.openai.com',
+        baseUrl: endpoint,
         model: MODEL,
+        evidence: failure.evidence,
         cause: (err as Error).message,
         hint: 'set OPENAI_JSON_MODE=prompt to pin the fallback if this server never honours it',
       });
       throw err;
     }
-    const key = structuredModeKey(args.agent.name);
-    structuredModeMemo.demote(key);
-    log.warn('structured-output fallback: native response_format failed, retrying with prompt injection', {
-      agent: args.agent.name,
-      baseUrl: env.OPENAI_BASE_URL ?? 'api.openai.com',
-      model: MODEL,
-      cause: (err as Error).message,
-      retriesNativeInMs: structuredModeMemo.retriesNativeIn(key),
-    });
-    return {
-      value: await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt')),
-      mode: 'prompt',
-      fellBack: true,
-    };
+    let value: T;
+    try {
+      value = await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt'));
+    } catch (withoutParameter) {
+      structuredModeMemo.inconclusive(key);
+      log.warn(
+        'structured-output: prompt injection failed the same way, so response_format was not the cause',
+        {
+          agent: args.agent.name,
+          baseUrl: endpoint,
+          model: MODEL,
+          evidence: failure.evidence,
+          cause: (err as Error).message,
+          promptModeCause: (withoutParameter as Error).message,
+        },
+      );
+      throw err;
+    }
+    structuredModeMemo.refused(key);
+    log.warn(
+      'structured-output fallback: native response_format failed, prompt injection produced the object',
+      {
+        agent: args.agent.name,
+        baseUrl: endpoint,
+        model: MODEL,
+        evidence: failure.evidence,
+        cause: (err as Error).message,
+        retriesNativeInMs: structuredModeMemo.retriesNativeIn(key),
+      },
+    );
+    return { value, mode: 'prompt', fellBack: true };
   }
+  structuredModeMemo.worked(key);
+  return { value: native, mode: 'native', fellBack: false };
 }
 
 export async function agentJson<T>(args: AgentJsonArgs): Promise<T> {
