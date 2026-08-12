@@ -199,8 +199,11 @@ export interface JsonCompleteResult<TParsed> {
  * explain, the prompt attempt doubles as the experiment that settles it,
  * and only its success demotes the endpoint. A failure the parameter
  * cannot explain — a rate limit, a bad key, an overlong context, a sick
- * server — is rethrown untried: prompt injection recovers from none of
- * them and a second doomed round-trip would only hide the real cause.
+ * server, anything statusless that nothing ties to the endpoint — is
+ * rethrown untried: prompt injection recovers from none of them and a
+ * second doomed round-trip would only hide the real cause. Where the
+ * parameter is implicated but the failure could also have passed on a
+ * retry, the object is fetched and nothing is demoted.
  *
  * The demotion is memoised per endpoint-and-model and expires, so one
  * wasted round-trip pays for a run of calls rather than one per call,
@@ -261,6 +264,23 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
         },
       );
       throw err;
+    }
+    if (!failure.provesRefusal) {
+      // The object arrived, which is what the caller needed, but the native
+      // failure was consistent with a passing condition and the two calls are
+      // separated in time. Demoting on that would put every later call on the
+      // degraded rung on the strength of a coincidence.
+      jsonModeMemo.inconclusive(key);
+      log.warn(
+        'json-mode: prompt mode produced the object, but the native failure does not prove response_format was the cause; not demoting',
+        {
+          baseUrl: endpoint,
+          model,
+          evidence: failure.evidence,
+          cause: (err as Error).message,
+        },
+      );
+      return { value, mode: 'prompt', fellBack: true };
     }
     jsonModeMemo.refused(key);
     log.warn(

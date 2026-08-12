@@ -25,7 +25,12 @@ import {
   resetJsonModeMemo,
   textComplete,
 } from '../src/lib/openai';
-import { agentJsonWithMode, makeAgent, resetStructuredModeMemo } from '../src/lib/mastra';
+import {
+  agentJsonWithMode,
+  makeAgent,
+  resetStructuredModeMemo,
+  structuredModeFor,
+} from '../src/lib/mastra';
 
 interface Check {
   name: string;
@@ -179,6 +184,9 @@ async function main(): Promise<void> {
   // 7. What the app will actually do here. `auto` starts native and only
   //    settles on prompt when dropping `response_format` is what fixed it,
   //    so this is the one step that reports the rung a demo will run on.
+  //    A fallback that could not be attributed to the parameter is reported
+  //    as exactly that: the object arrived, and nothing was concluded, so the
+  //    next call pays for the same native attempt again.
   resetJsonModeMemo();
   resetStructuredModeMemo();
   try {
@@ -189,10 +197,16 @@ async function main(): Promise<void> {
         schema,
       }),
     );
+    const held = structuredModeFor(agent.name) === 'prompt';
+    const how = !value.fellBack
+      ? ''
+      : held
+        ? ' after native was refused'
+        : ' after an unexplained native failure, so nothing was demoted';
     record(
       'mastra · auto',
       value.value.steps.length > 0,
-      `${ms.toFixed(0)}ms · settled on ${value.mode}${value.fellBack ? ' after native was refused' : ''}`,
+      `${ms.toFixed(0)}ms · settled on ${value.mode}${how}`,
     );
   } catch (err) {
     record('mastra · auto', false, `${(err as Error).message} — neither rung produced an object`);
