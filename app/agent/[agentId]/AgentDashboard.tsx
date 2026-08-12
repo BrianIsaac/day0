@@ -591,7 +591,10 @@ function WorkItemCard({
         expectedOutputType: string;
       }
     | undefined;
-  const output = item.output as { draft: string; notes: string } | undefined;
+  const output = item.output as
+    | { draft: string; notes: string; applied?: Array<{ tool: string; ok: boolean; reason?: string }> }
+    | undefined;
+  const failedActions = (output?.applied ?? []).filter((a) => !a.ok);
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -662,6 +665,15 @@ function WorkItemCard({
           </pre>
           {output.notes ? (
             <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
+          ) : null}
+          {failedActions.length > 0 ? (
+            <ul className="mt-1 space-y-0.5 text-[var(--color-danger)]">
+              {failedActions.map((a, i) => (
+                <li key={i}>
+                  {a.tool} not applied: {a.reason ?? 'unknown reason'}
+                </li>
+              ))}
+            </ul>
           ) : null}
         </details>
       ) : null}

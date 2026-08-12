@@ -274,6 +274,23 @@ export const executeApprovedPlan = action({
         mockEnv,
       });
       const applied = await applyMockActions(ctx, args.agentId, output.actions ?? []);
+      // Completing an item that changed nothing in the mock environment would
+      // report work that did not happen. A run that applied at least one action
+      // is still a completion - the per-action results ride along in `output`
+      // so a partial failure is visible rather than silently swallowed.
+      const failures = applied.filter((a) => !a.ok);
+      if (applied.length === 0 || failures.length === applied.length) {
+        const reason =
+          applied.length === 0
+            ? 'skill emitted no actions, so nothing in the work environment changed'
+            : `every action failed: ${failures.map((f) => `${f.tool} (${f.reason})`).join('; ')}`;
+        await ctx.runMutation(internal.work.setFailed, {
+          workItemId: args.workItemId,
+          reason,
+          output: { ...output, applied },
+        });
+        return { ok: false, reason };
+      }
       await ctx.runMutation(internal.work.setCompleted, {
         workItemId: args.workItemId,
         output: { ...output, applied },

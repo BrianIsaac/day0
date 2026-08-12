@@ -212,11 +212,21 @@ export const setCompleted = internalMutation({
 });
 
 export const setFailed = internalMutation({
-  args: { workItemId: v.id('workItems'), reason: v.string() },
+  args: {
+    workItemId: v.id('workItems'),
+    reason: v.string(),
+    // Kept when the skill produced a draft the run then failed to apply, so
+    // the boss can read what was written before deciding whether to retry.
+    output: v.optional(v.any()),
+  },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
-    await ctx.db.patch(args.workItemId, { state: 'failed', skipReason: args.reason });
+    await ctx.db.patch(args.workItemId, {
+      state: 'failed',
+      skipReason: args.reason,
+      ...(args.output !== undefined ? { output: args.output } : {}),
+    });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.failed',
