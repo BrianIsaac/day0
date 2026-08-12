@@ -15,6 +15,18 @@ import { assertOwnsAgent } from './ownership';
  * via these queries so edits surface live.
  */
 
+/**
+ * What a write did to the mock environment. `changed: false` is the honest
+ * answer when the action named a surface that does not exist, or asked for a
+ * patch with nothing in it: the mutation resolved, and the work environment is
+ * exactly as it was. The executor completes a work item on `changed`, never on
+ * "the promise did not reject".
+ */
+export interface MockWriteResult {
+  changed: boolean;
+  reason?: string;
+}
+
 // ---------- Docs ----------
 
 export const listDocs = query({
@@ -136,8 +148,25 @@ export const appendSpreadsheetRow = internalMutation({
     cells: v.any(),
     addedBy: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const id = await ctx.db.insert('mockSpreadsheetRows', {
+  handler: async (ctx, args): Promise<MockWriteResult> => {
+    const sheet = await ctx.db
+      .query('mockSpreadsheets')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.sheetSlug))
+      .unique();
+    if (!sheet) {
+      return { changed: false, reason: `no spreadsheet with slug "${args.sheetSlug}"` };
+    }
+    if (!sheet.tabs.some((t) => t.name === args.tabName)) {
+      return {
+        changed: false,
+        reason: `spreadsheet "${args.sheetSlug}" has no tab "${args.tabName}"`,
+      };
+    }
+    const cells = (args.cells ?? {}) as Record<string, string>;
+    if (Object.keys(cells).length === 0) {
+      return { changed: false, reason: 'row had no cells, so the tab is unchanged' };
+    }
+    await ctx.db.insert('mockSpreadsheetRows', {
       agentId: args.agentId,
       sheetSlug: args.sheetSlug,
       tabName: args.tabName,
@@ -145,7 +174,7 @@ export const appendSpreadsheetRow = internalMutation({
       addedBy: args.addedBy ?? 'agent',
       addedAt: Date.now(),
     });
-    return id;
+    return { changed: true };
   },
 });
 
@@ -214,8 +243,17 @@ export const postSlackMessage = internalMutation({
     ),
     body: v.string(),
   },
-  handler: async (ctx, args) => {
-    return await ctx.db.insert('mockSlackMessages', {
+  handler: async (ctx, args): Promise<MockWriteResult> => {
+    const channel = await ctx.db
+      .query('mockSlackChannels')
+      .withIndex('by_agent_slug', (q) =>
+        q.eq('agentId', args.agentId).eq('slug', args.channelSlug),
+      )
+      .unique();
+    if (!channel) {
+      return { changed: false, reason: `no Slack channel with slug "${args.channelSlug}"` };
+    }
+    await ctx.db.insert('mockSlackMessages', {
       agentId: args.agentId,
       channelSlug: args.channelSlug,
       threadKey: args.threadKey,
@@ -224,6 +262,7 @@ export const postSlackMessage = internalMutation({
       body: args.body,
       timestamp: Date.now(),
     });
+    return { changed: true };
   },
 });
 
@@ -287,8 +326,15 @@ export const postTweetReply = internalMutation({
     body: v.string(),
     isAgentDraft: v.boolean(),
   },
-  handler: async (ctx, args) => {
-    return await ctx.db.insert('mockTweetReplies', {
+  handler: async (ctx, args): Promise<MockWriteResult> => {
+    const tweet = await ctx.db
+      .query('mockTweets')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.tweetSlug))
+      .unique();
+    if (!tweet) {
+      return { changed: false, reason: `no tweet with slug "${args.tweetSlug}"` };
+    }
+    await ctx.db.insert('mockTweetReplies', {
       agentId: args.agentId,
       tweetSlug: args.tweetSlug,
       author: args.author,
@@ -297,6 +343,7 @@ export const postTweetReply = internalMutation({
       isAgentDraft: args.isAgentDraft,
       createdAt: Date.now(),
     });
+    return { changed: true };
   },
 });
 
@@ -369,12 +416,17 @@ export const updateTicket = internalMutation({
     comment: v.optional(v.string()),
     commentAuthor: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<MockWriteResult> => {
     const ticket = await ctx.db
       .query('mockTickets')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.slug))
       .unique();
-    if (!ticket) return null;
+    if (!ticket) {
+      return { changed: false, reason: `no ticket with slug "${args.slug}"` };
+    }
+    if (!args.status && !args.comment) {
+      return { changed: false, reason: `ticket "${args.slug}" got neither a status nor a comment` };
+    }
     const patch: Record<string, unknown> = { updatedAt: Date.now() };
     if (args.status) patch.status = args.status;
     if (args.comment) {
@@ -388,6 +440,6 @@ export const updateTicket = internalMutation({
       ];
     }
     await ctx.db.patch(ticket._id, patch);
-    return ticket._id;
+    return { changed: true };
   },
 });

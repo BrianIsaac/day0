@@ -594,7 +594,8 @@ function WorkItemCard({
   const output = item.output as
     | { draft: string; notes: string; applied?: Array<{ tool: string; ok: boolean; reason?: string }> }
     | undefined;
-  const failedActions = (output?.applied ?? []).filter((a) => !a.ok);
+  const appliedActions = output?.applied ?? [];
+  const failedActions = appliedActions.filter((a) => !a.ok);
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -666,30 +667,49 @@ function WorkItemCard({
           {output.notes ? (
             <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
           ) : null}
-          {failedActions.length > 0 ? (
-            <ul className="mt-1 space-y-0.5 text-[var(--color-danger)]">
-              {failedActions.map((a, i) => (
-                <li key={i}>
-                  {a.tool} not applied: {a.reason ?? 'unknown reason'}
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </details>
       ) : null}
 
+      {/* Not inside the details element above: an action that never reached the
+          work environment is the headline of this card, not a footnote to the
+          draft it produced. */}
+      {failedActions.length > 0 ? (
+        <div className="mt-2 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs">
+          <p className="text-[var(--color-danger)] font-medium mb-1">
+            {failedActions.length} {failedActions.length === 1 ? 'action' : 'actions'} did not reach
+            the work environment
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-danger)]">
+            {failedActions.map((a, i) => (
+              <li key={i}>
+                {a.tool} — {a.reason ?? 'unknown reason'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {item.state === 'failed' ? (
-        <div className="flex gap-2 mt-2">
+        <div className="mt-2">
+          {/* The per-action box above already names every action that failed, so
+              the row-level reason only earns its space for the other failures:
+              no registered skill, a model error, a mid-run throw. */}
+          {failedActions.length === 0 && item.skipReason ? (
+            <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">{item.skipReason}</p>
+          ) : null}
           <button
             onClick={onRetryFailed}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30"
           >
             Retry
           </button>
-          {item.skipReason ? (
-            <span className="text-[10px] text-[var(--color-muted)] italic self-center">
-              {item.skipReason.slice(0, 80)}
-            </span>
+          {appliedActions.length > failedActions.length ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry re-runs the whole plan, so the{' '}
+              {appliedActions.length - failedActions.length} action
+              {appliedActions.length - failedActions.length === 1 ? '' : 's'} that already landed
+              will be applied again.
+            </p>
           ) : null}
         </div>
       ) : null}
