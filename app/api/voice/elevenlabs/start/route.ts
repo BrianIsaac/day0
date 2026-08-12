@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import { env } from '@/env';
 
 /**
  * Hand the browser the agent id so it can mount the ElevenLabs widget,
  * plus a one-time signed URL for private agents. Public agents return
  * the agent id directly and the widget connects with no signed URL.
+ *
+ * Every signed URL is minted against the owner's ElevenLabs quota, so
+ * the caller is established here and not left to the proxy matcher
+ * alone.
  *
  * On any non-OK response from ElevenLabs we surface the actual error to
  * the browser. Silent fallbacks made it impossible to tell whether the
@@ -27,6 +32,11 @@ const UNCONFIGURED_REASON =
   'Voice mode needs ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID. Chat mode runs the same Day-1 1:1 without them.';
 
 export async function GET(req: Request): Promise<NextResponse> {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: 'not authenticated' }, { status: 401 });
+  }
+
   const apiKey = env.ELEVENLABS_API_KEY;
   const voiceAgentId = env.ELEVENLABS_AGENT_ID;
   const configured = !!apiKey && !!voiceAgentId;

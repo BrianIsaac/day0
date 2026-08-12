@@ -1,3 +1,4 @@
+import { auth } from '@clerk/nextjs/server';
 import { convertToModelMessages, hasToolCall, streamText, tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import { languageModel } from '@/lib/openai';
@@ -27,7 +28,18 @@ const SYSTEM_PROMPT = [
   '  - Once topic 7 has a real answer, call the dayOneComplete tool with a friendly closing line and stop.',
 ].join('\n');
 
+/**
+ * Streams the Day-1 1:1 on the owner's OpenAI key, so the caller is
+ * established here and not left to the proxy matcher alone. The check
+ * runs before the body is read: an anonymous caller never gets as far
+ * as choosing a message history.
+ */
 export async function POST(req: Request): Promise<Response> {
+  const { userId } = await auth();
+  if (!userId) {
+    return Response.json({ error: 'not authenticated' }, { status: 401 });
+  }
+
   const body = (await req.json()) as ChatBody;
   if (!Array.isArray(body.messages)) {
     return Response.json({ error: 'messages array required' }, { status: 400 });
