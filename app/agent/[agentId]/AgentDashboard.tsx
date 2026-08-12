@@ -99,15 +99,11 @@ export function AgentDashboard({ agentId }: Props) {
             onAuthoringFailed={setAuthoringFailure}
           />
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <WorkQueue
-              workItems={workItems ?? []}
-              registeredSkillCount={(registeredSkills ?? []).length}
-              charterApproved={!!charter?.approved}
-            />
-
-            <MockEnvironment agentId={agentId} />
-          </div>
+          <WorkQueue
+            workItems={workItems ?? []}
+            registeredSkillCount={(registeredSkills ?? []).length}
+            charterApproved={!!charter?.approved}
+          />
         </div>
 
         <div className="space-y-4">
@@ -120,6 +116,11 @@ export function AgentDashboard({ agentId }: Props) {
           <EventTicker events={events ?? []} />
         </div>
       </div>
+
+      {/* Full width, and not half of two thirds of the page. Five work
+          surfaces, a channel list and a conversation do not fit in 400px, and
+          this panel is the whole of what the agent's work is done against. */}
+      <MockEnvironment agentId={agentId} />
     </main>
   );
 }
