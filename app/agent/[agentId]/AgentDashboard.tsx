@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -568,28 +568,46 @@ function WorkQueue({
     [workItems],
   );
 
+  // One in-flight call per (step, item). Strict Mode runs every effect twice
+  // on mount, and a subscription update re-runs them before the first call has
+  // moved the row, so without this the same item is handed to the same action
+  // several times over. The backend refuses the duplicates — `claimForExecution`
+  // is the authority — but a refusal is not a reason to keep asking.
+  const inFlight = useRef(new Set<string>());
+  const once = useCallback(
+    (step: string, id: string, call: () => Promise<unknown>) => {
+      const key = `${step}:${id}`;
+      if (inFlight.current.has(key)) return;
+      inFlight.current.add(key);
+      call()
+        .catch(() => {})
+        .finally(() => inFlight.current.delete(key));
+    },
+    [],
+  );
+
   // Auto-progression: once charter is approved, evaluate every discovered
   // item; once a verdict comes back, draft a plan if claim, etc.
   useEffect(() => {
     if (!charterApproved) return;
     for (const it of workItems) {
       if (it.state === 'discovered') {
-        evaluate({ workItemId: it._id }).catch(() => {});
+        once('evaluate', it._id, () => evaluate({ workItemId: it._id }));
         break;
       }
     }
-  }, [charterApproved, workItems, evaluate]);
+  }, [charterApproved, workItems, evaluate, once]);
 
   useEffect(() => {
     for (const it of workItems) {
       if (it.state === 'claimed' && !it.plan) {
-        draftPlan({ workItemId: it._id }).catch(() => {});
+        once('draft', it._id, () => draftPlan({ workItemId: it._id }));
       }
       if (it.state === 'plan-approved') {
-        executePlan({ workItemId: it._id }).catch(() => {});
+        once('execute', it._id, () => executePlan({ workItemId: it._id }));
       }
     }
-  }, [workItems, draftPlan, executePlan]);
+  }, [workItems, draftPlan, executePlan, once]);
 
   return (
     <Card

@@ -20,6 +20,7 @@ import type {
 import type { Doc, Id } from './_generated/dataModel';
 import type { MockWriteResult } from './mock';
 import { asAgentId } from '../src/lib/ids';
+import { actionIdempotencyKey } from '../src/work/idempotency';
 
 /**
  * Node actions for the work loop — Layer-2 evaluation, Layer-3 plan
@@ -226,8 +227,9 @@ export const executeApprovedPlan = action({
     });
     if (!item) return { ok: false, reason: 'workItem not found' };
     const agentId = item.agentId;
-    // Same race tolerance as draftPlan — if the auto-progress effect fires
-    // after state moved past plan-approved, no-op instead of throwing.
+    // Cheap early-out for the common case; `claimForExecution` below is what
+    // actually decides, because only a mutation can read and move the state
+    // without another caller slipping between the two.
     if (item.state !== 'plan-approved') {
       return { ok: false, reason: `state is ${item.state}; expected plan-approved` };
     }
@@ -270,10 +272,13 @@ export const executeApprovedPlan = action({
       });
       return { ok: false, reason: 'no registered skill available' };
     }
-    await ctx.runMutation(internal.work.setExecutingWithSkill, {
+    // Nothing above this line touches a model or an adapter, so a caller that
+    // loses the claim costs a handful of reads and stops here.
+    const claim = await ctx.runMutation(internal.work.claimForExecution, {
       workItemId: args.workItemId,
       skillId: pickedSkill._id,
     });
+    if (!claim.claimed) return { ok: false, reason: claim.reason };
     try {
       const mockEnv = await loadMockEnvSnapshot(ctx, agentId);
       const output = await runSkill({
@@ -283,7 +288,12 @@ export const executeApprovedPlan = action({
         charter,
         mockEnv,
       });
-      const applied = await applyMockActions(ctx, agentId, output.actions ?? []);
+      const applied = await applyMockActions(ctx, {
+        agentId,
+        workItemId: args.workItemId,
+        runId: claim.runId,
+        actions: output.actions ?? [],
+      });
       // A run completes only when every action it emitted changed the work
       // environment. "At least one applied" is not enough: the skills are told
       // to DM the manager alongside the primary mutation, so a failed primary
@@ -390,27 +400,52 @@ async function loadMockEnvSnapshot(
   };
 }
 
+interface AppliedAction {
+  tool: string;
+  ok: boolean;
+  reason?: string;
+  /** What a real connector would send as its idempotency key for this action. */
+  idempotencyKey: string;
+}
+
 /**
  * Interpret the executor's actions against the mock environment. An action
  * counts as applied only when its adapter reports that the environment
  * changed — a write against a slug the environment does not have resolves
  * without touching anything, and reporting that as applied work is how a work
  * item completes with nothing behind it.
+ *
+ * Every action carries the key its adapter would deduplicate on. The mock
+ * adapters share this transaction's database and cannot half-apply, so they
+ * only record it; a connector that leaves the deployment must pass it to the
+ * provider, because an interruption between an external effect and the local
+ * completion record is otherwise indistinguishable from an effect that never
+ * happened.
  */
 async function applyMockActions(
   ctx: ActionCtx,
-  agentId: Id<'agents'>,
-  actions: MockAction[],
-): Promise<Array<{ tool: string; ok: boolean; reason?: string }>> {
-  const applied: Array<{ tool: string; ok: boolean; reason?: string }> = [];
-  for (const action of actions) {
+  run: {
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    runId: Id<'events'>;
+    actions: MockAction[];
+  },
+): Promise<AppliedAction[]> {
+  const { agentId, actions } = run;
+  const applied: AppliedAction[] = [];
+  for (const [index, action] of actions.entries()) {
+    const idempotencyKey = actionIdempotencyKey({
+      workItemId: run.workItemId,
+      runId: run.runId,
+      actionIndex: index,
+    });
     const args = action.args ?? {};
     try {
       let result: MockWriteResult;
       switch (action.tool) {
         case 'spreadsheet.appendRow': {
           if (!args.sheetSlug || !args.tabName || !args.cells) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing sheetSlug/tabName/cells' });
+            applied.push({ tool: action.tool, ok: false, reason: 'missing sheetSlug/tabName/cells', idempotencyKey });
             continue;
           }
           const cellsObj: Record<string, string> = {};
@@ -426,7 +461,7 @@ async function applyMockActions(
         }
         case 'slack.postMessage': {
           if (!args.channelSlug || !args.body) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing channelSlug/body' });
+            applied.push({ tool: action.tool, ok: false, reason: 'missing channelSlug/body', idempotencyKey });
             continue;
           }
           result = await ctx.runMutation(internal.mock.postSlackMessage, {
@@ -454,7 +489,7 @@ async function applyMockActions(
         }
         case 'twitter.reply': {
           if (!args.tweetSlug || !args.body) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing tweetSlug/body' });
+            applied.push({ tool: action.tool, ok: false, reason: 'missing tweetSlug/body', idempotencyKey });
             continue;
           }
           result = await ctx.runMutation(internal.mock.postTweetReply, {
@@ -469,7 +504,7 @@ async function applyMockActions(
         }
         case 'ticket.update': {
           if (!args.slug) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing slug' });
+            applied.push({ tool: action.tool, ok: false, reason: 'missing slug', idempotencyKey });
             continue;
           }
           result = await ctx.runMutation(internal.mock.updateTicket, {
@@ -482,20 +517,31 @@ async function applyMockActions(
           break;
         }
         default:
-          applied.push({ tool: (action as { tool: string }).tool, ok: false, reason: 'unknown tool' });
+          applied.push({
+            tool: (action as { tool: string }).tool,
+            ok: false,
+            reason: 'unknown tool',
+            idempotencyKey,
+          });
           continue;
       }
       applied.push(
         result.changed
-          ? { tool: action.tool, ok: true }
+          ? { tool: action.tool, ok: true, idempotencyKey }
           : {
               tool: action.tool,
               ok: false,
               reason: result.reason ?? 'the work environment did not change',
+              idempotencyKey,
             },
       );
     } catch (err) {
-      applied.push({ tool: action.tool, ok: false, reason: (err as Error).message });
+      applied.push({
+        tool: action.tool,
+        ok: false,
+        reason: (err as Error).message,
+        idempotencyKey,
+      });
     }
   }
   return applied;

@@ -210,11 +210,48 @@ export const cancelPlan = mutation({
   },
 });
 
-export const setExecutingWithSkill = internalMutation({
+/**
+ * Take exclusive ownership of an approved work item, or report that somebody
+ * else already has it.
+ *
+ * This is the whole of the concurrency control for execution. A mutation is a
+ * transaction, so the state check and the move to `executing` cannot be split
+ * by a second caller; an action that reads `plan-approved` and writes
+ * `executing` as two calls can be, and both callers then run the skill and
+ * apply every action. React Strict Mode plus the dashboard's auto-progress
+ * effect supplies that second caller for free in development.
+ *
+ * The winner gets a `runId` — the id of the claim event, which is durable,
+ * unique per claim and derived from nothing the caller controls. Adapter
+ * calls key their idempotency off it, so an external effect can be recognised
+ * as already-applied if the run is interrupted before its completion lands.
+ */
+export const claimForExecution = internalMutation({
   args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
-  handler: async (ctx, args) => {
-    await assertSameAgent(ctx, args.workItemId, args.skillId);
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    { claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }
+  > => {
+    const { item } = await assertSameAgent(ctx, args.workItemId, args.skillId);
+    if (item.state !== 'plan-approved') {
+      return {
+        claimed: false,
+        reason:
+          item.state === 'executing'
+            ? 'another execution already claimed this work item'
+            : `workItem state is ${item.state}; expected plan-approved`,
+      };
+    }
     await ctx.db.patch(args.workItemId, { state: 'executing', skillId: args.skillId });
+    const runId = await ctx.db.insert('events', {
+      agentId: item.agentId,
+      type: 'work.execution-claimed',
+      payload: { workItemId: args.workItemId, skillId: args.skillId },
+      createdAt: Date.now(),
+    });
+    return { claimed: true, runId };
   },
 });
 
@@ -244,6 +281,11 @@ export const setFailed = internalMutation({
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
+    // A row that already reached an end state keeps it. Nothing legitimately
+    // fails a completed run, and a losing caller must not add a second failure
+    // record for a failure the winner already wrote.
+    const terminal = ['completed', 'failed', 'cancelled', 'skipped'];
+    if (terminal.includes(row.state)) return;
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
       skipReason: args.reason,
