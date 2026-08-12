@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -101,7 +101,6 @@ export function AgentDashboard({ agentId }: Props) {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <WorkQueue
-              agentId={agentId}
               workItems={workItems ?? []}
               registeredSkillCount={(registeredSkills ?? []).length}
               charterApproved={!!charter?.approved}
@@ -408,7 +407,11 @@ function RegisteredSkillsPanel({
   lastFailure,
 }: {
   skills: Doc<'skills'>[];
-  /** Authored but never registered: `authoring` (no sandbox ran) and `failed`. */
+  /**
+   * Authored but never registered: `authoring` (no sandbox ran), `failed` (the
+   * sandbox said no), and `verified` (registration was interrupted before the
+   * lifecycle was collapsed into one mutation).
+   */
   unregistered: Doc<'skills'>[];
   /** Reported by the approve button, whose own card unmounts on approval. */
   lastFailure: string | null;
@@ -465,10 +468,11 @@ function RegisteredSkillsPanel({
 
       {unregistered.length > 0 ? (
         <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-          {/* Covers three states with one honest label: a skipped sandbox, a
-              sandbox that said no, and authoring that never produced a body. */}
+          {/* One honest label for every way a skill can stop short: a skipped
+              sandbox, a sandbox that said no, and a registration that was
+              interrupted. */}
           <p className="text-[10px] uppercase tracking-wider text-[var(--color-warn)] mb-1.5">
-            not verified · not callable
+            not registered · not callable
           </p>
           <ul className="space-y-3 text-sm">
             {unregistered.map((s) => (
@@ -545,12 +549,10 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 }
 
 function WorkQueue({
-  agentId,
   workItems,
   registeredSkillCount,
   charterApproved,
 }: {
-  agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
   registeredSkillCount: number;
   charterApproved: boolean;
@@ -571,28 +573,46 @@ function WorkQueue({
     [workItems],
   );
 
+  // One in-flight call per (step, item). Strict Mode runs every effect twice
+  // on mount, and a subscription update re-runs them before the first call has
+  // moved the row, so without this the same item is handed to the same action
+  // several times over. The backend refuses the duplicates — `claimForExecution`
+  // is the authority — but a refusal is not a reason to keep asking.
+  const inFlight = useRef(new Set<string>());
+  const once = useCallback(
+    (step: string, id: string, call: () => Promise<unknown>) => {
+      const key = `${step}:${id}`;
+      if (inFlight.current.has(key)) return;
+      inFlight.current.add(key);
+      call()
+        .catch(() => {})
+        .finally(() => inFlight.current.delete(key));
+    },
+    [],
+  );
+
   // Auto-progression: once charter is approved, evaluate every discovered
   // item; once a verdict comes back, draft a plan if claim, etc.
   useEffect(() => {
     if (!charterApproved) return;
     for (const it of workItems) {
       if (it.state === 'discovered') {
-        evaluate({ agentId, workItemId: it._id }).catch(() => {});
+        once('evaluate', it._id, () => evaluate({ workItemId: it._id }));
         break;
       }
     }
-  }, [charterApproved, workItems, agentId, evaluate]);
+  }, [charterApproved, workItems, evaluate, once]);
 
   useEffect(() => {
     for (const it of workItems) {
       if (it.state === 'claimed' && !it.plan) {
-        draftPlan({ agentId, workItemId: it._id }).catch(() => {});
+        once('draft', it._id, () => draftPlan({ workItemId: it._id }));
       }
       if (it.state === 'plan-approved') {
-        executePlan({ agentId, workItemId: it._id }).catch(() => {});
+        once('execute', it._id, () => executePlan({ workItemId: it._id }));
       }
     }
-  }, [workItems, agentId, draftPlan, executePlan]);
+  }, [workItems, draftPlan, executePlan, once]);
 
   return (
     <Card

@@ -427,18 +427,33 @@ export const updateTicket = internalMutation({
     if (!args.status && !args.comment) {
       return { changed: false, reason: `ticket "${args.slug}" got neither a status nor a comment` };
     }
-    const patch: Record<string, unknown> = { updatedAt: Date.now() };
-    if (args.status) patch.status = args.status;
-    if (args.comment) {
+    // `changed` means a semantic field moved, not "a patch was issued". Setting
+    // a done ticket to done rewrites the same status and a fresh `updatedAt`,
+    // neither of which the executor's environment snapshot carries — so the
+    // work would complete on a write nobody can see.
+    const statusMoves = !!args.status && args.status !== ticket.status;
+    const newComment = args.comment?.trim();
+    const patch: Record<string, unknown> = {};
+    if (statusMoves) patch.status = args.status;
+    if (newComment) {
       patch.comments = [
         ...ticket.comments,
         {
           author: args.commentAuthor ?? 'Day0',
-          body: args.comment,
+          body: newComment,
           timestamp: Date.now(),
         },
       ];
     }
+    if (!statusMoves && !newComment) {
+      return {
+        changed: false,
+        reason: args.status
+          ? `ticket "${args.slug}" is already ${ticket.status}, and no comment was added`
+          : `ticket "${args.slug}" got an empty comment`,
+      };
+    }
+    patch.updatedAt = Date.now();
     await ctx.db.patch(ticket._id, patch);
     return { changed: true };
   },

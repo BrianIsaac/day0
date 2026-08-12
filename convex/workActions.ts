@@ -20,10 +20,17 @@ import type {
 import type { Doc, Id } from './_generated/dataModel';
 import type { MockWriteResult } from './mock';
 import { asAgentId } from '../src/lib/ids';
+import { actionIdempotencyKey } from '../src/work/idempotency';
 
 /**
  * Node actions for the work loop — Layer-2 evaluation, Layer-3 plan
  * draft, and post-approval skill execution.
+ *
+ * Each handler derives its agent from the work item it loaded rather than
+ * accepting one as an argument. `api.work.get` proves the caller owns that
+ * item's agent; a separately supplied agent id proves only that the caller
+ * owns *some* agent, which is enough to run one agent's approved work against
+ * another's charter, skills and work environment.
  */
 
 interface SimpleSkillRow {
@@ -91,12 +98,13 @@ function buildLookups(args: {
 }
 
 export const evaluateWorkItem = action({
-  args: { agentId: v.id('agents'), workItemId: v.id('workItems') },
+  args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ decision: string }> => {
     const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, {
       workItemId: args.workItemId,
     });
     if (!item) throw new Error('workItem not found');
+    const agentId = item.agentId;
     // Race-tolerance: the dashboard's auto-progress useEffect can fire
     // evaluateWorkItem after the item already moved past `discovered`
     // (e.g. evaluator + draftPlan on the same render tick). The
@@ -108,18 +116,18 @@ export const evaluateWorkItem = action({
       return { decision: `noop-state=${item.state}` };
     }
     const charterRow = await ctx.runQuery(api.charters.latest, {
-      agentId: args.agentId,
+      agentId,
     });
     if (!charterRow || !charterRow.approved) {
       throw new Error('cannot evaluate: charter not approved');
     }
     const charter = charterRow.body as Charter;
     const agentsMd = await ctx.runQuery(api.workspace.readFile, {
-      agentId: args.agentId,
+      agentId,
       fileName: 'AGENTS.md',
     });
     const registeredSkills: SimpleSkillRow[] = (
-      await ctx.runQuery(api.skills.registered, { agentId: args.agentId })
+      await ctx.runQuery(api.skills.registered, { agentId })
     ).map((s: Doc<'skills'>) => ({
       _id: s._id,
       name: s.name,
@@ -127,13 +135,13 @@ export const evaluateWorkItem = action({
       body: s.body,
     }));
     const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(internal.agents.grantedScopes, {
-      agentId: args.agentId,
+      agentId,
     });
     const grantedScopes = new Set<string>(grantRows.map((g) => g.scope));
 
     const lookups = buildLookups({
       ctx,
-      agentId: args.agentId,
+      agentId,
       registeredSkills,
       grantedScopes,
     });
@@ -141,7 +149,7 @@ export const evaluateWorkItem = action({
     const verdict = await evaluateCandidate(
       candidate,
       {
-        agentId: asAgentId(args.agentId),
+        agentId: asAgentId(agentId),
         charter,
         agentsMd: agentsMd ?? '',
         bossLabel: charter.approvalChain.boss,
@@ -159,7 +167,7 @@ export const evaluateWorkItem = action({
       const writeScope = `${candidate.sourceSystem}:write`;
       const requiredScopes = [...new Set([...required, writeScope])];
       const skillId = await ctx.runMutation(internal.skills.propose, {
-        agentId: args.agentId,
+        agentId,
         workItemId: args.workItemId,
         name: verdict.suggestedSkillName,
         description: `Skill proposed to handle ${candidate.sourceSystem} work like "${candidate.title}".`,
@@ -177,7 +185,7 @@ export const evaluateWorkItem = action({
 });
 
 export const draftPlan = action({
-  args: { agentId: v.id('agents'), workItemId: v.id('workItems') },
+  args: { workItemId: v.id('workItems') },
   handler: async (
     ctx,
     args,
@@ -186,6 +194,7 @@ export const draftPlan = action({
       workItemId: args.workItemId,
     });
     if (!item) return { ok: false, reason: 'workItem not found' };
+    const agentId = item.agentId;
     // Race-tolerant: the dashboard's auto-progress useEffect can fire
     // draftPlan after the state has already moved past 'claimed' (e.g.
     // a stale render, or an evaluator stomp). Treat the mismatch as a
@@ -195,35 +204,40 @@ export const draftPlan = action({
       return { ok: false, reason: `state is ${item.state}; expected claimed` };
     }
     const charterRow = await ctx.runQuery(api.charters.latest, {
-      agentId: args.agentId,
+      agentId,
     });
     if (!charterRow) return { ok: false, reason: 'no charter' };
     const plan = await draftExecutionPlan({
       candidate: rowToCandidate(item),
       charter: charterRow.body as Charter,
     });
-    await ctx.runMutation(internal.work.setPlan, {
+    const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
       plan,
     });
+    if (!stored.stored) {
+      return { ok: false, reason: 'another draft stored a plan for this work item first' };
+    }
     return { ok: true };
   },
 });
 
 export const executeApprovedPlan = action({
-  args: { agentId: v.id('agents'), workItemId: v.id('workItems') },
+  args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
     const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, {
       workItemId: args.workItemId,
     });
     if (!item) return { ok: false, reason: 'workItem not found' };
-    // Same race tolerance as draftPlan — if the auto-progress effect fires
-    // after state moved past plan-approved, no-op instead of throwing.
+    const agentId = item.agentId;
+    // Cheap early-out for the common case; `claimForExecution` below is what
+    // actually decides, because only a mutation can read and move the state
+    // without another caller slipping between the two.
     if (item.state !== 'plan-approved') {
       return { ok: false, reason: `state is ${item.state}; expected plan-approved` };
     }
     const charterRow = await ctx.runQuery(api.charters.latest, {
-      agentId: args.agentId,
+      agentId,
     });
     if (!charterRow) return { ok: false, reason: 'no charter' };
     const charter = charterRow.body as Charter;
@@ -231,7 +245,7 @@ export const executeApprovedPlan = action({
     const candidate = rowToCandidate(item);
 
     const skills: Doc<'skills'>[] = await ctx.runQuery(api.skills.registered, {
-      agentId: args.agentId,
+      agentId,
     });
     // Use the same token-scoring as the evaluator's findMatchingSkill so
     // the executor picks the matched skill rather than blindly falling
@@ -261,12 +275,15 @@ export const executeApprovedPlan = action({
       });
       return { ok: false, reason: 'no registered skill available' };
     }
-    await ctx.runMutation(internal.work.setExecutingWithSkill, {
+    // Nothing above this line touches a model or an adapter, so a caller that
+    // loses the claim costs a handful of reads and stops here.
+    const claim = await ctx.runMutation(internal.work.claimForExecution, {
       workItemId: args.workItemId,
       skillId: pickedSkill._id,
     });
+    if (!claim.claimed) return { ok: false, reason: claim.reason };
     try {
-      const mockEnv = await loadMockEnvSnapshot(ctx, args.agentId);
+      const mockEnv = await loadMockEnvSnapshot(ctx, agentId);
       const output = await runSkill({
         skill: { name: pickedSkill.name, description: pickedSkill.description, body: pickedSkill.body },
         plan,
@@ -274,7 +291,12 @@ export const executeApprovedPlan = action({
         charter,
         mockEnv,
       });
-      const applied = await applyMockActions(ctx, args.agentId, output.actions ?? []);
+      const applied = await applyMockActions(ctx, {
+        agentId,
+        workItemId: args.workItemId,
+        runId: claim.runId,
+        actions: output.actions ?? [],
+      });
       // A run completes only when every action it emitted changed the work
       // environment. "At least one applied" is not enough: the skills are told
       // to DM the manager alongside the primary mutation, so a failed primary
@@ -381,27 +403,52 @@ async function loadMockEnvSnapshot(
   };
 }
 
+interface AppliedAction {
+  tool: string;
+  ok: boolean;
+  reason?: string;
+  /** What a real connector would send as its idempotency key for this action. */
+  idempotencyKey: string;
+}
+
 /**
  * Interpret the executor's actions against the mock environment. An action
  * counts as applied only when its adapter reports that the environment
  * changed — a write against a slug the environment does not have resolves
  * without touching anything, and reporting that as applied work is how a work
  * item completes with nothing behind it.
+ *
+ * Every action carries the key its adapter would deduplicate on. The mock
+ * adapters share this transaction's database and cannot half-apply, so they
+ * only record it; a connector that leaves the deployment must pass it to the
+ * provider, because an interruption between an external effect and the local
+ * completion record is otherwise indistinguishable from an effect that never
+ * happened.
  */
 async function applyMockActions(
   ctx: ActionCtx,
-  agentId: Id<'agents'>,
-  actions: MockAction[],
-): Promise<Array<{ tool: string; ok: boolean; reason?: string }>> {
-  const applied: Array<{ tool: string; ok: boolean; reason?: string }> = [];
-  for (const action of actions) {
+  run: {
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    runId: Id<'events'>;
+    actions: MockAction[];
+  },
+): Promise<AppliedAction[]> {
+  const { agentId, actions } = run;
+  const applied: AppliedAction[] = [];
+  for (const [index, action] of actions.entries()) {
+    const idempotencyKey = actionIdempotencyKey({
+      workItemId: run.workItemId,
+      runId: run.runId,
+      actionIndex: index,
+    });
     const args = action.args ?? {};
     try {
       let result: MockWriteResult;
       switch (action.tool) {
         case 'spreadsheet.appendRow': {
           if (!args.sheetSlug || !args.tabName || !args.cells) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing sheetSlug/tabName/cells' });
+            applied.push({ tool: action.tool, ok: false, reason: 'missing sheetSlug/tabName/cells', idempotencyKey });
             continue;
           }
           const cellsObj: Record<string, string> = {};
@@ -417,7 +464,7 @@ async function applyMockActions(
         }
         case 'slack.postMessage': {
           if (!args.channelSlug || !args.body) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing channelSlug/body' });
+            applied.push({ tool: action.tool, ok: false, reason: 'missing channelSlug/body', idempotencyKey });
             continue;
           }
           result = await ctx.runMutation(internal.mock.postSlackMessage, {
@@ -445,7 +492,7 @@ async function applyMockActions(
         }
         case 'twitter.reply': {
           if (!args.tweetSlug || !args.body) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing tweetSlug/body' });
+            applied.push({ tool: action.tool, ok: false, reason: 'missing tweetSlug/body', idempotencyKey });
             continue;
           }
           result = await ctx.runMutation(internal.mock.postTweetReply, {
@@ -460,7 +507,7 @@ async function applyMockActions(
         }
         case 'ticket.update': {
           if (!args.slug) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing slug' });
+            applied.push({ tool: action.tool, ok: false, reason: 'missing slug', idempotencyKey });
             continue;
           }
           result = await ctx.runMutation(internal.mock.updateTicket, {
@@ -473,20 +520,31 @@ async function applyMockActions(
           break;
         }
         default:
-          applied.push({ tool: (action as { tool: string }).tool, ok: false, reason: 'unknown tool' });
+          applied.push({
+            tool: (action as { tool: string }).tool,
+            ok: false,
+            reason: 'unknown tool',
+            idempotencyKey,
+          });
           continue;
       }
       applied.push(
         result.changed
-          ? { tool: action.tool, ok: true }
+          ? { tool: action.tool, ok: true, idempotencyKey }
           : {
               tool: action.tool,
               ok: false,
               reason: result.reason ?? 'the work environment did not change',
+              idempotencyKey,
             },
       );
     } catch (err) {
-      applied.push({ tool: action.tool, ok: false, reason: (err as Error).message });
+      applied.push({
+        tool: action.tool,
+        ok: false,
+        reason: (err as Error).message,
+        idempotencyKey,
+      });
     }
   }
   return applied;
