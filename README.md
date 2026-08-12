@@ -117,16 +117,21 @@ Copy `.env.example` to `.env.local` and fill in:
 | `NEXT_PUBLIC_CONVEX_URL`, `CONVEX_DEPLOYMENT` | Set by `pnpm convex:dev` on first run |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | Clerk dashboard keys |
 | `CLERK_JWT_ISSUER_DOMAIN` | Issuer URL of the Clerk JWT template named `convex` (also push to Convex env) |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | OpenAI; default model `gpt-5.5` |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | The model. Default model `gpt-5.5` on OpenAI. A key is needed only when you use OpenAI |
+| `OPENAI_BASE_URL` | Any OpenAI-compatible chat-completions endpoint, which is what makes the account-free path work. Unset means `https://api.openai.com/v1`. This is the address **Next** dials |
+| `CONVEX_OPENAI_BASE_URL` | The same endpoint as the **Convex deployment** must dial it, when that differs. It does with a self-hosted backend, whose Node actions run inside a container. Empty pushes `OPENAI_BASE_URL` unchanged |
+| `OPENAI_JSON_MODE` | `auto` (default), `native` or `prompt`. `auto` starts on `response_format` and falls back to prompt injection only when dropping the parameter is what fixed it |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | ElevenLabs Conversational AI. Optional - without them the mode picker greys voice out and chat runs the identical 1:1 |
 | `ELEVENLABS_WEBHOOK_SECRET` | Signs the post-call webhook. A **separate** setup from the two above: without it voice still connects and only post-call finalisation is refused. See [Voice](#elevenlabs-agent-setup) |
 | `EXA_API_KEY` | Good-habits research |
 | `DAYTONA_API_KEY`, `DAYTONA_API_URL` | Skill sandbox authoring. Without a key an authored skill stops at `authoring` and stays uncallable |
 | `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY` | Self-hosted backend instead of Convex cloud. Set by the steps in [Run it with no accounts](#run-it-with-no-accounts) |
-| `CONVEX_BIND_ADDR`, `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT` | Host side of the self-hosted stack. See [Ports](#ports-host-side-and-container-side) |
+| `CONVEX_BIND_ADDR`, `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT`, `MODEL_PORT` | Host side of the self-hosted stack. See [Ports](#ports-host-side-and-container-side) |
 | `NEXT_PUBLIC_DEV_NO_AUTH`, `DEV_NO_AUTH_SECRET`, `DEV_NO_AUTH_SIGNING_KEY`, `DEV_NO_AUTH_JWKS` | No-auth dev mode. The last three are written by `pnpm dev:no-auth-key`, never by hand |
 
-Convex Node actions read `OPENAI_API_KEY`, `EXA_API_KEY`, `DAYTONA_API_KEY` from the Convex deployment env (separate from `.env.local`). Push them with `./scripts/sync-convex-env.sh` after `pnpm convex:dev`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
+Convex Node actions read `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `EXA_API_KEY`, `DAYTONA_API_KEY` from the Convex deployment env (separate from `.env.local`). Push them with `./scripts/sync-convex-env.sh` after `pnpm convex:dev`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
+
+**Deployment env is read once, when a function module is first evaluated.** A backend that has already run an action keeps the values it started with, so changing them afterwards leaves `npx convex env list` reporting the new value while the running action still uses the old one. Push the env *before* the first function push, and if you change it later restart the backend: `pnpm convex:restart` self-hosted, or `npx convex deploy` on cloud.
 
 ## Local dev
 
@@ -134,12 +139,15 @@ Two ways to run it. The first is the shape the deployed app runs in; the second 
 
 | | Convex cloud + Clerk | Self-hosted Convex + no-auth |
 |---|---|---|
-| Accounts needed | Convex, Clerk | none |
+| Accounts needed | Convex, Clerk, and a model provider | **none** - but you must run a model yourself |
+| Model | any OpenAI-compatible endpoint, OpenAI by default | a local one, e.g. the bundled `pnpm model:up` |
 | Users | one per Clerk sign-in | one fixed local user who owns every row |
 | Reachable from another machine | yes | refused, by design |
 | Setup | below | [Run it with no accounts](#run-it-with-no-accounts) |
 
-Both still want an `OPENAI_API_KEY` - the charter, the plans, the executor and the skill author are all model calls. Exa and Daytona are optional; the loop degrades visibly rather than silently without them.
+Both need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible chat-completions endpoint, keyless local runtimes included, which is what the right-hand column rests on. Exa and Daytona are optional in either column; the loop degrades visibly rather than silently without them.
+
+Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of the four setups - backend, auth, model, voice - separately, and fails only on the states that are actually broken rather than merely incomplete.
 
 ### Convex cloud + Clerk
 
@@ -150,48 +158,100 @@ pnpm convex:dev                  # one-off: provisions deployment, writes .env.l
 pnpm dev                         # http://localhost:3000
 ```
 
-Clerk needs a JWT template named `convex`; copy its Issuer URL into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too.
+Both accounts are free to create and neither step can be done for you:
+
+- **Convex** — `pnpm convex:dev` opens a browser to sign up or log in at [convex.dev](https://convex.dev), then asks you to name a project. It writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. Until you have logged in it will not provision anything, and every later step that pushes functions fails.
+- **Clerk** — create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template). Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
+
+`pnpm dev` binds `localhost`, which is also the host Clerk's proxy rewrites to; a `127.0.0.1` bind reads as a foreign origin to Next 16 and breaks the sign-in handshake.
 
 ## Run it with no accounts
 
-A self-hosted Convex backend in Docker plus no-auth dev mode. The backend is the same open-source binary the cloud service runs; no-auth mode replaces Clerk with one fixed synthetic user, so ownership checks and the per-user data model are unchanged - there is simply only ever one user.
+A self-hosted Convex backend in Docker, a local model in Docker, and no-auth dev mode. Nothing here signs up for anything. The backend is the same open-source binary the cloud service runs; no-auth mode replaces Clerk with one fixed synthetic user, so ownership checks and the per-user data model are unchanged - there is simply only ever one user; and the model layer takes any OpenAI-compatible endpoint, so a local runtime is a complete setup rather than a degraded one.
+
+You need Docker, Node 22+ and pnpm. Run every command from the repository root.
 
 ```bash
+pnpm install                     # first: everything below is a repo-local binary
 cp .env.example .env.local
-# In .env.local: NEXT_PUBLIC_DEV_NO_AUTH=true, OPENAI_API_KEY=sk-…
-#                NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
-#                CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
 
-pnpm convex:up                   # docker compose, backend on 3210/3211, dashboard on 6791
+pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
+pnpm model:up                    # OpenAI-compatible model server on 11434
+pnpm model:pull qwen3:8b         # ~5 GB, tool-capable, runs the whole loop
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
+```
+
+Then set these in `.env.local`:
+
+```bash
+NEXT_PUBLIC_DEV_NO_AUTH=true
+NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
+CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
+CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|…   # from the command above
+OPENAI_BASE_URL=http://127.0.0.1:11434/v1           # what Next dials
+CONVEX_OPENAI_BASE_URL=http://model:11434/v1        # what the backend dials
+OPENAI_MODEL=qwen3:8b
+# OPENAI_API_KEY stays empty. There is no account.
+```
+
+and finish:
+
+```bash
 pnpm dev:no-auth-key             # generates the three DEV_NO_AUTH_* values
-./scripts/sync-convex-env.sh     # pushes DEV_NO_AUTH_JWKS + provider keys to the backend
+./scripts/sync-convex-env.sh     # pushes DEV_NO_AUTH_JWKS + model settings to the backend
 npx convex dev --once            # push functions
+pnpm check:setup                 # confirms all four setups before you open a browser
 pnpm dev                         # prints an unlock URL - open that, not localhost:3000
 ```
 
-Three things about that sequence are load-bearing:
+Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and approve the charter it writes. No provider was called and no account exists.
 
+Five things about that sequence are load-bearing:
+
+- **`pnpm install` comes first.** Every command after it - `tsx`, `convex`, `next` - is a binary in `node_modules`. Skip it and `pnpm dev:no-auth-key` fails with `tsx: not found` and no hint as to why.
+- **The model needs two addresses, and this is the one that costs an afternoon.** The Day-1 chat streams from Next, on this machine, and reaches the model on loopback. The *charter* is synthesised by a Convex Node action, which runs inside the backend container, where `127.0.0.1` is the container itself. So `OPENAI_BASE_URL` is what Next dials and `CONVEX_OPENAI_BASE_URL` is what the backend dials; `./scripts/sync-convex-env.sh` pushes the second as the deployment's `OPENAI_BASE_URL` and warns if you left it pointing at loopback. The symptom of getting it wrong is a 1:1 that works perfectly and a charter that never arrives.
 - **The key is generated, not chosen.** `pnpm dev:no-auth-key` writes `DEV_NO_AUTH_SECRET` (unlocks a browser), `DEV_NO_AUTH_SIGNING_KEY` (signs the token Convex accepts, never leaves the machine) and `DEV_NO_AUTH_JWKS` (its public half). Rotate with `pnpm dev:no-auth-key --force`, which invalidates every unlocked browser and needs a re-sync.
-- **The JWKS must reach the backend before the functions do.** `convex/auth.config.ts` is evaluated against the *deployment's* env when you push, and refuses the push if no-auth is on without a key. `./scripts/sync-convex-env.sh` pushes them in that order and says so if the key is missing.
+- **The JWKS must reach the backend before the functions do.** `convex/auth.config.ts` is evaluated against the *deployment's* env when you push, and refuses the push if no-auth is on without a key. `./scripts/sync-convex-env.sh` pushes them in that order and says so if the key is missing. The same ordering matters for the model settings, for a different reason: a module keeps whatever env it was first evaluated with, so a value changed after the backend has run an action needs `pnpm convex:restart`.
 - **`pnpm dev` prints an unlock URL.** It carries the secret once; after that it lives in an httpOnly cookie. Open `http://localhost:3000` directly and every route answers 403 - that is the boundary working, not a fault.
 
-`pnpm build` refuses outright while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment, with a message saying so. Same guard: the mode only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
+`pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
 
-Stop the stack with `pnpm convex:down`, which leaves the data volume in place. To throw the data away too: `docker compose --env-file .env.local down -v`.
+Stop the stack with `pnpm convex:down`, which leaves the data volume in place. To throw the data away too: `docker compose --env-file .env.local --profile model down -v`.
+
+### Using a model server you already have
+
+The bundled `model` service is a convenience, not a dependency - skip `pnpm model:up` and point the two variables at anything that speaks OpenAI chat completions (ollama, llama.cpp, LM Studio, vLLM, Groq, Together). The only rule is the one above: the second address must resolve *inside* the backend container.
+
+| Where the endpoint runs | `OPENAI_BASE_URL` (Next) | `CONVEX_OPENAI_BASE_URL` (backend) |
+|---|---|---|
+| The bundled `model` service | `http://127.0.0.1:11434/v1` | `http://model:11434/v1` |
+| On this host, bound to all interfaces | `http://127.0.0.1:11434/v1` | `http://host.docker.internal:11434/v1` |
+| A remote or hosted endpoint | the same URL | leave empty |
+
+`host.docker.internal` is mapped for you in `docker-compose.yml`, but whether traffic from the container actually reaches your host is a firewall question and some machines drop it. If in doubt, use the bundled service: a compose network is not something a host firewall sits in the middle of.
+
+```bash
+pnpm probe:model
+```
+
+answers whether a given endpoint can drive the loop - chat completions, JSON extraction, native `response_format`, prompt-injected schema, and the `auto` ladder the app actually runs on. A rung the server declines is reported as a note rather than a failure, because plenty of compatible servers refuse `response_format` and run the whole loop on prompt injection. It calls only the endpoint in `.env.local`.
 
 ### Ports (host side and container side)
 
-`CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT` and `CONVEX_DASHBOARD_PORT` move the **host** ports. The container always listens on 3210, 3211 and 6791, and the backend's own view of itself (`CONVEX_CLOUD_ORIGIN`, which Node actions dial to reach the backend they run in) stays canonical whatever the host publishes. Set the ports, not the origins:
+`CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT` and `MODEL_PORT` move the **host** ports. The containers always listen on 3210, 3211, 6791 and 11434, and the backend's own view of itself (`CONVEX_CLOUD_ORIGIN`, which Node actions dial to reach the backend they run in) stays canonical whatever the host publishes. Set the ports, not the origins:
 
 ```bash
 # .env.local
 CONVEX_PORT=3320
 CONVEX_SITE_PROXY_PORT=3321
 CONVEX_DASHBOARD_PORT=6891
+MODEL_PORT=11534
 NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3320
 CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3320
+OPENAI_BASE_URL=http://127.0.0.1:11534/v1
 ```
+
+`CONVEX_OPENAI_BASE_URL` does **not** follow `MODEL_PORT`: the backend reaches the model container over the compose network, where it is still `http://model:11434/v1`. Same rule as the origins - host ports move, container ports do not.
 
 To run two backends side by side, give each its own compose project so the volumes stay separate:
 
@@ -204,7 +264,7 @@ Override `CONVEX_CLOUD_ORIGIN` or `CONVEX_SITE_ORIGIN` only with an address that
 
 ### Testing from a phone, and tunnels
 
-`pnpm dev` binds `127.0.0.1`, so nothing off this machine reaches it until you widen that - and widening the Next bind alone is never enough, because the browser also talks to Convex directly.
+`pnpm dev` binds `localhost`, so nothing off this machine reaches it until you widen that - and widening the Next bind alone is never enough, because the browser also talks to Convex directly. (`localhost` rather than `127.0.0.1` because that is the host Clerk's proxy rewrites to, and Next 16 treats a `127.0.0.1` bind as a foreign origin.)
 
 | What you want | Works? | What it takes |
 |---|---|---|
@@ -256,7 +316,9 @@ Voice connecting and post-call finalisation working are separate facts, and the 
 - `ELEVENLABS_WEBHOOK_SECRET` is what makes the post-call webhook work. Without it the route answers **503 to every delivery** - it will not verify an ElevenLabs signature it has no secret for, and failing open there would be worse than having no check. What is lost is the call whose tab died mid-way: nothing else finalises it.
 
 ```bash
-pnpm check:voice
+pnpm check:setup
 ```
 
-reports the two separately, prints the dynamic variables to check by eye against the dashboard, and exits non-zero for exactly one state - voice configured with no webhook secret, the one that looks finished and is not.
+reports the two separately - along with the backend, auth and model setups - prints the dynamic variables to check by eye against the dashboard, and exits non-zero only for states that are actually broken. Voice configured with no webhook secret is one of them: the one that looks finished and is not.
+
+It resolves values the way the running app does, which matters more than it sounds. Wherever a variable is present in the process environment it wins over `.env.local`, *including when it is present and empty* - because that is what Next does, and routes read `process.env` directly and treat an empty string as missing. A checker that only applied non-empty overrides would call a secret configured while the webhook answered 503 to every delivery.
