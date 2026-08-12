@@ -20,10 +20,12 @@ export function AgentDashboard({ agentId }: Props) {
   const proposedSkills = useQuery(api.skills.proposed, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
+  const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: 30 });
   const voiceSession = useQuery(api.voice.latest, { agentId });
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
+  const [authoringFailure, setAuthoringFailure] = useState<string | null>(null);
 
   // Sync local mode with server state. Two cases:
   //   1. Reload mid-session — route back into the room they were in
@@ -94,6 +96,7 @@ export function AgentDashboard({ agentId }: Props) {
           <ProposedSkillsPanel
             agentId={agentId}
             skills={proposedSkills ?? []}
+            onAuthoringFailed={setAuthoringFailure}
           />
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -112,7 +115,8 @@ export function AgentDashboard({ agentId }: Props) {
           <WorkspacePanel workspace={workspace ?? {}} />
           <RegisteredSkillsPanel
             skills={registeredSkills ?? []}
-            unverified={unverifiedSkills ?? []}
+            unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
+            lastFailure={authoringFailure}
           />
           <EventTicker events={events ?? []} />
         </div>
@@ -343,9 +347,13 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
 function ProposedSkillsPanel({
   agentId,
   skills,
+  onAuthoringFailed,
 }: {
   agentId: Id<'agents'>;
   skills: Doc<'skills'>[];
+  /** Approving moves the row out of this panel, so its failure has to be
+   *  reported somewhere that survives the unmount. */
+  onAuthoringFailed: (reason: string) => void;
 }) {
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
@@ -368,8 +376,13 @@ function ProposedSkillsPanel({
               <button
                 onClick={async () => {
                   await approve({ skillId: s._id });
-                  author({ skillId: s._id }).catch(() => {});
                   void agentId;
+                  try {
+                    const result = await author({ skillId: s._id });
+                    if (!result.ok) onAuthoringFailed(`${s.name}: ${result.reason ?? 'authoring did not finish'}`);
+                  } catch (err) {
+                    onAuthoringFailed(`${s.name}: ${(err as Error).message}`);
+                  }
                 }}
                 className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium"
               >
@@ -391,13 +404,41 @@ function ProposedSkillsPanel({
 
 function RegisteredSkillsPanel({
   skills,
-  unverified,
+  unregistered,
+  lastFailure,
 }: {
   skills: Doc<'skills'>[];
-  unverified: Doc<'skills'>[];
+  /** Authored but never registered: `authoring` (no sandbox ran) and `failed`. */
+  unregistered: Doc<'skills'>[];
+  /** Reported by the approve button, whose own card unmounts on approval. */
+  lastFailure: string | null;
 }) {
+  const author = useAction(api.skillActions.authorAndRegisterSkill);
+  const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  async function onRetry(skillId: Id<'skills'>) {
+    setRetrying(skillId);
+    setErrors((prev) => ({ ...prev, [skillId]: '' }));
+    try {
+      const result = await author({ skillId });
+      if (!result.ok) {
+        setErrors((prev) => ({ ...prev, [skillId]: result.reason ?? 'retry did not succeed' }));
+      }
+    } catch (err) {
+      setErrors((prev) => ({ ...prev, [skillId]: (err as Error).message }));
+    } finally {
+      setRetrying(null);
+    }
+  }
+
   return (
     <Card title={`Skills · ${skills.length} registered`}>
+      {lastFailure ? (
+        <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
+          Authoring did not finish — {lastFailure}
+        </p>
+      ) : null}
       {skills.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">none yet</p>
       ) : (
@@ -422,21 +463,43 @@ function RegisteredSkillsPanel({
         </ul>
       )}
 
-      {unverified.length > 0 ? (
+      {unregistered.length > 0 ? (
         <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+          {/* Covers three states with one honest label: a skipped sandbox, a
+              sandbox that said no, and authoring that never produced a body. */}
           <p className="text-[10px] uppercase tracking-wider text-[var(--color-warn)] mb-1.5">
-            authored · not verified · not callable
+            not verified · not callable
           </p>
-          <ul className="space-y-2 text-sm">
-            {unverified.map((s) => (
+          <ul className="space-y-3 text-sm">
+            {unregistered.map((s) => (
               <li key={s._id}>
-                <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
-                <div className="text-[var(--color-muted)] text-xs">
-                  {s.verificationLog ?? s.description}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
+                    <div className="text-[var(--color-muted)] text-xs">
+                      {s.verificationLog ?? s.description}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onRetry(s._id)}
+                    disabled={retrying === s._id}
+                    className="px-2.5 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
+                  >
+                    {retrying === s._id ? 'Retrying…' : 'Retry'}
+                  </button>
                 </div>
+                {/* Only when the row itself does not already say it: a retry
+                    that recorded its reason has reported itself. */}
+                {errors[s._id] && !(s.verificationLog ?? '').includes(errors[s._id]) ? (
+                  <p className="text-[10px] text-[var(--color-danger)] mt-1">{errors[s._id]}</p>
+                ) : null}
               </li>
             ))}
           </ul>
+          <p className="text-[10px] text-[var(--color-muted)] mt-2">
+            Retry re-authors the skill and re-runs the sandbox check. Set DAYTONA_API_KEY on the
+            deployment first if the sandbox was skipped.
+          </p>
         </div>
       ) : null}
     </Card>
@@ -594,7 +657,8 @@ function WorkItemCard({
   const output = item.output as
     | { draft: string; notes: string; applied?: Array<{ tool: string; ok: boolean; reason?: string }> }
     | undefined;
-  const failedActions = (output?.applied ?? []).filter((a) => !a.ok);
+  const appliedActions = output?.applied ?? [];
+  const failedActions = appliedActions.filter((a) => !a.ok);
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -666,30 +730,49 @@ function WorkItemCard({
           {output.notes ? (
             <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
           ) : null}
-          {failedActions.length > 0 ? (
-            <ul className="mt-1 space-y-0.5 text-[var(--color-danger)]">
-              {failedActions.map((a, i) => (
-                <li key={i}>
-                  {a.tool} not applied: {a.reason ?? 'unknown reason'}
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </details>
       ) : null}
 
+      {/* Not inside the details element above: an action that never reached the
+          work environment is the headline of this card, not a footnote to the
+          draft it produced. */}
+      {failedActions.length > 0 ? (
+        <div className="mt-2 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs">
+          <p className="text-[var(--color-danger)] font-medium mb-1">
+            {failedActions.length} {failedActions.length === 1 ? 'action' : 'actions'} did not reach
+            the work environment
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-danger)]">
+            {failedActions.map((a, i) => (
+              <li key={i}>
+                {a.tool} — {a.reason ?? 'unknown reason'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {item.state === 'failed' ? (
-        <div className="flex gap-2 mt-2">
+        <div className="mt-2">
+          {/* The per-action box above already names every action that failed, so
+              the row-level reason only earns its space for the other failures:
+              no registered skill, a model error, a mid-run throw. */}
+          {failedActions.length === 0 && item.skipReason ? (
+            <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">{item.skipReason}</p>
+          ) : null}
           <button
             onClick={onRetryFailed}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30"
           >
             Retry
           </button>
-          {item.skipReason ? (
-            <span className="text-[10px] text-[var(--color-muted)] italic self-center">
-              {item.skipReason.slice(0, 80)}
-            </span>
+          {appliedActions.length > failedActions.length ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry re-runs the whole plan, so the{' '}
+              {appliedActions.length - failedActions.length} action
+              {appliedActions.length - failedActions.length === 1 ? '' : 's'} that already landed
+              will be applied again.
+            </p>
           ) : null}
         </div>
       ) : null}

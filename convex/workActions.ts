@@ -18,6 +18,7 @@ import type {
   WorkSourceCategory,
 } from '../src/work/types';
 import type { Doc, Id } from './_generated/dataModel';
+import type { MockWriteResult } from './mock';
 import { asAgentId } from '../src/lib/ids';
 
 /**
@@ -274,16 +275,18 @@ export const executeApprovedPlan = action({
         mockEnv,
       });
       const applied = await applyMockActions(ctx, args.agentId, output.actions ?? []);
-      // Completing an item that changed nothing in the mock environment would
-      // report work that did not happen. A run that applied at least one action
-      // is still a completion - the per-action results ride along in `output`
-      // so a partial failure is visible rather than silently swallowed.
+      // A run completes only when every action it emitted changed the work
+      // environment. "At least one applied" is not enough: the skills are told
+      // to DM the manager alongside the primary mutation, so a failed primary
+      // action plus a delivered "I did it" DM would report the work as done
+      // when only the claim about it landed.
       const failures = applied.filter((a) => !a.ok);
-      if (applied.length === 0 || failures.length === applied.length) {
+      if (applied.length === 0 || failures.length > 0) {
         const reason =
           applied.length === 0
             ? 'skill emitted no actions, so nothing in the work environment changed'
-            : `every action failed: ${failures.map((f) => `${f.tool} (${f.reason})`).join('; ')}`;
+            : `${failures.length} of ${applied.length} actions did not change the work environment: ` +
+              failures.map((f) => `${f.tool} (${f.reason})`).join('; ');
         await ctx.runMutation(internal.work.setFailed, {
           workItemId: args.workItemId,
           reason,
@@ -378,6 +381,13 @@ async function loadMockEnvSnapshot(
   };
 }
 
+/**
+ * Interpret the executor's actions against the mock environment. An action
+ * counts as applied only when its adapter reports that the environment
+ * changed — a write against a slug the environment does not have resolves
+ * without touching anything, and reporting that as applied work is how a work
+ * item completes with nothing behind it.
+ */
 async function applyMockActions(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
@@ -387,30 +397,30 @@ async function applyMockActions(
   for (const action of actions) {
     const args = action.args ?? {};
     try {
+      let result: MockWriteResult;
       switch (action.tool) {
-        case 'spreadsheet.appendRow':
+        case 'spreadsheet.appendRow': {
           if (!args.sheetSlug || !args.tabName || !args.cells) {
             applied.push({ tool: action.tool, ok: false, reason: 'missing sheetSlug/tabName/cells' });
             continue;
           }
-          {
-            const cellsObj: Record<string, string> = {};
-            for (const c of args.cells) cellsObj[c.header] = c.value;
-            await ctx.runMutation(internal.mock.appendSpreadsheetRow, {
-              agentId,
-              sheetSlug: args.sheetSlug,
-              tabName: args.tabName,
-              cells: cellsObj,
-              addedBy: 'Day0 (agent)',
-            });
-          }
+          const cellsObj: Record<string, string> = {};
+          for (const c of args.cells) cellsObj[c.header] = c.value;
+          result = await ctx.runMutation(internal.mock.appendSpreadsheetRow, {
+            agentId,
+            sheetSlug: args.sheetSlug,
+            tabName: args.tabName,
+            cells: cellsObj,
+            addedBy: 'Day0 (agent)',
+          });
           break;
-        case 'slack.postMessage':
+        }
+        case 'slack.postMessage': {
           if (!args.channelSlug || !args.body) {
             applied.push({ tool: action.tool, ok: false, reason: 'missing channelSlug/body' });
             continue;
           }
-          await ctx.runMutation(internal.mock.postSlackMessage, {
+          result = await ctx.runMutation(internal.mock.postSlackMessage, {
             agentId,
             channelSlug: args.channelSlug,
             threadKey: args.threadKey,
@@ -418,23 +428,27 @@ async function applyMockActions(
             senderKind: args.channelSlug.startsWith('dm-') ? 'agent-posted' : 'agent-draft',
             body: args.body,
           });
-          await ctx.scheduler.runAfter(
-            3500 + Math.floor(Math.random() * 2500),
-            internal.coworker.replyToAgentMessage,
-            {
-              agentId,
-              channelSlug: args.channelSlug,
-              threadKey: args.threadKey,
-              originalBody: args.body,
-            },
-          );
+          // A coworker only replies to a message that actually landed.
+          if (result.changed) {
+            await ctx.scheduler.runAfter(
+              3500 + Math.floor(Math.random() * 2500),
+              internal.coworker.replyToAgentMessage,
+              {
+                agentId,
+                channelSlug: args.channelSlug,
+                threadKey: args.threadKey,
+                originalBody: args.body,
+              },
+            );
+          }
           break;
-        case 'twitter.reply':
+        }
+        case 'twitter.reply': {
           if (!args.tweetSlug || !args.body) {
             applied.push({ tool: action.tool, ok: false, reason: 'missing tweetSlug/body' });
             continue;
           }
-          await ctx.runMutation(internal.mock.postTweetReply, {
+          result = await ctx.runMutation(internal.mock.postTweetReply, {
             agentId,
             tweetSlug: args.tweetSlug,
             author: 'Day0',
@@ -443,12 +457,13 @@ async function applyMockActions(
             isAgentDraft: true,
           });
           break;
-        case 'ticket.update':
+        }
+        case 'ticket.update': {
           if (!args.slug) {
             applied.push({ tool: action.tool, ok: false, reason: 'missing slug' });
             continue;
           }
-          await ctx.runMutation(internal.mock.updateTicket, {
+          result = await ctx.runMutation(internal.mock.updateTicket, {
             agentId,
             slug: args.slug,
             status: args.status,
@@ -456,11 +471,20 @@ async function applyMockActions(
             commentAuthor: 'Day0',
           });
           break;
+        }
         default:
           applied.push({ tool: (action as { tool: string }).tool, ok: false, reason: 'unknown tool' });
           continue;
       }
-      applied.push({ tool: action.tool, ok: true });
+      applied.push(
+        result.changed
+          ? { tool: action.tool, ok: true }
+          : {
+              tool: action.tool,
+              ok: false,
+              reason: result.reason ?? 'the work environment did not change',
+            },
+      );
     } catch (err) {
       applied.push({ tool: action.tool, ok: false, reason: (err as Error).message });
     }
