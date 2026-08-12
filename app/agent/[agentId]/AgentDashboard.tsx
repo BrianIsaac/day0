@@ -408,9 +408,11 @@ function RegisteredSkillsPanel({
 }: {
   skills: Doc<'skills'>[];
   /**
-   * Authored but never registered: `authoring` (no sandbox ran), `failed` (the
-   * sandbox said no), and `verified` (registration was interrupted before the
-   * lifecycle was collapsed into one mutation).
+   * Authored but never registered: `authoring` (a run is holding it now, or no
+   * sandbox ran), `failed` (the sandbox said no), and `verified` (registration
+   * was interrupted before the lifecycle was collapsed into one mutation).
+   * A skill a run holds is listed here throughout, so a run that dies mid-flight
+   * leaves something the boss can see and, once its claim lapses, retry.
    */
   unregistered: Doc<'skills'>[];
   /** Reported by the approve button, whose own card unmounts on approval. */
@@ -481,7 +483,11 @@ function RegisteredSkillsPanel({
                   <div className="flex-1">
                     <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
                     <div className="text-[var(--color-muted)] text-xs">
-                      {s.verificationLog ?? s.description}
+                      {/* A held row is being authored right now, so the log on it
+                          is the previous attempt's and saying so would be a lie. */}
+                      {s.authoringRunId
+                        ? 'authoring now · a run holds this skill'
+                        : (s.verificationLog ?? s.description)}
                     </div>
                   </div>
                   <button
@@ -502,7 +508,9 @@ function RegisteredSkillsPanel({
           </ul>
           <p className="text-[10px] text-[var(--color-muted)] mt-2">
             Retry re-authors the skill and re-runs the sandbox check. Set DAYTONA_API_KEY on the
-            deployment first if the sandbox was skipped.
+            deployment first if the sandbox was skipped. Only one authoring run holds a skill at a
+            time, so a retry while one is still running is refused until that run finishes or its
+            claim lapses.
           </p>
         </div>
       ) : null}

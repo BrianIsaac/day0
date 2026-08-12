@@ -161,6 +161,13 @@ export default defineSchema({
     proposedFor: v.optional(v.id('workItems')),
     rationale: v.optional(v.string()),
     requiredScopes: v.optional(v.array(v.string())),
+    /** The authoring run that currently holds this skill, and when it took it.
+     * Authoring is an exclusive, fenced run: a second run cannot start while
+     * this is set and unexpired, and a run may only write its result while this
+     * is still its own id. Cleared by every exit, and by the boss's rejection.
+     * See `convex/skills.ts`. */
+    authoringRunId: v.optional(v.id('events')),
+    authoringClaimedAt: v.optional(v.number()),
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
     createdAt: v.number(),
