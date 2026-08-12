@@ -15,6 +15,7 @@
     "convex:up": "docker compose --env-file .env.local up -d",
     "convex:down": "docker compose --env-file .env.local down",
     "convex:admin-key": "docker compose --env-file .env.local exec backend ./generate_admin_key.sh",
+    "check:voice": "tsx scripts/check-voice-setup.ts",
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint .",

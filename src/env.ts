@@ -19,6 +19,11 @@ const schema = z.object({
 
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_AGENT_ID: z.string().optional(),
+  // Signs the post-call webhook. Its absence is not the same shape of absence
+  // as the two above: without them voice never starts, without this one voice
+  // runs and only post-call finalisation is refused. `pnpm check:voice` reports
+  // the two separately.
+  ELEVENLABS_WEBHOOK_SECRET: z.string().optional(),
 
   GOOGLE_API_KEY: z.string().optional(),
   GEMINI_LIVE_MODEL: z.string().default('gemini-flash-3.1-live'),
@@ -52,6 +57,7 @@ export const env = schema.parse({
   OPENAI_JSON_MODE: process.env.OPENAI_JSON_MODE,
   ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
   ELEVENLABS_AGENT_ID: process.env.ELEVENLABS_AGENT_ID,
+  ELEVENLABS_WEBHOOK_SECRET: process.env.ELEVENLABS_WEBHOOK_SECRET,
   GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
   GEMINI_LIVE_MODEL: process.env.GEMINI_LIVE_MODEL,
   EXA_API_KEY: process.env.EXA_API_KEY,
