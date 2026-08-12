@@ -139,7 +139,7 @@ Two ways to run it. The first is the shape the deployed app runs in; the second 
 
 | | Convex cloud + Clerk | Self-hosted Convex + no-auth |
 |---|---|---|
-| Accounts needed | Convex, Clerk, and a model provider | **none** - but you must run a model yourself |
+| Accounts needed | Convex, Clerk | **none** - but you must run a model yourself |
 | Model | any OpenAI-compatible endpoint, OpenAI by default | a local one, e.g. the bundled `pnpm model:up` |
 | Users | one per Clerk sign-in | one fixed local user who owns every row |
 | Reachable from another machine | yes | refused, by design |
@@ -160,7 +160,7 @@ pnpm dev                         # http://localhost:3000
 
 Both accounts are free to create and neither step can be done for you:
 
-- **Convex** — `pnpm convex:dev` opens a browser to sign up or log in at [convex.dev](https://convex.dev), then asks you to name a project. It writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. Until you have logged in it will not provision anything, and every later step that pushes functions fails.
+- **Convex** — `pnpm convex:dev` offers a choice on first run: log in, which opens a browser to sign up at [convex.dev](https://convex.dev) and then asks you to name a project, or carry on without an account, which gives you a local [anonymous deployment](#without-docker-for-convex) instead. This column is the cloud one, so log in - it is the account. Either way the command writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. With no terminal to prompt at, it takes the anonymous option silently, which is worth knowing before you wonder why nothing appeared on the dashboard.
 - **Clerk** — create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template). Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
 
 `pnpm dev` binds `localhost`, which is also the host Clerk's proxy rewrites to; a `127.0.0.1` bind reads as a foreign origin to Next 16 and breaks the sign-in handshake.
