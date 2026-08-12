@@ -24,7 +24,16 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { DEV_NO_AUTH_KEY_ID } from '../convex/devAuth';
-import { DEV_NO_AUTH_UNLOCK_PARAM } from '../src/lib/dev-auth-server';
+import type { DEV_NO_AUTH_UNLOCK_PARAM as UnlockParam } from '../src/lib/dev-auth-server';
+
+// This runs under bare `tsx`, outside Next's bundler, so it cannot *import*
+// `src/lib/dev-auth-server.ts`: that module pulls in `@clerk/nextjs/server`,
+// which resolves to a build Node's ESM loader refuses (`does not provide an
+// export named 'auth'`). `pnpm dev` runs this script first, so an ordinary
+// import here takes down every mode, Clerk's included. The value is restated
+// instead, and the type-only import above makes `pnpm typecheck` fail if the
+// two ever drift apart.
+const UNLOCK_PARAM: typeof UnlockParam = 'day0_key';
 
 const ENV_FILE = '.env.local';
 const SECRET_VAR = 'DEV_NO_AUTH_SECRET';
@@ -128,7 +137,7 @@ function printUnlockUrl(): void {
 
   const port = process.env.PORT ?? '3000';
   console.log('No-auth dev mode. Open this once per browser to unlock it:\n');
-  console.log(`  http://localhost:${port}/?${DEV_NO_AUTH_UNLOCK_PARAM}=${values[SECRET_VAR]}\n`);
+  console.log(`  http://localhost:${port}/?${UNLOCK_PARAM}=${values[SECRET_VAR]}\n`);
 }
 
 function fail(message: string): never {

@@ -47,6 +47,15 @@
 #
 # Container names are left to compose so that `-p <project>` is enough to run a
 # second stack; a fixed name would collide on the first one started.
+#
+# The optional `model` service is the third address problem, and the one that
+# costs an afternoon. Charter synthesis, plan drafting and skill authoring are
+# Convex *Node actions*: they run inside the backend container, not in Next. So
+# a local model server on `127.0.0.1` is reachable from the app and invisible to
+# the backend, and the loop half-works - the Day-1 chat streams and the charter
+# never arrives. Running the model as a service here puts it on the same network
+# under a name the backend can resolve, which is why it is bundled rather than
+# left to the reader. It is opt-in: nothing starts it without `--profile model`.
 
 services:
   backend:
@@ -58,6 +67,12 @@ services:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_SITE_PROXY_PORT:-3211}:3211'
     volumes:
       - convex_data:/convex/data
+    # Lets CONVEX_OPENAI_BASE_URL name a model server running on this host
+    # rather than in a container. Whether it can actually be reached is a
+    # question for your firewall: some hosts drop traffic from the bridge, and
+    # `pnpm model:up` sidesteps the question entirely.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     environment:
       # Functions read this back as `process.env.CONVEX_CLOUD_URL` and Node
       # actions call the backend on it, so it names the container's own
@@ -90,5 +105,37 @@ services:
       backend:
         condition: service_healthy
 
+  # An OpenAI-compatible model server, so the account-free path needs no
+  # provider at all. Opt in with `pnpm model:up`, then pull a model:
+  #
+  #   pnpm model:up
+  #   pnpm model:pull qwen3:8b        # ~5 GB, tool-capable, runs the whole loop
+  #
+  # Two addresses again, and for once both are wanted. The backend reaches it at
+  # http://model:11434/v1 over this network (CONVEX_OPENAI_BASE_URL); Next
+  # reaches it on the published host port (OPENAI_BASE_URL). Skip this service
+  # entirely if you already have an endpoint - it is a convenience, not a
+  # dependency.
+  model:
+    profiles: ['model']
+    image: ollama/ollama:latest
+    stop_grace_period: 10s
+    ports:
+      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${MODEL_PORT:-11434}:11434'
+    volumes:
+      - model_data:/root/.ollama
+    # CPU by default, because that is what every machine has. It works, and an
+    # 8B model answers in minutes rather than seconds - enough to see the loop
+    # run, slow enough to be tiring. Uncomment for an NVIDIA GPU with the
+    # container toolkit installed; leaving it on without one refuses to start.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
 volumes:
   convex_data:
+  model_data:
