@@ -7,13 +7,8 @@ import type { Id, Doc } from '@convex/_generated/dataModel';
 
 export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
   const channels = useQuery(api.mock.listChannels, { agentId });
-  const [activeSlug, setActiveSlug] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (channels && channels.length > 0 && !activeSlug) {
-      setActiveSlug(channels[0].slug);
-    }
-  }, [channels, activeSlug]);
+  const [pickedSlug, setPickedSlug] = useState<string | null>(null);
+  const activeSlug = pickedSlug ?? channels?.[0]?.slug ?? null;
 
   const messages = useQuery(
     api.mock.listMessages,
@@ -44,7 +39,7 @@ export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
             .map((c) => (
               <li key={c._id}>
                 <button
-                  onClick={() => setActiveSlug(c.slug)}
+                  onClick={() => setPickedSlug(c.slug)}
                   className={`w-full text-left px-2 py-1 rounded ${
                     c.slug === activeSlug
                       ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
@@ -65,7 +60,7 @@ export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
             .map((c) => (
               <li key={c._id}>
                 <button
-                  onClick={() => setActiveSlug(c.slug)}
+                  onClick={() => setPickedSlug(c.slug)}
                   className={`w-full text-left px-2 py-1 rounded ${
                     c.slug === activeSlug
                       ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'

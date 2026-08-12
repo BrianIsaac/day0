@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { internalMutation, mutation, query } from './_generated/server';
+import { internalMutation, query } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 

@@ -30,9 +30,17 @@ const schema = z.object({
 
   CONVEX_DEPLOYMENT: z.string().optional(),
   NEXT_PUBLIC_CONVEX_URL: z.string().optional(),
+  // Self-hosted backend (docker-compose.yml). Read by the Convex CLI, not by
+  // app code; mutually exclusive with CONVEX_DEPLOYMENT.
+  CONVEX_SELF_HOSTED_URL: z.string().optional(),
+  CONVEX_SELF_HOSTED_ADMIN_KEY: z.string().optional(),
 
   NEXT_PUBLIC_DEMO_BOSS_EMAIL: z.string().optional(),
   NEXT_PUBLIC_DEMO_TENANT_SLUG: z.string().default('acme-demo'),
+
+  // `true` skips Clerk entirely and runs as one synthetic local user. Refused
+  // outside `next dev` — see src/lib/dev-auth.ts.
+  NEXT_PUBLIC_DEV_NO_AUTH: z.string().optional(),
 });
 
 export const env = schema.parse({
@@ -51,6 +59,9 @@ export const env = schema.parse({
   DAYTONA_API_URL: process.env.DAYTONA_API_URL,
   CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
   NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
+  CONVEX_SELF_HOSTED_URL: process.env.CONVEX_SELF_HOSTED_URL,
+  CONVEX_SELF_HOSTED_ADMIN_KEY: process.env.CONVEX_SELF_HOSTED_ADMIN_KEY,
   NEXT_PUBLIC_DEMO_BOSS_EMAIL: process.env.NEXT_PUBLIC_DEMO_BOSS_EMAIL,
   NEXT_PUBLIC_DEMO_TENANT_SLUG: process.env.NEXT_PUBLIC_DEMO_TENANT_SLUG,
+  NEXT_PUBLIC_DEV_NO_AUTH: process.env.NEXT_PUBLIC_DEV_NO_AUTH,
 });

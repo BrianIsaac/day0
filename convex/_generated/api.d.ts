@@ -11,6 +11,7 @@
 import type * as agents from "../agents.js";
 import type * as charters from "../charters.js";
 import type * as coworker from "../coworker.js";
+import type * as devAuth from "../devAuth.js";
 import type * as events from "../events.js";
 import type * as mock from "../mock.js";
 import type * as mockSeed from "../mockSeed.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   charters: typeof charters;
   coworker: typeof coworker;
+  devAuth: typeof devAuth;
   events: typeof events;
   mock: typeof mock;
   mockSeed: typeof mockSeed;

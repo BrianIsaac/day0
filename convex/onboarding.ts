@@ -2,7 +2,7 @@
 
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { action } from './_generated/server';
+import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import {
   synthesiseCharter,
@@ -17,7 +17,7 @@ import { mergeGoodHabits, researchAndDistil } from '../src/agent/good-habits';
 import { generateWorkItemsFromCharter } from '../src/agent/work-generator';
 import type { Charter } from '../src/agent/charter';
 import type { MockSurfaceSnapshot } from '../src/work/types';
-import type { Doc } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { assertOwnsAgentAction } from './ownership';
 
@@ -78,8 +78,8 @@ async function extractAnswersFromTranscript(
 }
 
 async function doSynthesise(
-  ctx: { runMutation: (fn: any, args: any) => Promise<any> },
-  args: { agentId: any; bossLabel: string; answers: Record<DayOneTopic, string> },
+  ctx: ActionCtx,
+  args: { agentId: Id<'agents'>; bossLabel: string; answers: Record<DayOneTopic, string> },
 ): Promise<{ charterId: string; version: string }> {
   const charter = await synthesiseCharter({
     answers: args.answers,
@@ -236,7 +236,7 @@ export const postCharterApproval = action({
       });
       const merged = mergeGoodHabits(existing ?? '', research.fragment);
       await ctx.runMutation(internal.workspace.writeFileInternal, {
-        agentId: args.agentId as any,
+        agentId: args.agentId,
         fileName: 'AGENTS.md',
         content: merged,
       });
@@ -285,7 +285,7 @@ export const postCharterApproval = action({
  * LLM sees the same surface identifiers the executor will later act on.
  */
 async function loadMockEnvSnapshot(
-  ctx: { runQuery: (fn: any, args: any) => Promise<any> },
+  ctx: ActionCtx,
   agentId: Doc<'agents'>['_id'],
 ): Promise<MockSurfaceSnapshot> {
   const docs: Doc<'mockDocs'>[] = await ctx.runQuery(api.mock.listDocs, { agentId });

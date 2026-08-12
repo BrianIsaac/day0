@@ -1,4 +1,5 @@
 import { mutation } from './_generated/server';
+import { getCallerOrThrow } from './ownership';
 
 /**
  * Wipe every record belonging to the signed-in user. Idempotent.
@@ -7,8 +8,7 @@ import { mutation } from './_generated/server';
 export const deleteMyData = mutation({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('not authenticated');
+    const identity = await getCallerOrThrow(ctx);
     const userId = identity.subject;
 
     const agents = await ctx.db

@@ -1,10 +1,11 @@
 import { v } from 'convex/values';
 import { mutation, query, internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent } from './ownership';
+import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 
 /**
- * Agent CRUD + state transitions. Each agent is owned by a Clerk user;
+ * Agent CRUD + state transitions. Each agent is owned by one caller subject —
+ * a Clerk user, or the single synthetic user in no-auth dev mode;
  * `listForUser` filters by the signed-in user so concurrent demos stay
  * isolated. All other public functions that take an `agentId` enforce
  * ownership via `assertOwnsAgent` before reading or writing.
@@ -13,7 +14,7 @@ import { assertOwnsAgent } from './ownership';
 export const listForUser = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
+    const identity = await getCaller(ctx);
     if (!identity) return [];
     return await ctx.db
       .query('agents')
@@ -33,7 +34,7 @@ export const get = query({
 export const getByEmail = query({
   args: { bossEmail: v.string() },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
+    const identity = await getCaller(ctx);
     if (!identity) return null;
     const row = await ctx.db
       .query('agents')
@@ -65,8 +66,7 @@ export const deploy = mutation({
     avatarId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('not authenticated');
+    const identity = await getCallerOrThrow(ctx);
     const agentId = await ctx.db.insert('agents', {
       bossEmail: args.bossEmail,
       name: args.name ?? 'Day0',

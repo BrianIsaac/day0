@@ -18,7 +18,9 @@ export function ChatRoom({
 }) {
   const startSession = useMutation(api.voice.start);
   const [draft, setDraft] = useState('');
-  const [synthFired, setSynthFired] = useState(false);
+  // A latch, not UI state — nothing renders off it, so a ref keeps the
+  // once-only guard out of the render cycle.
+  const synthFired = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const transport = new DefaultChatTransport({
@@ -27,7 +29,7 @@ export function ChatRoom({
   });
 
   const [streamError, setStreamError] = useState<string | null>(null);
-  const { messages, sendMessage, status, error } = useChat({
+  const { messages, sendMessage, status } = useChat({
     transport,
     onError: (err) => {
       // OpenAI 503s and similar transient failures land here. The hook
@@ -66,8 +68,8 @@ export function ChatRoom({
 
   // Fire charter synthesis once the agent emits the dayOneComplete tool.
   useEffect(() => {
-    if (!done || synthFired) return;
-    setSynthFired(true);
+    if (!done || synthFired.current) return;
+    synthFired.current = true;
     const transcript = messages
       .map((m) => {
         const text = m.parts
@@ -88,7 +90,7 @@ export function ChatRoom({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentId, bossLabel, transcript }),
     });
-  }, [done, synthFired, messages, agentId, bossLabel]);
+  }, [done, messages, agentId, bossLabel]);
 
   function send() {
     const trimmed = draft.trim();

@@ -32,9 +32,16 @@ export function AgentDashboard({ agentId }: Props) {
   // The `voiceSession` guard is critical: without it, the moment a fresh
   // user picks a mode (state is still `deployed`, mode flips off `pick`)
   // this effect would race the user's click and snap them back to picker.
+  //
+  // This resync stays an effect on purpose. Deriving `mode` cannot express
+  // case 2 — the boss's own pick has to be discarded when the server moves
+  // underneath it — and resetting via a subtree `key` would remount
+  // `ChatRoom`, whose mount effect opens a voice session, so every state
+  // transition would start a duplicate 1:1.
   useEffect(() => {
     if (!agent) return;
     if (agent.state === 'deployed' && mode !== 'pick' && voiceSession) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMode('pick');
       return;
     }

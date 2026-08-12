@@ -1,4 +1,6 @@
+import { NextResponse } from 'next/server';
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+import { DEV_NO_AUTH } from '@/lib/dev-auth';
 
 /**
  * Next.js 16 renamed `middleware.ts` to `proxy.ts`. Public routes
@@ -9,6 +11,10 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
  * the environment. Keyless dev mode bootstraps keys on the client but
  * not on the server, so the middleware passes through until the user
  * claims their Clerk keys.
+ *
+ * In no-auth dev mode Clerk's middleware never runs at all — invoking it
+ * without a `ClerkProvider` anywhere in the app would only manufacture a
+ * dependency the rest of that mode has deliberately dropped.
  */
 const isPublicRoute = createRouteMatcher([
   '/',
@@ -21,12 +27,17 @@ const isPublicRoute = createRouteMatcher([
   '/api/voice/chat(.*)',
 ]);
 
-export default clerkMiddleware(async (auth, req) => {
+const clerkProxy = clerkMiddleware(async (auth, req) => {
   const hasClerkKey = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   if (hasClerkKey && !isPublicRoute(req)) {
     await auth.protect();
   }
 });
+
+export default function proxy(...args: Parameters<typeof clerkProxy>) {
+  if (DEV_NO_AUTH) return NextResponse.next();
+  return clerkProxy(...args);
+}
 
 export const config = {
   matcher: [
