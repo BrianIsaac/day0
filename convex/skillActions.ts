@@ -120,17 +120,30 @@ export const authorAndRegisterSkill = action({
         verificationLog = `sandbox verification skipped - ${skipReason}`;
       } else {
         sandboxId = result.sandboxId;
+        // Store the body as soon as a sandbox exists: whichever way the check
+        // goes, the boss can read what was written and decide about a retry.
         await ctx.runMutation(internal.skills.setAuthoring, {
           skillId: args.skillId,
           sandboxId,
+          body,
         });
         verificationLog = `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
         if (!result.ok) {
+          const failureReason = result.failureReason ?? 'sandbox verification failed';
           await ctx.runMutation(internal.skills.setFailed, {
             skillId: args.skillId,
-            reason: `Daytona sandbox exited non-zero. ${verificationLog.slice(0, 500)}`,
+            reason: `Daytona verification failed - ${failureReason}. ${verificationLog.slice(0, 400)}`,
           });
-          return { ok: false, reason: 'sandbox failed' };
+          if (skill.proposedFor) {
+            await ctx.runMutation(internal.work.setVerdict, {
+              workItemId: skill.proposedFor,
+              verdict: {
+                decision: 'needs-skill',
+                reason: `skill authored but verification failed - ${failureReason}`,
+              },
+            });
+          }
+          return { ok: false, reason: failureReason };
         }
       }
     } catch (err) {

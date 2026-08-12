@@ -24,8 +24,15 @@ export interface SkillSandboxRun {
   stdout: string;
   /** Stderr from the smoke-test execution. */
   stderr: string;
-  /** Whether the sandbox exited 0. */
+  /**
+   * Whether the run produced a verification signal: exit 0 **and** something on
+   * stdout. Exit code alone would pass a program that ran nothing observable,
+   * and "the sandbox printed what we asked it to print" is the whole of the
+   * signal this helper contributes.
+   */
   ok: boolean;
+  /** Why `ok` is false, for the caller's failure record. */
+  failureReason?: string;
   /** True when no sandbox ran at all; `ok` carries no verification weight. */
   skipped: boolean;
   skipReason?: string;
@@ -75,11 +82,22 @@ export async function authorAndVerifySkill(args: AuthorSkillArgs): Promise<Skill
     await fs.uploadFile(Buffer.from(args.skillBody, 'utf8'), 'SKILL.md');
     await fs.uploadFile(Buffer.from(args.smokeTest, 'utf8'), 'smoke.py');
     const result = await sandbox.process.executeCommand('python smoke.py', undefined, undefined, 60);
+    const stdout = result.result ?? '';
+    const exitCode = result.exitCode ?? 1;
+    const printedSomething = stdout.trim().length > 0;
     return {
       sandboxId: sandbox.id,
-      stdout: result.result ?? '',
+      stdout,
       stderr: '',
-      ok: (result.exitCode ?? 1) === 0,
+      ok: exitCode === 0 && printedSomething,
+      ...(exitCode !== 0
+        ? { failureReason: `smoke test exited ${exitCode}` }
+        : printedSomething
+          ? {}
+          : {
+              failureReason:
+                'smoke test exited 0 but printed nothing, so the run produced no verification signal',
+            }),
       skipped: false,
     };
   } finally {
