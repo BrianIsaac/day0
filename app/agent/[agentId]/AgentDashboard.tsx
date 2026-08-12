@@ -532,7 +532,12 @@ function WorkQueue({
   }, [workItems, agentId, draftPlan, executePlan]);
 
   return (
-    <Card title={`Work queue · ${items.length} items · ${registeredSkillCount} skills available`}>
+    <Card
+      title={
+        `Work queue · ${items.length} ${items.length === 1 ? 'item' : 'items'} · ` +
+        `${registeredSkillCount} ${registeredSkillCount === 1 ? 'skill' : 'skills'} available`
+      }
+    >
       {items.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">
           {charterApproved
