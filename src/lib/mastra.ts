@@ -99,8 +99,9 @@ export type StructuredMode = 'native' | 'prompt';
  * Raised when the server accepted the request and returned no object. Mastra
  * more often raises its own inside `agent.generate()` first - a schema
  * validation failure against the prose-prefixed text a server returns when it
- * takes `response_format` and ignores it - which is why the classifier decides
- * on the shape of the failure rather than on this type alone.
+ * takes `response_format` and ignores it - which is what the error below
+ * translates, so that both routes reach the classifier as the same kind of
+ * failure.
  */
 export class StructuredOutputMissingError extends StructuredContractError {
   constructor(
@@ -110,6 +111,41 @@ export class StructuredOutputMissingError extends StructuredContractError {
     super(`agentJson(${agentName}): model returned no structured object in ${mode} mode`);
     this.name = 'StructuredOutputMissingError';
   }
+}
+
+/**
+ * Raised when Mastra's own schema validation rejected the reply. Same fact as
+ * the error above - a request completed and the reply did not honour the
+ * contract - reached by a different route, so it is typed as the same kind of
+ * failure.
+ */
+export class StructuredOutputInvalidError extends StructuredContractError {
+  constructor(
+    readonly agentName: string,
+    readonly mode: StructuredMode,
+    cause: unknown,
+  ) {
+    super(`agentJson(${agentName}): ${mode} reply did not satisfy the schema`, { cause });
+    this.name = 'StructuredOutputInvalidError';
+  }
+}
+
+/**
+ * Mastra validates the reply against the schema inside `agent.generate()`, so a
+ * server that takes `response_format` and returns prose-prefixed JSON anyway
+ * fails there, before the missing-object check below can see it. That error
+ * carries no HTTP status and nothing else that distinguishes it from a bad key
+ * or a local bug - only this id does, and the classifier admits a statusless
+ * failure on affirmative evidence alone. Recognising the id here rather than in
+ * the shared classifier keeps Mastra's private error vocabulary on the Mastra
+ * side of the seam.
+ */
+function isMastraSchemaViolation(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === 'object' &&
+    (err as { id?: unknown }).id === 'STRUCTURED_OUTPUT_SCHEMA_VALIDATION_FAILED'
+  );
 }
 
 /**
@@ -163,8 +199,12 @@ export interface AgentJsonResult<T> {
  * native attempt fails for a reason `response_format` could explain, the prompt
  * attempt is what settles whether it did, and only its success demotes the
  * agent. A failure the parameter cannot explain - a rate limit, a bad key, a
- * 5xx - is rethrown untried, because prompt injection recovers from none of
- * them and would only bury the real cause under a second failure.
+ * 5xx, anything statusless that nothing ties to the endpoint - is rethrown
+ * untried, because prompt injection recovers from none of them and would only
+ * bury the real cause under a second failure. Where the parameter is implicated
+ * but the failure could also have cleared on its own, the object is fetched and
+ * no demotion is recorded: the two calls are separated in time and this ladder
+ * cannot tell a refusal from a coincidence.
  */
 export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJsonResult<T>> {
   const label = `agentJson(${args.agent.name})`;
@@ -222,6 +262,24 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
       );
       throw err;
     }
+    if (!failure.provesRefusal) {
+      // The object is in hand, which is what the caller needed, but the native
+      // failure was consistent with a passing condition and the two calls are
+      // separated in time. Demoting on that would hold every later call for
+      // this agent on the degraded rung on the strength of a coincidence.
+      structuredModeMemo.inconclusive(key);
+      log.warn(
+        'structured-output: prompt injection produced the object, but the native failure does not prove response_format was the cause; not demoting',
+        {
+          agent: args.agent.name,
+          baseUrl: endpoint,
+          model: MODEL,
+          evidence: failure.evidence,
+          cause: (err as Error).message,
+        },
+      );
+      return { value, mode: 'prompt', fellBack: true };
+    }
     structuredModeMemo.refused(key);
     log.warn(
       'structured-output fallback: native response_format failed, prompt injection produced the object',
@@ -248,16 +306,24 @@ async function generateObject<T>(
   args: { agent: Agent; user: string; schema: unknown },
   mode: StructuredMode,
 ): Promise<T> {
-  const response = await args.agent.generate(args.user, {
-    // Zod 4 schemas pass through Mastra's PublicSchema bridge; the cast
-    // sidesteps the v4-vs-v3 peer-dep nuance without losing the
-    // runtime validation Mastra performs against the schema.
-    structuredOutput: {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      schema: args.schema as any,
-      jsonPromptInjection: mode === 'prompt',
-    },
-  });
+  let response;
+  try {
+    response = await args.agent.generate(args.user, {
+      // Zod 4 schemas pass through Mastra's PublicSchema bridge; the cast
+      // sidesteps the v4-vs-v3 peer-dep nuance without losing the
+      // runtime validation Mastra performs against the schema.
+      structuredOutput: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        schema: args.schema as any,
+        jsonPromptInjection: mode === 'prompt',
+      },
+    });
+  } catch (err) {
+    if (isMastraSchemaViolation(err)) {
+      throw new StructuredOutputInvalidError(args.agent.name, mode, err);
+    }
+    throw err;
+  }
   const object = response.object as T | undefined;
   if (object === undefined || object === null) {
     throw new StructuredOutputMissingError(args.agent.name, mode);
