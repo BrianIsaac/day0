@@ -471,15 +471,13 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
 
+  // Agents open at the deterministic idle spot `OfficeAgent` derives from their
+  // id and start roaming from the first tick, so no synchronous seeding here.
   useEffect(() => {
     const currentAgents = agents ?? [];
+    if (!currentAgents.length) return;
 
-    if (!currentAgents.length) {
-      setAgentDestinations({});
-      return;
-    }
-
-    function updateDestinations() {
+    const timer = window.setInterval(() => {
       setAgentDestinations((current) => {
         const next: Record<string, OfficePoint> = {};
 
@@ -491,10 +489,7 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
 
         return next;
       });
-    }
-
-    updateDestinations();
-    const timer = window.setInterval(updateDestinations, 3400);
+    }, 3400);
     return () => window.clearInterval(timer);
   }, [agents]);
 

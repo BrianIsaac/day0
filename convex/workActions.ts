@@ -1,7 +1,7 @@
 "use node";
 
 import { v } from 'convex/values';
-import { action } from './_generated/server';
+import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import {
   evaluateCandidate,
@@ -47,7 +47,7 @@ function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
 }
 
 function buildLookups(args: {
-  ctx: any;
+  ctx: ActionCtx;
   agentId: Id<'agents'>;
   registeredSkills: SimpleSkillRow[];
   grantedScopes: Set<string>;
@@ -293,7 +293,7 @@ export const executeApprovedPlan = action({
 // ---------- Mock environment helpers ----------
 
 async function loadMockEnvSnapshot(
-  ctx: any,
+  ctx: ActionCtx,
   agentId: Id<'agents'>,
 ): Promise<MockSurfaceSnapshot> {
   const docs: Doc<'mockDocs'>[] = await ctx.runQuery(api.mock.listDocs, { agentId });
@@ -362,7 +362,7 @@ async function loadMockEnvSnapshot(
 }
 
 async function applyMockActions(
-  ctx: any,
+  ctx: ActionCtx,
   agentId: Id<'agents'>,
   actions: MockAction[],
 ): Promise<Array<{ tool: string; ok: boolean; reason?: string }>> {

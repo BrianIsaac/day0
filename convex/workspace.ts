@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation } from './_generated/server';
+import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
+import type { Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 
 /**
@@ -72,15 +73,15 @@ export const writeFileInternal = internalMutation({
 });
 
 async function writeFileImpl(
-  ctx: { db: { query: any; insert: any; patch: any } },
-  args: { agentId: any; fileName: string; content: string },
+  ctx: MutationCtx,
+  args: { agentId: Id<'agents'>; fileName: string; content: string },
 ) {
   if (!isKnown(args.fileName)) {
     throw new Error(`workspace.writeFile: unknown ${args.fileName}`);
   }
   const existing = await ctx.db
     .query('workspace')
-    .withIndex('by_agent_file', (q: any) =>
+    .withIndex('by_agent_file', (q) =>
       q.eq('agentId', args.agentId).eq('fileName', args.fileName),
     )
     .unique();

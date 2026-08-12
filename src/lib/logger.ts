@@ -14,7 +14,6 @@ function emit(level: LogLevel, msg: string, ctx?: Record<string, unknown>): void
     msg,
     ...(ctx ?? {}),
   };
-  // eslint-disable-next-line no-console
   console.log(JSON.stringify(line));
 }
 
