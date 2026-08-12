@@ -21,7 +21,7 @@ const schema = z.object({
   ELEVENLABS_AGENT_ID: z.string().optional(),
   // Signs the post-call webhook. Its absence is not the same shape of absence
   // as the two above: without them voice never starts, without this one voice
-  // runs and only post-call finalisation is refused. `pnpm check:voice` reports
+  // runs and only post-call finalisation is refused. `pnpm check:setup` reports
   // the two separately.
   ELEVENLABS_WEBHOOK_SECRET: z.string().optional(),
 

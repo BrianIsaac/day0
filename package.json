@@ -14,13 +14,15 @@
     "convex:dev": "convex dev",
     "convex:up": "docker compose --env-file .env.local up -d",
     "convex:down": "docker compose --env-file .env.local down",
+    "convex:restart": "docker compose --env-file .env.local restart backend",
     "convex:admin-key": "docker compose --env-file .env.local exec backend ./generate_admin_key.sh",
-    "check:voice": "tsx scripts/check-voice-setup.ts",
+    "model:up": "docker compose --env-file .env.local --profile model up -d model",
+    "model:pull": "docker compose --env-file .env.local --profile model exec model ollama pull",
+    "check:setup": "tsx scripts/check-setup.ts",
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx seed/seed.ts",
     "probe:model": "tsx --env-file-if-exists=.env.local scripts/probe-model-endpoint.ts"
   },
   "prettier": {
