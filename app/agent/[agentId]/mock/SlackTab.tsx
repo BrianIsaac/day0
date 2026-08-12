@@ -27,60 +27,79 @@ export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
 
   if (!channels) return <div className="text-xs text-[var(--color-muted)]">loading slack…</div>;
 
-  return (
-    <div className="grid grid-cols-[12rem_1fr] gap-4 h-full">
-      <aside className="border-r border-[var(--color-border)] pr-3 -mr-1 overflow-y-auto">
-        <div className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-2 mt-1">
-          Channels
-        </div>
-        <ul className="space-y-1 text-xs">
-          {channels
-            .filter((c) => c.kind === 'channel')
-            .map((c) => (
-              <li key={c._id}>
-                <button
-                  onClick={() => setPickedSlug(c.slug)}
-                  className={`w-full text-left px-2 py-1 rounded ${
-                    c.slug === activeSlug
-                      ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
-                      : 'text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
-                  }`}
-                >
-                  {c.displayName}
-                </button>
-              </li>
-            ))}
-        </ul>
-        <div className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-2 mt-4">
-          Direct messages
-        </div>
-        <ul className="space-y-1 text-xs">
-          {channels
-            .filter((c) => c.kind === 'dm')
-            .map((c) => (
-              <li key={c._id}>
-                <button
-                  onClick={() => setPickedSlug(c.slug)}
-                  className={`w-full text-left px-2 py-1 rounded ${
-                    c.slug === activeSlug
-                      ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
-                      : 'text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
-                  }`}
-                >
-                  {c.displayName}
-                </button>
-              </li>
-            ))}
-        </ul>
-      </aside>
+  const channelList = channels.filter((c) => c.kind === 'channel');
+  const dmList = channels.filter((c) => c.kind === 'dm');
 
-      <div ref={scrollRef} className="overflow-y-auto pr-2 space-y-3">
-        {sortedMessages.length === 0 ? (
-          <div className="text-xs text-[var(--color-muted)]">no messages in this channel yet</div>
-        ) : (
-          sortedMessages.map((m) => <MessageRow key={m._id} m={m} />)
-        )}
+  /* A fixed 12rem rail took 114px of a 398px panel and left the conversation
+     the rest, wrapping a 24-word message over nine lines. The rail earns its
+     column only where there is one to spare: below that the channels sit above
+     the conversation as a single row of chips, and the messages get the width. */
+  return (
+    <div className="@container h-full">
+      <div className="grid grid-cols-1 @lg:grid-cols-[11rem_minmax(0,1fr)] gap-3 @lg:gap-4 h-full">
+        <aside className="@lg:border-r border-[var(--color-border)] @lg:pr-3 @lg:-mr-1 @lg:overflow-y-auto min-w-0">
+          <ChannelGroup
+            label="Channels"
+            channels={channelList}
+            activeSlug={activeSlug}
+            onPick={setPickedSlug}
+          />
+          <ChannelGroup
+            label="Direct messages"
+            channels={dmList}
+            activeSlug={activeSlug}
+            onPick={setPickedSlug}
+            className="mt-2 @lg:mt-4"
+          />
+        </aside>
+
+        <div ref={scrollRef} className="overflow-y-auto @lg:pr-2 space-y-3 min-w-0">
+          {sortedMessages.length === 0 ? (
+            <div className="text-xs text-[var(--color-muted)]">no messages in this channel yet</div>
+          ) : (
+            sortedMessages.map((m) => <MessageRow key={m._id} m={m} />)
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function ChannelGroup({
+  label,
+  channels,
+  activeSlug,
+  onPick,
+  className,
+}: {
+  label: string;
+  channels: Doc<'mockSlackChannels'>[];
+  activeSlug: string | null;
+  onPick: (slug: string) => void;
+  className?: string;
+}) {
+  if (channels.length === 0) return null;
+  return (
+    <div className={className}>
+      <div className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-1.5 @lg:mb-2 @lg:mt-1">
+        {label}
+      </div>
+      <ul className="flex flex-wrap gap-1 @lg:block @lg:space-y-1 text-xs">
+        {channels.map((c) => (
+          <li key={c._id}>
+            <button
+              onClick={() => onPick(c.slug)}
+              className={`text-left px-2 py-1 rounded @lg:w-full ${
+                c.slug === activeSlug
+                  ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                  : 'text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
+              }`}
+            >
+              {c.displayName}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -98,9 +117,12 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
   const initial = m.sender.slice(0, 1).toUpperCase();
   return (
     <div className={`border ${tone} rounded-md px-3 py-2`}>
-      <div className="flex items-center gap-2 mb-1">
+      {/* Wraps rather than squashing: the avatar used to be crushed to an
+          ellipse and the thread key broken over three lines when the column
+          was narrow. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
         <span
-          className={`w-5 h-5 rounded-full text-[10px] font-medium flex items-center justify-center ${
+          className={`w-5 h-5 shrink-0 rounded-full text-[10px] font-medium flex items-center justify-center ${
             isAgent
               ? 'bg-[var(--color-accent)]/30 text-[var(--color-accent)]'
               : 'bg-[var(--color-muted)]/20 text-[var(--color-muted)]'
@@ -120,11 +142,11 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
           </span>
         ) : null}
         {m.threadKey ? (
-          <span className="text-[9px] text-[var(--color-muted)] font-mono">
+          <span className="text-[9px] text-[var(--color-muted)] font-mono truncate max-w-[14rem]">
             ↳ {m.threadKey}
           </span>
         ) : null}
-        <span className="text-[9px] text-[var(--color-muted)] ml-auto">
+        <span className="text-[9px] text-[var(--color-muted)] ml-auto shrink-0">
           {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
