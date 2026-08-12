@@ -127,6 +127,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `DAYTONA_API_KEY`, `DAYTONA_API_URL` | Skill sandbox authoring. Without a key an authored skill stops at `authoring` and stays uncallable |
 | `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY` | Self-hosted backend instead of Convex cloud. Set by the steps in [Run it with no accounts](#run-it-with-no-accounts) |
 | `CONVEX_BIND_ADDR`, `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT`, `MODEL_PORT` | Host side of the self-hosted stack. See [Ports](#ports-host-side-and-container-side) |
+| `MODEL_GPU`, `MODEL_GPU_COUNT` | Whether the bundled model service reserves a GPU. `auto` (default) uses one where there is one. See [The GPU is opt-out, not opt-in](#the-gpu-is-opt-out-not-opt-in) |
 | `NEXT_PUBLIC_DEV_NO_AUTH`, `DEV_NO_AUTH_SECRET`, `DEV_NO_AUTH_SIGNING_KEY`, `DEV_NO_AUTH_JWKS` | No-auth dev mode. The last three are written by `pnpm dev:no-auth-key`, never by hand |
 
 Convex Node actions read `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `EXA_API_KEY`, `DAYTONA_API_KEY` from the Convex deployment env (separate from `.env.local`). Push them with `./scripts/sync-convex-env.sh` after `pnpm convex:dev`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
@@ -135,37 +136,19 @@ Convex Node actions read `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `EXA_API_KEY`, `DA
 
 ## Local dev
 
-Two ways to run it. The first is the shape the deployed app runs in; the second needs no third-party account at all.
+Three ways to run it. They disagree about two things only: who runs the model, and who holds the accounts.
 
-| | Convex cloud + Clerk | Self-hosted Convex + no-auth |
-|---|---|---|
-| Accounts needed | Convex, Clerk | **none** - but you must run a model yourself |
-| Model | any OpenAI-compatible endpoint, OpenAI by default | a local one, e.g. the bundled `pnpm model:up` |
-| Users | one per Clerk sign-in | one fixed local user who owns every row |
-| Reachable from another machine | yes | refused, by design |
-| Setup | below | [Run it with no accounts](#run-it-with-no-accounts) |
+| Route | Accounts | Setup it costs you | What it gives you |
+|---|---|---|---|
+| [**No accounts, and you run the model**](#run-it-with-no-accounts) | none | Docker, and one model to pull - `qwen3:8b` is about 5 GB | The whole loop with nothing signed up for and nothing metered. How fast it answers is a question about your hardware, not about Day0: `pnpm model:up` uses an NVIDIA GPU wherever it finds one |
+| [**An OpenAI key, and you run nothing**](#run-it-with-an-openai-key) | OpenAI | Docker, and one key pasted into `.env.local` | The shortest route if you already have a key. No weights to pull and no GPU question - everything but the model still runs on your machine, and you pay OpenAI per token |
+| [**The full hosted setup**](#convex-cloud--clerk) | Convex, Clerk, OpenAI | three sign-ups, and a JWT template in the Clerk dashboard | Per-user auth, a backend that is not your laptop, and the exact shape the deployed app runs in - the one to pick if you intend to deploy it |
 
-Both need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible chat-completions endpoint, keyless local runtimes included, which is what the right-hand column rests on. Exa and Daytona are optional in either column; the loop degrades visibly rather than silently without them.
+The first two are the same stack, and differ only in where the model lives: a self-hosted Convex backend in Docker and no-auth dev mode, where one fixed local user owns every row and a request from any other machine is refused by design. The third replaces both halves with hosted ones and gives you a user per Clerk sign-in.
+
+All three need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible chat-completions endpoint - keyless local runtimes included - which is what the first route rests on and what lets the other two point anywhere else. Exa and Daytona are optional on all three; the loop degrades visibly rather than silently without them.
 
 Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of the four setups - backend, auth, model, voice - separately, and fails only on the states that are actually broken rather than merely incomplete.
-
-### Convex cloud + Clerk
-
-```bash
-pnpm install
-pnpm convex:dev                  # one-off: provisions deployment, writes .env.local Convex keys
-./scripts/sync-convex-env.sh     # push provider keys into Convex deployment env
-pnpm dev                         # http://localhost:3000
-```
-
-Both accounts are free to create and neither step can be done for you:
-
-- **Convex** — `pnpm convex:dev` offers a choice on first run: log in, which opens a browser to sign up at [convex.dev](https://convex.dev) and then asks you to name a project, or carry on without an account, which gives you a local [anonymous deployment](#without-docker-for-convex) instead. This column is the cloud one, so log in - it is the account. Either way the command writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. With no terminal to prompt at, it takes the anonymous option silently, which is worth knowing before you wonder why nothing appeared on the dashboard.
-- **Clerk** — create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template). Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
-
-`pnpm dev` binds `localhost`, which is also the host Clerk's proxy rewrites to; a `127.0.0.1` bind reads as a foreign origin to Next 16 and breaks the sign-in handshake.
-
-Before either account exists the app still starts, which is worth knowing so you do not mistake it for a broken checkout: `pnpm dev` serves the landing page normally, and every route that would spend a provider key answers `401 {"error":"not authenticated"}`. Nothing is wrong - there is simply no one signed in and no way to become someone. `pnpm check:setup` says the same thing without starting a server.
 
 ## Run it with no accounts
 
@@ -178,7 +161,7 @@ pnpm install                     # first: everything below is a repo-local binar
 cp .env.example .env.local
 
 pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
-pnpm model:up                    # OpenAI-compatible model server on 11434
+pnpm model:up                    # OpenAI-compatible model server on 11434, on the GPU if you have one
 pnpm model:pull qwen3:8b         # ~5 GB, tool-capable, runs the whole loop
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
 ```
@@ -208,9 +191,9 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
 Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and approve the charter it writes. No provider was called and no account exists.
 
-The bundled model runs on the CPU, which works and is slow - an 8B model answers in minutes rather than seconds, and charter synthesis is several calls. If you have an NVIDIA GPU and the container toolkit, uncomment the `deploy.resources` block on the `model` service in `docker-compose.yml` and `pnpm model:up` again; it is the difference between a demo you watch and a demo you wait for.
+How fast that is has nothing to do with Day0. The agent core makes ordinary OpenAI chat-completions calls, so the wait you get is a property of the endpoint you pointed it at: the same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, and a hosted endpoint answers as fast as the provider does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
 
-Expect the loop to run and the output to be blunter than the hosted default. An 8B model holds the 1:1, fills the charter and drives the work queue, but it will sometimes decide it has heard enough and call `dayOneComplete` after two topics rather than seven. That is the model, not the wiring: the charter it writes from a short transcript is a real charter, with thinner evidence in it. A larger local model, or an `OPENAI_API_KEY`, is what buys the difference.
+Model size shows up in the output as well as on the clock, and the two are worth telling apart before you judge the loop. A small model holds the 1:1, fills the charter and drives the work queue, but it will sometimes decide it has heard enough and call `dayOneComplete` after two topics rather than seven; the charter it writes from that short transcript is a real charter, with thinner evidence in it. A larger model - local or hosted - is the whole of the fix, and `pnpm probe:model` tells you whether a given endpoint can drive the loop at all before you wire it into a demo.
 
 Five things about that sequence are load-bearing:
 
@@ -221,6 +204,23 @@ Five things about that sequence are load-bearing:
 - **`pnpm dev` prints an unlock URL.** It carries the secret once; after that it lives in an httpOnly cookie. Open `http://localhost:3000` directly and every route answers 403 - that is the boundary working, not a fault.
 
 `pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
+
+### The GPU is opt-out, not opt-in
+
+`pnpm model:up` looks for an NVIDIA driver on the host and, finding one, layers `docker-compose.gpu.yml` over the compose file so the container reserves the GPU. It prints the device the container ended up with. Where Docker declines to hand one over - no container toolkit, usually - it says why and starts the same service on the CPU, because a model server that is slow beats one that will not start.
+
+That fallback is why the reservation is a second file rather than a block in `docker-compose.yml`: an unsatisfiable device request is fatal rather than ignored, and the container is created and then refuses to start with `could not select device driver "nvidia" with capabilities: [[gpu]]`. `docker compose --profile model up -d model` with the base file alone is the CPU configuration, and every machine can run it.
+
+Pin the decision in `.env.local` when the guess is wrong:
+
+| | |
+|---|---|
+| `MODEL_GPU=auto` | the default - use a GPU where the driver is there, fall back where Docker refuses |
+| `MODEL_GPU=on` | require one, and fail loudly rather than run slowly |
+| `MODEL_GPU=off` | never ask for a device |
+| `MODEL_GPU_COUNT=1` | reserve one device instead of all of them |
+
+A model larger than your free VRAM is loaded partly on the CPU whatever was reserved. `docker compose exec model ollama ps` prints the split, and is the thing to check when an accelerated setup is still mysteriously slow.
 
 Every `:up` has a matching `:down`, and `pnpm convex:down` really does mean only Convex - the model service is behind a compose profile and outlives it, holding several gigabytes resident, which is not what you want after you thought you had stopped:
 
@@ -249,7 +249,68 @@ pnpm dev
 
 You still need a model - a native `ollama serve` on 11434, or `pnpm model:up` and `MODEL_PORT` for the bundled one. What you give up against the self-hosted stack is a deployment you own and can keep: the compose backend has its own volume, its own dashboard, and survives independently of the CLI. Use this route to see the thing run; use the one above to keep working on it.
 
-### Using a model server you already have
+## Run it with an OpenAI key
+
+Everything the route above runs, minus the model. The same self-hosted Convex backend in Docker and the same no-auth dev mode - so still no Convex account, no Clerk, and one fixed local user - with `api.openai.com` in place of a model server you host. If you already have a key, this is the shortest way to see the loop run: nothing to pull, nothing left resident afterwards, and the pauses between steps are a hosted model's rather than your laptop's.
+
+```bash
+pnpm install
+cp .env.example .env.local
+
+pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
+pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
+```
+
+Then set these in `.env.local`:
+
+```bash
+NEXT_PUBLIC_DEV_NO_AUTH=true
+NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
+CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
+CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|…   # from the command above
+OPENAI_API_KEY=sk-…
+OPENAI_MODEL=gpt-5.5
+# OPENAI_BASE_URL and CONVEX_OPENAI_BASE_URL both stay empty - see below.
+```
+
+and finish exactly as the account-free route does:
+
+```bash
+pnpm dev:no-auth-key             # generates the three DEV_NO_AUTH_* values
+./scripts/sync-convex-env.sh     # pushes DEV_NO_AUTH_JWKS + the key to the backend
+npx convex dev --once            # push functions
+pnpm check:setup
+pnpm dev                         # prints an unlock URL - open that, not localhost:3000
+```
+
+**The two addresses collapse into one here, which is the point.** Empty means `https://api.openai.com/v1`, and that address means the same thing from Next as it does from inside the backend container - so the trap that costs an afternoon on a local model server cannot be sprung. Next reaches it over this machine's ordinary outbound connection and the backend over its container's, and the charter arrives from the Node action just as the chat streams from Next. Leave both variables empty rather than writing the default into them; there is nothing to point anywhere.
+
+Two things to know:
+
+- **Coming from the local-model route, clear `OPENAI_BASE_URL` and `CONVEX_OPENAI_BASE_URL` and re-sync.** `./scripts/sync-convex-env.sh` clears the deployment's copy when both are empty, which is the one case where "unset" is a value rather than an omission: a deployment still holding `http://model:11434/v1` would call a model server you have since stopped, and only the actions would fail. Restart the backend afterwards - `pnpm convex:restart` - because a module keeps whatever env it was first evaluated with.
+- **This route meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, good-habits research, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.5` a demo run is cents rather than dollars, but it is not zero, which the account-free route is.
+
+No `pnpm model:up` here, so `pnpm convex:down` on its own is the whole teardown. And combined with the [anonymous deployment](#without-docker-for-convex) above, this route needs no Docker either: a key, `pnpm convex:dev`, and nothing else running on your machine.
+
+## Convex cloud + Clerk
+
+```bash
+pnpm install
+pnpm convex:dev                  # one-off: provisions deployment, writes .env.local Convex keys
+./scripts/sync-convex-env.sh     # push provider keys into Convex deployment env
+pnpm dev                         # http://localhost:3000
+```
+
+Both accounts are free to create and neither step can be done for you:
+
+- **Convex** — `pnpm convex:dev` offers a choice on first run: log in, which opens a browser to sign up at [convex.dev](https://convex.dev) and then asks you to name a project, or carry on without an account, which gives you a local [anonymous deployment](#without-docker-for-convex) instead. This route is the cloud one, so log in - it is the account. Either way the command writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. With no terminal to prompt at, it takes the anonymous option silently, which is worth knowing before you wonder why nothing appeared on the dashboard.
+- **Clerk** — create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template). Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
+
+`pnpm dev` binds `localhost`, which is also the host Clerk's proxy rewrites to; a `127.0.0.1` bind reads as a foreign origin to Next 16 and breaks the sign-in handshake.
+
+Before either account exists the app still starts, which is worth knowing so you do not mistake it for a broken checkout: `pnpm dev` serves the landing page normally, and every route that would spend a provider key answers `401 {"error":"not authenticated"}`. Nothing is wrong - there is simply no one signed in and no way to become someone. `pnpm check:setup` says the same thing without starting a server.
+
+## Using a model server you already have
 
 The bundled `model` service is a convenience, not a dependency - skip `pnpm model:up` and point the two variables at anything that speaks OpenAI chat completions (ollama, llama.cpp, LM Studio, vLLM, Groq, Together). The only rule is the one above: the second address must resolve *inside* the backend container.
 
@@ -267,7 +328,7 @@ pnpm probe:model
 
 answers whether a given endpoint can drive the loop - chat completions, JSON extraction, native `response_format`, prompt-injected schema, and the `auto` ladder the app actually runs on. A rung the server declines is reported as a note rather than a failure, because plenty of compatible servers refuse `response_format` and run the whole loop on prompt injection. It calls only the endpoint in `.env.local`.
 
-### Ports (host side and container side)
+## Ports (host side and container side)
 
 `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT` and `MODEL_PORT` move the **host** ports. The containers always listen on 3210, 3211, 6791 and 11434, and the backend's own view of itself (`CONVEX_CLOUD_ORIGIN`, which Node actions dial to reach the backend they run in) stays canonical whatever the host publishes. Set the ports, not the origins:
 
@@ -293,7 +354,7 @@ docker compose -p day0-review --env-file .env.local down -v
 
 Override `CONVEX_CLOUD_ORIGIN` or `CONVEX_SITE_ORIGIN` only with an address that resolves *inside* the container. An address only your browser can resolve belongs in `NEXT_PUBLIC_CONVEX_URL` (the app) or `CONVEX_BROWSER_ORIGIN` (the Convex dashboard container) instead.
 
-### Testing from a phone, and tunnels
+## Testing from a phone, and tunnels
 
 `pnpm dev` binds `localhost`, so nothing off this machine reaches it until you widen that - and widening the Next bind alone is never enough, because the browser also talks to Convex directly. (`localhost` rather than `127.0.0.1` because that is the host Clerk's proxy rewrites to, and Next 16 treats a `127.0.0.1` bind as a foreign origin.)
 
