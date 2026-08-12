@@ -94,47 +94,63 @@ export const seedItem = internalMutation({
   },
 });
 
+/**
+ * Record an evaluation verdict and move the row to where it puts it.
+ *
+ * A plain helper rather than only a mutation, because `skills.completeRegistration`
+ * has to requeue the work item that asked for a skill inside the same
+ * transaction that registers the skill — a registered, callable skill whose
+ * originating work item is still parked at `needs-skill` is a state nothing in
+ * the product knows how to leave.
+ */
+export async function applyVerdict(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  verdict: unknown,
+): Promise<void> {
+  const row = await ctx.db.get(workItemId);
+  if (!row) throw new Error('workItem not found');
+
+  // Late-arriving verdict guard: a verdict is the entry transition from
+  // `discovered` (initial evaluation) or `needs-skill` (pending-reevaluation
+  // after a skill registers). If the row has already advanced past these —
+  // claimed, plan-pending, plan-approved, executing, completed, etc. — a stale
+  // verdict must NOT stomp the row's state, which would wipe a drafted plan or
+  // running execution. Ignore silently.
+  if (row.state !== 'discovered' && row.state !== 'needs-skill') {
+    return;
+  }
+
+  const decision = (verdict as { decision: string }).decision;
+  let nextState: Doc<'workItems'>['state'] = 'discovered';
+  let skipReason: string | undefined;
+  if (decision === 'claim') nextState = 'claimed';
+  else if (decision === 'skip') {
+    nextState = 'skipped';
+    skipReason = (verdict as { reason?: string }).reason;
+  } else if (decision === 'queue') nextState = 'discovered';
+  else if (decision === 'defer') nextState = 'deferred';
+  else if (decision === 'needs-skill') nextState = 'needs-skill';
+  await ctx.db.patch(workItemId, {
+    verdict,
+    state: nextState,
+    ...(skipReason ? { skipReason } : {}),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.evaluated',
+    payload: { workItemId, decision, verdict },
+    createdAt: Date.now(),
+  });
+}
+
 export const setVerdict = internalMutation({
   args: {
     workItemId: v.id('workItems'),
     verdict: v.any(),
   },
   handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.workItemId);
-    if (!row) throw new Error('workItem not found');
-
-    // Late-arriving verdict guard: setVerdict is the entry transition
-    // from `discovered` (initial evaluation) or `needs-skill`
-    // (pending-reevaluation after a skill registers). If the row has
-    // already advanced past these — claimed, plan-pending,
-    // plan-approved, executing, completed, etc. — a stale verdict
-    // call must NOT stomp the row's state, which would wipe a drafted
-    // plan or running execution. Ignore silently.
-    if (row.state !== 'discovered' && row.state !== 'needs-skill') {
-      return;
-    }
-
-    const decision = (args.verdict as { decision: string }).decision;
-    let nextState: Doc<'workItems'>['state'] = 'discovered';
-    let skipReason: string | undefined;
-    if (decision === 'claim') nextState = 'claimed';
-    else if (decision === 'skip') {
-      nextState = 'skipped';
-      skipReason = (args.verdict as { reason?: string }).reason;
-    } else if (decision === 'queue') nextState = 'discovered';
-    else if (decision === 'defer') nextState = 'deferred';
-    else if (decision === 'needs-skill') nextState = 'needs-skill';
-    await ctx.db.patch(args.workItemId, {
-      verdict: args.verdict,
-      state: nextState,
-      ...(skipReason ? { skipReason } : {}),
-    });
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.evaluated',
-      payload: { workItemId: args.workItemId, decision, verdict: args.verdict },
-      createdAt: Date.now(),
-    });
+    await applyVerdict(ctx, args.workItemId, args.verdict);
   },
 });
 

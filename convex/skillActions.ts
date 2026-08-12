@@ -57,14 +57,17 @@ const authorSchema = z.object({
 });
 
 /**
- * Where a run may start. `approved` is the boss's first go-ahead; `authoring`
- * and `failed` are retries of a skill that never registered, so re-authoring
- * cannot pull the ground out from under an executor already calling it. A retry
- * re-authors rather than re-verifying the stored body, because the smoke test
- * that would verify it is not persisted - and an unverified body has no claim
- * to being the one worth keeping.
+ * Where a run may start. `approved` is the boss's first go-ahead; `authoring`,
+ * `verified` and `failed` are retries of a skill that never registered, so
+ * re-authoring cannot pull the ground out from under an executor already
+ * calling it. A retry re-authors rather than re-verifying the stored body,
+ * because the smoke test that would verify it is not persisted - and an
+ * unverified body has no claim to being the one worth keeping.
+ *
+ * `verified` is in the list for rows stranded there by the earlier split
+ * registration path; nothing writes it now.
  */
-const RETRYABLE_STATES = ['approved', 'authoring', 'failed'] as const;
+const RETRYABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
 
 /**
  * Park a skill that did not reach `registered`. Every no-registration exit goes
@@ -219,19 +222,15 @@ export const authorAndRegisterSkill = action({
       return { ok: false, reason: `sandbox verification unavailable: ${skipReason}` };
     }
 
-    await ctx.runMutation(internal.skills.setVerified, {
+    // One call, one transaction: the verified body, the callable row and the
+    // requeue of the work item that asked for the skill either all land or none
+    // of them do. Anything that fails here leaves the row in a state the retry
+    // above accepts and the skills panel lists.
+    await ctx.runMutation(internal.skills.completeRegistration, {
       skillId: args.skillId,
       body,
       verificationLog,
     });
-    await ctx.runMutation(internal.skills.setRegistered, { skillId: args.skillId });
-
-    if (skill.proposedFor) {
-      await ctx.runMutation(internal.work.setVerdict, {
-        workItemId: skill.proposedFor,
-        verdict: { decision: 'pending-reevaluation', reason: 'skill registered, ready to retry' },
-      });
-    }
 
     return { ok: true };
   },
