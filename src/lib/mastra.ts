@@ -1,5 +1,8 @@
 import { Agent } from '@mastra/core/agent';
+import type { MastraModelConfig } from '@mastra/core/llm';
 import { env } from '../env';
+import { languageModel, MODEL } from './openai';
+import { log } from './logger';
 
 /**
  * Mastra-fronted agent helpers.
@@ -11,14 +14,27 @@ import { env } from '../env';
  * traces so the framework's role in the call graph is concrete rather
  * than incidental.
  *
- * Both helpers retry on transient OpenAI errors (503 service overloads,
+ * Both helpers retry on transient model errors (503 service overloads,
  * generic API errors flagged `isRetryable`). The Mastra/AI-SDK default
  * is two retries on top of the initial attempt — that has not been
- * enough during demo windows when OpenAI is hot. We wrap with
+ * enough during demo windows when the provider is hot. We wrap with
  * exponential backoff up to five attempts so the loop survives a flake.
  */
 
-const MODEL = `openai/${env.OPENAI_MODEL}` as const;
+/**
+ * Model handed to every Mastra Agent.
+ *
+ * Hosted OpenAI keeps the model-router string so Mastra resolves the
+ * model through its own provider registry (capability metadata, strict
+ * structured-output mode, observability labels). A custom
+ * OPENAI_BASE_URL swaps in an explicit AI-SDK chat-completions model,
+ * because the router would otherwise resolve `openai/*` against
+ * api.openai.com and ignore the base URL entirely.
+ */
+export const MODEL_CONFIG: MastraModelConfig = env.OPENAI_BASE_URL
+  ? (languageModel() as MastraModelConfig)
+  : (`openai/${MODEL}` as MastraModelConfig);
+
 const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 2000;
 const MAX_DELAY_MS = 30000;
@@ -53,25 +69,92 @@ export function makeAgent(name: string, instructions: string): Agent {
     id: name,
     name,
     instructions,
-    model: MODEL,
+    model: MODEL_CONFIG,
   });
+}
+
+/**
+ * How Mastra is asked to produce the object.
+ *
+ *   native — the schema goes down the wire as `response_format`
+ *            (`json_schema` for providers that advertise strict mode).
+ *   prompt — Mastra injects the schema into the system prompt instead
+ *            and parses the object back out of the reply text.
+ *
+ * This is the Mastra-side twin of the ladder in `src/lib/openai.ts`,
+ * driven by the same `OPENAI_JSON_MODE` switch so one variable
+ * describes the whole model layer.
+ */
+export type StructuredMode = 'native' | 'prompt';
+
+let structuredModeProbe: StructuredMode | null = null;
+
+export function structuredModeInUse(): StructuredMode | null {
+  return structuredModeProbe;
+}
+
+/** Test seam — clears the memo so a suite can drive both branches. */
+export function resetStructuredModeProbe(): void {
+  structuredModeProbe = null;
+}
+
+function initialStructuredMode(override?: StructuredMode): StructuredMode {
+  if (override) return override;
+  if (env.OPENAI_JSON_MODE === 'prompt') return 'prompt';
+  if (env.OPENAI_JSON_MODE === 'native') return 'native';
+  return structuredModeProbe ?? 'native';
 }
 
 export async function agentJson<T>(args: {
   agent: Agent;
   user: string;
   schema: unknown;
+  /** Pin the strategy for this call, overriding `OPENAI_JSON_MODE`. */
+  mode?: StructuredMode;
 }): Promise<T> {
-  return withRetry(`agentJson(${args.agent.name})`, async () => {
-    const response = await args.agent.generate(args.user, {
-      // Zod 4 schemas pass through Mastra's PublicSchema bridge; the cast
-      // sidesteps the v4-vs-v3 peer-dep nuance without losing the
-      // runtime validation Mastra performs against the schema.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      structuredOutput: { schema: args.schema as any },
+  const label = `agentJson(${args.agent.name})`;
+  const mode = initialStructuredMode(args.mode);
+  try {
+    const value = await withRetry(label, () => generateObject<T>(args, mode));
+    structuredModeProbe = mode;
+    return value;
+  } catch (err) {
+    // Only unpinned `auto` may change strategy; anything else fails loudly.
+    if (mode === 'prompt' || args.mode || env.OPENAI_JSON_MODE !== 'auto') throw err;
+    log.warn('structured-output fallback: native response_format failed, retrying with prompt injection', {
+      agent: args.agent.name,
+      baseUrl: env.OPENAI_BASE_URL ?? 'api.openai.com',
+      model: MODEL,
+      cause: (err as Error).message,
     });
-    return response.object as T;
+    const value = await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt'));
+    structuredModeProbe = 'prompt';
+    return value;
+  }
+}
+
+async function generateObject<T>(
+  args: { agent: Agent; user: string; schema: unknown },
+  mode: StructuredMode,
+): Promise<T> {
+  const response = await args.agent.generate(args.user, {
+    // Zod 4 schemas pass through Mastra's PublicSchema bridge; the cast
+    // sidesteps the v4-vs-v3 peer-dep nuance without losing the
+    // runtime validation Mastra performs against the schema.
+    structuredOutput: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      schema: args.schema as any,
+      jsonPromptInjection: mode === 'prompt',
+    },
   });
+  const object = response.object as T | undefined;
+  // A server that accepts `response_format` and ignores it lands here
+  // with no object rather than an error; treat it as a failure so the
+  // caller's fallback can take over.
+  if (object === undefined || object === null) {
+    throw new Error(`agentJson(${args.agent.name}): model returned no structured object in ${mode} mode`);
+  }
+  return object;
 }
 
 export async function agentText(args: { agent: Agent; user: string }): Promise<string> {
