@@ -109,6 +109,14 @@ export async function POST(req: Request): Promise<NextResponse> {
     // a byte-identical payload, treats 4xx as permanent, and disables a webhook
     // after enough consecutive failures. Saying "already recorded" with a 200 is
     // both true and what keeps the endpoint alive.
+    //
+    // `in-progress` is answered 200 for the same reason, and that answer spends
+    // this delivery: a 200 is not retried. What makes that safe is that the
+    // deployment no longer needs the retry — a claim that fails schedules its
+    // own re-drive in the transaction that releases it
+    // (`convex/voice.ts:releaseFinalisation`). Answering a retryable status here
+    // instead would trade a defect for a worse one: repeated non-2xx is what
+    // gets a webhook disabled.
     return NextResponse.json(result);
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';

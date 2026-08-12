@@ -2,7 +2,7 @@
 
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { action, type ActionCtx } from './_generated/server';
+import { action, internalAction, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import {
   synthesiseCharter,
@@ -33,6 +33,9 @@ import type { WorkspaceFile } from './charters';
  *   - `synthesiseFromTranscriptForWebhook` — webhook entry: same logic,
  *     but the caller carries no Clerk identity. Authenticated by the
  *     per-session webhook token; trust model documented at the action.
+ *   - `recoverFinalisation` — the deployment finishing a call neither client
+ *     will come back for. Internal, and scheduled by the database rather
+ *     than called by anybody.
  *   - `postCharterApproval` — runs after the boss clicks Approve. Kicks
  *     off Exa good-habits research; distils into AGENTS.md.
  *
@@ -251,6 +254,8 @@ export const synthesiseFromTranscript = action({
     const claim = await ctx.runMutation(internal.voice.claimFinalisation, {
       sessionId: args.voiceSessionId,
       expectedAgentId: args.agentId,
+      transcript: args.transcript,
+      bossLabel: args.bossLabel,
     });
     if (claim.outcome !== 'claimed') return fromClaim(claim);
 
@@ -300,6 +305,8 @@ export const synthesiseFromTranscriptForWebhook = action({
       agentId: args.agentId,
       webhookToken: args.sessionToken,
       conversationId: args.elevenLabsConversationId,
+      transcript: args.transcript,
+      bossLabel: args.bossLabel,
     });
     if (claim.outcome !== 'claimed') return fromClaim(claim);
 
@@ -310,6 +317,58 @@ export const synthesiseFromTranscriptForWebhook = action({
       bossLabel: args.bossLabel,
       transcript: args.transcript,
     });
+  },
+});
+
+/** What one server-driven attempt did. */
+export type RecoveryOutcome =
+  | { outcome: 'recovered'; charterId: string; version: string }
+  | { outcome: 'skipped'; reason: string }
+  | { outcome: 'failed'; reason: string };
+
+/**
+ * Finish a call that both clients have given up on.
+ *
+ * The browser's `onDisconnect` post is a one-shot by construction — the page is
+ * usually gone before the response arrives — and a delivery that overlapped a
+ * live claim was answered 200, which is what stops ElevenLabs wasting a retry
+ * on work already in flight but also spends that delivery. So a released
+ * session has no client left to come back for it, and the deployment finishes
+ * it instead, from the transcript the failed attempt wrote onto the row.
+ *
+ * Scheduled by `voice.releaseFinalisation` in the transaction that releases the
+ * session, and by `voice.sweepStalledFinalisations` for a claim whose holder
+ * died before it could release anything. It reaches the same claim-once machine
+ * as the two clients, so an overlap with a genuine late delivery is decided the
+ * same way every other overlap is, and it never fails a scheduled run for a
+ * reason that is already recorded on the row.
+ */
+export const recoverFinalisation = internalAction({
+  args: { sessionId: v.id('voiceSessions') },
+  handler: async (ctx, args): Promise<RecoveryOutcome> => {
+    const claim = await ctx.runMutation(internal.voice.claimRecoveryFinalisation, {
+      sessionId: args.sessionId,
+    });
+    if (claim.outcome !== 'claimed') return { outcome: 'skipped', reason: claim.reason };
+
+    try {
+      const result = await finaliseClaimedSession(ctx, {
+        sessionId: claim.sessionId,
+        agentId: claim.agentId,
+        claimToken: claim.claimToken,
+        bossLabel: claim.bossLabel,
+        transcript: claim.transcript,
+      });
+      if (result.outcome === 'synthesised') {
+        return { outcome: 'recovered', charterId: result.charterId, version: result.version };
+      }
+      return { outcome: 'skipped', reason: `another finisher reported ${result.outcome}` };
+    } catch (err) {
+      // The release this attempt already performed carries the reason and
+      // schedules the next try, so rethrowing would only turn a handled failure
+      // into a failed scheduled function.
+      return { outcome: 'failed', reason: (err as Error).message ?? 'unknown error' };
+    }
   },
 });
 

@@ -90,6 +90,11 @@ function VoiceRoomInner({
         });
       }
     },
+    // One post per call, and deliberately one: the page is usually being torn
+    // down as this resolves, so a browser-side retry is a promise this component
+    // cannot keep. The latch stops a second post; what covers a post that fails
+    // is the deployment re-driving the session itself, which is scheduled the
+    // moment the failed attempt hands its claim back.
     onDisconnect: () => {
       if (finalisePosted.current) return;
       setTranscript((current) => {

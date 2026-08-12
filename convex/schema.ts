@@ -74,7 +74,22 @@ export default defineSchema({
      * caller whose lease expired mid-flight cannot overwrite its successor. */
     claimToken: v.optional(v.string()),
     claimedAt: v.optional(v.number()),
-    claimedBy: v.optional(v.union(v.literal('browser'), v.literal('webhook'))),
+    claimedBy: v.optional(
+      v.union(v.literal('browser'), v.literal('webhook'), v.literal('recovery')),
+    ),
+    /** The material the current claim is working from, written by the claim
+     * itself. Neither client comes back after its one attempt, so a session
+     * released by a failed finisher is only recoverable if what that finisher
+     * was given outlives it. */
+    pendingTranscript: v.optional(v.string()),
+    pendingBossLabel: v.optional(v.string()),
+    /** How many times the deployment has re-driven this session on its own.
+     * Bounded, so a model that fails the same way every time costs a fixed
+     * number of attempts rather than looping for the life of the row. */
+    recoveryAttempts: v.optional(v.number()),
+    /** When the last attempt handed the session back. Tells a session waiting
+     * on its scheduled retry from one whose retry never ran. */
+    finalisationFailedAt: v.optional(v.number()),
     /** The recorded result. A duplicate finisher returns this instead of
      * repeating the work, which is what makes a webhook retry idempotent. */
     charterId: v.optional(v.id('charters')),
@@ -86,7 +101,12 @@ export default defineSchema({
     endedAt: v.optional(v.number()),
   })
     .index('by_agent', ['agentId'])
-    .index('by_webhook_token', ['webhookToken']),
+    .index('by_webhook_token', ['webhookToken'])
+    // The two shapes the finalisation sweep looks for, each expressed as a
+    // range rather than a scan-and-filter: a claim whose lease has expired, and
+    // a released session whose scheduled retry never arrived.
+    .index('by_state_claimed_at', ['state', 'claimedAt'])
+    .index('by_state_failed_at', ['state', 'finalisationFailedAt']),
 
   workItems: defineTable({
     agentId: v.id('agents'),
