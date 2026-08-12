@@ -12,6 +12,27 @@
 #
 # Backend http://127.0.0.1:3210 · HTTP actions http://127.0.0.1:3211 · dashboard http://localhost:6791
 #
+# Two kinds of address live in this file, and they are not interchangeable.
+#
+# CONVEX_PORT, CONVEX_SITE_PROXY_PORT and CONVEX_DASHBOARD_PORT are *host* ports.
+# Move them to run two backends side by side. Browsers, the Convex CLI and
+# NEXT_PUBLIC_CONVEX_URL all reach the backend through them.
+#
+# CONVEX_CLOUD_ORIGIN and CONVEX_SITE_ORIGIN are what the backend calls itself
+# from *inside* the container, and a Node action dials the first of them to reach
+# the backend it is running for. The container listens on 3210 and 3211 whatever
+# the host publishes, so these stay canonical rather than following the host
+# ports. Setting them to a host port is the failure this file used to ship: the
+# host mapping is right, the browser is fine, queries and mutations are fine, and
+# every Node action fails with `Transient network error running query
+# (ECONNREFUSED, 5 attempts)` against a port nothing is bound to in the
+# container's own network namespace.
+#
+# Override them only with an address that resolves *inside* the container - a
+# compose service name, or a host address reachable over the bridge. An address
+# only your browser can resolve belongs in CONVEX_BROWSER_ORIGIN or
+# NEXT_PUBLIC_CONVEX_URL instead.
+#
 # CONVEX_BIND_ADDR is the host address every port below is published on, and it
 # defaults to loopback. It is read from `.env.local` because `pnpm convex:up`
 # passes `--env-file .env.local`; plain `docker compose up` reads your shell or
@@ -23,11 +44,13 @@
 # there. What holds that boundary now is a key the caller has to present, so
 # widening this address exposes an unauthenticated backend to your network but
 # does not let anyone act as the local boss. See `convex/devAuth.ts`.
+#
+# Container names are left to compose so that `-p <project>` is enough to run a
+# second stack; a fixed name would collide on the first one started.
 
 services:
   backend:
     image: ghcr.io/get-convex/convex-backend:latest
-    container_name: day0-convex-backend
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -36,11 +59,11 @@ services:
     volumes:
       - convex_data:/convex/data
     environment:
-      # Functions read this back as `process.env.CONVEX_CLOUD_URL`, and the
-      # browser reaches the backend on it, so it has to name an address the
-      # browser can resolve.
-      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:${CONVEX_PORT:-3210}}
-      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:${CONVEX_SITE_PROXY_PORT:-3211}}
+      # Functions read this back as `process.env.CONVEX_CLOUD_URL` and Node
+      # actions call the backend on it, so it names the container's own
+      # listener rather than whatever the host publishes.
+      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:3211}
       # No phone-home from a local dev backend.
       - DISABLE_BEACON=true
       - DISABLE_METRICS_ENDPOINT=true
@@ -53,13 +76,16 @@ services:
 
   dashboard:
     image: ghcr.io/get-convex/convex-dashboard:latest
-    container_name: day0-convex-dashboard
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_DASHBOARD_PORT:-6791}:6791'
     environment:
-      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:${CONVEX_PORT:-3210}}
+      # Resolved by the browser rendering the dashboard, not by the container,
+      # so this one does follow the published host port. Set
+      # CONVEX_BROWSER_ORIGIN when the browser reaches the backend by some
+      # other name - a LAN address, a tunnel - than the address it is bound to.
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_BROWSER_ORIGIN:-http://127.0.0.1:${CONVEX_PORT:-3210}}
     depends_on:
       backend:
         condition: service_healthy
