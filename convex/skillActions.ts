@@ -2,8 +2,9 @@
 
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { action } from './_generated/server';
+import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
+import type { Doc } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { authorAndVerifySkill } from '../src/lib/daytona';
 
@@ -65,6 +66,36 @@ const authorSchema = z.object({
  */
 const RETRYABLE_STATES = ['approved', 'authoring', 'failed'] as const;
 
+/**
+ * Park a skill that did not reach `registered`. Every no-registration exit goes
+ * through here so the boss is never left guessing: the row lands in `failed`
+ * (listed, with a Retry, in the skills panel), the event feed carries the
+ * reason, and the work item that asked for the skill says why it is still
+ * waiting.
+ */
+async function recordAuthoringFailure(
+  ctx: ActionCtx,
+  skill: Doc<'skills'>,
+  args: { rowReason: string; reason: string; eventType: string },
+): Promise<{ ok: false; reason: string }> {
+  await ctx.runMutation(internal.skills.setFailed, {
+    skillId: skill._id,
+    reason: args.rowReason,
+  });
+  await ctx.runMutation(internal.events.log, {
+    agentId: skill.agentId,
+    type: args.eventType,
+    payload: { skillId: skill._id, name: skill.name, reason: args.reason },
+  });
+  if (skill.proposedFor) {
+    await ctx.runMutation(internal.work.setVerdict, {
+      workItemId: skill.proposedFor,
+      verdict: { decision: 'needs-skill', reason: args.reason },
+    });
+  }
+  return { ok: false, reason: args.reason };
+}
+
 export const authorAndRegisterSkill = action({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
@@ -85,20 +116,36 @@ export const authorAndRegisterSkill = action({
       'Author SKILL.md and smoke.py now.',
     ].join('\n');
     type AuthoredSkill = z.infer<typeof authorSchema>;
-    const authored = await agentJson<AuthoredSkill>({
-      agent: skillAuthorAgent,
-      user: userPrompt,
-      schema: authorSchema,
-    });
+    // The model layer rethrows failures prompt injection cannot fix, which is
+    // right - but the dashboard fires this action and forgets it, so an
+    // uncaught throw would leave the row at `approved`, in none of the skill
+    // panels, with nothing to press. Record the failure instead: `failed` is
+    // listed, carries the reason, and offers Retry.
+    let authored: AuthoredSkill;
+    try {
+      authored = await agentJson<AuthoredSkill>({
+        agent: skillAuthorAgent,
+        user: userPrompt,
+        schema: authorSchema,
+      });
+    } catch (err) {
+      const reason = `authoring failed before any sandbox ran: ${(err as Error).message}`;
+      return await recordAuthoringFailure(ctx, skill, {
+        rowReason: reason,
+        reason,
+        eventType: 'skill.author-failed',
+      });
+    }
 
     const body = authored.body.trim();
     const smokeTest = authored.smokeTest.trim();
     if (!body || !smokeTest) {
-      await ctx.runMutation(internal.skills.setFailed, {
-        skillId: args.skillId,
-        reason: 'GPT-5.5 returned empty body or smokeTest',
+      const reason = 'the model returned an empty SKILL.md body or smoke test';
+      return await recordAuthoringFailure(ctx, skill, {
+        rowReason: reason,
+        reason,
+        eventType: 'skill.author-failed',
       });
-      return { ok: false, reason: 'empty author output' };
     }
 
     // Daytona is optional, so the loop survives without it - but a skill it
@@ -109,6 +156,7 @@ export const authorAndRegisterSkill = action({
     let sandboxId = '(skipped)';
     let verificationLog = '(daytona unavailable)';
     let skipReason: string | null = null;
+    let verificationFailure: string | null = null;
     try {
       const result = await authorAndVerifySkill({
         skillName: skill.name,
@@ -129,26 +177,22 @@ export const authorAndRegisterSkill = action({
         });
         verificationLog = `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
         if (!result.ok) {
-          const failureReason = result.failureReason ?? 'sandbox verification failed';
-          await ctx.runMutation(internal.skills.setFailed, {
-            skillId: args.skillId,
-            reason: `Daytona verification failed - ${failureReason}. ${verificationLog.slice(0, 400)}`,
-          });
-          if (skill.proposedFor) {
-            await ctx.runMutation(internal.work.setVerdict, {
-              workItemId: skill.proposedFor,
-              verdict: {
-                decision: 'needs-skill',
-                reason: `skill authored but verification failed - ${failureReason}`,
-              },
-            });
-          }
-          return { ok: false, reason: failureReason };
+          verificationFailure = result.failureReason ?? 'sandbox verification failed';
         }
       }
     } catch (err) {
       skipReason = `Daytona threw: ${(err as Error).message}`;
       verificationLog = skipReason;
+    }
+
+    // Recorded outside the try: a failure while recording a failure must not be
+    // reported as the sandbox throwing.
+    if (verificationFailure) {
+      return await recordAuthoringFailure(ctx, skill, {
+        rowReason: `Daytona verification failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`,
+        reason: `skill authored but verification failed - ${verificationFailure}`,
+        eventType: 'skill.verification-failed',
+      });
     }
 
     if (skipReason) {

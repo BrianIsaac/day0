@@ -25,6 +25,7 @@ export function AgentDashboard({ agentId }: Props) {
   const voiceSession = useQuery(api.voice.latest, { agentId });
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
+  const [authoringFailure, setAuthoringFailure] = useState<string | null>(null);
 
   // Sync local mode with server state. Two cases:
   //   1. Reload mid-session — route back into the room they were in
@@ -95,6 +96,7 @@ export function AgentDashboard({ agentId }: Props) {
           <ProposedSkillsPanel
             agentId={agentId}
             skills={proposedSkills ?? []}
+            onAuthoringFailed={setAuthoringFailure}
           />
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -114,6 +116,7 @@ export function AgentDashboard({ agentId }: Props) {
           <RegisteredSkillsPanel
             skills={registeredSkills ?? []}
             unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
+            lastFailure={authoringFailure}
           />
           <EventTicker events={events ?? []} />
         </div>
@@ -344,9 +347,13 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
 function ProposedSkillsPanel({
   agentId,
   skills,
+  onAuthoringFailed,
 }: {
   agentId: Id<'agents'>;
   skills: Doc<'skills'>[];
+  /** Approving moves the row out of this panel, so its failure has to be
+   *  reported somewhere that survives the unmount. */
+  onAuthoringFailed: (reason: string) => void;
 }) {
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
@@ -369,8 +376,13 @@ function ProposedSkillsPanel({
               <button
                 onClick={async () => {
                   await approve({ skillId: s._id });
-                  author({ skillId: s._id }).catch(() => {});
                   void agentId;
+                  try {
+                    const result = await author({ skillId: s._id });
+                    if (!result.ok) onAuthoringFailed(`${s.name}: ${result.reason ?? 'authoring did not finish'}`);
+                  } catch (err) {
+                    onAuthoringFailed(`${s.name}: ${(err as Error).message}`);
+                  }
                 }}
                 className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium"
               >
@@ -393,10 +405,13 @@ function ProposedSkillsPanel({
 function RegisteredSkillsPanel({
   skills,
   unregistered,
+  lastFailure,
 }: {
   skills: Doc<'skills'>[];
   /** Authored but never registered: `authoring` (no sandbox ran) and `failed`. */
   unregistered: Doc<'skills'>[];
+  /** Reported by the approve button, whose own card unmounts on approval. */
+  lastFailure: string | null;
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
@@ -419,6 +434,11 @@ function RegisteredSkillsPanel({
 
   return (
     <Card title={`Skills · ${skills.length} registered`}>
+      {lastFailure ? (
+        <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
+          Authoring did not finish — {lastFailure}
+        </p>
+      ) : null}
       {skills.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">none yet</p>
       ) : (
@@ -445,8 +465,10 @@ function RegisteredSkillsPanel({
 
       {unregistered.length > 0 ? (
         <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+          {/* Covers three states with one honest label: a skipped sandbox, a
+              sandbox that said no, and authoring that never produced a body. */}
           <p className="text-[10px] uppercase tracking-wider text-[var(--color-warn)] mb-1.5">
-            authored · not verified · not callable
+            not verified · not callable
           </p>
           <ul className="space-y-3 text-sm">
             {unregistered.map((s) => (
@@ -455,7 +477,6 @@ function RegisteredSkillsPanel({
                   <div className="flex-1">
                     <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
                     <div className="text-[var(--color-muted)] text-xs">
-                      {s.state === 'failed' ? 'verification failed — ' : ''}
                       {s.verificationLog ?? s.description}
                     </div>
                   </div>
@@ -467,7 +488,9 @@ function RegisteredSkillsPanel({
                     {retrying === s._id ? 'Retrying…' : 'Retry'}
                   </button>
                 </div>
-                {errors[s._id] ? (
+                {/* Only when the row itself does not already say it: a retry
+                    that recorded its reason has reported itself. */}
+                {errors[s._id] && !(s.verificationLog ?? '').includes(errors[s._id]) ? (
                   <p className="text-[10px] text-[var(--color-danger)] mt-1">{errors[s._id]}</p>
                 ) : null}
               </li>
