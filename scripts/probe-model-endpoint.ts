@@ -20,10 +20,10 @@ import {
   extractJsonPayload,
   jsonCompleteWithMode,
   MODEL,
-  resetJsonModeProbe,
+  resetJsonModeMemo,
   textComplete,
 } from '../src/lib/openai';
-import { agentJson, makeAgent, resetStructuredModeProbe } from '../src/lib/mastra';
+import { agentJson, makeAgent, resetStructuredModeMemo } from '../src/lib/mastra';
 
 interface Check {
   name: string;
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     user: 'Return {"title": string, "priority": "low"|"high"} for a task about refreshing a sales tracker.',
     maxTokens: 2000,
   };
-  resetJsonModeProbe();
+  resetJsonModeMemo();
   try {
     const { value, ms } = await timed(() =>
       jsonCompleteWithMode<{ title?: string }>({ ...jsonArgs, mode: 'native' }),
@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   }
 
   // 4. Prompt fallback — must work even where step 3 did.
-  resetJsonModeProbe();
+  resetJsonModeMemo();
   try {
     const { value, ms } = await timed(() =>
       jsonCompleteWithMode<{ title?: string }>({ ...jsonArgs, mode: 'prompt' }),
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   }
 
   // 5. The Mastra path every domain function actually calls.
-  resetStructuredModeProbe();
+  resetStructuredModeMemo();
   const agent = makeAgent(
     'day0-probe',
     'You are a probe agent. Answer with the requested structured fields and nothing else.',
@@ -129,7 +129,7 @@ async function main(): Promise<void> {
 
   // 6. The same call with schema injection instead of response_format,
   //    which is where `auto` lands on a server that ignores the field.
-  resetStructuredModeProbe();
+  resetStructuredModeMemo();
   try {
     const { value, ms } = await timed(() =>
       agentJson<z.infer<typeof schema>>({

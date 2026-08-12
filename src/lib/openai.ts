@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
 import { env } from '../env';
 import { log } from './logger';
+import { createFallbackMemo, isStructuredOutputRefusal } from './structured-fallback';
 
 /**
  * Provider-agnostic model client. Every raw-SDK call and every AI-SDK
@@ -82,40 +83,27 @@ export const JSON_ONLY_INSTRUCTION = [
 ].join('\n');
 
 /**
- * Per-process memo of whether the configured server honours
- * `response_format`. `null` means "not probed yet". Only consulted in
- * `auto` mode; `native` and `prompt` are hard settings.
+ * Which endpoint-and-model pairs have refused `response_format`, and until
+ * when. Support is a property of the server and the model, not of the process,
+ * so a refusal from one model says nothing about the next - and it expires, so
+ * a server that starts honouring the parameter is not written off for the life
+ * of a warm process. Only consulted in `auto` mode; `native` and `prompt` are
+ * hard settings.
  */
-let nativeJsonModeSupported: boolean | null = null;
+const jsonModeMemo = createFallbackMemo();
 
-export function jsonModeProbe(): boolean | null {
-  return nativeJsonModeSupported;
+function jsonModeKey(model: string): string {
+  return `${env.OPENAI_BASE_URL ?? 'api.openai.com'}|${model}`;
 }
 
-/** Test seam — clears the memo so a suite can drive both branches. */
-export function resetJsonModeProbe(): void {
-  nativeJsonModeSupported = null;
+/** The rung the next `auto` call will start on for this model. */
+export function jsonModeFor(model: string = MODEL): JsonMode {
+  return jsonModeMemo.isDemoted(jsonModeKey(model)) ? 'prompt' : 'native';
 }
 
-/**
- * Whether an error means "this server does not implement
- * `response_format`" rather than "this request was bad". Servers reject
- * it in at least three shapes: a 400 naming the field, a 404 on the
- * route, and a 422 from proxies that validate the body themselves.
- */
-export function isJsonModeUnsupportedError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { status?: number; message?: unknown; error?: { message?: unknown } };
-  const message = `${String(e.message ?? '')} ${String(e.error?.message ?? '')}`.toLowerCase();
-  const namesResponseFormat =
-    /response_format|json_object|json_schema|structured output|json mode/.test(message);
-  if (namesResponseFormat) return true;
-  const status = e.status;
-  if (status === undefined) return false;
-  return (
-    (status === 400 || status === 404 || status === 422 || status === 501) &&
-    /unsupported|not supported|unknown|unrecognized|invalid/.test(message)
-  );
+/** Test seam, and what the endpoint probe calls between rungs. */
+export function resetJsonModeMemo(): void {
+  jsonModeMemo.reset();
 }
 
 /**
@@ -203,10 +191,19 @@ export interface JsonCompleteResult<TParsed> {
  *
  * `OPENAI_JSON_MODE` pins a strategy (`native` / `prompt`) for testing
  * or for a server whose behaviour is already known. The default `auto`
- * tries native, and demotes to prompt when the server either rejects
+ * tries native, and demotes to prompt when the server either declines
  * `response_format` or accepts it and ignores it (unparseable reply).
- * The demotion is memoised per process, so one wasted round-trip pays
- * for the whole run rather than one per call.
+ * Any other failure is rethrown: prompt injection recovers from a rate
+ * limit or a bad key no better than native did, and a second doomed
+ * round-trip would only hide the real cause.
+ *
+ * The demotion is memoised per endpoint-and-model and expires, so one
+ * wasted round-trip pays for a run of calls rather than one per call,
+ * without one model's refusal speaking for another's.
+ *
+ * There is deliberately no value-only convenience wrapper: `fellBack`
+ * is how a caller learns it is on the degraded rung, and a wrapper that
+ * drops it makes that invisible at every call site at once.
  */
 export async function jsonCompleteWithMode<TParsed = unknown>(
   args: JsonCompleteArgs<TParsed>,
@@ -218,35 +215,41 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
   if (configured === 'native') {
     return { value: await runJsonCompletion('native', args), mode: 'native', fellBack: false };
   }
-  if (nativeJsonModeSupported === false) {
+  const model = args.model ?? MODEL;
+  const key = jsonModeKey(model);
+  if (jsonModeMemo.isDemoted(key)) {
     return { value: await runJsonCompletion('prompt', args), mode: 'prompt', fellBack: false };
   }
   try {
-    const value = await runJsonCompletion('native', args);
-    nativeJsonModeSupported = true;
-    return { value, mode: 'native', fellBack: false };
+    return { value: await runJsonCompletion('native', args), mode: 'native', fellBack: false };
   } catch (err) {
-    if (!isJsonModeFallbackWorthy(err)) throw err;
-    nativeJsonModeSupported = false;
+    if (!isJsonModeFallbackWorthy(err)) {
+      log.warn('json-mode: native response_format failed for a reason prompt mode cannot fix', {
+        baseUrl: env.OPENAI_BASE_URL ?? 'api.openai.com',
+        model,
+        cause: (err as Error).message,
+        hint: 'set OPENAI_JSON_MODE=prompt to pin the fallback if this server never honours it',
+      });
+      throw err;
+    }
+    jsonModeMemo.demote(key);
     log.warn('json-mode fallback: server did not honour response_format, switching to prompt mode', {
       baseUrl: env.OPENAI_BASE_URL ?? 'api.openai.com',
-      model: args.model ?? MODEL,
+      model,
       cause: (err as Error).message,
+      retriesNativeInMs: jsonModeMemo.retriesNativeIn(key),
     });
     return { value: await runJsonCompletion('prompt', args), mode: 'prompt', fellBack: true };
   }
 }
 
-export async function jsonComplete<TParsed = unknown>(
-  args: JsonCompleteArgs<TParsed>,
-): Promise<TParsed> {
-  const result = await jsonCompleteWithMode(args);
-  return result.value;
-}
-
-/** A native-mode failure the prompt ladder can plausibly recover from. */
+/**
+ * A native-mode failure the prompt ladder can plausibly recover from: the
+ * server declined the parameter, or it took the parameter and ignored it,
+ * which lands here as an unparseable reply rather than an error.
+ */
 function isJsonModeFallbackWorthy(err: unknown): boolean {
-  return isJsonModeUnsupportedError(err) || err instanceof JsonParseError;
+  return isStructuredOutputRefusal(err) || err instanceof JsonParseError;
 }
 
 /** Raised when a reply carried no parseable JSON, whatever the mode. */
