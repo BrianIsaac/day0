@@ -210,6 +210,8 @@ Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and appro
 
 The bundled model runs on the CPU, which works and is slow - an 8B model answers in minutes rather than seconds, and charter synthesis is several calls. If you have an NVIDIA GPU and the container toolkit, uncomment the `deploy.resources` block on the `model` service in `docker-compose.yml` and `pnpm model:up` again; it is the difference between a demo you watch and a demo you wait for.
 
+Expect the loop to run and the output to be blunter than the hosted default. An 8B model holds the 1:1, fills the charter and drives the work queue, but it will sometimes decide it has heard enough and call `dayOneComplete` after two topics rather than seven. That is the model, not the wiring: the charter it writes from a short transcript is a real charter, with thinner evidence in it. A larger local model, or an `OPENAI_API_KEY`, is what buys the difference.
+
 Five things about that sequence are load-bearing:
 
 - **`pnpm install` comes first.** Every command after it - `tsx`, `convex`, `next` - is a binary in `node_modules`. Skip it and `pnpm dev:no-auth-key` fails with `tsx: not found` and no hint as to why.

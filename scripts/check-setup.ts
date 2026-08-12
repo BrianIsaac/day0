@@ -128,9 +128,11 @@ function main(): void {
 
   const gaps = sections.filter((s) => s.status === 'gap');
   if (gaps.length > 0) {
-    console.log(`${gaps.length} thing${gaps.length === 1 ? '' : 's'} to fix: ${gaps
-      .map((s) => s.title)
-      .join('; ')}`);
+    console.log(
+      `${gaps.length} thing${gaps.length === 1 ? '' : 's'} to fix: ${gaps
+        .map((s) => s.title)
+        .join('; ')}`,
+    );
     process.exit(1);
   }
   console.log('Nothing here is half-done.');
@@ -249,7 +251,7 @@ function authSection(v: Values): Section {
           ]
         : [
             'Clerk keys are set but CLERK_JWT_ISSUER_DOMAIN is not, so Convex cannot verify',
-            "a Clerk token and every signed-in call is refused. Create a JWT template named",
+            'a Clerk token and every signed-in call is refused. Create a JWT template named',
             '"convex" in the Clerk dashboard and copy its Issuer URL here.',
           ],
     };
@@ -296,7 +298,9 @@ function modelSection(v: Values, selfHosted: boolean): Section {
       `Next calls ${v.OPENAI_BASE_URL}${v.OPENAI_API_KEY ? ' with a key' : ' with no key'}, model ${v.OPENAI_MODEL || 'gpt-5.5 (default)'}.`,
     );
   } else {
-    lines.push(`Next calls api.openai.com with OPENAI_API_KEY, model ${v.OPENAI_MODEL || 'gpt-5.5 (default)'}.`);
+    lines.push(
+      `Next calls api.openai.com with OPENAI_API_KEY, model ${v.OPENAI_MODEL || 'gpt-5.5 (default)'}.`,
+    );
   }
 
   if (selfHosted && backendUrl && isLoopback(backendUrl)) {
@@ -312,8 +316,6 @@ function modelSection(v: Values, selfHosted: boolean): Section {
   } else if (selfHosted && v.CONVEX_OPENAI_BASE_URL) {
     lines.push(`The backend container calls ${v.CONVEX_OPENAI_BASE_URL} for the same endpoint.`);
   }
-
-  if (!v.OPENAI_API_KEY && !v.OPENAI_BASE_URL) status = 'gap';
 
   return { title: titleFor(status, 'Model'), status, lines };
 }
