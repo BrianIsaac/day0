@@ -1,10 +1,38 @@
 # Day0
 
-A Next.js 16 + Convex single-tenant agent that runs the new-hire week as an autonomous loop: a Day-1 1:1 over voice, a charter the boss approves, a 7-criterion work evaluator, and an autonomous skill-creation loop that spins a Daytona sandbox to author and verify new skills the agent proposes.
+An autonomous teammate that joins with no role, no skills and no scope.
 
-**Live:** https://day0-olive.vercel.app
+[**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · **Apache-2.0**
 
-**Dashboard:** signed-in users deploy agents into a live mini office world.
+Putting an agent into a real team is an engineering project. Someone defines the role, wires the tools, writes the prompts and encodes what counts as good work, and that work is done again for every team and every organisation that wants one. It is the main reason agents stall at the pilot.
+
+Day0 starts a step earlier. It is deployed empty. Everything it becomes comes out of a conversation with the person who hired it.
+
+## What is unusual about it
+
+### It is onboarded, not configured
+
+A Day-1 one-to-one, held over voice or chat, walks its new boss through seven topics: why the hire was made, what the role is, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. No part of the role is written into a config file.
+
+### It writes its own charter, and waits for a human
+
+From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes, and a set of scoped, revocable capability grants.
+
+### It finds its own work
+
+Nothing hands it a queue. The agent reads its work environment and proposes what to pick up. Each candidate is scored against seven criteria - eligibility, permission, ownership, quality fit, value, risk and capacity - and then moves through an eleven-state lifecycle in which a human approves the plan before anything executes.
+
+### It writes the skill it is missing
+
+A work item that matches no registered skill returns `needs-skill` rather than being dropped. The agent proposes a skill, authors it, then verifies it by running a smoke test in an isolated sandbox. It registers the skill only if the sandbox agrees; one that fails verification, or that was never verified at all, stays visibly uncallable. Capability grows in place, without a developer.
+
+## What this is, and what it is not
+
+Day0 was built in a day, for the AI Engineer Hackathon in Singapore on 9 May 2026, and has been hardened since. It is a working demonstration of the whole loop rather than a product: it has no users, no benchmarks, and it makes no measured claim about how well the agent does the work it takes on. What it shows is that the loop closes.
+
+The agent works inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue, a social feed - seeded per agent. There are no connectors to real corporate systems, and that is deliberate: the mock environment is what makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust. Everything around it is real - the model calls, the sandbox, the state machine, the approval gates.
+
+The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible endpoint, so the full loop runs against a model on your own machine with no account anywhere and nothing metered. Voice, web research and sandboxed verification are optional third-party services; without their keys the loop degrades visibly rather than failing silently. [Three ways to run it](#local-dev) are set out below, and `pnpm check:setup` reports which of them the machine you are on is currently set up for.
 
 ## Stack
 
@@ -426,3 +454,7 @@ pnpm check:setup
 reports the two separately - along with the backend, auth and model setups - prints the dynamic variables to check by eye against the dashboard, and exits non-zero only for states that are actually broken. Voice configured with no webhook secret is one of them: the one that looks finished and is not.
 
 It resolves values the way the running app does, which matters more than it sounds. Wherever a variable is present in the process environment it wins over `.env.local`, *including when it is present and empty* - because that is what Next does, and routes read `process.env` directly and treat an empty string as missing. A checker that only applied non-empty overrides would call a secret configured while the webhook answered 503 to every delivery.
+
+## Licence
+
+Copyright 2026 Brian Isaac. Licensed under the Apache Licence, Version 2.0 - see [LICENSE](LICENSE). Apache-2.0 rather than MIT for its express patent grant, which is what makes the code safe to reuse inside an organisation.

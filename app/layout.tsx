@@ -21,9 +21,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)]">
                 Day0
               </span>
-              <span className="text-[10px] text-[var(--color-muted)] hidden sm:inline">
-                AI Engineer Hackathon · Singapore
-              </span>
             </Link>
             <HeaderAccount />
           </header>

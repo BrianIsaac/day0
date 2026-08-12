@@ -102,7 +102,8 @@ export async function authorAndVerifySkill(args: AuthorSkillArgs): Promise<Skill
     };
   } finally {
     await sandbox.delete().catch(() => {
-      /* hackathon: ignore cleanup failures */
+      /* The verification verdict is already decided; a failed teardown must
+         not replace it with an error the caller cannot act on. */
     });
   }
 }

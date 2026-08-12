@@ -3,11 +3,13 @@ import { agentJson, makeAgent } from '../lib/mastra';
 
 /**
  * Charter domain type + synthesis. Lifted from Protean's
- * `src/agent/charter.ts` and adapted to Mastra Agent + GPT-5.5 with
- * structured output.
+ * `src/agent/charter.ts` and adapted to a Mastra Agent over the
+ * configured model, with structured output.
  *
- * Day0 stays at v0.0 for the hackathon — the v0.1 (collaborator 1:1s)
- * and v0.2 (observation layer) versions are out of scope.
+ * Only v0.0 is produced: the manager 1:1 is the sole evidence source
+ * Day0 has. `CharterVersion` still names v0.1 (collaborator 1:1s) and
+ * v0.2 (an observation layer), because the renderer and the persisted
+ * rows are versioned for them — neither is implemented.
  */
 
 export type CharterVersion = '0.0' | '0.1' | '0.2' | (string & { readonly _v?: 'charter' });
