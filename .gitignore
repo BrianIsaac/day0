@@ -3,6 +3,9 @@ node_modules
 .env.local
 .env
 *.tsbuildinfo
+# Generated, and rewritten to a different path by `next dev` than by `next
+# build`, so a tracked copy is dirty from a stranger's first `pnpm dev`.
+next-env.d.ts
 .DS_Store
 .convex
 dist
