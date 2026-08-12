@@ -16,7 +16,9 @@ import { authorAndVerifySkill } from '../src/lib/daytona';
  *      exercises the skill behaviour.
  *   3. Daytona spins a Python sandbox; the smoke test runs.
  *   4. If the sandbox exits 0 with non-empty stdout, we register the
- *      skill so it becomes available to the agent.
+ *      skill so it becomes available to the agent. If no sandbox ran at
+ *      all, the skill stops at `authoring` and stays uncallable: the
+ *      register step is what claims the body was checked.
  *
  * The Python smoke is a Voyager-style execution-success signal —
  * sandbox exit 0 means the body is internally consistent. Plan 2 / 3
@@ -86,10 +88,11 @@ export const authorAndRegisterSkill = action({
       return { ok: false, reason: 'empty author output' };
     }
 
-    // Daytona is optional. Whether the key is absent or the sandbox
-    // itself falls over, the loop continues with the skill unverified
-    // and the skip is written to the event feed so the demo shows what
-    // was and was not checked.
+    // Daytona is optional, so the loop survives without it - but a skill it
+    // never ran is not a verified skill. Whether the key is absent or the
+    // sandbox falls over, the skill stops at `authoring` with the body kept,
+    // the work item stays `needs-skill`, and the skip goes to the event feed
+    // so the demo shows what was and was not checked.
     let sandboxId = '(skipped)';
     let verificationLog = '(daytona unavailable)';
     let skipReason: string | null = null;
@@ -101,7 +104,7 @@ export const authorAndRegisterSkill = action({
       });
       if (result.skipped) {
         skipReason = result.skipReason ?? 'daytona unavailable';
-        verificationLog = `sandbox verification skipped — ${skipReason}`;
+        verificationLog = `sandbox verification skipped - ${skipReason}`;
       } else {
         sandboxId = result.sandboxId;
         await ctx.runMutation(internal.skills.setAuthoring, {
@@ -126,12 +129,24 @@ export const authorAndRegisterSkill = action({
       await ctx.runMutation(internal.skills.setAuthoring, {
         skillId: args.skillId,
         sandboxId,
+        body,
+        verificationLog,
       });
       await ctx.runMutation(internal.events.log, {
         agentId: skill.agentId,
         type: 'skill.sandbox-skipped',
         payload: { skillId: args.skillId, name: skill.name, reason: skipReason },
       });
+      if (skill.proposedFor) {
+        await ctx.runMutation(internal.work.setVerdict, {
+          workItemId: skill.proposedFor,
+          verdict: {
+            decision: 'needs-skill',
+            reason: `skill authored but not verified - ${skipReason}`,
+          },
+        });
+      }
+      return { ok: false, reason: `sandbox verification unavailable: ${skipReason}` };
     }
 
     await ctx.runMutation(internal.skills.setVerified, {

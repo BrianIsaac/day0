@@ -19,6 +19,7 @@ export function AgentDashboard({ agentId }: Props) {
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const proposedSkills = useQuery(api.skills.proposed, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
+  const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: 30 });
   const voiceSession = useQuery(api.voice.latest, { agentId });
 
@@ -109,7 +110,10 @@ export function AgentDashboard({ agentId }: Props) {
 
         <div className="space-y-4">
           <WorkspacePanel workspace={workspace ?? {}} />
-          <RegisteredSkillsPanel skills={registeredSkills ?? []} />
+          <RegisteredSkillsPanel
+            skills={registeredSkills ?? []}
+            unverified={unverifiedSkills ?? []}
+          />
           <EventTicker events={events ?? []} />
         </div>
       </div>
@@ -385,7 +389,13 @@ function ProposedSkillsPanel({
   );
 }
 
-function RegisteredSkillsPanel({ skills }: { skills: Doc<'skills'>[] }) {
+function RegisteredSkillsPanel({
+  skills,
+  unverified,
+}: {
+  skills: Doc<'skills'>[];
+  unverified: Doc<'skills'>[];
+}) {
   return (
     <Card title={`Skills · ${skills.length} registered`}>
       {skills.length === 0 ? (
@@ -411,6 +421,24 @@ function RegisteredSkillsPanel({ skills }: { skills: Doc<'skills'>[] }) {
           ))}
         </ul>
       )}
+
+      {unverified.length > 0 ? (
+        <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-warn)] mb-1.5">
+            authored · not verified · not callable
+          </p>
+          <ul className="space-y-2 text-sm">
+            {unverified.map((s) => (
+              <li key={s._id}>
+                <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
+                <div className="text-[var(--color-muted)] text-xs">
+                  {s.verificationLog ?? s.description}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </Card>
   );
 }

@@ -28,6 +28,22 @@ export const registered = query({
   },
 });
 
+/**
+ * Authored but never verified: the sandbox could not run, so the body exists
+ * and nothing has attested that it works. Deliberately not part of
+ * `registered`, which is what the executor picks from.
+ */
+export const awaitingVerification = query({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    return await ctx.db
+      .query('skills')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'authoring'))
+      .collect();
+  },
+});
+
 export const proposed = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
@@ -186,11 +202,20 @@ export const reject = mutation({
 });
 
 export const setAuthoring = internalMutation({
-  args: { skillId: v.id('skills'), sandboxId: v.string() },
+  args: {
+    skillId: v.id('skills'),
+    sandboxId: v.string(),
+    // Written when the authored body is all there is to keep: no sandbox ran,
+    // so the skill stops here rather than continuing to `verified`.
+    body: v.optional(v.string()),
+    verificationLog: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.skillId, {
       state: 'authoring',
       daytonaSandboxId: args.sandboxId,
+      ...(args.body !== undefined ? { body: args.body } : {}),
+      ...(args.verificationLog !== undefined ? { verificationLog: args.verificationLog } : {}),
     });
     const row = await ctx.db.get(args.skillId);
     if (row) {
