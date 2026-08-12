@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- Drawn on the 16-unit grid this is actually seen at, so every edge lands on a
+       whole device pixel in a tab and nothing blurs. The accent reaches only 1.8:1
+       against a white tab strip, so light chrome gets the same hue two steps darker;
+       browsers that ignore the query keep that shade, which holds on either chrome. -->
+  <style>
+    .mark { fill: #0891b2; }
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #22d3ee; }
+    }
+  </style>
+  <g class="mark">
+    <rect x="7" y="0" width="2" height="5" rx="1" />
+    <rect x="1" y="4" width="14" height="11" rx="3.5" />
+  </g>
+  <rect x="3" y="8" width="4" height="3" rx="0.75" fill="#0a0a0b" />
+  <rect x="9" y="8" width="4" height="3" rx="0.75" fill="#0a0a0b" />
+</svg>
