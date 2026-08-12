@@ -12,8 +12,14 @@
  *      separates the two is behavioural: *the same request without the
  *      parameter succeeds*. So nothing here concludes anything. It decides
  *      only whether that experiment is safe to run, and the caller demotes on
- *      the result. Prose can veto the experiment; it can never license a
- *      demotion.
+ *      the result.
+ *
+ *      Words are therefore read for shape, never for a conclusion: whether a
+ *      *server* answered at all, and if it did, whether it blamed the request
+ *      it read or a condition of its own. "Allowed values are: text" earns the
+ *      experiment because only something that read a request can name a
+ *      parameter of it and report it rejected - not because those words mean
+ *      "unsupported".
  *   2. How far does one refusal travel? Support is a property of an endpoint,
  *      a model and (for a strict schema) the schema, so a demotion is keyed by
  *      those and expires. One incompatible schema demoting every later charter,
@@ -74,19 +80,32 @@ const NO_RESPONSE_PHRASE =
   /fetch failed|socket hang up|network socket disconnected|other side closed/;
 
 /**
+ * Names the parameter under test. Not a conclusion on its own: a server quotes
+ * it back both when it will not take it and when it fails for reasons that have
+ * nothing to do with it.
+ */
+const NAMES_STRUCTURED_OUTPUT =
+  /response_format|json_schema|json_object|structured[ _]output|json mode/;
+
+/**
+ * Rejection of something the *request* carried, as opposed to a report about
+ * the server's own condition. Paired with the pattern above and never read
+ * alone: "invalid" says nothing by itself, and neither does `json_schema`.
+ */
+const REJECTS_WHAT_THE_REQUEST_CARRIED =
+  /support|unrecogni[sz]ed|unknown (?:parameter|argument|field|value)|unexpected (?:parameter|argument|field)|invalid|not a valid|allowed values?|not allowed|not permitted|must be one of|only accepts?|cannot be used|not implemented|not available|disabled/;
+
+/**
  * The same causes named in prose, for servers that put them behind a
  * request-shape status where the status alone will not give them away - a
- * context overflow is a 400 on most OpenAI-compatible endpoints. Only ever
- * consulted against a *server's* diagnosis of a failed request, never against
- * model output, so an agent that happens to write "permission" into a reply
- * cannot veto its own fallback.
+ * context overflow is a 400 on most OpenAI-compatible endpoints - and for
+ * stacks that report them with no status at all. Only ever consulted against a
+ * *server's* diagnosis of a failed request, never against model output, so an
+ * agent that happens to write "permission" into a reply cannot veto its own
+ * fallback.
  */
 const DIAGNOSIS_BLAMES_ANOTHER_CAUSE =
   /rate.?limit|too many requests|quota|insufficient_quota|billing|api key|unauthori[sz]ed|authenticat|permission|context length|maximum context|reduce the length|too long|too many tokens|overload|service_unavailable|timeout|timed out|temporarily/;
-
-/** Corroboration only: when a server does name the parameter, say so in the log. */
-const NAMES_STRUCTURED_OUTPUT =
-  /response_format|json_schema|json_object|structured[ _]output|json mode/;
 
 /** What the ladder is allowed to do about a failed native attempt. */
 export type StructuredVerdict =
@@ -119,15 +138,15 @@ interface ErrorFacts {
   transport?: string;
   /** The server's own diagnosis: messages and response bodies, never the request. */
   diagnosis: string;
-  /** The machine-readable `param` of the OpenAI error contract, when present. */
+  /** The machine-readable `param` of the OpenAI error contract, lowercased. */
   param?: string;
   /** Whether an observable failing request carried `response_format`. */
   carriedParameter?: boolean;
   /**
    * Whether a server was observed to answer at all - any HTTP status, a
-   * response body, response headers. Without one, the failure happened on this
-   * side of the wire and the endpoint's opinion of `response_format` was never
-   * expressed, let alone recorded.
+   * response body, response headers, an error body's `param`. Without one, the
+   * failure happened on this side of the wire and the endpoint's opinion of
+   * `response_format` was never expressed, let alone recorded.
    */
   responded: boolean;
   /** The stack's own view that this failure may pass on a retry. */
@@ -188,13 +207,21 @@ function gatherFacts(err: unknown): ErrorFacts {
     }
     if (typeof e.message === 'string') facts.diagnosis += ` ${e.message}`;
     if (typeof e.responseBody === 'string') facts.diagnosis += ` ${e.responseBody}`;
-    if (typeof e.param === 'string') facts.param ??= e.param;
+    // `param` belongs to the OpenAI error *body*, so a client only ever holds
+    // one because a server sent it: its presence is itself a response.
+    if (typeof e.param === 'string') {
+      facts.param ??= e.param.toLowerCase();
+      facts.responded = true;
+    }
 
     const body = e.error;
     if (body && typeof body === 'object') {
       const inner = body as ErrorLike;
       if (typeof inner.message === 'string') facts.diagnosis += ` ${inner.message}`;
-      if (typeof inner.param === 'string') facts.param ??= inner.param;
+      if (typeof inner.param === 'string') {
+        facts.param ??= inner.param.toLowerCase();
+        facts.responded = true;
+      }
     }
 
     if (
@@ -236,6 +263,35 @@ function ambiguous(evidence: string): StructuredFailure {
 }
 
 /**
+ * Whether what is in hand is a *server* rejecting `response_format` itself.
+ *
+ * This is the fact the no-status branch cannot get from the status, because
+ * there isn't one, and it is not a matter of vocabulary. Only something that
+ * read the request can name a parameter of it and report that parameter as one
+ * it will not take: a local `TypeError` does not make that claim, a dead socket
+ * does not make it, and a rate limiter blames its own state rather than the
+ * request's shape. So the two halves together - the parameter named, and named
+ * as rejected - are affirmative evidence of exactly what the ambiguous branch
+ * below asks for and cannot otherwise obtain: a server answered, and the
+ * request it answered carried the parameter. It still concludes nothing about
+ * support. The prompt attempt does that.
+ *
+ * A machine-readable `param` naming it needs no corroboration: that field is
+ * the server's own attribution of the failure to one parameter of the request.
+ */
+function serverRefusedTheParameter(facts: ErrorFacts): boolean {
+  if (facts.param !== undefined && NAMES_STRUCTURED_OUTPUT.test(facts.param)) return true;
+  return (
+    NAMES_STRUCTURED_OUTPUT.test(facts.diagnosis) &&
+    REJECTS_WHAT_THE_REQUEST_CARRIED.test(facts.diagnosis)
+  );
+}
+
+function statusPrefix(facts: ErrorFacts): string {
+  return facts.status === undefined ? 'no status' : `status ${facts.status}`;
+}
+
+/**
  * Whether dropping `response_format` is worth trying, and worth believing if it
  * works. Ordered so that the cheap structural facts decide first and the
  * server's prose is only ever a veto:
@@ -249,10 +305,18 @@ function ambiguous(evidence: string): StructuredFailure {
  *      ignored it" looks like from here. Settled before any prose is read,
  *      because the message of a contract failure quotes the model's own reply
  *      and a reply is not a diagnosis;
- *   5. the error's own words blame a cause the parameter cannot explain -
+ *   5. the error's own words say no server answered;
+ *   6. a server named `response_format` as the parameter it rejected. Ahead of
+ *      the veto below: between two readings of one message, a rejection of
+ *      something the request carried is a claim about that request, while a
+ *      bare cause word is a claim about the server's own state, and the
+ *      specific one wins. The asymmetry settles the rest - refusing the
+ *      experiment here breaks a compatible endpoint outright, while running it
+ *      costs one round-trip and a demotion the TTL bounds;
+ *   7. the error's own words blame a cause the parameter cannot explain -
  *      consulted for statusless failures too, since a server is free to report
  *      a rate limit or a bad key without one;
- *   6. otherwise the parameter is implicated only if something actually
+ *   8. otherwise the parameter is implicated only if something actually
  *      implicates it. With a status, that is the status itself: the request
  *      shape was rejected. Without one, it takes affirmative evidence that a
  *      server answered *and* that the request it answered carried the
@@ -278,12 +342,11 @@ export function classifyStructuredFailure(err: unknown): StructuredFailure {
   if (NO_RESPONSE_PHRASE.test(facts.diagnosis)) {
     return unrelated('transport failure (no response)');
   }
+  if (serverRefusedTheParameter(facts)) {
+    return decisive(facts, `${statusPrefix(facts)}, server named response_format as rejected`);
+  }
   if (DIAGNOSIS_BLAMES_ANOTHER_CAUSE.test(facts.diagnosis)) {
-    return unrelated(
-      facts.status === undefined
-        ? 'no status, and the failure names another cause'
-        : `status ${facts.status}, server diagnosis names another cause`,
-    );
+    return unrelated(`${statusPrefix(facts)}, and the failure names another cause`);
   }
   if (facts.status === undefined) {
     if (!facts.responded || facts.carriedParameter !== true) {
@@ -292,9 +355,6 @@ export function classifyStructuredFailure(err: unknown): StructuredFailure {
     return ambiguous(
       'server answered a request carrying response_format, without saying what failed',
     );
-  }
-  if (facts.param === 'response_format' || NAMES_STRUCTURED_OUTPUT.test(facts.diagnosis)) {
-    return decisive(facts, `status ${facts.status} naming response_format`);
   }
   return decisive(facts, `status ${facts.status} rejecting the request shape`);
 }
