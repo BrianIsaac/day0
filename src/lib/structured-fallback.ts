@@ -68,7 +68,13 @@ function statusBlamesAnotherCause(status: number): boolean {
 
 /** Failures that never reached an endpoint, so they say nothing about it. */
 const TRANSPORT_FAILURE =
-  /^(ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|EPIPE|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EPROTO|CERT_|DEPTH_ZERO|UND_ERR_)/;
+  /^(ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|EPIPE|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EPROTO|CERT_|DEPTH_ZERO|UND_ERR_|ERR_CANCELED|ABORT_ERR)/;
+
+/**
+ * The same thing reported as an error class rather than a code. A call the
+ * caller withdrew produced no server opinion of `response_format` either.
+ */
+const TRANSPORT_FAILURE_NAME = /^(AbortError|TimeoutError|CanceledError|CancelledError)$/;
 
 /**
  * The same thing in prose, for stacks that report a dead connection as a
@@ -99,13 +105,16 @@ const REJECTS_WHAT_THE_REQUEST_CARRIED =
  * The same causes named in prose, for servers that put them behind a
  * request-shape status where the status alone will not give them away - a
  * context overflow is a 400 on most OpenAI-compatible endpoints - and for
- * stacks that report them with no status at all. Only ever consulted against a
- * *server's* diagnosis of a failed request, never against model output, so an
- * agent that happens to write "permission" into a reply cannot veto its own
- * fallback.
+ * stacks that report them with no status at all. Deliberately generous, which
+ * it can afford to be because it is consulted only after the refusal shape
+ * above has had its say: a bare "unavailable" can veto an otherwise unexplained
+ * failure without being able to veto a server that named `response_format` as
+ * the thing it would not take. Only ever consulted against a *server's*
+ * diagnosis of a failed request, never against model output, so an agent that
+ * happens to write "permission" into a reply cannot veto its own fallback.
  */
 const DIAGNOSIS_BLAMES_ANOTHER_CAUSE =
-  /rate.?limit|too many requests|quota|insufficient_quota|billing|api key|unauthori[sz]ed|authenticat|permission|context length|maximum context|reduce the length|too long|too many tokens|overload|service_unavailable|timeout|timed out|temporarily/;
+  /rate.?limit|too many requests|quota|insufficient_quota|resource.?exhausted|billing|api key|unauthori[sz]ed|authenticat|permission|context.?length|maximum context|reduce the length|too long|too many tokens|overload|unavailable|timeout|timed out|deadline.?exceeded|temporarily|cancell?ed|cancell?ation|aborted/;
 
 /** What the ladder is allowed to do about a failed native attempt. */
 export type StructuredVerdict =
@@ -202,8 +211,12 @@ function gatherFacts(err: unknown): ErrorFacts {
     ) {
       facts.transport = e.code;
     }
-    if (facts.transport === undefined && (e.name === 'AbortError' || e.name === 'TimeoutError')) {
-      facts.transport = String(e.name);
+    if (
+      facts.transport === undefined &&
+      typeof e.name === 'string' &&
+      TRANSPORT_FAILURE_NAME.test(e.name)
+    ) {
+      facts.transport = e.name;
     }
     if (typeof e.message === 'string') facts.diagnosis += ` ${e.message}`;
     if (typeof e.responseBody === 'string') facts.diagnosis += ` ${e.responseBody}`;
@@ -307,12 +320,13 @@ function statusPrefix(facts: ErrorFacts): string {
  *      and a reply is not a diagnosis;
  *   5. the error's own words say no server answered;
  *   6. a server named `response_format` as the parameter it rejected. Ahead of
- *      the veto below: between two readings of one message, a rejection of
- *      something the request carried is a claim about that request, while a
- *      bare cause word is a claim about the server's own state, and the
- *      specific one wins. The asymmetry settles the rest - refusing the
- *      experiment here breaks a compatible endpoint outright, while running it
- *      costs one round-trip and a demotion the TTL bounds;
+ *      the veto below, and the reason the veto can be worded loosely: between
+ *      two readings of one message, a rejection of something the request
+ *      carried is a claim about that request, while a bare cause word is a
+ *      claim about the server's own state, and the specific one wins. The
+ *      asymmetry settles the rest - refusing the experiment here breaks a
+ *      compatible endpoint outright, while running it costs one round-trip and
+ *      a demotion the TTL bounds;
  *   7. the error's own words blame a cause the parameter cannot explain -
  *      consulted for statusless failures too, since a server is free to report
  *      a rate limit or a bad key without one;
