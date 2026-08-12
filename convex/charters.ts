@@ -88,6 +88,12 @@ export const listForAgent = query({
  * the answers-first entry point. A run that does have one goes through
  * `voice.finaliseSession`, which adds the session transition to this same
  * transaction.
+ *
+ * The agent moves to `charter-pending` here for the same reason it does there:
+ * the 1:1 is over the moment a charter exists. Without it the chat route left
+ * the row at `day-one-in-progress` for good — a dashboard still showing the
+ * 1:1 in progress under the charter it produced, and an avatar still working
+ * on the landing page.
  */
 export const commit = internalMutation({
   args: {
@@ -97,12 +103,14 @@ export const commit = internalMutation({
     workspaceFiles: v.array(workspaceFileValidator),
   },
   handler: async (ctx, args): Promise<Id<'charters'>> => {
-    return await commitCharterAndWorkspace(ctx, {
+    const charterId = await commitCharterAndWorkspace(ctx, {
       agentId: args.agentId,
       version: args.version,
       body: args.body,
       workspaceFiles: args.workspaceFiles,
     });
+    await ctx.db.patch(args.agentId, { state: 'charter-pending' });
+    return charterId;
   },
 });
 
