@@ -50,6 +50,17 @@ declare -A ALIASED=(
   [OPENAI_BASE_URL]=CONVEX_OPENAI_BASE_URL
 )
 
+# Keys whose absence is a setting rather than an omission, and so must be
+# removed from the deployment rather than left alone when .env.local has
+# nothing to say. OPENAI_BASE_URL unset means api.openai.com, so a reader
+# moving from a local model to a hosted one clears it here and would otherwise
+# leave a deployment still calling `http://model:11434/v1` - a model server
+# they have since stopped. That failure shows up only in the actions, which is
+# the confusing half: the chat streams from Next and the charter never arrives.
+CLEAR_WHEN_EMPTY=(
+  OPENAI_BASE_URL
+)
+
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
 # is inert, but it is the declaration two versions of the no-auth guard mistook
 # for the socket, so it should not sit on a deployment looking meaningful.
@@ -151,7 +162,11 @@ for key in "${KEYS[@]}"; do
   fi
   value=$(read_local "$key")
   if [ -z "$value" ]; then
-    echo "skip ${key} (empty in $ENV_FILE)"
+    if [[ " ${CLEAR_WHEN_EMPTY[*]} " == *" ${key} "* ]]; then
+      clear_key "$key" "empty in $ENV_FILE, so the deployment falls back to OpenAI"
+    else
+      echo "skip ${key} (empty in $ENV_FILE)"
+    fi
     continue
   fi
   set_key "$key" "$value"
