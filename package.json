@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "dev": "tsx scripts/dev-no-auth-key.ts url && next dev -H 127.0.0.1 -p 3000",
+    "dev": "tsx scripts/dev-no-auth-key.ts url && next dev -H localhost -p 3000",
     "dev:no-auth-key": "tsx scripts/dev-no-auth-key.ts init",
     "convex:dev": "convex dev",
     "convex:up": "docker compose --env-file .env.local up -d",
