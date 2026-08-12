@@ -10,11 +10,17 @@
  *   OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=qwen3:8b \
  *     pnpm probe:model
  *
- * Exit code 0 means the endpoint can drive charter synthesis, plan
- * drafting, execution and skill authoring. Non-zero names the step that
- * failed. A rung the server declines is a note rather than a failure:
- * plenty of OpenAI-compatible servers refuse `response_format` and run
- * the whole loop on prompt injection, which is what `auto` settles on.
+ * Exit code 0 means the endpoint speaks everything charter synthesis,
+ * plan drafting, execution and skill authoring ask of it. Non-zero names
+ * the step that failed. A rung the server declines is a note rather than
+ * a failure: plenty of OpenAI-compatible servers refuse `response_format`
+ * and run the whole loop on prompt injection, which is what `auto`
+ * settles on.
+ *
+ * Conformance is not the whole answer, though, because the loop also has
+ * a clock. Every prompt here is far smaller than a real one, so an
+ * endpoint can pass all seven checks and still lose the charter to a
+ * timeout - see SLOW_MS below.
  */
 import { z } from 'zod';
 import { env } from '../src/env';
@@ -225,6 +231,19 @@ function finish(): void {
   if (noted.length > 0) {
     process.stdout.write(
       `declined by this server, covered by the fallback: ${noted.map((n) => n.name).join(', ')}\n`,
+    );
+  }
+  // Every prompt above is far smaller than a real one, so passing says the
+  // endpoint speaks the protocol - not that it can finish charter synthesis
+  // inside the 300s-per-call and 600s-per-action ceilings that step runs
+  // under. The timings printed above are the only evidence of that here, and
+  // they are noisy on a thinking model, so the check that settles it is
+  // `ollama ps` rather than anything this script can measure in one shot.
+  if (checks.every((c) => c.ok || c.advisory)) {
+    process.stdout.write(
+      '\nspeed is a separate question, and these prompts are much smaller than the\n' +
+        'real ones. If the 1:1 runs and no charter arrives, see "Run it with no\n' +
+        'accounts" in README.md - a local model spilled onto the CPU is the cause.\n',
     );
   }
   if (failed.length > 0) {
