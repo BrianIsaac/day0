@@ -315,6 +315,11 @@ function modelSection(v: Values, selfHosted: boolean): Section {
     );
   } else if (selfHosted && v.CONVEX_OPENAI_BASE_URL) {
     lines.push(`The backend container calls ${v.CONVEX_OPENAI_BASE_URL} for the same endpoint.`);
+  } else if (selfHosted && !backendUrl) {
+    lines.push(
+      'The backend container calls api.openai.com as well - one address that means',
+      'the same thing on both sides, so there is no second one to get wrong.',
+    );
   }
 
   return { title: titleFor(status, 'Model'), status, lines };

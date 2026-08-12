@@ -56,6 +56,10 @@
 # never arrives. Running the model as a service here puts it on the same network
 # under a name the backend can resolve, which is why it is bundled rather than
 # left to the reader. It is opt-in: nothing starts it without `--profile model`.
+#
+# Its GPU reservation lives in docker-compose.gpu.yml, which `pnpm model:up`
+# layers on top when this machine can satisfy it. This file alone starts
+# anywhere.
 
 services:
   backend:
@@ -111,6 +115,11 @@ services:
   #   pnpm model:up
   #   pnpm model:pull qwen3:8b        # ~5 GB, tool-capable, runs the whole loop
   #
+  # `pnpm model:up` adds docker-compose.gpu.yml when this machine has an NVIDIA
+  # driver Docker can hand over, so the acceleration is the default rather than
+  # something to find. Starting the service straight from this file - no
+  # overlay - is the CPU configuration, and every machine can run it.
+  #
   # Two addresses again, and for once both are wanted. The backend reaches it at
   # http://model:11434/v1 over this network (CONVEX_OPENAI_BASE_URL); Next
   # reaches it on the published host port (OPENAI_BASE_URL). Skip this service
@@ -124,17 +133,6 @@ services:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${MODEL_PORT:-11434}:11434'
     volumes:
       - model_data:/root/.ollama
-    # CPU by default, because that is what every machine has. It works, and an
-    # 8B model answers in minutes rather than seconds - enough to see the loop
-    # run, slow enough to be tiring. Uncomment for an NVIDIA GPU with the
-    # container toolkit installed; leaving it on without one refuses to start.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
 
 volumes:
   convex_data:

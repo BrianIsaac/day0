@@ -1,0 +1,28 @@
+# GPU overlay for the bundled `model` service.
+#
+# `pnpm model:up` layers this file on top of docker-compose.yml whenever this
+# machine has an NVIDIA driver, and drops back to the base file alone when
+# Docker turns out not to be able to hand a device over. Run it by hand as:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#     --profile model up -d model
+#
+# It is a separate file rather than a block in the main one because an
+# unsatisfiable device reservation is fatal rather than ignored - the container
+# is created and then refuses to start with `could not select device driver
+# "nvidia" with capabilities: [[gpu]]`. A compose file that will not start on a
+# machine with no GPU is a worse default than a slow one, so docker-compose.yml
+# stays startable everywhere and the acceleration is layered on.
+#
+# MODEL_GPU_COUNT selects how many devices to reserve; `all` is the default and
+# a number picks that many on a multi-GPU machine.
+
+services:
+  model:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${MODEL_GPU_COUNT:-all}
+              capabilities: [gpu]
