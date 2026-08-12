@@ -30,8 +30,8 @@ import { assertOwnsAgentAction } from './ownership';
  *     extracts the seven answers via GPT-5.5, then hands off to the same
  *     pipeline. Ownership-checked.
  *   - `synthesiseFromTranscriptForWebhook` — webhook entry: same logic,
- *     but the caller is the unauthenticated ElevenLabs post-call webhook.
- *     The trust model is documented at the action's call site.
+ *     but the caller carries no Clerk identity. Authenticated by the
+ *     per-session webhook token; trust model documented at the action.
  *   - `postCharterApproval` — runs after the boss clicks Approve. Kicks
  *     off Exa good-habits research; distils into AGENTS.md.
  *
@@ -155,21 +155,22 @@ export const synthesiseFromTranscript = action({
 });
 
 /**
- * Webhook entry — called by the ElevenLabs post-call webhook with no
- * Clerk JWT on the request. Skipping the per-user ownership check here
- * is deliberate; the trust signal is the voice session itself:
+ * Webhook entry — called by the ElevenLabs post-call webhook, which carries
+ * no Clerk JWT. Two independent checks stand in for the ownership check:
  *
- *   - The legitimate user started this session via the ownership-checked
- *     `voice.start` mutation, which stamped (agentId, conversationId) on
- *     a fresh voiceSessions row in `active` state.
- *   - We look that row up by (agentId, conversationId) and refuse to
- *     proceed if no active session matches. A malicious signed-in user
- *     calling this action directly with someone else's agentId can't
- *     forge an active session for it, so the lookup fails.
+ *   - The route (`app/api/voice/elevenlabs/webhook/route.ts`) verifies the
+ *     `elevenlabs-signature` HMAC over the raw body before calling this, so
+ *     only ElevenLabs can put a payload on this path.
+ *   - This action is a public Convex function, reachable directly at the
+ *     deployment URL by anyone who knows it, so it cannot rely on the route
+ *     having run. `sessionToken` is the check that survives that: it is
+ *     minted by the ownership-checked `voice.start`, released only to the
+ *     boss who owns the agent, and echoed back by ElevenLabs. Neither the
+ *     agent id (a routing id, visible in `/agent/<agentId>`) nor the
+ *     conversation id (supplied by the caller) proves anything on its own.
  *
- * This is HMAC-signature-equivalent without HMAC — the database lookup
- * carries the trust. A production hardening pass should still add HMAC
- * verification at the route level using the ElevenLabs webhook secret.
+ * `voice.bindWebhookSession` holds the matching rules, including the refusal
+ * to accept a conversation id that contradicts the session's own.
  */
 export const synthesiseFromTranscriptForWebhook = action({
   args: {
@@ -177,25 +178,20 @@ export const synthesiseFromTranscriptForWebhook = action({
     bossLabel: v.string(),
     transcript: v.string(),
     elevenLabsConversationId: v.string(),
+    sessionToken: v.string(),
   },
   handler: async (ctx, args): Promise<{ charterId: string; version: string }> => {
-    // Strict lookup first (uses the conversationId attached by the
-    // browser's onConnect handler); fall back to the most recent active
-    // session for the agent if the attach call didn't land.
-    const session =
-      (await ctx.runQuery(internal.voice.findActiveByConversation, {
+    const sessionId: Id<'voiceSessions'> = await ctx.runMutation(
+      internal.voice.bindWebhookSession,
+      {
         agentId: args.agentId,
+        webhookToken: args.sessionToken,
         conversationId: args.elevenLabsConversationId,
-      })) ??
-      (await ctx.runQuery(internal.voice.findLatestActiveForAgent, {
-        agentId: args.agentId,
-      }));
-    if (!session) {
-      throw new Error('no active voice session for that agent — webhook denied');
-    }
+      },
+    );
     const answers = await extractAnswersFromTranscript(args.transcript);
     await ctx.runMutation(internal.voice.complete, {
-      sessionId: session._id,
+      sessionId,
       transcriptText: args.transcript,
       answers,
     });
