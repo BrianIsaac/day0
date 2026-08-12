@@ -45,11 +45,13 @@ const clerkProxy = clerkMiddleware(async (auth, req) => {
 
 /**
  * The one route that is meant to be reached from off this machine even in
- * no-auth mode. ElevenLabs posts call transcripts to it, it carries no caller
- * identity, and the Convex action behind it authenticates the payload by
- * matching (agentId, conversationId) against an active voice session rather
- * than by trusting the caller - so a tunnel pointed at it grants nothing that
- * the deployed Vercel app does not already expose.
+ * no-auth mode. ElevenLabs posts call transcripts to it and it carries no
+ * caller identity, so the route authenticates the delivery itself: it verifies
+ * the elevenlabs-signature HMAC over the raw body and refuses every request
+ * when ELEVENLABS_WEBHOOK_SECRET is unset. Behind it, the Convex action binds
+ * the transcript to a voice session by a per-session token minted by
+ * `voice.start` - the agent id alone proves nothing. A tunnel pointed at it
+ * grants nothing that the deployed Vercel app does not already expose.
  */
 const isExternallyCalledRoute = createRouteMatcher(['/api/voice/elevenlabs/webhook(.*)']);
 
