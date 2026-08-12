@@ -2,7 +2,7 @@
 
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { action } from './_generated/server';
+import { action, internalAction, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import {
   synthesiseCharter,
@@ -17,9 +17,10 @@ import { mergeGoodHabits, researchAndDistil } from '../src/agent/good-habits';
 import { generateWorkItemsFromCharter } from '../src/agent/work-generator';
 import type { Charter } from '../src/agent/charter';
 import type { MockSurfaceSnapshot } from '../src/work/types';
-import type { Doc } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { assertOwnsAgentAction } from './ownership';
+import type { WorkspaceFile } from './charters';
 
 /**
  * Day-1 onboarding actions. Surfaces:
@@ -30,8 +31,11 @@ import { assertOwnsAgentAction } from './ownership';
  *     extracts the seven answers via GPT-5.5, then hands off to the same
  *     pipeline. Ownership-checked.
  *   - `synthesiseFromTranscriptForWebhook` — webhook entry: same logic,
- *     but the caller is the unauthenticated ElevenLabs post-call webhook.
- *     The trust model is documented at the action's call site.
+ *     but the caller carries no Clerk identity. Authenticated by the
+ *     per-session webhook token; trust model documented at the action.
+ *   - `recoverFinalisation` — the deployment finishing a call neither client
+ *     will come back for. Internal, and scheduled by the database rather
+ *     than called by anybody.
  *   - `postCharterApproval` — runs after the boss clicks Approve. Kicks
  *     off Exa good-habits research; distils into AGENTS.md.
  *
@@ -77,40 +81,129 @@ async function extractAnswersFromTranscript(
   return out as Record<DayOneTopic, string>;
 }
 
-async function doSynthesise(
-  ctx: { runMutation: (fn: any, args: any) => Promise<any> },
-  args: { agentId: any; bossLabel: string; answers: Record<DayOneTopic, string> },
-): Promise<{ charterId: string; version: string }> {
+const CHARTER_VERSION = '0.0';
+
+/**
+ * Everything the commit needs, computed before it: two model calls and seven
+ * rendered files, none of them touching the database. Keeping the model work
+ * outside the transaction is what lets the transaction be the only writer.
+ */
+async function draftCharter(args: {
+  bossLabel: string;
+  answers: Record<DayOneTopic, string>;
+}): Promise<{ charter: Charter; workspaceFiles: WorkspaceFile[] }> {
   const charter = await synthesiseCharter({
     answers: args.answers,
-    version: '0.0',
+    version: CHARTER_VERSION,
     bossLabel: args.bossLabel,
   });
-  const charterId = await ctx.runMutation(internal.charters.persist, {
+  return {
+    charter,
+    workspaceFiles: [
+      { fileName: 'SOUL.md', content: defaultSoul() },
+      { fileName: 'IDENTITY.md', content: identityFromCharter(charter) },
+      { fileName: 'TOOLS.md', content: toolsFromCharter(charter) },
+      { fileName: 'BOOTSTRAP.md', content: day1Script() },
+      { fileName: 'USER.md', content: `# USER\n\nBoss: ${args.bossLabel}\n` },
+      { fileName: 'MEMORY.md', content: '# MEMORY\n\n(empty — populated by post-turn review)\n' },
+      {
+        fileName: 'HEARTBEAT.md',
+        content: `# HEARTBEAT\n\nDeployed: ${new Date().toISOString()}\n`,
+      },
+    ],
+  };
+}
+
+/**
+ * What a finalisation attempt tells its caller.
+ *
+ *   synthesised — this attempt did the work.
+ *   duplicate   — someone else already did it; here is what they produced.
+ *   in-progress — someone else is doing it now.
+ *
+ * The last two are successes from the caller's point of view: the transcript
+ * has been accepted and the charter either exists or is being written.
+ */
+export type SynthesisOutcome =
+  | { outcome: 'synthesised'; charterId: string; version: string }
+  | { outcome: 'duplicate'; charterId: string | null; version: string | null }
+  | { outcome: 'in-progress' };
+
+async function doSynthesise(
+  ctx: ActionCtx,
+  args: { agentId: Id<'agents'>; bossLabel: string; answers: Record<DayOneTopic, string> },
+): Promise<{ charterId: string; version: string }> {
+  const drafted = await draftCharter({ bossLabel: args.bossLabel, answers: args.answers });
+  const charterId: Id<'charters'> = await ctx.runMutation(internal.charters.commit, {
     agentId: args.agentId,
-    version: '0.0',
-    body: charter,
+    version: CHARTER_VERSION,
+    body: drafted.charter,
+    workspaceFiles: drafted.workspaceFiles,
   });
-  const writes = [
-    { fileName: 'SOUL.md', content: defaultSoul() },
-    { fileName: 'IDENTITY.md', content: identityFromCharter(charter) },
-    { fileName: 'TOOLS.md', content: toolsFromCharter(charter) },
-    { fileName: 'BOOTSTRAP.md', content: day1Script() },
-    { fileName: 'USER.md', content: `# USER\n\nBoss: ${args.bossLabel}\n` },
-    { fileName: 'MEMORY.md', content: '# MEMORY\n\n(empty — populated by post-turn review)\n' },
-    {
-      fileName: 'HEARTBEAT.md',
-      content: `# HEARTBEAT\n\nDeployed: ${new Date().toISOString()}\n`,
-    },
-  ];
-  for (const w of writes) {
-    await ctx.runMutation(internal.workspace.writeFileInternal, {
-      agentId: args.agentId,
-      fileName: w.fileName,
-      content: w.content,
+  return { charterId, version: CHARTER_VERSION };
+}
+
+/**
+ * Run the finalisation this caller has won: extract, draft, commit. A failure
+ * anywhere in it hands the session back so a later delivery — or the other
+ * path — can try again, rather than leaving the boss with a finished call and
+ * no charter.
+ */
+async function finaliseClaimedSession(
+  ctx: ActionCtx,
+  args: {
+    sessionId: Id<'voiceSessions'>;
+    agentId: Id<'agents'>;
+    claimToken: string;
+    bossLabel: string;
+    transcript: string;
+  },
+): Promise<SynthesisOutcome> {
+  try {
+    const answers = await extractAnswersFromTranscript(args.transcript);
+    const drafted = await draftCharter({ bossLabel: args.bossLabel, answers });
+    const result = await ctx.runMutation(internal.voice.finaliseSession, {
+      sessionId: args.sessionId,
+      expectedAgentId: args.agentId,
+      claimToken: args.claimToken,
+      transcriptText: args.transcript,
+      answers,
+      charterVersion: CHARTER_VERSION,
+      charterBody: drafted.charter,
+      workspaceFiles: drafted.workspaceFiles,
     });
+    if (result.outcome === 'finalised') {
+      return { outcome: 'synthesised', charterId: result.charterId, version: result.version };
+    }
+    if (result.outcome === 'already-done') {
+      return { outcome: 'duplicate', charterId: result.charterId, version: result.version };
+    }
+    return { outcome: 'in-progress' };
+  } catch (err) {
+    // Releasing is best effort. Failing to release must not replace the real
+    // cause with a second error; the lease expiry recovers the session anyway.
+    try {
+      await ctx.runMutation(internal.voice.releaseFinalisation, {
+        sessionId: args.sessionId,
+        claimToken: args.claimToken,
+        reason: (err as Error).message ?? 'unknown error',
+      });
+    } catch {
+      /* keep the original failure */
+    }
+    throw err;
   }
-  return { charterId, version: '0.0' };
+}
+
+/** How a caller that did not win the claim reports what it found. */
+function fromClaim(
+  claim:
+    | { outcome: 'in-progress' }
+    | { outcome: 'already-done'; charterId: string | null; version: string | null },
+): SynthesisOutcome {
+  return claim.outcome === 'already-done'
+    ? { outcome: 'duplicate', charterId: claim.charterId, version: claim.version }
+    : { outcome: 'in-progress' };
 }
 
 export const synthesiseFromAnswers = action({
@@ -129,6 +222,15 @@ export const synthesiseFromAnswers = action({
   },
 });
 
+/**
+ * Browser entry. Two things are proved before a single model call is spent:
+ * that the caller owns `agentId`, and — in one transaction, against the row —
+ * that `voiceSessionId` is that agent's session and is finalisable. Ownership
+ * of the session follows from the pair, and only from the pair: a session id
+ * the caller merely knows proves nothing about who may end that call.
+ *
+ * With no session id this is the chat-mode 1:1, which has no call to end.
+ */
 export const synthesiseFromTranscript = action({
   args: {
     agentId: v.id('agents'),
@@ -136,40 +238,59 @@ export const synthesiseFromTranscript = action({
     transcript: v.string(),
     voiceSessionId: v.optional(v.id('voiceSessions')),
   },
-  handler: async (ctx, args): Promise<{ charterId: string; version: string }> => {
+  handler: async (ctx, args): Promise<SynthesisOutcome> => {
     await assertOwnsAgentAction(ctx, args.agentId);
-    const answers = await extractAnswersFromTranscript(args.transcript);
-    if (args.voiceSessionId) {
-      await ctx.runMutation(internal.voice.complete, {
-        sessionId: args.voiceSessionId,
-        transcriptText: args.transcript,
+
+    if (!args.voiceSessionId) {
+      const answers = await extractAnswersFromTranscript(args.transcript);
+      const result = await doSynthesise(ctx, {
+        agentId: args.agentId,
+        bossLabel: args.bossLabel,
         answers,
       });
+      return { outcome: 'synthesised', ...result };
     }
-    return await doSynthesise(ctx, {
-      agentId: args.agentId,
+
+    const claim = await ctx.runMutation(internal.voice.claimFinalisation, {
+      sessionId: args.voiceSessionId,
+      expectedAgentId: args.agentId,
+      transcript: args.transcript,
       bossLabel: args.bossLabel,
-      answers,
+    });
+    if (claim.outcome !== 'claimed') return fromClaim(claim);
+
+    return await finaliseClaimedSession(ctx, {
+      sessionId: claim.sessionId,
+      agentId: claim.agentId,
+      claimToken: claim.claimToken,
+      bossLabel: args.bossLabel,
+      transcript: args.transcript,
     });
   },
 });
 
 /**
- * Webhook entry — called by the ElevenLabs post-call webhook with no
- * Clerk JWT on the request. Skipping the per-user ownership check here
- * is deliberate; the trust signal is the voice session itself:
+ * Webhook entry — called by the ElevenLabs post-call webhook, which carries
+ * no Clerk JWT. Two independent checks stand in for the ownership check:
  *
- *   - The legitimate user started this session via the ownership-checked
- *     `voice.start` mutation, which stamped (agentId, conversationId) on
- *     a fresh voiceSessions row in `active` state.
- *   - We look that row up by (agentId, conversationId) and refuse to
- *     proceed if no active session matches. A malicious signed-in user
- *     calling this action directly with someone else's agentId can't
- *     forge an active session for it, so the lookup fails.
+ *   - The route (`app/api/voice/elevenlabs/webhook/route.ts`) verifies the
+ *     `elevenlabs-signature` HMAC over the raw body before calling this, so
+ *     only ElevenLabs can put a payload on this path.
+ *   - This action is a public Convex function, reachable directly at the
+ *     deployment URL by anyone who knows it, so it cannot rely on the route
+ *     having run. `sessionToken` is the check that survives that: it is
+ *     minted by the ownership-checked `voice.start`, released only to the
+ *     boss who owns the agent, and echoed back by ElevenLabs. Neither the
+ *     agent id (a routing id, visible in `/agent/<agentId>`) nor the
+ *     conversation id (supplied by the caller) proves anything on its own.
  *
- * This is HMAC-signature-equivalent without HMAC — the database lookup
- * carries the trust. A production hardening pass should still add HMAC
- * verification at the route level using the ElevenLabs webhook secret.
+ * `voice.claimWebhookFinalisation` holds the matching rules, including the
+ * refusal to accept a conversation id that contradicts the session's own, and
+ * reserves the session in the same transaction that recognises it.
+ *
+ * ElevenLabs retries a failed delivery with a byte-identical payload, so this
+ * has to be idempotent on the session rather than on anything in the body: a
+ * repeat delivery is answered with what the first one produced.
  */
 export const synthesiseFromTranscriptForWebhook = action({
   args: {
@@ -177,33 +298,77 @@ export const synthesiseFromTranscriptForWebhook = action({
     bossLabel: v.string(),
     transcript: v.string(),
     elevenLabsConversationId: v.string(),
+    sessionToken: v.string(),
   },
-  handler: async (ctx, args): Promise<{ charterId: string; version: string }> => {
-    // Strict lookup first (uses the conversationId attached by the
-    // browser's onConnect handler); fall back to the most recent active
-    // session for the agent if the attach call didn't land.
-    const session =
-      (await ctx.runQuery(internal.voice.findActiveByConversation, {
-        agentId: args.agentId,
-        conversationId: args.elevenLabsConversationId,
-      })) ??
-      (await ctx.runQuery(internal.voice.findLatestActiveForAgent, {
-        agentId: args.agentId,
-      }));
-    if (!session) {
-      throw new Error('no active voice session for that agent — webhook denied');
-    }
-    const answers = await extractAnswersFromTranscript(args.transcript);
-    await ctx.runMutation(internal.voice.complete, {
-      sessionId: session._id,
-      transcriptText: args.transcript,
-      answers,
-    });
-    return await doSynthesise(ctx, {
+  handler: async (ctx, args): Promise<SynthesisOutcome> => {
+    const claim = await ctx.runMutation(internal.voice.claimWebhookFinalisation, {
       agentId: args.agentId,
+      webhookToken: args.sessionToken,
+      conversationId: args.elevenLabsConversationId,
+      transcript: args.transcript,
       bossLabel: args.bossLabel,
-      answers,
     });
+    if (claim.outcome !== 'claimed') return fromClaim(claim);
+
+    return await finaliseClaimedSession(ctx, {
+      sessionId: claim.sessionId,
+      agentId: claim.agentId,
+      claimToken: claim.claimToken,
+      bossLabel: args.bossLabel,
+      transcript: args.transcript,
+    });
+  },
+});
+
+/** What one server-driven attempt did. */
+export type RecoveryOutcome =
+  | { outcome: 'recovered'; charterId: string; version: string }
+  | { outcome: 'skipped'; reason: string }
+  | { outcome: 'failed'; reason: string };
+
+/**
+ * Finish a call that both clients have given up on.
+ *
+ * The browser's `onDisconnect` post is a one-shot by construction — the page is
+ * usually gone before the response arrives — and a delivery that overlapped a
+ * live claim was answered 200, which is what stops ElevenLabs wasting a retry
+ * on work already in flight but also spends that delivery. So a released
+ * session has no client left to come back for it, and the deployment finishes
+ * it instead, from the transcript the failed attempt wrote onto the row.
+ *
+ * Scheduled by `voice.releaseFinalisation` in the transaction that releases the
+ * session, and by `voice.sweepStalledFinalisations` for a claim whose holder
+ * died before it could release anything. It reaches the same claim-once machine
+ * as the two clients, so an overlap with a genuine late delivery is decided the
+ * same way every other overlap is, and it never fails a scheduled run for a
+ * reason that is already recorded on the row.
+ */
+export const recoverFinalisation = internalAction({
+  args: { sessionId: v.id('voiceSessions') },
+  handler: async (ctx, args): Promise<RecoveryOutcome> => {
+    const claim = await ctx.runMutation(internal.voice.claimRecoveryFinalisation, {
+      sessionId: args.sessionId,
+    });
+    if (claim.outcome !== 'claimed') return { outcome: 'skipped', reason: claim.reason };
+
+    try {
+      const result = await finaliseClaimedSession(ctx, {
+        sessionId: claim.sessionId,
+        agentId: claim.agentId,
+        claimToken: claim.claimToken,
+        bossLabel: claim.bossLabel,
+        transcript: claim.transcript,
+      });
+      if (result.outcome === 'synthesised') {
+        return { outcome: 'recovered', charterId: result.charterId, version: result.version };
+      }
+      return { outcome: 'skipped', reason: `another finisher reported ${result.outcome}` };
+    } catch (err) {
+      // The release this attempt already performed carries the reason and
+      // schedules the next try, so rethrowing would only turn a handled failure
+      // into a failed scheduled function.
+      return { outcome: 'failed', reason: (err as Error).message ?? 'unknown error' };
+    }
   },
 });
 
@@ -218,22 +383,34 @@ export const postCharterApproval = action({
     if (!charter) throw new Error('postCharterApproval: no charter');
     const charterBody = charter.body as Charter;
     const role = extractRole(charterBody);
-    const { fragment, norms } = await researchAndDistil(role);
-    const existing = await ctx.runQuery(api.workspace.readFile, {
-      agentId: args.agentId,
-      fileName: 'AGENTS.md',
-    });
-    const merged = mergeGoodHabits(existing ?? '', fragment);
-    await ctx.runMutation(internal.workspace.writeFileInternal, {
-      agentId: args.agentId as any,
-      fileName: 'AGENTS.md',
-      content: merged,
-    });
-    await ctx.runMutation(internal.events.log, {
-      agentId: args.agentId,
-      type: 'good-habits.distilled',
-      payload: { norms, role },
-    });
+    // Exa is optional. Without it the loop continues with an unchanged
+    // AGENTS.md and the skip lands in the event feed, so the missing
+    // capability is visible rather than silent.
+    const research = await researchAndDistil(role);
+    const norms = research.norms;
+    if (research.skipped) {
+      await ctx.runMutation(internal.events.log, {
+        agentId: args.agentId,
+        type: 'good-habits.skipped',
+        payload: { role, reason: research.skipReason ?? 'research unavailable' },
+      });
+    } else {
+      const existing = await ctx.runQuery(api.workspace.readFile, {
+        agentId: args.agentId,
+        fileName: 'AGENTS.md',
+      });
+      const merged = mergeGoodHabits(existing ?? '', research.fragment);
+      await ctx.runMutation(internal.workspace.writeFileInternal, {
+        agentId: args.agentId,
+        fileName: 'AGENTS.md',
+        content: merged,
+      });
+      await ctx.runMutation(internal.events.log, {
+        agentId: args.agentId,
+        type: 'good-habits.distilled',
+        payload: { norms, role },
+      });
+    }
 
     // Generate role-specific work items grounded in BOTH the charter AND
     // the agent's actual mock environment. The work-generator LLM sees
@@ -273,7 +450,7 @@ export const postCharterApproval = action({
  * LLM sees the same surface identifiers the executor will later act on.
  */
 async function loadMockEnvSnapshot(
-  ctx: { runQuery: (fn: any, args: any) => Promise<any> },
+  ctx: ActionCtx,
   agentId: Doc<'agents'>['_id'],
 ): Promise<MockSurfaceSnapshot> {
   const docs: Doc<'mockDocs'>[] = await ctx.runQuery(api.mock.listDocs, { agentId });

@@ -12,11 +12,18 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
   OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-5.5'),
   OPENAI_IMAGE_MODEL: z.string().default('gpt-image-2'),
+  OPENAI_JSON_MODE: z.enum(['auto', 'native', 'prompt']).default('auto'),
 
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_AGENT_ID: z.string().optional(),
+  // Signs the post-call webhook. Its absence is not the same shape of absence
+  // as the two above: without them voice never starts, without this one voice
+  // runs and only post-call finalisation is refused. `pnpm check:setup` reports
+  // the two separately.
+  ELEVENLABS_WEBHOOK_SECRET: z.string().optional(),
 
   GOOGLE_API_KEY: z.string().optional(),
   GEMINI_LIVE_MODEL: z.string().default('gemini-flash-3.1-live'),
@@ -28,18 +35,29 @@ const schema = z.object({
 
   CONVEX_DEPLOYMENT: z.string().optional(),
   NEXT_PUBLIC_CONVEX_URL: z.string().optional(),
+  // Self-hosted backend (docker-compose.yml). Read by the Convex CLI, not by
+  // app code; mutually exclusive with CONVEX_DEPLOYMENT.
+  CONVEX_SELF_HOSTED_URL: z.string().optional(),
+  CONVEX_SELF_HOSTED_ADMIN_KEY: z.string().optional(),
 
   NEXT_PUBLIC_DEMO_BOSS_EMAIL: z.string().optional(),
   NEXT_PUBLIC_DEMO_TENANT_SLUG: z.string().default('acme-demo'),
+
+  // `true` skips Clerk entirely and runs as one synthetic local user. Refused
+  // outside `next dev` — see src/lib/dev-auth.ts.
+  NEXT_PUBLIC_DEV_NO_AUTH: z.string().optional(),
 });
 
 export const env = schema.parse({
   NODE_ENV: process.env.NODE_ENV,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
   OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL,
+  OPENAI_JSON_MODE: process.env.OPENAI_JSON_MODE,
   ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
   ELEVENLABS_AGENT_ID: process.env.ELEVENLABS_AGENT_ID,
+  ELEVENLABS_WEBHOOK_SECRET: process.env.ELEVENLABS_WEBHOOK_SECRET,
   GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
   GEMINI_LIVE_MODEL: process.env.GEMINI_LIVE_MODEL,
   EXA_API_KEY: process.env.EXA_API_KEY,
@@ -47,6 +65,9 @@ export const env = schema.parse({
   DAYTONA_API_URL: process.env.DAYTONA_API_URL,
   CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
   NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
+  CONVEX_SELF_HOSTED_URL: process.env.CONVEX_SELF_HOSTED_URL,
+  CONVEX_SELF_HOSTED_ADMIN_KEY: process.env.CONVEX_SELF_HOSTED_ADMIN_KEY,
   NEXT_PUBLIC_DEMO_BOSS_EMAIL: process.env.NEXT_PUBLIC_DEMO_BOSS_EMAIL,
   NEXT_PUBLIC_DEMO_TENANT_SLUG: process.env.NEXT_PUBLIC_DEMO_TENANT_SLUG,
+  NEXT_PUBLIC_DEV_NO_AUTH: process.env.NEXT_PUBLIC_DEV_NO_AUTH,
 });

@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { internalMutation, mutation, query } from './_generated/server';
+import { internalMutation, query } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 
@@ -14,6 +14,18 @@ import { assertOwnsAgent } from './ownership';
  * mutations defined here. The dashboard subscribes to the same data
  * via these queries so edits surface live.
  */
+
+/**
+ * What a write did to the mock environment. `changed: false` is the honest
+ * answer when the action named a surface that does not exist, or asked for a
+ * patch with nothing in it: the mutation resolved, and the work environment is
+ * exactly as it was. The executor completes a work item on `changed`, never on
+ * "the promise did not reject".
+ */
+export interface MockWriteResult {
+  changed: boolean;
+  reason?: string;
+}
 
 // ---------- Docs ----------
 
@@ -136,8 +148,25 @@ export const appendSpreadsheetRow = internalMutation({
     cells: v.any(),
     addedBy: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const id = await ctx.db.insert('mockSpreadsheetRows', {
+  handler: async (ctx, args): Promise<MockWriteResult> => {
+    const sheet = await ctx.db
+      .query('mockSpreadsheets')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.sheetSlug))
+      .unique();
+    if (!sheet) {
+      return { changed: false, reason: `no spreadsheet with slug "${args.sheetSlug}"` };
+    }
+    if (!sheet.tabs.some((t) => t.name === args.tabName)) {
+      return {
+        changed: false,
+        reason: `spreadsheet "${args.sheetSlug}" has no tab "${args.tabName}"`,
+      };
+    }
+    const cells = (args.cells ?? {}) as Record<string, string>;
+    if (Object.keys(cells).length === 0) {
+      return { changed: false, reason: 'row had no cells, so the tab is unchanged' };
+    }
+    await ctx.db.insert('mockSpreadsheetRows', {
       agentId: args.agentId,
       sheetSlug: args.sheetSlug,
       tabName: args.tabName,
@@ -145,7 +174,7 @@ export const appendSpreadsheetRow = internalMutation({
       addedBy: args.addedBy ?? 'agent',
       addedAt: Date.now(),
     });
-    return id;
+    return { changed: true };
   },
 });
 
@@ -214,8 +243,17 @@ export const postSlackMessage = internalMutation({
     ),
     body: v.string(),
   },
-  handler: async (ctx, args) => {
-    return await ctx.db.insert('mockSlackMessages', {
+  handler: async (ctx, args): Promise<MockWriteResult> => {
+    const channel = await ctx.db
+      .query('mockSlackChannels')
+      .withIndex('by_agent_slug', (q) =>
+        q.eq('agentId', args.agentId).eq('slug', args.channelSlug),
+      )
+      .unique();
+    if (!channel) {
+      return { changed: false, reason: `no Slack channel with slug "${args.channelSlug}"` };
+    }
+    await ctx.db.insert('mockSlackMessages', {
       agentId: args.agentId,
       channelSlug: args.channelSlug,
       threadKey: args.threadKey,
@@ -224,6 +262,7 @@ export const postSlackMessage = internalMutation({
       body: args.body,
       timestamp: Date.now(),
     });
+    return { changed: true };
   },
 });
 
@@ -287,8 +326,15 @@ export const postTweetReply = internalMutation({
     body: v.string(),
     isAgentDraft: v.boolean(),
   },
-  handler: async (ctx, args) => {
-    return await ctx.db.insert('mockTweetReplies', {
+  handler: async (ctx, args): Promise<MockWriteResult> => {
+    const tweet = await ctx.db
+      .query('mockTweets')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.tweetSlug))
+      .unique();
+    if (!tweet) {
+      return { changed: false, reason: `no tweet with slug "${args.tweetSlug}"` };
+    }
+    await ctx.db.insert('mockTweetReplies', {
       agentId: args.agentId,
       tweetSlug: args.tweetSlug,
       author: args.author,
@@ -297,6 +343,7 @@ export const postTweetReply = internalMutation({
       isAgentDraft: args.isAgentDraft,
       createdAt: Date.now(),
     });
+    return { changed: true };
   },
 });
 
@@ -369,25 +416,45 @@ export const updateTicket = internalMutation({
     comment: v.optional(v.string()),
     commentAuthor: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<MockWriteResult> => {
     const ticket = await ctx.db
       .query('mockTickets')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.slug))
       .unique();
-    if (!ticket) return null;
-    const patch: Record<string, unknown> = { updatedAt: Date.now() };
-    if (args.status) patch.status = args.status;
-    if (args.comment) {
+    if (!ticket) {
+      return { changed: false, reason: `no ticket with slug "${args.slug}"` };
+    }
+    if (!args.status && !args.comment) {
+      return { changed: false, reason: `ticket "${args.slug}" got neither a status nor a comment` };
+    }
+    // `changed` means a semantic field moved, not "a patch was issued". Setting
+    // a done ticket to done rewrites the same status and a fresh `updatedAt`,
+    // neither of which the executor's environment snapshot carries — so the
+    // work would complete on a write nobody can see.
+    const statusMoves = !!args.status && args.status !== ticket.status;
+    const newComment = args.comment?.trim();
+    const patch: Record<string, unknown> = {};
+    if (statusMoves) patch.status = args.status;
+    if (newComment) {
       patch.comments = [
         ...ticket.comments,
         {
           author: args.commentAuthor ?? 'Day0',
-          body: args.comment,
+          body: newComment,
           timestamp: Date.now(),
         },
       ];
     }
+    if (!statusMoves && !newComment) {
+      return {
+        changed: false,
+        reason: args.status
+          ? `ticket "${args.slug}" is already ${ticket.status}, and no comment was added`
+          : `ticket "${args.slug}" got an empty comment`,
+      };
+    }
+    patch.updatedAt = Date.now();
     await ctx.db.patch(ticket._id, patch);
-    return ticket._id;
+    return { changed: true };
   },
 });

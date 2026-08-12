@@ -1,17 +1,31 @@
+import type { UserIdentity } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
+import { notAuthenticatedMessage } from './devAuth';
 
 /**
  * Per-account ownership guards. Every public query/mutation/action that
  * touches a per-agent row calls one of these. Internal functions skip the
  * check — they're only callable from other Convex functions, which have
  * already verified the caller.
+ *
+ * `getCaller` is the single place a caller's identity enters the backend. Every
+ * caller presents a verified token, in no-auth dev mode as much as under Clerk;
+ * the two differ only in who issued it (see `convex/devAuth.ts`).
  */
 
-async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error('not authenticated');
+export async function getCaller(
+  ctx: QueryCtx | MutationCtx | ActionCtx,
+): Promise<UserIdentity | null> {
+  return ctx.auth.getUserIdentity();
+}
+
+export async function getCallerOrThrow(
+  ctx: QueryCtx | MutationCtx | ActionCtx,
+): Promise<UserIdentity> {
+  const identity = await getCaller(ctx);
+  if (!identity) throw new Error(notAuthenticatedMessage());
   return identity;
 }
 

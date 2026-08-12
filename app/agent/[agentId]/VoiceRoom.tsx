@@ -7,10 +7,13 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 
 interface StartResponse {
-  agentId: string;
+  /** False when the deployment has no ElevenLabs credentials. */
+  configured: boolean;
+  agentId: string | null;
   signedUrl: string | null;
   public: boolean;
   warning?: string;
+  reason?: string;
 }
 
 interface InboundMessage {
@@ -52,7 +55,18 @@ function VoiceRoomInner({
 }) {
   const startSession = useMutation(api.voice.start);
   const attachConversationId = useMutation(api.voice.attachConversationId);
-  const [voiceSessionId, setVoiceSessionId] = useState<Id<'voiceSessions'> | null>(null);
+  const [session, setSession] = useState<{
+    id: Id<'voiceSessions'>;
+    webhookToken: string;
+  } | null>(null);
+  // The SDK captures its callbacks once, so `onConnect` and `onDisconnect` see
+  // whatever `session` held on the render that created them — null, for a call
+  // started in the same tick. A ref is what the callbacks can read the live
+  // value from, and the session id is the key both finalisation paths agree on:
+  // without it here, the browser's post cannot be recognised as the same work
+  // the webhook reports.
+  const sessionRef = useRef<{ id: Id<'voiceSessions'>; webhookToken: string } | null>(null);
+  const finalisePosted = useRef(false);
   const [start, setStart] = useState<StartResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<InboundMessage[]>([]);
@@ -65,21 +79,30 @@ function VoiceRoomInner({
     micMuted: muted,
     onConnect: ({ conversationId }: { conversationId: string }) => {
       setError(null);
-      if (voiceSessionId && conversationId) {
+      const current = sessionRef.current;
+      if (current && conversationId) {
         attachConversationId({
-          sessionId: voiceSessionId,
+          sessionId: current.id,
           elevenLabsConversationId: conversationId,
         }).catch(() => {
-          // Non-fatal — webhook can fall back to latest-active lookup.
+          // Non-fatal — the post-call webhook records the conversation id
+          // itself when this never lands.
         });
       }
     },
+    // One post per call, and deliberately one: the page is usually being torn
+    // down as this resolves, so a browser-side retry is a promise this component
+    // cannot keep. The latch stops a second post; what covers a post that fails
+    // is the deployment re-driving the session itself, which is scheduled the
+    // moment the failed attempt hands its claim back.
     onDisconnect: () => {
+      if (finalisePosted.current) return;
       setTranscript((current) => {
         const text = current
           .map((t) => `${t.source === 'ai' ? 'AGENT' : 'USER'}: ${t.message}`)
           .join('\n\n');
         if (text) {
+          finalisePosted.current = true;
           void fetch('/api/onboarding/synthesise', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -87,7 +110,7 @@ function VoiceRoomInner({
               agentId,
               bossLabel,
               transcript: text,
-              voiceSessionId,
+              voiceSessionId: sessionRef.current?.id ?? null,
             }),
           });
         }
@@ -128,16 +151,25 @@ function VoiceRoomInner({
   }, [start]);
 
   async function onStart() {
-    if (!start) return;
-    if (!voiceSessionId) {
-      const id = await startSession({ agentId, mode: 'elevenlabs' });
-      setVoiceSessionId(id);
+    if (!start || !start.configured || !start.agentId) return;
+    let current = session;
+    if (!current) {
+      const started = await startSession({ agentId, mode: 'elevenlabs' });
+      current = { id: started.sessionId, webhookToken: started.webhookToken };
+      sessionRef.current = current;
+      finalisePosted.current = false;
+      setSession(current);
     }
+    // `internal_session_token` round-trips through ElevenLabs and comes back on
+    // the post-call webhook, which is how that route proves the transcript
+    // belongs to this session. Read from `current`, not state: the connection
+    // can be up before React has committed the setState above.
     conversation.startSession({
       ...(start.signedUrl ? { signedUrl: start.signedUrl } : { agentId: start.agentId }),
       dynamicVariables: {
         boss_label: bossLabel,
         internal_agent_id: agentId,
+        internal_session_token: current.webhookToken,
       },
     });
   }
@@ -150,6 +182,28 @@ function VoiceRoomInner({
   const isConnected = status === 'connected';
   const isSpeaking = conversation.isSpeaking;
   const isListening = conversation.isListening;
+
+  // No ElevenLabs credentials on this deployment — say so plainly and
+  // hand the boss to chat mode, which runs the identical 1:1.
+  if (start && !start.configured) {
+    return (
+      <section className="bg-[var(--color-card)] border border-[var(--color-warn)]/40 rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-2">Day-1 1:1 · voice unavailable</h2>
+        <p className="text-sm text-[var(--color-muted)] mb-4">
+          {start.reason ??
+            'Voice mode needs ElevenLabs credentials. Chat mode runs the same Day-1 1:1 without them.'}
+        </p>
+        {onSwitchMode ? (
+          <button
+            onClick={onSwitchMode}
+            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90"
+          >
+            Continue in chat
+          </button>
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <section className="bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl p-4">

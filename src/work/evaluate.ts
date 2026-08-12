@@ -117,7 +117,7 @@ function inferSkillRationale(
       : `${candidate.sourceSystem}-action`;
   const name = `${verb}-${candidate.externalId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 60);
   const rationale = [
-    `Charter places me on ${charter.proposedFunction}.`,
+    `Charter places me on ${charter.proposedFunction.replace(/\.\s*$/, '')}.`,
     `This candidate ("${candidate.title}") needs me to operate on ${candidate.sourceSystem} but I don't have a registered skill for it.`,
     `Proposing a new skill so I can complete this and similar work going forward.`,
   ].join(' ');

@@ -18,7 +18,9 @@ export function ChatRoom({
 }) {
   const startSession = useMutation(api.voice.start);
   const [draft, setDraft] = useState('');
-  const [synthFired, setSynthFired] = useState(false);
+  // A latch, not UI state — nothing renders off it, so a ref keeps the
+  // once-only guard out of the render cycle.
+  const synthFired = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const transport = new DefaultChatTransport({
@@ -27,7 +29,7 @@ export function ChatRoom({
   });
 
   const [streamError, setStreamError] = useState<string | null>(null);
-  const { messages, sendMessage, status, error } = useChat({
+  const { messages, sendMessage, status } = useChat({
     transport,
     onError: (err) => {
       // OpenAI 503s and similar transient failures land here. The hook
@@ -66,8 +68,8 @@ export function ChatRoom({
 
   // Fire charter synthesis once the agent emits the dayOneComplete tool.
   useEffect(() => {
-    if (!done || synthFired) return;
-    setSynthFired(true);
+    if (!done || synthFired.current) return;
+    synthFired.current = true;
     const transcript = messages
       .map((m) => {
         const text = m.parts
@@ -88,7 +90,7 @@ export function ChatRoom({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentId, bossLabel, transcript }),
     });
-  }, [done, synthFired, messages, agentId, bossLabel]);
+  }, [done, messages, agentId, bossLabel]);
 
   function send() {
     const trimmed = draft.trim();
@@ -102,7 +104,7 @@ export function ChatRoom({
       <header className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <h2 className="text-sm font-semibold">Day-1 1:1 · chat mode</h2>
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-[var(--color-muted)]">GPT-5.5 · streaming</span>
+          <span className="text-[10px] text-[var(--color-muted)]">streaming</span>
           {onSwitchMode && !done ? (
             <button
               onClick={() => {

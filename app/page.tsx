@@ -13,17 +13,42 @@ import {
   avatarById,
   type AgentAvatarPet,
 } from '@/agent/avatar-pets';
+import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
+
+/** Whoever the dashboard is acting for — a Clerk user, or the local dev boss. */
+interface Boss {
+  email: string | undefined;
+  firstName: string | undefined;
+}
 
 export default function LandingPage() {
   return (
     <main className="min-h-[calc(100vh-3.25rem)] flex flex-col">
-      <Show when="signed-out">
-        <SignedOutHero />
-      </Show>
-      <Show when="signed-in">
-        <SignedInDashboard />
-      </Show>
+      {DEV_NO_AUTH ? (
+        <SignedInDashboard boss={{ email: DEV_BOSS_EMAIL, firstName: DEV_BOSS_FIRST_NAME }} />
+      ) : (
+        <>
+          <Show when="signed-out">
+            <SignedOutHero />
+          </Show>
+          <Show when="signed-in">
+            <ClerkSignedInDashboard />
+          </Show>
+        </>
+      )}
     </main>
+  );
+}
+
+function ClerkSignedInDashboard() {
+  const { user } = useUser();
+  return (
+    <SignedInDashboard
+      boss={{
+        email: user?.primaryEmailAddress?.emailAddress,
+        firstName: user?.firstName ?? undefined,
+      }}
+    />
   );
 }
 
@@ -267,9 +292,8 @@ function SurfaceNode({
   );
 }
 
-function SignedInDashboard() {
+function SignedInDashboard({ boss }: { boss: Boss }) {
   const router = useRouter();
-  const { user } = useUser();
   const agents = useQuery(api.agents.listForUser);
   const deploy = useMutation(api.agents.deploy);
   const reset = useMutation(api.reset.deleteMyData);
@@ -283,9 +307,9 @@ function SignedInDashboard() {
   async function onDeploy(ev: FormEvent<HTMLFormElement>) {
     ev.preventDefault();
     if (!workerName.trim()) return;
-    const bossEmail = user?.primaryEmailAddress?.emailAddress;
+    const bossEmail = boss.email;
     if (!bossEmail) {
-      setError('Could not read your email from Clerk — try signing out and back in.');
+      setError('Could not read your email address — try signing out and back in.');
       return;
     }
     setSubmitting(true);
@@ -319,7 +343,7 @@ function SignedInDashboard() {
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between mb-8">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight mb-2">
-            Welcome{user?.firstName ? `, ${user.firstName}` : ''}.
+            Welcome{boss.firstName ? `, ${boss.firstName}` : ''}.
           </h1>
           <p className="text-sm text-[var(--color-muted)]">
             Each agent runs the new-hire loop independently. Deploy as many as you like; reset wipes
@@ -471,15 +495,13 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
 
+  // Agents open at the deterministic idle spot `OfficeAgent` derives from their
+  // id and start roaming from the first tick, so no synchronous seeding here.
   useEffect(() => {
     const currentAgents = agents ?? [];
+    if (!currentAgents.length) return;
 
-    if (!currentAgents.length) {
-      setAgentDestinations({});
-      return;
-    }
-
-    function updateDestinations() {
+    const timer = window.setInterval(() => {
       setAgentDestinations((current) => {
         const next: Record<string, OfficePoint> = {};
 
@@ -491,10 +513,7 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
 
         return next;
       });
-    }
-
-    updateDestinations();
-    const timer = window.setInterval(updateDestinations, 3400);
+    }, 3400);
     return () => window.clearInterval(timer);
   }, [agents]);
 

@@ -1,0 +1,139 @@
+# Self-hosted Convex backend — the same open-source binary the cloud service runs.
+# Lets the whole of Day0 run locally with no Convex account.
+#
+# Adapted from the upstream reference compose file:
+#   https://github.com/get-convex/convex-backend/blob/main/self-hosted/docker/docker-compose.yml
+# The AWS/S3/MySQL/Postgres passthrough env vars are dropped — the default
+# SQLite-in-a-volume storage is what local development wants. See upstream if you
+# need external storage.
+#
+#   pnpm convex:up
+#   pnpm convex:admin-key                                 # -> CONVEX_SELF_HOSTED_ADMIN_KEY
+#
+# Backend http://127.0.0.1:3210 · HTTP actions http://127.0.0.1:3211 · dashboard http://localhost:6791
+#
+# Two kinds of address live in this file, and they are not interchangeable.
+#
+# CONVEX_PORT, CONVEX_SITE_PROXY_PORT and CONVEX_DASHBOARD_PORT are *host* ports.
+# Move them to run two backends side by side. Browsers, the Convex CLI and
+# NEXT_PUBLIC_CONVEX_URL all reach the backend through them.
+#
+# CONVEX_CLOUD_ORIGIN and CONVEX_SITE_ORIGIN are what the backend calls itself
+# from *inside* the container, and a Node action dials the first of them to reach
+# the backend it is running for. The container listens on 3210 and 3211 whatever
+# the host publishes, so these stay canonical rather than following the host
+# ports. Setting them to a host port is the failure this file used to ship: the
+# host mapping is right, the browser is fine, queries and mutations are fine, and
+# every Node action fails with `Transient network error running query
+# (ECONNREFUSED, 5 attempts)` against a port nothing is bound to in the
+# container's own network namespace.
+#
+# Override them only with an address that resolves *inside* the container - a
+# compose service name, or a host address reachable over the bridge. An address
+# only your browser can resolve belongs in CONVEX_BROWSER_ORIGIN or
+# NEXT_PUBLIC_CONVEX_URL instead.
+#
+# CONVEX_BIND_ADDR is the host address every port below is published on, and it
+# defaults to loopback. It is read from `.env.local` because `pnpm convex:up`
+# passes `--env-file .env.local`; plain `docker compose up` reads your shell or
+# `.env` instead and will silently take the default.
+#
+# It is hygiene, not a boundary, and nothing else reads it. No-auth dev mode used
+# to treat this value as evidence that the backend was unreachable from off the
+# machine; it never was, because the socket is opened here and the guard ran over
+# there. What holds that boundary now is a key the caller has to present, so
+# widening this address exposes an unauthenticated backend to your network but
+# does not let anyone act as the local boss. See `convex/devAuth.ts`.
+#
+# Container names are left to compose so that `-p <project>` is enough to run a
+# second stack; a fixed name would collide on the first one started.
+#
+# The optional `model` service is the third address problem, and the one that
+# costs an afternoon. Charter synthesis, plan drafting and skill authoring are
+# Convex *Node actions*: they run inside the backend container, not in Next. So
+# a local model server on `127.0.0.1` is reachable from the app and invisible to
+# the backend, and the loop half-works - the Day-1 chat streams and the charter
+# never arrives. Running the model as a service here puts it on the same network
+# under a name the backend can resolve, which is why it is bundled rather than
+# left to the reader. It is opt-in: nothing starts it without `--profile model`.
+#
+# Its GPU reservation lives in docker-compose.gpu.yml, which `pnpm model:up`
+# layers on top when this machine can satisfy it. This file alone starts
+# anywhere.
+
+services:
+  backend:
+    image: ghcr.io/get-convex/convex-backend:latest
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_PORT:-3210}:3210'
+      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_SITE_PROXY_PORT:-3211}:3211'
+    volumes:
+      - convex_data:/convex/data
+    # Lets CONVEX_OPENAI_BASE_URL name a model server running on this host
+    # rather than in a container. Whether it can actually be reached is a
+    # question for your firewall: some hosts drop traffic from the bridge, and
+    # `pnpm model:up` sidesteps the question entirely.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      # Functions read this back as `process.env.CONVEX_CLOUD_URL` and Node
+      # actions call the backend on it, so it names the container's own
+      # listener rather than whatever the host publishes.
+      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:3211}
+      # No phone-home from a local dev backend.
+      - DISABLE_BEACON=true
+      - DISABLE_METRICS_ENDPOINT=true
+      - DOCUMENT_RETENTION_DELAY=${DOCUMENT_RETENTION_DELAY:-172800}
+      - RUST_LOG=${RUST_LOG:-info}
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 10s
+
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_DASHBOARD_PORT:-6791}:6791'
+    environment:
+      # Resolved by the browser rendering the dashboard, not by the container,
+      # so this one does follow the published host port. Set
+      # CONVEX_BROWSER_ORIGIN when the browser reaches the backend by some
+      # other name - a LAN address, a tunnel - than the address it is bound to.
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_BROWSER_ORIGIN:-http://127.0.0.1:${CONVEX_PORT:-3210}}
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # An OpenAI-compatible model server, so the account-free path needs no
+  # provider at all. Opt in with `pnpm model:up`, then pull a model:
+  #
+  #   pnpm model:up
+  #   pnpm model:pull qwen3:8b        # ~5 GB, tool-capable, runs the whole loop
+  #
+  # `pnpm model:up` adds docker-compose.gpu.yml when this machine has an NVIDIA
+  # driver Docker can hand over, so the acceleration is the default rather than
+  # something to find. Starting the service straight from this file - no
+  # overlay - is the CPU configuration, and every machine can run it.
+  #
+  # Two addresses again, and for once both are wanted. The backend reaches it at
+  # http://model:11434/v1 over this network (CONVEX_OPENAI_BASE_URL); Next
+  # reaches it on the published host port (OPENAI_BASE_URL). Skip this service
+  # entirely if you already have an endpoint - it is a convenience, not a
+  # dependency.
+  model:
+    profiles: ['model']
+    image: ollama/ollama:latest
+    stop_grace_period: 10s
+    ports:
+      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${MODEL_PORT:-11434}:11434'
+    volumes:
+      - model_data:/root/.ollama
+
+volumes:
+  convex_data:
+  model_data:

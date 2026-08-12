@@ -1,6 +1,11 @@
+import { redirect } from 'next/navigation';
 import { SignUp } from '@clerk/nextjs';
+import { DEV_NO_AUTH } from '@/lib/dev-auth';
 
 export default function SignUpPage() {
+  // No accounts exist in no-auth dev mode, so there is nothing to create.
+  if (DEV_NO_AUTH) redirect('/');
+
   return (
     <main className="min-h-screen flex items-center justify-center px-6 bg-[var(--color-bg)]">
       <div className="max-w-md w-full">

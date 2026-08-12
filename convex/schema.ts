@@ -49,18 +49,64 @@ export default defineSchema({
   voiceSessions: defineTable({
     agentId: v.id('agents'),
     mode: v.union(v.literal('elevenlabs'), v.literal('gemini-live'), v.literal('chat')),
+    /** The finalisation state machine. A call has two independent finishers —
+     * the browser's `onDisconnect` post and the ElevenLabs post-call webhook —
+     * so `synthesising` is the reservation exactly one of them wins before any
+     * model call is spent. See `convex/voice.ts`. */
     state: v.union(
       v.literal('pending'),
       v.literal('active'),
+      v.literal('synthesising'),
       v.literal('done'),
       v.literal('failed'),
     ),
     answers: v.any(),
     transcriptText: v.optional(v.string()),
     elevenLabsConversationId: v.optional(v.string()),
+    /** Per-session capability minted by `voice.start`. It rides out to
+     * ElevenLabs as a dynamic variable and comes back on the post-call
+     * webhook, which is how that unauthenticated route proves which session
+     * a transcript belongs to. Optional only for rows written before it
+     * existed; those can no longer be completed by webhook. */
+    webhookToken: v.optional(v.string()),
+    /** Fences the `synthesising` reservation. A finisher may only commit or
+     * release while the token it was issued is still the one on the row, so a
+     * caller whose lease expired mid-flight cannot overwrite its successor. */
+    claimToken: v.optional(v.string()),
+    claimedAt: v.optional(v.number()),
+    claimedBy: v.optional(
+      v.union(v.literal('browser'), v.literal('webhook'), v.literal('recovery')),
+    ),
+    /** The material the current claim is working from, written by the claim
+     * itself. Neither client comes back after its one attempt, so a session
+     * released by a failed finisher is only recoverable if what that finisher
+     * was given outlives it. */
+    pendingTranscript: v.optional(v.string()),
+    pendingBossLabel: v.optional(v.string()),
+    /** How many times the deployment has re-driven this session on its own.
+     * Bounded, so a model that fails the same way every time costs a fixed
+     * number of attempts rather than looping for the life of the row. */
+    recoveryAttempts: v.optional(v.number()),
+    /** When the last attempt handed the session back. Tells a session waiting
+     * on its scheduled retry from one whose retry never ran. */
+    finalisationFailedAt: v.optional(v.number()),
+    /** The recorded result. A duplicate finisher returns this instead of
+     * repeating the work, which is what makes a webhook retry idempotent. */
+    charterId: v.optional(v.id('charters')),
+    charterVersion: v.optional(v.string()),
+    /** Why the last finalisation attempt gave up. Kept on a session that went
+     * back to `active` so a failed run is visible rather than silent. */
+    finalisationError: v.optional(v.string()),
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
-  }).index('by_agent', ['agentId']),
+  })
+    .index('by_agent', ['agentId'])
+    .index('by_webhook_token', ['webhookToken'])
+    // The two shapes the finalisation sweep looks for, each expressed as a
+    // range rather than a scan-and-filter: a claim whose lease has expired, and
+    // a released session whose scheduled retry never arrived.
+    .index('by_state_claimed_at', ['state', 'claimedAt'])
+    .index('by_state_failed_at', ['state', 'finalisationFailedAt']),
 
   workItems: defineTable({
     agentId: v.id('agents'),
@@ -115,6 +161,13 @@ export default defineSchema({
     proposedFor: v.optional(v.id('workItems')),
     rationale: v.optional(v.string()),
     requiredScopes: v.optional(v.array(v.string())),
+    /** The authoring run that currently holds this skill, and when it took it.
+     * Authoring is an exclusive, fenced run: a second run cannot start while
+     * this is set and unexpired, and a run may only write its result while this
+     * is still its own id. Cleared by every exit, and by the boss's rejection.
+     * See `convex/skills.ts`. */
+    authoringRunId: v.optional(v.id('events')),
+    authoringClaimedAt: v.optional(v.number()),
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
     createdAt: v.number(),

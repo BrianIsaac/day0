@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
-import { agentJson } from '../lib/mastra';
-import { env } from '../env';
+import { agentJson, MODEL_CONFIG } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import type {
   ExecutionOutput,
@@ -184,7 +183,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     id: `day0-skill-${skill.name}`,
     name: `day0-skill-${skill.name}`,
     instructions,
-    model: `openai/${env.OPENAI_MODEL}`,
+    model: MODEL_CONFIG,
   });
 
   const userPrompt = [

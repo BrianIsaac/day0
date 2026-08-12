@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -19,10 +19,13 @@ export function AgentDashboard({ agentId }: Props) {
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const proposedSkills = useQuery(api.skills.proposed, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
+  const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
+  const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: 30 });
   const voiceSession = useQuery(api.voice.latest, { agentId });
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
+  const [authoringFailure, setAuthoringFailure] = useState<string | null>(null);
 
   // Sync local mode with server state. Two cases:
   //   1. Reload mid-session — route back into the room they were in
@@ -32,9 +35,16 @@ export function AgentDashboard({ agentId }: Props) {
   // The `voiceSession` guard is critical: without it, the moment a fresh
   // user picks a mode (state is still `deployed`, mode flips off `pick`)
   // this effect would race the user's click and snap them back to picker.
+  //
+  // This resync stays an effect on purpose. Deriving `mode` cannot express
+  // case 2 — the boss's own pick has to be discarded when the server moves
+  // underneath it — and resetting via a subtree `key` would remount
+  // `ChatRoom`, whose mount effect opens a voice session, so every state
+  // transition would start a duplicate 1:1.
   useEffect(() => {
     if (!agent) return;
     if (agent.state === 'deployed' && mode !== 'pick' && voiceSession) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMode('pick');
       return;
     }
@@ -86,11 +96,11 @@ export function AgentDashboard({ agentId }: Props) {
           <ProposedSkillsPanel
             agentId={agentId}
             skills={proposedSkills ?? []}
+            onAuthoringFailed={setAuthoringFailure}
           />
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <WorkQueue
-              agentId={agentId}
               workItems={workItems ?? []}
               registeredSkillCount={(registeredSkills ?? []).length}
               charterApproved={!!charter?.approved}
@@ -102,7 +112,11 @@ export function AgentDashboard({ agentId }: Props) {
 
         <div className="space-y-4">
           <WorkspacePanel workspace={workspace ?? {}} />
-          <RegisteredSkillsPanel skills={registeredSkills ?? []} />
+          <RegisteredSkillsPanel
+            skills={registeredSkills ?? []}
+            unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
+            lastFailure={authoringFailure}
+          />
           <EventTicker events={events ?? []} />
         </div>
       </div>
@@ -167,6 +181,26 @@ function Card({
 }
 
 function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
+  // null while the probe is in flight — voice stays clickable so the
+  // picker doesn't flicker on a configured deployment.
+  const [voiceConfigured, setVoiceConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/voice/elevenlabs/start?probe=1')
+      .then((r) => r.json())
+      .then((d: { configured?: boolean }) => {
+        if (!cancelled) setVoiceConfigured(d.configured !== false);
+      })
+      .catch(() => {
+        if (!cancelled) setVoiceConfigured(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const voiceOff = voiceConfigured === false;
   return (
     <Card title="Day-1 1:1 — voice or chat?" tone="accent">
       <p className="text-sm text-[var(--color-muted)] mb-4">
@@ -176,17 +210,33 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
       <div className="flex gap-3">
         <button
           onClick={() => onPick('voice')}
-          className="flex-1 px-4 py-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium hover:opacity-90"
+          disabled={voiceOff}
+          title={voiceOff ? 'ElevenLabs credentials not set on this deployment' : undefined}
+          className={`flex-1 px-4 py-3 rounded-lg font-medium ${
+            voiceOff
+              ? 'border border-[var(--color-border)] text-[var(--color-muted)] cursor-not-allowed'
+              : 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
+          }`}
         >
           Voice (ElevenLabs)
         </button>
         <button
           onClick={() => onPick('chat')}
-          className="flex-1 px-4 py-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)]"
+          className={`flex-1 px-4 py-3 rounded-lg font-medium ${
+            voiceOff
+              ? 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
+              : 'border border-[var(--color-border)] hover:border-[var(--color-accent)]'
+          }`}
         >
-          Chat (GPT-5.5)
+          Chat
         </button>
       </div>
+      {voiceOff ? (
+        <p className="text-xs text-[var(--color-muted)] mt-3">
+          Voice is off on this deployment — no ElevenLabs credentials. Chat runs the identical
+          seven-topic 1:1.
+        </p>
+      ) : null}
     </Card>
   );
 }
@@ -296,9 +346,13 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
 function ProposedSkillsPanel({
   agentId,
   skills,
+  onAuthoringFailed,
 }: {
   agentId: Id<'agents'>;
   skills: Doc<'skills'>[];
+  /** Approving moves the row out of this panel, so its failure has to be
+   *  reported somewhere that survives the unmount. */
+  onAuthoringFailed: (reason: string) => void;
 }) {
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
@@ -321,8 +375,13 @@ function ProposedSkillsPanel({
               <button
                 onClick={async () => {
                   await approve({ skillId: s._id });
-                  author({ skillId: s._id }).catch(() => {});
                   void agentId;
+                  try {
+                    const result = await author({ skillId: s._id });
+                    if (!result.ok) onAuthoringFailed(`${s.name}: ${result.reason ?? 'authoring did not finish'}`);
+                  } catch (err) {
+                    onAuthoringFailed(`${s.name}: ${(err as Error).message}`);
+                  }
                 }}
                 className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium"
               >
@@ -342,9 +401,49 @@ function ProposedSkillsPanel({
   );
 }
 
-function RegisteredSkillsPanel({ skills }: { skills: Doc<'skills'>[] }) {
+function RegisteredSkillsPanel({
+  skills,
+  unregistered,
+  lastFailure,
+}: {
+  skills: Doc<'skills'>[];
+  /**
+   * Authored but never registered: `authoring` (a run is holding it now, or no
+   * sandbox ran), `failed` (the sandbox said no), and `verified` (registration
+   * was interrupted before the lifecycle was collapsed into one mutation).
+   * A skill a run holds is listed here throughout, so a run that dies mid-flight
+   * leaves something the boss can see and, once its claim lapses, retry.
+   */
+  unregistered: Doc<'skills'>[];
+  /** Reported by the approve button, whose own card unmounts on approval. */
+  lastFailure: string | null;
+}) {
+  const author = useAction(api.skillActions.authorAndRegisterSkill);
+  const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  async function onRetry(skillId: Id<'skills'>) {
+    setRetrying(skillId);
+    setErrors((prev) => ({ ...prev, [skillId]: '' }));
+    try {
+      const result = await author({ skillId });
+      if (!result.ok) {
+        setErrors((prev) => ({ ...prev, [skillId]: result.reason ?? 'retry did not succeed' }));
+      }
+    } catch (err) {
+      setErrors((prev) => ({ ...prev, [skillId]: (err as Error).message }));
+    } finally {
+      setRetrying(null);
+    }
+  }
+
   return (
     <Card title={`Skills · ${skills.length} registered`}>
+      {lastFailure ? (
+        <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
+          Authoring did not finish — {lastFailure}
+        </p>
+      ) : null}
       {skills.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">none yet</p>
       ) : (
@@ -368,6 +467,53 @@ function RegisteredSkillsPanel({ skills }: { skills: Doc<'skills'>[] }) {
           ))}
         </ul>
       )}
+
+      {unregistered.length > 0 ? (
+        <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+          {/* One honest label for every way a skill can stop short: a skipped
+              sandbox, a sandbox that said no, and a registration that was
+              interrupted. */}
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-warn)] mb-1.5">
+            not registered · not callable
+          </p>
+          <ul className="space-y-3 text-sm">
+            {unregistered.map((s) => (
+              <li key={s._id}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
+                    <div className="text-[var(--color-muted)] text-xs">
+                      {/* A held row is being authored right now, so the log on it
+                          is the previous attempt's and saying so would be a lie. */}
+                      {s.authoringRunId
+                        ? 'authoring now · a run holds this skill'
+                        : (s.verificationLog ?? s.description)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onRetry(s._id)}
+                    disabled={retrying === s._id}
+                    className="px-2.5 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
+                  >
+                    {retrying === s._id ? 'Retrying…' : 'Retry'}
+                  </button>
+                </div>
+                {/* Only when the row itself does not already say it: a retry
+                    that recorded its reason has reported itself. */}
+                {errors[s._id] && !(s.verificationLog ?? '').includes(errors[s._id]) ? (
+                  <p className="text-[10px] text-[var(--color-danger)] mt-1">{errors[s._id]}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-[var(--color-muted)] mt-2">
+            Retry re-authors the skill and re-runs the sandbox check. Set DAYTONA_API_KEY on the
+            deployment first if the sandbox was skipped. Only one authoring run holds a skill at a
+            time, so a retry while one is still running is refused until that run finishes or its
+            claim lapses.
+          </p>
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -411,12 +557,10 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 }
 
 function WorkQueue({
-  agentId,
   workItems,
   registeredSkillCount,
   charterApproved,
 }: {
-  agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
   registeredSkillCount: number;
   charterApproved: boolean;
@@ -437,31 +581,54 @@ function WorkQueue({
     [workItems],
   );
 
+  // One in-flight call per (step, item). Strict Mode runs every effect twice
+  // on mount, and a subscription update re-runs them before the first call has
+  // moved the row, so without this the same item is handed to the same action
+  // several times over. The backend refuses the duplicates — `claimForExecution`
+  // is the authority — but a refusal is not a reason to keep asking.
+  const inFlight = useRef(new Set<string>());
+  const once = useCallback(
+    (step: string, id: string, call: () => Promise<unknown>) => {
+      const key = `${step}:${id}`;
+      if (inFlight.current.has(key)) return;
+      inFlight.current.add(key);
+      call()
+        .catch(() => {})
+        .finally(() => inFlight.current.delete(key));
+    },
+    [],
+  );
+
   // Auto-progression: once charter is approved, evaluate every discovered
   // item; once a verdict comes back, draft a plan if claim, etc.
   useEffect(() => {
     if (!charterApproved) return;
     for (const it of workItems) {
       if (it.state === 'discovered') {
-        evaluate({ agentId, workItemId: it._id }).catch(() => {});
+        once('evaluate', it._id, () => evaluate({ workItemId: it._id }));
         break;
       }
     }
-  }, [charterApproved, workItems, agentId, evaluate]);
+  }, [charterApproved, workItems, evaluate, once]);
 
   useEffect(() => {
     for (const it of workItems) {
       if (it.state === 'claimed' && !it.plan) {
-        draftPlan({ agentId, workItemId: it._id }).catch(() => {});
+        once('draft', it._id, () => draftPlan({ workItemId: it._id }));
       }
       if (it.state === 'plan-approved') {
-        executePlan({ agentId, workItemId: it._id }).catch(() => {});
+        once('execute', it._id, () => executePlan({ workItemId: it._id }));
       }
     }
-  }, [workItems, agentId, draftPlan, executePlan]);
+  }, [workItems, draftPlan, executePlan, once]);
 
   return (
-    <Card title={`Work queue · ${items.length} items · ${registeredSkillCount} skills available`}>
+    <Card
+      title={
+        `Work queue · ${items.length} ${items.length === 1 ? 'item' : 'items'} · ` +
+        `${registeredSkillCount} ${registeredSkillCount === 1 ? 'skill' : 'skills'} available`
+      }
+    >
       {items.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">
           {charterApproved
@@ -515,7 +682,11 @@ function WorkItemCard({
         expectedOutputType: string;
       }
     | undefined;
-  const output = item.output as { draft: string; notes: string } | undefined;
+  const output = item.output as
+    | { draft: string; notes: string; applied?: Array<{ tool: string; ok: boolean; reason?: string }> }
+    | undefined;
+  const appliedActions = output?.applied ?? [];
+  const failedActions = appliedActions.filter((a) => !a.ok);
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -590,18 +761,46 @@ function WorkItemCard({
         </details>
       ) : null}
 
+      {/* Not inside the details element above: an action that never reached the
+          work environment is the headline of this card, not a footnote to the
+          draft it produced. */}
+      {failedActions.length > 0 ? (
+        <div className="mt-2 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs">
+          <p className="text-[var(--color-danger)] font-medium mb-1">
+            {failedActions.length} {failedActions.length === 1 ? 'action' : 'actions'} did not reach
+            the work environment
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-danger)]">
+            {failedActions.map((a, i) => (
+              <li key={i}>
+                {a.tool} — {a.reason ?? 'unknown reason'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {item.state === 'failed' ? (
-        <div className="flex gap-2 mt-2">
+        <div className="mt-2">
+          {/* The per-action box above already names every action that failed, so
+              the row-level reason only earns its space for the other failures:
+              no registered skill, a model error, a mid-run throw. */}
+          {failedActions.length === 0 && item.skipReason ? (
+            <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">{item.skipReason}</p>
+          ) : null}
           <button
             onClick={onRetryFailed}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30"
           >
             Retry
           </button>
-          {item.skipReason ? (
-            <span className="text-[10px] text-[var(--color-muted)] italic self-center">
-              {item.skipReason.slice(0, 80)}
-            </span>
+          {appliedActions.length > failedActions.length ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry re-runs the whole plan, so the{' '}
+              {appliedActions.length - failedActions.length} action
+              {appliedActions.length - failedActions.length === 1 ? '' : 's'} that already landed
+              will be applied again.
+            </p>
           ) : null}
         </div>
       ) : null}

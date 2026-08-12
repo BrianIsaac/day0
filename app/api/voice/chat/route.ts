@@ -1,8 +1,7 @@
-import { openai } from '@ai-sdk/openai';
-import { auth } from '@clerk/nextjs/server';
 import { convertToModelMessages, hasToolCall, streamText, tool, type UIMessage } from 'ai';
 import { z } from 'zod';
-import { env } from '@/env';
+import { establishCaller } from '@/lib/dev-auth-server';
+import { languageModel } from '@/lib/openai';
 import { DAY_ONE_TOPIC_SPECS, DAY_ONE_WELCOME } from '@/agent/day-one-prompts';
 
 export const runtime = 'nodejs';
@@ -36,10 +35,8 @@ const SYSTEM_PROMPT = [
  * as choosing a message history.
  */
 export async function POST(req: Request): Promise<Response> {
-  const { userId } = await auth();
-  if (!userId) {
-    return Response.json({ error: 'not authenticated' }, { status: 401 });
-  }
+  const caller = await establishCaller();
+  if (!caller.ok) return caller.refusal;
 
   const body = (await req.json()) as ChatBody;
   if (!Array.isArray(body.messages)) {
@@ -68,7 +65,7 @@ export async function POST(req: Request): Promise<Response> {
   const messages = await convertToModelMessages(uiMessages);
   try {
     const result = streamText({
-      model: openai(env.OPENAI_MODEL),
+      model: languageModel(),
       system: SYSTEM_PROMPT,
       messages,
       maxOutputTokens: 2000,

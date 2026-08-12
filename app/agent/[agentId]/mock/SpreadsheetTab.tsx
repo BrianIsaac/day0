@@ -1,21 +1,17 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
 
 export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
   const sheets = useQuery(api.mock.listSpreadsheets, { agentId });
-  const [activeSlug, setActiveSlug] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (sheets && sheets.length > 0 && !activeSlug) {
-      setActiveSlug(sheets[0].slug);
-      setActiveTab(sheets[0].tabs[0]?.name ?? null);
-    }
-  }, [sheets, activeSlug]);
+  // Nothing picked yet falls through to the first sheet and its first tab, so
+  // the selection is derived rather than back-filled once the query lands.
+  const [pickedSlug, setPickedSlug] = useState<string | null>(null);
+  const [pickedTab, setPickedTab] = useState<string | null>(null);
+  const activeSlug = pickedSlug ?? sheets?.[0]?.slug ?? null;
 
   const detail = useQuery(
     api.mock.getSpreadsheet,
@@ -23,6 +19,7 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
   );
 
   const sheet = detail?.sheet;
+  const activeTab = pickedTab ?? sheet?.tabs[0]?.name ?? null;
   const rows: Doc<'mockSpreadsheetRows'>[] = useMemo(() => detail?.rows ?? [], [detail]);
 
   const activeRows = useMemo(
@@ -50,8 +47,8 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
             <button
               key={s._id}
               onClick={() => {
-                setActiveSlug(s.slug);
-                setActiveTab(s.tabs[0]?.name ?? null);
+                setPickedSlug(s.slug);
+                setPickedTab(null);
               }}
               className={`text-[10px] px-2 py-1 rounded ${
                 s.slug === activeSlug
@@ -70,7 +67,7 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
           {sheet.tabs.map((t) => (
             <button
               key={t.name}
-              onClick={() => setActiveTab(t.name)}
+              onClick={() => setPickedTab(t.name)}
               className={`text-xs px-3 py-1.5 border-b-2 -mb-px ${
                 t.name === activeTab
                   ? 'border-[var(--color-accent)] text-[var(--color-fg)]'
