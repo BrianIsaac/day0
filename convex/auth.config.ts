@@ -9,12 +9,15 @@
  *
  * After that, `ctx.auth.getUserIdentity()` returns the signed-in Clerk user.
  *
- * In no-auth dev mode there is no provider at all: `convex/devAuth.ts` mints the
- * caller identity itself, so declaring a Clerk issuer the deployment can never
- * reach would be a lie. This file is evaluated against the *deployment's* env
- * vars when functions are pushed, so set the flag on the deployment before
- * pushing.
+ * In no-auth dev mode Clerk is replaced rather than removed: the deployment
+ * accepts tokens signed by a keypair generated on the operator's machine, whose
+ * public half arrives as `DEV_NO_AUTH_JWKS`. See `convex/devAuth.ts`. This file
+ * is evaluated against the *deployment's* env vars when functions are pushed, so
+ * set both on the deployment before pushing — `./scripts/sync-convex-env.sh`
+ * does that in the right order.
  */
+
+import { devNoAuthProvider, devNoAuthRequested } from './devAuth';
 
 /**
  * `process.env` inside an auth config throws `AuthConfigMissingEnvironmentVariable`
@@ -29,11 +32,9 @@ function readEnv(name: string): string | undefined {
   }
 }
 
-const noAuth = readEnv('NEXT_PUBLIC_DEV_NO_AUTH') === 'true';
-
 const authConfig = {
-  providers: noAuth
-    ? []
+  providers: devNoAuthRequested()
+    ? [devNoAuthProvider()]
     : [
         {
           domain: readEnv('CLERK_JWT_ISSUER_DOMAIN') ?? 'https://example.clerk.accounts.dev',

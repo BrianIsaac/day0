@@ -3,7 +3,8 @@
 # Run once after `pnpm convex:dev` has provisioned the deployment — or, when
 # self-hosting, as soon as CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY
 # are in .env.local and before the first push: `convex/auth.config.ts` reads
-# NEXT_PUBLIC_DEV_NO_AUTH off the deployment at push time.
+# NEXT_PUBLIC_DEV_NO_AUTH and DEV_NO_AUTH_JWKS off the deployment at push time,
+# and refuses the push if the first is set without the second.
 #
 # Usage: ./scripts/sync-convex-env.sh
 
@@ -20,21 +21,42 @@ KEYS=(
   DAYTONA_API_KEY
   DAYTONA_API_URL
   NEXT_PUBLIC_DEV_NO_AUTH
-  CONVEX_BIND_ADDR
+  DEV_NO_AUTH_JWKS
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
   CLERK_JWT_ISSUER_DOMAIN
 )
 
 # Keys whose absence is meaningful: leaving a stale value on the deployment
 # would be a silent security downgrade, so an empty local value removes them.
-# These are the two `convex/devAuth.ts` reads before it disables authentication.
+# These are the two `convex/auth.config.ts` reads to decide who may call it.
 CLEAR_IF_EMPTY=(
   NEXT_PUBLIC_DEV_NO_AUTH
+  DEV_NO_AUTH_JWKS
+)
+
+# Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
+# is inert, but it is the declaration two versions of the no-auth guard mistook
+# for the socket, so it should not sit on a deployment looking meaningful.
+RETIRED=(
   CONVEX_BIND_ADDR
 )
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "error: $ENV_FILE not found"
+  exit 1
+fi
+
+# The deployment cannot verify a no-auth caller's token without the public key,
+# and a push in that state would refuse every caller. Say so here rather than
+# leaving it to be discovered as a 'not authenticated' on the dashboard.
+read_local() {
+  grep -E "^${1}=" "$ENV_FILE" | head -n1 | cut -d= -f2- | sed 's/^"//; s/"$//' || true
+}
+if [ "$(read_local NEXT_PUBLIC_DEV_NO_AUTH)" = "true" ] && [ -z "$(read_local DEV_NO_AUTH_JWKS)" ]; then
+  echo "error: NEXT_PUBLIC_DEV_NO_AUTH=true in $ENV_FILE but DEV_NO_AUTH_JWKS is empty." >&2
+  echo "       No-auth mode accepts only callers holding this machine's local key," >&2
+  echo "       and the deployment needs its public half to check one. Run" >&2
+  echo "       \`pnpm dev:no-auth-key\`, then re-run this script." >&2
   exit 1
 fi
 
@@ -53,12 +75,12 @@ if ! deployment_env=$(npx convex env list 2>&1); then
 fi
 
 clear_key() {
-  local key="$1" output
+  local key="$1" reason="${2:-empty in $ENV_FILE}" output
   if ! grep -qE "^${key}=" <<<"$deployment_env"; then
     echo "clear ${key} (already absent)"
     return 0
   fi
-  echo "clear ${key} (empty in $ENV_FILE)"
+  echo "clear ${key} (${reason})"
   if ! output=$(npx convex env remove "$key" 2>&1); then
     echo "error: failed to remove ${key} from the deployment - it is still set there." >&2
     printf '%s\n' "$output" >&2
@@ -75,8 +97,12 @@ clear_key() {
   fi
 }
 
+for key in "${RETIRED[@]}"; do
+  clear_key "$key" "no longer read by the deployment"
+done
+
 for key in "${KEYS[@]}"; do
-  value=$(grep -E "^${key}=" "$ENV_FILE" | head -n1 | cut -d= -f2- | sed 's/^"//; s/"$//' || true)
+  value=$(read_local "$key")
   if [ -z "$value" ]; then
     if [[ " ${CLEAR_IF_EMPTY[*]} " == *" ${key} "* ]]; then
       clear_key "$key"
