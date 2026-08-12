@@ -7,6 +7,7 @@ import {
   type MutationCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsVoiceSession } from './ownership';
 import { commitCharterAndWorkspace, workspaceFileValidator } from './charters';
 
@@ -32,6 +33,19 @@ import { commitCharterAndWorkspace, workspaceFileValidator } from './charters';
  * charter, the workspace, the session and the events, so there is no state in
  * which a session is finished without the charter it is supposed to have
  * produced.
+ *
+ * Neither client can be asked to come back. The browser posts once from
+ * `onDisconnect` and the page is usually gone by the time that post resolves;
+ * ElevenLabs is answered 200 for an overlapping delivery precisely so a retry
+ * is not wasted on work already in flight, which spends that delivery. So the
+ * release arrow above is a promise the deployment has to keep by itself: it
+ * schedules its own re-drive in the same transaction that hands the session
+ * back, and `sweepStalledFinalisations` covers the one case that transaction
+ * cannot — a finisher that died before it could release anything.
+ *
+ * That is only possible because the claim writes down what it was given. The
+ * transcript and the boss label are on the row from the moment a finisher wins,
+ * so recovery has the material even though the caller that supplied it is gone.
  */
 
 export const list = query({
@@ -161,6 +175,27 @@ export const getInternal = internalQuery({
 const CLAIM_LEASE_MS = 5 * 60 * 1000;
 
 /**
+ * How long after a failed attempt the deployment re-drives the session itself.
+ * Long enough that a provider blip has passed, short enough that the boss is
+ * still looking at the dashboard when the charter lands.
+ */
+const RECOVERY_DELAY_MS = 15 * 1000;
+
+/**
+ * How many times the deployment will re-drive one session on its own. Each
+ * attempt costs two model calls, so a model that is failing for a reason time
+ * will not fix must stop costing them. Reaching this leaves the row `active`
+ * and says so in the feed: a genuine later delivery is still free to try.
+ */
+const MAX_RECOVERY_ATTEMPTS = 3;
+
+/** What a finisher was given to work from, and what recovery inherits. */
+interface FinalisationMaterial {
+  transcript: string;
+  bossLabel: string;
+}
+
+/**
  * What a finisher is told when it asks to finalise a session.
  *
  *   claimed     — it won; it alone may spend model calls and commit.
@@ -190,7 +225,8 @@ export type FinalisationClaim =
 async function claimSession(
   ctx: MutationCtx,
   session: Doc<'voiceSessions'>,
-  claimedBy: 'browser' | 'webhook',
+  claimedBy: 'browser' | 'webhook' | 'recovery',
+  material: FinalisationMaterial,
 ): Promise<FinalisationClaim> {
   if (session.state === 'done') {
     return {
@@ -220,6 +256,10 @@ async function claimSession(
     claimToken,
     claimedAt: Date.now(),
     claimedBy,
+    pendingTranscript: material.transcript,
+    pendingBossLabel: material.bossLabel,
+    recoveryAttempts:
+      claimedBy === 'recovery' ? (session.recoveryAttempts ?? 0) + 1 : session.recoveryAttempts,
     finalisationError: undefined,
   });
   return {
@@ -241,6 +281,8 @@ export const claimFinalisation = internalMutation({
   args: {
     sessionId: v.id('voiceSessions'),
     expectedAgentId: v.id('agents'),
+    transcript: v.string(),
+    bossLabel: v.string(),
   },
   handler: async (ctx, args): Promise<FinalisationClaim> => {
     const session = await ctx.db.get(args.sessionId);
@@ -248,7 +290,10 @@ export const claimFinalisation = internalMutation({
     if (session.agentId !== args.expectedAgentId) {
       throw new Error('finalisation denied: voice session belongs to a different agent');
     }
-    return await claimSession(ctx, session, 'browser');
+    return await claimSession(ctx, session, 'browser', {
+      transcript: args.transcript,
+      bossLabel: args.bossLabel,
+    });
   },
 });
 
@@ -279,6 +324,8 @@ export const claimWebhookFinalisation = internalMutation({
     agentId: v.id('agents'),
     webhookToken: v.string(),
     conversationId: v.string(),
+    transcript: v.string(),
+    bossLabel: v.string(),
   },
   handler: async (ctx, args): Promise<FinalisationClaim> => {
     const session = await ctx.db
@@ -298,7 +345,74 @@ export const claimWebhookFinalisation = internalMutation({
     if (!session.elevenLabsConversationId) {
       await ctx.db.patch(session._id, { elevenLabsConversationId: args.conversationId });
     }
-    return await claimSession(ctx, session, 'webhook');
+    return await claimSession(ctx, session, 'webhook', {
+      transcript: args.transcript,
+      bossLabel: args.bossLabel,
+    });
+  },
+});
+
+/** What the deployment's own re-drive is told when it comes back to a session. */
+export type RecoveryClaim =
+  | {
+      outcome: 'claimed';
+      sessionId: Id<'voiceSessions'>;
+      agentId: Id<'agents'>;
+      claimToken: string;
+      transcript: string;
+      bossLabel: string;
+      attempt: number;
+    }
+  | { outcome: 'declined'; reason: string };
+
+/**
+ * The recovery entry. It carries no transcript of its own — it works from what
+ * the failed attempt wrote down — and it takes the session only when there is
+ * genuinely nobody else on it: not finished, not held by a live claim, with
+ * material to work from and attempts left.
+ *
+ * Deciding and claiming in one transaction matters as much here as it does for
+ * the two clients. Two sweeps, or a sweep racing the scheduled retry, both
+ * arrive at this mutation, and only one of them can leave holding the token.
+ */
+export const claimRecoveryFinalisation = internalMutation({
+  args: { sessionId: v.id('voiceSessions') },
+  handler: async (ctx, args): Promise<RecoveryClaim> => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return { outcome: 'declined', reason: 'voice session not found' };
+    if (session.state === 'done') {
+      return { outcome: 'declined', reason: 'session is already finalised' };
+    }
+    if (!session.pendingTranscript) {
+      return { outcome: 'declined', reason: 'no transcript was ever accepted for this session' };
+    }
+    if (
+      session.state === 'synthesising' &&
+      Date.now() - (session.claimedAt ?? 0) < CLAIM_LEASE_MS
+    ) {
+      return { outcome: 'declined', reason: 'another finisher holds a live claim' };
+    }
+    const attempts = session.recoveryAttempts ?? 0;
+    if (attempts >= MAX_RECOVERY_ATTEMPTS) {
+      return { outcome: 'declined', reason: 'recovery attempts exhausted' };
+    }
+
+    const claim = await claimSession(ctx, session, 'recovery', {
+      transcript: session.pendingTranscript,
+      bossLabel: session.pendingBossLabel ?? 'boss',
+    });
+    if (claim.outcome !== 'claimed') {
+      return { outcome: 'declined', reason: `session is ${claim.outcome}` };
+    }
+    return {
+      outcome: 'claimed',
+      sessionId: claim.sessionId,
+      agentId: claim.agentId,
+      claimToken: claim.claimToken,
+      transcript: session.pendingTranscript,
+      bossLabel: session.pendingBossLabel ?? 'boss',
+      attempt: attempts + 1,
+    };
   },
 });
 
@@ -361,7 +475,10 @@ export const finaliseSession = internalMutation({
       charterVersion: args.charterVersion,
       claimToken: undefined,
       claimedAt: undefined,
+      pendingTranscript: undefined,
+      pendingBossLabel: undefined,
       finalisationError: undefined,
+      finalisationFailedAt: undefined,
     });
     await ctx.db.patch(session.agentId, { state: 'charter-pending' });
     await ctx.db.insert('events', {
@@ -380,6 +497,14 @@ export const finaliseSession = internalMutation({
  * the state a fresh finisher can claim, so a failed run costs one attempt
  * rather than the charter. The reason is kept on the row and in the feed so the
  * failure is visible rather than merely survivable.
+ *
+ * Handing it back is not enough on its own, because there is nobody left to
+ * hand it back to: the browser posts once and is gone, and an overlapping
+ * delivery has already been answered 200. So the re-drive is scheduled here,
+ * inside the same transaction as the release. Convex commits a scheduled
+ * function with the mutation that scheduled it, which makes "the session is
+ * retryable" and "somebody will retry it" one fact rather than two — the
+ * process that failed can now die without taking the retry with it.
  */
 export const releaseFinalisation = internalMutation({
   args: {
@@ -389,22 +514,95 @@ export const releaseFinalisation = internalMutation({
   },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
-    if (!session) return { released: false };
+    if (!session) return { released: false, retryScheduled: false };
     if (session.state !== 'synthesising' || session.claimToken !== args.claimToken) {
-      return { released: false };
+      return { released: false, retryScheduled: false };
     }
+    const reason = args.reason.slice(0, 500);
+    const attempts = session.recoveryAttempts ?? 0;
+    const retryScheduled = !!session.pendingTranscript && attempts < MAX_RECOVERY_ATTEMPTS;
+
     await ctx.db.patch(args.sessionId, {
       state: 'active',
       claimToken: undefined,
       claimedAt: undefined,
-      finalisationError: args.reason.slice(0, 500),
+      finalisationError: reason,
+      finalisationFailedAt: Date.now(),
     });
     await ctx.db.insert('events', {
       agentId: session.agentId,
       type: 'voice.finalisation-failed',
-      payload: { sessionId: args.sessionId, reason: args.reason.slice(0, 500) },
+      payload: { sessionId: args.sessionId, reason, retryScheduled },
       createdAt: Date.now(),
     });
-    return { released: true };
+
+    if (retryScheduled) {
+      await ctx.scheduler.runAfter(RECOVERY_DELAY_MS, internal.onboarding.recoverFinalisation, {
+        sessionId: args.sessionId,
+      });
+    } else {
+      await ctx.db.insert('events', {
+        agentId: session.agentId,
+        type: 'voice.finalisation-abandoned',
+        payload: {
+          sessionId: args.sessionId,
+          reason,
+          attempts,
+          // Distinguishes "we gave up trying" from "there was never anything to
+          // retry with", which is a different fault with a different fix.
+          hadTranscript: !!session.pendingTranscript,
+        },
+        createdAt: Date.now(),
+      });
+    }
+    return { released: true, retryScheduled };
+  },
+});
+
+/**
+ * The backstop for the one failure the scheduled retry cannot cover: a finisher
+ * whose process died before it could release anything. Nothing was scheduled,
+ * because nothing ran, and the row sits in `synthesising` behind a lease its
+ * holder will never come back to clear.
+ *
+ * It also picks up a released session whose scheduled retry never arrived,
+ * which is why it waits a full lease past the failure before touching an
+ * `active` row — long enough that a retry already on its way has had its turn.
+ * A session still in the middle of a live call carries no accepted transcript,
+ * so it is never mistaken for one that needs finishing.
+ */
+export const sweepStalledFinalisations = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    // Both ranges start above zero because an unset timestamp sorts below every
+    // real one, and a session that has never been claimed or never failed is
+    // not what either of these is looking for.
+    const staleBefore = Date.now() - CLAIM_LEASE_MS;
+    const abandonedClaims = await ctx.db
+      .query('voiceSessions')
+      .withIndex('by_state_claimed_at', (q) =>
+        q.eq('state', 'synthesising').gt('claimedAt', 0).lte('claimedAt', staleBefore),
+      )
+      .collect();
+    const missedRetries = await ctx.db
+      .query('voiceSessions')
+      .withIndex('by_state_failed_at', (q) =>
+        q
+          .eq('state', 'active')
+          .gt('finalisationFailedAt', 0)
+          .lte('finalisationFailedAt', staleBefore),
+      )
+      .collect();
+
+    let requeued = 0;
+    for (const session of [...abandonedClaims, ...missedRetries]) {
+      if (!session.pendingTranscript) continue;
+      if ((session.recoveryAttempts ?? 0) >= MAX_RECOVERY_ATTEMPTS) continue;
+      await ctx.scheduler.runAfter(0, internal.onboarding.recoverFinalisation, {
+        sessionId: session._id,
+      });
+      requeued += 1;
+    }
+    return { requeued };
   },
 });
