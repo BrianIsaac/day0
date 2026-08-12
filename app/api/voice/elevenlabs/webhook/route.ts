@@ -105,16 +105,22 @@ export async function POST(req: Request): Promise<NextResponse> {
       elevenLabsConversationId: conversationId,
       sessionToken,
     });
+    // A repeat delivery is a success, not a fault: ElevenLabs sends retries with
+    // a byte-identical payload, treats 4xx as permanent, and disables a webhook
+    // after enough consecutive failures. Saying "already recorded" with a 200 is
+    // both true and what keeps the endpoint alive.
     return NextResponse.json(result);
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
     console.error(`[elevenlabs webhook] synthesis failed: ${message}`);
     if (message.includes('webhook denied')) {
       return NextResponse.json(
-        { error: 'payload does not match an active voice session' },
+        { error: 'payload does not match a voice session for that agent' },
         { status: 403 },
       );
     }
+    // 5xx, so a genuine delivery whose model call failed is retried rather than
+    // dropped. The session has already been handed back for exactly that.
     return NextResponse.json({ error: 'charter synthesis failed' }, { status: 500 });
   }
 }

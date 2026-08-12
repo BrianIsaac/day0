@@ -72,7 +72,12 @@ export const writeFileInternal = internalMutation({
   },
 });
 
-async function writeFileImpl(
+/**
+ * Shared with the charter commit in `convex/charters.ts`, which seeds the
+ * workspace in the same transaction that inserts the charter. Calling it as a
+ * helper rather than a mutation is what keeps that a single atomic write.
+ */
+export async function writeFileImpl(
   ctx: MutationCtx,
   args: { agentId: Id<'agents'>; fileName: string; content: string },
 ) {

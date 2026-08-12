@@ -47,15 +47,29 @@ export async function POST(req: Request): Promise<NextResponse> {
     client.setAuth(token);
   }
 
-  const result = await client.action(api.onboarding.synthesiseFromTranscript, {
-    agentId: body.agentId as Id<'agents'>,
-    bossLabel: body.bossLabel,
-    transcript: body.transcript,
-    voiceSessionId: body.voiceSessionId
-      ? (body.voiceSessionId as Id<'voiceSessions'>)
-      : undefined,
-  });
-  return NextResponse.json(result);
+  try {
+    const result = await client.action(api.onboarding.synthesiseFromTranscript, {
+      agentId: body.agentId as Id<'agents'>,
+      bossLabel: body.bossLabel,
+      transcript: body.transcript,
+      voiceSessionId: body.voiceSessionId
+        ? (body.voiceSessionId as Id<'voiceSessions'>)
+        : undefined,
+    });
+    return NextResponse.json(result);
+  } catch (err) {
+    const message = (err as Error).message ?? 'unknown error';
+    console.error(`[onboarding synthesise] failed: ${message}`);
+    // A caller asking to end a call that is not its own gets a refusal it can
+    // read, rather than an opaque 500 that looks like a server fault.
+    if (message.includes('finalisation denied') || message.includes('forbidden')) {
+      return NextResponse.json(
+        { error: 'that voice session does not belong to this agent' },
+        { status: 403 },
+      );
+    }
+    return NextResponse.json({ error: 'charter synthesis failed' }, { status: 500 });
+  }
 }
 
 function convexClient(): ConvexHttpClient {
