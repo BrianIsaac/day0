@@ -407,7 +407,11 @@ function RegisteredSkillsPanel({
   lastFailure,
 }: {
   skills: Doc<'skills'>[];
-  /** Authored but never registered: `authoring` (no sandbox ran) and `failed`. */
+  /**
+   * Authored but never registered: `authoring` (no sandbox ran), `failed` (the
+   * sandbox said no), and `verified` (registration was interrupted before the
+   * lifecycle was collapsed into one mutation).
+   */
   unregistered: Doc<'skills'>[];
   /** Reported by the approve button, whose own card unmounts on approval. */
   lastFailure: string | null;
@@ -464,10 +468,11 @@ function RegisteredSkillsPanel({
 
       {unregistered.length > 0 ? (
         <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-          {/* Covers three states with one honest label: a skipped sandbox, a
-              sandbox that said no, and authoring that never produced a body. */}
+          {/* One honest label for every way a skill can stop short: a skipped
+              sandbox, a sandbox that said no, and a registration that was
+              interrupted. */}
           <p className="text-[10px] uppercase tracking-wider text-[var(--color-warn)] mb-1.5">
-            not verified · not callable
+            not registered · not callable
           </p>
           <ul className="space-y-3 text-sm">
             {unregistered.map((s) => (
