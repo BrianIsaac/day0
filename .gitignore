@@ -32,4 +32,5 @@ phase*.txt
 # drop them from the repo without ever failing a build: the site would just
 # serve a 404 where the icon should be.
 !app/apple-icon.png
+!app/opengraph-image.png
 

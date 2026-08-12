@@ -5,10 +5,25 @@ import { HeaderAccount } from './HeaderAccount';
 import { Providers } from './providers';
 import { WhipCursor } from './WhipCursor';
 
+const description =
+  'An autonomous teammate that joins on day zero with no role, no skills, no scope — and figures it all out by talking to its boss.';
+
+/**
+ * Absolute base for the generated `og:image` URL. A scraper is a stranger to the
+ * page and cannot resolve a relative one, and Next otherwise falls back to
+ * localhost. Vercel exposes the production alias on every deployment, preview
+ * builds included; the literal covers running outside Vercel.
+ */
+const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : 'https://day0-olive.vercel.app';
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: 'Day0',
-  description:
-    'An autonomous teammate that joins on day zero with no role, no skills, no scope — and figures it all out by talking to its boss.',
+  description,
+  openGraph: { title: 'Day0', description, siteName: 'Day0', url: siteUrl, type: 'website' },
+  twitter: { card: 'summary_large_image', title: 'Day0', description },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
