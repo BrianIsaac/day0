@@ -49,9 +49,14 @@ export default defineSchema({
   voiceSessions: defineTable({
     agentId: v.id('agents'),
     mode: v.union(v.literal('elevenlabs'), v.literal('gemini-live'), v.literal('chat')),
+    /** The finalisation state machine. A call has two independent finishers —
+     * the browser's `onDisconnect` post and the ElevenLabs post-call webhook —
+     * so `synthesising` is the reservation exactly one of them wins before any
+     * model call is spent. See `convex/voice.ts`. */
     state: v.union(
       v.literal('pending'),
       v.literal('active'),
+      v.literal('synthesising'),
       v.literal('done'),
       v.literal('failed'),
     ),
@@ -64,6 +69,19 @@ export default defineSchema({
      * a transcript belongs to. Optional only for rows written before it
      * existed; those can no longer be completed by webhook. */
     webhookToken: v.optional(v.string()),
+    /** Fences the `synthesising` reservation. A finisher may only commit or
+     * release while the token it was issued is still the one on the row, so a
+     * caller whose lease expired mid-flight cannot overwrite its successor. */
+    claimToken: v.optional(v.string()),
+    claimedAt: v.optional(v.number()),
+    claimedBy: v.optional(v.union(v.literal('browser'), v.literal('webhook'))),
+    /** The recorded result. A duplicate finisher returns this instead of
+     * repeating the work, which is what makes a webhook retry idempotent. */
+    charterId: v.optional(v.id('charters')),
+    charterVersion: v.optional(v.string()),
+    /** Why the last finalisation attempt gave up. Kept on a session that went
+     * back to `active` so a failed run is visible rather than silent. */
+    finalisationError: v.optional(v.string()),
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
   })
