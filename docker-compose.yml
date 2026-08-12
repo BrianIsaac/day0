@@ -7,17 +7,22 @@
 # SQLite-in-a-volume storage is what local development wants. See upstream if you
 # need external storage.
 #
-#   docker compose up -d
-#   docker compose exec backend ./generate_admin_key.sh   # -> CONVEX_SELF_HOSTED_ADMIN_KEY
+#   pnpm convex:up
+#   pnpm convex:admin-key                                 # -> CONVEX_SELF_HOSTED_ADMIN_KEY
 #
 # Backend http://127.0.0.1:3210 · HTTP actions http://127.0.0.1:3211 · dashboard http://localhost:6791
 #
 # CONVEX_BIND_ADDR is the host address every port below is published on, and it
-# defaults to loopback: this backend has no authentication of its own, and in
-# no-auth dev mode it mints a fixed identity that owns every row. The same
-# variable is pushed to the deployment by `scripts/sync-convex-env.sh` and is
-# what `convex/devAuth.ts` checks, so widening it here disables no-auth mode
-# rather than quietly exposing it.
+# defaults to loopback. It is read from `.env.local` because `pnpm convex:up`
+# passes `--env-file .env.local`; plain `docker compose up` reads your shell or
+# `.env` instead and will silently take the default.
+#
+# It is hygiene, not a boundary, and nothing else reads it. No-auth dev mode used
+# to treat this value as evidence that the backend was unreachable from off the
+# machine; it never was, because the socket is opened here and the guard ran over
+# there. What holds that boundary now is a key the caller has to present, so
+# widening this address exposes an unauthenticated backend to your network but
+# does not let anyone act as the local boss. See `convex/devAuth.ts`.
 
 services:
   backend:
@@ -31,9 +36,9 @@ services:
     volumes:
       - convex_data:/convex/data
     environment:
-      # Functions read this back as `process.env.CONVEX_CLOUD_URL`. The no-auth
-      # dev identity in `convex/devAuth.ts` refuses to mint unless it is loopback,
-      # so leaving this at the default is part of that safety check.
+      # Functions read this back as `process.env.CONVEX_CLOUD_URL`, and the
+      # browser reaches the backend on it, so it has to name an address the
+      # browser can resolve.
       - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:${CONVEX_PORT:-3210}}
       - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:${CONVEX_SITE_PROXY_PORT:-3211}}
       # No phone-home from a local dev backend.
