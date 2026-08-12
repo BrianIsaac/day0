@@ -20,8 +20,8 @@ import {
  *   2. There's a new terminal verdict — `needs-skill`. When the
  *      candidate is in scope but no registered skill matches, we
  *      surface this as a propose-new-skill flow rather than
- *      hard-skipping. This is the headline demo path for the
- *      hackathon.
+ *      hard-skipping. Capability is meant to grow in place, so an
+ *      unmatched candidate is a gap to fill rather than a dead end.
  */
 
 const WIP_REASON_AT_CAP = 'WIP cap reached for cold-start posture';

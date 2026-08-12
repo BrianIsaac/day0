@@ -2,11 +2,13 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
 /**
- * Day0 schema — single-tenant, single-agent hackathon distillation.
+ * Day0 schema — one world per agent, by design.
  *
- * One `agents` row at a time during a demo. Every other table FK-points
- * back to it. `workspace` stores the 8-file convention as one row per
- * (agent, file). `events` is an append-only feed driving the live UI.
+ * Every other table FK-points back at an `agents` row, the mock work
+ * environment included, so an agent's workspace, queue, skills and grants
+ * are its own and are never shared with another agent or another user.
+ * `workspace` stores the 8-file convention as one row per (agent, file).
+ * `events` is an append-only feed driving the live UI.
  */
 export default defineSchema({
   agents: defineTable({
