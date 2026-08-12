@@ -282,11 +282,38 @@ export const claimForExecution = internalMutation({
   },
 });
 
+/**
+ * Mark a run done, and refuse to when nothing is behind it.
+ *
+ * The rule — every action the run emitted changed the work environment — was
+ * enforced by the caller that happens to run the skill today. That leaves it
+ * one caller away from being lost, and it reads as satisfied by a run that
+ * emitted no actions at all: vacuously, every action succeeded. `completed`
+ * then means "the model finished a turn", which is precisely the state a
+ * person cannot tell apart from work that happened.
+ *
+ * So the rule lives with the write instead. An empty ledger is a bug in the
+ * caller rather than an outcome of the work, hence a throw: the action's own
+ * error path turns it into a visible `failed` row rather than a silent one.
+ */
 export const setCompleted = internalMutation({
   args: { workItemId: v.id('workItems'), output: v.any() },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
+    const applied = ((args.output ?? {}) as { applied?: Array<{ tool: string; ok: boolean }> })
+      .applied;
+    if (!applied || applied.length === 0) {
+      throw new Error(
+        'cannot complete a work item whose run applied nothing to the work environment',
+      );
+    }
+    const failed = applied.filter((a) => !a.ok);
+    if (failed.length > 0) {
+      throw new Error(
+        `cannot complete a work item with ${failed.length} action(s) that did not change the work environment`,
+      );
+    }
     await ctx.db.patch(args.workItemId, { state: 'completed', output: args.output });
     await ctx.db.insert('events', {
       agentId: row.agentId,

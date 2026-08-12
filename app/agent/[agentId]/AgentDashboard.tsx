@@ -683,10 +683,15 @@ function WorkItemCard({
       }
     | undefined;
   const output = item.output as
-    | { draft: string; notes: string; applied?: Array<{ tool: string; ok: boolean; reason?: string }> }
+    | {
+        draft: string;
+        notes: string;
+        applied?: Array<{ tool: string; ok: boolean; effect?: string; reason?: string }>;
+      }
     | undefined;
   const appliedActions = output?.applied ?? [];
   const failedActions = appliedActions.filter((a) => !a.ok);
+  const landedActions = appliedActions.filter((a) => a.ok);
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -747,10 +752,32 @@ function WorkItemCard({
         </div>
       ) : null}
 
+      {/* The record of the run, ahead of the prose that describes it. The draft
+          is written before a single action is applied, so it is the agent's
+          account of the work; this list is what the work environment actually
+          received. A reader who only ever sees the draft cannot tell the two
+          apart, which is the whole of the failure this panel answers. */}
+      {landedActions.length > 0 ? (
+        <div className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs">
+          <p className="text-[var(--color-ok)] font-medium mb-1">
+            {landedActions.length} {landedActions.length === 1 ? 'change' : 'changes'} reached the
+            work environment
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-fg)]">
+            {landedActions.map((a, i) => (
+              <li key={i}>
+                <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
+                {a.effect ?? '(applied)'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {output ? (
         <details className="mt-2 text-xs">
           <summary className="cursor-pointer text-[var(--color-accent)]">
-            Draft output ({output.draft.length} chars)
+            Draft the agent wrote ({output.draft.length} chars)
           </summary>
           <pre className="mt-2 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap text-[var(--color-fg)]">
             {output.draft}
@@ -758,6 +785,10 @@ function WorkItemCard({
           {output.notes ? (
             <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
           ) : null}
+          <p className="mt-1 text-[10px] text-[var(--color-muted)]">
+            The agent&apos;s own words, written before anything was applied. Only the changes listed
+            above reached the work environment.
+          </p>
         </details>
       ) : null}
 

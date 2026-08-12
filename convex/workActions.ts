@@ -406,9 +406,22 @@ async function loadMockEnvSnapshot(
 interface AppliedAction {
   tool: string;
   ok: boolean;
+  /**
+   * What this action changed, read off the write that landed rather than off
+   * the skill's account of it. The draft is written in the same model turn
+   * that emits the actions, so everything it says about the work is a
+   * prediction; this is the record.
+   */
+  effect?: string;
   reason?: string;
   /** What a real connector would send as its idempotency key for this action. */
   idempotencyKey: string;
+}
+
+/** Keeps one ledger line readable in a card without losing what it identifies. */
+function clip(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
 /**
@@ -445,6 +458,7 @@ async function applyMockActions(
     const args = action.args ?? {};
     try {
       let result: MockWriteResult;
+      let effect = '';
       switch (action.tool) {
         case 'spreadsheet.appendRow': {
           if (!args.sheetSlug || !args.tabName || !args.cells) {
@@ -460,6 +474,11 @@ async function applyMockActions(
             cells: cellsObj,
             addedBy: 'Day0 (agent)',
           });
+          effect = clip(
+            `1 row appended to ${args.sheetSlug} · ${args.tabName} — ` +
+              args.cells.map((c) => `${c.header}=${c.value || '(blank)'}`).join(', '),
+            180,
+          );
           break;
         }
         case 'slack.postMessage': {
@@ -475,6 +494,11 @@ async function applyMockActions(
             senderKind: args.channelSlug.startsWith('dm-') ? 'agent-posted' : 'agent-draft',
             body: args.body,
           });
+          effect = clip(
+            `1 message posted to ${args.channelSlug}` +
+              `${args.threadKey ? ` · thread ${args.threadKey}` : ''} — “${args.body}”`,
+            180,
+          );
           // A coworker only replies to a message that actually landed.
           if (result.changed) {
             await ctx.scheduler.runAfter(
@@ -503,6 +527,7 @@ async function applyMockActions(
             body: args.body,
             isAgentDraft: true,
           });
+          effect = clip(`1 reply drafted on ${args.tweetSlug} — “${args.body}”`, 180);
           break;
         }
         case 'ticket.update': {
@@ -517,6 +542,16 @@ async function applyMockActions(
             comment: args.comment,
             commentAuthor: 'Day0',
           });
+          effect = clip(
+            [
+              `ticket ${args.slug}`,
+              args.status ? `set to ${args.status}` : null,
+              args.comment ? `1 comment — “${args.comment}”` : null,
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            180,
+          );
           break;
         }
         default:
@@ -530,7 +565,7 @@ async function applyMockActions(
       }
       applied.push(
         result.changed
-          ? { tool: action.tool, ok: true, idempotencyKey }
+          ? { tool: action.tool, ok: true, effect, idempotencyKey }
           : {
               tool: action.tool,
               ok: false,

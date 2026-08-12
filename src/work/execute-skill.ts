@@ -16,7 +16,10 @@ import type {
  *
  * The skill body is prepended to the system prompt as a behavioural
  * prior. The executor returns:
- *   - draft: human-readable summary of what was done (manager reads this)
+ *   - draft: the deliverable the manager reads. Written in the same turn that
+ *     emits the actions and before any of them is applied, so it is the
+ *     agent's account of the work and never the record of it — that is the
+ *     applied ledger the caller builds from the adapters.
  *   - notes: assumptions / open questions
  *   - actions: typed mutations against mock work surfaces (Spreadsheet,
  *     Slack, Twitter, Ticket); the workActions handler applies them in
@@ -31,9 +34,14 @@ const SYSTEM_PROMPT_PREAMBLE = [
   'You are an autonomous workplace agent named Day0.',
   'A skill body has been loaded as your behavioural prior for this turn. The boss has approved the plan; you are authorised to act.',
   'Apply the skill to the candidate. Produce three things:',
-  '  1. A draft (human-readable) — the manager reads this to verify what you did and decide whether to ratify.',
+  '  1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.',
   '  2. Notes — short assumptions or open questions (single sentence).',
-  '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). Apply them only as needed; an empty actions array is fine if the work was purely advisory.',
+  '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
+  '',
+  'The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:',
+  '  - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three `spreadsheet.appendRow` actions, not one action and a sentence saying three.',
+  '  - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a `slack.postMessage` in this response says it.',
+  '  - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in `notes` rather than describing the work as finished.',
   '',
   'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. Available tools:',
   "  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }",
