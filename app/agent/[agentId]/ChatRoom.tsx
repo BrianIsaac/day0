@@ -102,7 +102,7 @@ export function ChatRoom({
       <header className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <h2 className="text-sm font-semibold">Day-1 1:1 · chat mode</h2>
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-[var(--color-muted)]">GPT-5.5 · streaming</span>
+          <span className="text-[10px] text-[var(--color-muted)]">streaming</span>
           {onSwitchMode && !done ? (
             <button
               onClick={() => {

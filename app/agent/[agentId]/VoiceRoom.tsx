@@ -7,10 +7,13 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 
 interface StartResponse {
-  agentId: string;
+  /** False when the deployment has no ElevenLabs credentials. */
+  configured: boolean;
+  agentId: string | null;
   signedUrl: string | null;
   public: boolean;
   warning?: string;
+  reason?: string;
 }
 
 interface InboundMessage {
@@ -128,7 +131,7 @@ function VoiceRoomInner({
   }, [start]);
 
   async function onStart() {
-    if (!start) return;
+    if (!start || !start.configured || !start.agentId) return;
     if (!voiceSessionId) {
       const id = await startSession({ agentId, mode: 'elevenlabs' });
       setVoiceSessionId(id);
@@ -150,6 +153,28 @@ function VoiceRoomInner({
   const isConnected = status === 'connected';
   const isSpeaking = conversation.isSpeaking;
   const isListening = conversation.isListening;
+
+  // No ElevenLabs credentials on this deployment — say so plainly and
+  // hand the boss to chat mode, which runs the identical 1:1.
+  if (start && !start.configured) {
+    return (
+      <section className="bg-[var(--color-card)] border border-[var(--color-warn)]/40 rounded-xl p-4">
+        <h2 className="text-sm font-semibold mb-2">Day-1 1:1 · voice unavailable</h2>
+        <p className="text-sm text-[var(--color-muted)] mb-4">
+          {start.reason ??
+            'Voice mode needs ElevenLabs credentials. Chat mode runs the same Day-1 1:1 without them.'}
+        </p>
+        {onSwitchMode ? (
+          <button
+            onClick={onSwitchMode}
+            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90"
+          >
+            Continue in chat
+          </button>
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <section className="bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl p-4">
