@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
+import { clockTime, clockTimeWithSeconds } from '../time';
 
 export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
   const channels = useQuery(api.mock.listChannels, { agentId });
@@ -146,8 +147,11 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
             ↳ {m.threadKey}
           </span>
         ) : null}
-        <span className="text-[9px] text-[var(--color-muted)] ml-auto shrink-0">
-          {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        <span
+          className="text-[9px] text-[var(--color-muted)] ml-auto shrink-0"
+          title={clockTimeWithSeconds(m.timestamp)}
+        >
+          {clockTime(m.timestamp)}
         </span>
       </div>
       <p className="text-xs text-[var(--color-fg)] whitespace-pre-wrap leading-relaxed">{m.body}</p>
