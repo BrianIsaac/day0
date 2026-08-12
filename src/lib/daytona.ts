@@ -5,9 +5,6 @@ import { env } from '../env';
 let client: Daytona | null = null;
 
 function daytona(): Daytona {
-  if (!env.DAYTONA_API_KEY) {
-    throw new Error('DAYTONA_API_KEY not set — cannot run skill authoring sandbox');
-  }
   if (!client) {
     client = new Daytona({
       apiKey: env.DAYTONA_API_KEY,
@@ -15,6 +12,10 @@ function daytona(): Daytona {
     });
   }
   return client;
+}
+
+export function isDaytonaConfigured(): boolean {
+  return !!env.DAYTONA_API_KEY;
 }
 
 export interface SkillSandboxRun {
@@ -25,6 +26,9 @@ export interface SkillSandboxRun {
   stderr: string;
   /** Whether the sandbox exited 0. */
   ok: boolean;
+  /** True when no sandbox ran at all; `ok` carries no verification weight. */
+  skipped: boolean;
+  skipReason?: string;
 }
 
 export interface AuthorSkillArgs {
@@ -46,8 +50,22 @@ export interface AuthorSkillArgs {
  * implements signal 1 directly here (sandbox exit 0 + non-empty
  * stdout); signals 2 and 3 are surfaced by the caller comparing the
  * stdout against expected fixtures.
+ *
+ * Daytona is an optional capability. With no key the run is reported as
+ * skipped instead of throwing — the skill-authoring loop continues
+ * unverified and the caller records the skip in the event log.
  */
 export async function authorAndVerifySkill(args: AuthorSkillArgs): Promise<SkillSandboxRun> {
+  if (!env.DAYTONA_API_KEY) {
+    return {
+      sandboxId: '(skipped)',
+      stdout: '',
+      stderr: '',
+      ok: false,
+      skipped: true,
+      skipReason: 'DAYTONA_API_KEY not set',
+    };
+  }
   const sandbox = await daytona().create({
     image: 'python:3.12-slim',
     public: false,
@@ -62,6 +80,7 @@ export async function authorAndVerifySkill(args: AuthorSkillArgs): Promise<Skill
       stdout: result.result ?? '',
       stderr: '',
       ok: (result.exitCode ?? 1) === 0,
+      skipped: false,
     };
   } finally {
     await sandbox.delete().catch(() => {

@@ -167,6 +167,26 @@ function Card({
 }
 
 function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
+  // null while the probe is in flight — voice stays clickable so the
+  // picker doesn't flicker on a configured deployment.
+  const [voiceConfigured, setVoiceConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/voice/elevenlabs/start?probe=1')
+      .then((r) => r.json())
+      .then((d: { configured?: boolean }) => {
+        if (!cancelled) setVoiceConfigured(d.configured !== false);
+      })
+      .catch(() => {
+        if (!cancelled) setVoiceConfigured(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const voiceOff = voiceConfigured === false;
   return (
     <Card title="Day-1 1:1 — voice or chat?" tone="accent">
       <p className="text-sm text-[var(--color-muted)] mb-4">
@@ -176,17 +196,33 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
       <div className="flex gap-3">
         <button
           onClick={() => onPick('voice')}
-          className="flex-1 px-4 py-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium hover:opacity-90"
+          disabled={voiceOff}
+          title={voiceOff ? 'ElevenLabs credentials not set on this deployment' : undefined}
+          className={`flex-1 px-4 py-3 rounded-lg font-medium ${
+            voiceOff
+              ? 'border border-[var(--color-border)] text-[var(--color-muted)] cursor-not-allowed'
+              : 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
+          }`}
         >
           Voice (ElevenLabs)
         </button>
         <button
           onClick={() => onPick('chat')}
-          className="flex-1 px-4 py-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)]"
+          className={`flex-1 px-4 py-3 rounded-lg font-medium ${
+            voiceOff
+              ? 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
+              : 'border border-[var(--color-border)] hover:border-[var(--color-accent)]'
+          }`}
         >
-          Chat (GPT-5.5)
+          Chat
         </button>
       </div>
+      {voiceOff ? (
+        <p className="text-xs text-[var(--color-muted)] mt-3">
+          Voice is off on this deployment — no ElevenLabs credentials. Chat runs the identical
+          seven-topic 1:1.
+        </p>
+      ) : null}
     </Card>
   );
 }

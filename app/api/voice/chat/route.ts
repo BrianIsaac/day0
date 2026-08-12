@@ -1,7 +1,6 @@
-import { openai } from '@ai-sdk/openai';
 import { convertToModelMessages, hasToolCall, streamText, tool, type UIMessage } from 'ai';
 import { z } from 'zod';
-import { env } from '@/env';
+import { languageModel } from '@/lib/openai';
 import { DAY_ONE_TOPIC_SPECS, DAY_ONE_WELCOME } from '@/agent/day-one-prompts';
 
 export const runtime = 'nodejs';
@@ -56,7 +55,7 @@ export async function POST(req: Request): Promise<Response> {
   const messages = await convertToModelMessages(uiMessages);
   try {
     const result = streamText({
-      model: openai(env.OPENAI_MODEL),
+      model: languageModel(),
       system: SYSTEM_PROMPT,
       messages,
       maxOutputTokens: 2000,

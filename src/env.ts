@@ -12,8 +12,10 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
   OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-5.5'),
   OPENAI_IMAGE_MODEL: z.string().default('gpt-image-2'),
+  OPENAI_JSON_MODE: z.enum(['auto', 'native', 'prompt']).default('auto'),
 
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_AGENT_ID: z.string().optional(),
@@ -36,8 +38,10 @@ const schema = z.object({
 export const env = schema.parse({
   NODE_ENV: process.env.NODE_ENV,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
   OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL,
+  OPENAI_JSON_MODE: process.env.OPENAI_JSON_MODE,
   ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
   ELEVENLABS_AGENT_ID: process.env.ELEVENLABS_AGENT_ID,
   GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
