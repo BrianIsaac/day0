@@ -222,7 +222,16 @@ Five things about that sequence are load-bearing:
 
 `pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
 
-Stop the stack with `pnpm convex:down`, which leaves the data volume in place. To throw the data away too: `docker compose --env-file .env.local --profile model down -v`.
+Every `:up` has a matching `:down`, and `pnpm convex:down` really does mean only Convex - the model service is behind a compose profile and outlives it, holding several gigabytes resident, which is not what you want after you thought you had stopped:
+
+```bash
+pnpm model:down                  # the model server; the pulled weights stay
+pnpm convex:down                 # backend + dashboard; the data volume stays
+```
+
+In that order: `convex:down` removes the compose network on its way out, and cannot while the model container is still attached to it.
+
+To throw the volumes away too, both together: `docker compose --env-file .env.local --profile model down -v`.
 
 ### Without Docker for Convex
 
