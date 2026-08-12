@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import './globals.css';
+import { HeaderAccount } from './HeaderAccount';
 import { Providers } from './providers';
 import { WhipCursor } from './WhipCursor';
 
@@ -25,31 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 AI Engineer Hackathon · Singapore
               </span>
             </Link>
-            <Show when="signed-out">
-              <div className="flex items-center gap-2">
-                <SignInButton mode="modal">
-                  <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)]">
-                    Sign in
-                  </button>
-                </SignInButton>
-                <SignUpButton mode="modal">
-                  <button className="text-xs px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium hover:opacity-90">
-                    Create account
-                  </button>
-                </SignUpButton>
-              </div>
-            </Show>
-            <Show when="signed-in">
-              <UserButton
-                appearance={{
-                  variables: {
-                    colorBackground: '#18181b',
-                    colorText: '#f4f4f5',
-                    colorPrimary: '#22d3ee',
-                  },
-                }}
-              />
-            </Show>
+            <HeaderAccount />
           </header>
           {children}
         </Providers>
