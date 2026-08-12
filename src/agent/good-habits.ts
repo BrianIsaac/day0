@@ -62,17 +62,41 @@ export async function distilGoodHabits(args: DistilArgs): Promise<string> {
   return stripFence(raw);
 }
 
-/**
- * End-to-end orchestrator: Exa search + Mastra distillation.
- */
-export async function researchAndDistil(role: string): Promise<{
+export interface GoodHabitsResult {
   fragment: string;
   results: ExaResult[];
   norms: number;
-}> {
-  const results = await searchRole(role);
-  const fragment = await distilGoodHabits({ role, results });
-  return { fragment, results, norms: countNorms(fragment) };
+  /** True when research was unavailable and no fragment was produced. */
+  skipped: boolean;
+  skipReason?: string;
+}
+
+/**
+ * End-to-end orchestrator: Exa search + Mastra distillation.
+ *
+ * With no sources there is nothing to distil — every bullet in the
+ * fragment must carry a source URL, so a source-less run would just
+ * invent them. Skipping is the honest degradation: the caller logs it
+ * and the onboarding loop continues with AGENTS.md untouched.
+ */
+export async function researchAndDistil(role: string): Promise<GoodHabitsResult> {
+  const search = await searchRole(role);
+  if (search.skipped) {
+    return {
+      fragment: '',
+      results: search.results,
+      norms: 0,
+      skipped: true,
+      skipReason: search.skipReason,
+    };
+  }
+  const fragment = await distilGoodHabits({ role, results: search.results });
+  return {
+    fragment,
+    results: search.results,
+    norms: countNorms(fragment),
+    skipped: false,
+  };
 }
 
 /**

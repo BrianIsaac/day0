@@ -86,34 +86,51 @@ export const authorAndRegisterSkill = action({
       return { ok: false, reason: 'empty author output' };
     }
 
+    // Daytona is optional. Whether the key is absent or the sandbox
+    // itself falls over, the loop continues with the skill unverified
+    // and the skip is written to the event feed so the demo shows what
+    // was and was not checked.
     let sandboxId = '(skipped)';
     let verificationLog = '(daytona unavailable)';
+    let skipReason: string | null = null;
     try {
       const result = await authorAndVerifySkill({
         skillName: skill.name,
         skillBody: body,
         smokeTest,
       });
-      sandboxId = result.sandboxId;
+      if (result.skipped) {
+        skipReason = result.skipReason ?? 'daytona unavailable';
+        verificationLog = `sandbox verification skipped — ${skipReason}`;
+      } else {
+        sandboxId = result.sandboxId;
+        await ctx.runMutation(internal.skills.setAuthoring, {
+          skillId: args.skillId,
+          sandboxId,
+        });
+        verificationLog = `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
+        if (!result.ok) {
+          await ctx.runMutation(internal.skills.setFailed, {
+            skillId: args.skillId,
+            reason: `Daytona sandbox exited non-zero. ${verificationLog.slice(0, 500)}`,
+          });
+          return { ok: false, reason: 'sandbox failed' };
+        }
+      }
+    } catch (err) {
+      skipReason = `Daytona threw: ${(err as Error).message}`;
+      verificationLog = skipReason;
+    }
+
+    if (skipReason) {
       await ctx.runMutation(internal.skills.setAuthoring, {
         skillId: args.skillId,
         sandboxId,
       });
-      verificationLog = `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
-      if (!result.ok) {
-        await ctx.runMutation(internal.skills.setFailed, {
-          skillId: args.skillId,
-          reason: `Daytona sandbox exited non-zero. ${verificationLog.slice(0, 500)}`,
-        });
-        return { ok: false, reason: 'sandbox failed' };
-      }
-    } catch (err) {
-      verificationLog = `Daytona threw: ${(err as Error).message}`;
-      // Soft-degrade — if Daytona is unavailable in the demo environment,
-      // record the skill as verified anyway so the demo flow continues.
-      await ctx.runMutation(internal.skills.setAuthoring, {
-        skillId: args.skillId,
-        sandboxId,
+      await ctx.runMutation(internal.events.log, {
+        agentId: skill.agentId,
+        type: 'skill.sandbox-skipped',
+        payload: { skillId: args.skillId, name: skill.name, reason: skipReason },
       });
     }
 

@@ -218,22 +218,34 @@ export const postCharterApproval = action({
     if (!charter) throw new Error('postCharterApproval: no charter');
     const charterBody = charter.body as Charter;
     const role = extractRole(charterBody);
-    const { fragment, norms } = await researchAndDistil(role);
-    const existing = await ctx.runQuery(api.workspace.readFile, {
-      agentId: args.agentId,
-      fileName: 'AGENTS.md',
-    });
-    const merged = mergeGoodHabits(existing ?? '', fragment);
-    await ctx.runMutation(internal.workspace.writeFileInternal, {
-      agentId: args.agentId as any,
-      fileName: 'AGENTS.md',
-      content: merged,
-    });
-    await ctx.runMutation(internal.events.log, {
-      agentId: args.agentId,
-      type: 'good-habits.distilled',
-      payload: { norms, role },
-    });
+    // Exa is optional. Without it the loop continues with an unchanged
+    // AGENTS.md and the skip lands in the event feed, so the missing
+    // capability is visible rather than silent.
+    const research = await researchAndDistil(role);
+    const norms = research.norms;
+    if (research.skipped) {
+      await ctx.runMutation(internal.events.log, {
+        agentId: args.agentId,
+        type: 'good-habits.skipped',
+        payload: { role, reason: research.skipReason ?? 'research unavailable' },
+      });
+    } else {
+      const existing = await ctx.runQuery(api.workspace.readFile, {
+        agentId: args.agentId,
+        fileName: 'AGENTS.md',
+      });
+      const merged = mergeGoodHabits(existing ?? '', research.fragment);
+      await ctx.runMutation(internal.workspace.writeFileInternal, {
+        agentId: args.agentId as any,
+        fileName: 'AGENTS.md',
+        content: merged,
+      });
+      await ctx.runMutation(internal.events.log, {
+        agentId: args.agentId,
+        type: 'good-habits.distilled',
+        payload: { norms, role },
+      });
+    }
 
     // Generate role-specific work items grounded in BOTH the charter AND
     // the agent's actual mock environment. The work-generator LLM sees
