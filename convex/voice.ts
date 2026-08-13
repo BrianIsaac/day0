@@ -73,10 +73,31 @@ export const latest = query({
 });
 
 /**
- * Open a session. Returns the row id plus `webhookToken`, the capability the
- * caller hands to ElevenLabs so the post-call webhook can prove which session
- * it is reporting on — see `claimWebhookFinalisation`. Only the boss who owns
- * the agent ever sees it: this mutation is ownership-checked.
+ * Open the agent's Day-1 1:1, or hand back the one already open.
+ *
+ * "One 1:1, one session" is decided here rather than asked of the caller,
+ * because the caller cannot keep that promise. A React effect starting a room is
+ * invoked twice on mount under Strict Mode and again on every remount — a
+ * resume, a mode resync, a hot reload — and each invocation used to insert a
+ * row, so a single conversation left a scatter of `active` sessions, none of
+ * which any transcript would ever be attributed to. A latch in the component
+ * would cover the first case and none of the others; deciding against the row is
+ * what covers all of them, including a second tab.
+ *
+ * A session is reusable until it reaches `done`: `synthesising` is a finaliser's
+ * reservation and `active` is a 1:1 still being held, both of which belong to
+ * the conversation that is already under way. Only a finished one starts the
+ * next 1:1, which is what makes Request Changes open a genuinely new session.
+ *
+ * Reuse crosses modes on purpose — switching from chat to voice mid-1:1 is the
+ * same conversation on a different surface, and the UI says as much before it
+ * switches. The conversation id goes with the mode, since it names a call that
+ * is over.
+ *
+ * Returns the row id plus `webhookToken`, the capability the caller hands to
+ * ElevenLabs so the post-call webhook can prove which session it is reporting on
+ * — see `claimWebhookFinalisation`. Only the boss who owns the agent ever sees
+ * it: this mutation is ownership-checked.
  */
 export const start = mutation({
   args: {
@@ -85,7 +106,32 @@ export const start = mutation({
     elevenLabsConversationId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await assertOwnsAgent(ctx, args.agentId);
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+
+    const open = await ctx.db
+      .query('voiceSessions')
+      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+      .order('desc')
+      .first();
+    if (open && open.state !== 'done') {
+      const webhookToken = open.webhookToken ?? crypto.randomUUID();
+      if (open.mode !== args.mode || !open.webhookToken) {
+        await ctx.db.patch(open._id, {
+          mode: args.mode,
+          webhookToken,
+          ...(open.mode !== args.mode ? { elevenLabsConversationId: undefined } : {}),
+        });
+      }
+      // A session released by a failed finaliser is reusable while its agent has
+      // been put back to `deployed`, and the dashboard reads that row to decide
+      // whether the boss is mid-1:1. Left alone, it would route them back to the
+      // mode picker they just came from.
+      if (agent.state === 'deployed') {
+        await ctx.db.patch(args.agentId, { state: 'day-one-in-progress' });
+      }
+      return { sessionId: open._id, webhookToken, resumed: true };
+    }
+
     const webhookToken = crypto.randomUUID();
     const id = await ctx.db.insert('voiceSessions', {
       agentId: args.agentId,
@@ -103,7 +149,7 @@ export const start = mutation({
       payload: { sessionId: id, mode: args.mode },
       createdAt: Date.now(),
     });
-    return { sessionId: id, webhookToken };
+    return { sessionId: id, webhookToken, resumed: false };
   },
 });
 

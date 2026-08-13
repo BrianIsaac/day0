@@ -7,6 +7,27 @@ import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 
+/** Prompts the agent's opening turn. Not the boss speaking, and never rendered. */
+const INIT_PROMPT = '__init__';
+
+function textOf(message: UIMessage): string {
+  return message.parts
+    .filter((p) => p.type === 'text')
+    .map((p) => (p as { type: 'text'; text: string }).text)
+    .join('');
+}
+
+/**
+ * The conversation proper. The priming turn wears the boss's role, so the
+ * extractor would otherwise be entitled to read it as something the boss said.
+ * Recognised by its sentinel text rather than by its position: it is normally
+ * first, but it is sent from an effect, and a reply typed before that effect
+ * lands would take the first slot and be dropped in its place.
+ */
+function withoutPrimingTurn(messages: UIMessage[]): UIMessage[] {
+  return messages.filter((m) => !(m.role === 'user' && textOf(m).trim() === INIT_PROMPT));
+}
+
 export function ChatRoom({
   agentId,
   bossLabel,
@@ -21,6 +42,10 @@ export function ChatRoom({
   // A latch, not UI state — nothing renders off it, so a ref keeps the
   // once-only guard out of the render cycle.
   const synthFired = useRef(false);
+  // The session this 1:1 belongs to, read by the finalisation post below. A ref
+  // rather than state because the effect that posts must see the id the mount
+  // effect obtained, not whatever a stale render closed over.
+  const sessionRef = useRef<Id<'voiceSessions'> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const transport = new DefaultChatTransport({
@@ -39,11 +64,16 @@ export function ChatRoom({
     },
   });
 
-  // Kick the agent's opening turn once the voice session row is created.
+  // Kick the agent's opening turn once the session row exists. Strict Mode
+  // invokes this twice and the discarded invocation cancels its own send, so one
+  // mount asks one opening question. It still asks for a session twice, and any
+  // remount asks again — `voice.start` answers all of them with the same row,
+  // which is why nothing here has to be latched to keep the count at one.
   useEffect(() => {
     let cancelled = false;
-    startSession({ agentId, mode: 'chat' }).then(() => {
-      if (!cancelled) sendMessage({ text: '__init__' });
+    startSession({ agentId, mode: 'chat' }).then((started) => {
+      sessionRef.current = started.sessionId;
+      if (!cancelled) sendMessage({ text: INIT_PROMPT });
     });
     return () => {
       cancelled = true;
@@ -70,12 +100,9 @@ export function ChatRoom({
   useEffect(() => {
     if (!done || synthFired.current) return;
     synthFired.current = true;
-    const transcript = messages
+    const transcript = withoutPrimingTurn(messages)
       .map((m) => {
-        const text = m.parts
-          .filter((p) => p.type === 'text')
-          .map((p) => (p as { type: 'text'; text: string }).text)
-          .join('');
+        const text = textOf(m);
         const closing = m.parts
           .filter((p) => p.type === 'tool-dayOneComplete')
           .map((p) => (p as { input?: { closingLine?: string } }).input?.closingLine ?? '')
@@ -88,13 +115,24 @@ export function ChatRoom({
     void fetch('/api/onboarding/synthesise', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId, bossLabel, transcript }),
+      // Naming the session is what ends it: the chat 1:1 goes through the same
+      // claim-once finalisation as a call, so the row it opened reaches `done`
+      // carrying its transcript, instead of sitting at `active` for good while
+      // the charter it produced is on the page.
+      body: JSON.stringify({ agentId, bossLabel, transcript, voiceSessionId: sessionRef.current }),
     });
   }, [done, messages, agentId, bossLabel]);
 
+  // The opening turn is sent from an effect, so for a moment after mount the
+  // composer is live with nothing yet asked. A reply typed into that gap arrives
+  // ahead of the agent's own first turn and answers a question it has not put —
+  // an error surfaces instead, because then there is nothing else to wait for.
+  const opened = messages.some((m) => m.role === 'assistant') || !!streamError;
+  const composerDisabled = status !== 'ready' || done || !opened;
+
   function send() {
     const trimmed = draft.trim();
-    if (!trimmed || status !== 'ready' || done) return;
+    if (!trimmed || composerDisabled) return;
     sendMessage({ text: trimmed });
     setDraft('');
   }
@@ -132,11 +170,9 @@ export function ChatRoom({
         </div>
       </header>
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 text-sm">
-        {messages
-          .filter((m) => !(m.role === 'user' && m.id === messages[0]?.id))
-          .map((m) => (
-            <MessageBubble key={m.id} message={m} />
-          ))}
+        {withoutPrimingTurn(messages).map((m) => (
+          <MessageBubble key={m.id} message={m} />
+        ))}
         {status === 'submitted' || status === 'streaming' ? (
           <div className="text-[var(--color-muted)] text-xs">…</div>
         ) : null}
@@ -161,13 +197,15 @@ export function ChatRoom({
               send();
             }
           }}
-          disabled={status !== 'ready' || done}
-          placeholder={done ? 'conversation complete' : 'type your reply…'}
+          disabled={composerDisabled}
+          placeholder={
+            done ? 'conversation complete' : opened ? 'type your reply…' : 'waiting for Day0…'
+          }
           className="flex-1 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm disabled:opacity-50"
         />
         <button
           onClick={send}
-          disabled={status !== 'ready' || done || !draft.trim()}
+          disabled={composerDisabled || !draft.trim()}
           className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
         >
           Send
