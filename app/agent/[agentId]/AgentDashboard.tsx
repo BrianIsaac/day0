@@ -13,6 +13,17 @@ interface Props {
   agentId: Id<'agents'>;
 }
 
+/**
+ * The last authoring attempt this browser made and the verdict it came back
+ * with. Kept as the skill it names rather than as a finished sentence, so
+ * whether the verdict is still true can be asked of the skill row.
+ */
+interface AuthoringAttempt {
+  skillId: Id<'skills'>;
+  name: string;
+  reason: string;
+}
+
 export function AgentDashboard({ agentId }: Props) {
   const agent = useQuery(api.agents.get, { agentId });
   const charter = useQuery(api.charters.latest, { agentId });
@@ -26,7 +37,29 @@ export function AgentDashboard({ agentId }: Props) {
   const voiceSession = useQuery(api.voice.latest, { agentId });
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
-  const [authoringFailure, setAuthoringFailure] = useState<string | null>(null);
+  const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
+
+  // This notice used to be a string set once and never cleared, so the first
+  // failure outlived everything that came after it: a retry that registered the
+  // skill, a second failure that said something else, the boss's own rejection.
+  // It is asked of the skill row instead. `skills.get` rather than the panel
+  // queries above, because the two states that settle it appear in none of
+  // them: `approved`, where a run failed before it could write anything, and
+  // `rejected`.
+  const attemptedSkill = useQuery(
+    api.skills.get,
+    lastAttempt ? { skillId: lastAttempt.skillId } : 'skip',
+  );
+  // A run holding the skill now, a registration and a rejection are all facts
+  // newer than the verdict, and each of them makes it a lie.
+  const authoringFailure =
+    lastAttempt &&
+    attemptedSkill &&
+    !attemptedSkill.authoringRunId &&
+    attemptedSkill.state !== 'registered' &&
+    attemptedSkill.state !== 'rejected'
+      ? `${lastAttempt.name}: ${lastAttempt.reason}`
+      : null;
 
   // Sync local mode with server state. Two cases:
   //   1. Reload mid-session — route back into the room they were in
@@ -102,7 +135,7 @@ export function AgentDashboard({ agentId }: Props) {
           <ProposedSkillsPanel
             agentId={agentId}
             skills={proposedSkills ?? []}
-            onAuthoringFailed={setAuthoringFailure}
+            onAuthoringAttempt={setLastAttempt}
           />
 
           <WorkQueue
@@ -117,7 +150,8 @@ export function AgentDashboard({ agentId }: Props) {
           <RegisteredSkillsPanel
             skills={registeredSkills ?? []}
             unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
-            lastFailure={authoringFailure}
+            authoringFailure={authoringFailure}
+            onAuthoringAttempt={setLastAttempt}
           />
           <EventTicker events={events ?? []} />
         </div>
@@ -367,13 +401,14 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
 function ProposedSkillsPanel({
   agentId,
   skills,
-  onAuthoringFailed,
+  onAuthoringAttempt,
 }: {
   agentId: Id<'agents'>;
   skills: Doc<'skills'>[];
-  /** Approving moves the row out of this panel, so its failure has to be
-   *  reported somewhere that survives the unmount. */
-  onAuthoringFailed: (reason: string) => void;
+  /** Approving moves the row out of this panel, so its verdict has to be
+   *  reported somewhere that survives the unmount. `null` opens an attempt and
+   *  retires whatever the last one said. */
+  onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
 }) {
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
@@ -397,16 +432,27 @@ function ProposedSkillsPanel({
                 onClick={async () => {
                   await approve({ skillId: s._id });
                   void agentId;
+                  onAuthoringAttempt(null);
                   try {
                     const result = await author({ skillId: s._id });
-                    if (!result.ok) onAuthoringFailed(`${s.name}: ${result.reason ?? 'authoring did not finish'}`);
+                    if (!result.ok) {
+                      onAuthoringAttempt({
+                        skillId: s._id,
+                        name: s.name,
+                        reason: result.reason ?? 'authoring did not finish',
+                      });
+                    }
                   } catch (err) {
-                    onAuthoringFailed(`${s.name}: ${(err as Error).message}`);
+                    onAuthoringAttempt({
+                      skillId: s._id,
+                      name: s.name,
+                      reason: (err as Error).message,
+                    });
                   }
                 }}
                 className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium"
               >
-                Approve · author in Daytona
+                Approve · author and verify
               </button>
               <button
                 onClick={() => reject({ skillId: s._id })}
@@ -425,7 +471,8 @@ function ProposedSkillsPanel({
 function RegisteredSkillsPanel({
   skills,
   unregistered,
-  lastFailure,
+  authoringFailure,
+  onAuthoringAttempt,
 }: {
   skills: Doc<'skills'>[];
   /**
@@ -436,23 +483,28 @@ function RegisteredSkillsPanel({
    * leaves something the boss can see and, once its claim lapses, retry.
    */
   unregistered: Doc<'skills'>[];
-  /** Reported by the approve button, whose own card unmounts on approval. */
-  lastFailure: string | null;
+  /**
+   * The most recent authoring attempt's verdict, already checked against the
+   * skill it names. Null once that skill has moved past it, which is what keeps
+   * it from sitting above a row that says something else.
+   */
+  authoringFailure: string | null;
+  /** Retries report here too, so the notice is never older than the last try. */
+  onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  async function onRetry(skillId: Id<'skills'>) {
+  async function onRetry(skillId: Id<'skills'>, name: string) {
     setRetrying(skillId);
-    setErrors((prev) => ({ ...prev, [skillId]: '' }));
+    onAuthoringAttempt(null);
     try {
       const result = await author({ skillId });
       if (!result.ok) {
-        setErrors((prev) => ({ ...prev, [skillId]: result.reason ?? 'retry did not succeed' }));
+        onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
       }
     } catch (err) {
-      setErrors((prev) => ({ ...prev, [skillId]: (err as Error).message }));
+      onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
     } finally {
       setRetrying(null);
     }
@@ -460,9 +512,9 @@ function RegisteredSkillsPanel({
 
   return (
     <Card title={`Skills · ${skills.length} registered`}>
-      {lastFailure ? (
+      {authoringFailure ? (
         <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
-          Authoring did not finish — {lastFailure}
+          Authoring did not finish — {authoringFailure}
         </p>
       ) : null}
       {skills.length === 0 ? (
@@ -512,26 +564,25 @@ function RegisteredSkillsPanel({
                     </div>
                   </div>
                   <button
-                    onClick={() => onRetry(s._id)}
+                    onClick={() => onRetry(s._id, s.name)}
                     disabled={retrying === s._id}
                     className="px-2.5 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
                   >
                     {retrying === s._id ? 'Retrying…' : 'Retry'}
                   </button>
                 </div>
-                {/* Only when the row itself does not already say it: a retry
-                    that recorded its reason has reported itself. */}
-                {errors[s._id] && !(s.verificationLog ?? '').includes(errors[s._id]) ? (
-                  <p className="text-[10px] text-[var(--color-danger)] mt-1">{errors[s._id]}</p>
-                ) : null}
               </li>
             ))}
           </ul>
+          {/* Two backends can run the check, so naming one of them is advice
+              half the readers cannot act on. The rule that picks between them
+              is what tells a reader which line is theirs. */}
           <p className="text-[10px] text-[var(--color-muted)] mt-2">
-            Retry re-authors the skill and re-runs the sandbox check. Set DAYTONA_API_KEY on the
-            deployment first if the sandbox was skipped. Only one authoring run holds a skill at a
-            time, so a retry while one is still running is refused until that run finishes or its
-            claim lapses.
+            Retry re-authors the skill and re-runs the sandbox check. If the sandbox was skipped,
+            start one first: run pnpm sandbox:up for the bundled local sandbox, or set
+            DAYTONA_API_KEY on the deployment to use Daytona instead. Only one authoring run holds a
+            skill at a time, so a retry while one is still running is refused until that run
+            finishes or its claim lapses.
           </p>
         </div>
       ) : null}
