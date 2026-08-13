@@ -7,6 +7,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { ChatRoom } from './ChatRoom';
 import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
+import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 
 interface Props {
@@ -38,6 +39,9 @@ export function AgentDashboard({ agentId }: Props) {
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
   const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
+  // Ticks, so an authoring claim stops being described as live the moment it
+  // stops being honoured rather than on the next thing the boss happens to do.
+  const now = useNow();
 
   // This notice used to be a string set once and never cleared, so the first
   // failure outlived everything that came after it: a retry that registered the
@@ -51,11 +55,13 @@ export function AgentDashboard({ agentId }: Props) {
     lastAttempt ? { skillId: lastAttempt.skillId } : 'skip',
   );
   // A run holding the skill now, a registration and a rejection are all facts
-  // newer than the verdict, and each of them makes it a lie.
+  // newer than the verdict, and each of them makes it a lie. A claim whose run
+  // died is none of them: it is left on the row by a run that never came back,
+  // so it is exactly the case the verdict is describing and must not hide it.
   const authoringFailure =
     lastAttempt &&
     attemptedSkill &&
-    !attemptedSkill.authoringRunId &&
+    !holdsLiveAuthoringClaim(attemptedSkill, now) &&
     attemptedSkill.state !== 'registered' &&
     attemptedSkill.state !== 'rejected'
       ? `${lastAttempt.name}: ${lastAttempt.reason}`
@@ -494,6 +500,7 @@ function RegisteredSkillsPanel({
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
+  const now = useNow();
 
   async function onRetry(skillId: Id<'skills'>, name: string) {
     setRetrying(skillId);
@@ -556,11 +563,16 @@ function RegisteredSkillsPanel({
                   <div className="flex-1">
                     <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
                     <div className="text-[var(--color-muted)] text-xs">
-                      {/* A held row is being authored right now, so the log on it
-                          is the previous attempt's and saying so would be a lie. */}
-                      {s.authoringRunId
+                      {/* Three different things, and the row used to say the
+                          first for two of them: a run working on it now, whose
+                          log is the previous attempt's; a run that died holding
+                          it, which the lease has since released; and no run at
+                          all, where the log is this skill's own verdict. */}
+                      {holdsLiveAuthoringClaim(s, now)
                         ? 'authoring now · a run holds this skill'
-                        : (s.verificationLog ?? s.description)}
+                        : s.authoringRunId
+                          ? 'a run stopped without reporting · Retry takes the skill over'
+                          : (s.verificationLog ?? s.description)}
                     </div>
                   </div>
                   <button
