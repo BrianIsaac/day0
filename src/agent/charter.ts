@@ -171,6 +171,90 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
   };
 }
 
+/**
+ * How many consecutive words a clause has to share with something the agent said
+ * before that is read as a copy rather than a coincidence. Six words of ordinary
+ * English do not line up by chance; a manager and an agent agreeing on "the
+ * support handbook" (three) routinely do.
+ */
+const AGENT_QUOTE_RUN = 6;
+
+function words(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function runsOf(text: string): string[] {
+  const w = words(text);
+  const runs: string[] = [];
+  for (let i = 0; i + AGENT_QUOTE_RUN <= w.length; i++) {
+    runs.push(w.slice(i, i + AGENT_QUOTE_RUN).join(' '));
+  }
+  return runs;
+}
+
+/** Both halves of the conversation, told apart before either was read. */
+export interface TranscriptSides {
+  agent: string[];
+  manager: string[];
+}
+
+/**
+ * Drop every evidence clause that quotes the agent rather than the manager.
+ *
+ * Evidence is the charter's claim to be grounded in what the boss said, and each
+ * clause is stamped `from manager 1:1 day-1`. A clause carrying the agent's own
+ * words is therefore false on its face — it is the agent citing itself as the
+ * source for what the boss wants — and no model has to be consulted to notice,
+ * because both halves of the transcript are in hand.
+ *
+ * A run of words the agent said *and the manager also said* proves nothing: an
+ * agent that reads an answer back, which this one is told not to do but may,
+ * would otherwise have the boss's own sentence deleted from their charter as a
+ * forgery. Only what the agent said and the manager never did is disqualifying.
+ *
+ * Dropped rather than merely flagged: a false clause left in the body is still
+ * read by the boss, quoted into IDENTITY.md and carried into every downstream
+ * prompt. Dropped rather than fatal: the rest of the charter came from the
+ * manager's answers and refusing to produce one would leave a finished 1:1 with
+ * nothing to show for it — and the retry would spend two more model calls to
+ * arrive at the same place. So the clause goes, and an open question says it
+ * went, because a charter that quietly lost its evidence is the same silent
+ * failure in a smaller size.
+ */
+export function withoutAgentQuotedEvidence(
+  charter: Charter,
+  turns: TranscriptSides,
+): { charter: Charter; rejected: EvidenceItem[] } {
+  if (turns.agent.length === 0) return { charter, rejected: [] };
+  const managerRuns = new Set(turns.manager.flatMap(runsOf));
+  const agentRuns = new Set(turns.agent.flatMap(runsOf).filter((r) => !managerRuns.has(r)));
+  if (agentRuns.size === 0) return { charter, rejected: [] };
+
+  const rejected = charter.evidence.filter((e) => runsOf(e.text).some((r) => agentRuns.has(r)));
+  if (rejected.length === 0) return { charter, rejected };
+
+  const kept = charter.evidence.filter((e) => !rejected.includes(e));
+  return {
+    charter: {
+      ...charter,
+      evidence: kept,
+      openQuestions: [
+        ...charter.openQuestions,
+        `Evidence check: ${rejected.length} ${
+          rejected.length === 1 ? 'clause' : 'clauses'
+        } in this draft quoted my own words back as if they were yours, so I dropped ${
+          rejected.length === 1 ? 'it' : 'them'
+        }. Which of this is actually what you told me?`,
+      ],
+    },
+    rejected,
+  };
+}
+
 export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Charter> {
   const createdAt = (args.createdAt ?? new Date()).toISOString();
   const raw = await agentJson<RawCharterPayload>({
