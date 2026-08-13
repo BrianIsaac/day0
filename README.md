@@ -497,6 +497,10 @@ reports the two separately - along with the backend, auth and model setups - pri
 
 It resolves values the way the running app does, which matters more than it sounds. Wherever a variable is present in the process environment it wins over `.env.local`, *including when it is present and empty* - because that is what Next does, and routes read `process.env` directly and treat an empty string as missing. A checker that only applied non-empty overrides would call a secret configured while the webhook answered 503 to every delivery.
 
+## Credits
+
+The pixel-art agent avatars are not original to this project. They are from the public [**Singapore Codex Pets**](https://singapore-pet-share.vercel.app/) gallery - a community-run set of Codex-Pet characters, one per Singapore AI builder, each keyed to that person's X handle. The gallery is built on the MIT-licensed [`portons/codex-pet-share`](https://github.com/portons/codex-pet-share) template. The characters are stylised likenesses of real people; they are used here as demo avatars, and anyone reusing them beyond linking to the source should credit it and, ideally, ask the people depicted.
+
 ## Licence
 
-Copyright 2026 Brian Isaac. Licensed under the Apache Licence, Version 2.0 - see [LICENSE](LICENSE). Apache-2.0 rather than MIT for its express patent grant, which is what makes the code safe to reuse inside an organisation.
+Copyright 2026 Brian Isaac. Licensed under the Apache Licence, Version 2.0 - see [LICENSE](LICENSE). Apache-2.0 rather than MIT for its express patent grant, which is what makes the code safe to reuse inside an organisation. This licence covers the code; it does not cover the third-party avatar images credited above.
