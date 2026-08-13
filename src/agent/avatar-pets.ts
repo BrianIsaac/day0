@@ -1,3 +1,9 @@
+// The pixel-art builder avatars are not ours. They come from the public
+// "Singapore Codex Pets" gallery at https://singapore-pet-share.vercel.app/ -
+// a community-run set of Codex-Pet characters, one per Singapore AI builder,
+// keyed to each person's X handle (the same `tw-<handle>` keys used here). See
+// the Credits section of the README.
+
 export interface AgentAvatarPet {
   id: string;
   name: string;
