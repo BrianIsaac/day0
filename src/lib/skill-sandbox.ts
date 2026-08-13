@@ -71,10 +71,15 @@ export interface SmokeTestOutcome {
  * Exit 0 with nothing on stdout used to count, and it was a real defect: a
  * smoke test that ran no assertions and printed nothing registered a skill.
  * Both backends come through here so the two can never drift apart on it.
+ *
+ * A run that hit the wall-clock cap is not a verification whatever else it
+ * reports. The local sandbox kills such a run, so its exit code carries the
+ * fact too; a backend that stops a run more gently need not, and the rule
+ * should not depend on which of the two is answering.
  */
 export function verdictFor(backend: SkillSandboxBackend, run: SmokeTestOutcome): SkillSandboxRun {
   const printedSomething = run.stdout.trim().length > 0;
-  const ok = run.exitCode === 0 && printedSomething;
+  const ok = run.exitCode === 0 && printedSomething && !run.timedOut;
   return {
     backend,
     sandboxId: run.sandboxId,

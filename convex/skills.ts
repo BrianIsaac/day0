@@ -3,6 +3,7 @@ import { mutation, query, internalMutation, type MutationCtx } from './_generate
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { applyVerdict } from './work';
+import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -39,15 +40,6 @@ import { applyVerdict } from './work';
  *     takeover, or to the boss rejecting the skill underneath it — cannot write
  *     a result the current state has moved past.
  */
-
-/**
- * How long a claim is honoured before another run may take the skill over. An
- * action that dies mid-run cannot release its own claim, and a skill no run can
- * ever take again would be exactly the dead end this file exists to avoid. Long
- * enough that a live run holding a model call and a sandbox is never taken over
- * while it is still working.
- */
-const AUTHORING_LEASE_MS = 10 * 60 * 1000;
 
 /**
  * Where an authoring run may start. `approved` is the boss's first go-ahead;

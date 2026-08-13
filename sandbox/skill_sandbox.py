@@ -23,12 +23,18 @@ than the code:
     runs as `nobody`.
   - Memory, process count, CPU time, file size and wall-clock are all capped.
     The wall-clock cap is 60 seconds, which is what the Daytona path allows.
+  - A run cannot outlive itself. Killing its process group misses anything that
+    called `setsid()` to leave that group, so this process also holds the child
+    subreaper bit: an escapee whose parent dies is re-parented here, and every
+    run ends by sweeping what is parented here. See `become_subreaper`.
 
 What it is not is a defence against someone who is trying. A container escape
-is a container escape, and the smoke test shares a uid with this supervisor, so
-code that wanted to could stop it serving (Docker restarts it). It is an
-isolation boundary for verification - the same claim the project makes about
-Daytona - and not a sandbox to run hostile code in.
+is a container escape, and the smoke test shares a uid with this supervisor. It
+can no longer signal this process to death - see `refuse_interrupts_from_inside`
+- but code that wanted to could still make the container fall over some other
+way, which costs a restart. It is an isolation boundary for verification - the
+same claim the project makes about Daytona - and not a sandbox to run hostile
+code in.
 
 The protocol is two endpoints of JSON over HTTP/1.0:
 
@@ -46,11 +52,13 @@ both backends.
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import pwd
 import resource
 import shutil
+import signal
 import socket
 import socketserver
 import subprocess
@@ -76,9 +84,23 @@ MAX_OUTPUT_BYTES = 64 * 1024
 #: buffered, so a wrong caller cannot make this process the memory problem.
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
-CHILD_ADDRESS_SPACE_BYTES = 512 * 1024 * 1024
+#: Deliberately below the container's own 512 MiB memory cap, so that a run
+#: which asks for too much hits its own limit and gets a MemoryError to report,
+#: rather than pushing the cgroup over and leaving the kernel to choose a
+#: victim - which can be the server rather than the run that caused it.
+CHILD_ADDRESS_SPACE_BYTES = 384 * 1024 * 1024
 CHILD_MAX_FILE_BYTES = 8 * 1024 * 1024
 CHILD_MAX_PROCESSES = 32
+
+#: `prctl(2)` option number. Not exposed by the `os` module in 3.12.
+PR_SET_CHILD_SUBREAPER = 36
+
+#: The post-run sweep keeps looking until this many consecutive passes find
+#: nothing, because a descendant is only re-parented here once its own parent
+#: has finished dying, and that lags the kill by a moment.
+SWEEP_QUIET_PASSES = 2
+SWEEP_INTERVAL_SECONDS = 0.025
+SWEEP_DEADLINE_SECONDS = 2.0
 
 
 def log(message: str) -> None:
@@ -105,6 +127,119 @@ def _child_limits() -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (CHILD_MAX_FILE_BYTES, CHILD_MAX_FILE_BYTES))
     resource.setrlimit(resource.RLIMIT_NPROC, (CHILD_MAX_PROCESSES, CHILD_MAX_PROCESSES))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def become_subreaper() -> bool:
+    """Make this process the reaper for orphaned descendants of a smoke test.
+
+    Killing the run's process group is not enough on its own: a smoke test that
+    calls `setsid()`, or forks something that does, leaves that group, so the
+    kill misses it and it outlives its own run holding PIDs and memory the next
+    run needs. A PID namespace per run would settle the question outright, but
+    creating one needs `CAP_SYS_ADMIN`, which this container drops on purpose.
+    The subreaper bit needs no capability at all: an escapee whose parent dies
+    is re-parented here rather than to init, which puts it back within reach of
+    `kill_strays`.
+
+    Deliberately not inherited across `fork()`, so a smoke test cannot claim the
+    bit itself and keep what it spawned out of reach.
+
+    Returns:
+        Whether the kernel accepted the request.
+    """
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), "prctl(PR_SET_CHILD_SUBREAPER) refused")
+    except (AttributeError, OSError) as err:
+        log(f"warning: cannot become child subreaper ({err}); a smoke test that daemonises may outlive its run")
+        return False
+    return True
+
+
+def refuse_interrupts_from_inside() -> None:
+    """Close the one signal a smoke test could stop this service with.
+
+    As PID 1 of the container's namespace, the kernel already discards any
+    signal this process has installed no handler for, which is why a smoke test
+    sending SIGKILL or SIGTERM to pid 1 achieves nothing. Python's own default
+    SIGINT handler is the exception that removes that protection, and a run that
+    used it stopped the service mid-verification. Nothing here wants Ctrl-C
+    while it is pid 1: `docker stop` reaches it from outside the namespace,
+    where the protection does not apply.
+    """
+    if os.getpid() != 1:
+        return
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
+def _reap_exited() -> None:
+    """Collect every child that has already exited, so its PID slot comes back."""
+    while True:
+        try:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            return
+
+
+def _live_children() -> list[int]:
+    """List processes this one is the parent of, ignoring those already dead.
+
+    Returns:
+        PIDs, read from `/proc`. Zombies are left to `_reap_exited`.
+    """
+    me = str(os.getpid()).encode()
+    found: list[int] = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "rb") as handle:
+                fields = handle.read().rpartition(b") ")[2].split()
+        except OSError:
+            continue
+        if len(fields) > 1 and fields[1] == me and fields[0] != b"Z":
+            found.append(int(entry))
+    return found
+
+
+def kill_strays() -> int:
+    """Kill everything a finished run left behind, however it got away.
+
+    Runs after the run's own child has been waited for, so anything still
+    parented here is a descendant that outlived it - either re-parented by
+    `become_subreaper` after escaping into its own session, or orphaned inside
+    the run's process group. Killing one orphans its own children in turn, which
+    re-parents them here too, so this repeats until a pass finds nothing.
+
+    Returns:
+        How many processes were killed.
+    """
+    deadline = time.monotonic() + SWEEP_DEADLINE_SECONDS
+    killed = 0
+    quiet = 0
+    while time.monotonic() < deadline:
+        strays = _live_children()
+        if strays:
+            quiet = 0
+            for pid in strays:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    continue
+                killed += 1
+        else:
+            quiet += 1
+            if quiet >= SWEEP_QUIET_PASSES:
+                break
+        _reap_exited()
+        time.sleep(SWEEP_INTERVAL_SECONDS)
+    _reap_exited()
+    if _live_children():
+        log("warning: gave up sweeping leftover processes; the container may need a restart")
+    return killed
 
 
 def _read_capped(path: str) -> tuple[str, bool]:
@@ -161,8 +296,8 @@ def run_smoke_test(skill_body: str, smoke_test: str) -> dict[str, Any]:
             "PYTHONUNBUFFERED": "1",
         }
         with open(stdout_path, "wb") as out, open(stderr_path, "wb") as err:
-            # Its own session, so the timeout below kills anything the smoke
-            # test spawned rather than orphaning it into the next run.
+            # Its own session, so the timeout below can kill the whole run with
+            # one signal without reaching the server supervising it.
             child = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 [sys.executable, "smoke.py"],
                 cwd=run_dir,
@@ -174,12 +309,19 @@ def run_smoke_test(skill_body: str, smoke_test: str) -> dict[str, Any]:
                 start_new_session=True,
             )
             try:
-                exit_code = child.wait(timeout=TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                os.killpg(child.pid, 9)
-                exit_code = child.wait()
+                try:
+                    exit_code = child.wait(timeout=TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    os.killpg(child.pid, signal.SIGKILL)
+                    exit_code = child.wait()
+            finally:
+                # Whether it timed out, failed or passed: nothing it started
+                # gets to still be running when the next run starts.
+                strays = kill_strays()
 
+        if strays:
+            log(f"run {run_id} left {strays} process(es) behind; killed them")
         stdout, out_truncated = _read_capped(stdout_path)
         stderr, err_truncated = _read_capped(stderr_path)
         return {
@@ -367,9 +509,12 @@ def main() -> NoReturn:
     server = bind_socket()
     drop_privileges()
     check_workspace()
+    subreaper = become_subreaper()
+    refuse_interrupts_from_inside()
     log(
         f"serving on {SOCKET_PATH} as {pwd.getpwuid(os.geteuid()).pw_name}, "
-        f"python {sys.version.split()[0]}, {TIMEOUT_SECONDS:g}s per smoke test"
+        f"python {sys.version.split()[0]}, {TIMEOUT_SECONDS:g}s per smoke test, "
+        f"subreaper {'on' if subreaper else 'off'}"
     )
     try:
         server.serve_forever()
