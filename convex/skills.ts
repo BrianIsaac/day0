@@ -25,8 +25,8 @@ import { applyVerdict } from './work';
  *
  * `authoring`, `verified` and `failed` are all resumable: none has ever been
  * registered, so a new authoring run may claim them (see `claimAuthoringRun`).
- * That is the way back for a skill authored before Daytona was configured, or
- * one whose sandbox check failed.
+ * That is the way back for a skill authored before either sandbox backend was
+ * available, or one whose sandbox check failed.
  *
  * Authoring is an exclusive, fenced run, because the transitions above are made
  * by an action that spends minutes in a model and a sandbox between reading the
@@ -526,8 +526,8 @@ export const failAuthoringRun = internalMutation({
  * `authoring` — listed, uncallable, retryable — because registering is what
  * claims the body was checked, and nothing checked it.
  *
- * The claim is released: this run is over, and the retry that follows a
- * DAYTONA_API_KEY appearing must be able to start.
+ * The claim is released: this run is over, and the retry that follows a sandbox
+ * appearing - a DAYTONA_API_KEY, or `pnpm sandbox:up` - must be able to start.
  */
 export const parkUnverified = internalMutation({
   args: {

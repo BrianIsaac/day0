@@ -406,7 +406,7 @@ function ProposedSkillsPanel({
                 }}
                 className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium"
               >
-                Approve · author in Daytona
+                Approve · author and verify
               </button>
               <button
                 onClick={() => reject({ skillId: s._id })}
@@ -527,11 +527,15 @@ function RegisteredSkillsPanel({
               </li>
             ))}
           </ul>
+          {/* Two backends can run the check, so naming one of them is advice
+              half the readers cannot act on. The rule that picks between them
+              is what tells a reader which line is theirs. */}
           <p className="text-[10px] text-[var(--color-muted)] mt-2">
-            Retry re-authors the skill and re-runs the sandbox check. Set DAYTONA_API_KEY on the
-            deployment first if the sandbox was skipped. Only one authoring run holds a skill at a
-            time, so a retry while one is still running is refused until that run finishes or its
-            claim lapses.
+            Retry re-authors the skill and re-runs the sandbox check. If the sandbox was skipped,
+            start one first: run pnpm sandbox:up for the bundled local sandbox, or set
+            DAYTONA_API_KEY on the deployment to use Daytona instead. Only one authoring run holds a
+            skill at a time, so a retry while one is still running is refused until that run
+            finishes or its claim lapses.
           </p>
         </div>
       ) : null}
