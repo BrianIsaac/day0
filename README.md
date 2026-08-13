@@ -28,7 +28,7 @@ A work item that matches no registered skill returns `needs-skill` rather than b
 
 ## What this is, and what it is not
 
-Day0 was built in a day, for the AI Engineer Hackathon in Singapore on 9 May 2026, and has been hardened since. It is a working demonstration of the whole loop rather than a product: it has no users, no benchmarks, and it makes no measured claim about how well the agent does the work it takes on. What it shows is that the loop closes.
+Day0 is a working demonstration of the whole loop rather than a product: it has no users, no benchmarks, and it makes no measured claim about how well the agent does the work it takes on. What it shows is that the loop closes.
 
 The agent works inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue, a social feed - seeded per agent. There are no connectors to real corporate systems, and that is deliberate: the mock environment is what makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust. Everything around it is real - the model calls, the sandbox, the state machine, the approval gates.
 
