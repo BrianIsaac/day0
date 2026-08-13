@@ -29,10 +29,12 @@ than the code:
     run ends by sweeping what is parented here. See `become_subreaper`.
 
 What it is not is a defence against someone who is trying. A container escape
-is a container escape, and the smoke test shares a uid with this supervisor, so
-code that wanted to could stop it serving (Docker restarts it). It is an
-isolation boundary for verification - the same claim the project makes about
-Daytona - and not a sandbox to run hostile code in.
+is a container escape, and the smoke test shares a uid with this supervisor. It
+can no longer signal this process to death - see `refuse_interrupts_from_inside`
+- but code that wanted to could still make the container fall over some other
+way, which costs a restart. It is an isolation boundary for verification - the
+same claim the project makes about Daytona - and not a sandbox to run hostile
+code in.
 
 The protocol is two endpoints of JSON over HTTP/1.0:
 
@@ -153,6 +155,22 @@ def become_subreaper() -> bool:
         log(f"warning: cannot become child subreaper ({err}); a smoke test that daemonises may outlive its run")
         return False
     return True
+
+
+def refuse_interrupts_from_inside() -> None:
+    """Close the one signal a smoke test could stop this service with.
+
+    As PID 1 of the container's namespace, the kernel already discards any
+    signal this process has installed no handler for, which is why a smoke test
+    sending SIGKILL or SIGTERM to pid 1 achieves nothing. Python's own default
+    SIGINT handler is the exception that removes that protection, and a run that
+    used it stopped the service mid-verification. Nothing here wants Ctrl-C
+    while it is pid 1: `docker stop` reaches it from outside the namespace,
+    where the protection does not apply.
+    """
+    if os.getpid() != 1:
+        return
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
 def _reap_exited() -> None:
@@ -492,6 +510,7 @@ def main() -> NoReturn:
     drop_privileges()
     check_workspace()
     subreaper = become_subreaper()
+    refuse_interrupts_from_inside()
     log(
         f"serving on {SOCKET_PATH} as {pwd.getpwuid(os.geteuid()).pw_name}, "
         f"python {sys.version.split()[0]}, {TIMEOUT_SECONDS:g}s per smoke test, "
