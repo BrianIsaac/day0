@@ -20,6 +20,8 @@
     "model:up": "tsx scripts/model-up.ts",
     "model:down": "docker compose --env-file .env.local --profile model rm -sf model",
     "model:pull": "docker compose --env-file .env.local --profile model exec model ollama pull",
+    "sandbox:up": "docker compose --env-file .env.local --profile sandbox up -d sandbox backend",
+    "sandbox:down": "docker compose --env-file .env.local --profile sandbox rm -sf sandbox",
     "check:setup": "tsx scripts/check-setup.ts",
     "build": "next build",
     "start": "next start -p 3000",
