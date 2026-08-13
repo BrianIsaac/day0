@@ -6,13 +6,14 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import {
   synthesiseCharter,
+  withoutAgentQuotedEvidence,
   identityFromCharter,
   toolsFromCharter,
   extractRole,
   DAY_ONE_TOPICS,
 } from '../src/agent/charter';
 import type { DayOneTopic } from '../src/agent/charter';
-import { defaultSoul, day1Script } from '../src/agent/day-one-prompts';
+import { defaultSoul, day1Script, DAY_ONE_TOPIC_SPECS } from '../src/agent/day-one-prompts';
 import { mergeGoodHabits, researchAndDistil } from '../src/agent/good-habits';
 import { generateWorkItemsFromCharter } from '../src/agent/work-generator';
 import type { Charter } from '../src/agent/charter';
@@ -27,9 +28,9 @@ import type { WorkspaceFile } from './charters';
  *
  *   - `synthesiseFromAnswers` — chat-friendly entry: given the seven topic
  *     answers, produces Charter v0.0, persists, seeds the 8-file workspace.
- *   - `synthesiseFromTranscript` — chat-mode entry: given a transcript,
- *     extracts the seven answers via GPT-5.5, then hands off to the same
- *     pipeline. Ownership-checked.
+ *   - `synthesiseFromTranscript` — chat-mode entry: given a role-labelled
+ *     transcript, attributes the seven answers to the manager's own turns,
+ *     then hands off to the same pipeline. Ownership-checked.
  *   - `synthesiseFromTranscriptForWebhook` — webhook entry: same logic,
  *     but the caller carries no Clerk identity. Authenticated by the
  *     per-session webhook token; trust model documented at the action.
@@ -42,43 +43,175 @@ import type { WorkspaceFile } from './charters';
  * All wrapped in Convex Node actions because they call external APIs.
  */
 
-const TRANSCRIPT_EXTRACTION_SYSTEM = [
-  'You are summarising a Day-1 manager 1:1 conversation between a new autonomous agent named Day0 and the manager who hired it.',
-  'The agent asked seven topic questions; the manager answered conversationally. Extract a clean answer per topic.',
+/**
+ * Who said a line, as the surface that wrote the transcript labelled it. Every
+ * producer labels every line — `ChatRoom` writes USER/ASSISTANT, the voice room
+ * and the ElevenLabs post-call webhook write USER/AGENT — so which half of the
+ * conversation a sentence came from is a fact about the input. Asking a model to
+ * work it out is what let an 8B answer its own questions and sign the manager's
+ * name to them.
+ */
+const SPEAKER_LABELS: Record<string, 'manager' | 'agent'> = {
+  USER: 'manager',
+  MANAGER: 'manager',
+  BOSS: 'manager',
+  ASSISTANT: 'agent',
+  AGENT: 'agent',
+  DAY0: 'agent',
+};
+
+const LABELLED_LINE = /^\s*([A-Za-z0-9_]+)\s*:\s*(.*)$/;
+
+interface TranscriptTurn {
+  role: 'manager' | 'agent';
+  text: string;
+}
+
+/** One question the agent asked and everything the manager said in reply to it. */
+interface Exchange {
+  question: string;
+  replies: string[];
+}
+
+function parseTranscript(transcript: string): TranscriptTurn[] {
+  const turns: TranscriptTurn[] = [];
+  for (const line of transcript.split('\n')) {
+    const match = LABELLED_LINE.exec(line);
+    const speaker = match ? SPEAKER_LABELS[match[1].toUpperCase()] : undefined;
+    const last = turns[turns.length - 1];
+    if (speaker && match) {
+      if (last && last.role === speaker) last.text = `${last.text}\n${match[2]}`.trim();
+      else turns.push({ role: speaker, text: match[2].trim() });
+    } else if (last && line.trim()) {
+      // A wrapped or blank-prefixed line continues the turn above it. A line
+      // before any label has no speaker to belong to and is dropped rather than
+      // guessed at.
+      last.text = `${last.text}\n${line.trim()}`.trim();
+    }
+  }
+  return turns.filter((t) => t.text.length > 0);
+}
+
+function buildExchanges(turns: TranscriptTurn[]): Exchange[] {
+  const exchanges: Exchange[] = [];
+  for (const turn of turns) {
+    if (turn.role === 'agent') {
+      exchanges.push({ question: turn.text, replies: [] });
+      continue;
+    }
+    if (exchanges.length === 0) exchanges.push({ question: '', replies: [] });
+    exchanges[exchanges.length - 1].replies.push(turn.text);
+  }
+  return exchanges;
+}
+
+const TOPIC_OR_NONE = [...DAY_ONE_TOPICS, 'none'] as const;
+
+const QUESTION_LABELLING_SYSTEM = [
+  'You are labelling the questions an agent asked during a Day-1 manager 1:1.',
+  'Each numbered item is one thing the agent said. Say which of the seven topics it was asking about.',
   '',
-  'Discipline:',
-  '  - If the manager skipped a topic, return an empty string for that key.',
-  '  - Preserve the manager\'s wording where possible — do not editorialise.',
-  '  - 1-3 short sentences per answer. Do not invent collaborators or tools.',
+  'The seven topics, and how each is normally asked:',
+  ...DAY_ONE_TOPIC_SPECS.map((s) => `  ${s.topic} — ${s.question.split('\n')[1] ?? s.question}`),
+  '',
+  'Rules:',
+  '  - One label per numbered item, in the same order, using the item numbers given.',
+  '  - Use "none" for a welcome, an acknowledgement or a closing line that asks nothing.',
+  '  - Label what the agent asked, not what you would have asked.',
 ].join('\n');
 
-const transcriptAgent = makeAgent('day0-transcript-extractor', TRANSCRIPT_EXTRACTION_SYSTEM);
+const questionLabellerAgent = makeAgent('day0-question-labeller', QUESTION_LABELLING_SYSTEM);
 
-const transcriptSchema = z.object({
-  'why-this-hire': z.string(),
-  'role-and-goals': z.string(),
-  collaborators: z.string(),
-  reading: z.string(),
-  tools: z.string(),
-  immediate: z.string(),
-  'open-questions': z.string(),
+const questionLabelSchema = z.object({
+  labels: z.array(
+    z.object({
+      question: z.number(),
+      topic: z.enum(TOPIC_OR_NONE),
+    }),
+  ),
 });
 
-type TranscriptAnswers = z.infer<typeof transcriptSchema>;
+type QuestionLabels = z.infer<typeof questionLabelSchema>;
 
-async function extractAnswersFromTranscript(
-  transcript: string,
-): Promise<Record<DayOneTopic, string>> {
-  const raw = await agentJson<TranscriptAnswers>({
-    agent: transcriptAgent,
-    user: `--- Transcript ---\n${transcript}\n\nExtract the seven answers.`,
-    schema: transcriptSchema,
+/**
+ * Which topic each of the agent's questions was asking about. The model sees the
+ * agent's questions and nothing else — not one word the manager said — and it
+ * answers in labels rather than in prose. Both halves of that are deliberate:
+ * text it never receives cannot be reworded, and a reply that can only be one of
+ * eight labels cannot become an answer.
+ */
+async function labelQuestions(exchanges: Exchange[]): Promise<Map<number, DayOneTopic>> {
+  const asked = exchanges
+    .map((ex, i) => ({ i, question: ex.question.trim() }))
+    .filter((q) => q.question.length > 0);
+  const labels = new Map<number, DayOneTopic>();
+  if (asked.length === 0) return labels;
+
+  const raw = await agentJson<QuestionLabels>({
+    agent: questionLabellerAgent,
+    user: asked.map((q) => `${q.i + 1}. ${q.question}`).join('\n\n'),
+    schema: questionLabelSchema,
   });
-  const out: Record<string, string> = {};
-  for (const t of DAY_ONE_TOPICS) {
-    out[t] = raw[t] ?? '';
+  for (const label of raw.labels ?? []) {
+    const index = label.question - 1;
+    if (label.topic === 'none') continue;
+    if (!exchanges[index]) continue;
+    labels.set(index, label.topic);
   }
-  return out as Record<DayOneTopic, string>;
+  return labels;
+}
+
+/** What the manager said, and what the agent said, told apart before any of it is read. */
+interface AttributedTranscript {
+  answers: Record<DayOneTopic, string>;
+  agentTurns: string[];
+}
+
+/**
+ * Turn a role-labelled transcript into the seven topic answers.
+ *
+ * The invariant this exists to hold: an answer is only ever the manager's own
+ * turns, copied. The model chooses which topic a question was about; the code
+ * copies the replies to that question across. Nothing the agent said can reach
+ * an answer, however the labelling comes back — a wrong label misfiles the
+ * manager's words, it does not replace them with the agent's.
+ *
+ * An unlabelled question is treated as a follow-up and its replies stay with the
+ * topic in progress, so a partial labelling misfiles a reply rather than losing
+ * it. A transcript nobody labelled at all is refused: it cannot be attributed,
+ * and guessing at attribution is the bug this replaced.
+ */
+async function attributeTranscript(transcript: string): Promise<AttributedTranscript> {
+  const turns = parseTranscript(transcript);
+  if (turns.length === 0) {
+    throw new Error(
+      'transcript attribution: no speaker-labelled lines. Every line must begin with a ' +
+        `speaker label (${Object.keys(SPEAKER_LABELS).join(', ')}), because who said a ` +
+        'sentence decides whether it may become an answer.',
+    );
+  }
+
+  const exchanges = buildExchanges(turns);
+  const labels = await labelQuestions(exchanges);
+
+  const collected = new Map<DayOneTopic, string[]>();
+  let current: DayOneTopic = DAY_ONE_TOPICS[0];
+  exchanges.forEach((exchange, index) => {
+    current = labels.get(index) ?? current;
+    if (exchange.replies.length === 0) return;
+    const bucket = collected.get(current) ?? [];
+    bucket.push(...exchange.replies);
+    collected.set(current, bucket);
+  });
+
+  const answers: Record<string, string> = {};
+  for (const topic of DAY_ONE_TOPICS) {
+    answers[topic] = (collected.get(topic) ?? []).join('\n\n');
+  }
+  return {
+    answers: answers as Record<DayOneTopic, string>,
+    agentTurns: turns.filter((t) => t.role === 'agent').map((t) => t.text),
+  };
 }
 
 const CHARTER_VERSION = '0.0';
@@ -87,18 +220,30 @@ const CHARTER_VERSION = '0.0';
  * Everything the commit needs, computed before it: two model calls and seven
  * rendered files, none of them touching the database. Keeping the model work
  * outside the transaction is what lets the transaction be the only writer.
+ *
+ * The evidence guard runs here rather than at the call site, so the charter and
+ * the workspace files rendered from it are always the reviewed one.
  */
 async function draftCharter(args: {
   bossLabel: string;
   answers: Record<DayOneTopic, string>;
-}): Promise<{ charter: Charter; workspaceFiles: WorkspaceFile[] }> {
-  const charter = await synthesiseCharter({
+  agentTurns: string[];
+}): Promise<{ charter: Charter; workspaceFiles: WorkspaceFile[]; rejectedEvidence: string[] }> {
+  const drafted = await synthesiseCharter({
     answers: args.answers,
     version: CHARTER_VERSION,
     bossLabel: args.bossLabel,
   });
+  // The manager's side is the answers themselves: they are that side of the
+  // transcript, copied, which is what the fix above guarantees.
+  const reviewed = withoutAgentQuotedEvidence(drafted, {
+    agent: args.agentTurns,
+    manager: Object.values(args.answers),
+  });
+  const charter = reviewed.charter;
   return {
     charter,
+    rejectedEvidence: reviewed.rejected.map((e) => e.text),
     workspaceFiles: [
       { fileName: 'SOUL.md', content: defaultSoul() },
       { fileName: 'IDENTITY.md', content: identityFromCharter(charter) },
@@ -129,17 +274,46 @@ export type SynthesisOutcome =
   | { outcome: 'duplicate'; charterId: string | null; version: string | null }
   | { outcome: 'in-progress' };
 
+/**
+ * What the guard found, in the feed. A clause that quoted the agent is dropped
+ * from the charter and an open question says so, but neither says it happened
+ * *again* — and a model doing this on every run is a different fault from one
+ * doing it once, with a different fix.
+ */
+async function reportRejectedEvidence(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  rejected: string[],
+): Promise<void> {
+  if (rejected.length === 0) return;
+  await ctx.runMutation(internal.events.log, {
+    agentId,
+    type: 'charter.evidence-rejected',
+    payload: { count: rejected.length, texts: rejected.slice(0, 3) },
+  });
+}
+
 async function doSynthesise(
   ctx: ActionCtx,
-  args: { agentId: Id<'agents'>; bossLabel: string; answers: Record<DayOneTopic, string> },
+  args: {
+    agentId: Id<'agents'>;
+    bossLabel: string;
+    answers: Record<DayOneTopic, string>;
+    agentTurns: string[];
+  },
 ): Promise<{ charterId: string; version: string }> {
-  const drafted = await draftCharter({ bossLabel: args.bossLabel, answers: args.answers });
+  const drafted = await draftCharter({
+    bossLabel: args.bossLabel,
+    answers: args.answers,
+    agentTurns: args.agentTurns,
+  });
   const charterId: Id<'charters'> = await ctx.runMutation(internal.charters.commit, {
     agentId: args.agentId,
     version: CHARTER_VERSION,
     body: drafted.charter,
     workspaceFiles: drafted.workspaceFiles,
   });
+  await reportRejectedEvidence(ctx, args.agentId, drafted.rejectedEvidence);
   return { charterId, version: CHARTER_VERSION };
 }
 
@@ -160,19 +334,24 @@ async function finaliseClaimedSession(
   },
 ): Promise<SynthesisOutcome> {
   try {
-    const answers = await extractAnswersFromTranscript(args.transcript);
-    const drafted = await draftCharter({ bossLabel: args.bossLabel, answers });
+    const attributed = await attributeTranscript(args.transcript);
+    const drafted = await draftCharter({
+      bossLabel: args.bossLabel,
+      answers: attributed.answers,
+      agentTurns: attributed.agentTurns,
+    });
     const result = await ctx.runMutation(internal.voice.finaliseSession, {
       sessionId: args.sessionId,
       expectedAgentId: args.agentId,
       claimToken: args.claimToken,
       transcriptText: args.transcript,
-      answers,
+      answers: attributed.answers,
       charterVersion: CHARTER_VERSION,
       charterBody: drafted.charter,
       workspaceFiles: drafted.workspaceFiles,
     });
     if (result.outcome === 'finalised') {
+      await reportRejectedEvidence(ctx, args.agentId, drafted.rejectedEvidence);
       return { outcome: 'synthesised', charterId: result.charterId, version: result.version };
     }
     if (result.outcome === 'already-done') {
@@ -214,10 +393,13 @@ export const synthesiseFromAnswers = action({
   },
   handler: async (ctx, args): Promise<{ charterId: string; version: string }> => {
     await assertOwnsAgentAction(ctx, args.agentId);
+    // Answers handed straight in have no transcript behind them, so there are no
+    // agent turns for the evidence guard to check against.
     return await doSynthesise(ctx, {
       agentId: args.agentId,
       bossLabel: args.bossLabel,
       answers: args.answers as Record<DayOneTopic, string>,
+      agentTurns: [],
     });
   },
 });
@@ -242,11 +424,12 @@ export const synthesiseFromTranscript = action({
     await assertOwnsAgentAction(ctx, args.agentId);
 
     if (!args.voiceSessionId) {
-      const answers = await extractAnswersFromTranscript(args.transcript);
+      const attributed = await attributeTranscript(args.transcript);
       const result = await doSynthesise(ctx, {
         agentId: args.agentId,
         bossLabel: args.bossLabel,
-        answers,
+        answers: attributed.answers,
+        agentTurns: attributed.agentTurns,
       });
       return { outcome: 'synthesised', ...result };
     }
