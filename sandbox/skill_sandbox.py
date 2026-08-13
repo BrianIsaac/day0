@@ -82,7 +82,11 @@ MAX_OUTPUT_BYTES = 64 * 1024
 #: buffered, so a wrong caller cannot make this process the memory problem.
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
-CHILD_ADDRESS_SPACE_BYTES = 512 * 1024 * 1024
+#: Deliberately below the container's own 512 MiB memory cap, so that a run
+#: which asks for too much hits its own limit and gets a MemoryError to report,
+#: rather than pushing the cgroup over and leaving the kernel to choose a
+#: victim - which can be the server rather than the run that caused it.
+CHILD_ADDRESS_SPACE_BYTES = 384 * 1024 * 1024
 CHILD_MAX_FILE_BYTES = 8 * 1024 * 1024
 CHILD_MAX_PROCESSES = 32
 
