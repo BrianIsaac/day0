@@ -345,6 +345,38 @@ export const reject = mutation({
 });
 
 /**
+ * One-off: move what `daytonaSandboxId` holds onto `sandboxId`.
+ *
+ * The field was named after the only sandbox there was. The local one writes
+ * `local:<run id>` into it, so the name is wrong on the row as much as it was
+ * on the screen. Renaming the declaration is not enough by itself: Convex
+ * checks every stored document against the schema when it is pushed, so a
+ * deployment holding rows under the old name refuses the new schema before any
+ * migration could run. Hence both names are declared for now, this moves the
+ * rows, and the old declaration comes out afterwards.
+ *
+ *   npx convex run skills:migrateSandboxIdField
+ *
+ * Safe to run twice: a row with nothing under the old name is left alone.
+ */
+export const migrateSandboxIdField = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ moved: number }> => {
+    const rows = await ctx.db.query('skills').collect();
+    let moved = 0;
+    for (const row of rows) {
+      if (row.daytonaSandboxId === undefined) continue;
+      await ctx.db.patch(row._id, {
+        sandboxId: row.sandboxId ?? row.daytonaSandboxId,
+        daytonaSandboxId: undefined,
+      });
+      moved += 1;
+    }
+    return { moved };
+  },
+});
+
+/**
  * Take exclusive ownership of a skill for one authoring run, or report that
  * somebody else has it.
  *
@@ -423,7 +455,7 @@ export const recordAuthoringProgress = internalMutation({
   handler: async (ctx, args): Promise<{ held: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'authoring-progress');
     if (!row) return { held: false };
-    await ctx.db.patch(args.skillId, { daytonaSandboxId: args.sandboxId, body: args.body });
+    await ctx.db.patch(args.skillId, { sandboxId: args.sandboxId, body: args.body });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'skill.authoring',
@@ -544,7 +576,7 @@ export const parkUnverified = internalMutation({
     await ctx.db.patch(args.skillId, {
       state: 'authoring',
       body: args.body,
-      daytonaSandboxId: args.sandboxId,
+      sandboxId: args.sandboxId,
       verificationLog: args.verificationLog,
       ...RELEASED,
     });

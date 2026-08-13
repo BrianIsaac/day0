@@ -170,6 +170,16 @@ export default defineSchema({
      * See `convex/skills.ts`. */
     authoringRunId: v.optional(v.id('events')),
     authoringClaimedAt: v.optional(v.number()),
+    /** Names the run that checked this body: a Daytona sandbox id, or
+     * `local:<run id>` from the bundled local sandbox. */
+    sandboxId: v.optional(v.string()),
+    /** What that field was called while Daytona was the only backend. Nothing
+     * writes it and nothing reads it. It stays declared because Convex checks
+     * every existing document against this validator at push time and refuses
+     * one carrying a field the validator does not name - so dropping it here
+     * would refuse the push on any deployment that has authored a skill. It
+     * comes out once those rows have been moved by
+     * `skills.migrateSandboxIdField`. */
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
     createdAt: v.number(),
