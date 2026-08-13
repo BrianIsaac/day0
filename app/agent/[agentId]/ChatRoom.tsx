@@ -42,6 +42,10 @@ export function ChatRoom({
   // A latch, not UI state — nothing renders off it, so a ref keeps the
   // once-only guard out of the render cycle.
   const synthFired = useRef(false);
+  // The session this 1:1 belongs to, read by the finalisation post below. A ref
+  // rather than state because the effect that posts must see the id the mount
+  // effect obtained, not whatever a stale render closed over.
+  const sessionRef = useRef<Id<'voiceSessions'> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const transport = new DefaultChatTransport({
@@ -60,10 +64,15 @@ export function ChatRoom({
     },
   });
 
-  // Kick the agent's opening turn once the voice session row is created.
+  // Kick the agent's opening turn once the session row exists. Strict Mode
+  // invokes this twice and the discarded invocation cancels its own send, so one
+  // mount asks one opening question. It still asks for a session twice, and any
+  // remount asks again — `voice.start` answers all of them with the same row,
+  // which is why nothing here has to be latched to keep the count at one.
   useEffect(() => {
     let cancelled = false;
-    startSession({ agentId, mode: 'chat' }).then(() => {
+    startSession({ agentId, mode: 'chat' }).then((started) => {
+      sessionRef.current = started.sessionId;
       if (!cancelled) sendMessage({ text: INIT_PROMPT });
     });
     return () => {
@@ -106,7 +115,11 @@ export function ChatRoom({
     void fetch('/api/onboarding/synthesise', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId, bossLabel, transcript }),
+      // Naming the session is what ends it: the chat 1:1 goes through the same
+      // claim-once finalisation as a call, so the row it opened reaches `done`
+      // carrying its transcript, instead of sitting at `active` for good while
+      // the charter it produced is on the page.
+      body: JSON.stringify({ agentId, bossLabel, transcript, voiceSessionId: sessionRef.current }),
     });
   }, [done, messages, agentId, bossLabel]);
 
