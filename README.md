@@ -32,7 +32,7 @@ Day0 is a working demonstration of the whole loop rather than a product: it has 
 
 The agent works inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue, a social feed - seeded per agent. There are no connectors to real corporate systems, and that is deliberate: the mock environment is what makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust. Everything around it is real - the model calls, the sandbox, the state machine, the approval gates.
 
-The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible endpoint, so the full loop runs against a model on your own machine with no account anywhere and nothing metered. Voice, web research and sandboxed verification are optional third-party services; without their keys the loop degrades visibly rather than failing silently. [Three ways to run it](#local-dev) are set out below, and `pnpm check:setup` reports which of them the machine you are on is currently set up for.
+The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible endpoint, so the full loop runs against a model on your own machine with no account anywhere and nothing metered. The sandbox that verifies an authored skill is bundled too, so skill creation finishes on that route rather than stopping one step short of a callable skill. Voice and web research are optional third-party services; without their keys the loop degrades visibly rather than failing silently. [Three ways to run it](#local-dev) are set out below, and `pnpm check:setup` reports which of them the machine you are on is currently set up for.
 
 ## Stack
 
@@ -44,7 +44,7 @@ The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at an
 | LLMs | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.5`. Streaming chat via AI SDK 6. Raw OpenAI SDK 6 available. |
 | Voice | ElevenLabs Conversational AI (`@elevenlabs/elevenlabs-js` 2.46, `@elevenlabs/react` 1.5) |
 | Search | Exa (`exa-js` 2) for good-habits role research |
-| Sandboxes | Daytona (`@daytona/sdk`) with `python:3.12-slim` for skill smoke tests |
+| Sandboxes | `python:3.12-slim` for skill smoke tests, in a [bundled local sandbox](#the-local-skill-sandbox) or in Daytona (`@daytona/sdk`) |
 | Validation | Zod 4 |
 
 ## Routes
@@ -79,7 +79,7 @@ The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at an
 | `work.ts` | Work-item state machine (11 states: `discovered → claimed → plan-pending → plan-approved → executing → completed | failed`, plus `cancelled / skipped / deferred / needs-skill / failed`) |
 | `workActions.ts` (Node) | `evaluateWorkItem`, `draftPlan`, `executeApprovedPlan` |
 | `skills.ts` | Skill registry — 7-state lifecycle (`proposed → approved → authoring → verified → registered`) |
-| `skillActions.ts` (Node) | `authorAndRegisterSkill` — GPT-5.5 author + Daytona sandbox verify + register |
+| `skillActions.ts` (Node) | `authorAndRegisterSkill` — GPT-5.5 author + sandbox verify + register |
 | `onboarding.ts` (Node) | `synthesiseFromAnswers`, `synthesiseFromTranscript`, `postCharterApproval` (Exa research + good-habits merge) |
 | `mock.ts` | Mock environment CRUD (docs, spreadsheets, slack, twitter, tickets) |
 | `mockSeed.ts` | Idempotent demo seed (4 team docs, 4 how-to guides, Q4 spreadsheet, 5 channels, 1 tweet, 3 tickets) |
@@ -111,7 +111,9 @@ The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at an
 | `src/lib/openai.ts` | Raw OpenAI singleton (`jsonCompleteWithMode`, `textComplete`, `jsonModeFor`) |
 | `src/lib/structured-fallback.ts` | Classifies a structured-output failure and decides whether the native `response_format` rung may be demoted to the prompt rung |
 | `src/lib/exa.ts` | `searchRole(role)` — fixed query for role best-practices, 8 results × 1200-char snippets |
-| `src/lib/daytona.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout |
+| `src/lib/skill-sandbox.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — picks a sandbox backend, and owns the rule that verification means exit 0 **and** non-empty stdout |
+| `src/lib/local-sandbox.ts` | Client for the bundled sandbox service, over a unix socket because that container has no network |
+| `src/lib/daytona.ts` | The Daytona backend — `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout |
 | `src/lib/ids.ts` | Branded id helpers (zero runtime cost) |
 | `src/lib/logger.ts` | JSON logger |
 | `src/agent/charter.ts` | `synthesiseCharter`, `renderCharter`, `identityFromCharter`, `toolsFromCharter`, `extractRole` |
@@ -133,7 +135,7 @@ The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at an
 3. **Charter synthesis** — `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
 4. **Approval** — boss approves; `api.charters.approve` flips state to `active` and triggers `postCharterApproval` (Exa + GPT-5.5 → `## Good-habits memory` block in `AGENTS.md`).
 5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item. Claimed items get a plan (`draftPlan`), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. **Those three calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
-6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs GPT-5.5 to author `SKILL.md` + `smoke.py`, runs the smoke test in a Daytona sandbox, and registers the skill on success. A skill whose sandbox said no, or never ran at all (no `DAYTONA_API_KEY`, API down), stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
+6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs GPT-5.5 to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** non-empty stdout, whichever ran. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
 7. **Reset** — `api.reset.deleteMyData` wipes every row across the 15 per-agent tables.
 
 ## Environment
@@ -152,13 +154,14 @@ Copy `.env.example` to `.env.local` and fill in:
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | ElevenLabs Conversational AI. Optional - without them the mode picker greys voice out and chat runs the identical 1:1 |
 | `ELEVENLABS_WEBHOOK_SECRET` | Signs the post-call webhook. A **separate** setup from the two above: without it voice still connects and only post-call finalisation is refused. See [Voice](#elevenlabs-agent-setup) |
 | `EXA_API_KEY` | Good-habits research |
-| `DAYTONA_API_KEY`, `DAYTONA_API_URL` | Skill sandbox authoring. Without a key an authored skill stops at `authoring` and stays uncallable |
+| `DAYTONA_API_KEY`, `DAYTONA_API_URL` | The hosted skill-verification sandbox. Optional: without a key the [bundled local sandbox](#the-local-skill-sandbox) does the same job, and with neither an authored skill stops at `authoring` and stays uncallable |
+| `SKILL_SANDBOX_SOCKET`, `SKILL_SANDBOX_TIMEOUT_SECONDS` | The local sandbox. Both have working defaults and the bundled stack needs neither. See [The local skill sandbox](#the-local-skill-sandbox) |
 | `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY` | Self-hosted backend instead of Convex cloud. Set by the steps in [Run it with no accounts](#run-it-with-no-accounts) |
 | `CONVEX_BIND_ADDR`, `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT`, `MODEL_PORT` | Host side of the self-hosted stack. See [Ports](#ports-host-side-and-container-side) |
 | `MODEL_GPU`, `MODEL_GPU_COUNT` | Whether the bundled model service reserves a GPU. `auto` (default) uses one where there is one. See [The GPU is opt-out, not opt-in](#the-gpu-is-opt-out-not-opt-in) |
 | `NEXT_PUBLIC_DEV_NO_AUTH`, `DEV_NO_AUTH_SECRET`, `DEV_NO_AUTH_SIGNING_KEY`, `DEV_NO_AUTH_JWKS` | No-auth dev mode. The last three are written by `pnpm dev:no-auth-key`, never by hand |
 
-Convex Node actions read `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `EXA_API_KEY`, `DAYTONA_API_KEY` from the Convex deployment env (separate from `.env.local`). Push them with `./scripts/sync-convex-env.sh` after `pnpm convex:dev`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
+Convex Node actions read `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `EXA_API_KEY`, `DAYTONA_API_KEY` and `SKILL_SANDBOX_SOCKET` from the Convex deployment env (separate from `.env.local`). Push them with `./scripts/sync-convex-env.sh` after `pnpm convex:dev`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
 
 **Deployment env is read once, when a function module is first evaluated.** A backend that has already run an action keeps the values it started with, so changing them afterwards leaves `npx convex env list` reporting the new value while the running action still uses the old one. Push the env *before* the first function push, and if you change it later restart the backend: `pnpm convex:restart` self-hosted, or `npx convex deploy` on cloud.
 
@@ -168,19 +171,21 @@ Three ways to run it. They disagree about two things only: who runs the model, a
 
 | Route | Accounts | Setup it costs you | What it gives you |
 |---|---|---|---|
-| [**No accounts, and you run the model**](#run-it-with-no-accounts) | none | Docker, and one model to pull - `qwen3:8b` is about 5 GB | The whole loop with nothing signed up for and nothing metered. How fast it answers is a question about your hardware, not about Day0: `pnpm model:up` uses an NVIDIA GPU wherever it finds one |
+| [**No accounts, and you run the model**](#run-it-with-no-accounts) | none | Docker, and one model to pull - `qwen3:8b` is about 5 GB | The whole loop, skill creation included, with nothing signed up for and nothing metered. How fast it answers is a question about your hardware, not about Day0: `pnpm model:up` uses an NVIDIA GPU wherever it finds one |
 | [**An OpenAI key, and you run nothing**](#run-it-with-an-openai-key) | OpenAI | Docker, and one key pasted into `.env.local` | The shortest route if you already have a key. No weights to pull and no GPU question - everything but the model still runs on your machine, and you pay OpenAI per token |
 | [**The full hosted setup**](#convex-cloud--clerk) | Convex, Clerk, OpenAI | three sign-ups, and a JWT template in the Clerk dashboard | Per-user auth, a backend that is not your laptop, and the exact shape the deployed app runs in - the one to pick if you intend to deploy it |
 
 The first two are the same stack, and differ only in where the model lives: a self-hosted Convex backend in Docker and no-auth dev mode, where one fixed local user owns every row and a request from any other machine is refused by design. The third replaces both halves with hosted ones and gives you a user per Clerk sign-in.
 
-All three need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible chat-completions endpoint - keyless local runtimes included - which is what the first route rests on and what lets the other two point anywhere else. Exa and Daytona are optional on all three; the loop degrades visibly rather than silently without them.
+All three need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible chat-completions endpoint - keyless local runtimes included - which is what the first route rests on and what lets the other two point anywhere else.
 
-Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of the four setups - backend, auth, model, voice - separately, and fails only on the states that are actually broken rather than merely incomplete.
+All three also need somewhere to verify an authored skill, and that is bundled as well: `pnpm sandbox:up` starts a local sandbox on any of them, and Daytona is the hosted alternative. Only Exa is genuinely account-only, and its absence costs the good-habits research rather than the loop.
+
+Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of the five setups - backend, auth, model, sandbox, voice - separately, and fails only on the states that are actually broken rather than merely incomplete.
 
 ## Run it with no accounts
 
-A self-hosted Convex backend in Docker, a local model in Docker, and no-auth dev mode. Nothing here signs up for anything. The backend is the same open-source binary the cloud service runs; no-auth mode replaces Clerk with one fixed synthetic user, so ownership checks and the per-user data model are unchanged - there is simply only ever one user; and the model layer takes any OpenAI-compatible endpoint, so a local runtime is a complete setup rather than a degraded one.
+A self-hosted Convex backend in Docker, a local model in Docker, a local verification sandbox in Docker, and no-auth dev mode. Nothing here signs up for anything. The backend is the same open-source binary the cloud service runs; no-auth mode replaces Clerk with one fixed synthetic user, so ownership checks and the per-user data model are unchanged - there is simply only ever one user; the model layer takes any OpenAI-compatible endpoint, so a local runtime is a complete setup rather than a degraded one; and the sandbox is what lets an authored skill actually become callable, which is the half of the headline loop that used to need an account.
 
 You need Docker, Node 22+ and pnpm. Run every command from the repository root.
 
@@ -191,6 +196,7 @@ cp .env.example .env.local
 pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
 pnpm model:up                    # OpenAI-compatible model server on 11434, on the GPU if you have one
 pnpm model:pull qwen3:8b         # ~5 GB, tool-capable, runs the whole loop
+pnpm sandbox:up                  # the sandbox that verifies authored skills; no port, no account
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
 ```
 
@@ -219,7 +225,7 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
 Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and approve the charter it writes. No provider was called and no account exists.
 
-Approving the charter is what fills the work queue, and how far the queue then gets is decided by the charter you just approved rather than by anything in this file. Each item is evaluated against the skills the agent has and the permissions it was deployed with, and only a `claim` verdict goes on to a plan and an execution. Deploy seeds five read scopes, and the one skill that ships is `see-internal-docs`, so the work that runs end to end on this route is the work that can be answered out of the internal docs. The other verdicts stop where they stop, visibly and on purpose: `needs-skill` proposes a skill that cannot be verified without `DAYTONA_API_KEY` and so never becomes callable, and `defer - awaiting-permission` names the scope it wanted and then waits, with nothing in the UI that grants one. A 1:1 that dwells on reading the team's docs and answering from them will therefore show you more of the loop than one that dwells on editing the spreadsheet.
+Approving the charter is what fills the work queue, and how far the queue then gets is decided by the charter you just approved rather than by anything in this file. Each item is evaluated against the skills the agent has and the permissions it was deployed with, and only a `claim` verdict goes on to a plan and an execution. Deploy seeds five read scopes, and the one skill that ships is `see-internal-docs`, so the work that runs immediately is the work that can be answered out of the internal docs. A `needs-skill` verdict is the interesting one and it now finishes on this route: the agent proposes a skill, you approve it, the local sandbox runs its smoke test, and on exit 0 with output the skill registers and the work item that asked for it goes back in the queue and completes. `defer - awaiting-permission` is the verdict that still stops where it stops - it names the scope it wanted and then waits, with nothing in the UI that grants one.
 
 How fast that is has nothing to do with Day0. The agent core makes ordinary OpenAI chat-completions calls, so the wait you get is a property of the endpoint you pointed it at: the same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, and a hosted endpoint answers as fast as the provider does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
 
@@ -235,15 +241,43 @@ Spilling is a question of free VRAM, not of the model's size on paper, so the fi
 pnpm model:pull qwen3:4b         # ~2.5 GB, same loop, fits a smaller gap
 ```
 
-Five things about that sequence are load-bearing:
+Six things about that sequence are load-bearing:
 
 - **`pnpm install` comes first.** Every command after it - `tsx`, `convex`, `next` - is a binary in `node_modules`. Skip it and `pnpm dev:no-auth-key` fails with `tsx: not found` and no hint as to why.
 - **The model needs two addresses, and this is the one that costs an afternoon.** The Day-1 chat streams from Next, on this machine, and reaches the model on loopback. The *charter* is synthesised by a Convex Node action, which runs inside the backend container, where `127.0.0.1` is the container itself. So `OPENAI_BASE_URL` is what Next dials and `CONVEX_OPENAI_BASE_URL` is what the backend dials; `./scripts/sync-convex-env.sh` pushes the second as the deployment's `OPENAI_BASE_URL` and warns if you left it pointing at loopback. The symptom of getting it wrong is a 1:1 that works perfectly and a charter that never arrives.
 - **The key is generated, not chosen.** `pnpm dev:no-auth-key` writes `DEV_NO_AUTH_SECRET` (unlocks a browser), `DEV_NO_AUTH_SIGNING_KEY` (signs the token Convex accepts, never leaves the machine) and `DEV_NO_AUTH_JWKS` (its public half). Rotate with `pnpm dev:no-auth-key --force`, which invalidates every unlocked browser and needs a re-sync.
 - **The JWKS must reach the backend before the functions do.** `convex/auth.config.ts` is evaluated against the *deployment's* env when you push, and refuses the push if no-auth is on without a key. `./scripts/sync-convex-env.sh` pushes them in that order and says so if the key is missing. The same ordering matters for the model settings, for a different reason: a module keeps whatever env it was first evaluated with, so a value changed after the backend has run an action needs `pnpm convex:restart`.
 - **`pnpm dev` prints an unlock URL.** It carries the secret once; after that it lives in an httpOnly cookie. Open `http://localhost:3000` directly and every route answers 403 - that is the boundary working, not a fault.
+- **`pnpm sandbox:up` restarts the backend, on purpose.** The two meet over a socket on a shared volume, so the backend container has to be the one that carries the mount. Starting the sandbox reconciles both rather than leaving you with a sandbox that is running and a backend that cannot see it - the half-done state that would otherwise look like a skill failing verification.
 
 `pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
+
+### The local skill sandbox
+
+A skill the agent wrote is not a callable skill until something has run it, and that is the step that used to need an account. `pnpm sandbox:up` starts a container that runs the smoke test, so the account-free route finishes the loop it advertises: `needs-skill` → propose → approve → author → **verify** → register → the work item that asked for the skill goes back in the queue and completes.
+
+```bash
+pnpm sandbox:up                  # start it (this also restarts the backend - see below)
+pnpm sandbox:down                # stop it; skills then stop at `authoring`, visibly
+```
+
+**What it is.** An isolation boundary for verification - the same claim this project makes about Daytona, and the same kind of thing:
+
+- **No network at all.** The container runs with `network_mode: none`, which is why the Convex backend reaches it over a unix socket on a shared volume rather than over a port. Model-authored Python in there cannot reach the backend, the model server, your machine or the internet, because there is no interface to reach them through. The authoring prompt already tells the model its smoke test gets a bare Python 3.12 with no third-party packages and must mock external calls, so nothing legitimate wants one.
+- **Nothing runs as root.** The service starts as root only long enough to bind its socket, then drops to `nobody` permanently; every smoke test inherits that. All Linux capabilities are dropped bar the two that hand-over needs, and `no-new-privileges` is set.
+- **Nothing persists.** The root filesystem is read-only and the working directory is a 64 MB tmpfs, wiped per run, so one smoke test cannot leave anything for the next.
+- **Nothing runs long.** 60 seconds of wall clock - the same cap the Daytona path allows - plus CPU, address-space, file-size and process-count limits on the smoke test and memory and pid limits on the container.
+
+**What it is not.** A defence against someone who is trying. A container escape is a container escape; the smoke test shares a user with the small supervisor that launched it, so code that wanted to could stop the service and cost you a restart. It raises the floor for code a model wrote to check its own work. It is not a place to run code you actively distrust, and neither is Daytona in this project's use of it.
+
+**What it deliberately is not built on** is the Docker socket. Mounting `/var/run/docker.sock` into the backend so it could spawn a sandbox per skill is the shortest path to the same feature, and it hands every reader's machine a root-equivalent socket to model-authored code. The service on the compose network is the boundary instead.
+
+Two practical notes:
+
+- **`pnpm sandbox:up` restarts the backend.** The socket lives on a volume both containers mount, so the backend has to carry that mount. Bringing the sandbox up reconciles both, rather than leaving a running sandbox the backend cannot see.
+- **Nothing needs configuring.** There is no port and no address to keep in step - the one place a local model costs you an afternoon on this stack. `SKILL_SANDBOX_SOCKET` exists for a Convex backend running somewhere other than the bundled container, which is also the case it does not cover: an [anonymous deployment](#without-docker-for-convex) runs as an ordinary process on this machine and cannot see inside a Docker volume, so use the compose backend if you want local skill verification.
+
+With both a `DAYTONA_API_KEY` and a running local sandbox, **Daytona wins**: an API key in the environment is a deliberate act, and the local sandbox is there to be the answer when there is no key. Clear the key to use the local one.
 
 ### The GPU is opt-out, not opt-in
 
@@ -266,12 +300,13 @@ Every `:up` has a matching `:down`, and `pnpm convex:down` really does mean only
 
 ```bash
 pnpm model:down                  # the model server; the pulled weights stay
+pnpm sandbox:down                # the verification sandbox; it holds nothing
 pnpm convex:down                 # backend + dashboard; the data volume stays
 ```
 
-In that order: `convex:down` removes the compose network on its way out, and cannot while the model container is still attached to it.
+In that order: `convex:down` removes the compose network on its way out, and cannot while the model container is still attached to it. The sandbox is on no network at all, so it is only in that list to be tidy - it is a few megabytes of idle Python.
 
-To throw the volumes away too, both together: `docker compose --env-file .env.local --profile model down -v`.
+To throw the volumes away too, all together: `docker compose --env-file .env.local --profile model --profile sandbox down -v`.
 
 ### Without Docker for Convex
 
@@ -298,6 +333,7 @@ pnpm install
 cp .env.example .env.local
 
 pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
+pnpm sandbox:up                  # verifies authored skills; no account, no key
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
 ```
 
@@ -330,7 +366,7 @@ Two things to know:
 - **Coming from the local-model route, clear `OPENAI_BASE_URL` and `CONVEX_OPENAI_BASE_URL` and re-sync.** `./scripts/sync-convex-env.sh` clears the deployment's copy when both are empty, which is the one case where "unset" is a value rather than an omission: a deployment still holding `http://model:11434/v1` would call a model server you have since stopped, and only the actions would fail. Restart the backend afterwards - `pnpm convex:restart` - because a module keeps whatever env it was first evaluated with.
 - **This route meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, good-habits research, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.5` a demo run is cents rather than dollars, but it is not zero, which the account-free route is.
 
-No `pnpm model:up` here, so `pnpm convex:down` on its own is the whole teardown. And combined with the [anonymous deployment](#without-docker-for-convex) above, this route needs no Docker either: a key, `pnpm convex:dev`, and nothing else running on your machine.
+No `pnpm model:up` here, so `pnpm sandbox:down && pnpm convex:down` is the whole teardown. And combined with the [anonymous deployment](#without-docker-for-convex) above, this route needs no Docker either: a key, `pnpm convex:dev`, and nothing else running on your machine - at the cost of the local sandbox, which lives in Docker, so skill verification on that combination means a `DAYTONA_API_KEY`.
 
 ## Convex cloud + Clerk
 
@@ -384,6 +420,8 @@ OPENAI_BASE_URL=http://127.0.0.1:11534/v1
 ```
 
 `CONVEX_OPENAI_BASE_URL` does **not** follow `MODEL_PORT`: the backend reaches the model container over the compose network, where it is still `http://model:11434/v1`. Same rule as the origins - host ports move, container ports do not.
+
+The [sandbox](#the-local-skill-sandbox) has no entry here because it has no port. It is reached over a unix socket on a shared volume, so it cannot collide with anything and nothing about it needs moving to run a second stack.
 
 **Set these before the first `:up`, which is earlier than the walkthroughs above put you in this file.** `pnpm convex:up` and `pnpm model:up` pass `.env.local` to docker compose, so a port only moves for containers created after it changed. Both routes above tell you to edit `.env.local` *after* bringing the backend up, which is the right order while the defaults are free and the wrong one as soon as they are not - so if you know you need a port, copy `.env.example` and set it first. Changing one afterwards is not fatal, only unobvious: `pnpm model:up` recreates the model container on the new port, and `pnpm convex:down && pnpm convex:up` is what moves the backend.
 

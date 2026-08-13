@@ -33,6 +33,14 @@ const schema = z.object({
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_API_URL: z.string().default('https://app.daytona.io/api'),
 
+  // Where the bundled local sandbox (`pnpm sandbox:up`) puts its socket, as
+  // the *deployment* sees it. The default is where docker-compose.yml mounts
+  // the shared volume inside the backend container, so the documented route
+  // configures nothing: an absent socket reads as "no local sandbox", which is
+  // checked per run rather than at module load. Override it only for a backend
+  // running somewhere else.
+  SKILL_SANDBOX_SOCKET: z.string().default('/run/day0-sandbox/skill-sandbox.sock'),
+
   CONVEX_DEPLOYMENT: z.string().optional(),
   NEXT_PUBLIC_CONVEX_URL: z.string().optional(),
   // Self-hosted backend (docker-compose.yml). Read by the Convex CLI, not by
@@ -75,6 +83,7 @@ const OPTIONAL_STRINGS = [
   'EXA_API_KEY',
   'DAYTONA_API_KEY',
   'DAYTONA_API_URL',
+  'SKILL_SANDBOX_SOCKET',
   'CONVEX_DEPLOYMENT',
   'NEXT_PUBLIC_CONVEX_URL',
   'CONVEX_SELF_HOSTED_URL',
@@ -124,6 +133,7 @@ export const env = schema.parse(
     EXA_API_KEY: process.env.EXA_API_KEY,
     DAYTONA_API_KEY: process.env.DAYTONA_API_KEY,
     DAYTONA_API_URL: process.env.DAYTONA_API_URL,
+    SKILL_SANDBOX_SOCKET: process.env.SKILL_SANDBOX_SOCKET,
     CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
     NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
     CONVEX_SELF_HOSTED_URL: process.env.CONVEX_SELF_HOSTED_URL,

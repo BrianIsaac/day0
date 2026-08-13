@@ -60,6 +60,13 @@
 # Its GPU reservation lives in docker-compose.gpu.yml, which `pnpm model:up`
 # layers on top when this machine can satisfy it. This file alone starts
 # anywhere.
+#
+# The optional `sandbox` service is the same idea for the other half of the
+# loop. Skill verification runs a smoke test somewhere isolated, Daytona needs
+# an account, and a skill nothing ran is not a verified skill - so the
+# account-free route could author a skill and never register one. It is opt-in
+# the same way (`pnpm sandbox:up`), and it is reached over a unix socket rather
+# than a port, which is the whole of its network story: see the service.
 
 services:
   backend:
@@ -71,6 +78,11 @@ services:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_SITE_PROXY_PORT:-3211}:3211'
     volumes:
       - convex_data:/convex/data
+      # Where the `sandbox` service below puts its socket. Mounted whether or
+      # not that service is running, so that starting it later needs nothing
+      # here: an empty volume reads as "no local sandbox", which is exactly
+      # what it means, and the skill loop reports the honest skip.
+      - sandbox_socket:/run/day0-sandbox
     # Lets CONVEX_OPENAI_BASE_URL name a model server running on this host
     # rather than in a container. Whether it can actually be reached is a
     # question for your firewall: some hosts drop traffic from the bridge, and
@@ -134,6 +146,69 @@ services:
     volumes:
       - model_data:/root/.ollama
 
+  # Runs the smoke test that decides whether an authored skill becomes
+  # callable, so that the account-free route can finish the skill loop:
+  #
+  #   pnpm sandbox:up
+  #
+  # Every line below is part of the boundary, not configuration around it.
+  #
+  # `network_mode: none` is the load-bearing one, and it is why the backend
+  # reaches this over a unix socket on a shared volume instead of over a port.
+  # A service on the compose network would put model-authored Python one DNS
+  # name away from the Convex backend and the model server; with no interface
+  # at all it is one away from nothing. The authoring prompt tells the model
+  # its smoke test gets a bare Python 3.12 with no third-party packages and
+  # must mock external calls, so nothing legitimate wants a network here.
+  #
+  # The obvious alternative - mounting the Docker socket so the backend can
+  # spawn a sandbox per skill - is deliberately not taken. It hands every
+  # reader's machine a root-equivalent socket to code a model wrote.
+  #
+  # The container starts as root, binds the socket on the volume Docker owns,
+  # and then drops to `nobody` for good; every smoke test inherits that. Root
+  # keeps only the two capabilities that drop needs. The root filesystem is
+  # read-only and the working directory is a 64 MB tmpfs, so a smoke test
+  # leaves nothing behind for the next one.
+  #
+  # It restarts because it supervises code it does not trust: a smoke test
+  # shares a uid with the server and could stop it serving, which should cost
+  # a restart rather than the rest of the session.
+  sandbox:
+    profiles: ['sandbox']
+    image: python:3.12-slim
+    restart: unless-stopped
+    stop_grace_period: 5s
+    network_mode: none
+    read_only: true
+    cap_drop: ['ALL']
+    cap_add: ['SETUID', 'SETGID']
+    security_opt: ['no-new-privileges:true']
+    pids_limit: 96
+    mem_limit: 512m
+    command: ['python3', '-u', '/opt/day0/skill_sandbox.py']
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      # 60 seconds is what the Daytona path allows a smoke test, and the two
+      # backends should not disagree about what "too slow" means.
+      - SANDBOX_TIMEOUT_SECONDS=${SKILL_SANDBOX_TIMEOUT_SECONDS:-60}
+    volumes:
+      - ./sandbox/skill_sandbox.py:/opt/day0/skill_sandbox.py:ro
+      - sandbox_socket:/run/day0-sandbox
+    # Handed straight to the unprivileged user the server drops to, so that
+    # preparing it needs no capability the drop would otherwise have to keep.
+    # 65534 is `nobody` on this image.
+    tmpfs:
+      - /run/sandbox-work:size=64m,mode=700,uid=65534,gid=65534,nosuid,nodev,noexec
+    healthcheck:
+      test: ['CMD', 'python3', '/opt/day0/skill_sandbox.py', '--health']
+      interval: 15s
+      timeout: 10s
+      start_period: 5s
+
 volumes:
   convex_data:
   model_data:
+  # Carries one unix socket between the backend and the sandbox. It is the only
+  # thing the two share, and the only way into a container that has no network.
+  sandbox_socket:

@@ -6,7 +6,7 @@ import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
-import { authorAndVerifySkill } from '../src/lib/daytona';
+import { authorAndVerifySkill } from '../src/lib/skill-sandbox';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -15,7 +15,9 @@ import { authorAndVerifySkill } from '../src/lib/daytona';
  *   2. Mastra Agent (GPT-5.5) authors the SKILL.md body from
  *      name/description/rationale + a short Python smoke test that
  *      exercises the skill behaviour.
- *   3. Daytona spins a Python sandbox; the smoke test runs.
+ *   3. A sandbox runs the smoke test — Daytona where a key is configured,
+ *      the bundled local service otherwise. `src/lib/skill-sandbox.ts`
+ *      picks, and reports the same shape whichever ran.
  *   4. If the sandbox exits 0 with non-empty stdout, we register the
  *      skill so it becomes available to the agent. If no sandbox ran at
  *      all, the skill stops at `authoring` and stays uncallable: the
@@ -144,15 +146,18 @@ export const authorAndRegisterSkill = action({
       });
     }
 
-    // Daytona is optional, so the loop survives without it - but a skill it
-    // never ran is not a verified skill. Whether the key is absent or the
-    // sandbox falls over, the skill stops at `authoring` with the body kept,
-    // the work item stays `needs-skill`, and the skip goes to the event feed
-    // so the demo shows what was and was not checked.
+    // Sandbox verification is optional, so the loop survives without it - but
+    // a skill nothing ran is not a verified skill. Whether no backend is
+    // available or the one chosen falls over, the skill stops at `authoring`
+    // with the body kept, the work item stays `needs-skill`, and the skip goes
+    // to the event feed so the demo shows what was and was not checked.
     let sandboxId = '(skipped)';
-    let verificationLog = '(daytona unavailable)';
+    let verificationLog = '(no sandbox available)';
     let skipReason: string | null = null;
     let verificationFailure: string | null = null;
+    // Named in every message below, because "verification failed" means
+    // different things to a boss depending on which sandbox said so.
+    let backend = 'the sandbox';
     try {
       const result = await authorAndVerifySkill({
         skillName: skill.name,
@@ -160,9 +165,10 @@ export const authorAndRegisterSkill = action({
         smokeTest,
       });
       if (result.skipped) {
-        skipReason = result.skipReason ?? 'daytona unavailable';
+        skipReason = result.skipReason ?? 'no sandbox available';
         verificationLog = `sandbox verification skipped - ${skipReason}`;
       } else {
+        backend = result.backend === 'local' ? 'the local sandbox' : 'Daytona';
         sandboxId = result.sandboxId;
         // Store the body as soon as a sandbox exists: whichever way the check
         // goes, the boss can read what was written and decide about a retry.
@@ -175,13 +181,13 @@ export const authorAndRegisterSkill = action({
           body,
         });
         if (!progress.held) return { ok: false, reason: SUPERSEDED };
-        verificationLog = `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
+        verificationLog = `ran in ${backend} (${sandboxId})\n\nstdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
         if (!result.ok) {
           verificationFailure = result.failureReason ?? 'sandbox verification failed';
         }
       }
     } catch (err) {
-      skipReason = `Daytona threw: ${(err as Error).message}`;
+      skipReason = `${backend} threw: ${(err as Error).message}`;
       verificationLog = skipReason;
     }
 
@@ -189,7 +195,7 @@ export const authorAndRegisterSkill = action({
     // reported as the sandbox throwing.
     if (verificationFailure) {
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: `Daytona verification failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`,
+        rowReason: `verification in ${backend} failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`,
         reason: `skill authored but verification failed - ${verificationFailure}`,
         eventType: 'skill.verification-failed',
       });

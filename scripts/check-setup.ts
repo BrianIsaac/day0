@@ -7,15 +7,21 @@
  *
  * It answers the question a reader actually has after following the README -
  * "did I set this up correctly?" - and the honest answer is not one boolean.
- * Day0 has four independent setups (backend, auth, model, voice), each of which
- * can be complete, deliberately skipped, or half-done, and the failure that
- * costs an afternoon is always the half-done one that looks finished. So each
- * is reported separately and only the states that are *wrong* fail the command.
+ * Day0 has five independent setups (backend, auth, model, sandbox, voice), each
+ * of which can be complete, deliberately skipped, or half-done, and the failure
+ * that costs an afternoon is always the half-done one that looks finished. So
+ * each is reported separately and only the states that are *wrong* fail the
+ * command.
  *
  * Two things this does not do. It never calls a provider: no key here is spent
  * establishing that it exists. And it cannot see the ElevenLabs dashboard, so
  * the dynamic variables an agent must declare are printed to check by eye
  * rather than guessed at.
+ *
+ * It does ask Docker one question, because one of the five is not a variable.
+ * Whether skill verification works locally depends on whether the bundled
+ * sandbox service is running, and `.env.local` cannot say - the reader would
+ * otherwise find out by watching a skill fail.
  *
  * Values are read from `.env.local`, then overridden by the *process*
  * environment wherever a variable is present there - including when it is
@@ -25,9 +31,13 @@
  * checker that only applied non-empty overrides would report a secret as
  * configured while the running route answered 503 to every delivery.
  */
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 
 const ENV_FILE = process.argv[2] ?? '.env.local';
+
+/** The compose service that verifies authored skills without an account. */
+const SANDBOX_SERVICE = 'sandbox';
 
 const WEBHOOK_PATH = '/api/voice/elevenlabs/webhook';
 
@@ -55,6 +65,8 @@ const WATCHED = [
   'OPENAI_BASE_URL',
   'CONVEX_OPENAI_BASE_URL',
   'OPENAI_MODEL',
+  'DAYTONA_API_KEY',
+  'SKILL_SANDBOX_SOCKET',
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_AGENT_ID',
   'ELEVENLABS_WEBHOOK_SECRET',
@@ -107,6 +119,7 @@ function main(): void {
     backendSection(v),
     authSection(v),
     modelSection(v, selfHosted),
+    sandboxSection(v),
     voiceSection(v),
     finalisationSection(v),
   ];
@@ -323,6 +336,122 @@ function modelSection(v: Values, selfHosted: boolean): Section {
   }
 
   return { title: titleFor(status, 'Model'), status, lines };
+}
+
+/** What Docker says about the bundled sandbox service, or that it could not be asked. */
+type SandboxState = 'healthy' | 'unhealthy' | 'stopped' | 'unknown';
+
+/**
+ * Ask compose whether the sandbox container is up and answering.
+ *
+ * `pnpm sandbox:up` gives the service a healthcheck that dials its own socket,
+ * so "healthy" here means a smoke test would actually run rather than merely
+ * that a container exists. Anything Docker cannot answer - not installed,
+ * daemon down, a different compose project - is reported as not knowing rather
+ * than as an absence.
+ */
+function sandboxState(): SandboxState {
+  const probe = spawnSync(
+    'docker',
+    [
+      'compose',
+      '--env-file',
+      ENV_FILE,
+      '--profile',
+      SANDBOX_SERVICE,
+      'ps',
+      '--format',
+      'json',
+      SANDBOX_SERVICE,
+    ],
+    { encoding: 'utf8', timeout: 15_000 },
+  );
+  if (probe.status !== 0) return 'unknown';
+  const line = (probe.stdout ?? '')
+    .split('\n')
+    .find((candidate) => candidate.trim().startsWith('{'));
+  if (!line) return 'stopped';
+  try {
+    const row = JSON.parse(line) as { State?: string; Health?: string };
+    if (row.State !== 'running') return 'stopped';
+    // A service with a healthcheck reports `starting` for its first few
+    // seconds, which is not yet a working sandbox and not a broken one either.
+    return row.Health === 'healthy' ? 'healthy' : 'unhealthy';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Which sandbox will verify an authored skill, or that none will.
+ *
+ * The distinction this section exists to make visible: a skill no sandbox ran
+ * is not a verified skill, so it stops at `authoring` and stays uncallable.
+ * That is a complete setup if you meant to skip verification, and a surprise
+ * if you did not - and until this section existed the only way to find out was
+ * to watch a skill fail.
+ */
+function sandboxSection(v: Values): Section {
+  const daytona = !!v.DAYTONA_API_KEY;
+  const local = daytona ? 'stopped' : sandboxState();
+  const socketNote = v.SKILL_SANDBOX_SOCKET
+    ? [`The deployment looks for the socket at ${v.SKILL_SANDBOX_SOCKET}.`]
+    : [];
+
+  if (daytona) {
+    return {
+      title: 'Sandbox: Daytona',
+      status: 'ok',
+      lines: [
+        'DAYTONA_API_KEY is set, so authored skills are verified in a hosted',
+        'sandbox. Daytona is preferred whenever its key is present; clear the key',
+        'to use the bundled local sandbox (`pnpm sandbox:up`) instead.',
+      ],
+    };
+  }
+
+  if (local === 'healthy') {
+    return {
+      title: 'Sandbox: local',
+      status: 'ok',
+      lines: [
+        'The bundled sandbox service is running and answering, so authored skills',
+        'are verified here and no account is involved. It is an isolation boundary',
+        'for verification - a container with no network, a read-only root and an',
+        'unprivileged user - not a defence against hostile code.',
+        ...socketNote,
+      ],
+    };
+  }
+
+  if (local === 'unhealthy') {
+    return {
+      title: 'Sandbox: local sandbox is running but not answering - needs fixing',
+      status: 'gap',
+      lines: [
+        'The container is up and its healthcheck is not passing, so every skill',
+        'would stop at `authoring` while the service looks started. Check',
+        '`docker compose logs sandbox`, or restart it with `pnpm sandbox:up`.',
+        ...socketNote,
+      ],
+    };
+  }
+
+  return {
+    title: 'Sandbox: nothing verifies skills',
+    status: 'warn',
+    lines: [
+      local === 'unknown'
+        ? 'No DAYTONA_API_KEY, and Docker could not be asked about the bundled sandbox.'
+        : 'No DAYTONA_API_KEY and the bundled sandbox service is not running.',
+      'The agent still proposes and authors a skill; nothing runs its smoke test,',
+      'so the skill stops at `authoring`, stays visibly uncallable, and the work',
+      'item that asked for it stays at `needs-skill`. Everything else runs.',
+      'Fix either way: `pnpm sandbox:up` for the account-free sandbox, or a',
+      'DAYTONA_API_KEY for the hosted one.',
+      ...socketNote,
+    ],
+  };
 }
 
 function voiceConfigured(v: Values): boolean {
