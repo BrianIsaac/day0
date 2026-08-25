@@ -1053,7 +1053,7 @@ function WorkItemCard({
           <span className="text-[var(--color-muted)]">verdict:</span>{' '}
           {verdict.decision === 'defer' && verdict.reason === 'awaiting-connection' ? (
             <span className="text-[var(--color-fg)]">
-              defer — awaiting-connection: {verdict.missingSurface ?? '(unnamed system)'}
+              defer - awaiting-connection: {verdict.missingSurface ?? '(unnamed system)'}
               {awaitingSurface ? ` (${verdictFor(awaitingSurface, now)})` : ''}{' '}
               <a href="#surfaces" className="text-[var(--color-accent)] underline">
                 Surfaces tab
@@ -1143,7 +1143,7 @@ function WorkItemCard({
           <ul className="space-y-0.5 text-[var(--color-muted)]">
             {heldActions.map((a, i) => (
               <li key={i}>
-                <span className="font-mono text-[10px]">{a.tool}</span> — {a.reason ?? 'held'}
+                <span className="font-mono text-[10px]">{a.tool}</span> - {a.reason ?? 'held'}
                 {a.effect ? (
                   <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">{a.effect}</code>
                 ) : null}
@@ -1183,7 +1183,7 @@ function WorkItemCard({
           <ul className="space-y-0.5 text-[var(--color-danger)]">
             {failedActions.map((a, i) => (
               <li key={i}>
-                {a.tool} — {a.reason ?? 'unknown reason'}
+                {a.tool} - {a.reason ?? 'unknown reason'}
               </li>
             ))}
           </ul>
