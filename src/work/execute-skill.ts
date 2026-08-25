@@ -165,9 +165,9 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
     const detail: string[] = [`class ${surface.class}`];
     if (surface.path) detail.push(`path ${surface.path}`);
     if (surface.endpoint) detail.push(`endpoint ${surface.endpoint}`);
-    if (surface.toolAllowlist && surface.toolAllowlist.length > 0) {
-      detail.push(`allowed tools: ${surface.toolAllowlist.join(', ')}`);
-    }
+    detail.push(
+      `allowed tools: ${surface.toolAllowlist?.length ? surface.toolAllowlist.join(', ') : '(none)'}`,
+    );
     if (surface.managerDmChannelId) {
       detail.push(`manager DM channel id: ${surface.managerDmChannelId}`);
     }

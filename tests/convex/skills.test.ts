@@ -123,6 +123,66 @@ describe('skills that target a surface', (): void => {
     await expect(harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId })).resolves.toEqual({ ok: true });
   });
 
+  it('targets an unlisted real source so approval cannot bypass connection', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'northstar');
+    const skillId = await propose(harness, agentId, workItemId);
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill?.targetSurface).toBe('northstar');
+    expect(skill?.requiredScopes).toContain('northstar:write');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).rejects.toThrow(
+      'cannot approve "update-linear-ticket": surface northstar is not listed for this agent',
+    );
+  });
+
+  it('fails loudly when duplicate surface slugs make the target ambiguous', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    await seedSurface(harness, agentId, 'proposed', { credentialLanded: false });
+    await seedSurface(harness, agentId, 'approved', { credentialLanded: false });
+    await expect(propose(harness, agentId, workItemId)).rejects.toThrow(
+      'more than one surface is listed with slug linear',
+    );
+  });
+
+  it('grows the required scopes when the same proposal is requested again', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    await seedSurface(harness, agentId, 'connected', {
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+    });
+    const first = await harness.mutation(internal.skills.propose, {
+      agentId,
+      workItemId,
+      name: 'x',
+      description: 'y',
+      rationale: 'z',
+      requiredScopes: ['boss:message'],
+    });
+    const second = await harness.mutation(internal.skills.propose, {
+      agentId,
+      workItemId,
+      name: 'x',
+      description: 'y',
+      rationale: 'z',
+      requiredScopes: ['audit:write'],
+    });
+    expect(second).toBe(first);
+    const skill = await harness.run(async (ctx) => await ctx.db.get(first));
+    expect(skill?.requiredScopes).toEqual([
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'audit:write',
+    ]);
+  });
+
   it('refuses approval while the target surface is not connected', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

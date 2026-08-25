@@ -63,7 +63,9 @@ describe('surface guidance in the executor prompt', (): void => {
   it('lists connected surfaces with allowlists, the manager DM id and the two verbs', (): void => {
     const text = surfaceInstructions([linear, slack, { ...linear, slug: 'jira', verdict: 'absent' }], now);
     expect(text).toContain('  - linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: create_comment, save_issue');
-    expect(text).toContain('  - slack (Slack) - class chat · path documented-api · endpoint https://slack.com/api/ · manager DM channel id: D0MANAGER');
+    expect(text).toContain(
+      '  - slack (Slack) - class chat · path documented-api · endpoint https://slack.com/api/ · allowed tools: (none) · manager DM channel id: D0MANAGER',
+    );
     expect(text).not.toContain('jira');
     expect(text).toContain('mcp.call     - { surface, tool, toolArgsJson }');
     expect(text).toContain('http.request - { surface, method, path, headersJson, body }');

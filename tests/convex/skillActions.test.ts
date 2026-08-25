@@ -69,4 +69,18 @@ describe('skill author prompts', (): void => {
     expect(prompt).toContain('{{secret}}');
     expect(prompt.endsWith('Author SKILL.md and smoke.py now.')).toBe(true);
   });
+
+  it('lists only live surfaces and says when a connected surface allows no tools', (): void => {
+    const prompt = buildAuthorPrompt(
+      { ...skill, targetSurface: 'linear' },
+      [
+        { ...linear, slug: 'dead', displayName: 'Dead', lastVerifiedAt: now - 7 * 60 * 60 * 1000 },
+        { ...linear, slug: 'empty', displayName: 'Empty', toolAllowlist: [] },
+      ],
+      now,
+    );
+    expect(prompt).not.toContain('dead (Dead)');
+    expect(prompt).toContain('empty (Empty)');
+    expect(prompt).toContain('allowed tools: (none)');
+  });
 });

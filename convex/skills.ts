@@ -6,6 +6,7 @@ import { applyVerdict } from './work';
 import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -114,7 +115,7 @@ async function requeueSourceWork(
 }
 
 /**
- * The surface a work item's source names, when the agent has such a surface.
+ * The surface a work item's source names in real-surface mode.
  *
  * Args:
  *   ctx: Mutation context.
@@ -122,7 +123,7 @@ async function requeueSourceWork(
  *   workItemId: The work item the skill is proposed for.
  *
  * Returns:
- *   The surface slug, or undefined when the source is not a discovered surface.
+ *   The source slug in real mode, or undefined for a mock-mode skill.
  */
 async function surfaceSlugForWork(
   ctx: MutationCtx,
@@ -131,11 +132,15 @@ async function surfaceSlugForWork(
 ): Promise<string | undefined> {
   const item = await ctx.db.get(workItemId);
   if (!item || item.agentId !== agentId) return undefined;
-  const surface = await ctx.db
+  if (SURFACE_MODE !== 'real') return undefined;
+  const surfaces = await ctx.db
     .query('surfaces')
     .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', item.sourceSystem))
-    .unique();
-  return surface?.slug;
+    .collect();
+  if (surfaces.length > 1) {
+    throw new Error(`more than one surface is listed with slug ${item.sourceSystem}`);
+  }
+  return item.sourceSystem;
 }
 
 export const registered = query({
@@ -264,6 +269,10 @@ export const propose = internalMutation({
     requiredScopes: v.array(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'skills'>> => {
+    const targetSurface = await surfaceSlugForWork(ctx, args.agentId, args.workItemId);
+    const proposedScopes = targetSurface
+      ? [...new Set([...args.requiredScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
+      : args.requiredScopes;
     const existing = await ctx.db
       .query('skills')
       .withIndex('by_agent_name', (q) =>
@@ -271,15 +280,28 @@ export const propose = internalMutation({
       )
       .first();
     if (existing && existing.state !== 'rejected' && existing.state !== 'failed') {
+      if (existing.state === 'proposed') {
+        if (
+          existing.targetSurface &&
+          targetSurface &&
+          existing.targetSurface !== targetSurface
+        ) {
+          throw new Error(
+            `skill ${args.name} is already proposed for surface ${existing.targetSurface}`,
+          );
+        }
+        await ctx.db.patch(existing._id, {
+          targetSurface: existing.targetSurface ?? targetSurface,
+          requiredScopes: [
+            ...new Set([...(existing.requiredScopes ?? []), ...proposedScopes]),
+          ],
+        });
+      }
       return existing._id;
     }
     // A skill proposed for work that came in from a discovered surface acts on
     // that surface: it is named on the row so approval can insist the surface
     // is connected, and its scopes are the surface's read and write pair.
-    const targetSurface = await surfaceSlugForWork(ctx, args.agentId, args.workItemId);
-    const requiredScopes = targetSurface
-      ? [...new Set([...args.requiredScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
-      : args.requiredScopes;
     const id = await ctx.db.insert('skills', {
       agentId: args.agentId,
       name: args.name,
@@ -289,7 +311,7 @@ export const propose = internalMutation({
       state: 'proposed',
       proposedFor: args.workItemId,
       rationale: args.rationale,
-      requiredScopes,
+      requiredScopes: proposedScopes,
       targetSurface,
       createdAt: Date.now(),
     });
