@@ -10,9 +10,12 @@
 
 import type * as agents from "../agents.js";
 import type * as charters from "../charters.js";
+import type * as config from "../config.js";
 import type * as coworker from "../coworker.js";
 import type * as crons from "../crons.js";
 import type * as devAuth from "../devAuth.js";
+import type * as docSources from "../docSources.js";
+import type * as docSyncActions from "../docSyncActions.js";
 import type * as events from "../events.js";
 import type * as mock from "../mock.js";
 import type * as mockSeed from "../mockSeed.js";
@@ -37,9 +40,12 @@ import type {
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   charters: typeof charters;
+  config: typeof config;
   coworker: typeof coworker;
   crons: typeof crons;
   devAuth: typeof devAuth;
+  docSources: typeof docSources;
+  docSyncActions: typeof docSyncActions;
   events: typeof events;
   mock: typeof mock;
   mockSeed: typeof mockSeed;

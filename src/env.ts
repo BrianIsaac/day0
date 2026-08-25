@@ -54,6 +54,9 @@ const schema = z.object({
   // `true` skips Clerk entirely and runs as one synthetic local user. Refused
   // outside `next dev` — see src/lib/dev-auth.ts.
   NEXT_PUBLIC_DEV_NO_AUTH: z.string().optional(),
+  DAY0_SURFACE_MODE: z.enum(['mock', 'real']).default('mock'),
+  DAY0_DOCS_ROOT: z.string().default('/docs'),
+  DAY0_SECRET_REFS: z.string().optional(),
 });
 
 /**
@@ -91,6 +94,9 @@ const OPTIONAL_STRINGS = [
   'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
   'NEXT_PUBLIC_DEMO_TENANT_SLUG',
   'NEXT_PUBLIC_DEV_NO_AUTH',
+  'DAY0_SURFACE_MODE',
+  'DAY0_DOCS_ROOT',
+  'DAY0_SECRET_REFS',
 ] as const;
 
 /**
@@ -141,5 +147,8 @@ export const env = schema.parse(
     NEXT_PUBLIC_DEMO_BOSS_EMAIL: process.env.NEXT_PUBLIC_DEMO_BOSS_EMAIL,
     NEXT_PUBLIC_DEMO_TENANT_SLUG: process.env.NEXT_PUBLIC_DEMO_TENANT_SLUG,
     NEXT_PUBLIC_DEV_NO_AUTH: process.env.NEXT_PUBLIC_DEV_NO_AUTH,
+    DAY0_SURFACE_MODE: process.env.DAY0_SURFACE_MODE,
+    DAY0_DOCS_ROOT: process.env.DAY0_DOCS_ROOT,
+    DAY0_SECRET_REFS: process.env.DAY0_SECRET_REFS,
   }),
 );

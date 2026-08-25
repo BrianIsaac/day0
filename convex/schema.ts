@@ -15,6 +15,7 @@ export default defineSchema({
     bossEmail: v.string(),
     name: v.string(),
     avatarId: v.optional(v.string()),
+    docSourceIds: v.optional(v.array(v.id('docSources'))),
     /** Clerk user id (`identity.subject`). Optional for legacy rows; new
      * deploys must populate it. Queries scope by this so each judge's
      * agents are isolated. */
@@ -47,6 +48,43 @@ export default defineSchema({
     content: v.string(),
     updatedAt: v.number(),
   }).index('by_agent_file', ['agentId', 'fileName']),
+
+  docSources: defineTable({
+    userId: v.string(),
+    label: v.string(),
+    kind: v.union(v.literal('mcp'), v.literal('folder'), v.literal('git'), v.literal('urls')),
+    locator: v.string(),
+    serverKind: v.optional(
+      v.union(
+        v.literal('notion'),
+        v.literal('confluence'),
+        v.literal('drive'),
+        v.literal('generic'),
+      ),
+    ),
+    credentialRef: v.optional(v.string()),
+    status: v.union(
+      v.literal('linking'),
+      v.literal('synced'),
+      v.literal('error'),
+      v.literal('credential-not-landed'),
+    ),
+    lastSyncAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_user', ['userId']),
+
+  docPages: defineTable({
+    sourceId: v.id('docSources'),
+    ref: v.string(),
+    title: v.string(),
+    url: v.optional(v.string()),
+    markdown: v.string(),
+    updatedAt: v.number(),
+  })
+    .index('by_source', ['sourceId'])
+    .index('by_source_ref', ['sourceId', 'ref']),
 
   voiceSessions: defineTable({
     agentId: v.id('agents'),
@@ -212,8 +250,13 @@ export default defineSchema({
     title: v.string(),
     body: v.string(),
     category: v.union(v.literal('team-doc'), v.literal('how-to-guide')),
+    sourceId: v.optional(v.id('docSources')),
+    sourceRef: v.optional(v.string()),
+    sourceUrl: v.optional(v.string()),
     updatedAt: v.number(),
-  }).index('by_agent_slug', ['agentId', 'slug']),
+  })
+    .index('by_agent_slug', ['agentId', 'slug'])
+    .index('by_source', ['sourceId']),
 
   // A spreadsheet has named tabs; rows belong to a (sheetSlug, tabName).
   mockSpreadsheets: defineTable({

@@ -295,6 +295,7 @@ function SurfaceNode({
 function SignedInDashboard({ boss }: { boss: Boss }) {
   const router = useRouter();
   const agents = useQuery(api.agents.listForUser);
+  const docSources = useQuery(api.docSources.listMine);
   const deploy = useMutation(api.agents.deploy);
   const reset = useMutation(api.reset.deleteMyData);
   const [workerName, setWorkerName] = useState('worker 1');
@@ -302,6 +303,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
   const [submitting, setSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [excludedSourceIds, setExcludedSourceIds] = useState<string[]>([]);
   const selectedAvatar = avatarById(selectedAvatarId);
 
   async function onDeploy(ev: FormEvent<HTMLFormElement>) {
@@ -319,6 +321,9 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
         bossEmail,
         name: workerName.trim(),
         avatarId: selectedAvatar.id,
+        docSourceIds: (docSources || [])
+          .filter((source) => !excludedSourceIds.includes(source._id))
+          .map((source) => source._id),
       });
       fetch(`/api/seed?agentId=${agentId}`, { method: 'POST' }).catch(() => {});
       router.push(`/agent/${agentId}`);
@@ -363,6 +368,34 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
           <div>
             <h2 className="text-sm font-semibold mb-3">Deploy a new Day0 agent</h2>
             <AvatarPicker selectedId={selectedAvatarId} onSelect={setSelectedAvatarId} />
+            {(docSources?.length ?? 0) > 0 ? (
+              <fieldset className="mb-3">
+                <legend className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-1">
+                  Documentation this agent reads
+                </legend>
+                <div className="flex flex-wrap gap-3">
+                  {docSources?.map((source) => (
+                    <label key={source._id} className="text-xs flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={!excludedSourceIds.includes(source._id)}
+                        onChange={(event) =>
+                          setExcludedSourceIds((current) =>
+                            event.target.checked
+                              ? current.filter((id) => id !== source._id)
+                              : [...current, source._id],
+                          )
+                        }
+                      />
+                      {source.label}
+                    </label>
+                  ))}
+                  <Link href="/documentation" className="text-xs text-[var(--color-accent)]">
+                    manage
+                  </Link>
+                </div>
+              </fieldset>
+            ) : null}
             <form onSubmit={onDeploy} className="flex flex-col gap-3 sm:flex-row">
               <input
                 type="text"

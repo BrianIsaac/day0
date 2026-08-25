@@ -16,9 +16,9 @@ coverage
 /.clerk/
 
 # internal planning docs, fixture content, and AI agent meta - not part of the public repo
-docs/
-docs-fixture/
-docs-local/
+/docs/
+/docs-fixture/
+/docs-local/
 AGENTS.md
 CLAUDE.md
 

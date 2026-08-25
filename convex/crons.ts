@@ -20,4 +20,6 @@ crons.interval(
   {},
 );
 
+crons.interval('sync documentation sources', { minutes: 15 }, internal.docSyncActions.syncAll, {});
+
 export default crons;

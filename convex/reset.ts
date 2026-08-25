@@ -1,13 +1,15 @@
+import { v } from 'convex/values';
 import { mutation } from './_generated/server';
 import { getCallerOrThrow } from './ownership';
+import { deleteOwnedDocumentation } from './docSources';
 
 /**
  * Wipe every record belonging to the signed-in user. Idempotent.
  * Called from the reset button on the landing page.
  */
 export const deleteMyData = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { alsoUnlinkDocumentation: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
     const identity = await getCallerOrThrow(ctx);
     const userId = identity.subject;
 
@@ -69,6 +71,9 @@ export const deleteMyData = mutation({
       await ctx.db.delete(agent._id);
       deleted += 1;
     }
-    return { deleted };
+    const unlinkedSources = args.alsoUnlinkDocumentation
+      ? await deleteOwnedDocumentation(ctx, userId)
+      : 0;
+    return { deleted, unlinkedSources };
   },
 });

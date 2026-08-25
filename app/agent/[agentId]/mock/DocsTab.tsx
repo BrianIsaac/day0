@@ -17,10 +17,17 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
       return a.title.localeCompare(b.title);
     });
   }, [docs]);
+  const sourceIds = useMemo(
+    () => [...new Set((docs ?? []).flatMap((doc) => (doc.sourceId ? [doc.sourceId] : [])))],
+    [docs],
+  );
+  const sources = useQuery(api.docSources.byIds, { sourceIds });
+  const sourceLabels = useMemo(
+    () => new Map((sources ?? []).map((source) => [source._id, source.label])),
+    [sources],
+  );
 
-  const active = activeSlug
-    ? sortedDocs.find((d) => d.slug === activeSlug)
-    : sortedDocs[0];
+  const active = activeSlug ? sortedDocs.find((d) => d.slug === activeSlug) : sortedDocs[0];
 
   if (!docs) return <div className="text-xs text-[var(--color-muted)]">loading docs…</div>;
   if (sortedDocs.length === 0)
@@ -45,6 +52,11 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
                       : 'text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
                   }`}
                 >
+                  <span className="block text-[9px] text-[var(--color-muted)]">
+                    {d.sourceId
+                      ? sourceLabels.get(d.sourceId) || 'linked source'
+                      : 'Demo docs (seeded)'}
+                  </span>
                   {d.title}
                 </button>
               </li>
@@ -66,6 +78,11 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
                       : 'text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
                   }`}
                 >
+                  <span className="block text-[9px] text-[var(--color-muted)]">
+                    {d.sourceId
+                      ? sourceLabels.get(d.sourceId) || 'linked source'
+                      : 'Demo docs (seeded)'}
+                  </span>
                   {d.title}
                 </button>
               </li>
@@ -87,6 +104,16 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
               >
                 {active.category === 'how-to-guide' ? 'agent-readable' : 'team doc'}
               </span>
+              {active.sourceUrl ? (
+                <a
+                  href={active.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-[var(--color-accent)] underline"
+                >
+                  open source
+                </a>
+              ) : null}
             </div>
             <pre className="text-xs whitespace-pre-wrap font-sans leading-relaxed text-[var(--color-fg)]">
               {active.body}
