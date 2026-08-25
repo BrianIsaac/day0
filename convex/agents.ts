@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { mutation, query, internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 
 /**
@@ -64,13 +65,23 @@ export const deploy = mutation({
     bossEmail: v.string(),
     name: v.optional(v.string()),
     avatarId: v.optional(v.string()),
+    excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
+    for (const sourceId of args.excludedDocSourceIds ?? []) {
+      const source = await ctx.db.get(sourceId);
+      if (!source || source.userId !== identity.subject) {
+        throw new Error('Documentation source not found or owned by another user.');
+      }
+    }
     const agentId = await ctx.db.insert('agents', {
       bossEmail: args.bossEmail,
       name: args.name ?? 'Day0',
       avatarId: args.avatarId,
+      excludedDocSourceIds: args.excludedDocSourceIds?.length
+        ? args.excludedDocSourceIds
+        : undefined,
       userId: identity.subject,
       state: 'deployed',
       createdAt: Date.now(),
@@ -94,6 +105,7 @@ export const deploy = mutation({
         createdAt: Date.now(),
       });
     }
+    await ctx.scheduler.runAfter(0, internal.docSyncActions.mirrorForAgent, { agentId });
     return agentId;
   },
 });

@@ -58,6 +58,9 @@ export const upsertDoc = internalMutation({
     title: v.string(),
     body: v.string(),
     category: v.union(v.literal('team-doc'), v.literal('how-to-guide')),
+    sourceId: v.optional(v.id('docSources')),
+    sourceRef: v.optional(v.string()),
+    sourceUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -68,6 +71,9 @@ export const upsertDoc = internalMutation({
       title: args.title,
       body: args.body,
       category: args.category,
+      sourceId: args.sourceId,
+      sourceRef: args.sourceRef,
+      sourceUrl: args.sourceUrl,
       updatedAt: Date.now(),
     };
     if (existing) {
@@ -246,9 +252,7 @@ export const postSlackMessage = internalMutation({
   handler: async (ctx, args): Promise<MockWriteResult> => {
     const channel = await ctx.db
       .query('mockSlackChannels')
-      .withIndex('by_agent_slug', (q) =>
-        q.eq('agentId', args.agentId).eq('slug', args.channelSlug),
-      )
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.channelSlug))
       .unique();
     if (!channel) {
       return { changed: false, reason: `no Slack channel with slug "${args.channelSlug}"` };
@@ -406,12 +410,7 @@ export const updateTicket = internalMutation({
     agentId: v.id('agents'),
     slug: v.string(),
     status: v.optional(
-      v.union(
-        v.literal('open'),
-        v.literal('in-progress'),
-        v.literal('blocked'),
-        v.literal('done'),
-      ),
+      v.union(v.literal('open'), v.literal('in-progress'), v.literal('blocked'), v.literal('done')),
     ),
     comment: v.optional(v.string()),
     commentAuthor: v.optional(v.string()),

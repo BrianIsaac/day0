@@ -49,6 +49,23 @@ export interface ShortTermGoals {
   day90: string;
 }
 
+export const SYSTEM_CLASSES = [
+  'kanban',
+  'chat',
+  'docs',
+  'spreadsheet',
+  'crm',
+  'analytics',
+  'social',
+  'other',
+] as const;
+
+export interface NamedSystem {
+  name: string;
+  class: (typeof SYSTEM_CLASSES)[number];
+  whereMentioned: string;
+}
+
 export interface Charter {
   version: CharterVersion;
   source: string;
@@ -58,6 +75,7 @@ export interface Charter {
   shortTermGoals: ShortTermGoals;
   proposedBoundaries: ProposedBoundaries;
   namedCollaborators: NamedCollaborator[];
+  namedSystems: NamedSystem[];
   priorityReading: string[];
   adjacentRoles: AdjacentRole[];
   approvalChain: ApprovalChain;
@@ -84,11 +102,12 @@ const SYSTEM_PROMPT = [
   'Provenance discipline: every evidence clause carries source "from manager 1:1 day-1" because v0.0 has no other source.',
   'Conservative defaults: in proposedBoundaries.willDo, prefer concrete narrow actions; in willNotDo, list adjacent roles you must NOT step on.',
   'If the manager left a topic vague (e.g. "figure it out"), capture it under openQuestions instead of inventing a goal.',
+  'List every tool or system the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
 ].join('\n');
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
 
-const charterSchema = z.object({
+export const charterSchema = z.object({
   whyThisHire: z.string(),
   proposedFunction: z.string(),
   evidence: z.array(
@@ -112,6 +131,13 @@ const charterSchema = z.object({
       name: z.string(),
       topic: z.string(),
       introPath: z.enum(['manager', 'self', 'tbd']),
+    }),
+  ),
+  namedSystems: z.array(
+    z.object({
+      name: z.string(),
+      class: z.enum(SYSTEM_CLASSES),
+      whereMentioned: z.string(),
     }),
   ),
   priorityReading: z.array(z.string()),
@@ -160,6 +186,7 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
     shortTermGoals: raw.shortTermGoals,
     proposedBoundaries: raw.proposedBoundaries,
     namedCollaborators: raw.namedCollaborators,
+    namedSystems: raw.namedSystems,
     priorityReading: raw.priorityReading,
     adjacentRoles: raw.adjacentRoles,
     approvalChain: {
@@ -296,6 +323,11 @@ export function renderCharter(c: Charter, date = new Date()): string {
     'NAMED COLLABORATORS                                        [from manager 1:1]',
     ...renderCollaborators(c.namedCollaborators),
     '',
+    'NAMED SYSTEMS                                              [from manager 1:1]',
+    ...(c.namedSystems ?? []).map(
+      (system) => `  - ${system.name} (${system.class}) - ${system.whereMentioned}`,
+    ),
+    '',
     'PRIORITY READING                                           [from manager 1:1]',
     ...renderBullets(c.priorityReading, '  '),
     '',
@@ -376,6 +408,9 @@ export function toolsFromCharter(c: Charter): string {
     ...reading.map((r) => `- ${r}`),
     '',
     '## Known surfaces (open questions until the team names them)',
+    ...(c.namedSystems ?? []).map(
+      (system) => `- ${system.name} (${system.class}) - ${system.whereMentioned}`,
+    ),
     ...c.openQuestions
       .filter((q) => /tool|stack|tracker|surface|dashboard|wiki|spreadsheet/i.test(q))
       .map((q) => `- ${q}`),

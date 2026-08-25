@@ -9,8 +9,9 @@ import { SpreadsheetTab } from './mock/SpreadsheetTab';
 import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
+import { SurfacesTab } from './mock/SurfacesTab';
 
-type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets';
+type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets' | 'surfaces';
 
 const TABS: Array<{ key: TabKey; label: string; sublabel: string }> = [
   { key: 'slack', label: 'Slack', sublabel: 'channels + DMs' },
@@ -18,6 +19,7 @@ const TABS: Array<{ key: TabKey; label: string; sublabel: string }> = [
   { key: 'docs', label: 'Docs', sublabel: 'team wiki + how-tos' },
   { key: 'tweet', label: 'Twitter', sublabel: 'mentions + drafts' },
   { key: 'tickets', label: 'Tickets', sublabel: 'Linear-style queue' },
+  { key: 'surfaces', label: 'Surfaces', sublabel: 'connections + evidence' },
 ];
 
 export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
@@ -29,6 +31,12 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const tweets = useQuery(api.mock.listTweets, { agentId });
   const tickets = useQuery(api.mock.listTickets, { agentId });
   const spreadsheets = useQuery(api.mock.listSpreadsheets, { agentId });
+  const config = useQuery(api.config.surfaceMode);
+  // The Surfaces tab exists only in real mode; the hosted mock keeps its
+  // five synthetic surfaces and never asks for connection verdicts.
+  const isReal = config?.mode === 'real';
+  const surfaces = useQuery(api.surfaces.listForAgent, isReal ? { agentId } : 'skip');
+  const tabs = isReal ? TABS : TABS.filter((tab) => tab.key !== 'surfaces');
 
   const counts: Record<TabKey, number | undefined> = {
     slack: channels?.length,
@@ -36,6 +44,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
     docs: docs?.length,
     tweet: tweets?.length,
     tickets: tickets?.length,
+    surfaces: surfaces?.length,
   };
 
   return (
@@ -45,7 +54,9 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
     <section className="@container bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
         <div>
-          <h2 className="text-sm font-semibold tracking-tight">Mock work environment</h2>
+          <h2 className="text-sm font-semibold tracking-tight">
+            {config?.mode === 'real' ? 'Work environment' : 'Mock work environment'}
+          </h2>
           <p className="text-[10px] text-[var(--color-muted)]">
             Live surfaces — when the agent runs a skill, edits land here in real time
           </p>
@@ -57,7 +68,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
           it hid here — Twitter and Tickets — are two fifths of the environment
           the agent works in. */}
       <nav className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const isActive = active === t.key;
           const count = counts[t.key];
           return (
@@ -96,6 +107,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
         {active === 'slack' ? <SlackTab agentId={agentId} /> : null}
         {active === 'tweet' ? <TwitterTab agentId={agentId} /> : null}
         {active === 'tickets' ? <TicketsTab agentId={agentId} /> : null}
+        {active === 'surfaces' && isReal ? <SurfacesTab agentId={agentId} /> : null}
       </div>
     </section>
   );

@@ -179,6 +179,7 @@ function Header({
   /** What the page is showing, which outranks the row when the two disagree. */
   charter: Doc<'charters'> | null;
 }) {
+  const surfaceConfig = useQuery(api.config.surfaceMode);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
     'day-one-in-progress': {
@@ -210,7 +211,12 @@ function Header({
             Agent reporting to <span className="font-mono text-[var(--color-accent)]">{agent.bossEmail}</span>
           </h1>
         </div>
-        <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.tone}`}>{s.text}</span>
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">
+            {surfaceConfig?.label || 'loading'}
+          </span>
+          <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.tone}`}>{s.text}</span>
+        </div>
       </div>
     </header>
   );
@@ -313,6 +319,7 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
     shortTermGoals: { day30: string; day60: string; day90: string };
     proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
     namedCollaborators: Array<{ name: string; topic: string }>;
+    namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
     priorityReading: string[];
     openQuestions: string[];
   };
@@ -349,6 +356,12 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             <BoundaryList label="Will do" items={body.proposedBoundaries.willDo} />
             <BoundaryList label="Will NOT do" items={body.proposedBoundaries.willNotDo} />
             <BoundaryList label="Escalation triggers" items={body.proposedBoundaries.escalationTriggers} />
+            <BoundaryList
+              label="Systems named in the 1:1"
+              items={(body.namedSystems ?? []).map(
+                (system) => `${system.name} (${system.class}) - ${system.whereMentioned}`,
+              )}
+            />
             <BoundaryList
               label="Collaborators"
               items={body.namedCollaborators.map((c) => `${c.name} — ${c.topic}`)}

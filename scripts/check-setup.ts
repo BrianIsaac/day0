@@ -70,6 +70,10 @@ const WATCHED = [
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_AGENT_ID',
   'ELEVENLABS_WEBHOOK_SECRET',
+  'DAY0_SURFACE_MODE',
+  'DAY0_DOCS_ROOT',
+  'DAY0_SECRET_REFS',
+  'COMPOSE_PROJECT_NAME',
 ] as const;
 
 type Status = 'ok' | 'warn' | 'gap';
@@ -98,7 +102,25 @@ function resolve(path: string): Values {
   for (const key of WATCHED) {
     if (key in process.env) values[key] = process.env[key] ?? '';
   }
+  for (const key of secretRefs(values)) {
+    if (key in process.env) values[key] = process.env[key] ?? '';
+  }
   return values;
+}
+
+/**
+ * Parse the allowlisted provider-secret names without reading their values.
+ *
+ * Args:
+ *   values: Resolved environment contract.
+ *
+ * Returns:
+ *   Unique valid environment-variable names.
+ */
+function secretRefs(values: Values): string[] {
+  return [...new Set((values.DAY0_SECRET_REFS ?? '').split(',').map((key) => key.trim()))].filter(
+    (key: string): boolean => /^[A-Z][A-Z0-9_]*$/.test(key),
+  );
 }
 
 /** Loopback from the host is nothing at all from inside a container. */
@@ -118,8 +140,9 @@ function main(): void {
   const sections: Section[] = [
     backendSection(v),
     authSection(v),
+    surfacesSection(v),
     modelSection(v, selfHosted),
-    sandboxSection(v),
+    sandboxSection(v, v.COMPOSE_PROJECT_NAME || 'day0'),
     voiceSection(v),
     finalisationSection(v),
   ];
@@ -149,6 +172,121 @@ function main(): void {
     process.exit(1);
   }
   console.log('Nothing here is half-done.');
+}
+
+/**
+ * Ask Compose which services are running in the shared Day0 project.
+ *
+ * Args:
+ *   projectName: Explicit Compose project name.
+ *
+ * Returns:
+ *   Running service names, or undefined when Docker cannot be queried.
+ */
+function composeRunningServices(projectName: string): string[] | undefined {
+  const probe = spawnSync(
+    'docker',
+    [
+      'compose',
+      '-p',
+      projectName,
+      '--env-file',
+      ENV_FILE,
+      '--profile',
+      'real',
+      'ps',
+      '--status',
+      'running',
+      '--services',
+    ],
+    { encoding: 'utf8', timeout: 15_000 },
+  );
+  if (probe.status !== 0) return undefined;
+  return (probe.stdout ?? '')
+    .split('\n')
+    .map((service: string): string => service.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Check the documentation mount from the backend runtime that reads it.
+ *
+ * Args:
+ *   projectName: Explicit Compose project name.
+ *   docsRoot: Container path configured for folder readers.
+ *
+ * Returns:
+ *   True when the backend can read the directory.
+ */
+function backendCanReadDocs(projectName: string, docsRoot: string): boolean {
+  const probe = spawnSync(
+    'docker',
+    [
+      'compose',
+      '-p',
+      projectName,
+      '--env-file',
+      ENV_FILE,
+      'exec',
+      '-T',
+      'backend',
+      'test',
+      '-r',
+      docsRoot,
+    ],
+    { encoding: 'utf8', timeout: 15_000 },
+  );
+  return probe.status === 0;
+}
+
+/**
+ * Report the selected surface mode, documentation seam and credential refs.
+ *
+ * Args:
+ *   values: Resolved environment contract.
+ *
+ * Returns:
+ *   One setup section without exposing any provider value.
+ */
+function surfacesSection(values: Values): Section {
+  const mode = values.DAY0_SURFACE_MODE || 'mock';
+  if (mode !== 'mock' && mode !== 'real') {
+    return {
+      title: 'Surfaces: invalid mode - needs fixing',
+      status: 'gap',
+      lines: [`DAY0_SURFACE_MODE must be mock or real, not ${mode}.`],
+    };
+  }
+  if (mode === 'mock') {
+    return {
+      title: 'Surfaces: mock',
+      status: 'ok',
+      lines: ['The seeded five-surface environment is active; no provider credentials are read.'],
+    };
+  }
+
+  const projectName = values.COMPOSE_PROJECT_NAME || 'day0';
+  const docsRoot = values.DAY0_DOCS_ROOT || '/docs';
+  const services = composeRunningServices(projectName);
+  const profileDetected = services?.includes('playwright-mcp') ?? false;
+  const docsReadable = backendCanReadDocs(projectName, docsRoot);
+  const refs = secretRefs(values);
+  const present = refs.filter((key: string): boolean => Boolean(values[key]));
+  const absent = refs.filter((key: string): boolean => !values[key]);
+  const lines = [
+    `Compose project ${projectName}; real profile ${profileDetected ? 'detected' : 'not detected'}.`,
+    `Backend documentation root ${docsRoot} is ${docsReadable ? 'readable' : 'not readable'}.`,
+    `Credential refs present: ${present.length > 0 ? present.join(', ') : 'none'}.`,
+    `Credential refs absent: ${absent.length > 0 ? absent.join(', ') : 'none'}.`,
+  ];
+  if (!profileDetected || !docsReadable) {
+    return { title: 'Surfaces: real (local) - needs fixing', status: 'gap', lines };
+  }
+  return {
+    title: 'Surfaces: real (local)',
+    status: absent.length > 0 ? 'warn' : 'ok',
+    lines,
+  };
 }
 
 /** Which backend the app and the Convex CLI will talk to, and whether they agree. */
@@ -350,11 +488,13 @@ type SandboxState = 'healthy' | 'unhealthy' | 'stopped' | 'unknown';
  * daemon down, a different compose project - is reported as not knowing rather
  * than as an absence.
  */
-function sandboxState(): SandboxState {
+function sandboxState(projectName: string): SandboxState {
   const probe = spawnSync(
     'docker',
     [
       'compose',
+      '-p',
+      projectName,
       '--env-file',
       ENV_FILE,
       '--profile',
@@ -391,9 +531,9 @@ function sandboxState(): SandboxState {
  * if you did not - and until this section existed the only way to find out was
  * to watch a skill fail.
  */
-function sandboxSection(v: Values): Section {
+function sandboxSection(v: Values, projectName: string): Section {
   const daytona = !!v.DAYTONA_API_KEY;
-  const local = daytona ? 'stopped' : sandboxState();
+  const local = daytona ? 'stopped' : sandboxState(projectName);
   const socketNote = v.SKILL_SANDBOX_SOCKET
     ? [`The deployment looks for the socket at ${v.SKILL_SANDBOX_SOCKET}.`]
     : [];
