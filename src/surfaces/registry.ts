@@ -158,7 +158,7 @@ export async function applySurfaceActions(
   ctx: ActionCtx,
   mode: SurfaceMode,
   surfaces: readonly SurfaceRecord[],
-  run: AdapterRun,
+  run: Omit<AdapterRun, 'agentName'> & { agentName?: string },
   actions: MockAction[],
   options: ApplyOptions = {},
 ): Promise<AppliedAction[]> {
@@ -192,7 +192,7 @@ export async function applySurfaceActions(
       continue;
     }
     if (!isSurfaceTool(action.tool)) {
-      applied.push(await adapter.apply(ctx, run, action, index, idempotencyKey));
+      applied.push(await adapter.apply(ctx, run as AdapterRun, action, index, idempotencyKey));
       continue;
     }
     const parsed = parseSurfaceAction(action);
@@ -246,7 +246,11 @@ export async function applySurfaceActions(
     const provenance = applyProvenance(
       parsed.action,
       surface,
-      { agentName: run.agentName, workItemId: run.workItemId, runId: run.runId },
+      {
+        agentName: run.agentName ?? 'Day0',
+        workItemId: run.workItemId,
+        runId: run.runId,
+      },
       surface.credentialKind ?? 'value',
     );
     if (!provenance.ok) {
@@ -254,7 +258,13 @@ export async function applySurfaceActions(
       continue;
     }
     applied.push(
-      await adapter.apply(ctx, run, serialiseSurfaceAction(provenance.action), index, idempotencyKey),
+      await adapter.apply(
+        ctx,
+        { ...run, agentName: run.agentName ?? 'Day0' },
+        serialiseSurfaceAction(provenance.action),
+        index,
+        idempotencyKey,
+      ),
     );
   }
   return applied;

@@ -246,8 +246,6 @@ export const executeApprovedPlan = action({
       agentId,
     });
     if (!charterRow) return { ok: false, reason: 'no charter' };
-    const agent = await ctx.runQuery(internal.agents.getInternal, { agentId });
-    if (!agent) return { ok: false, reason: 'agent not found' };
     const charter = charterRow.body as Charter;
     const plan = item.plan as Awaited<ReturnType<typeof draftExecutionPlan>>;
     const candidate = rowToCandidate(item);
@@ -295,11 +293,19 @@ export const executeApprovedPlan = action({
       skillId: pickedSkill._id,
     });
     if (!claim.claimed) return { ok: false, reason: claim.reason };
+    if (SURFACE_MODE === 'real') {
+      return await holdRealActions(ctx, {
+        workItemId: args.workItemId,
+        agentId,
+        runId: claim.runId,
+        skill: pickedSkill,
+        plan,
+        candidate,
+        charter,
+      });
+    }
     try {
-      // The snapshot is always the mock tables: mirrored documentation lives
-      // there in both modes, and real surfaces contribute nothing to it.
       const mockEnv = await readSurfaceSnapshot(ctx, agentId, 'mock', []);
-      const surfaces = SURFACE_MODE === 'real' ? await loadSurfaces(ctx, agentId) : [];
       const output = await runSkill({
         skill: {
           name: pickedSkill.name,
@@ -310,46 +316,103 @@ export const executeApprovedPlan = action({
         candidate,
         charter,
         mockEnv,
-        surfaces,
       });
-      if (SURFACE_MODE === 'real') {
-        // The exact-action gate: nothing is applied until the manager has read
-        // the literal actions. The run id is kept on the row so approval keys
-        // its idempotency off the same claim.
-        const pending = await ctx.runMutation(internal.work.setActionsPending, {
-          workItemId: args.workItemId,
-          runId: claim.runId,
-          output,
-        });
-        if (!pending.pending) {
-          return { ok: false, reason: 'the run was moved on before its actions could be held' };
-        }
-        return { ok: true, reason: 'actions pending the manager\'s approval' };
-      }
       const applied = await applySurfaceActions(
         ctx,
         'mock',
         [],
         {
           agentId,
-          agentName: agent.name,
           workItemId: args.workItemId,
           runId: claim.runId,
         },
         output.actions ?? [],
       );
-      return await finishRun(ctx, args.workItemId, claim.runId, output, applied);
+      // A run completes only when every action it emitted changed the work
+      // environment. "At least one applied" is not enough: the skills are told
+      // to DM the manager alongside the primary mutation, so a failed primary
+      // action plus a delivered "I did it" DM would report the work as done
+      // when only the claim about it landed.
+      const reason = completionFailure(applied);
+      if (reason) {
+        await ctx.runMutation(internal.work.setFailed, {
+          workItemId: args.workItemId,
+          reason,
+          output: { ...output, applied },
+        });
+        return { ok: false, reason };
+      }
+      await ctx.runMutation(internal.work.setCompleted, {
+        workItemId: args.workItemId,
+        output: { ...output, applied },
+      });
+      return { ok: true };
     } catch (err) {
       const reason = (err as Error).message;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId: args.workItemId,
         reason,
-        runId: claim.runId,
       });
       return { ok: false, reason };
     }
   },
 });
+
+/**
+ * Run a real-surface skill and stop it at the exact-action gate.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: Work, run, skill and evaluation context.
+ *
+ * Returns:
+ *   The pending result, or the fenced failure.
+ */
+async function holdRealActions(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    agentId: Id<'agents'>;
+    runId: Id<'events'>;
+    skill: SimpleSkillRow;
+    plan: Awaited<ReturnType<typeof draftExecutionPlan>>;
+    candidate: WorkCandidate;
+    charter: Charter;
+  },
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const mockEnv = await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
+    const output = await runSkill({
+      skill: {
+        name: args.skill.name,
+        description: args.skill.description,
+        body: args.skill.body,
+      },
+      plan: args.plan,
+      candidate: args.candidate,
+      charter: args.charter,
+      mockEnv,
+      surfaces: await loadSurfaces(ctx, args.agentId),
+    });
+    const pending = await ctx.runMutation(internal.work.setActionsPending, {
+      workItemId: args.workItemId,
+      runId: args.runId,
+      output,
+    });
+    if (!pending.pending) {
+      return { ok: false, reason: 'the run was moved on before its actions could be held' };
+    }
+    return { ok: true, reason: 'actions pending the manager\'s approval' };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await ctx.runMutation(internal.work.setFailed, {
+      workItemId: args.workItemId,
+      reason,
+      runId: args.runId,
+    });
+    return { ok: false, reason };
+  }
+}
 
 /**
  * Apply the actions the manager approved, with the run id the skill ran under.
@@ -464,7 +527,15 @@ async function finishRun(
   output: ExecutionOutput,
   applied: AppliedAction[],
 ): Promise<{ ok: boolean; reason?: string }> {
-  const reason = completionFailure(applied);
+  const failures = applied.filter((action: AppliedAction): boolean => !action.ok && !action.held);
+  const reason =
+    applied.length === 0
+      ? 'skill emitted no actions, so nothing in the work environment changed'
+      : failures.length > 0
+        ? `${failures.length} of ${applied.length} actions did not change the work environment: ${failures
+            .map((failure: AppliedAction): string => `${failure.tool} (${failure.reason})`)
+            .join('; ')}`
+        : undefined;
   if (reason) {
     await ctx.runMutation(internal.work.setFailed, {
       workItemId,
@@ -485,9 +556,6 @@ async function finishRun(
 /**
  * Explain why an applied-action ledger cannot complete its work item.
  *
- * Held rows count as accounted for: a public post the gate held, or an action
- * the manager chose not to send, is recorded rather than failed.
- *
  * Args:
  *   applied: Evidence rows returned by the surface adapters.
  *
@@ -495,7 +563,7 @@ async function finishRun(
  *   Failure reason, or undefined when every proposed action landed.
  */
 export function completionFailure(applied: AppliedAction[]): string | undefined {
-  const failures = applied.filter((action: AppliedAction): boolean => !action.ok && !action.held);
+  const failures = applied.filter((action: AppliedAction): boolean => !action.ok);
   if (applied.length === 0) {
     return 'skill emitted no actions, so nothing in the work environment changed';
   }

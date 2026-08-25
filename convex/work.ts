@@ -335,11 +335,14 @@ export const claimForExecution = internalMutation({
  * error path turns it into a visible `failed` row rather than a silent one.
  */
 export const setCompleted = internalMutation({
-  args: { workItemId: v.id('workItems'), runId: v.id('events'), output: v.any() },
+  args: { workItemId: v.id('workItems'), runId: v.optional(v.id('events')), output: v.any() },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
-    if (row.state !== 'executing' || row.executionRunId !== args.runId) {
+    if (
+      row.state !== 'executing' ||
+      (args.runId !== undefined && row.executionRunId !== args.runId)
+    ) {
       throw new Error('execution run changed before completion');
     }
     const applied = (
