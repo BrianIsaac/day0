@@ -789,9 +789,19 @@ function WorkQueue({
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={() => retryFailed({ workItemId: item._id })}
               onApproveActions={(approvedIndexes) =>
-                approveActions({ workItemId: item._id, approvedIndexes })
+                item.pendingRunId
+                  ? approveActions({
+                      workItemId: item._id,
+                      pendingRunId: item.pendingRunId,
+                      approvedIndexes,
+                    })
+                  : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
               }
-              onRejectActions={(reason) => rejectActions({ workItemId: item._id, reason })}
+              onRejectActions={(reason) =>
+                item.pendingRunId
+                  ? rejectActions({ workItemId: item._id, pendingRunId: item.pendingRunId, reason })
+                  : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
+              }
             />
           ))}
         </div>

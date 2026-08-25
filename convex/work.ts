@@ -416,13 +416,20 @@ export const setActionsPending = internalMutation({
  * recorded as held.
  */
 export const approveActions = mutation({
-  args: { workItemId: v.id('workItems'), approvedIndexes: v.array(v.number()) },
+  args: {
+    workItemId: v.id('workItems'),
+    pendingRunId: v.id('events'),
+    approvedIndexes: v.array(v.number()),
+  },
   handler: async (ctx, args): Promise<{ ok: true; approvedIndexes: number[] }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     if (row.state !== 'actions-pending') {
       throw new Error(`workItem state is ${row.state}; expected actions-pending`);
     }
     if (!row.pendingRunId) throw new Error('workItem has no pending run');
+    if (row.pendingRunId !== args.pendingRunId) {
+      throw new Error('pending run changed; refresh the action list');
+    }
     if (row.approvedIndexes !== undefined) {
       throw new Error('actions have already been approved');
     }
@@ -457,7 +464,7 @@ export const approveActions = mutation({
  * draft is kept, so Retry resumes from `plan-approved` and runs the skill again.
  */
 export const rejectActions = mutation({
-  args: { workItemId: v.id('workItems'), reason: v.string() },
+  args: { workItemId: v.id('workItems'), pendingRunId: v.id('events'), reason: v.string() },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     if (row.state !== 'actions-pending') {
@@ -465,6 +472,10 @@ export const rejectActions = mutation({
     }
     if (row.approvedIndexes !== undefined) {
       throw new Error('actions have already been approved');
+    }
+    if (!row.pendingRunId) throw new Error('workItem has no pending run');
+    if (row.pendingRunId !== args.pendingRunId) {
+      throw new Error('pending run changed; refresh the action list');
     }
     const reason = args.reason.trim();
     const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';

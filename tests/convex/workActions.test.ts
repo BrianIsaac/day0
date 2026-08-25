@@ -307,7 +307,8 @@ describe('executing an approved plan through the gate', (): void => {
     const runId = pending.pendingRunId;
     // The row is what survives a backend restart: state, run id and actions are
     // persisted, and approval reads only them.
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, approvedIndexes: [0, 1, 2, 3] });
+    if (!runId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] });
     const applied = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect(applied).toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
@@ -358,7 +359,9 @@ describe('executing an approved plan through the gate', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, approvedIndexes: [1, 2] });
+    const pending = await readItem(harness, workItemId);
+    if (!pending.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: pending.pendingRunId, approvedIndexes: [1, 2] });
     const applied = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect(applied.ok).toBe(false);
     const row = await readItem(harness, workItemId);
@@ -379,7 +382,12 @@ describe('executing an approved plan through the gate', (): void => {
     const { workItemId } = await seed(harness, 'real');
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const first = (await readItem(harness, workItemId)).pendingRunId;
-    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, reason: 'not yet' });
+    if (!first) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+      workItemId,
+      pendingRunId: first,
+      reason: 'not yet',
+    });
     await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const second = (await readItem(harness, workItemId)).pendingRunId;

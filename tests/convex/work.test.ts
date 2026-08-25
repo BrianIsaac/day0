@@ -144,7 +144,7 @@ describe('the exact-action gate', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, runId } = await pend(harness);
-    const result = await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, approvedIndexes: [1, 0, 1] });
+    const result = await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1, 0, 1] });
     expect(result).toEqual({ ok: true, approvedIndexes: [0, 1] });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('actions-pending');
@@ -164,12 +164,14 @@ describe('the exact-action gate', (): void => {
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, {
         workItemId,
+        pendingRunId: runId,
         approvedIndexes: [],
       }),
     ).rejects.toThrow('actions have already been approved');
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
         workItemId,
+        pendingRunId: runId,
         reason: 'replace the first decision',
       }),
     ).rejects.toThrow('actions have already been approved');
@@ -179,32 +181,69 @@ describe('the exact-action gate', (): void => {
   it('refuses approval from a non-owner, in the wrong state, or for an index outside the list', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const { workItemId } = await pend(harness);
-    await expect(harness.withIdentity({ subject: 'intruder' }).mutation(api.work.approveActions, { workItemId, approvedIndexes: [0] })).rejects.toThrow('forbidden');
-    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, approvedIndexes: [2] })).rejects.toThrow('outside the pending list');
-    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, approvedIndexes: [-1] })).rejects.toThrow('outside the pending list');
+    const { workItemId, runId } = await pend(harness);
+    await expect(harness.withIdentity({ subject: 'intruder' }).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] })).rejects.toThrow('forbidden');
+    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [2] })).rejects.toThrow('outside the pending list');
+    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [-1] })).rejects.toThrow('outside the pending list');
+    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0.5] })).rejects.toThrow('outside the pending list');
     const other = await seed(harness, 'plan-approved');
-    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId: other.workItemId, approvedIndexes: [] })).rejects.toThrow('expected actions-pending');
+    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId: other.workItemId, pendingRunId: other.runId, approvedIndexes: [] })).rejects.toThrow('expected actions-pending');
+    expect(await scheduledFunctionNames(harness)).toEqual([]);
+  });
+
+  it('refuses a delayed decision from an older pending run', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await pend(harness);
+    const replacementRunId = await harness.run(async (ctx) => {
+      const nextRunId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: 2,
+      });
+      await ctx.db.patch(workItemId, { pendingRunId: nextRunId });
+      return nextRunId;
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0],
+      }),
+    ).rejects.toThrow('pending run changed');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+        workItemId,
+        pendingRunId: runId,
+        reason: 'stale card',
+      }),
+    ).rejects.toThrow('pending run changed');
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'actions-pending',
+      pendingRunId: replacementRunId,
+    });
     expect(await scheduledFunctionNames(harness)).toEqual([]);
   });
 
   it('rejects to failed with the reason, keeps the draft, and retries from plan-approved', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const { agentId, workItemId } = await pend(harness);
-    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, reason: 'wrong issue' });
+    const { agentId, workItemId, runId } = await pend(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'wrong issue' });
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
     expect(failed.skipReason).toBe('rejected by the manager: wrong issue');
     expect(failed.pendingRunId).toBeUndefined();
     expect(failed.output).toEqual(pendingOutput);
     expect(await eventTypes(harness, agentId)).toContain('work.actions-rejected');
-    await expect(harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, reason: 'again' })).rejects.toThrow('expected actions-pending');
+    await expect(harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'again' })).rejects.toThrow('expected actions-pending');
     const retried = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
     expect(retried).toEqual({ ok: true, resumeState: 'plan-approved' });
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
     const blank = await pend(harness);
-    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId: blank.workItemId, reason: '  ' });
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId: blank.workItemId, pendingRunId: blank.runId, reason: '  ' });
     expect((await readItem(harness, blank.workItemId)).skipReason).toBe('rejected by the manager');
   });
 
@@ -216,7 +255,7 @@ describe('the exact-action gate', (): void => {
       claimed: false,
       reason: 'no actions have been approved',
     });
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, approvedIndexes: [0] });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
     const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
     expect(claim).toMatchObject({ claimed: true, runId, approvedIndexes: [0], output: pendingOutput });
     expect((await readItem(harness, workItemId)).state).toBe('executing');
@@ -229,8 +268,8 @@ describe('the exact-action gate', (): void => {
   it('completes a run whose only unlanded rows are held, and clears the gate fields', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const { workItemId } = await pend(harness);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, approvedIndexes: [0] });
+    const { workItemId, runId } = await pend(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
     await harness.mutation(internal.work.claimApprovedActions, { workItemId });
     await harness.mutation(internal.work.setCompleted, {
       workItemId,
