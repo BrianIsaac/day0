@@ -8,6 +8,11 @@ import { ChatRoom } from './ChatRoom';
 import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
+import { describeAction, heldEligible, skillApprovalRefusal } from '@/surfaces/policy';
+import { toSurfaceRecord } from '@/surfaces/records';
+import type { SurfaceRecord } from '@/surfaces/types';
+import { verdictFor } from '@/surfaces/verdict';
+import type { MockAction } from '@/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 
 interface Props {
@@ -36,6 +41,17 @@ export function AgentDashboard({ agentId }: Props) {
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: 30 });
   const voiceSession = useQuery(api.voice.latest, { agentId });
+  // Real mode only: the mock has no surfaces table rows, and the hosted app
+  // never asks for connection verdicts.
+  const surfaceConfig = useQuery(api.config.surfaceMode);
+  const surfaceRows = useQuery(
+    api.surfaces.listForAgent,
+    surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
+  );
+  const surfaces = useMemo(
+    (): SurfaceRecord[] => (surfaceRows ?? []).map((row) => toSurfaceRecord(row)),
+    [surfaceRows],
+  );
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
   const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
@@ -141,11 +157,13 @@ export function AgentDashboard({ agentId }: Props) {
           <ProposedSkillsPanel
             agentId={agentId}
             skills={proposedSkills ?? []}
+            surfaces={surfaces}
             onAuthoringAttempt={setLastAttempt}
           />
 
           <WorkQueue
             workItems={workItems ?? []}
+            surfaces={surfaces}
             registeredSkillCount={(registeredSkills ?? []).length}
             charterApproved={!!charter?.approved}
           />
@@ -420,10 +438,14 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
 function ProposedSkillsPanel({
   agentId,
   skills,
+  surfaces,
   onAuthoringAttempt,
 }: {
   agentId: Id<'agents'>;
   skills: Doc<'skills'>[];
+  /** The agent's surfaces in real mode; a skill targeting one that is not
+   *  connected cannot be approved yet, and the button says why. */
+  surfaces: SurfaceRecord[];
   /** Approving moves the row out of this panel, so its verdict has to be
    *  reported somewhere that survives the unmount. `null` opens an attempt and
    *  retires whatever the last one said. */
@@ -432,11 +454,18 @@ function ProposedSkillsPanel({
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
   const author = useAction(api.skillActions.authorAndRegisterSkill);
+  const now = useNow();
   if (skills.length === 0) return null;
   return (
     <Card title="Proposed skills · awaiting your call" tone="warn">
       <div className="space-y-3">
-        {skills.map((s) => (
+        {skills.map((s) => {
+          const refusal = skillApprovalRefusal(
+            s.targetSurface,
+            surfaces.find((surface) => surface.slug === s.targetSurface),
+            now,
+          );
+          return (
           <div
             key={s._id}
             className="border border-[var(--color-border)] rounded-lg p-3 text-sm"
@@ -446,8 +475,18 @@ function ProposedSkillsPanel({
               <span className="text-[10px] text-[var(--color-muted)]">requires: {(s.requiredScopes ?? []).join(', ')}</span>
             </div>
             <p className="text-[var(--color-muted)] text-xs mb-2">{s.rationale ?? s.description}</p>
+            {refusal ? (
+              <p className="text-[10px] text-[var(--color-warn)] mb-2">
+                Cannot approve yet: {refusal}{' '}
+                <a href="#surfaces" className="underline">
+                  Surfaces tab
+                </a>
+              </p>
+            ) : null}
             <div className="flex gap-2">
               <button
+                disabled={Boolean(refusal)}
+                title={refusal}
                 onClick={async () => {
                   await approve({ skillId: s._id });
                   void agentId;
@@ -469,7 +508,7 @@ function ProposedSkillsPanel({
                     });
                   }
                 }}
-                className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium"
+                className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
               >
                 Approve · author and verify
               </button>
@@ -481,7 +520,8 @@ function ProposedSkillsPanel({
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
@@ -655,10 +695,12 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 
 function WorkQueue({
   workItems,
+  surfaces,
   registeredSkillCount,
   charterApproved,
 }: {
   workItems: Doc<'workItems'>[];
+  surfaces: SurfaceRecord[];
   registeredSkillCount: number;
   charterApproved: boolean;
 }) {
@@ -668,11 +710,15 @@ function WorkQueue({
   const approvePlan = useMutation(api.work.approvePlan);
   const cancelPlan = useMutation(api.work.cancelPlan);
   const retryFailed = useMutation(api.work.retryFailed);
+  const approveActions = useMutation(api.work.approveActions);
+  const rejectActions = useMutation(api.work.rejectActions);
 
   const items = useMemo(
     () =>
       [...workItems].sort((a, b) => {
-        const order = ['plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'skipped', 'cancelled', 'failed', 'deferred'];
+        // What needs the manager first: literal actions awaiting approval,
+        // then plans, then skills.
+        const order = ['actions-pending', 'plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'skipped', 'cancelled', 'failed', 'deferred'];
         return order.indexOf(a.state) - order.indexOf(b.state);
       }),
     [workItems],
@@ -738,9 +784,14 @@ function WorkQueue({
             <WorkItemCard
               key={item._id}
               item={item}
+              surfaces={surfaces}
               onApprovePlan={() => approvePlan({ workItemId: item._id })}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={() => retryFailed({ workItemId: item._id })}
+              onApproveActions={(approvedIndexes) =>
+                approveActions({ workItemId: item._id, approvedIndexes })
+              }
+              onRejectActions={(reason) => rejectActions({ workItemId: item._id, reason })}
             />
           ))}
         </div>
@@ -751,24 +802,204 @@ function WorkQueue({
 
 function stateColor(state: string): string {
   if (state === 'completed') return 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]';
-  if (state === 'plan-pending' || state === 'needs-skill') return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
+  if (state === 'plan-pending' || state === 'needs-skill' || state === 'actions-pending') {
+    return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
+  }
   if (state === 'failed' || state === 'cancelled') return 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]';
   if (state === 'skipped' || state === 'deferred') return 'bg-[var(--color-muted)]/15 text-[var(--color-muted)]';
   return 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]';
 }
 
+/** One row of the applied ledger as the card reads it. */
+interface LedgerRow {
+  tool: string;
+  ok: boolean;
+  held?: boolean;
+  effect?: string;
+  reason?: string;
+  providerId?: string;
+}
+
+/**
+ * The exact-action gate: every action the skill emitted, verbatim, with a
+ * checkbox each. Nothing reaches a surface until the manager approves it here.
+ */
+function PendingActions({
+  actions,
+  surfaces,
+  onApprove,
+  onReject,
+}: {
+  actions: MockAction[];
+  surfaces: SurfaceRecord[];
+  onApprove: (approvedIndexes: number[]) => Promise<unknown>;
+  onReject: (reason: string) => Promise<unknown>;
+}) {
+  // A public post is held by the server whatever the manager ticks, so it
+  // starts unticked and "Approve all" is disabled while one exists: approving
+  // everything would promise something the gate will not deliver.
+  const heldEligibleIndexes = useMemo(
+    () => new Set(actions.flatMap((action, index) => (heldEligible(action, surfaces) ? [index] : []))),
+    [actions, surfaces],
+  );
+  const [selected, setSelected] = useState<Set<number>>(
+    () => new Set(actions.map((_, index) => index).filter((index) => !heldEligibleIndexes.has(index))),
+  );
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(call: () => Promise<unknown>): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await call();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggle(index: number, on: boolean): void {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (on) next.add(index);
+      else next.delete(index);
+      return next;
+    });
+  }
+
+  const anyHeldEligible = heldEligibleIndexes.size > 0;
+  return (
+    <div className="mt-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
+      <p className="text-[var(--color-warn)] font-medium mb-1">
+        {actions.length} {actions.length === 1 ? 'action' : 'actions'} awaiting your approval ·
+        nothing has reached a surface
+      </p>
+      {actions.length === 0 ? (
+        <p className="text-[var(--color-muted)]">
+          The skill emitted no actions. Approving lands nothing; reject to send it back.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {actions.map((action, index) => {
+            const willHold = heldEligibleIndexes.has(index);
+            const on = selected.has(index);
+            return (
+              <li key={index} className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={on}
+                  disabled={busy}
+                  onChange={(event) => toggle(index, event.target.checked)}
+                  aria-label={`approve action ${index + 1}`}
+                />
+                <div className="flex-1 min-w-0">
+                  <code className="block font-mono text-[10px] text-[var(--color-fg)] whitespace-pre-wrap break-words">
+                    {describeAction(action)}
+                  </code>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {willHold ? (
+                      <span className="text-[10px] text-[var(--color-muted)]">
+                        public post · will be held for you even if approved
+                      </span>
+                    ) : null}
+                    {!on ? (
+                      <span className="text-[10px] text-[var(--color-muted)]">held · will not be sent</span>
+                    ) : null}
+                    {on ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => toggle(index, false)}
+                        className="text-[10px] text-[var(--color-danger)] underline"
+                      >
+                        reject this action
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => toggle(index, true)}
+                        className="text-[10px] text-[var(--color-accent)] underline"
+                      >
+                        include
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-2 mt-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => submit(() => onApprove([...selected].sort((a, b) => a - b)))}
+          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
+        >
+          Approve selected ({selected.size})
+        </button>
+        <button
+          type="button"
+          disabled={busy || anyHeldEligible || actions.length === 0}
+          title={
+            anyHeldEligible
+              ? 'A public post is in this run; it is held for you whatever is approved, so approve the rest by selection.'
+              : undefined
+          }
+          onClick={() => submit(() => onApprove(actions.map((_, index) => index)))}
+          className="px-3 py-1 rounded-md border border-[var(--color-ok)]/40 text-[var(--color-ok)] text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Approve all
+        </button>
+        <input
+          type="text"
+          value={reason}
+          disabled={busy}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="reason for rejecting"
+          className="flex-1 min-w-[10rem] px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+        />
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => submit(() => onReject(reason))}
+          className="px-3 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
+        >
+          Reject run
+        </button>
+      </div>
+      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
 function WorkItemCard({
   item,
+  surfaces,
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
+  onApproveActions,
+  onRejectActions,
 }: {
   item: Doc<'workItems'>;
+  surfaces: SurfaceRecord[];
   onApprovePlan: () => void;
   onCancelPlan: () => void;
   onRetryFailed: () => void;
+  onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
+  onRejectActions: (reason: string) => Promise<unknown>;
 }) {
-  const verdict = item.verdict as { decision: string; reason?: string; suggestedSkillName?: string } | undefined;
+  const now = useNow();
+  const verdict = item.verdict as
+    | { decision: string; reason?: string; suggestedSkillName?: string; missingSurface?: string }
+    | undefined;
   const plan = item.plan as
     | {
         summary: string;
@@ -783,12 +1014,18 @@ function WorkItemCard({
     | {
         draft: string;
         notes: string;
-        applied?: Array<{ tool: string; ok: boolean; effect?: string; reason?: string }>;
+        actions?: MockAction[];
+        applied?: LedgerRow[];
       }
     | undefined;
   const appliedActions = output?.applied ?? [];
-  const failedActions = appliedActions.filter((a) => !a.ok);
-  const landedActions = appliedActions.filter((a) => a.ok);
+  const heldActions = appliedActions.filter((a) => a.held);
+  const failedActions = appliedActions.filter((a) => !a.ok && !a.held);
+  const landedActions = appliedActions.filter((a) => a.ok && !a.held);
+  const awaitingSurface =
+    verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
+      ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
+      : undefined;
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -814,10 +1051,20 @@ function WorkItemCard({
       {verdict ? (
         <div className="mt-2 text-xs">
           <span className="text-[var(--color-muted)]">verdict:</span>{' '}
-          <span className="text-[var(--color-fg)]">
-            {verdict.decision}
-            {verdict.reason ? ` — ${verdict.reason}` : ''}
-          </span>
+          {verdict.decision === 'defer' && verdict.reason === 'awaiting-connection' ? (
+            <span className="text-[var(--color-fg)]">
+              defer — awaiting-connection: {verdict.missingSurface ?? '(unnamed system)'}
+              {awaitingSurface ? ` (${verdictFor(awaitingSurface, now)})` : ''}{' '}
+              <a href="#surfaces" className="text-[var(--color-accent)] underline">
+                Surfaces tab
+              </a>
+            </span>
+          ) : (
+            <span className="text-[var(--color-fg)]">
+              {verdict.decision}
+              {verdict.reason ? ` — ${verdict.reason}` : ''}
+            </span>
+          )}
         </div>
       ) : null}
 
@@ -849,6 +1096,16 @@ function WorkItemCard({
         </div>
       ) : null}
 
+      {item.state === 'actions-pending' && output ? (
+        <PendingActions
+          key={`${item._id}:${item.pendingRunId ?? ''}`}
+          actions={output.actions ?? []}
+          surfaces={surfaces}
+          onApprove={onApproveActions}
+          onReject={onRejectActions}
+        />
+      ) : null}
+
       {/* The record of the run, ahead of the prose that describes it. The draft
           is written before a single action is applied, so it is the agent's
           account of the work; this list is what the work environment actually
@@ -865,6 +1122,31 @@ function WorkItemCard({
               <li key={i}>
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
                 {a.effect ?? '(applied)'}
+                {a.providerId ? (
+                  <span className="ml-1 font-mono text-[10px] text-[var(--color-muted)]">
+                    id {a.providerId}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {/* Held is its own list, not a success and not a failure: the gate or the
+          manager kept it back, and the ledger says so. */}
+      {heldActions.length > 0 ? (
+        <div className="mt-2 p-2 rounded-md bg-[var(--color-muted)]/10 border border-[var(--color-border)] text-xs">
+          <p className="text-[var(--color-muted)] font-medium mb-1">
+            {heldActions.length} {heldActions.length === 1 ? 'action' : 'actions'} held · never sent
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-muted)]">
+            {heldActions.map((a, i) => (
+              <li key={i}>
+                <span className="font-mono text-[10px]">{a.tool}</span> — {a.reason ?? 'held'}
+                {a.effect ? (
+                  <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">{a.effect}</code>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -912,7 +1194,7 @@ function WorkItemCard({
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
-              no registered skill, a model error, a mid-run throw. */}
+              no registered skill, a model error, a mid-run throw, a rejection. */}
           {failedActions.length === 0 && item.skipReason ? (
             <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">{item.skipReason}</p>
           ) : null}
@@ -922,11 +1204,11 @@ function WorkItemCard({
           >
             Retry
           </button>
-          {appliedActions.length > failedActions.length ? (
+          {landedActions.length > 0 ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry re-runs the whole plan, so the{' '}
-              {appliedActions.length - failedActions.length} action
-              {appliedActions.length - failedActions.length === 1 ? '' : 's'} that already landed
+              {landedActions.length} action
+              {landedActions.length === 1 ? '' : 's'} that already landed
               will be applied again.
             </p>
           ) : null}
