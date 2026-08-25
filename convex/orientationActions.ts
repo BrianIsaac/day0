@@ -135,6 +135,44 @@ const orientationAgent = makeAgent(
 );
 
 /**
+ * Build a whole-word matcher for a system name.
+ *
+ * "Slack" must not match "Slackbot", and "Linear" must not match "nonlinear":
+ * the name has to stand as its own word or words. Punctuation between the
+ * words of a multi-word name is tolerated ("Northstar-CRM"), as is a
+ * possessive or other suffix that is not a letter or digit ("Linear's").
+ *
+ * Args:
+ *   system: Manager-named system.
+ *
+ * Returns:
+ *   A case-insensitive regular expression with no global flag.
+ */
+export function systemNamePattern(system: string): RegExp {
+  const words = system
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((word: string): string => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const body = words.length > 0 ? words.join('[^a-z0-9]*') : '(?!)';
+  return new RegExp(`(?<![a-z0-9])${body}(?![a-z0-9])`, 'i');
+}
+
+/**
+ * Decide whether text names a system as a whole word or phrase.
+ *
+ * Args:
+ *   text: Documentation text.
+ *   system: Manager-named system.
+ *
+ * Returns:
+ *   True when the system is named, not merely contained in a longer word.
+ */
+export function namesSystem(text: string, system: string): boolean {
+  return systemNamePattern(system).test(text);
+}
+
+/**
  * Select a concise evidence line that names a system.
  *
  * Args:
@@ -145,9 +183,10 @@ const orientationAgent = makeAgent(
  *   The first matching line, or undefined when the page does not name it.
  */
 export function evidenceLine(markdown: string, system: string): string | undefined {
+  const pattern = systemNamePattern(system);
   return markdown
     .split('\n')
-    .find((line: string): boolean => line.toLowerCase().includes(system.toLowerCase()))
+    .find((line: string): boolean => pattern.test(line))
     ?.trim();
 }
 
@@ -163,7 +202,7 @@ export function evidenceLine(markdown: string, system: string): string | undefin
  */
 export function isDedicatedSystemPage(markdown: string, system: string): boolean {
   const heading = /^#\s+(.+)$/m.exec(markdown)?.[1];
-  return Boolean(heading?.toLowerCase().includes(system.toLowerCase()));
+  return heading !== undefined && namesSystem(heading, system);
 }
 
 /**
@@ -178,16 +217,16 @@ export function isDedicatedSystemPage(markdown: string, system: string): boolean
  */
 export function relevantSystemText(markdown: string, system: string): string {
   if (isDedicatedSystemPage(markdown, system)) return markdown;
-  const needle = system.toLowerCase();
+  const pattern = systemNamePattern(system);
   return markdown
     .split(/\n\s*\n/)
     .flatMap((paragraph: string): string[] => {
-      if (!paragraph.toLowerCase().includes(needle)) return [];
+      if (!pattern.test(paragraph)) return [];
       const tableLines = paragraph
         .split('\n')
         .filter((line: string): boolean => line.trimStart().startsWith('|'));
       if (tableLines.length < 2) return [paragraph];
-      return tableLines.filter((line: string): boolean => line.toLowerCase().includes(needle));
+      return tableLines.filter((line: string): boolean => pattern.test(line));
     })
     .join('\n\n');
 }
@@ -321,13 +360,10 @@ export function extractCredentialFinding(
  */
 export function explicitlyDeniesSurface(markdown: string, system: string): boolean {
   if (isDedicatedSystemPage(markdown, system)) return NO_SURFACE_PATTERN.test(markdown);
-  const needle = system.toLowerCase();
+  const pattern = systemNamePattern(system);
   return markdown
     .split('\n')
-    .some(
-      (line: string): boolean =>
-        line.toLowerCase().includes(needle) && NO_SURFACE_PATTERN.test(line),
-    );
+    .some((line: string): boolean => pattern.test(line) && NO_SURFACE_PATTERN.test(line));
 }
 
 /**
@@ -348,14 +384,40 @@ function hostOf(url: string): string {
 }
 
 /**
+ * Decide whether a URL host carries a system slug as whole labels.
+ *
+ * Labels are the dot- and hyphen-separated parts of the host, so
+ * `mcp.linear.app` and `linear-mcp` carry `linear`, while `mcp.slackbot.example`
+ * does not carry `slack`. A multi-word slug such as `northstar-crm` matches
+ * when every word is a label (`crm.northstar.example`) or when the words
+ * appear joined as one label (`northstarcrm.internal`).
+ *
+ * Args:
+ *   host: Lowercase URL host, possibly with a port.
+ *   slug: The system's surface slug.
+ *
+ * Returns:
+ *   True when the host names the system.
+ */
+export function hostCarriesSlug(host: string, slug: string): boolean {
+  const hostname = host.replace(/:\d+$/, '');
+  const labels = new Set(hostname.split(/[.-]/).filter(Boolean));
+  const words = slug.split('-').filter(Boolean);
+  if (words.length === 0) return false;
+  if (labels.has(words.join(''))) return true;
+  return words.every((word: string): boolean => labels.has(word));
+}
+
+/**
  * Collect the URLs the documentation attributes to one system.
  *
  * A URL belongs to a system only when the prose of the sentence it appears
- * in names the system (the URL text itself does not count), or when the URL
- * host contains the system slug. Co-occurrence in a
- * paragraph is not attribution: a page that documents Linear's MCP endpoint
- * and mentions Slack in the next sentence documents nothing for Slack. A
- * sentence that denies a surface contributes no URL at all.
+ * in names the system as a whole word (the URL text itself does not count),
+ * or when the URL host carries the system slug as whole labels.
+ * Co-occurrence in a paragraph is not attribution: a page that documents
+ * Linear's MCP endpoint and mentions Slack in the next sentence documents
+ * nothing for Slack, and a sentence about Slackbot documents nothing for
+ * Slack. A sentence that denies a surface contributes no URL at all.
  *
  * Args:
  *   text: Documentation text already scoped to the system.
@@ -366,20 +428,15 @@ function hostOf(url: string): string {
  *   Attributed URLs in document order, without trailing punctuation.
  */
 export function attributedUrls(text: string, system: string, slug: string): string[] {
-  const needle = system.toLowerCase();
-  const hostNeedles = [slug, slug.replaceAll('-', '')].filter(Boolean);
+  const pattern = systemNamePattern(system);
   const urls = new Set<string>();
   for (const line of text.split('\n')) {
     for (const sentence of line.split(SENTENCE_BOUNDARY)) {
       if (NO_SURFACE_PATTERN.test(sentence)) continue;
-      const prose = sentence.replace(URL_PATTERN, ' ').toLowerCase();
-      const named = prose.includes(needle);
+      const named = pattern.test(sentence.replace(URL_PATTERN, ' '));
       for (const raw of sentence.match(URL_PATTERN) ?? []) {
         const url = raw.replace(/[.,;:!?]+$/, '');
-        const host = hostOf(url);
-        if (named || hostNeedles.some((part: string): boolean => host.includes(part))) {
-          urls.add(url);
-        }
+        if (named || hostCarriesSlug(hostOf(url), slug)) urls.add(url);
       }
     }
   }
@@ -672,7 +729,7 @@ export const orientOne = internalAction({
       agentId: surface.agentId,
     });
     const matches = pages.filter((page: Doc<'docPages'>): boolean =>
-      page.markdown.toLowerCase().includes(surface.displayName.toLowerCase()),
+      namesSystem(page.markdown, surface.displayName),
     );
     const evidence: Evidence[] = matches.slice(0, 8).map(
       (page: Doc<'docPages'>): Evidence => ({

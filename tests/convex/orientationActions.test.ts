@@ -13,6 +13,8 @@ import {
   evidenceLine,
   extractCredentialFinding,
   explicitlyDeniesSurface,
+  hostCarriesSlug,
+  namesSystem,
   registryRemoteEndpoint,
   relevantSystemText,
 } from '../../convex/orientationActions';
@@ -414,12 +416,15 @@ describe('URL attribution', (): void => {
       'https://mcp.linear.app/mcp',
     ]);
     expect(
+      attributedUrls('Log in at https://portal.example/login', 'Northstar CRM', 'northstar-crm'),
+    ).toEqual([]);
+    expect(
       attributedUrls(
         'Log in at https://crm.northstar.example/login',
         'Northstar CRM',
         'northstar-crm',
       ),
-    ).toEqual([]);
+    ).toEqual(['https://crm.northstar.example/login']);
     expect(
       attributedUrls(
         'Northstar CRM web UI: https://crm.northstar.example/login.',
@@ -427,6 +432,33 @@ describe('URL attribution', (): void => {
         'northstar-crm',
       ),
     ).toEqual(['https://crm.northstar.example/login']);
+  });
+
+  it('matches a system as a whole word, so Slackbot text is not Slack evidence', (): void => {
+    expect(namesSystem('Slackbot answers questions.', 'Slack')).toBe(false);
+    expect(namesSystem("Linear's MCP endpoint", 'Linear')).toBe(true);
+    expect(namesSystem('A nonlinear pipeline', 'Linear')).toBe(false);
+    expect(namesSystem('Records live in Northstar-CRM.', 'Northstar CRM')).toBe(true);
+    expect(namesSystem('Records live in Northstar.', 'Northstar CRM')).toBe(false);
+    const slackbot =
+      '# Slackbot\n\nSlackbot is reached over MCP at https://mcp.slackbot.example/mcp. No approved API for Slackbot.';
+    expect(attributedUrls(slackbot, 'Slack', 'slack')).toEqual([]);
+    expect(explicitlyDeniesSurface(slackbot, 'Slack')).toBe(false);
+    expect(relevantSystemText('# Tools\n\nSlackbot answers questions.\n\nSlack is chat.', 'Slack')).toBe(
+      'Slack is chat.',
+    );
+    expect(evidenceLine(slackbot, 'Slack')).toBeUndefined();
+  });
+
+  it('attributes a host to a system only when its labels carry the slug', (): void => {
+    expect(hostCarriesSlug('mcp.linear.app', 'linear')).toBe(true);
+    expect(hostCarriesSlug('linear-mcp:8080', 'linear')).toBe(true);
+    expect(hostCarriesSlug('mcp.slackbot.example', 'slack')).toBe(false);
+    expect(hostCarriesSlug('api.slack.com', 'slack')).toBe(true);
+    expect(hostCarriesSlug('crm.northstar.example', 'northstar-crm')).toBe(true);
+    expect(hostCarriesSlug('northstarcrm.internal', 'northstar-crm')).toBe(true);
+    expect(hostCarriesSlug('northstar.example', 'northstar-crm')).toBe(false);
+    expect(hostCarriesSlug('mcp.linear.app.evil.example', 'linear')).toBe(true);
   });
 
   it('never takes a URL from a sentence that denies the surface', (): void => {
@@ -511,6 +543,29 @@ describe('orientation run', (): void => {
     expect(request.openQuestions.join(' ')).toContain('not linked evidence');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain('search=Slack');
+  });
+
+  it('files Slack absent when the only page is about Slackbot', async (): Promise<void> => {
+    const fetchMock = stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'slackbot.md':
+          '# Slackbot\n\nSlackbot is reached over MCP at https://mcp.slackbot.example/mcp. No approved API for Slackbot.',
+      },
+      [{ name: 'Slack', class: 'chat' }],
+    );
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 0, absent: 1 });
+    const slack = (await surfacesBySlug(harness, agentId)).slack;
+    expect(slack).toMatchObject({
+      verdict: 'absent',
+      reason: 'No approved surface found after searching: Slack, chat',
+    });
+    expect(slack.endpoint).toBeUndefined();
+    expect(slack.whereFound).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('prefers a documented API over a denied MCP path, whatever the model says', async (): Promise<void> => {
