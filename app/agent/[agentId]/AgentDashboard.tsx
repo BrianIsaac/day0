@@ -2,17 +2,17 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
-import { api } from '@convex/_generated/api';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import { api } from '../../../convex/_generated/api';
+import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { ChatRoom } from './ChatRoom';
 import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
-import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
-import { describeAction, heldEligible, skillApprovalRefusal } from '@/surfaces/policy';
-import { toSurfaceRecord } from '@/surfaces/records';
-import type { SurfaceRecord } from '@/surfaces/types';
-import { verdictFor } from '@/surfaces/verdict';
-import type { MockAction } from '@/work/types';
+import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
+import { describeAction, heldEligible, skillApprovalRefusal } from '../../../src/surfaces/policy';
+import { toSurfaceRecord } from '../../../src/surfaces/records';
+import type { SurfaceRecord } from '../../../src/surfaces/types';
+import { verdictFor } from '../../../src/surfaces/verdict';
+import type { MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 
 interface Props {
@@ -164,6 +164,7 @@ export function AgentDashboard({ agentId }: Props) {
           <WorkQueue
             workItems={workItems ?? []}
             surfaces={surfaces}
+            surfacesReady={surfaceConfig?.mode !== 'real' || surfaceRows !== undefined}
             registeredSkillCount={(registeredSkills ?? []).length}
             charterApproved={!!charter?.approved}
           />
@@ -696,11 +697,13 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 function WorkQueue({
   workItems,
   surfaces,
+  surfacesReady,
   registeredSkillCount,
   charterApproved,
 }: {
   workItems: Doc<'workItems'>[];
   surfaces: SurfaceRecord[];
+  surfacesReady: boolean;
   registeredSkillCount: number;
   charterApproved: boolean;
 }) {
@@ -785,6 +788,7 @@ function WorkQueue({
               key={item._id}
               item={item}
               surfaces={surfaces}
+              surfacesReady={surfacesReady}
               onApprovePlan={() => approvePlan({ workItemId: item._id })}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={() => retryFailed({ workItemId: item._id })}
@@ -834,14 +838,16 @@ interface LedgerRow {
  * The exact-action gate: every action the skill emitted, verbatim, with a
  * checkbox each. Nothing reaches a surface until the manager approves it here.
  */
-function PendingActions({
+export function PendingActions({
   actions,
   surfaces,
+  surfacesReady,
   onApprove,
   onReject,
 }: {
   actions: MockAction[];
   surfaces: SurfaceRecord[];
+  surfacesReady: boolean;
   onApprove: (approvedIndexes: number[]) => Promise<unknown>;
   onReject: (reason: string) => Promise<unknown>;
 }) {
@@ -887,6 +893,9 @@ function PendingActions({
         {actions.length} {actions.length === 1 ? 'action' : 'actions'} awaiting your approval ·
         nothing has reached a surface
       </p>
+      {!surfacesReady ? (
+        <p className="text-[var(--color-muted)]">Loading the surface rules before approval.</p>
+      ) : null}
       {actions.length === 0 ? (
         <p className="text-[var(--color-muted)]">
           The skill emitted no actions. Approving lands nothing; reject to send it back.
@@ -908,8 +917,11 @@ function PendingActions({
                 />
                 <div className="flex-1 min-w-0">
                   <code className="block font-mono text-[10px] text-[var(--color-fg)] whitespace-pre-wrap break-words">
-                    {describeAction(action)}
+                    {JSON.stringify(action, null, 2)}
                   </code>
+                  <span className="block text-[10px] text-[var(--color-muted)]">
+                    {describeAction(action)}
+                  </span>
                   <div className="flex items-center gap-2 mt-0.5">
                     {willHold ? (
                       <span className="text-[10px] text-[var(--color-muted)]">
@@ -948,7 +960,7 @@ function PendingActions({
       <div className="flex flex-wrap items-center gap-2 mt-2">
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || !surfacesReady || actions.length === 0}
           onClick={() => submit(() => onApprove([...selected].sort((a, b) => a - b)))}
           className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
         >
@@ -956,7 +968,7 @@ function PendingActions({
         </button>
         <button
           type="button"
-          disabled={busy || anyHeldEligible || actions.length === 0}
+          disabled={busy || !surfacesReady || anyHeldEligible || actions.length === 0}
           title={
             anyHeldEligible
               ? 'A public post is in this run; it is held for you whatever is approved, so approve the rest by selection.'
@@ -992,6 +1004,7 @@ function PendingActions({
 function WorkItemCard({
   item,
   surfaces,
+  surfacesReady,
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -1000,6 +1013,7 @@ function WorkItemCard({
 }: {
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
+  surfacesReady: boolean;
   onApprovePlan: () => void;
   onCancelPlan: () => void;
   onRetryFailed: () => void;
@@ -1064,7 +1078,7 @@ function WorkItemCard({
           {verdict.decision === 'defer' && verdict.reason === 'awaiting-connection' ? (
             <span className="text-[var(--color-fg)]">
               defer - awaiting-connection: {verdict.missingSurface ?? '(unnamed system)'}
-              {awaitingSurface ? ` (${verdictFor(awaitingSurface, now)})` : ''}{' '}
+              {awaitingSurface ? ` (${verdictFor(awaitingSurface, now)})` : ' (not listed)'}{' '}
               <a href="#surfaces" className="text-[var(--color-accent)] underline">
                 Surfaces tab
               </a>
@@ -1108,9 +1122,10 @@ function WorkItemCard({
 
       {item.state === 'actions-pending' && output ? (
         <PendingActions
-          key={`${item._id}:${item.pendingRunId ?? ''}`}
+          key={`${item._id}:${item.pendingRunId ?? ''}:${surfacesReady ? surfaces.map((surface) => `${surface.slug}:${surface.verdict}:${surface.managerDmChannelId ?? ''}`).join('|') : 'loading'}`}
           actions={output.actions ?? []}
           surfaces={surfaces}
+          surfacesReady={surfacesReady}
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />
