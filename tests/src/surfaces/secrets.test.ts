@@ -48,4 +48,13 @@ describe('secret injection', (): void => {
     );
     expect(redactValue('nothing here', '')).toBe('nothing here');
   });
+
+  it('redacts JSON-escaped and URL-encoded credential representations', (): void => {
+    const secret = 'tok-"-\\-line\nend';
+    const escaped = JSON.stringify(secret).slice(1, -1);
+    const encoded = encodeURIComponent(secret);
+    expect(redactValue(`{"error":"${escaped}"} ${encoded}`, secret)).toBe(
+      `{"error":"${REDACTED}"} ${REDACTED}`,
+    );
+  });
 });

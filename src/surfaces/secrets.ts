@@ -80,5 +80,14 @@ export function injectSecret(template: string, value: string, surfaceSlug?: stri
  */
 export function redactValue(text: string, value: string): string {
   if (!value) return text;
-  return text.split(value).join(REDACTED);
+  const representations = new Set([
+    value,
+    JSON.stringify(value).slice(1, -1),
+    encodeURIComponent(value),
+  ]);
+  let redacted = text;
+  for (const representation of representations) {
+    if (representation) redacted = redacted.split(representation).join(REDACTED);
+  }
+  return redacted;
 }
