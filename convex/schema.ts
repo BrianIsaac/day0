@@ -15,7 +15,11 @@ export default defineSchema({
     bossEmail: v.string(),
     name: v.string(),
     avatarId: v.optional(v.string()),
+    /** Legacy explicit inclusion list; new deploys store exclusions instead. */
     docSourceIds: v.optional(v.array(v.id('docSources'))),
+    /** Sources the owner unticked at deploy. Everything else the owner links,
+     * before or after the deploy, is inherited. */
+    excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
     /** Clerk user id (`identity.subject`). Optional for legacy rows; new
      * deploys must populate it. Queries scope by this so each judge's
      * agents are isolated. */

@@ -113,7 +113,7 @@ describe('documentation source validation', (): void => {
     ).toThrow('uppercase environment variable');
   });
 
-  it('treats an empty selection as all and a non-empty selection as explicit', async (): Promise<void> => {
+  it('reads every owner source except the excluded ones, honouring legacy inclusion lists', async (): Promise<void> => {
     const harness = convexTest(schema, convexModules);
     const result = await harness.run(async (ctx) => {
       const first = await ctx.db.insert('docSources', {
@@ -145,11 +145,21 @@ describe('documentation source validation', (): void => {
       };
       return {
         all: agentReadsSource(base, second),
-        selectedFirst: agentReadsSource({ ...base, docSourceIds: [first] }, first),
-        rejectedSecond: agentReadsSource({ ...base, docSourceIds: [first] }, second),
+        excludedSecond: agentReadsSource({ ...base, excludedDocSourceIds: [second] }, second),
+        keptFirst: agentReadsSource({ ...base, excludedDocSourceIds: [second] }, first),
+        legacySelectedFirst: agentReadsSource({ ...base, docSourceIds: [first] }, first),
+        legacyRejectedSecond: agentReadsSource({ ...base, docSourceIds: [first] }, second),
+        legacyEmptyMeansAll: agentReadsSource({ ...base, docSourceIds: [] }, second),
       };
     });
-    expect(result).toEqual({ all: true, selectedFirst: true, rejectedSecond: false });
+    expect(result).toEqual({
+      all: true,
+      excludedSecond: false,
+      keptFirst: true,
+      legacySelectedFirst: true,
+      legacyRejectedSecond: false,
+      legacyEmptyMeansAll: true,
+    });
   });
 });
 

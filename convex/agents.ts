@@ -65,23 +65,23 @@ export const deploy = mutation({
     bossEmail: v.string(),
     name: v.optional(v.string()),
     avatarId: v.optional(v.string()),
-    docSourceIds: v.optional(v.array(v.id('docSources'))),
+    excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
-    if (args.docSourceIds) {
-      for (const sourceId of args.docSourceIds) {
-        const source = await ctx.db.get(sourceId);
-        if (!source || source.userId !== identity.subject) {
-          throw new Error('Documentation source not found or owned by another user.');
-        }
+    for (const sourceId of args.excludedDocSourceIds ?? []) {
+      const source = await ctx.db.get(sourceId);
+      if (!source || source.userId !== identity.subject) {
+        throw new Error('Documentation source not found or owned by another user.');
       }
     }
     const agentId = await ctx.db.insert('agents', {
       bossEmail: args.bossEmail,
       name: args.name ?? 'Day0',
       avatarId: args.avatarId,
-      docSourceIds: args.docSourceIds,
+      excludedDocSourceIds: args.excludedDocSourceIds?.length
+        ? args.excludedDocSourceIds
+        : undefined,
       userId: identity.subject,
       state: 'deployed',
       createdAt: Date.now(),

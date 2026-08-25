@@ -31,7 +31,7 @@ describe('documentation schema', (): void => {
         bossEmail: 'boss@day0.local',
         name: 'schema test',
         userId: 'owner',
-        docSourceIds: [sourceId],
+        excludedDocSourceIds: [sourceId],
         state: 'deployed',
         createdAt: 1,
       });
@@ -43,6 +43,6 @@ describe('documentation schema', (): void => {
     });
     expect(result.source?.kind).toBe('folder');
     expect(result.page?.ref).toBe('onboarding.md');
-    expect(result.agent?.docSourceIds).toEqual([result.source?._id]);
+    expect(result.agent?.excludedDocSourceIds).toEqual([result.source?._id]);
   });
 });

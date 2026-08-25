@@ -6,7 +6,7 @@ import { useMutation, useQuery } from 'convex/react';
 import { useUser, Show, SignInButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
   DEFAULT_AGENT_AVATAR,
   SINGAPORE_AI_BUILDER_AVATARS,
@@ -303,7 +303,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
   const [submitting, setSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [excludedSourceIds, setExcludedSourceIds] = useState<string[]>([]);
+  const [excludedSourceIds, setExcludedSourceIds] = useState<Id<'docSources'>[]>([]);
   const [alsoUnlinkDocumentation, setAlsoUnlinkDocumentation] = useState(false);
   const selectedAvatar = avatarById(selectedAvatarId);
 
@@ -322,9 +322,10 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
         bossEmail,
         name: workerName.trim(),
         avatarId: selectedAvatar.id,
-        docSourceIds: (docSources || [])
-          .filter((source) => !excludedSourceIds.includes(source._id))
-          .map((source) => source._id),
+        // Only the unticked sources travel. Sending the ticked ones as an
+        // explicit list would freeze inheritance at deploy time, so a location
+        // linked later would never reach this agent.
+        excludedDocSourceIds: excludedSourceIds.length > 0 ? excludedSourceIds : undefined,
       });
       fetch(`/api/seed?agentId=${agentId}`, { method: 'POST' }).catch(() => {});
       router.push(`/agent/${agentId}`);
@@ -612,7 +613,10 @@ function OfficeWorld({
             key={agent._id}
             agent={agent}
             destination={agentDestinations[agent._id]}
-            docSourceCount={agent.docSourceIds?.length ?? docSourceCount}
+            docSourceCount={
+              agent.docSourceIds?.length ??
+              Math.max(0, docSourceCount - (agent.excludedDocSourceIds?.length ?? 0))
+            }
             index={index}
           />
         ))}

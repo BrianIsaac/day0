@@ -93,7 +93,12 @@ export function validateLinkInput(input: LinkInput): LinkInput {
 }
 
 /**
- * Check whether an agent inherits a source under the empty-means-all rule.
+ * Check whether an agent inherits a source.
+ *
+ * An agent reads every source its owner links, before or after the deploy,
+ * except the ones it excluded at deploy. Rows from before the exclusion list
+ * existed carry an explicit inclusion list instead, which is honoured as
+ * written; an empty inclusion list still means all.
  *
  * Args:
  *   agent: Persisted agent row.
@@ -103,6 +108,7 @@ export function validateLinkInput(input: LinkInput): LinkInput {
  *   True when the source should be mirrored for the agent.
  */
 export function agentReadsSource(agent: Doc<'agents'>, sourceId: Id<'docSources'>): boolean {
+  if (agent.excludedDocSourceIds?.includes(sourceId)) return false;
   return !agent.docSourceIds?.length || agent.docSourceIds.includes(sourceId);
 }
 
