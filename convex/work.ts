@@ -423,6 +423,9 @@ export const approveActions = mutation({
       throw new Error(`workItem state is ${row.state}; expected actions-pending`);
     }
     if (!row.pendingRunId) throw new Error('workItem has no pending run');
+    if (row.approvedIndexes !== undefined) {
+      throw new Error('actions have already been approved');
+    }
     const actions = ((row.output ?? {}) as { actions?: unknown[] }).actions ?? [];
     const approvedIndexes = [...new Set(args.approvedIndexes)].sort((a, b) => a - b);
     for (const index of approvedIndexes) {
@@ -459,6 +462,9 @@ export const rejectActions = mutation({
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     if (row.state !== 'actions-pending') {
       throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+    }
+    if (row.approvedIndexes !== undefined) {
+      throw new Error('actions have already been approved');
     }
     const reason = args.reason.trim();
     const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';

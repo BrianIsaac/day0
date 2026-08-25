@@ -140,7 +140,7 @@ describe('the exact-action gate', (): void => {
     ).rejects.toThrow('output.actions must be a list');
   });
 
-  it('records the approved indexes, the held ones, and schedules the apply', async (): Promise<void> => {
+  it('records one approval decision and refuses a competing decision', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, runId } = await pend(harness);
@@ -161,8 +161,19 @@ describe('the exact-action gate', (): void => {
     expect(events).toHaveLength(1);
     expect(events[0].payload).toEqual({ workItemId, runId, approvedIndexes: [0, 1], heldIndexes: [] });
     expect(await scheduledFunctionNames(harness)).toEqual(['workActions:applyApprovedActions']);
-    const partial = await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, approvedIndexes: [] });
-    expect(partial.approvedIndexes).toEqual([]);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        approvedIndexes: [],
+      }),
+    ).rejects.toThrow('actions have already been approved');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+        workItemId,
+        reason: 'replace the first decision',
+      }),
+    ).rejects.toThrow('actions have already been approved');
+    expect(await scheduledFunctionNames(harness)).toEqual(['workActions:applyApprovedActions']);
   });
 
   it('refuses approval from a non-owner, in the wrong state, or for an index outside the list', async (): Promise<void> => {
