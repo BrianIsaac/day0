@@ -14,6 +14,8 @@ import {
   extractCredentialFinding,
   explicitlyDeniesSurface,
   hostCarriesSlug,
+  isCredentialSafeEndpoint,
+  isPrivateHost,
   namesSystem,
   registryRemoteEndpoint,
   relevantSystemText,
@@ -461,6 +463,40 @@ describe('URL attribution', (): void => {
     expect(hostCarriesSlug('mcp.linear.app.evil.example', 'linear')).toBe(true);
   });
 
+  it('admits a plaintext endpoint only on a private host', (): void => {
+    expect(isPrivateHost('playwright-mcp')).toBe(true);
+    expect(isPrivateHost('localhost')).toBe(true);
+    expect(isPrivateHost('10.4.0.9')).toBe(true);
+    expect(isPrivateHost('172.20.0.3')).toBe(true);
+    expect(isPrivateHost('192.168.1.5')).toBe(true);
+    expect(isPrivateHost('172.32.0.1')).toBe(false);
+    expect(isPrivateHost('api.example.com')).toBe(false);
+    expect(isCredentialSafeEndpoint('https://api.example.com/v1')).toBe(true);
+    expect(isCredentialSafeEndpoint('http://playwright-mcp:8931/mcp')).toBe(true);
+    expect(isCredentialSafeEndpoint('http://api.example.com/v1')).toBe(false);
+    expect(isCredentialSafeEndpoint('not a url')).toBe(false);
+    expect(documentedEndpoints(['http://api.example.com/v1'])).toEqual({
+      mcp: undefined,
+      api: undefined,
+      webUi: 'http://api.example.com/v1',
+      insecure: 'http://api.example.com/v1',
+    });
+    expect(documentedEndpoints(['http://mcp.evil.example/mcp', 'https://api.example.com/v1'])).toEqual(
+      {
+        mcp: undefined,
+        api: 'https://api.example.com/v1',
+        webUi: 'http://mcp.evil.example/mcp',
+        insecure: 'http://mcp.evil.example/mcp',
+      },
+    );
+    expect(documentedEndpoints(['http://playwright-mcp:8931/mcp'])).toEqual({
+      mcp: 'http://playwright-mcp:8931/mcp',
+      api: undefined,
+      webUi: undefined,
+      insecure: undefined,
+    });
+  });
+
   it('never takes a URL from a sentence that denies the surface', (): void => {
     expect(
       attributedUrls(
@@ -565,6 +601,25 @@ describe('orientation run', (): void => {
     });
     expect(slack.endpoint).toBeUndefined();
     expect(slack.whereFound).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('escalates a plaintext public API base instead of admitting it', async (): Promise<void> => {
+    const fetchMock = stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      { 'ledger.md': '# Ledger\n\nLedger has a documented API at http://api.ledger.example/v1.' },
+      [{ name: 'Ledger', class: 'other' }],
+    );
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
+    const ledger = (await surfacesBySlug(harness, agentId)).ledger;
+    expect(ledger).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+    expect(ledger.endpoint).toBeUndefined();
+    expect((ledger.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
+      'plaintext http on a public host',
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

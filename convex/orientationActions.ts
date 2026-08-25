@@ -113,6 +113,8 @@ export interface DocumentedEndpoints {
   mcp?: string;
   api?: string;
   webUi?: string;
+  /** A plaintext `http:` endpoint on a public host that was refused as an API or MCP base. */
+  insecure?: string;
 }
 type RegistryRemote = { type?: unknown; url?: unknown };
 type RegistryServer = {
@@ -444,19 +446,74 @@ export function attributedUrls(text: string, system: string, slug: string): stri
 }
 
 /**
+ * Decide whether a host is private to this machine or the compose network.
+ *
+ * A single-label name (`playwright-mcp`), loopback, or an RFC 1918 address
+ * never leaves the operator's own network, so a plaintext endpoint there
+ * exposes nothing on the wire.
+ *
+ * Args:
+ *   hostname: URL hostname without a port.
+ *
+ * Returns:
+ *   True for a private host.
+ */
+export function isPrivateHost(hostname: string): boolean {
+  const name = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (name === 'localhost' || name === '::1') return true;
+  if (!name.includes('.')) return true;
+  const octets = name.split('.').map(Number);
+  if (octets.length === 4 && octets.every((octet: number): boolean => Number.isInteger(octet))) {
+    if (octets[0] === 127 || octets[0] === 10) return true;
+    if (octets[0] === 192 && octets[1] === 168) return true;
+    if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+  }
+  return false;
+}
+
+/**
+ * Decide whether a credential may be sent to a documented endpoint.
+ *
+ * The probe and the executors put a bearer on every request to an API or
+ * MCP endpoint, so the endpoint has to be `https:` unless it is private to
+ * this network. A plaintext endpoint on a public host is documented, but it
+ * is not admitted as the place to send a credential.
+ *
+ * Args:
+ *   url: Attributed documentation URL.
+ *
+ * Returns:
+ *   True when a credential may travel to the URL.
+ */
+export function isCredentialSafeEndpoint(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || isPrivateHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Group attributed URLs by the kind of surface they document.
  *
  * Args:
  *   urls: URLs attributed to one system.
  *
  * Returns:
- *   The first MCP endpoint, the first API base and the first other URL.
+ *   The first MCP endpoint, the first API base, the first other URL, and
+ *   the first plaintext public endpoint refused as an MCP or API base.
  */
 export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
-  const mcp = urls.find((url: string): boolean => MCP_SEGMENT.test(url));
-  const api = urls.find((url: string): boolean => url !== mcp && API_BASE.test(url));
+  const safe = urls.filter(isCredentialSafeEndpoint);
+  const insecure = urls.find(
+    (url: string): boolean =>
+      !isCredentialSafeEndpoint(url) && (MCP_SEGMENT.test(url) || API_BASE.test(url)),
+  );
+  const mcp = safe.find((url: string): boolean => MCP_SEGMENT.test(url));
+  const api = safe.find((url: string): boolean => url !== mcp && API_BASE.test(url));
   const webUi = urls.find((url: string): boolean => url !== mcp && url !== api);
-  return { mcp, api, webUi };
+  return { mcp, api, webUi, insecure };
 }
 
 /**
@@ -783,6 +840,11 @@ export const orientOne = internalAction({
         ? validatedDraftCredential(draft.credential, credentialPages)
         : extractedCredential;
     const openQuestions = [...draft.openQuestions];
+    if (endpoints.insecure) {
+      openQuestions.push(
+        `The documented endpoint ${endpoints.insecure} is plaintext http on a public host and was not admitted; a credential is only sent over https.`,
+      );
+    }
     if (registrySuggestion) {
       openQuestions.push(
         `Confirm the MCP endpoint with IT; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
