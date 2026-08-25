@@ -2,6 +2,8 @@
 
 import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
+import { getFunctionName } from 'convex/server';
+import type { FunctionReference } from 'convex/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -10,6 +12,7 @@ import {
   attributedUrls,
   choosePath,
   documentedEndpoints,
+  draftOrientation,
   evidenceLine,
   extractCredentialFinding,
   explicitlyDeniesSurface,
@@ -17,8 +20,11 @@ import {
   isCredentialSafeEndpoint,
   isPrivateHost,
   namesSystem,
+  orientSurface,
   registryRemoteEndpoint,
   relevantSystemText,
+  type OrientationCtx,
+  type OrientationDraftResult,
 } from '../../convex/orientationActions';
 import { allConvexModules } from './all-modules';
 import {
@@ -50,6 +56,8 @@ const model = vi.hoisted(() => ({
   pathFor: undefined as undefined | ((system: string) => DraftPath),
   /** When set, the mocked classifier copies its whole input into every free-text field. */
   echoInput: false,
+  /** When set, the mocked classifier never answers. */
+  hang: false,
   /** Every prompt the mocked classifier received. */
   prompts: [] as string[],
 }));
@@ -58,6 +66,7 @@ vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: async ({ user }: { user: string }): Promise<Record<string, unknown>> => {
     model.prompts.push(user);
+    if (model.hang) return await new Promise<never>((): void => undefined);
     if (!model.pathFor) throw new Error('model unavailable in tests');
     const system = /^System: (.+)$/m.exec(user)?.[1] ?? '';
     const echo = (text: string): string => (model.echoInput ? user : text);
@@ -295,6 +304,7 @@ afterEach((): void => {
   resetFakeCredentials();
   model.pathFor = undefined;
   model.echoInput = false;
+  model.hang = false;
   model.prompts.length = 0;
 });
 
@@ -906,6 +916,101 @@ describe('orientation run', (): void => {
       'could not be resolved',
     );
     expect(fakeCredentialState().storeCalls).toEqual([]);
+  });
+
+  it('records a failed run on the surface instead of leaving it silently declared', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK }, [
+      { name: 'Linear', class: 'kanban' },
+    ]);
+    const surfaceId = (await surfacesBySlug(harness, agentId)).linear._id;
+    const mutations: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const failing: OrientationCtx = {
+      runQuery: async (reference: unknown, args: unknown): Promise<unknown> => {
+        const name = getFunctionName(reference as FunctionReference<'query'>);
+        if (name.includes('surfaceForOrientation')) {
+          return {
+            surface: await harness.run(async (ctx) => await ctx.db.get(surfaceId)),
+            agent: await harness.run(async (ctx) => await ctx.db.get(agentId)),
+          };
+        }
+        if (name.includes('pagesForAgent')) {
+          return await harness.query(internal.orientationData.pagesForAgent, {
+            agentId: (args as { agentId: Id<'agents'> }).agentId,
+          });
+        }
+        throw new Error(`unexpected query ${name}`);
+      },
+      runMutation: async (reference: unknown, args: unknown): Promise<unknown> => {
+        const name = getFunctionName(reference as FunctionReference<'mutation'>);
+        mutations.push({ name, args: args as Record<string, unknown> });
+        if (name.includes('propose')) throw new Error('write failed: document too large');
+        return true;
+      },
+    } as unknown as OrientationCtx;
+    await expect(orientSurface(failing, surfaceId)).rejects.toThrow('document too large');
+    expect(mutations.map((call): string => call.name)).toEqual(['surfaces:propose']);
+
+    // The action wrapper turns that throw into a recorded reason.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { request: undefined });
+    });
+    await harness.mutation(internal.surfaces.recordOrientationFailure, {
+      surfaceId,
+      reason: 'write failed: document too large',
+    });
+    const linear = (await surfacesBySlug(harness, agentId)).linear;
+    expect(linear.verdict).toBe('declared');
+    expect(linear.reason).toBe('orientation failed: write failed: document too large');
+  });
+
+  it('decides from literal evidence when the model does not answer within its budget', async (): Promise<void> => {
+    vi.useRealTimers();
+    model.pathFor = (): DraftPath => 'mcp';
+    model.hang = true;
+    const surface = {
+      _id: 'surface' as Id<'surfaces'>,
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+    } as Doc<'surfaces'>;
+    const started = Date.now();
+    const result = await draftOrientation(surface, LINEAR_RUNBOOK, 25);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.draft.path).toBe('mcp');
+    expect(result.note).toContain('did not classify this system within');
+    expect(model.prompts).toHaveLength(1);
+  });
+
+  it('reports a model failure on the card and still files the evidence-backed proposal', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = undefined;
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK }, [
+      { name: 'Linear', class: 'kanban' },
+    ]);
+    const surfaceId = (await surfacesBySlug(harness, agentId)).linear._id;
+    const draft = async (
+      row: Doc<'surfaces'>,
+      relevantText: string,
+    ): Promise<OrientationDraftResult> => await draftOrientation(row, relevantText, 25);
+    type Caller = (reference: unknown, args: unknown) => Promise<unknown>;
+    const ctx: OrientationCtx = {
+      runQuery: async (reference: unknown, args: unknown): Promise<unknown> =>
+        await (harness.query as unknown as Caller)(reference, args),
+      runMutation: async (reference: unknown, args: unknown): Promise<unknown> =>
+        await (harness.mutation as unknown as Caller)(reference, args),
+    } as unknown as OrientationCtx;
+    await expect(
+      orientSurface(ctx, surfaceId, { draft, registry: async (): Promise<undefined> => undefined }),
+    ).resolves.toEqual({ outcome: 'proposed', surfaceId });
+    const linear = (await surfacesBySlug(harness, agentId)).linear;
+    expect(linear).toMatchObject({ verdict: 'proposed', path: 'mcp' });
+    expect((linear.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
+      'could not classify this system (model unavailable in tests)',
+    );
   });
 
   it('fans out one scheduled job per declared system and isolates a stale job', async (): Promise<void> => {

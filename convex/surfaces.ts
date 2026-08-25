@@ -154,6 +154,30 @@ export const markAbsent = internalMutation({
   },
 });
 
+/**
+ * Record that an orientation job failed before it could decide.
+ *
+ * The surface stays `declared`, because nothing was decided, but the card
+ * carries the failure so the operator sees why there is no proposal and the
+ * re-run control applies. A surface that has moved on is left alone.
+ */
+export const recordOrientationFailure = internalMutation({
+  args: { surfaceId: v.id('surfaces'), reason: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface || surface.verdict !== 'declared') return false;
+    const reason = `orientation failed: ${args.reason}`.slice(0, 400);
+    await ctx.db.patch(surface._id, { reason });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.orientation-failed',
+      payload: { surfaceId: surface._id, reason },
+      createdAt: Date.now(),
+    });
+    return true;
+  },
+});
+
 /** Set a surface verdict from a server-side probe or lifecycle action. */
 export const setStatus = internalMutation({
   args: {

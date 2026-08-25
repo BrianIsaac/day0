@@ -209,6 +209,34 @@ describe('surface persistence', (): void => {
   });
 });
 
+describe('orientation failure', (): void => {
+  it('records a failure reason on a declared surface only', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await expect(
+      harness.mutation(internal.surfaces.recordOrientationFailure, {
+        surfaceId,
+        reason: 'pages could not be read',
+      }),
+    ).resolves.toBe(true);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'declared',
+      reason: 'orientation failed: pages could not be read',
+    });
+    expect(await eventTypes(harness)).toContain('surface.orientation-failed');
+
+    await propose(harness, surfaceId);
+    await expect(
+      harness.mutation(internal.surfaces.recordOrientationFailure, {
+        surfaceId,
+        reason: 'stale',
+      }),
+    ).resolves.toBe(false);
+    expect((await readSurface(harness, surfaceId)).reason).toBeUndefined();
+  });
+});
+
 describe('surface probe generations', (): void => {
   it('rejects ineligible rows and ignores results from an older probe', async (): Promise<void> => {
     const harness = convexTest(schema, convexModules);

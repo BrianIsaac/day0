@@ -8,7 +8,7 @@ import { agentJson, makeAgent } from '../src/lib/mastra';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { containsTokenShape, redactTokenShapes } from '../src/surfaces/redact';
+import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -106,7 +106,8 @@ export interface CredentialPage {
 }
 
 const CREDENTIAL_MARKER = /<credential:\s*([^,>]+),\s*stored>/gi;
-const CREDENTIAL_LOCATION = /\b(?:credential|api key|bot token|configuration token|access token)\b/i;
+const CREDENTIAL_LOCATION =
+  /\b(?:credential|api key|bot token|configuration token|access token)\b/i;
 const CREDENTIAL_OWNER_OR_LOCATION =
   /\b(?:administrator|admin|owner|vault|approval|approve|issues?|provides?|hands? over|created? in|generated? in)\b/i;
 const GOVERNANCE_FINDING = 'credential found in a shared page - rotate into a vault';
@@ -663,33 +664,67 @@ function fallbackDraft(surface: Doc<'surfaces'>, relevantText: string): Orientat
   };
 }
 
+/** How long one surface's model call may take before literal evidence decides alone. */
+export const MODEL_BUDGET_MS = 120_000;
+
+/** A draft together with where it came from. */
+export interface OrientationDraftResult {
+  draft: OrientationDraft;
+  /** Present when the model did not decide: a sentence for the card's open questions. */
+  note?: string;
+}
+
 /**
  * Ask the orientation classifier for a structured connect-request draft.
+ *
+ * A provider call that never answers must not hold the surface: after the
+ * budget the literal-evidence fallback decides and the card says so. The
+ * abandoned call is left to time out on its own inside the action.
  *
  * Args:
  *   surface: Declared surface row.
  *   relevantText: Documentation excerpts scoped to that surface.
+ *   budgetMs: Longest wait for the model before falling back.
  *
  * Returns:
  *   A schema-validated draft, with a deterministic fallback on model failure.
  */
-async function draftOrientation(
+export async function draftOrientation(
   surface: Doc<'surfaces'>,
   relevantText: string,
-): Promise<OrientationDraft> {
+  budgetMs: number = MODEL_BUDGET_MS,
+): Promise<OrientationDraftResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<'timeout'>((resolve): void => {
+    timer = setTimeout((): void => resolve('timeout'), budgetMs);
+  });
+  const model = agentJson<OrientationDraft>({
+    agent: orientationAgent,
+    schema: orientationSchema,
+    user: [
+      `System: ${surface.displayName}`,
+      `Class: ${surface.class}`,
+      'Documentation evidence:',
+      relevantText.slice(0, 32_000),
+    ].join('\n\n'),
+  });
   try {
-    return await agentJson<OrientationDraft>({
-      agent: orientationAgent,
-      schema: orientationSchema,
-      user: [
-        `System: ${surface.displayName}`,
-        `Class: ${surface.class}`,
-        'Documentation evidence:',
-        relevantText.slice(0, 32_000),
-      ].join('\n\n'),
-    });
-  } catch {
-    return fallbackDraft(surface, relevantText);
+    const outcome = await Promise.race([model, budget]);
+    if (outcome === 'timeout') {
+      model.catch((): void => undefined);
+      return {
+        draft: fallbackDraft(surface, relevantText),
+        note: `The model did not classify this system within ${Math.round(budgetMs / 1000)} s; the path was decided from literal documentation evidence alone.`,
+      };
+    }
+    return { draft: outcome };
+  } catch (error) {
+    return {
+      draft: fallbackDraft(surface, relevantText),
+      note: `The model could not classify this system (${safeFailureMessage(error, '', 'no detail')}); the path was decided from literal documentation evidence alone.`,
+    };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -828,157 +863,205 @@ async function resolveStoredCredential(
   return undefined;
 }
 
+/** Outcome of one isolated orientation job. */
+export interface OrientationOutcome {
+  outcome: 'proposed' | 'absent' | 'skipped' | 'failed';
+  surfaceId: Id<'surfaces'>;
+}
+
+/** Collaborators a test can replace to drive one orientation run. */
+export interface OrientationDependencies {
+  draft: typeof draftOrientation;
+  registry: typeof discoverRegistryEndpoint;
+}
+
+const orientationDependencies: OrientationDependencies = {
+  draft: draftOrientation,
+  registry: discoverRegistryEndpoint,
+};
+
+/** The subset of the action context one orientation run needs. */
+export type OrientationCtx = Pick<ActionCtx, 'runQuery' | 'runMutation'>;
+
+/**
+ * Orient one declared system from owner-linked documentation.
+ *
+ * Args:
+ *   ctx: Action context.
+ *   surfaceId: Declared surface to orient.
+ *   dependencies: Model and registry collaborators.
+ *
+ * Returns:
+ *   The outcome recorded on the surface.
+ *
+ * Raises:
+ *   Error: Any failure of a Convex read or write; the caller records it.
+ */
+export async function orientSurface(
+  ctx: OrientationCtx,
+  surfaceId: Id<'surfaces'>,
+  dependencies: OrientationDependencies = orientationDependencies,
+): Promise<OrientationOutcome> {
+  const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
+  if (!context || context.surface.verdict !== 'declared') {
+    return { outcome: 'skipped', surfaceId };
+  }
+  const surface = context.surface;
+  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
+    agentId: surface.agentId,
+  });
+  const matches = pages.filter((page: Doc<'docPages'>): boolean =>
+    namesSystem(page.markdown, surface.displayName),
+  );
+  const evidence: Evidence[] = matches.slice(0, 8).map(
+    (page: Doc<'docPages'>): Evidence => ({
+      sourceId: String(page.sourceId),
+      ref: page.ref,
+      quote: redactTokenShapes(evidenceLine(page.markdown, surface.displayName) || page.title),
+      url: page.url,
+    }),
+  );
+  const relevantText = redactTokenShapes(
+    matches
+      .map((page: Doc<'docPages'>): string =>
+        relevantSystemText(page.markdown, surface.displayName),
+      )
+      .join('\n\n'),
+  );
+  const endpoints = documentedEndpoints(
+    attributedUrls(relevantText, surface.displayName, surface.slug),
+  );
+  const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
+    explicitlyDeniesSurface(page.markdown, surface.displayName),
+  );
+  if (matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api)) {
+    const recorded = await ctx.runMutation(internal.surfaces.markAbsent, {
+      surfaceId: surface._id,
+      searched: [surface.displayName, surface.class],
+      whereFound: evidence,
+    });
+    return { outcome: recorded ? 'absent' : 'skipped', surfaceId: surface._id };
+  }
+
+  const drafted = await dependencies.draft(surface, relevantText);
+  const draft = sanitisedDraft(drafted.draft);
+  const { path, endpoint } = choosePath(draft.path, endpoints);
+  const mentionsMcp = /\bmcp\b/i.test(relevantText);
+  const registrySuggestion =
+    path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
+      ? await dependencies.registry(surface.displayName)
+      : undefined;
+  const credentialPages: CredentialPage[] = matches.map(
+    (page: Doc<'docPages'>): CredentialPage => ({
+      sourceId: String(page.sourceId),
+      ref: page.ref,
+      title: page.title,
+      markdown: page.markdown,
+    }),
+  );
+  const extractedCredential = extractCredentialFinding(credentialPages, surface.displayName);
+  const credential =
+    extractedCredential.found === 'none' && extractedCredential.method === 'unknown'
+      ? validatedDraftCredential(draft.credential, credentialPages)
+      : extractedCredential;
+  const openQuestions = [...draft.openQuestions];
+  if (drafted.note) openQuestions.push(drafted.note);
+  if (endpoints.insecure) {
+    openQuestions.push(
+      `The documented endpoint ${endpoints.insecure} is plaintext http on a public host and was not admitted; a credential is only sent over https.`,
+    );
+  }
+  if (registrySuggestion) {
+    openQuestions.push(
+      `Confirm the MCP endpoint with IT; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
+    );
+  } else if (!endpoint && openQuestions.length === 0) {
+    openQuestions.push('Confirm the approved connection endpoint.');
+  }
+
+  let credentialId: CredentialId | undefined;
+  if (credential.found === 'value') {
+    credentialId =
+      credential.label && credential.evidenceRef && credential.sourceId && context.agent.userId
+        ? await resolveStoredCredential(
+            ctx,
+            context.agent.userId,
+            credential.sourceId as Id<'docSources'>,
+            credential.evidenceRef,
+            credential.label,
+          )
+        : undefined;
+    if (!credentialId) {
+      openQuestions.push(
+        'The stored credential marker could not be resolved to an encrypted row; re-sync the documentation source.',
+      );
+    }
+  }
+  const { sourceId: _sourceId, summary: _summary, ...requestCredential } = credential;
+  void _sourceId;
+  void _summary;
+  const request = {
+    target: {
+      system: surface.displayName,
+      class: surface.class,
+      chosenPath: path,
+      fallbackPath: draft.fallbackPath,
+      confidence: endpoint ? draft.confidence : Math.min(draft.confidence, 0.65),
+      reasoning: draft.reasoning,
+    },
+    evidence,
+    scopeRequested:
+      draft.scopeRequested.length > 0
+        ? draft.scopeRequested
+        : [`${surface.slug}:read`, `${surface.slug}:write`],
+    credential: requestCredential,
+    registrySuggestion: registrySuggestion
+      ? {
+          endpoint: registrySuggestion,
+          note: 'Public MCP Registry match, not linked evidence. IT enters the endpoint after confirming it.',
+        }
+      : undefined,
+    blastRadius: draft.blastRadius,
+    costBand: draft.costBand,
+    expiresInDays: draft.expiresInDays,
+    rollback: draft.rollback,
+    openQuestions,
+  };
+  const recorded = await ctx.runMutation(internal.surfaces.propose, {
+    surfaceId: surface._id,
+    request,
+    whereFound: evidence,
+    path,
+    fallbackPath: draft.fallbackPath,
+    endpoint,
+    credentialId,
+    credentialLocation: credential.found === 'value' ? undefined : credential.summary,
+    expiresInDays: draft.expiresInDays,
+  });
+  return { outcome: recorded ? 'proposed' : 'skipped', surfaceId: surface._id };
+}
+
 /**
  * Orient one declared system from owner-linked documentation.
  *
  * Each scheduled invocation owns one surface, so a slow model or provider
  * call cannot fail charter approval or prevent the other systems orienting.
- * Only surface ids cross the scheduler boundary.
+ * Only surface ids cross the scheduler boundary. A run that throws leaves
+ * its surface `declared` with the failure as its reason, so the card says
+ * what happened and the re-run control applies.
  */
 export const orientOne = internalAction({
   args: { surfaceId: v.id('surfaces') },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ outcome: 'proposed' | 'absent' | 'skipped'; surfaceId: Id<'surfaces'> }> => {
-    const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, args);
-    if (!context || context.surface.verdict !== 'declared') {
-      return { outcome: 'skipped', surfaceId: args.surfaceId };
-    }
-    const surface = context.surface;
-    const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-      agentId: surface.agentId,
-    });
-    const matches = pages.filter((page: Doc<'docPages'>): boolean =>
-      namesSystem(page.markdown, surface.displayName),
-    );
-    const evidence: Evidence[] = matches.slice(0, 8).map(
-      (page: Doc<'docPages'>): Evidence => ({
-        sourceId: String(page.sourceId),
-        ref: page.ref,
-        quote: redactTokenShapes(evidenceLine(page.markdown, surface.displayName) || page.title),
-        url: page.url,
-      }),
-    );
-    const relevantText = redactTokenShapes(
-      matches
-        .map((page: Doc<'docPages'>): string =>
-          relevantSystemText(page.markdown, surface.displayName),
-        )
-        .join('\n\n'),
-    );
-    const endpoints = documentedEndpoints(
-      attributedUrls(relevantText, surface.displayName, surface.slug),
-    );
-    const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
-      explicitlyDeniesSurface(page.markdown, surface.displayName),
-    );
-    if (matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api)) {
-      const recorded = await ctx.runMutation(internal.surfaces.markAbsent, {
-        surfaceId: surface._id,
-        searched: [surface.displayName, surface.class],
-        whereFound: evidence,
+  handler: async (ctx, args): Promise<OrientationOutcome> => {
+    try {
+      return await orientSurface(ctx, args.surfaceId);
+    } catch (error) {
+      await ctx.runMutation(internal.surfaces.recordOrientationFailure, {
+        surfaceId: args.surfaceId,
+        reason: safeFailureMessage(error, '', 'orientation failed without detail'),
       });
-      return { outcome: recorded ? 'absent' : 'skipped', surfaceId: surface._id };
+      return { outcome: 'failed', surfaceId: args.surfaceId };
     }
-
-    const draft = sanitisedDraft(await draftOrientation(surface, relevantText));
-    const { path, endpoint } = choosePath(draft.path, endpoints);
-    const mentionsMcp = /\bmcp\b/i.test(relevantText);
-    const registrySuggestion =
-      path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
-        ? await discoverRegistryEndpoint(surface.displayName)
-        : undefined;
-    const credentialPages: CredentialPage[] = matches.map(
-      (page: Doc<'docPages'>): CredentialPage => ({
-        sourceId: String(page.sourceId),
-        ref: page.ref,
-        title: page.title,
-        markdown: page.markdown,
-      }),
-    );
-    const extractedCredential = extractCredentialFinding(
-      credentialPages,
-      surface.displayName,
-    );
-    const credential =
-      extractedCredential.found === 'none' && extractedCredential.method === 'unknown'
-        ? validatedDraftCredential(draft.credential, credentialPages)
-        : extractedCredential;
-    const openQuestions = [...draft.openQuestions];
-    if (endpoints.insecure) {
-      openQuestions.push(
-        `The documented endpoint ${endpoints.insecure} is plaintext http on a public host and was not admitted; a credential is only sent over https.`,
-      );
-    }
-    if (registrySuggestion) {
-      openQuestions.push(
-        `Confirm the MCP endpoint with IT; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
-      );
-    } else if (!endpoint && openQuestions.length === 0) {
-      openQuestions.push('Confirm the approved connection endpoint.');
-    }
-
-    let credentialId: CredentialId | undefined;
-    if (credential.found === 'value') {
-      credentialId =
-        credential.label && credential.evidenceRef && credential.sourceId && context.agent.userId
-          ? await resolveStoredCredential(
-              ctx,
-              context.agent.userId,
-              credential.sourceId as Id<'docSources'>,
-              credential.evidenceRef,
-              credential.label,
-            )
-          : undefined;
-      if (!credentialId) {
-        openQuestions.push(
-          'The stored credential marker could not be resolved to an encrypted row; re-sync the documentation source.',
-        );
-      }
-    }
-    const { sourceId: _sourceId, summary: _summary, ...requestCredential } = credential;
-    void _sourceId;
-    void _summary;
-    const request = {
-      target: {
-        system: surface.displayName,
-        class: surface.class,
-        chosenPath: path,
-        fallbackPath: draft.fallbackPath,
-        confidence: endpoint ? draft.confidence : Math.min(draft.confidence, 0.65),
-        reasoning: draft.reasoning,
-      },
-      evidence,
-      scopeRequested:
-        draft.scopeRequested.length > 0
-          ? draft.scopeRequested
-          : [`${surface.slug}:read`, `${surface.slug}:write`],
-      credential: requestCredential,
-      registrySuggestion: registrySuggestion
-        ? {
-            endpoint: registrySuggestion,
-            note: 'Public MCP Registry match, not linked evidence. IT enters the endpoint after confirming it.',
-          }
-        : undefined,
-      blastRadius: draft.blastRadius,
-      costBand: draft.costBand,
-      expiresInDays: draft.expiresInDays,
-      rollback: draft.rollback,
-      openQuestions,
-    };
-    const recorded = await ctx.runMutation(internal.surfaces.propose, {
-      surfaceId: surface._id,
-      request,
-      whereFound: evidence,
-      path,
-      fallbackPath: draft.fallbackPath,
-      endpoint,
-      credentialId,
-      credentialLocation: credential.found === 'value' ? undefined : credential.summary,
-      expiresInDays: draft.expiresInDays,
-    });
-    return { outcome: recorded ? 'proposed' : 'skipped', surfaceId: surface._id };
   },
 });
 
