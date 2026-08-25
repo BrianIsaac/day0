@@ -8,8 +8,20 @@ import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
+const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
+const MCP_SEGMENT = /\/mcp(?:[/?#]|$)/i;
+const API_BASE = /\/api(?:[/?#]|$)|^https?:\/\/api\./i;
+
+/**
+ * Phrases by which team documentation says a system has no approved way in.
+ *
+ * Matched against a dedicated system page as a whole, or against a single
+ * line that also names the system, so a denial about one system never
+ * poisons another. A URL found in a sentence that matches here is never
+ * treated as documented evidence.
+ */
 const NO_SURFACE_PATTERN =
-  /no approved (?:api|mcp|connection|surface)|no endpoint|no approved connection surface/i;
+  /\bno (?:approved |official |supported |sanctioned )?(?:api|mcp(?: server)?|connection(?: surface)?|integration(?: surface)?|endpoint|surface|access path)\b|\bnot (?:yet )?(?:an? )?approved\b|\bno approved\b/i;
 
 const orientationSchema = z.object({
   path: z.enum(['mcp', 'documented-api', 'browser-driven', 'escalate']),
@@ -28,7 +40,15 @@ const orientationSchema = z.object({
 });
 
 type OrientationDraft = z.infer<typeof orientationSchema>;
+type OrientationPath = OrientationDraft['path'];
 type Evidence = { sourceId: string; ref: string; quote: string; url?: string };
+
+/** URLs the documentation attributes to one system, grouped by what they document. */
+export interface DocumentedEndpoints {
+  mcp?: string;
+  api?: string;
+  webUi?: string;
+}
 type RegistryRemote = { type?: unknown; url?: unknown };
 type RegistryServer = {
   description?: unknown;
@@ -118,10 +138,112 @@ export function relevantSystemText(markdown: string, system: string): string {
 export function explicitlyDeniesSurface(markdown: string, system: string): boolean {
   if (isDedicatedSystemPage(markdown, system)) return NO_SURFACE_PATTERN.test(markdown);
   const needle = system.toLowerCase();
-  return markdown.split('\n').some(
-    (line: string): boolean =>
-      line.toLowerCase().includes(needle) && NO_SURFACE_PATTERN.test(line),
-  );
+  return markdown
+    .split('\n')
+    .some(
+      (line: string): boolean =>
+        line.toLowerCase().includes(needle) && NO_SURFACE_PATTERN.test(line),
+    );
+}
+
+/**
+ * Read the host of a documented URL, tolerating malformed values.
+ *
+ * Args:
+ *   url: Candidate URL text.
+ *
+ * Returns:
+ *   The lowercase host, or an empty string when the text is not a URL.
+ */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Collect the URLs the documentation attributes to one system.
+ *
+ * A URL belongs to a system only when the prose of the sentence it appears
+ * in names the system (the URL text itself does not count), or when the URL
+ * host contains the system slug. Co-occurrence in a
+ * paragraph is not attribution: a page that documents Linear's MCP endpoint
+ * and mentions Slack in the next sentence documents nothing for Slack. A
+ * sentence that denies a surface contributes no URL at all.
+ *
+ * Args:
+ *   text: Documentation text already scoped to the system.
+ *   system: Manager-named system.
+ *   slug: The system's surface slug.
+ *
+ * Returns:
+ *   Attributed URLs in document order, without trailing punctuation.
+ */
+export function attributedUrls(text: string, system: string, slug: string): string[] {
+  const needle = system.toLowerCase();
+  const hostNeedles = [slug, slug.replaceAll('-', '')].filter(Boolean);
+  const urls = new Set<string>();
+  for (const line of text.split('\n')) {
+    for (const sentence of line.split(SENTENCE_BOUNDARY)) {
+      if (NO_SURFACE_PATTERN.test(sentence)) continue;
+      const prose = sentence.replace(URL_PATTERN, ' ').toLowerCase();
+      const named = prose.includes(needle);
+      for (const raw of sentence.match(URL_PATTERN) ?? []) {
+        const url = raw.replace(/[.,;:!?]+$/, '');
+        const host = hostOf(url);
+        if (named || hostNeedles.some((part: string): boolean => host.includes(part))) {
+          urls.add(url);
+        }
+      }
+    }
+  }
+  return [...urls];
+}
+
+/**
+ * Group attributed URLs by the kind of surface they document.
+ *
+ * Args:
+ *   urls: URLs attributed to one system.
+ *
+ * Returns:
+ *   The first MCP endpoint, the first API base and the first other URL.
+ */
+export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
+  const mcp = urls.find((url: string): boolean => MCP_SEGMENT.test(url));
+  const api = urls.find((url: string): boolean => url !== mcp && API_BASE.test(url));
+  const webUi = urls.find((url: string): boolean => url !== mcp && url !== api);
+  return { mcp, api, webUi };
+}
+
+/**
+ * Admit a connection path from literal evidence.
+ *
+ * The model drafts the artefact; the code decides the path. An attributed
+ * MCP endpoint wins, then a documented API base regardless of whether the
+ * text also says "mcp", then a web UI only when the model asked for the
+ * browser path, otherwise escalate. Nothing outside the linked evidence,
+ * the public registry included, can become an endpoint here.
+ *
+ * Args:
+ *   draftPath: Path the model proposed.
+ *   endpoints: URLs the documentation attributes to the system.
+ *
+ * Returns:
+ *   The admitted path and, for admitted paths, its documented endpoint.
+ */
+export function choosePath(
+  draftPath: OrientationPath,
+  endpoints: DocumentedEndpoints,
+): { path: OrientationPath; endpoint?: string } {
+  if (endpoints.mcp) return { path: 'mcp', endpoint: endpoints.mcp };
+  if (endpoints.api) return { path: 'documented-api', endpoint: endpoints.api };
+  if (endpoints.webUi && draftPath === 'browser-driven') {
+    return { path: 'browser-driven', endpoint: endpoints.webUi };
+  }
+  return { path: 'escalate' };
 }
 
 /**
@@ -246,7 +368,16 @@ async function draftOrientation(
   }
 }
 
-/** Orient every declared system from owner-linked documentation. */
+/**
+ * Orient every declared system from owner-linked documentation.
+ *
+ * Per declared surface: pages naming the system are the evidence; a denial
+ * with no documented endpoint is `absent`; otherwise the model drafts the
+ * connect request and `choosePath` admits a path from attributed URLs
+ * alone. The public MCP Registry is consulted only when the docs mention
+ * MCP without an endpoint, and its answer is a suggestion on the card for
+ * IT to confirm, never the surface endpoint.
+ */
 export const run = internalAction({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ proposed: number; absent: number }> => {
@@ -274,10 +405,13 @@ export const run = internalAction({
       const relevantText = matches
         .map((page): string => relevantSystemText(page.markdown, surface.displayName))
         .join('\n\n');
+      const endpoints = documentedEndpoints(
+        attributedUrls(relevantText, surface.displayName, surface.slug),
+      );
       const explicitNone = matches.some((page): boolean =>
         explicitlyDeniesSurface(page.markdown, surface.displayName),
       );
-      if (matches.length === 0 || explicitNone) {
+      if (matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api)) {
         await ctx.runMutation(internal.surfaces.markAbsent, {
           surfaceId: surface._id,
           searched: [surface.displayName, surface.class],
@@ -288,34 +422,21 @@ export const run = internalAction({
       }
 
       const draft = await draftOrientation(surface, relevantText);
-      const urls = relevantText.match(URL_PATTERN) ?? [];
-      const documentedMcp = urls.find((url: string): boolean => /\/mcp(?:[/?#]|$)/i.test(url));
-      const documentedApi = urls.find((url: string): boolean => /\/api(?:[/?#]|$)/i.test(url));
-      const documentedWebUi = urls.find(
-        (url: string): boolean => url !== documentedMcp && url !== documentedApi,
-      );
-      const registryEndpoint =
-        !documentedMcp && /\bmcp\b/i.test(relevantText)
+      const { path, endpoint } = choosePath(draft.path, endpoints);
+      const mentionsMcp = /\bmcp\b/i.test(relevantText);
+      const registrySuggestion =
+        path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
           ? await discoverRegistryEndpoint(surface.displayName)
           : undefined;
-      const mcpEndpoint = documentedMcp ?? registryEndpoint;
-      const path =
-        (draft.path === 'mcp' || /\bmcp\b/i.test(relevantText)) && mcpEndpoint
-          ? 'mcp'
-          : draft.path === 'documented-api' && documentedApi
-            ? 'documented-api'
-            : draft.path === 'browser-driven' && documentedWebUi
-              ? 'browser-driven'
-              : 'escalate';
-      const endpoint =
-        path === 'mcp'
-          ? mcpEndpoint
-          : path === 'documented-api'
-            ? documentedApi
-            : path === 'browser-driven'
-              ? documentedWebUi
-              : undefined;
       const credentialRef = /\b[A-Z][A-Z0-9_]*(?:TOKEN|KEY)\b/.exec(relevantText)?.[0];
+      const openQuestions = [...draft.openQuestions];
+      if (registrySuggestion) {
+        openQuestions.push(
+          `Confirm the MCP endpoint with IT; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
+        );
+      } else if (!endpoint && openQuestions.length === 0) {
+        openQuestions.push('Confirm the approved connection endpoint.');
+      }
       const request = {
         target: {
           system: surface.displayName,
@@ -339,14 +460,17 @@ export const run = internalAction({
               : draft.credentialMethod,
           envName: credentialRef || '',
         },
+        registrySuggestion: registrySuggestion
+          ? {
+              endpoint: registrySuggestion,
+              note: 'Public MCP Registry match, not linked evidence. IT enters the endpoint after confirming it.',
+            }
+          : undefined,
         blastRadius: draft.blastRadius,
         costBand: draft.costBand,
         expiresInDays: draft.expiresInDays,
         rollback: draft.rollback,
-        openQuestions:
-          endpoint || draft.openQuestions.length > 0
-            ? draft.openQuestions
-            : ['Confirm the approved connection endpoint.'],
+        openQuestions,
       };
       await ctx.runMutation(internal.surfaces.propose, {
         surfaceId: surface._id,

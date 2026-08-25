@@ -21,6 +21,7 @@ type ConnectRequestBody = {
   evidence?: SurfaceEvidence[];
   scopeRequested?: string[];
   credential?: { owner?: string; method?: string; envName?: string };
+  registrySuggestion?: { endpoint?: string; note?: string };
   blastRadius?: string;
   costBand?: string;
   expiresInDays?: number;
@@ -141,6 +142,18 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   </dd>
                   <dt className="text-[var(--color-muted)]">Owner</dt>
                   <dd>{request.credential?.owner || 'not documented'}</dd>
+                  {request.registrySuggestion?.endpoint ? (
+                    <>
+                      <dt className="text-[var(--color-muted)]">Registry suggestion</dt>
+                      <dd className="break-all">
+                        <span className="font-mono">{request.registrySuggestion.endpoint}</span>
+                        <span className="block text-[var(--color-warn)]">
+                          {request.registrySuggestion.note ||
+                            'Not linked evidence; IT confirms and enters the endpoint.'}
+                        </span>
+                      </dd>
+                    </>
+                  ) : null}
                   <dt className="text-[var(--color-muted)]">Blast radius</dt>
                   <dd>{request.blastRadius || 'not stated'}</dd>
                   <dt className="text-[var(--color-muted)]">Cost / expiry</dt>
