@@ -29,6 +29,7 @@ const linear: SurfaceRecord = {
   credentialLanded: true,
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
+  path: 'mcp',
   toolAllowlist: ['create_comment', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
@@ -143,6 +144,27 @@ describe('MCP adapter', (): void => {
     expect(client.disconnected).toBe(1);
   });
 
+  it('redacts a credential echoed as the provider id', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_create_comment: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: '{"id":"lin-secret"}' }],
+      }),
+    });
+    const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
+    expect(result).toMatchObject({ ok: true, providerId: '<redacted>' });
+    expect(JSON.stringify(result)).not.toContain('lin-secret');
+  });
+
+  it('turns a non-Error rejection into an honest failed row', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_create_comment: async (): Promise<never> => await Promise.reject('transport offline'),
+    });
+    await expect(adapter(client).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
+      ok: false,
+      reason: 'transport offline',
+    });
+  });
+
   it('refuses a tool outside the allowlist without connecting', async (): Promise<void> => {
     const client = fakeClient({});
     const result = await adapter(client).apply(
@@ -183,6 +205,30 @@ describe('MCP adapter', (): void => {
       reason: 'unknown surface',
     });
     expect(client.options).toHaveLength(0);
+  });
+
+  it('connects to a credentialless browser-driven MCP surface without an auth header', async (): Promise<void> => {
+    const client = fakeClient({
+      playwright_create_comment: async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }),
+    });
+    const browser: SurfaceRecord = {
+      ...linear,
+      slug: 'playwright',
+      displayName: 'Playwright',
+      path: 'browser-driven',
+      endpoint: 'http://playwright:8931/mcp',
+      credentialId: undefined,
+      toolAllowlist: ['create_comment'],
+    };
+    const call: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'playwright', tool: 'create_comment', toolArgsJson: '{}' },
+    };
+    const result = await adapter(client, [browser]).apply(ctx, run, call, 0, 'k');
+    expect(result.ok).toBe(true);
+    expect(client.options).toEqual([
+      { serverName: 'playwright', url: new URL('http://playwright:8931/mcp') },
+    ]);
   });
 
   it('rejects malformed arguments before touching the network', async (): Promise<void> => {

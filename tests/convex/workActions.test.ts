@@ -94,7 +94,7 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
-                recorded.mcp.push({ server: options.serverName, tool, args, bearer: options.bearer });
+                recorded.mcp.push({ server: options.serverName, tool, args, bearer: options.bearer ?? '' });
                 return { content: [{ type: 'text', text: JSON.stringify({ id: `${tool}-id` }) }] };
               },
             },

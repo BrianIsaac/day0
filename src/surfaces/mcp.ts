@@ -1,4 +1,5 @@
 import { MCPClient } from '@mastra/mcp';
+import { noopLogger } from '@mastra/core/logger';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
@@ -32,7 +33,7 @@ export interface McpClientOptions {
   /** The surface slug; Mastra namespaces tool names as `<serverName>_<tool>`. */
   serverName: string;
   url: URL;
-  bearer: string;
+  bearer?: string;
 }
 
 export type CreateMcpClient = (options: McpClientOptions) => McpClientLike;
@@ -51,10 +52,11 @@ export interface InterpretedToolResult {
 }
 
 /**
- * Build a Streamable HTTP client for one surface with a bearer credential.
+ * Build a Streamable HTTP client for one surface.
  *
- * Tool execution errors are returned rather than thrown so the ledger can
- * record the server's own `isError` verdict and content.
+ * Mastra must throw tool errors: its return mode drops `isError` whenever a
+ * server also returns structured content. Its default logger is disabled so
+ * a provider response cannot log a reflected credential before redaction.
  *
  * Args:
  *   options: Server name, endpoint and bearer credential.
@@ -63,18 +65,33 @@ export interface InterpretedToolResult {
  *   A connected-on-demand Mastra MCP client.
  */
 export function createMastraMcpClient(options: McpClientOptions): McpClientLike {
-  return new MCPClient({
+  const client = new MCPClient({
     id: `day0-${options.serverName}-${globalThis.crypto.randomUUID()}`,
     servers: {
       [options.serverName]: {
         url: options.url,
         allowedHosts: [options.url.host],
-        requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } },
-        onToolError: 'return',
+        ...(options.bearer
+          ? { requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } } }
+          : {}),
+        enableServerLogs: false,
+        onToolError: 'throw',
       },
     },
     timeout: MCP_TIMEOUT_MS,
   });
+  client.__setLogger(noopLogger);
+  return {
+    listTools: async (): Promise<Record<string, McpToolLike>> => {
+      const { tools, errors } = await client.listToolsWithErrors({
+        perServerTimeoutMs: MCP_TIMEOUT_MS,
+      });
+      const error = errors[options.serverName];
+      if (error) throw new Error(error);
+      return tools;
+    },
+    disconnect: async (): Promise<void> => await client.disconnect(),
+  };
 }
 
 function firstStringDeep(value: unknown, keys: readonly string[], depth = 0): string | undefined {
@@ -222,13 +239,17 @@ export class McpAdapter implements SurfaceAdapter {
     } catch {
       return { tool: action.tool, ok: false, reason: 'surface has no valid endpoint', idempotencyKey };
     }
-    if (!surface.credentialId) {
+    if (!surface.credentialId && surface.path !== 'browser-driven') {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
     }
     let bearer = '';
     try {
-      bearer = await this.deps.decrypt(ctx, surface.credentialId);
-      const client = this.deps.createClient({ serverName: surface.slug, url, bearer });
+      if (surface.credentialId) bearer = await this.deps.decrypt(ctx, surface.credentialId);
+      const client = this.deps.createClient({
+        serverName: surface.slug,
+        url,
+        ...(bearer ? { bearer } : {}),
+      });
       try {
         const tools = await client.listTools();
         const tool = tools[`${surface.slug}_${call.tool}`];
@@ -249,7 +270,9 @@ export class McpAdapter implements SurfaceAdapter {
           tool: action.tool,
           ok: true,
           effect: clipEffect(`${call.tool} on ${surface.slug} · ${text || 'ok'}`, EFFECT_LENGTH),
-          providerId: result.providerId,
+          providerId: result.providerId
+            ? clipEffect(redactValue(result.providerId, bearer), EFFECT_LENGTH)
+            : undefined,
           idempotencyKey,
         };
       } finally {
@@ -259,7 +282,10 @@ export class McpAdapter implements SurfaceAdapter {
       return {
         tool: action.tool,
         ok: false,
-        reason: clipEffect(redactValue((error as Error).message, bearer), EFFECT_LENGTH),
+        reason: clipEffect(
+          redactValue(error instanceof Error ? error.message : String(error), bearer),
+          EFFECT_LENGTH,
+        ),
         idempotencyKey,
       };
     }
