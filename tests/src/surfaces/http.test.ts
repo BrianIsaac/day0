@@ -22,6 +22,8 @@ const slack: SurfaceRecord = {
   credentialLanded: true,
   lastVerifiedAt: now,
   endpoint: 'https://slack.com/api/',
+  path: 'documented-api',
+  toolAllowlist: ['auth.test', 'chat.postMessage'],
   credentialId: 'cred-slack',
   credentialKind: 'value',
   managerDmChannelId: 'D0MANAGER',
@@ -106,10 +108,51 @@ describe('HTTP adapter', (): void => {
     expect(JSON.stringify(result)).not.toContain('Authorization');
   });
 
+  it('redacts a credential echoed as the provider id', async (): Promise<void> => {
+    const fetchImpl = fakeFetch(
+      (): Response => new Response(JSON.stringify({ ok: true, ts: 'xoxb-test-value' }), { status: 200 }),
+    );
+    const result = await adapter(fetchImpl).apply(ctx, run, post, 0, 'k');
+    expect(result).toMatchObject({ ok: true, providerId: '<redacted>' });
+    expect(JSON.stringify(result)).not.toContain('xoxb-test-value');
+  });
+
   it('treats a non-2xx status as not landed', async (): Promise<void> => {
     const fetchImpl = fakeFetch((): Response => new Response('rate limited', { status: 429 }));
     const result = await adapter(fetchImpl).apply(ctx, run, post, 0, 'k');
     expect(result).toMatchObject({ ok: false, reason: 'HTTP 429 · rate limited' });
+  });
+
+  it('treats redirects and oversized envelopes as not landed', async (): Promise<void> => {
+    const redirect = fakeFetch(
+      (): Response => new Response('', { status: 302, headers: { Location: 'https://evil.example' } }),
+    );
+    await expect(adapter(redirect).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
+      ok: false,
+      reason: 'HTTP 302 ·',
+    });
+
+    const oversized = fakeFetch(
+      (): Response =>
+        new Response(JSON.stringify({ padding: 'x'.repeat(2 * 1024 * 1024), ok: false, error: 'denied' }), {
+          status: 200,
+        }),
+    );
+    const result = await adapter(oversized).apply(ctx, run, post, 0, 'k');
+    expect(result).toEqual({
+      tool: 'http.request',
+      ok: false,
+      reason: 'HTTP 200 · response exceeded 65536 bytes',
+      idempotencyKey: 'k',
+    });
+  });
+
+  it('records a successful non-JSON body as bounded evidence', async (): Promise<void> => {
+    const fetchImpl = fakeFetch((): Response => new Response('accepted', { status: 200 }));
+    await expect(adapter(fetchImpl).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
+      ok: true,
+      effect: 'HTTP 200 · accepted',
+    });
   });
 
   it('reads an id from a JSON response without a ts', async (): Promise<void> => {
@@ -120,7 +163,16 @@ describe('HTTP adapter', (): void => {
 
   it('refuses a path that escapes the surface endpoint before decrypting', async (): Promise<void> => {
     const fetchImpl = fakeFetch((): Response => new Response('should not be called'));
-    for (const path of ['https://evil.example/steal', '../../other', '/../other']) {
+    for (const path of [
+      '//evil.example/x',
+      'http://slack.com/api/chat.postMessage',
+      'https://user@slack.com/api/chat.postMessage',
+      'https://evil.example/steal',
+      '../../other',
+      '/../other',
+      '..%2f..%2fother',
+      '%252e%252e%252fother',
+    ]) {
       const result = await adapter(fetchImpl).apply(
         ctx,
         run,
@@ -131,6 +183,49 @@ describe('HTTP adapter', (): void => {
       expect(result).toMatchObject({ ok: false, reason: 'path escapes the surface endpoint' });
     }
     expect(fetchImpl.calls).toHaveLength(0);
+  });
+
+  it('refuses an HTTP operation outside the surface allowlist before decrypt or fetch', async (): Promise<void> => {
+    const fetchImpl = fakeFetch((): Response => new Response('should not be called'));
+    const decrypt = vi.fn(async (): Promise<string> => 'xoxb-test-value');
+    const surfaceAdapter = new HttpAdapter([slack], {
+      decrypt,
+      fetch: fetchImpl.fetch,
+      now: (): number => now,
+    });
+    const result = await surfaceAdapter.apply(
+      ctx,
+      run,
+      { tool: 'http.request', args: { ...post.args, path: '/chat.delete' } },
+      0,
+      'k',
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'tool not in the surface allowlist (chat.delete)',
+    });
+    expect(decrypt).not.toHaveBeenCalled();
+    expect(fetchImpl.calls).toHaveLength(0);
+  });
+
+  it('refuses secret placeholders in header names and redacts non-Error failures', async (): Promise<void> => {
+    const fetchImpl = fakeFetch(async (): Promise<never> => await Promise.reject('offline'));
+    const badHeader = await adapter(fetchImpl).apply(
+      ctx,
+      run,
+      {
+        tool: 'http.request',
+        args: { ...post.args, headersJson: '{"{{secret}}":"value"}' },
+      },
+      0,
+      'k',
+    );
+    expect(badHeader).toMatchObject({ ok: false, reason: 'secret placeholders are not allowed in header names' });
+    expect(fetchImpl.calls).toHaveLength(0);
+    await expect(adapter(fetchImpl).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
+      ok: false,
+      reason: 'offline',
+    });
   });
 
   it('refuses a template naming another surface secret and sends nothing', async (): Promise<void> => {
@@ -190,7 +285,11 @@ describe('request URL and provider id helpers', (): void => {
   it('resolves relative paths under the endpoint and refuses escapes', (): void => {
     expect(resolveRequestUrl('https://slack.com/api/', '/chat.postMessage').toString()).toBe('https://slack.com/api/chat.postMessage');
     expect(resolveRequestUrl('https://slack.com/api', 'auth.test?x=1').toString()).toBe('https://slack.com/api/auth.test?x=1');
-    expect(resolveRequestUrl('https://slack.com/api/', '//evil.example/x').toString()).toBe('https://slack.com/api/evil.example/x');
+    expect(() => resolveRequestUrl('https://slack.com/api/', '//evil.example/x')).toThrow('path escapes');
+    expect(() => resolveRequestUrl('https://slack.com/api/', '..%2fadmin')).toThrow('path escapes');
+    expect(() => resolveRequestUrl('https://slack.com/api/', '%252e%252e%252fadmin')).toThrow('path escapes');
+    expect(() => resolveRequestUrl('https://slack.com/api/', 'http:evil')).toThrow('path escapes');
+    expect(() => resolveRequestUrl('https://user@slack.com/api/', 'auth.test')).toThrow('without userinfo');
     expect(() => resolveRequestUrl('https://slack.com/api/', 'https://slack.com/other')).toThrow('path escapes the surface endpoint');
     expect(() => resolveRequestUrl('not a url', 'x')).toThrow();
   });

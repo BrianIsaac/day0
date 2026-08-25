@@ -3,8 +3,13 @@ import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { decryptCredential, type DecryptCredential } from './credentials';
 import { clipEffect } from './mock';
-import { parseSurfaceAction, surfaceRefusal, type ParsedHttpRequest } from './policy';
-import { injectSecret, redactValue, SecretTemplateError } from './secrets';
+import {
+  parseSurfaceAction,
+  surfaceRefusal,
+  TOOL_NOT_ALLOWED,
+  type ParsedHttpRequest,
+} from './policy';
+import { hasPlaceholder, injectSecret, redactValue, SecretTemplateError } from './secrets';
 import type { AdapterRun, AppliedAction, SurfaceAdapter, SurfaceRecord } from './types';
 
 export const HTTP_TOOLS = ['http.request'] as const satisfies readonly MockAction['tool'][];
@@ -41,12 +46,75 @@ export interface HttpAdapterDeps {
  */
 export function resolveRequestUrl(endpoint: string, path: string): URL {
   const base = new URL(endpoint);
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
+    throw new Error('surface endpoint must be an HTTP URL without userinfo');
+  }
   if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
-  const target = new URL(path.replace(/^\/+/, ''), base);
-  if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname)) {
+  const rawPath = path.trim();
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(rawPath)) {
+    throw new Error('path escapes the surface endpoint');
+  }
+  let decodedPath = rawPath;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const decoded = decodeURIComponent(decodedPath);
+      if (decoded === decodedPath) break;
+      decodedPath = decoded;
+    } catch {
+      throw new Error('path has invalid percent encoding');
+    }
+  }
+  if (
+    decodedPath.includes('\\') ||
+    /(?:^|\/)\.{1,2}(?:\/|$)/.test(decodedPath.split(/[?#]/, 1)[0])
+  ) {
+    throw new Error('path escapes the surface endpoint');
+  }
+  const target = new URL(rawPath.replace(/^\/+/, ''), base);
+  if (
+    target.origin !== base.origin ||
+    target.username ||
+    target.password ||
+    !target.pathname.startsWith(base.pathname)
+  ) {
     throw new Error('path escapes the surface endpoint');
   }
   return target;
+}
+
+/**
+ * Read at most the response evidence limit without treating truncation as JSON.
+ *
+ * Args:
+ *   response: Provider response to read.
+ *
+ * Returns:
+ *   Decoded evidence and whether the provider exceeded the limit.
+ */
+async function readBoundedResponse(
+  response: Response,
+): Promise<{ text: string; exceeded: boolean }> {
+  if (!response.body) return { text: '', exceeded: false };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let bytesRead = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      parts.push(decoder.decode());
+      return { text: parts.join(''), exceeded: false };
+    }
+    const remaining = RESPONSE_READ_LIMIT - bytesRead;
+    if (value.byteLength > remaining) {
+      if (remaining > 0) parts.push(decoder.decode(value.subarray(0, remaining), { stream: true }));
+      await reader.cancel('response evidence limit reached');
+      parts.push(decoder.decode());
+      return { text: parts.join(''), exceeded: true };
+    }
+    bytesRead += value.byteLength;
+    parts.push(decoder.decode(value, { stream: true }));
+  }
 }
 
 /**
@@ -136,11 +204,30 @@ export class HttpAdapter implements SurfaceAdapter {
     const surface = this.surfaces.find((row) => row.slug === request.surface);
     const refusal = surfaceRefusal(surface, this.deps.now());
     if (!surface || refusal) return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
+    if (surface.path !== 'documented-api') {
+      return {
+        tool: action.tool,
+        ok: false,
+        reason: `http.request is not allowed on surface path ${surface.path ?? 'unknown'}`,
+        idempotencyKey,
+      };
+    }
     let url: URL;
     try {
       url = resolveRequestUrl(surface.endpoint ?? '', request.path);
     } catch (error) {
       return { tool: action.tool, ok: false, reason: (error as Error).message, idempotencyKey };
+    }
+    const base = new URL(surface.endpoint ?? '');
+    if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+    const operation = url.pathname.slice(base.pathname.length).replace(/^\/+/, '');
+    if (!surface.toolAllowlist?.includes(operation)) {
+      return {
+        tool: action.tool,
+        ok: false,
+        reason: `${TOOL_NOT_ALLOWED} (${operation})`,
+        idempotencyKey,
+      };
     }
     if (!surface.credentialId) {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
@@ -150,6 +237,9 @@ export class HttpAdapter implements SurfaceAdapter {
       secret = await this.deps.decrypt(ctx, surface.credentialId);
       const headers: Record<string, string> = {};
       for (const [key, value] of Object.entries(request.headers)) {
+        if (hasPlaceholder(key)) {
+          throw new SecretTemplateError('secret placeholders are not allowed in header names');
+        }
         headers[key] = injectSecret(value, secret, surface.slug);
       }
       const body =
@@ -163,8 +253,17 @@ export class HttpAdapter implements SurfaceAdapter {
         signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
         redirect: 'manual',
       });
-      const raw = (await response.text()).slice(0, RESPONSE_READ_LIMIT);
+      const bounded = await readBoundedResponse(response);
+      const raw = bounded.text;
       const text = redactValue(raw, secret);
+      if (bounded.exceeded) {
+        return {
+          tool: action.tool,
+          ok: false,
+          reason: `HTTP ${response.status} · response exceeded ${RESPONSE_READ_LIMIT} bytes`,
+          idempotencyKey,
+        };
+      }
       let payload: unknown;
       try {
         payload = JSON.parse(raw);
@@ -189,16 +288,20 @@ export class HttpAdapter implements SurfaceAdapter {
         tool: action.tool,
         ok: true,
         effect: clipEffect(`HTTP ${response.status} · ${summary}`, EFFECT_LENGTH),
-        providerId: providerIdFrom(payload),
+        providerId: providerIdFrom(payload)
+          ? clipEffect(redactValue(providerIdFrom(payload) ?? '', secret), EFFECT_LENGTH)
+          : undefined,
         idempotencyKey,
       };
     } catch (error) {
       const message =
         error instanceof SecretTemplateError
           ? error.message
-          : (error as Error).name === 'TimeoutError'
+          : error instanceof Error && error.name === 'TimeoutError'
             ? `no response within ${HTTP_TIMEOUT_MS / 1000} s`
-            : (error as Error).message;
+            : error instanceof Error
+              ? error.message
+              : String(error);
       return {
         tool: action.tool,
         ok: false,

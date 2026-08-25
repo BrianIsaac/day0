@@ -207,6 +207,21 @@ export async function applySurfaceActions(
       applied.push(refused(action.tool, refusal ?? 'unknown surface', idempotencyKey));
       continue;
     }
+    if (
+      (parsed.action.kind === 'mcp.call' &&
+        surface.path !== 'mcp' &&
+        surface.path !== 'browser-driven') ||
+      (parsed.action.kind === 'http.request' && surface.path !== 'documented-api')
+    ) {
+      applied.push(
+        refused(
+          action.tool,
+          `${action.tool} is not allowed on surface path ${surface.path ?? 'unknown'}`,
+          idempotencyKey,
+        ),
+      );
+      continue;
+    }
     const held = heldReason(parsed.action, surface);
     if (held) {
       applied.push({

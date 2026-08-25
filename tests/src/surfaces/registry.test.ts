@@ -31,6 +31,7 @@ const linear: SurfaceRecord = {
   credentialLanded: true,
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
+  path: 'mcp',
   toolAllowlist: ['create_comment', 'save_issue', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
@@ -44,6 +45,8 @@ const slack: SurfaceRecord = {
   credentialLanded: true,
   lastVerifiedAt: now,
   endpoint: 'https://slack.com/api/',
+  path: 'documented-api',
+  toolAllowlist: ['auth.test', 'users.lookupByEmail', 'conversations.open', 'chat.postMessage'],
   credentialId: 'cred-slack',
   credentialKind: 'value',
   managerDmChannelId: 'D0MANAGER',
@@ -228,6 +231,24 @@ describe('applying surface actions', (): void => {
       { deps: deps(recorded), grants: new Set(['linear:read']), now },
     );
     expect(read[0].ok).toBe(true);
+  });
+
+  it('refuses verbs that do not match the connected surface path', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const crossed: MockAction[] = [
+      { ...comment, args: { ...comment.args, surface: 'slack' } },
+      { ...dm, args: { ...dm.args, surface: 'linear' } },
+    ];
+    const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, crossed, {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+    expect(applied.map((row) => row.reason)).toEqual([
+      'mcp.call is not allowed on surface path documented-api',
+      'http.request is not allowed on surface path mcp',
+    ]);
+    expect(recorded).toEqual({ mcp: [], http: [] });
   });
 
   it('refuses malformed, unknown-surface, unconnected and forged-trailer actions', async (): Promise<void> => {

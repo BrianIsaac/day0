@@ -230,6 +230,14 @@ export class McpAdapter implements SurfaceAdapter {
     const surface = this.surfaces.find((row) => row.slug === call.surface);
     const refusal = surfaceRefusal(surface, this.deps.now());
     if (!surface || refusal) return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
+    if (surface.path !== 'mcp' && surface.path !== 'browser-driven') {
+      return {
+        tool: action.tool,
+        ok: false,
+        reason: `mcp.call is not allowed on surface path ${surface.path ?? 'unknown'}`,
+        idempotencyKey,
+      };
+    }
     if (!surface.toolAllowlist?.includes(call.tool)) {
       return { tool: action.tool, ok: false, reason: `${TOOL_NOT_ALLOWED} (${call.tool})`, idempotencyKey };
     }
