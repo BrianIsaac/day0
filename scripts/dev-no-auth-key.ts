@@ -159,10 +159,14 @@ async function init(force: boolean): Promise<void> {
 /**
  * Ensure ordinary `pnpm dev` creates stable real-surface secrets once.
  *
+ * Without `.env.local` there is nothing to write into and nothing that would
+ * read the key, so `pnpm dev` starts as it always did rather than failing.
+ *
  * Args:
  *   force: Rotate the key when true.
  */
 function ensureRealSurfaceKeys(force: boolean): void {
+  if (!existsSync(ENV_FILE)) return;
   const existing = readEnvFile();
   const updates: Record<string, string> = {};
   if (!existing[CREDENTIAL_KEY_VAR] || force) {
