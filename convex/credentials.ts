@@ -33,7 +33,7 @@ type CredentialKind = 'value' | 'location' | 'oauth';
  *   Error: If a value-bearing credential has no plaintext.
  */
 function credentialPlaintext(kind: CredentialKind, plaintext?: string): string {
-  if (plaintext === undefined && kind === 'location') return '';
+  if (kind === 'location' && !plaintext) return '';
   if (!plaintext) throw new Error('Credential plaintext is required.');
   return plaintext;
 }
@@ -191,10 +191,17 @@ export const store = internalAction({
             ref: args.source.ref,
           });
     if (existing) {
-      const current = await ctx.runAction(internal.credentialCryptoActions.open, {
-        ciphertext: existing.ciphertext,
-        iv: existing.iv,
-      });
+      let current: string | undefined;
+      try {
+        current = await ctx.runAction(internal.credentialCryptoActions.open, {
+          ciphertext: existing.ciphertext,
+          iv: existing.iv,
+        });
+      } catch {
+        // Sealed under a rotated DAY0_CREDENTIAL_KEY: unreadable, so the page's
+        // value replaces it rather than failing every sync of that page.
+        current = undefined;
+      }
       if (current === plaintext) {
         await ctx.runMutation(internal.credentials.updateMetadata, {
           credentialId: existing._id,
