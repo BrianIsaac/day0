@@ -38,19 +38,83 @@ export interface McpConnectionConfig {
 
 type McpClientFactory = (config: McpConnectionConfig) => McpClientLike;
 
+export interface SessionBoundFetch {
+  fetch: typeof fetch;
+  terminate(): Promise<void>;
+}
+
+/**
+ * Bind one session's headers to fetch and remember its server session id.
+ *
+ * Mastra's `disconnect()` only aborts the client side. A Streamable HTTP
+ * server keeps the session, and for the Notion server the per-token proxy
+ * behind it, until it receives `DELETE` with the session id, so every sync
+ * batch would otherwise leave one session behind for the life of the
+ * container.
+ *
+ * Args:
+ *   config: Credential-bound connection configuration.
+ *   transport: Underlying fetch, injectable for tests.
+ *
+ * Returns:
+ *   A fetch that adds the session headers, and a terminator that closes the
+ *   server session once and never throws.
+ */
+export function sessionBoundFetch(
+  config: McpConnectionConfig,
+  transport: typeof fetch = fetch,
+): SessionBoundFetch {
+  let sessionId: string | undefined;
+  const boundFetch: typeof fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    for (const [name, value] of Object.entries(config.headers)) headers.set(name, value);
+    const response = await transport(input, { ...init, headers });
+    const id = response.headers.get('mcp-session-id');
+    if (id) sessionId = id;
+    return response;
+  };
+  return {
+    fetch: boundFetch,
+    async terminate(): Promise<void> {
+      if (!sessionId) return;
+      const id = sessionId;
+      sessionId = undefined;
+      const headers: Record<string, string> = { 'mcp-session-id': id };
+      if (config.headers.Authorization) headers.Authorization = config.headers.Authorization;
+      try {
+        await transport(config.url, { method: 'DELETE', headers });
+      } catch {
+        // The server drops the session on its next restart; nothing to retry.
+      }
+    },
+  };
+}
+
 /** Create the production Mastra client for one credential-bound session. */
 function productionClient(config: McpConnectionConfig): McpClientLike {
-  return new MCPClient({
+  const session = sessionBoundFetch(config);
+  const client = new MCPClient({
     id: config.id,
     servers: {
       [SERVER_NAME]: {
         url: config.url,
         allowedHosts: [config.url.host],
-        requestInit: { headers: config.headers },
+        fetch: session.fetch,
       },
     },
     timeout: 60_000,
   }) as unknown as McpClientLike;
+  return {
+    listTools: (): Promise<Record<string, McpTool>> => client.listTools(),
+    resources: client.resources,
+    async disconnect(): Promise<void> {
+      try {
+        await client.disconnect();
+      } finally {
+        await session.terminate();
+      }
+    },
+  };
 }
 
 /** Build one credential-bound MCP session configuration. */

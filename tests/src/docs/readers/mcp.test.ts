@@ -4,6 +4,7 @@ import type { Id } from '../../../../convex/_generated/dataModel';
 import {
   McpReader,
   authorizationHeader,
+  sessionBoundFetch,
   unwrapWholePageFence,
   type McpConnectionConfig,
 } from '../../../../src/docs/readers/mcp';
@@ -143,5 +144,59 @@ describe('MCP documentation reader', (): void => {
       ),
     ).rejects.toThrow('escalate');
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+});
+
+describe('MCP session termination', (): void => {
+  it('adds the session headers to every request and deletes the server session once', async (): Promise<void> => {
+    const calls: Array<{ url: string; method: string; headers: Headers }> = [];
+    const transport: typeof fetch = async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? 'GET',
+        headers: new Headers(init?.headers),
+      });
+      return new Response('{}', { headers: { 'mcp-session-id': 'session-1' } });
+    };
+    const config: McpConnectionConfig = {
+      id: 'contract',
+      url: new URL('http://notion-mcp:3000/mcp'),
+      headers: { 'notion-token': ['ntn', 'contract-value'].join('_'), Authorization: 'Bearer t' },
+    };
+    const session = sessionBoundFetch(config, transport);
+    await session.fetch(config.url, { method: 'POST', headers: { 'content-type': 'x' } });
+    expect(calls[0].headers.get('notion-token')).toBe(['ntn', 'contract-value'].join('_'));
+    expect(calls[0].headers.get('Authorization')).toBe('Bearer t');
+    expect(calls[0].headers.get('content-type')).toBe('x');
+    await session.terminate();
+    await session.terminate();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ url: 'http://notion-mcp:3000/mcp', method: 'DELETE' });
+    expect(calls[1].headers.get('mcp-session-id')).toBe('session-1');
+    expect(calls[1].headers.get('Authorization')).toBe('Bearer t');
+    expect(calls[1].headers.get('notion-token')).toBeNull();
+  });
+
+  it('is a no-op without a session and swallows a failed delete', async (): Promise<void> => {
+    let deletes = 0;
+    const transport: typeof fetch = async (_input, init) => {
+      if (init?.method === 'DELETE') {
+        deletes += 1;
+        throw new Error('connection reset');
+      }
+      return new Response('{}', { headers: { 'mcp-session-id': 'session-2' } });
+    };
+    const config: McpConnectionConfig = {
+      id: 'contract',
+      url: new URL('http://notion-mcp:3000/mcp'),
+      headers: {},
+    };
+    const idle = sessionBoundFetch(config, transport);
+    await idle.terminate();
+    expect(deletes).toBe(0);
+    const active = sessionBoundFetch(config, transport);
+    await active.fetch(config.url, { method: 'POST' });
+    await expect(active.terminate()).resolves.toBeUndefined();
+    expect(deletes).toBe(1);
   });
 });

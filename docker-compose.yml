@@ -216,6 +216,11 @@ services:
 
   # Reads an operator-owned Notion workspace through Streamable HTTP. The port
   # is unpublished and each initialisation supplies its own Notion credential.
+  #
+  # The healthcheck is a real MCP initialise, and the server keeps every
+  # session it initialises (with a per-token API proxy each) until a DELETE
+  # arrives, so the check terminates its own session or six of them would
+  # accumulate a minute for as long as the container runs.
   notion-mcp:
     profiles: ['real']
     image: node:22-alpine
@@ -234,7 +239,7 @@ services:
           'CMD',
           'node',
           '-e',
-          "const token=['nt','n_','h'.repeat(46)].join('');fetch('http://127.0.0.1:3000/mcp',{method:'POST',headers:{accept:'application/json, text/event-stream',authorization:'Bearer '+process.env.AUTH_TOKEN,'content-type':'application/json','notion-token':token},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'healthcheck',version:'1'}}})}).then(async r=>{const body=await r.text();process.exit(r.ok&&body.includes('protocolVersion')?0:1)}).catch(()=>process.exit(1))",
+          "const token=['nt','n_','h'.repeat(46)].join('');const url='http://127.0.0.1:3000/mcp';const auth='Bearer '+process.env.AUTH_TOKEN;fetch(url,{method:'POST',headers:{accept:'application/json, text/event-stream',authorization:auth,'content-type':'application/json','notion-token':token},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'healthcheck',version:'1'}}})}).then(async r=>{const body=await r.text();const session=r.headers.get('mcp-session-id');if(session){await fetch(url,{method:'DELETE',headers:{authorization:auth,'mcp-session-id':session}}).catch(()=>{})}process.exit(r.ok&&body.includes('protocolVersion')?0:1)}).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 5s
