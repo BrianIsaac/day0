@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 
 /**
@@ -15,6 +16,13 @@ import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
  *
  *   discovered → skipped | deferred | needs-skill
  *   plan-pending → cancelled
+ *
+ * Real mode adds the exact-action gate between the skill run and apply:
+ *   executing → actions-pending → (approve) executing → completed | failed
+ *                               → (reject)  failed
+ * The run id minted by `claimForExecution` is kept on the row through the
+ * gate, so approval applies with the same idempotency keys the run would have
+ * used had it not paused.
  */
 
 /**
@@ -301,20 +309,29 @@ export const setCompleted = internalMutation({
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
-    const applied = ((args.output ?? {}) as { applied?: Array<{ tool: string; ok: boolean }> })
-      .applied;
+    const applied = (
+      (args.output ?? {}) as { applied?: Array<{ tool: string; ok: boolean; held?: boolean }> }
+    ).applied;
     if (!applied || applied.length === 0) {
       throw new Error(
         'cannot complete a work item whose run applied nothing to the work environment',
       );
     }
-    const failed = applied.filter((a) => !a.ok);
+    // A held row is accounted for: the manager chose not to send it, or the
+    // gate held a public post for them, and the ledger says so. It is neither
+    // a landed change nor a failure.
+    const failed = applied.filter((a) => !a.ok && !a.held);
     if (failed.length > 0) {
       throw new Error(
         `cannot complete a work item with ${failed.length} action(s) that did not change the work environment`,
       );
     }
-    await ctx.db.patch(args.workItemId, { state: 'completed', output: args.output });
+    await ctx.db.patch(args.workItemId, {
+      state: 'completed',
+      output: args.output,
+      pendingRunId: undefined,
+      approvedIndexes: undefined,
+    });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.completed',
@@ -343,6 +360,8 @@ export const setFailed = internalMutation({
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
       skipReason: args.reason,
+      pendingRunId: undefined,
+      approvedIndexes: undefined,
       ...(args.output !== undefined ? { output: args.output } : {}),
     });
     await ctx.db.insert('events', {
@@ -351,6 +370,159 @@ export const setFailed = internalMutation({
       payload: { workItemId: args.workItemId, reason: args.reason },
       createdAt: Date.now(),
     });
+  },
+});
+
+/**
+ * Pause an executing run at the exact-action gate.
+ *
+ * Called by the action that ran the skill, in real mode, instead of applying
+ * anything: the draft, notes and literal `actions` are persisted with the run
+ * id, the row moves to `actions-pending`, and nothing reaches a surface until
+ * `approveActions` says which indexes may. Guarded on `executing` so a late
+ * caller cannot reopen a run the manager has already decided.
+ */
+export const setActionsPending = internalMutation({
+  args: { workItemId: v.id('workItems'), runId: v.id('events'), output: v.any() },
+  handler: async (ctx, args): Promise<{ pending: boolean }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    if (row.state !== 'executing') return { pending: false };
+    const actions = (args.output as { actions?: unknown[] }).actions;
+    if (!Array.isArray(actions)) throw new Error('output.actions must be a list');
+    await ctx.db.patch(args.workItemId, {
+      state: 'actions-pending',
+      output: args.output,
+      pendingRunId: args.runId,
+      approvedIndexes: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.actions-pending',
+      payload: { workItemId: args.workItemId, runId: args.runId, actionCount: actions.length },
+      createdAt: Date.now(),
+    });
+    return { pending: true };
+  },
+});
+
+/**
+ * Approve some or all of the pending actions and schedule their application.
+ *
+ * The indexes are validated against the persisted list, deduplicated and
+ * sorted; an index outside the list is refused rather than ignored, because a
+ * stale card must not silently approve a different action than it showed.
+ * Approving nothing is allowed and lands nothing: every action is then
+ * recorded as held.
+ */
+export const approveActions = mutation({
+  args: { workItemId: v.id('workItems'), approvedIndexes: v.array(v.number()) },
+  handler: async (ctx, args): Promise<{ ok: true; approvedIndexes: number[] }> => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    if (row.state !== 'actions-pending') {
+      throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+    }
+    if (!row.pendingRunId) throw new Error('workItem has no pending run');
+    const actions = ((row.output ?? {}) as { actions?: unknown[] }).actions ?? [];
+    const approvedIndexes = [...new Set(args.approvedIndexes)].sort((a, b) => a - b);
+    for (const index of approvedIndexes) {
+      if (!Number.isInteger(index) || index < 0 || index >= actions.length) {
+        throw new Error(`action index ${index} is outside the pending list`);
+      }
+    }
+    await ctx.db.patch(args.workItemId, { approvedIndexes });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.actions-approved',
+      payload: {
+        workItemId: args.workItemId,
+        runId: row.pendingRunId,
+        approvedIndexes,
+        heldIndexes: actions.map((_, index) => index).filter((i) => !approvedIndexes.includes(i)),
+      },
+      createdAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.workActions.applyApprovedActions, {
+      workItemId: args.workItemId,
+    });
+    return { ok: true, approvedIndexes };
+  },
+});
+
+/**
+ * Refuse the pending actions. The row fails with the manager's reason and the
+ * draft is kept, so Retry resumes from `plan-approved` and runs the skill again.
+ */
+export const rejectActions = mutation({
+  args: { workItemId: v.id('workItems'), reason: v.string() },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    if (row.state !== 'actions-pending') {
+      throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+    }
+    const reason = args.reason.trim();
+    const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';
+    await ctx.db.patch(args.workItemId, {
+      state: 'failed',
+      skipReason,
+      pendingRunId: undefined,
+      approvedIndexes: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.actions-rejected',
+      payload: { workItemId: args.workItemId, reason: skipReason },
+      createdAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+/**
+ * Take the approved actions for application, exactly once.
+ *
+ * The apply action is scheduled by `approveActions` and may be scheduled again
+ * by a second approval after a restart; whichever caller moves the row from
+ * `actions-pending` back to `executing` is the one that applies. The caller
+ * gets everything it needs from the row so it never re-reads state that may
+ * have moved.
+ */
+export const claimApprovedActions = internalMutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    | {
+        claimed: true;
+        agentId: Id<'agents'>;
+        runId: Id<'events'>;
+        approvedIndexes: number[];
+        output: unknown;
+      }
+    | { claimed: false; reason: string }
+  > => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    if (row.state !== 'actions-pending') {
+      return { claimed: false, reason: `workItem state is ${row.state}; expected actions-pending` };
+    }
+    if (!row.pendingRunId) return { claimed: false, reason: 'workItem has no pending run' };
+    if (!row.approvedIndexes) return { claimed: false, reason: 'no actions have been approved' };
+    await ctx.db.patch(args.workItemId, { state: 'executing' });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.actions-applying',
+      payload: { workItemId: args.workItemId, runId: row.pendingRunId },
+      createdAt: Date.now(),
+    });
+    return {
+      claimed: true,
+      agentId: row.agentId,
+      runId: row.pendingRunId,
+      approvedIndexes: row.approvedIndexes,
+      output: row.output,
+    };
   },
 });
 
@@ -370,7 +542,13 @@ export const countOpenForAgent = query({
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
       .collect();
-    const openStates = new Set(['claimed', 'plan-pending', 'plan-approved', 'executing']);
+    const openStates = new Set([
+      'claimed',
+      'plan-pending',
+      'plan-approved',
+      'executing',
+      'actions-pending',
+    ]);
     return open.filter((w) => openStates.has(w.state)).length;
   },
 });
@@ -391,7 +569,13 @@ export const findExistingClaim = query({
       .filter((q) => q.eq(q.field('agentId'), args.agentId))
       .first();
     if (!row) return null;
-    const claimedStates = ['claimed', 'plan-pending', 'plan-approved', 'executing'];
+    const claimedStates = [
+      'claimed',
+      'plan-pending',
+      'plan-approved',
+      'executing',
+      'actions-pending',
+    ];
     if (!claimedStates.includes(row.state)) return null;
     return { state: row.state };
   },
