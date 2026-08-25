@@ -602,18 +602,24 @@ export const postCharterApproval = action({
       });
     }
 
-    await ctx.runMutation(internal.surfaces.seedFromCharter, {
-      agentId: args.agentId,
-      namedSystems: charterBody.namedSystems ?? [],
-    });
-    await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
+    // Real mode: the named systems become declared surfaces and orientation
+    // files one evidence-backed card per system from the linked docs. Mock
+    // mode never reaches this branch, so the hosted demo keeps its five
+    // synthetic surfaces and files no absence cards.
+    if (SURFACE_MODE === 'real') {
+      await ctx.runMutation(internal.surfaces.seedFromCharter, {
+        agentId: args.agentId,
+        namedSystems: charterBody.namedSystems ?? [],
+      });
+      await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
+      return { norms, workItemsGenerated: 0 };
+    }
 
     // Generate role-specific work items grounded in BOTH the charter AND
     // the agent's actual mock environment. The work-generator LLM sees
     // real surface slugs (channels, spreadsheets, docs, tweets, tickets)
     // and emits contentRefs the executor can later mutate against real
     // rows. No hardcoded slugs in the prompt.
-    if (SURFACE_MODE === 'real') return { norms, workItemsGenerated: 0 };
     const mockEnv = await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
     const generated = await generateWorkItemsFromCharter(charterBody, mockEnv);
     let workItemsGenerated = 0;

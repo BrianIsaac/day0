@@ -31,8 +31,12 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const tweets = useQuery(api.mock.listTweets, { agentId });
   const tickets = useQuery(api.mock.listTickets, { agentId });
   const spreadsheets = useQuery(api.mock.listSpreadsheets, { agentId });
-  const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const config = useQuery(api.config.surfaceMode);
+  // The Surfaces tab exists only in real mode; the hosted mock keeps its
+  // five synthetic surfaces and never asks for connection verdicts.
+  const isReal = config?.mode === 'real';
+  const surfaces = useQuery(api.surfaces.listForAgent, isReal ? { agentId } : 'skip');
+  const tabs = isReal ? TABS : TABS.filter((tab) => tab.key !== 'surfaces');
 
   const counts: Record<TabKey, number | undefined> = {
     slack: channels?.length,
@@ -64,7 +68,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
           it hid here — Twitter and Tickets — are two fifths of the environment
           the agent works in. */}
       <nav className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const isActive = active === t.key;
           const count = counts[t.key];
           return (
@@ -103,7 +107,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
         {active === 'slack' ? <SlackTab agentId={agentId} /> : null}
         {active === 'tweet' ? <TwitterTab agentId={agentId} /> : null}
         {active === 'tickets' ? <TicketsTab agentId={agentId} /> : null}
-        {active === 'surfaces' ? <SurfacesTab agentId={agentId} /> : null}
+        {active === 'surfaces' && isReal ? <SurfacesTab agentId={agentId} /> : null}
       </div>
     </section>
   );
