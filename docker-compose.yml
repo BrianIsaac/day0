@@ -80,7 +80,12 @@ services:
       - convex_data:/convex/data
       # Owner-linked documentation is visible to Node actions but never writable
       # from the backend. DAY0_DOCS_HOST_DIR is a host path; actions use /docs.
-      - ${DAY0_DOCS_HOST_DIR:-./docs-local}:/docs:ro
+      - type: bind
+        source: ${DAY0_DOCS_HOST_DIR:?Set DAY0_DOCS_HOST_DIR to an existing documentation directory}
+        target: /docs
+        read_only: true
+        bind:
+          create_host_path: false
       # Where the `sandbox` service below puts its socket. Mounted whether or
       # not that service is running, so that starting it later needs nothing
       # here: an empty volume reads as "no local sandbox", which is exactly
@@ -209,9 +214,8 @@ services:
       timeout: 10s
       start_period: 5s
 
-  # Reads an operator-owned Notion workspace through Streamable HTTP. The
-  # integration token also authenticates the private compose-network endpoint;
-  # no port is published to the host.
+  # Reads an operator-owned Notion workspace through Streamable HTTP. The port
+  # is unpublished and each initialisation supplies its own Notion credential.
   notion-mcp:
     profiles: ['real']
     image: node:22-alpine
@@ -219,11 +223,10 @@ services:
       [
         'sh',
         '-lc',
-        'npx -y @notionhq/notion-mcp-server --transport http --host 0.0.0.0 --port 3000',
+        'npx -y @notionhq/notion-mcp-server@2.5.1 --transport http --host 0.0.0.0 --port 3000 --enable-token-passthrough',
       ]
     environment:
-      - NOTION_TOKEN=${NOTION_TOKEN:-}
-      - AUTH_TOKEN=${NOTION_TOKEN:-}
+      - AUTH_TOKEN=${DAY0_NOTION_MCP_AUTH_TOKEN:?Run pnpm dev once to generate the Notion MCP transport token}
     expose: ['3000']
     healthcheck:
       test:
@@ -231,30 +234,11 @@ services:
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:3000/mcp').then(() => process.exit(0)).catch(() => process.exit(1))",
+          "const token=['nt','n_','h'.repeat(46)].join('');fetch('http://127.0.0.1:3000/mcp',{method:'POST',headers:{accept:'application/json, text/event-stream',authorization:'Bearer '+process.env.AUTH_TOKEN,'content-type':'application/json','notion-token':token},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'healthcheck',version:'1'}}})}).then(async r=>{const body=await r.text();process.exit(r.ok&&body.includes('protocolVersion')?0:1)}).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 5s
       start_period: 20s
-
-  # The posting tool is absent unless the operator supplies the manager's DM
-  # channel id. Public-channel writes remain disabled at the server boundary.
-  slack-mcp:
-    profiles: ['real']
-    image: ghcr.io/korotovsky/slack-mcp-server:latest
-    command: ['--transport', 'http']
-    environment:
-      - SLACK_MCP_XOXB_TOKEN=${SLACK_BOT_TOKEN:-}
-      - SLACK_MCP_API_KEY=${SLACK_MCP_API_KEY:-}
-      - SLACK_MCP_ADD_MESSAGE_TOOL=${SLACK_MANAGER_DM_CHANNEL_ID:-}
-      - SLACK_MCP_HOST=0.0.0.0
-      - SLACK_MCP_PORT=13080
-    expose: ['13080']
-    healthcheck:
-      test: ['CMD', 'curl', '-sS', '-o', '/dev/null', 'http://127.0.0.1:13080/mcp']
-      interval: 10s
-      timeout: 5s
-      start_period: 15s
 
   # The browser floor exposes read-only tools later through Day0's allowlist.
   # The MCP server itself is not a security boundary, so it remains internal.

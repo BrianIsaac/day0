@@ -1,11 +1,13 @@
 'use node';
 
-import { randomUUID } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
-import { MCPClient } from '@mastra/mcp';
 import { v } from 'convex/values';
 import { internalAction, type ActionCtx } from './_generated/server';
+import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
+import { discoverMcpTools } from '../src/docs/readers/mcp';
+import type { DocSourceRecord } from '../src/docs/types';
 
 interface McpProbeResult {
   toolNames: string[];
@@ -16,11 +18,6 @@ interface FolderProbeResult {
   title: string;
   ref: string;
 }
-
-const MCP_PROBE_TARGETS: Record<string, string> = {
-  LINEAR_API_KEY: 'https://mcp.linear.app/mcp',
-  NOTION_TOKEN: 'http://notion-mcp:3000/mcp',
-};
 
 /**
  * Convert Mastra's namespaced MCP tool keys to provider tool names.
@@ -109,83 +106,34 @@ async function firstMarkdownFile(directory: string): Promise<string | undefined>
 }
 
 /**
- * Refuse any probe target that is not the exact allowlisted pair.
- *
- * A public action accepting arbitrary URLs could send a deployment
- * credential to a caller-controlled host, so the credential reference and
- * the URL must both match one allowlist entry exactly.
+ * Discover one linked MCP server through its encrypted stored credential.
  *
  * Args:
- *   url: Requested MCP URL.
- *   headerEnv: Environment variable named as the bearer credential.
- *
- * Returns:
- *   The allowlisted URL, normalised.
- *
- * Raises:
- *   Error: If the reference is malformed, unknown, or paired with another URL.
- */
-export function assertAllowlistedProbe(url: string, headerEnv: string): URL {
-  if (!/^[A-Z][A-Z0-9_]*$/.test(headerEnv)) {
-    throw new Error('headerEnv must be an uppercase environment variable name.');
-  }
-  const allowedUrl = MCP_PROBE_TARGETS[headerEnv];
-  let requested: URL;
-  try {
-    requested = new URL(url);
-  } catch {
-    throw new Error('MCP probe target and credential reference are not allowlisted.');
-  }
-  if (!allowedUrl || requested.href !== new URL(allowedUrl).href) {
-    throw new Error('MCP probe target and credential reference are not allowlisted.');
-  }
-  return requested;
-}
-
-/**
- * Discover one MCP server from inside the Convex Node action runtime.
- *
- * Args:
- *   _ctx: Convex action context, unused because the probe is read-only.
- *   args: MCP URL and deployment environment variable holding its bearer token.
+ *   ctx: Convex action context.
+ *   args: Stored documentation source identifier.
  *
  * Returns:
  *   Provider tool names and elapsed discovery time.
  *
  * Raises:
- *   Error: If configuration is missing, the URL is unsafe, or discovery fails.
+ *   Error: If the source or its active credential is unavailable.
  */
 async function probeMcpHandler(
-  _ctx: ActionCtx,
-  args: { url: string; headerEnv: string },
+  ctx: ActionCtx,
+  args: { docSourceId: Id<'docSources'> },
 ): Promise<McpProbeResult> {
-  const url = assertAllowlistedProbe(args.url, args.headerEnv);
-  const credential = process.env[args.headerEnv];
-  if (!credential) throw new Error(`${args.headerEnv} is not configured in the deployment.`);
-
-  const client = new MCPClient({
-    id: `day0-probe-${randomUUID()}`,
-    servers: {
-      probe: {
-        url,
-        allowedHosts: [url.host],
-        requestInit: { headers: { Authorization: `Bearer ${credential}` } },
-      },
-    },
-    timeout: 30_000,
+  const source = await ctx.runQuery(internal.docSources.getInternal, {
+    sourceId: args.docSourceId,
+  });
+  if (!source || source.kind !== 'mcp' || !source.credentialId) {
+    throw new Error('Credential-backed MCP documentation source not found.');
+  }
+  const credential = await ctx.runAction(internal.credentials.decrypt, {
+    credentialId: source.credentialId,
   });
   const startedAt = performance.now();
-  try {
-    const { tools, errors } = await client.listToolsWithErrors({ perServerTimeoutMs: 30_000 });
-    if (errors.probe) {
-      throw new Error(errors.probe.replaceAll(credential, '<redacted>'));
-    }
-    const toolNames = normaliseToolNames(Object.keys(tools), 'probe');
-    if (toolNames.length === 0) throw new Error('MCP server returned no tools.');
-    return { toolNames, elapsedMs: Math.round(performance.now() - startedAt) };
-  } finally {
-    await client.disconnect();
-  }
+  const toolNames = await discoverMcpTools(source as DocSourceRecord, credential);
+  return { toolNames, elapsedMs: Math.round(performance.now() - startedAt) };
 }
 
 /**
@@ -215,7 +163,7 @@ async function probeFolderHandler(
 }
 
 export const probeMcp = internalAction({
-  args: { url: v.string(), headerEnv: v.string() },
+  args: { docSourceId: v.id('docSources') },
   handler: probeMcpHandler,
 });
 
