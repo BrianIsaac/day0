@@ -22,6 +22,7 @@ import { agentJson, makeAgent } from '../src/lib/mastra';
 import { assertOwnsAgentAction } from './ownership';
 import type { WorkspaceFile } from './charters';
 import { readSurfaceSnapshot } from '../src/surfaces/registry';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
  * Day-1 onboarding actions. Surfaces:
@@ -601,11 +602,18 @@ export const postCharterApproval = action({
       });
     }
 
+    await ctx.runMutation(internal.surfaces.seedFromCharter, {
+      agentId: args.agentId,
+      namedSystems: charterBody.namedSystems ?? [],
+    });
+    await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
+
     // Generate role-specific work items grounded in BOTH the charter AND
     // the agent's actual mock environment. The work-generator LLM sees
     // real surface slugs (channels, spreadsheets, docs, tweets, tickets)
     // and emits contentRefs the executor can later mutate against real
     // rows. No hardcoded slugs in the prompt.
+    if (SURFACE_MODE === 'real') return { norms, workItemsGenerated: 0 };
     const mockEnv = await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
     const generated = await generateWorkItemsFromCharter(charterBody, mockEnv);
     let workItemsGenerated = 0;

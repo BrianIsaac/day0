@@ -86,6 +86,38 @@ export default defineSchema({
     .index('by_source', ['sourceId'])
     .index('by_source_ref', ['sourceId', 'ref']),
 
+  surfaces: defineTable({
+    agentId: v.id('agents'),
+    slug: v.string(),
+    displayName: v.string(),
+    class: v.string(),
+    verdict: v.union(
+      v.literal('declared'),
+      v.literal('proposed'),
+      v.literal('approved'),
+      v.literal('connected'),
+      v.literal('ungranted'),
+      v.literal('absent'),
+      v.literal('listed-dead'),
+    ),
+    whereFound: v.array(v.any()),
+    path: v.optional(v.string()),
+    fallbackPath: v.optional(v.string()),
+    endpoint: v.optional(v.string()),
+    request: v.optional(v.any()),
+    managerApprovedAt: v.optional(v.number()),
+    itApprovedAt: v.optional(v.number()),
+    toolAllowlist: v.optional(v.array(v.string())),
+    credentialRef: v.optional(v.string()),
+    credentialLanded: v.boolean(),
+    lastVerifiedAt: v.optional(v.number()),
+    expiresAt: v.optional(v.number()),
+    reason: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_agent', ['agentId'])
+    .index('by_agent_slug', ['agentId', 'slug']),
+
   voiceSessions: defineTable({
     agentId: v.id('agents'),
     mode: v.union(v.literal('elevenlabs'), v.literal('gemini-live'), v.literal('chat')),

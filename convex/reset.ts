@@ -33,6 +33,7 @@ export const deleteMyData = mutation({
           | 'skills'
           | 'permissionGrants'
           | 'events'
+          | 'surfaces'
           | 'mockDocs'
           | 'mockSpreadsheets'
           | 'mockSpreadsheetRows'
@@ -58,6 +59,7 @@ export const deleteMyData = mutation({
       await collectAndDelete('skills');
       await collectAndDelete('permissionGrants');
       await collectAndDelete('events');
+      await collectAndDelete('surfaces');
       await collectAndDelete('mockDocs');
       await collectAndDelete('mockSpreadsheets');
       await collectAndDelete('mockSpreadsheetRows');
