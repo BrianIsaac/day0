@@ -1,6 +1,8 @@
 import { v } from 'convex/values';
-import { internalMutation, mutation, query } from './_generated/server';
-import { assertOwnsAgent } from './ownership';
+import { action, internalMutation, mutation, query } from './_generated/server';
+import { internal } from './_generated/api';
+import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
+import { assertRealMode } from '../src/lib/surface-mode';
 import type { Doc } from './_generated/dataModel';
 
 const surfaceVerdict = v.union(
@@ -157,20 +159,31 @@ export const setStatus = internalMutation({
   },
 });
 
-/** Record manager or IT approval; both are required for `approved`. */
+/**
+ * Record manager or IT approval; both are required for `approved`.
+ *
+ * Only a proposed surface can be approved: an absent, declared or already
+ * approved surface has nothing to approve, and a rejected surface must be
+ * re-proposed from evidence before either stamp can be placed again.
+ */
 export const approve = mutation({
   args: { surfaceId: v.id('surfaces'), role: v.union(v.literal('manager'), v.literal('it')) },
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
+    if (surface.verdict !== 'proposed') {
+      throw new Error(
+        `Only a proposed surface can be approved; this one is ${surface.verdict}.`,
+      );
+    }
     const now = Date.now();
     const patch = args.role === 'manager' ? { managerApprovedAt: now } : { itApprovedAt: now };
     const both =
-      (args.role === 'manager' || surface.managerApprovedAt) &&
-      (args.role === 'it' || surface.itApprovedAt);
-    await ctx.db.patch(surface._id, { ...patch, verdict: both ? 'approved' : surface.verdict });
-    if (both && surface.verdict !== 'approved') {
+      (args.role === 'manager' || surface.managerApprovedAt !== undefined) &&
+      (args.role === 'it' || surface.itApprovedAt !== undefined);
+    await ctx.db.patch(surface._id, { ...patch, verdict: both ? 'approved' : 'proposed' });
+    if (both) {
       await ctx.db.insert('events', {
         agentId: surface.agentId,
         type: 'surface.approved',
@@ -181,17 +194,37 @@ export const approve = mutation({
   },
 });
 
-/** Reject and return a proposed surface to its declared state. */
+/**
+ * Reject a proposed or approved surface and return it to `declared`.
+ *
+ * Both approval stamps and every connection detail are cleared, so a later
+ * re-proposal starts from evidence again and a single approval can never
+ * complete it on the strength of a stamp placed before the rejection.
+ */
 export const reject = mutation({
   args: { surfaceId: v.id('surfaces'), reason: v.string() },
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
+    if (surface.verdict !== 'proposed' && surface.verdict !== 'approved') {
+      throw new Error(
+        `Only a proposed or approved surface can be rejected; this one is ${surface.verdict}.`,
+      );
+    }
     await ctx.db.patch(surface._id, {
       verdict: 'declared',
       reason: args.reason,
       request: undefined,
+      managerApprovedAt: undefined,
+      itApprovedAt: undefined,
+      endpoint: undefined,
+      path: undefined,
+      fallbackPath: undefined,
+      credentialRef: undefined,
+      toolAllowlist: undefined,
+      credentialLanded: false,
+      lastVerifiedAt: undefined,
     });
     await ctx.db.insert('events', {
       agentId: surface.agentId,
@@ -199,5 +232,21 @@ export const reject = mutation({
       payload: { surfaceId: surface._id, reason: args.reason },
       createdAt: Date.now(),
     });
+  },
+});
+
+/**
+ * Re-run orientation for the owner's declared surfaces.
+ *
+ * Orientation otherwise runs only from charter approval, so a rejected
+ * surface would have no way back to `proposed` short of re-approving the
+ * charter. Real mode only, like the run it triggers.
+ */
+export const reorient = action({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<{ proposed: number; absent: number }> => {
+    await assertOwnsAgentAction(ctx, args.agentId);
+    assertRealMode('Surface orientation');
+    return await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
   },
 });
