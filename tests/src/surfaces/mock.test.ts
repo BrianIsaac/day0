@@ -51,7 +51,7 @@ async function createRun(): Promise<{
       payload: {},
       createdAt: 1,
     });
-    return { agentId, workItemId, runId };
+    return { agentId, agentName: 'adapter test', workItemId, runId };
   });
   return { harness, run };
 }

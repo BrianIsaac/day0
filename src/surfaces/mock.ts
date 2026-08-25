@@ -243,6 +243,8 @@ class MockSurfaceAdapter implements SurfaceAdapter {
           );
           break;
         }
+        default:
+          return { tool: action.tool, ok: false, reason: 'unknown tool', idempotencyKey };
       }
       return result.changed
         ? { tool: action.tool, ok: true, effect, idempotencyKey }
