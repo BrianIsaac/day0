@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../convex/_generated/dataModel';
+import { readerFor } from '../../../src/docs/readers';
 import { mirroredDocSlug } from '../../../src/docs/types';
 
 describe('documentation types', (): void => {
@@ -8,5 +9,10 @@ describe('documentation types', (): void => {
     expect(mirroredDocSlug(sourceId, 'Runbooks/How to Post Slack.md')).toBe(
       'source-1234567890-runbooks-how-to-post-slack-md',
     );
+  });
+
+  it('requires readers to expose bounded sync batches', (): void => {
+    const reader = readerFor('folder');
+    expect(typeof reader.listPageBatch).toBe('function');
   });
 });

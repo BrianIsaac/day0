@@ -1,10 +1,11 @@
 import type { DocSourceKind, DocSourceReader } from '../types';
 import { FolderReader } from './folder';
 import { GitReader } from './git';
+import { McpReader } from './mcp';
 import { UrlsReader } from './urls';
 
 /**
- * Resolve a non-MCP documentation reader.
+ * Resolve a documentation reader.
  *
  * Args:
  *   kind: Persisted source kind.
@@ -12,9 +13,6 @@ import { UrlsReader } from './urls';
  * Returns:
  *   Reader implementation for the source.
  *
- * Raises:
- *   Error: When an MCP source is requested before its credential-backed
- *     binding has been verified.
  */
 export function readerFor(kind: DocSourceKind): DocSourceReader {
   switch (kind) {
@@ -25,6 +23,6 @@ export function readerFor(kind: DocSourceKind): DocSourceReader {
     case 'urls':
       return new UrlsReader();
     case 'mcp':
-      throw new Error('MCP documentation reader is pending credential-backed verification.');
+      return new McpReader();
   }
 }

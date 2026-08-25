@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FolderReader } from '../../../../src/docs/readers/folder';
 import { GitReader } from '../../../../src/docs/readers/git';
+import { McpReader } from '../../../../src/docs/readers/mcp';
 import { readerFor } from '../../../../src/docs/readers';
 import { UrlsReader } from '../../../../src/docs/readers/urls';
 
@@ -11,7 +12,7 @@ describe('documentation reader registry', (): void => {
     expect(readerFor('urls')).toBeInstanceOf(UrlsReader);
   });
 
-  it('holds the MCP binding until credential-backed verification', (): void => {
-    expect(() => readerFor('mcp')).toThrow('pending credential-backed verification');
+  it('resolves the credential-bound MCP reader', (): void => {
+    expect(readerFor('mcp')).toBeInstanceOf(McpReader);
   });
 });

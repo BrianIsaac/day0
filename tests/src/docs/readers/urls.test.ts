@@ -18,9 +18,12 @@ describe('URL documentation reader', (): void => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (): Promise<Response> => {
-        return new Response('<html><head><title>Runbook &amp; guide</title></head><body><h1>Runbook</h1><p>Do the work.</p></body></html>', {
-          headers: { 'content-type': 'text/html' },
-        });
+        return new Response(
+          '<html><head><title>Runbook &amp; guide</title></head><body><h1>Runbook</h1><p>Do the work.</p></body></html>',
+          {
+            headers: { 'content-type': 'text/html' },
+          },
+        );
       }),
     );
     const source: DocSourceRecord = {
@@ -33,6 +36,26 @@ describe('URL documentation reader', (): void => {
     expect(page.title).toBe('Runbook & guide');
     expect(page.markdown).toContain('# Runbook');
     expect(page.markdown).toContain('Do the work.');
+  });
+
+  it('fetches only the URL range selected by a batch cursor', async (): Promise<void> => {
+    const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = String(input);
+      return new Response(`# ${url.endsWith('/one') ? 'One' : 'Two'}`, {
+        headers: { 'content-type': 'text/markdown' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const source: DocSourceRecord = {
+      _id: 'source-urls' as Id<'docSources'>,
+      label: 'Pages',
+      kind: 'urls',
+      locator: 'https://example.com/one\nhttps://example.com/two',
+    };
+    const first = await new UrlsReader().listPageBatch(source, undefined, undefined, 1);
+    expect(first.pages.map((page) => page.title)).toEqual(['One']);
+    expect(first.nextCursor).toBe('1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('extracts a plain fallback-safe HTML title', (): void => {

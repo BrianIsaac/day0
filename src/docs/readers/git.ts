@@ -2,8 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import type { DocPage, DocSourceReader, DocSourceRecord } from '../types';
-import { readMarkdownDirectory } from './folder';
+import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
+import { readMarkdownDirectory, readMarkdownDirectoryBatch } from './folder';
 
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
@@ -86,6 +86,32 @@ async function downloadArchive(url: URL): Promise<Buffer> {
 /** Reader for public GitHub and GitLab Markdown repositories. */
 export class GitReader implements DocSourceReader {
   /**
+   * Read a bounded Markdown batch from an isolated checkout.
+   *
+   * Args:
+   *   source: Linked git source.
+   *   _secret: Unused because public repositories need no credential.
+   *   cursor: Optional decimal file offset.
+   *   limit: Maximum pages to read.
+   *
+   * Returns:
+   *   Bounded page batch and continuation cursor.
+   */
+  async listPageBatch(
+    source: DocSourceRecord,
+    _secret: string | undefined,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<DocPageBatch> {
+    void _secret;
+    return await this.withCheckout(
+      source,
+      async (checkout: string): Promise<DocPageBatch> =>
+        await readMarkdownDirectoryBatch(source, checkout, cursor, limit),
+    );
+  }
+
+  /**
    * Read Markdown from a shallow checkout or bounded provider archive.
    *
    * Args:
@@ -97,6 +123,26 @@ export class GitReader implements DocSourceReader {
    */
   async listPages(source: DocSourceRecord, _secret?: string): Promise<DocPage[]> {
     void _secret;
+    return await this.withCheckout(
+      source,
+      async (checkout: string): Promise<DocPage[]> => await readMarkdownDirectory(source, checkout),
+    );
+  }
+
+  /**
+   * Prepare one temporary checkout and remove it after the read completes.
+   *
+   * Args:
+   *   source: Linked git source.
+   *   read: Operation to perform against the checkout directory.
+   *
+   * Returns:
+   *   Reader result.
+   */
+  private async withCheckout<T>(
+    source: DocSourceRecord,
+    read: (checkout: string) => Promise<T>,
+  ): Promise<T> {
     const locator = parseGitLocator(source.locator);
     const temporary = await mkdtemp(join(tmpdir(), 'day0-docs-git-'));
     const checkout = join(temporary, 'checkout');
@@ -117,10 +163,12 @@ export class GitReader implements DocSourceReader {
           { encoding: 'utf8', timeout: 30_000 },
         );
         if (extracted.error || extracted.status !== 0) {
-          throw new Error(`Git archive extraction failed: ${extracted.error?.message || extracted.stderr}`);
+          throw new Error(
+            `Git archive extraction failed: ${extracted.error?.message || extracted.stderr}`,
+          );
         }
       }
-      return await readMarkdownDirectory(source, checkout);
+      return await read(checkout);
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }

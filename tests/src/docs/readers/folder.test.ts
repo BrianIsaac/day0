@@ -48,6 +48,22 @@ describe('folder documentation reader', (): void => {
     ]);
   });
 
+  it('reads deterministic bounded batches without loading later pages', async (): Promise<void> => {
+    const root = await createFixture();
+    const source: DocSourceRecord = {
+      _id: 'source-folder' as Id<'docSources'>,
+      label: 'Team folder',
+      kind: 'folder',
+      locator: 'team',
+    };
+    const reader = new FolderReader(root);
+    const first = await reader.listPageBatch(source, undefined, undefined, 1);
+    const second = await reader.listPageBatch(source, undefined, first.nextCursor, 1);
+    expect(first.pages.map((page) => page.ref)).toEqual(['onboarding.md']);
+    expect(second.pages.map((page) => page.ref)).toEqual(['runbooks/ticket.md']);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   it('refuses absolute and escaping locators', (): void => {
     expect((): string => resolveFolderLocator('/docs', '/etc')).toThrow('must be relative');
     expect((): string => resolveFolderLocator('/docs', '../private')).toThrow('must stay inside');

@@ -9,7 +9,7 @@ export interface DocSourceRecord {
   kind: DocSourceKind;
   locator: string;
   serverKind?: DocServerKind;
-  credentialRef?: string;
+  credentialId?: Id<'credentials'>;
 }
 
 export interface DocPage {
@@ -23,6 +23,17 @@ export interface DocPage {
 
 export interface DocSourceReader {
   listPages(source: DocSourceRecord, secret?: string): Promise<DocPage[]>;
+  listPageBatch(
+    source: DocSourceRecord,
+    secret: string | undefined,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<DocPageBatch>;
+}
+
+export interface DocPageBatch {
+  pages: DocPage[];
+  nextCursor?: string;
 }
 
 /**
