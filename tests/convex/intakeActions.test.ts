@@ -7,12 +7,14 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  issueProject,
   linearListArguments,
   mcpIssuePage,
   runIntakeSweep,
   safeIntakeError,
   slackChannelsFromPages,
   type IntakeRuntime,
+  type LinearListRequest,
 } from '../../convex/intakeActions';
 import type { WorkCandidate } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
@@ -538,7 +540,7 @@ describe('real surface intake', (): void => {
 });
 
 describe('intake provider contracts', (): void => {
-  it('uses only names exposed by the Linear schema and refuses an unbounded checkpoint', (): void => {
+  it('uses only names exposed by the Linear schema and says which bounds it could not express', (): void => {
     expect(
       linearListArguments(
         {
@@ -555,20 +557,106 @@ describe('intake provider contracts', (): void => {
         'cursor-2',
       ),
     ).toEqual({
-      projectName: 'Q3 close',
-      teamKey: 'REVOPS',
-      updated_since: '2026-08-26T01:00:00.000Z',
-      page_size: 100,
-      after: 'cursor-2',
+      args: {
+        projectName: 'Q3 close',
+        teamKey: 'REVOPS',
+        updated_since: '2026-08-26T01:00:00.000Z',
+        page_size: 100,
+        after: 'cursor-2',
+      },
+      projectEnforced: true,
+      checkpointEnforced: true,
     });
     expect(
-      (): Record<string, unknown> =>
+      linearListArguments(
+        { properties: { limit: {} } },
+        { project: 'Q3 close' },
+        Date.parse('2026-08-26T01:00:00.000Z'),
+      ),
+    ).toEqual({ args: { limit: 100 }, projectEnforced: false, checkpointEnforced: false });
+    expect(
+      (): LinearListRequest =>
         linearListArguments(
           { properties: { project: {} } },
           { project: 'Q3 close' },
-          Date.parse('2026-08-26T01:00:00.000Z'),
+          undefined,
+          'c',
         ),
-    ).toThrow('no supported updated-at argument');
+    ).toThrow('unsupported cursor');
+    expect(issueProject({ project: { name: 'Q3 close', id: 'p1' } })).toBe('Q3 close');
+    expect(issueProject({ project: 'Q3 close' })).toBe('Q3 close');
+    expect(issueProject({ projectName: 'Q3 close' })).toBe('Q3 close');
+    expect(issueProject({ project: { id: 'p1' } })).toBe('p1');
+    expect(issueProject({ title: 'no project' })).toBeUndefined();
+  });
+
+  it('bounds intake to the documented project itself when the schema cannot', async (): Promise<void> => {
+    const linearCredential = id<'credentials'>('credential-linear');
+    const surface = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId: linearCredential,
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+      lastPolledAt: Date.parse('2026-08-26T01:00:00.000Z'),
+    });
+    const harnessFor = (): ReturnType<typeof runtimeHarness> =>
+      runtimeHarness(
+        [surface],
+        [
+          pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+          pageRow('linear.md', 'Linear', LINEAR),
+        ],
+        new Map([[String(linearCredential), 'linear-test-value']]),
+      );
+    const client = (rows: Record<string, unknown>[]) => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: { surface: { list_issues: { inputSchema: { properties: { limit: {} } } } } },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (args: Record<string, unknown>): Promise<unknown> => {
+          expect(args).toEqual({ limit: 100 });
+          return { issues: rows };
+        },
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+    const issue = (
+      identifier: string,
+      project: unknown,
+      updatedAt: string,
+    ): Record<string, unknown> => ({
+      id: identifier,
+      title: `Issue ${identifier}`,
+      url: `https://linear.app/day0/issue/${identifier}`,
+      updatedAt,
+      project,
+    });
+
+    const bounded = harnessFor();
+    await expect(
+      runIntakeSweep(bounded.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        makeMcpClient: () =>
+          client([
+            issue('in-project', { name: 'Q3 close' }, '2026-08-26T02:00:00.000Z'),
+            issue('other-project', { name: 'Q4 plan' }, '2026-08-26T02:00:00.000Z'),
+            issue('stale', { name: 'Q3 close' }, '2026-08-26T00:30:00.000Z'),
+          ]),
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 1, skipped: 0 });
+    expect([...bounded.seeds.keys()]).toEqual(['linear:in-project']);
+
+    const unbounded = harnessFor();
+    await expect(
+      runIntakeSweep(unbounded.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        makeMcpClient: () => client([issue('no-project', undefined, '2026-08-26T02:00:00.000Z')]),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(unbounded.records[0].skipReason).toContain('cannot be bounded to project Q3 close');
+    expect(unbounded.seeds.size).toBe(0);
   });
 
   it('decodes structured and text MCP results and reads only policy channel rows', (): void => {

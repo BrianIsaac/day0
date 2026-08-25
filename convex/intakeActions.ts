@@ -218,8 +218,23 @@ function discoveredArgument(
   return Object.keys(properties).find((name: string): boolean => wanted.has(normalise(name)));
 }
 
+/** A Linear list request and which of its bounds the provider itself enforces. */
+export interface LinearListRequest {
+  args: Record<string, unknown>;
+  /** True when the schema had a project argument; otherwise issues are filtered here. */
+  projectEnforced: boolean;
+  /** True when the schema had an updated-at argument; otherwise issues are filtered here. */
+  checkpointEnforced: boolean;
+}
+
 /**
  * Build a bounded Linear list request only from discovered argument names.
+ *
+ * Argument names come from the live schema, never from the runbook. When
+ * the schema offers no way to express the project or the checkpoint, the
+ * request is still made and the poller applies that bound to the returned
+ * issues itself, so an unknown schema degrades to more reading, not to no
+ * intake.
  *
  * Args:
  *   inputSchema: Live schema advertised for list_issues.
@@ -228,29 +243,29 @@ function discoveredArgument(
  *   cursor: Provider cursor for the next bounded page.
  *
  * Returns:
- *   Arguments accepted by the live schema.
+ *   Arguments accepted by the live schema and which bounds it enforces.
  *
  * Raises:
- *   Error: If the provider cannot enforce the documented project or checkpoint.
+ *   Error: If the provider returned a cursor the schema cannot take back.
  */
 export function linearListArguments(
   inputSchema: unknown,
   scope: LinearScope,
   lastPolledAt?: number,
   cursor?: string,
-): Record<string, unknown> {
+): LinearListRequest {
   const properties = schemaProperties(inputSchema);
   const args: Record<string, unknown> = {};
-  const projectName = discoveredArgument(properties, ['project', 'projectName']);
-  if (!projectName) throw new Error('Linear list_issues schema has no supported project argument.');
-  args[projectName] = scope.project;
+  const projectName = discoveredArgument(properties, ['project', 'projectName', 'projectId']);
+  if (projectName) args[projectName] = scope.project;
 
-  const teamName = discoveredArgument(properties, ['team', 'teamName', 'teamKey']);
+  const teamName = discoveredArgument(properties, ['team', 'teamName', 'teamKey', 'teamId']);
   if (teamName && scope.team) args[teamName] = scope.team;
 
   const limitName = discoveredArgument(properties, ['limit', 'first', 'pageSize']);
   if (limitName) args[limitName] = PAGE_SIZE;
 
+  let checkpointEnforced = false;
   if (lastPolledAt !== undefined) {
     const updatedName = discoveredArgument(properties, [
       'updatedAt',
@@ -258,10 +273,10 @@ export function linearListArguments(
       'updatedSince',
       'updated_at',
     ]);
-    if (!updatedName) {
-      throw new Error('Linear list_issues schema has no supported updated-at argument.');
+    if (updatedName) {
+      args[updatedName] = new Date(lastPolledAt).toISOString();
+      checkpointEnforced = true;
     }
-    args[updatedName] = new Date(lastPolledAt).toISOString();
   }
 
   if (cursor) {
@@ -269,7 +284,25 @@ export function linearListArguments(
     if (!cursorName) throw new Error('Linear list_issues returned an unsupported cursor.');
     args[cursorName] = cursor;
   }
-  return args;
+  return { args, projectEnforced: projectName !== undefined, checkpointEnforced };
+}
+
+/**
+ * Read the project an issue belongs to, in the shapes providers use.
+ *
+ * Args:
+ *   issue: Provider issue object.
+ *
+ * Returns:
+ *   The project name or id, or undefined when the issue carries none.
+ */
+export function issueProject(issue: Record<string, unknown>): string | undefined {
+  if (typeof issue.project === 'string') return issue.project;
+  const project = asRecord(issue.project);
+  if (typeof project?.name === 'string') return project.name;
+  if (typeof issue.projectName === 'string') return issue.projectName;
+  if (typeof project?.id === 'string') return project.id;
+  return undefined;
 }
 
 /**
@@ -466,14 +499,26 @@ async function pollLinear(
 
     const candidates: WorkCandidate[] = [];
     const cursors = new Set<string>();
+    const wantedProject = scope.project.toLowerCase();
+    let seen = 0;
+    let withProject = 0;
     let cursor: string | undefined;
     for (let pageIndex = 0; pageIndex < MAX_MCP_PAGES; pageIndex += 1) {
-      const args = linearListArguments(definition.inputSchema, scope, surface.lastPolledAt, cursor);
-      const value = await tool.execute(args, {
+      const request = linearListArguments(
+        definition.inputSchema,
+        scope,
+        surface.lastPolledAt,
+        cursor,
+      );
+      const value = await tool.execute(request.args, {
         abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
       });
       const page = mcpIssuePage(value);
       for (const issue of page.issues) {
+        seen += 1;
+        const project = issueProject(issue);
+        if (project !== undefined) withProject += 1;
+        if (!request.projectEnforced && project?.toLowerCase() !== wantedProject) continue;
         const updatedAt = typeof issue.updatedAt === 'string' ? Date.parse(issue.updatedAt) : NaN;
         if (
           surface.lastPolledAt !== undefined &&
@@ -484,6 +529,11 @@ async function pollLinear(
         }
         const candidate = linearCandidate(issue, surface, observedAt);
         if (candidate) candidates.push(candidate);
+      }
+      if (!request.projectEnforced && seen > 0 && withProject === 0) {
+        throw new Error(
+          `Linear list_issues has no project argument and its issues carry no project field, so intake cannot be bounded to project ${scope.project}.`,
+        );
       }
       if (!page.nextCursor || cursors.has(page.nextCursor)) break;
       cursors.add(page.nextCursor);
