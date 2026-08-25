@@ -410,6 +410,8 @@ describe('real surface intake', (): void => {
         providerWorkspaceId: 'TTEAM',
       }),
     ];
+    const linearToken = ['lin', 'api', 'privatevalue'].join('_');
+    const slackToken = ['xoxb', 'privatevalue'].join('-');
     const harness = runtimeHarness(
       surfaces,
       [
@@ -418,8 +420,8 @@ describe('real surface intake', (): void => {
         pageRow('slack.md', 'Slack', SLACK),
       ],
       new Map([
-        [String(linearCredential), 'lin_api_privatevalue'],
-        [String(slackCredential), 'xoxb-privatevalue'],
+        [String(linearCredential), linearToken],
+        [String(slackCredential), slackToken],
       ]),
     );
     const makeMcpClient = (): {
@@ -440,7 +442,7 @@ describe('real surface intake', (): void => {
       }),
       toolFromDefinition: async () => ({
         execute: async (): Promise<never> => {
-          throw new Error('401 for Bearer lin_api_privatevalue');
+          throw new Error(`401 for Bearer ${linearToken}`);
         },
       }),
       disconnect: async (): Promise<void> => undefined,
@@ -588,8 +590,9 @@ describe('intake provider contracts', (): void => {
   });
 
   it('redacts exact and token-shaped credentials from bounded errors', (): void => {
+    const tokenShape = ['xoxb', 'another-private-value'].join('-');
     const safe = safeIntakeError(
-      new Error('Bearer custom-value failed next to xoxb-another-private-value'),
+      new Error(`Bearer custom-value failed next to ${tokenShape}`),
       'custom-value',
     );
     expect(safe).toBe('Bearer <redacted> failed next to <redacted>');

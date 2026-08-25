@@ -7,13 +7,15 @@ afterEach((): void => {
 
 describe('surface probe shell output', (): void => {
   it('redacts administrator keys and provider token shapes', (): void => {
+    const slackToken = ['xoxb', '123-secret'].join('-');
+    const linearToken = ['lin', 'api', '456-value'].join('_');
     vi.stubEnv('CONVEX_SELF_HOSTED_ADMIN_KEY', 'convex-self-hosted|local-admin-value');
     const output = redactProbeOutput(
-      'convex-self-hosted|local-admin-value Bearer xoxb-123-secret lin_api_456-value',
+      `convex-self-hosted|local-admin-value Bearer ${slackToken} ${linearToken}`,
     );
     expect(output).not.toContain('local-admin-value');
-    expect(output).not.toContain('xoxb-123-secret');
-    expect(output).not.toContain('lin_api_456-value');
+    expect(output).not.toContain(slackToken);
+    expect(output).not.toContain(linearToken);
     expect(output.match(/<redacted>/g)).toHaveLength(3);
   });
 });

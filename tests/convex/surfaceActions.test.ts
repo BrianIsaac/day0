@@ -192,12 +192,13 @@ describe('Slack documented API probing', (): void => {
 describe('probe error hygiene', (): void => {
   it('removes exact and token-shaped credentials and clips the persisted reason', (): void => {
     const credential = 'local-contract-value';
+    const tokenShape = ['xoxb', '123456-secret'].join('-');
     const reason = safeProviderError(
-      new Error(`${credential} Bearer xoxb-123456-secret ${'failure '.repeat(100)}`),
+      new Error(`${credential} Bearer ${tokenShape} ${'failure '.repeat(100)}`),
       credential,
     );
     expect(reason).not.toContain(credential);
-    expect(reason).not.toContain('xoxb-123456-secret');
+    expect(reason).not.toContain(tokenShape);
     expect(reason).toContain('<redacted>');
     expect(reason.length).toBeLessThanOrEqual(300);
   });

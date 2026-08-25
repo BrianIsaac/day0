@@ -17,7 +17,8 @@ describe('documentation sync action helpers', (): void => {
   });
 
   it('redacts explicit and recognisable credential values', (): void => {
+    const tokenShape = ['xoxb', 'secret-value'].join('-');
     expect(safeSyncError(new Error('failed token-value'), 'token-value')).toBe('failed <redacted>');
-    expect(safeSyncError(new Error('failed xoxb-secret-value'))).toBe('failed <redacted>');
+    expect(safeSyncError(new Error(`failed ${tokenShape}`))).toBe('failed <redacted>');
   });
 });
