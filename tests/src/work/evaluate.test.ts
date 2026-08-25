@@ -1,0 +1,167 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { Charter } from '../../../src/agent/charter';
+import {
+  evaluateCandidate,
+  missingConnectionSurface,
+  type EvalContext,
+  type EvaluateLookups,
+  type EvaluationSurface,
+} from '../../../src/work/evaluate';
+import type { AgentContext, WorkCandidate } from '../../../src/work/types';
+
+const NOW = Date.parse('2026-08-26T12:00:00.000Z');
+
+const charter: Charter = {
+  version: '0.0',
+  source: 'day-1 manager 1:1',
+  whyThisHire: 'Keep revenue operations hand-offs moving.',
+  proposedFunction: 'Revenue operations triage and follow-through',
+  evidence: [],
+  shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
+  proposedBoundaries: {
+    willDo: ['Triage revenue operations requests and update delivery records.'],
+    willNotDo: [],
+    escalationTriggers: [],
+  },
+  namedCollaborators: [],
+  namedSystems: [],
+  priorityReading: [],
+  adjacentRoles: [],
+  approvalChain: { boss: 'Manager', confidence: 'high' },
+  openQuestions: [],
+  createdAt: new Date(NOW).toISOString(),
+};
+
+/** Build an eligible work candidate for one provider. */
+function candidate(
+  sourceSystem = 'linear',
+  contentSummary = 'Triage this revenue operations request.',
+): WorkCandidate {
+  return {
+    sourceCategory: 'ticket-queue',
+    sourceSystem,
+    externalId: 'REVOPS-1',
+    title: 'Triage the revenue operations delivery record',
+    contentSummary,
+    contentRefs: [],
+    observedAt: new Date(NOW - 1_000),
+    priority: 'P1',
+    requesterLabel: 'Manager',
+  };
+}
+
+/** Build one persisted surface liveness record. */
+function surface(
+  slug: string,
+  verdict: EvaluationSurface['verdict'] = 'connected',
+  overrides: Partial<EvaluationSurface> = {},
+): EvaluationSurface {
+  return {
+    slug,
+    displayName: slug === 'northstar-crm' ? 'Northstar CRM' : 'Linear',
+    verdict,
+    credentialLanded: true,
+    lastVerifiedAt: NOW,
+    ...overrides,
+  };
+}
+
+/** Build the pure evaluator context for one mode. */
+function context(
+  surfaceMode: EvalContext['surfaceMode'],
+  surfaces: readonly EvaluationSurface[],
+): EvalContext {
+  const base: AgentContext = {
+    agentId: 'agent-test' as AgentContext['agentId'],
+    charter,
+    agentsMd: '',
+    bossLabel: 'Manager',
+  };
+  return { ...base, surfaceMode, surfaces, now: NOW };
+}
+
+/** Build successful non-surface evaluator lookups. */
+function lookups(
+  hasGrantForScope: EvaluateLookups['hasGrantForScope'] = async (): Promise<boolean> => true,
+): EvaluateLookups {
+  return {
+    hasGrantForScope,
+    findExistingClaim: async (): Promise<null> => null,
+    countOpenClaims: async (): Promise<number> => 0,
+    findMatchingSkill: async (): Promise<{ name: string; description: string }> => ({
+      name: 'linear-triage',
+      description: 'Triage Linear work.',
+    }),
+  };
+}
+
+describe('work surface enablement', (): void => {
+  it('preserves mock behaviour when no persistent surfaces exist', async (): Promise<void> => {
+    await expect(
+      evaluateCandidate(candidate('ticket'), context('mock', []), lookups()),
+    ).resolves.toMatchObject({
+      decision: 'claim',
+    });
+  });
+
+  it('allows a recently verified connected real surface', async (): Promise<void> => {
+    await expect(
+      evaluateCandidate(candidate(), context('real', [surface('linear')]), lookups()),
+    ).resolves.toMatchObject({ decision: 'claim' });
+  });
+
+  it.each([
+    ['absent', surface('linear', 'absent')],
+    [
+      'ungranted',
+      surface('linear', 'approved', { credentialLanded: false, lastVerifiedAt: undefined }),
+    ],
+    [
+      'stale',
+      surface('linear', 'connected', {
+        lastVerifiedAt: NOW - 6 * 60 * 60 * 1_000 - 1,
+      }),
+    ],
+  ])('defers a real candidate whose surface is %s', async (_label, row): Promise<void> => {
+    await expect(
+      evaluateCandidate(candidate(), context('real', [row]), lookups()),
+    ).resolves.toEqual({
+      decision: 'defer',
+      reason: 'awaiting-connection',
+      missingSurface: 'linear',
+    });
+  });
+
+  it('defers a second disconnected system named by a connected provider item', (): void => {
+    expect(
+      missingConnectionSurface(
+        candidate('linear', 'Use Northstar CRM to reconcile this revenue operations request.'),
+        context('real', [surface('linear'), surface('northstar-crm', 'absent')]),
+      ),
+    ).toBe('northstar-crm');
+  });
+
+  it('defers an unknown real provider by its normalised source slug', (): void => {
+    expect(missingConnectionSurface(candidate('Unknown Work Queue'), context('real', []))).toBe(
+      'unknown-work-queue',
+    );
+  });
+
+  it('does not require a surface for a boss request without another system target', async (): Promise<void> => {
+    await expect(
+      evaluateCandidate(candidate('boss'), context('real', []), lookups()),
+    ).resolves.toMatchObject({ decision: 'claim' });
+  });
+
+  it('checks connection before reading grants', async (): Promise<void> => {
+    const hasGrant = vi.fn(async (): Promise<boolean> => true);
+    await expect(
+      evaluateCandidate(
+        candidate(),
+        context('real', [surface('linear', 'absent')]),
+        lookups(hasGrant),
+      ),
+    ).resolves.toMatchObject({ decision: 'defer', reason: 'awaiting-connection' });
+    expect(hasGrant).not.toHaveBeenCalled();
+  });
+});

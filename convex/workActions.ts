@@ -122,21 +122,22 @@ export const evaluateWorkItem = action({
       throw new Error('cannot evaluate: charter not approved');
     }
     const charter = charterRow.body as Charter;
-    const agentsMd = await ctx.runQuery(api.workspace.readFile, {
-      agentId,
-      fileName: 'AGENTS.md',
-    });
-    const registeredSkills: SimpleSkillRow[] = (
-      await ctx.runQuery(api.skills.registered, { agentId })
-    ).map((s: Doc<'skills'>) => ({
+    const [agentsMd, skillRows, grantRows, surfaceConfig, surfaces] = await Promise.all([
+      ctx.runQuery(api.workspace.readFile, {
+        agentId,
+        fileName: 'AGENTS.md',
+      }),
+      ctx.runQuery(api.skills.registered, { agentId }),
+      ctx.runQuery(internal.agents.grantedScopes, { agentId }),
+      ctx.runQuery(api.config.surfaceMode, {}),
+      ctx.runQuery(api.surfaces.listForAgent, { agentId }),
+    ]);
+    const registeredSkills: SimpleSkillRow[] = skillRows.map((s: Doc<'skills'>) => ({
       _id: s._id,
       name: s.name,
       description: s.description,
       body: s.body,
     }));
-    const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(internal.agents.grantedScopes, {
-      agentId,
-    });
     const grantedScopes = new Set<string>(grantRows.map((g) => g.scope));
 
     const lookups = buildLookups({
@@ -153,6 +154,8 @@ export const evaluateWorkItem = action({
         charter,
         agentsMd: agentsMd ?? '',
         bossLabel: charter.approvalChain.boss,
+        surfaceMode: surfaceConfig.mode,
+        surfaces,
       },
       lookups,
     );
