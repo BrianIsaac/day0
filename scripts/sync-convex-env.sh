@@ -70,8 +70,19 @@ CLEAR_WHEN_EMPTY=(
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
 # is inert, but it is the declaration two versions of the no-auth guard mistook
 # for the socket, so it should not sit on a deployment looking meaningful.
+#
+# The 26 Aug credential model replaced the env-var credential names with the
+# encrypted `credentials` table: a deployment that still carries them would
+# keep a provider token readable by any Node action long after the code
+# stopped asking for it.
 RETIRED=(
   CONVEX_BIND_ADDR
+  DAY0_SECRET_REFS
+  NOTION_TOKEN
+  LINEAR_API_KEY
+  SLACK_BOT_TOKEN
+  SLACK_MCP_API_KEY
+  SLACK_MANAGER_DM_CHANNEL_ID
 )
 
 if [ ! -f "$ENV_FILE" ]; then
