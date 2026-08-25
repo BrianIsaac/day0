@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { isSurfacePath } from '../../../src/surfaces/types';
+import { CREDENTIAL_KINDS, isSurfacePath } from '../../../src/surfaces/types';
 import type { AppliedAction, SurfaceAdapter } from '../../../src/surfaces/types';
 
 describe('surface contracts', (): void => {
@@ -8,6 +8,10 @@ describe('surface contracts', (): void => {
     expect(isSurfacePath('browser-driven')).toBe(true);
     expect(isSurfacePath('custom-adapter')).toBe(false);
     expect(isSurfacePath(null)).toBe(false);
+  });
+
+  it('names the three credential landing kinds', (): void => {
+    expect(CREDENTIAL_KINDS).toEqual(['value', 'location', 'oauth']);
   });
 
   it('keeps ledger and adapter fields typed', (): void => {

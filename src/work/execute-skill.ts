@@ -2,13 +2,16 @@ import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
 import { agentJson, MODEL_CONFIG } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
-import type {
-  ExecutionOutput,
-  ExecutionPlan,
-  MockAction,
-  MockSurfaceSnapshot,
-  WorkCandidate,
+import {
+  ACTION_TOOLS,
+  type ExecutionOutput,
+  type ExecutionPlan,
+  type MockAction,
+  type MockSurfaceSnapshot,
+  type WorkCandidate,
 } from './types';
+import type { SurfaceRecord } from '../surfaces/types';
+import { verdictFor } from '../surfaces/verdict';
 
 /**
  * Skill executor. Lifted from Protean's `src/work/execute-skill.ts`
@@ -70,7 +73,7 @@ const SYSTEM_PROMPT_PREAMBLE = [
  * doesn't round-trip cleanly through openai.beta.chat.completions.
  * The flat shape keeps the JSON schema valid and readable.
  */
-const actionArgsSchema = z.object({
+export const actionArgsSchema = z.object({
   // spreadsheet.appendRow — cells encoded as array of header/value pairs
   // because OpenAI structured-output strict mode rejects `propertyNames`
   // (the JSON-schema field z.record produces).
@@ -95,19 +98,22 @@ const actionArgsSchema = z.object({
   slug: z.string().optional(),
   status: z.enum(['open', 'in-progress', 'blocked', 'done']).optional(),
   comment: z.string().optional(),
+  // mcp.call and http.request. Structured provider arguments travel as JSON
+  // strings, parsed and size-capped server-side, so the bag stays flat.
+  surface: z.string().optional(),
+  tool: z.string().optional(),
+  toolArgsJson: z.string().optional(),
+  method: z.string().optional(),
+  path: z.string().optional(),
+  headersJson: z.string().optional(),
 });
 
-const executeSchema = z.object({
+export const executeSchema = z.object({
   draft: z.string(),
   notes: z.string(),
   actions: z.array(
     z.object({
-      tool: z.enum([
-        'spreadsheet.appendRow',
-        'slack.postMessage',
-        'twitter.reply',
-        'ticket.update',
-      ]),
+      tool: z.enum(ACTION_TOOLS),
       args: actionArgsSchema,
     }),
   ),
@@ -125,6 +131,60 @@ export interface RunSkillArgs {
   candidate: WorkCandidate;
   charter: Charter;
   mockEnv: MockSurfaceSnapshot;
+  /**
+   * Discovered surfaces, real mode only. When any is connected the executor is
+   * told about the two surface verbs; in mock mode the prompt is unchanged.
+   */
+  surfaces?: readonly SurfaceRecord[];
+  /** Clock for the connection verdict; defaults to now. */
+  now?: number;
+}
+
+/**
+ * Describe the connected surfaces and the two verbs that reach them.
+ *
+ * Only connected surfaces are listed: a skill may not target anything else,
+ * and the executor is told so rather than left to guess from a slug. The
+ * `dm-manager` fanout rule from the mock preamble maps to the chat surface's
+ * manager DM channel id, which the probe stored on the surface.
+ *
+ * Args:
+ *   surfaces: Surface rows for the agent.
+ *   now: Clock used for the liveness verdict.
+ *
+ * Returns:
+ *   Prompt lines, or an empty string when no surface is connected.
+ */
+export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: number): string {
+  const connected = surfaces.filter((surface) => verdictFor(surface, now) === 'connected');
+  if (connected.length === 0) return '';
+  const lines: string[] = [
+    'Connected real surfaces (name each exactly as listed; take the action shape from its runbook):',
+  ];
+  for (const surface of connected) {
+    const detail: string[] = [`class ${surface.class}`];
+    if (surface.path) detail.push(`path ${surface.path}`);
+    if (surface.endpoint) detail.push(`endpoint ${surface.endpoint}`);
+    if (surface.toolAllowlist && surface.toolAllowlist.length > 0) {
+      detail.push(`allowed tools: ${surface.toolAllowlist.join(', ')}`);
+    }
+    if (surface.managerDmChannelId) {
+      detail.push(`manager DM channel id: ${surface.managerDmChannelId}`);
+    }
+    lines.push(`  - ${surface.slug} (${surface.displayName}) - ${detail.join(' · ')}`);
+  }
+  lines.push(
+    '',
+    'Two verbs reach a real surface. Their structured arguments travel as JSON strings:',
+    '  - mcp.call     - { surface, tool, toolArgsJson }: `tool` must be in the surface allowlist; `toolArgsJson` is the JSON object of tool arguments.',
+    '  - http.request - { surface, method, path, headersJson, body }: `path` is relative to the surface endpoint; `headersJson` is a JSON object of headers; `body` is the request body.',
+    '  - Write `{{secret}}` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.',
+    '  - You may only target a surface listed above. A system without a connected surface gets no action; say so in `notes`.',
+    '  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager and never sent.',
+    '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
+    '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
+  );
+  return lines.join('\n');
 }
 
 function renderHowTos(guides: MockSurfaceSnapshot['howToGuides']): string {
@@ -177,8 +237,10 @@ function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
 
 export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   const { skill, plan, candidate, charter, mockEnv } = args;
+  const surfaceGuidance = surfaceInstructions(args.surfaces ?? [], args.now ?? Date.now());
   const instructions = [
     SYSTEM_PROMPT_PREAMBLE,
+    ...(surfaceGuidance ? ['', surfaceGuidance] : []),
     '',
     '--- How-to guides (action format reference) ---',
     renderHowTos(mockEnv.howToGuides),
