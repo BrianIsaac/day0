@@ -18,6 +18,7 @@ import type * as mock from "../mock.js";
 import type * as mockSeed from "../mockSeed.js";
 import type * as onboarding from "../onboarding.js";
 import type * as ownership from "../ownership.js";
+import type * as probeActions from "../probeActions.js";
 import type * as reset from "../reset.js";
 import type * as seed from "../seed.js";
 import type * as skillActions from "../skillActions.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   mockSeed: typeof mockSeed;
   onboarding: typeof onboarding;
   ownership: typeof ownership;
+  probeActions: typeof probeActions;
   reset: typeof reset;
   seed: typeof seed;
   skillActions: typeof skillActions;
