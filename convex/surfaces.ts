@@ -1,7 +1,14 @@
 import { v } from 'convex/values';
-import { action, internalMutation, mutation, query } from './_generated/server';
+import {
+  action,
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
+import { grantScopeInTransaction } from './agents';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { Doc, Id } from './_generated/dataModel';
 
@@ -301,7 +308,62 @@ export const recordProbeFailure = internalMutation({
   },
 });
 
-/** Persist one successful provider probe and its discovered safe metadata. */
+/**
+ * Return work parked on this surface to the evaluator.
+ *
+ * Evaluation defers a candidate whose provider is not connected, or whose
+ * read grant is missing, and nothing re-evaluates a deferred row on its
+ * own. When the surface connects, and the grant lands with it, those rows go
+ * back to `discovered` so the dashboard's queue evaluates them again.
+ *
+ * Args:
+ *   ctx: Mutation context of the connecting write.
+ *   surface: The surface that just became connected.
+ *
+ * Returns:
+ *   Ids of the work items requeued.
+ */
+async function requeueWorkAwaitingSurface(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<Id<'workItems'>[]> {
+  const readScope = `${surface.slug}:read`;
+  const deferred = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_state', (index) =>
+      index.eq('agentId', surface.agentId).eq('state', 'deferred'),
+    )
+    .collect();
+  const requeued: Id<'workItems'>[] = [];
+  for (const item of deferred) {
+    const verdict = item.verdict as
+      | { reason?: string; missingSurface?: string; missingPermissions?: string[] }
+      | undefined;
+    const waitingOnThisSurface =
+      (verdict?.reason === 'awaiting-connection' && verdict.missingSurface === surface.slug) ||
+      (verdict?.reason === 'awaiting-permission' &&
+        (verdict.missingPermissions ?? []).includes(readScope));
+    if (!waitingOnThisSurface) continue;
+    await ctx.db.patch(item._id, { state: 'discovered', verdict: undefined });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'work.requeued',
+      payload: { workItemId: item._id, surfaceId: surface._id, slug: surface.slug },
+      createdAt: Date.now(),
+    });
+    requeued.push(item._id);
+  }
+  return requeued;
+}
+
+/**
+ * Persist one successful provider probe and its discovered safe metadata.
+ *
+ * The first transition to `connected` also grants `<slug>:read` and requeues
+ * the work that was deferred on this surface, in the same transaction, so a
+ * connected surface can never exist without its grant and the hourly
+ * re-probe never grants again.
+ */
 export const recordConnected = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -321,6 +383,7 @@ export const recordConnected = internalMutation({
     if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
       return false;
     }
+    const transitioned = surface.verdict !== 'connected';
     await ctx.db.patch(surface._id, {
       verdict: 'connected',
       reason: undefined,
@@ -339,6 +402,10 @@ export const recordConnected = internalMutation({
       payload: { surfaceId: surface._id },
       createdAt: args.verifiedAt,
     });
+    if (transitioned) {
+      await grantScopeInTransaction(ctx, surface.agentId, `${surface.slug}:read`);
+      await requeueWorkAwaitingSurface(ctx, surface);
+    }
     return true;
   },
 });

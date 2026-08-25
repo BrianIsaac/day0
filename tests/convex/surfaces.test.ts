@@ -393,6 +393,108 @@ describe('surface probe generations', (): void => {
       { surfaceId },
       { surfaceId },
     ]);
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (index) =>
+            index.eq('agentId', agentId).eq('scope', 'linear:read'),
+          )
+          .collect(),
+    );
+    expect(grants).toHaveLength(1);
+  });
+
+  it('grants the read scope and requeues deferred work in the connecting write', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const item = (
+      state: Doc<'workItems'>['state'],
+      externalId: string,
+      verdict: unknown,
+    ): Omit<Doc<'workItems'>, '_id' | '_creationTime'> => ({
+      agentId,
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId,
+      title: `Item ${externalId}`,
+      contentSummary: 'Triage.',
+      contentRefs: [],
+      observedAt: 1,
+      state,
+      verdict,
+      createdAt: 1,
+    });
+    const [onSurface, onGrant, elsewhere, skipped] = await harness.run(
+      async (ctx): Promise<Id<'workItems'>[]> => [
+        await ctx.db.insert(
+          'workItems',
+          item('deferred', 'REVOPS-1', {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'linear',
+          }),
+        ),
+        await ctx.db.insert(
+          'workItems',
+          item('deferred', 'REVOPS-2', {
+            decision: 'defer',
+            reason: 'awaiting-permission',
+            missingPermissions: ['linear:read'],
+          }),
+        ),
+        await ctx.db.insert(
+          'workItems',
+          item('deferred', 'REVOPS-3', {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'northstar-crm',
+          }),
+        ),
+        await ctx.db.insert(
+          'workItems',
+          item('skipped', 'REVOPS-4', { decision: 'skip', reason: 'low-value: 10' }),
+        ),
+      ],
+    );
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['list_issues'],
+      toolArguments: [],
+      verifiedAt: 100,
+    });
+    const states = await harness.run(
+      async (ctx): Promise<Array<[string, unknown]>> =>
+        await Promise.all(
+          [onSurface, onGrant, elsewhere, skipped].map(
+            async (id): Promise<[string, unknown]> => {
+              const row = await ctx.db.get(id);
+              return [row?.state ?? 'missing', row?.verdict ?? null];
+            },
+          ),
+        ),
+    );
+    expect(states).toEqual([
+      ['discovered', null],
+      ['discovered', null],
+      ['deferred', { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar-crm' }],
+      ['skipped', { decision: 'skip', reason: 'low-value: 10' }],
+    ]);
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(grants.map((grant): string => grant.scope)).toEqual(['linear:read']);
+    expect((await eventTypes(harness)).filter((type) => type === 'work.requeued')).toHaveLength(2);
   });
 });
 

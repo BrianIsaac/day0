@@ -267,7 +267,8 @@ describe('surface probe action state', (): void => {
 
     expect(runAction).toHaveBeenCalledOnce();
     expect(probeMcp).toHaveBeenCalledOnce();
-    expect(mutationArguments).toContainEqual({ agentId, scope: 'linear:read' });
+    // The read grant lands inside the connected write, not as a second call.
+    expect(mutationArguments).not.toContainEqual({ agentId, scope: 'linear:read' });
     expect(mutationArguments).toContainEqual({
       surfaceId,
       generation: 4,

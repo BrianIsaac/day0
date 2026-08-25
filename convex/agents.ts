@@ -1,5 +1,11 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation, internalQuery } from './_generated/server';
+import {
+  mutation,
+  query,
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
@@ -170,23 +176,39 @@ export const grantedScopes = internalQuery({
   },
 });
 
+/**
+ * Grant one scope inside the caller's transaction, once.
+ *
+ * Exported as a plain helper so that the write which makes a surface
+ * `connected` can grant its read scope in the same transaction, rather than
+ * from a second call that may never run.
+ *
+ * Args:
+ *   ctx: Mutation context of the caller.
+ *   agentId: Agent receiving the grant.
+ *   scope: Scope string such as `linear:read`.
+ *
+ * Returns:
+ *   Whether a new grant row was inserted; an active grant is left alone.
+ */
+export async function grantScopeInTransaction(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  scope: string,
+): Promise<{ added: boolean }> {
+  const existing = await ctx.db
+    .query('permissionGrants')
+    .withIndex('by_agent_scope', (index) => index.eq('agentId', agentId).eq('scope', scope))
+    .filter((query) => query.eq(query.field('revokedAt'), undefined))
+    .first();
+  if (existing) return { added: false };
+  await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: Date.now() });
+  return { added: true };
+}
+
 /** Grant one read or write scope idempotently after a provider connection succeeds. */
 export const grantScope = internalMutation({
   args: { agentId: v.id('agents'), scope: v.string() },
-  handler: async (ctx, args): Promise<{ added: boolean }> => {
-    const existing = await ctx.db
-      .query('permissionGrants')
-      .withIndex('by_agent_scope', (index) =>
-        index.eq('agentId', args.agentId).eq('scope', args.scope),
-      )
-      .filter((query) => query.eq(query.field('revokedAt'), undefined))
-      .first();
-    if (existing) return { added: false };
-    await ctx.db.insert('permissionGrants', {
-      agentId: args.agentId,
-      scope: args.scope,
-      createdAt: Date.now(),
-    });
-    return { added: true };
-  },
+  handler: async (ctx, args): Promise<{ added: boolean }> =>
+    await grantScopeInTransaction(ctx, args.agentId, args.scope),
 });

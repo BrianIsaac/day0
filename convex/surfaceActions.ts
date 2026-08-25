@@ -470,10 +470,6 @@ export async function runSurfaceProbe(
     if (!recorded) {
       return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
     }
-    await ctx.runMutation(internal.agents.grantScope, {
-      agentId: surface.agentId,
-      scope: `${surface.slug}:read`,
-    });
     return {
       verdict: 'connected',
       toolAllowlist,
