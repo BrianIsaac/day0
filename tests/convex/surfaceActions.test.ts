@@ -7,6 +7,7 @@ import schema from '../../convex/schema';
 import {
   argumentNamesFromSchema,
   linearMcpEndpoint,
+  managerUserId,
   mcpAllowlist,
   probeMcpSurface,
   probeSlackSurface,
@@ -60,9 +61,11 @@ describe('surface MCP probing', (): void => {
 
   it('calls listTools, reads definitions, and disconnects without returning the bearer', async (): Promise<void> => {
     const credential = 'local-contract-value-never-persisted';
-    const listTools = vi.fn(async (): Promise<Record<string, unknown>> => ({
-      surface_list_issues: {},
-    }));
+    const listTools = vi.fn(
+      async (): Promise<Record<string, unknown>> => ({
+        surface_list_issues: {},
+      }),
+    );
     const listToolDefinitionsWithErrors = vi.fn(async () => ({
       definitions: {
         surface: {
@@ -171,7 +174,61 @@ describe('Slack documented API probing', (): void => {
       probeSlackSurface('local-contract-value', 'boss@day0.local', SLACK_POLICY, async () =>
         slackResponse({ ok: false, error: 'invalid_auth' }),
       ),
-    ).rejects.toThrow('invalid_auth');
+    ).rejects.toThrow('Slack auth.test failed: invalid_auth');
+  });
+
+  it('refuses to derive a manager DM without a manager email, before any call', async (): Promise<void> => {
+    const fetcher = vi.fn();
+    await expect(
+      probeSlackSurface('local-contract-value', '   ', SLACK_POLICY, fetcher),
+    ).rejects.toThrow('no manager email');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('names a manager Slack does not know, and never opens a DM with a bot or itself', async (): Promise<void> => {
+    const lookupReturning = (
+      user: Record<string, unknown> | undefined,
+      error?: string,
+    ): ((input: string | URL) => Promise<Response>) => {
+      return async (input: string | URL): Promise<Response> => {
+        const url = String(input);
+        if (url.endsWith('/auth.test')) return slackResponse({ ok: true, user_id: 'UBOT' });
+        if (url.includes('/users.lookupByEmail')) {
+          return error ? slackResponse({ ok: false, error }) : slackResponse({ ok: true, user });
+        }
+        throw new Error('conversations.open must not be reached');
+      };
+    };
+    await expect(
+      probeSlackSurface(
+        'value',
+        'nobody@day0.local',
+        SLACK_POLICY,
+        lookupReturning(undefined, 'users_not_found'),
+      ),
+    ).rejects.toThrow('nobody@day0.local is not a member of this Slack workspace');
+    await expect(
+      probeSlackSurface(
+        'value',
+        'bot@day0.local',
+        SLACK_POLICY,
+        lookupReturning({ id: 'UOTHERBOT', is_bot: true }),
+      ),
+    ).rejects.toThrow('resolves to a Slack bot');
+    await expect(
+      probeSlackSurface(
+        'value',
+        'gone@day0.local',
+        SLACK_POLICY,
+        lookupReturning({ id: 'UGONE', deleted: true }),
+      ),
+    ).rejects.toThrow('deactivated');
+    await expect(
+      probeSlackSurface('value', 'self@day0.local', SLACK_POLICY, lookupReturning({ id: 'UBOT' })),
+    ).rejects.toThrow('own bot user');
+    expect(managerUserId({ id: 'UMANAGER', is_bot: false }, 'UBOT', 'boss@day0.local')).toBe(
+      'UMANAGER',
+    );
   });
 
   it('refuses a policy missing a required method before making HTTP calls', async (): Promise<void> => {
@@ -237,27 +294,27 @@ describe('surface probe action state', (): void => {
         return undefined;
       },
     );
-    const runQuery = vi.fn(async (): Promise<unknown> => ({
-      surface: { _id: surfaceId, agentId },
-      agent: {
-        _id: agentId,
-        bossEmail: 'boss@day0.local',
-        name: 'probe contract',
-        state: 'active',
-        createdAt: 1,
-      },
-    }));
+    const runQuery = vi.fn(
+      async (): Promise<unknown> => ({
+        surface: { _id: surfaceId, agentId },
+        agent: {
+          _id: agentId,
+          bossEmail: 'boss@day0.local',
+          name: 'probe contract',
+          state: 'active',
+          createdAt: 1,
+        },
+      }),
+    );
     const runAction = vi.fn(async (): Promise<string> => credential);
     const ctx = { runMutation, runQuery, runAction } as unknown as ActionCtx;
-    const probeMcp = vi.fn(
-      async (_endpoint: string | undefined, receivedCredential: string) => {
-        expect(receivedCredential).toBe(credential);
-        return {
-          toolAllowlist: ['list_issues'],
-          toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
-        };
-      },
-    );
+    const probeMcp = vi.fn(async (_endpoint: string | undefined, receivedCredential: string) => {
+      expect(receivedCredential).toBe(credential);
+      return {
+        toolAllowlist: ['list_issues'],
+        toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
+      };
+    });
 
     const result = await runSurfaceProbe(ctx, surfaceId, true, {
       probeMcp,
@@ -293,10 +350,7 @@ describe('surface probe action state', (): void => {
     const surfaceId = 'test-surface-id' as Id<'surfaces'>;
     const mutationArguments: Array<Record<string, unknown>> = [];
     const ctx = {
-      runMutation: async (
-        _reference: unknown,
-        args: Record<string, unknown>,
-      ): Promise<unknown> => {
+      runMutation: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
         mutationArguments.push(args);
         if (Object.keys(args).length === 1) {
           return {

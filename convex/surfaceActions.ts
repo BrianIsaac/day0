@@ -27,11 +27,7 @@ const SLACK_METHOD_DEFAULTS = [
   'chat.postMessage',
 ] as const;
 
-const REQUIRED_SLACK_METHODS = [
-  'auth.test',
-  'users.lookupByEmail',
-  'conversations.open',
-] as const;
+const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
 
 interface ToolDefinition {
   inputSchema?: unknown;
@@ -77,12 +73,7 @@ type CredentialId = GenericId<'credentials'>;
 
 const credentialInternal = internal as unknown as {
   credentials: {
-    decrypt: FunctionReference<
-      'action',
-      'internal',
-      { credentialId: CredentialId },
-      string
-    >;
+    decrypt: FunctionReference<'action', 'internal', { credentialId: CredentialId }, string>;
     store: FunctionReference<
       'action',
       'internal',
@@ -148,12 +139,10 @@ export function mcpAllowlist(
   }
   return {
     toolAllowlist,
-    toolArguments: toolAllowlist.map(
-      (tool: string): { tool: string; arguments: string[] } => ({
-        tool,
-        arguments: argumentNamesFromSchema(definitions[tool]?.inputSchema),
-      }),
-    ),
+    toolArguments: toolAllowlist.map((tool: string): { tool: string; arguments: string[] } => ({
+      tool,
+      arguments: argumentNamesFromSchema(definitions[tool]?.inputSchema),
+    })),
   };
 }
 
@@ -310,10 +299,43 @@ async function callSlack(
   const payload = (await response.json()) as Record<string, unknown>;
   if (!response.ok || payload.ok !== true) {
     throw new Error(
-      typeof payload.error === 'string' ? payload.error : `Slack returned HTTP ${response.status}.`,
+      typeof payload.error === 'string'
+        ? `Slack ${method} failed: ${payload.error}`
+        : `Slack ${method} returned HTTP ${response.status}.`,
     );
   }
   return payload;
+}
+
+/**
+ * Check that a looked-up Slack user can be the manager the bot will DM.
+ *
+ * Args:
+ *   user: The `user` object from `users.lookupByEmail`.
+ *   botUserId: The bot's own user id from `auth.test`.
+ *   bossEmail: The email that was looked up, for the message.
+ *
+ * Returns:
+ *   The manager's Slack user id.
+ *
+ * Raises:
+ *   Error: If the user is missing, is a bot, is deactivated, or is the bot itself.
+ */
+export function managerUserId(user: unknown, botUserId: string, bossEmail: string): string {
+  const record = user && typeof user === 'object' ? (user as Record<string, unknown>) : undefined;
+  const id = record?.id;
+  if (typeof id !== 'string')
+    throw new Error('Slack users.lookupByEmail returned no manager identity.');
+  if (record?.is_bot === true || record?.is_app_user === true) {
+    throw new Error(`the manager email ${bossEmail} resolves to a Slack bot, not a person.`);
+  }
+  if (record?.deleted === true) {
+    throw new Error(`the manager email ${bossEmail} resolves to a deactivated Slack user.`);
+  }
+  if (id === botUserId) {
+    throw new Error(`the manager email ${bossEmail} resolves to this automation's own bot user.`);
+  }
+  return id;
 }
 
 /**
@@ -341,15 +363,25 @@ export async function probeSlackSurface(
   if (missing.length > 0) {
     throw new Error(`Slack policy does not allow required methods: ${missing.join(', ')}.`);
   }
-  const auth = await callSlack(fetcher, credential, 'auth.test');
-  if (typeof auth.user_id !== 'string') throw new Error('Slack auth.test returned no bot identity.');
-  const lookup = await callSlack(fetcher, credential, 'users.lookupByEmail', {
-    email: bossEmail,
-  });
-  const managerId = (lookup.user as { id?: unknown } | undefined)?.id;
-  if (typeof managerId !== 'string') {
-    throw new Error('Slack users.lookupByEmail returned no manager identity.');
+  const email = bossEmail.trim();
+  if (!email) {
+    throw new Error('the agent has no manager email, so the manager DM cannot be derived.');
   }
+  const auth = await callSlack(fetcher, credential, 'auth.test');
+  if (typeof auth.user_id !== 'string')
+    throw new Error('Slack auth.test returned no bot identity.');
+  let lookup: Record<string, unknown>;
+  try {
+    lookup = await callSlack(fetcher, credential, 'users.lookupByEmail', { email });
+  } catch (error) {
+    if (error instanceof Error && /users_not_found/.test(error.message)) {
+      throw new Error(
+        `the manager email ${email} is not a member of this Slack workspace (users_not_found).`,
+      );
+    }
+    throw error;
+  }
+  const managerId = managerUserId(lookup.user, auth.user_id, email);
   const opened = await callSlack(fetcher, credential, 'conversations.open', undefined, {
     users: managerId,
   });
@@ -421,21 +453,16 @@ export async function runSurfaceProbe(
     let providerIdentityId: string | undefined;
     let providerWorkspaceId: string | undefined;
     if (surface.path === 'mcp') {
-      const discovery = await dependencies.probeMcp(
-        surface.endpoint,
-        credential,
-        surface.class,
-      );
+      const discovery = await dependencies.probeMcp(surface.endpoint, credential, surface.class);
       toolAllowlist = discovery.toolAllowlist;
       toolArguments = discovery.toolArguments;
     } else if (surface.path === 'documented-api' && surface.class === 'chat') {
       if (!surface.endpoint?.startsWith('https://slack.com/api/')) {
         throw new Error('The documented Slack API endpoint is not the approved Slack host.');
       }
-      const pages: Doc<'docPages'>[] = await ctx.runQuery(
-        internal.orientationData.pagesForAgent,
-        { agentId: surface.agentId },
-      );
+      const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
+        agentId: surface.agentId,
+      });
       const slack = await dependencies.probeSlack(
         credential,
         context.agent.bossEmail,
