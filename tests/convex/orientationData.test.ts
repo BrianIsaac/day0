@@ -1,8 +1,10 @@
 import { convexTest, type TestConvex } from 'convex-test';
+import type { GenericId } from 'convex/values';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { isReprobeCandidate } from '../../convex/orientationData';
 import { convexModules } from './modules';
 
 /**
@@ -121,7 +123,7 @@ describe('orientation data boundary', (): void => {
     });
   });
 
-  it('returns only connected rows for the hourly re-probe', async (): Promise<void> => {
+  it('re-probes connected rows and dead rows that still hold a credential and both approvals', async (): Promise<void> => {
     const harness = convexTest(schema, convexModules);
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
@@ -138,18 +140,36 @@ describe('orientation data boundary', (): void => {
       namedSystems: [
         { name: 'Linear', class: 'kanban', whereMentioned: 'Linear.' },
         { name: 'Slack', class: 'chat', whereMentioned: 'Slack.' },
+        { name: 'Jira', class: 'kanban', whereMentioned: 'Jira.' },
+        { name: 'Asana', class: 'kanban', whereMentioned: 'Asana.' },
       ],
     });
     const surfaces = await harness.query(internal.orientationData.surfacesForAgent, { agentId });
-    const linear = surfaces.find((surface): boolean => surface.slug === 'linear');
-    if (!linear) throw new Error('Linear surface missing');
-    await harness.mutation(internal.surfaces.setStatus, {
-      surfaceId: linear._id,
-      verdict: 'connected',
+    const bySlug = Object.fromEntries(
+      surfaces.map((surface): [string, Doc<'surfaces'>] => [surface.slug, surface]),
+    );
+    const credentialId = '10000credentials' as GenericId<'credentials'>;
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(bySlug.linear._id, { verdict: 'connected', credentialLanded: true });
+      // Dead after a transient failure, still approved and still holding a credential: retried.
+      await ctx.db.patch(bySlug.jira._id, {
+        verdict: 'listed-dead',
+        credentialId,
+        managerApprovedAt: 1,
+        itApprovedAt: 2,
+      });
+      // Dead but rejected since (no stamps): not retried.
+      await ctx.db.patch(bySlug.asana._id, { verdict: 'listed-dead', credentialId });
+      // No credential at all: nothing to retry until one lands.
+      await ctx.db.patch(bySlug.slack._id, {
+        verdict: 'ungranted',
+        managerApprovedAt: 1,
+        itApprovedAt: 2,
+      });
     });
-    await expect(
-      harness.query(internal.orientationData.connectedForReprobe, {}),
-    ).resolves.toMatchObject([{ _id: linear._id, verdict: 'connected' }]);
+    const candidates = await harness.query(internal.orientationData.reprobeCandidates, {});
+    expect(candidates.map((surface): string => surface.slug).sort()).toEqual(['jira', 'linear']);
+    expect(isReprobeCandidate({ ...bySlug.slack, verdict: 'approved' })).toBe(false);
   });
 
   it('returns all agent surfaces to the deployment-local intake sweep', async (): Promise<void> => {

@@ -556,14 +556,20 @@ export const landCredential = action({
   },
 });
 
-/** Expire due leases and isolate hourly re-probes by surface. */
+/**
+ * Expire due leases and isolate hourly re-probes by surface.
+ *
+ * Connected surfaces are re-verified; a surface the last probe left
+ * `listed-dead` with its credential and approvals intact is retried, so a
+ * transient provider failure does not stay dead until a human clicks Probe.
+ */
 export const reprobeAll = internalAction({
   args: {},
   handler: async (ctx): Promise<{ expired: number; scheduled: number }> => {
     if (SURFACE_MODE === 'mock') return { expired: 0, scheduled: 0 };
     const now = Date.now();
     const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
-      internal.orientationData.connectedForReprobe,
+      internal.orientationData.reprobeCandidates,
       {},
     );
     let expired = 0;

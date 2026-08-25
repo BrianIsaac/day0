@@ -34,12 +34,38 @@ export const surfaceForOrientation = internalQuery({
   },
 });
 
-/** Return connected surfaces eligible for the hourly provider re-probe. */
-export const connectedForReprobe = internalQuery({
+/**
+ * Decide whether a surface belongs in the hourly provider re-probe.
+ *
+ * A connected surface is re-verified so liveness stays fresh. A surface the
+ * last probe left `listed-dead` is retried as long as it still holds both
+ * approvals and a credential, so a transient provider failure heals on the
+ * next hour instead of waiting for a human to press Probe. `ungranted`
+ * rows are not retried: nothing changes until a credential lands, and
+ * landing one schedules its own probe.
+ *
+ * Args:
+ *   surface: Persisted surface row.
+ *
+ * Returns:
+ *   True when the hourly cron should probe it.
+ */
+export function isReprobeCandidate(surface: Doc<'surfaces'>): boolean {
+  if (surface.verdict === 'connected') return true;
+  return (
+    surface.verdict === 'listed-dead' &&
+    surface.credentialId !== undefined &&
+    surface.managerApprovedAt !== undefined &&
+    surface.itApprovedAt !== undefined
+  );
+}
+
+/** Return the surfaces eligible for the hourly provider re-probe. */
+export const reprobeCandidates = internalQuery({
   args: {},
   handler: async (ctx): Promise<Doc<'surfaces'>[]> => {
     const surfaces = await ctx.db.query('surfaces').collect();
-    return surfaces.filter((surface): boolean => surface.verdict === 'connected');
+    return surfaces.filter(isReprobeCandidate);
   },
 });
 
