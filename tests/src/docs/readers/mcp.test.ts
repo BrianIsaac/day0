@@ -44,6 +44,40 @@ describe('whole-page Markdown fence handling', (): void => {
     const manifest = '```json\n{"name":"Day0"}\n```';
     expect(unwrapWholePageFence(manifest)).toBe(manifest);
   });
+
+  it('unwraps each handbook template pasted as one block, with any accepted info string', (): void => {
+    for (const name of [
+      'onboarding.md',
+      'linear-automation.md',
+      'slack-day0-app.md',
+      'northstar-crm.md',
+    ]) {
+      const template = readFileSync(`docs/submission/notion-pages/${name}`, 'utf8').trim();
+      for (const opener of ['```', '```md', '```markdown', '```MARKDOWN', '~~~', '````markdown']) {
+        const closer = opener.replace(/[^`~]/g, '');
+        expect(unwrapWholePageFence(`\n${opener}\n${template}\n${closer}\n\n`)).toBe(
+          `\n${template}\n\n`,
+        );
+      }
+      expect(unwrapWholePageFence(`\`\`\`json\n${template}\n\`\`\``)).toBe(
+        `\`\`\`json\n${template}\n\`\`\``,
+      );
+    }
+  });
+
+  it('keeps a same-length nested fence and refuses a page made of two blocks', (): void => {
+    const nested = '```markdown\n# Policy\n\n```json\n{"name":"Day0"}\n```\n\nAfter\n```';
+    expect(unwrapWholePageFence(nested)).toBe('# Policy\n\n```json\n{"name":"Day0"}\n```\n\nAfter');
+    const twoBlocks = '```md\nA\n```\n\n```md\nB\n```';
+    expect(unwrapWholePageFence(twoBlocks)).toBe(twoBlocks);
+    const mixed = '```md\nA\n~~~\nB\n~~~\n```';
+    expect(unwrapWholePageFence(mixed)).toBe('A\n~~~\nB\n~~~');
+    const unclosedInner = '```md\nA\n```json\n{}\n```';
+    expect(unwrapWholePageFence(unclosedInner)).toBe(unclosedInner);
+    expect(unwrapWholePageFence('```md\r\nA\r\nB\r\n```\r\n')).toBe('A\nB\n');
+    expect(unwrapWholePageFence('# Plain\n\nNo fence')).toBe('# Plain\n\nNo fence');
+    expect(unwrapWholePageFence('```md\n```')).toBe('');
+  });
 });
 
 describe('MCP documentation reader', (): void => {

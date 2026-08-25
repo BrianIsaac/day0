@@ -162,6 +162,41 @@ export async function discoverMcpTools(source: DocSourceRecord, secret: string):
   }
 }
 
+const FENCE_LINE = /^\s*(`{3,}|~{3,})(.*)$/;
+
+/**
+ * Decide whether the lines between an outer fence pair are one block's body.
+ *
+ * Inner fences may open and close (the Slack policy carries a JSON manifest),
+ * but a closing line that matches no open inner fence would close the outer
+ * block instead, which means the page is several blocks, not one.
+ *
+ * Args:
+ *   lines: Lines strictly between the outer opener and closer.
+ *   marker: Outer fence character.
+ *   minimum: Outer fence length.
+ *
+ * Returns:
+ *   True when every inner fence is balanced and none closes the outer one.
+ */
+function innerFencesBalanced(lines: string[], marker: string, minimum: number): boolean {
+  const open: number[] = [];
+  for (const line of lines) {
+    const fence = FENCE_LINE.exec(line);
+    if (!fence || fence[1][0] !== marker) continue;
+    const length = fence[1].length;
+    const closes = fence[2].trim() === '' && open.length > 0 && length >= open[open.length - 1];
+    if (closes) {
+      open.pop();
+    } else if (fence[2].trim() === '' && length >= minimum) {
+      return false;
+    } else {
+      open.push(length);
+    }
+  }
+  return open.length === 0;
+}
+
 /**
  * Remove one outer Markdown fence without parsing its nested content.
  *
@@ -170,7 +205,8 @@ export async function discoverMcpTools(source: DocSourceRecord, secret: string):
  *
  * Returns:
  *   Inner Markdown only when the first and last non-empty lines form one
- *   empty, `md`, or `markdown` fence; otherwise the original body.
+ *   empty, `md`, or `markdown` fence around balanced content; otherwise the
+ *   original body.
  */
 export function unwrapWholePageFence(markdown: string): string {
   const lines = markdown.split(/\r?\n/);
@@ -184,9 +220,9 @@ export function unwrapWholePageFence(markdown: string): string {
   const minimum = opener[1].length;
   const closer = new RegExp(`^\\s*${marker}{${minimum},}\\s*$`);
   if (!closer.test(lines[last])) return markdown;
-  return [...lines.slice(0, first), ...lines.slice(first + 1, last), ...lines.slice(last + 1)].join(
-    '\n',
-  );
+  const inner = lines.slice(first + 1, last);
+  if (!innerFencesBalanced(inner, marker, minimum)) return markdown;
+  return [...lines.slice(0, first), ...inner, ...lines.slice(last + 1)].join('\n');
 }
 
 /**
