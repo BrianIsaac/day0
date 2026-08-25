@@ -26,3 +26,23 @@ export function resolveSurfaceMode(
 }
 
 export const SURFACE_MODE: SurfaceMode = resolveSurfaceMode();
+
+/**
+ * Refuse a local-run feature on any deployment that is not in real mode.
+ *
+ * The hosted mock is reachable by any signed-in user, so features that make
+ * the deployment fetch, clone or classify caller-chosen content must be
+ * refused server-side rather than merely hidden by the client.
+ *
+ * Args:
+ *   feature: Human-readable feature name for the refusal message.
+ *   mode: Surface mode to check, defaulting to the deployment's mode.
+ *
+ * Raises:
+ *   Error: If the mode is not `real`.
+ */
+export function assertRealMode(feature: string, mode: SurfaceMode = SURFACE_MODE): void {
+  if (mode !== 'real') {
+    throw new Error(`${feature} is a local real-mode feature; this deployment runs in ${mode} mode.`);
+  }
+}

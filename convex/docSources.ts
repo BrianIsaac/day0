@@ -9,6 +9,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
+import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -141,7 +142,13 @@ export const byIds = query({
   },
 });
 
-/** Link one owner-level documentation location and start its first sync. */
+/**
+ * Link one owner-level documentation location and start its first sync.
+ *
+ * Refused outside real mode: a linked source makes the deployment fetch its
+ * locator on every periodic sync, which the hosted mock must never do on a
+ * caller's behalf.
+ */
 export const link = mutation({
   args: {
     label: v.string(),
@@ -151,6 +158,7 @@ export const link = mutation({
     credentialRef: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'docSources'>> => {
+    assertRealMode('Documentation linking');
     const identity = await getCallerOrThrow(ctx);
     const input = validateLinkInput(args);
     const now = Date.now();
@@ -170,10 +178,11 @@ export const link = mutation({
   },
 });
 
-/** Schedule a fresh sync of one owned location. */
+/** Schedule a fresh sync of one owned location; refused outside real mode. */
 export const resync = mutation({
   args: { sourceId: v.id('docSources') },
   handler: async (ctx, args): Promise<void> => {
+    assertRealMode('Documentation resync');
     const identity = await getCallerOrThrow(ctx);
     const source = await ctx.db.get(args.sourceId);
     if (!source || source.userId !== identity.subject)
@@ -187,10 +196,11 @@ export const resync = mutation({
   },
 });
 
-/** Unlink an owned source and remove its pages and per-agent mirrors. */
+/** Unlink an owned source and remove its pages and per-agent mirrors; real mode only. */
 export const unlink = mutation({
   args: { sourceId: v.id('docSources') },
   handler: async (ctx, args): Promise<{ pages: number; mirrors: number }> => {
+    assertRealMode('Documentation unlinking');
     const identity = await getCallerOrThrow(ctx);
     const source = await ctx.db.get(args.sourceId);
     if (!source || source.userId !== identity.subject)
@@ -242,10 +252,11 @@ export const getInternal = internalQuery({
   handler: async (ctx, args) => await ctx.db.get(args.sourceId),
 });
 
-/** List sources eligible for periodic resync. */
+/** List sources eligible for periodic resync; empty outside real mode so the cron is inert. */
 export const listSyncable = internalQuery({
   args: {},
   handler: async (ctx) => {
+    if (SURFACE_MODE !== 'real') return [];
     const sources = await ctx.db.query('docSources').collect();
     return sources.filter((source) => source.status !== 'linking');
   },
