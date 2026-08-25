@@ -53,6 +53,25 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_agent_file', ['agentId', 'fileName']),
 
+  // Phase 2 lane A - encrypted credentials shared by documentation and surfaces.
+  credentials: defineTable({
+    userId: v.string(),
+    kind: v.union(v.literal('value'), v.literal('location'), v.literal('oauth')),
+    appId: v.optional(v.string()),
+    label: v.string(),
+    ciphertext: v.string(),
+    iv: v.string(),
+    source: v.union(
+      v.object({ sourceId: v.id('docSources'), ref: v.string() }),
+      v.literal('entered'),
+    ),
+    createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_user_source_ref', ['userId', 'source.sourceId', 'source.ref']),
+
   docSources: defineTable({
     userId: v.string(),
     label: v.string(),
@@ -66,7 +85,8 @@ export default defineSchema({
         v.literal('generic'),
       ),
     ),
-    credentialRef: v.optional(v.string()),
+    credentialId: v.optional(v.id('credentials')),
+    activeSyncId: v.optional(v.id('docSyncRuns')),
     status: v.union(
       v.literal('linking'),
       v.literal('synced'),
@@ -78,6 +98,24 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
+
+  // Phase 2 lane A - generation fences and safe cursors for 25-page sync batches.
+  docSyncRuns: defineTable({
+    sourceId: v.id('docSources'),
+    cursor: v.optional(v.string()),
+    refs: v.array(v.string()),
+    credentialRefs: v.array(v.string()),
+    pageCount: v.number(),
+    redactionCount: v.number(),
+    state: v.union(
+      v.literal('running'),
+      v.literal('completed'),
+      v.literal('superseded'),
+      v.literal('error'),
+    ),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index('by_source', ['sourceId']),
 
   docPages: defineTable({
     sourceId: v.id('docSources'),

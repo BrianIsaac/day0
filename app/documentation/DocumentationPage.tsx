@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useMutation, useQuery } from 'convex/react';
+import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 
@@ -10,7 +11,9 @@ type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 export function DocumentationPage(): React.ReactNode {
   const config = useQuery(api.config.surfaceMode);
   const sources = useQuery(api.docSources.listMine);
-  const link = useMutation(api.docSources.link);
+  const link = useAction(api.docSources.link);
+  const rotateCredential = useAction(api.docSources.rotateCredential);
+  const revokeCredential = useMutation(api.credentials.revoke);
   const unlink = useMutation(api.docSources.unlink);
   const resync = useMutation(api.docSources.resync);
   const [kind, setKind] = useState<SourceKind>('folder');
@@ -19,13 +22,18 @@ export function DocumentationPage(): React.ReactNode {
   const [serverKind, setServerKind] = useState<'notion' | 'confluence' | 'drive' | 'generic'>(
     'notion',
   );
-  const [credentialRef, setCredentialRef] = useState('NOTION_TOKEN');
   const [busy, setBusy] = useState(false);
+  const [rotatingSourceId, setRotatingSourceId] = useState<string | null>(null);
+  const [busySourceId, setBusySourceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /** Link the submitted source without accepting a credential value. */
+  /** Link the submitted source and clear its write-only credential field. */
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const credential = String(formData.get('credential') || '');
+    form.reset();
     setBusy(true);
     setError(null);
     try {
@@ -34,12 +42,36 @@ export function DocumentationPage(): React.ReactNode {
         kind,
         locator,
         serverKind: kind === 'mcp' ? serverKind : undefined,
-        credentialRef: kind === 'mcp' ? credentialRef : undefined,
+        credential: kind === 'mcp' ? credential : undefined,
       });
     } catch (failure) {
       setError((failure as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** Rotate one source credential and clear its write-only input immediately. */
+  async function onRotate(
+    event: FormEvent<HTMLFormElement>,
+    sourceId: Id<'docSources'>,
+  ): Promise<void> {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const credential = String(new FormData(form).get('credential') || '');
+    form.reset();
+    setBusySourceId(sourceId);
+    setError(null);
+    try {
+      await rotateCredential({
+        sourceId,
+        credential,
+      });
+      setRotatingSourceId(null);
+    } catch (failure) {
+      setError((failure as Error).message);
+    } finally {
+      setBusySourceId(null);
     }
   }
 
@@ -90,14 +122,61 @@ export function DocumentationPage(): React.ReactNode {
                     {source.pageCount} pages{source.lastError ? ` - ${source.lastError}` : ''}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
+                  {source.kind === 'mcp' && rotatingSourceId === source._id ? (
+                    <form
+                      onSubmit={(event) => void onRotate(event, source._id)}
+                      className="flex gap-2"
+                    >
+                      <label className="sr-only" htmlFor={`rotate-${source._id}`}>
+                        New connection secret
+                      </label>
+                      <input
+                        id={`rotate-${source._id}`}
+                        name="credential"
+                        type="password"
+                        autoComplete="new-password"
+                        required
+                        placeholder="New connection secret"
+                        className="text-xs px-3 py-1.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
+                      />
+                      <button
+                        disabled={busySourceId === source._id}
+                        className="text-xs border border-[var(--color-border)] rounded px-3 py-1.5 disabled:opacity-50"
+                      >
+                        {busySourceId === source._id ? 'Rotating...' : 'Save'}
+                      </button>
+                    </form>
+                  ) : null}
+                  {source.kind === 'mcp' && source.credentialId ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setRotatingSourceId(source._id)}
+                        className="text-xs border border-[var(--color-border)] rounded px-3 py-1.5"
+                      >
+                        Rotate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void revokeCredential({ credentialId: source.credentialId! })
+                        }
+                        className="text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 py-1.5"
+                      >
+                        Revoke
+                      </button>
+                    </>
+                  ) : null}
                   <button
+                    type="button"
                     onClick={() => void resync({ sourceId: source._id })}
                     className="text-xs border border-[var(--color-border)] rounded px-3 py-1.5"
                   >
                     Re-sync
                   </button>
                   <button
+                    type="button"
                     onClick={() => void unlink({ sourceId: source._id })}
                     className="text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 py-1.5"
                   >
@@ -153,17 +232,18 @@ export function DocumentationPage(): React.ReactNode {
                     <option value="generic">Generic resources</option>
                   </select>
                   <input
-                    value={credentialRef}
-                    onChange={(event) => setCredentialRef(event.target.value)}
-                    placeholder="Token environment variable name"
+                    name="credential"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    placeholder="Connection secret"
                     className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
                   />
                 </div>
               ) : null}
               {kind === 'mcp' ? (
                 <p className="text-xs text-[var(--color-muted)]">
-                  Set the value in .env.local, run pnpm sync:env, then re-sync. Only the variable
-                  name is stored.
+                  The secret is encrypted when submitted and is never displayed again.
                 </p>
               ) : null}
               {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}

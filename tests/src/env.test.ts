@@ -31,11 +31,17 @@ describe('environment contract', (): void => {
   it('reads an empty optional value as absent and drops it from process.env', async (): Promise<void> => {
     vi.stubEnv('OPENAI_BASE_URL', '');
     vi.stubEnv('EXA_API_KEY', '');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', '');
     const env = await loadEnv();
     expect(env.OPENAI_BASE_URL).toBeUndefined();
     expect(env.EXA_API_KEY).toBeUndefined();
+    expect(env.DAY0_CREDENTIAL_KEY).toBeUndefined();
+    expect(env.DAY0_NOTION_MCP_AUTH_TOKEN).toBeUndefined();
     expect(process.env.OPENAI_BASE_URL).toBeUndefined();
     expect(process.env.EXA_API_KEY).toBeUndefined();
+    expect(process.env.DAY0_CREDENTIAL_KEY).toBeUndefined();
+    expect(process.env.DAY0_NOTION_MCP_AUTH_TOKEN).toBeUndefined();
   });
 
   it('keeps a configured value and refuses an unknown surface mode', async (): Promise<void> => {

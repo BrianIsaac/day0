@@ -72,7 +72,7 @@ const WATCHED = [
   'ELEVENLABS_WEBHOOK_SECRET',
   'DAY0_SURFACE_MODE',
   'DAY0_DOCS_ROOT',
-  'DAY0_SECRET_REFS',
+  'DAY0_CREDENTIAL_KEY',
   'COMPOSE_PROJECT_NAME',
 ] as const;
 
@@ -102,25 +102,7 @@ function resolve(path: string): Values {
   for (const key of WATCHED) {
     if (key in process.env) values[key] = process.env[key] ?? '';
   }
-  for (const key of secretRefs(values)) {
-    if (key in process.env) values[key] = process.env[key] ?? '';
-  }
   return values;
-}
-
-/**
- * Parse the allowlisted provider-secret names without reading their values.
- *
- * Args:
- *   values: Resolved environment contract.
- *
- * Returns:
- *   Unique valid environment-variable names.
- */
-function secretRefs(values: Values): string[] {
-  return [...new Set((values.DAY0_SECRET_REFS ?? '').split(',').map((key) => key.trim()))].filter(
-    (key: string): boolean => /^[A-Z][A-Z0-9_]*$/.test(key),
-  );
 }
 
 /** Loopback from the host is nothing at all from inside a container. */
@@ -240,7 +222,41 @@ function backendCanReadDocs(projectName: string, docsRoot: string): boolean {
 }
 
 /**
- * Report the selected surface mode, documentation seam and credential refs.
+ * Count active encrypted credentials through an administrator-only query.
+ *
+ * Args:
+ *   values: Resolved deployment environment.
+ *
+ * Returns:
+ *   Stored active credential count, or undefined when the backend cannot answer.
+ */
+function storedCredentialCount(values: Values): number | undefined {
+  if (!values.CONVEX_SELF_HOSTED_URL || !values.CONVEX_SELF_HOSTED_ADMIN_KEY) return undefined;
+  const probe = spawnSync(
+    'npx',
+    [
+      'convex',
+      'run',
+      '--typecheck',
+      'disable',
+      '--codegen',
+      'disable',
+      'credentials:countStored',
+      '{}',
+    ],
+    {
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: { ...process.env, ...values },
+    },
+  );
+  if (probe.status !== 0) return undefined;
+  const count = Number.parseInt((probe.stdout || '').trim(), 10);
+  return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+}
+
+/**
+ * Report the selected surface mode, documentation seam and encrypted store.
  *
  * Args:
  *   values: Resolved environment contract.
@@ -258,33 +274,36 @@ function surfacesSection(values: Values): Section {
     };
   }
   if (mode === 'mock') {
+    const count = storedCredentialCount(values);
     return {
       title: 'Surfaces: mock',
       status: 'ok',
-      lines: ['The seeded five-surface environment is active; no provider credentials are read.'],
+      lines: [
+        'The seeded five-surface environment is active; no provider credentials are read.',
+        `Credential key ${values.DAY0_CREDENTIAL_KEY ? 'present' : 'absent'}; stored credentials ${count ?? 'unavailable'}.`,
+      ],
     };
   }
 
   const projectName = values.COMPOSE_PROJECT_NAME || 'day0';
   const docsRoot = values.DAY0_DOCS_ROOT || '/docs';
   const services = composeRunningServices(projectName);
-  const profileDetected = services?.includes('playwright-mcp') ?? false;
+  const profileDetected =
+    (services?.includes('notion-mcp') && services.includes('playwright-mcp')) ?? false;
   const docsReadable = backendCanReadDocs(projectName, docsRoot);
-  const refs = secretRefs(values);
-  const present = refs.filter((key: string): boolean => Boolean(values[key]));
-  const absent = refs.filter((key: string): boolean => !values[key]);
+  const count = storedCredentialCount(values);
+  const keyPresent = Boolean(values.DAY0_CREDENTIAL_KEY);
   const lines = [
     `Compose project ${projectName}; real profile ${profileDetected ? 'detected' : 'not detected'}.`,
     `Backend documentation root ${docsRoot} is ${docsReadable ? 'readable' : 'not readable'}.`,
-    `Credential refs present: ${present.length > 0 ? present.join(', ') : 'none'}.`,
-    `Credential refs absent: ${absent.length > 0 ? absent.join(', ') : 'none'}.`,
+    `Credential key ${keyPresent ? 'present' : 'absent'}; stored credentials ${count ?? 'unavailable'}.`,
   ];
-  if (!profileDetected || !docsReadable) {
+  if (!profileDetected || !docsReadable || !keyPresent || count === undefined) {
     return { title: 'Surfaces: real (local) - needs fixing', status: 'gap', lines };
   }
   return {
     title: 'Surfaces: real (local)',
-    status: absent.length > 0 ? 'warn' : 'ok',
+    status: 'ok',
     lines,
   };
 }

@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { DocPage, DocSourceReader, DocSourceRecord } from '../types';
+import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
 
 /**
  * Read the first level-one Markdown heading.
@@ -67,6 +67,66 @@ async function markdownFiles(directory: string): Promise<string[]> {
 }
 
 /**
+ * Parse an offset cursor emitted by a filesystem-backed reader.
+ *
+ * Args:
+ *   cursor: Optional decimal offset.
+ *
+ * Returns:
+ *   Non-negative page offset.
+ *
+ * Raises:
+ *   Error: If the cursor is not a canonical non-negative integer.
+ */
+export function offsetFromCursor(cursor?: string): number {
+  if (cursor === undefined) return 0;
+  if (!/^(0|[1-9][0-9]*)$/.test(cursor)) throw new Error('Documentation cursor is invalid.');
+  return Number(cursor);
+}
+
+/**
+ * Read one bounded batch of Markdown files.
+ *
+ * Args:
+ *   source: Source metadata stored by Convex.
+ *   directory: Absolute directory to read.
+ *   cursor: Optional decimal file offset.
+ *   limit: Maximum pages to read.
+ *
+ * Returns:
+ *   Normalised pages and the next safe offset.
+ */
+export async function readMarkdownDirectoryBatch(
+  source: DocSourceRecord,
+  directory: string,
+  cursor: string | undefined,
+  limit: number,
+): Promise<DocPageBatch> {
+  const files = await markdownFiles(directory);
+  const offset = offsetFromCursor(cursor);
+  const selected = files.slice(offset, offset + limit);
+  const pages = await Promise.all(
+    selected.map(async (path): Promise<DocPage> => {
+      const [markdown, details] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
+      const ref = relative(directory, path).split(sep).join('/');
+      const fallback = basename(path, '.md').replaceAll('-', ' ');
+      return {
+        sourceId: source._id,
+        ref,
+        title: markdownPageTitle(markdown, fallback),
+        markdown,
+        updatedAt: details.mtimeMs,
+      };
+    }),
+  );
+  const nextOffset = offset + pages.length;
+  return {
+    pages,
+    nextCursor: nextOffset < files.length ? String(nextOffset) : undefined,
+  };
+}
+
+/**
  * Read all Markdown pages below a known-safe directory.
  *
  * Args:
@@ -80,21 +140,8 @@ export async function readMarkdownDirectory(
   source: DocSourceRecord,
   directory: string,
 ): Promise<DocPage[]> {
-  const files = await markdownFiles(directory);
-  return await Promise.all(
-    files.map(async (path): Promise<DocPage> => {
-      const [markdown, details] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
-      const ref = relative(directory, path).split(sep).join('/');
-      const fallback = basename(path, '.md').replaceAll('-', ' ');
-      return {
-        sourceId: source._id,
-        ref,
-        title: markdownPageTitle(markdown, fallback),
-        markdown,
-        updatedAt: details.mtimeMs,
-      };
-    }),
-  );
+  return (await readMarkdownDirectoryBatch(source, directory, undefined, Number.MAX_SAFE_INTEGER))
+    .pages;
 }
 
 /** Reader for Markdown mounted below `DAY0_DOCS_ROOT`. */
@@ -124,5 +171,32 @@ export class FolderReader implements DocSourceReader {
   async listPages(source: DocSourceRecord, _secret?: string): Promise<DocPage[]> {
     void _secret;
     return await readMarkdownDirectory(source, resolveFolderLocator(this.root, source.locator));
+  }
+
+  /**
+   * Read at most one sync action's worth of Markdown pages.
+   *
+   * Args:
+   *   source: Linked folder source.
+   *   _secret: Unused because folder sources need no credential.
+   *   cursor: Optional decimal file offset.
+   *   limit: Maximum pages to read.
+   *
+   * Returns:
+   *   Bounded page batch and continuation cursor.
+   */
+  async listPageBatch(
+    source: DocSourceRecord,
+    _secret: string | undefined,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<DocPageBatch> {
+    void _secret;
+    return await readMarkdownDirectoryBatch(
+      source,
+      resolveFolderLocator(this.root, source.locator),
+      cursor,
+      limit,
+    );
   }
 }

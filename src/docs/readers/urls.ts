@@ -1,6 +1,6 @@
 import TurndownService from 'turndown';
-import type { DocPage, DocSourceReader, DocSourceRecord } from '../types';
-import { markdownPageTitle } from './folder';
+import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
+import { markdownPageTitle, offsetFromCursor } from './folder';
 
 const MAX_PAGE_BYTES = 2 * 1024 * 1024;
 
@@ -21,9 +21,16 @@ export function parseUrlLocator(locator: string): URL[] {
   try {
     values = JSON.parse(locator);
   } catch {
-    values = locator.split(/\r?\n/).map((value: string): string => value.trim()).filter(Boolean);
+    values = locator
+      .split(/\r?\n/)
+      .map((value: string): string => value.trim())
+      .filter(Boolean);
   }
-  if (!Array.isArray(values) || values.length === 0 || !values.every((value) => typeof value === 'string')) {
+  if (
+    !Array.isArray(values) ||
+    values.length === 0 ||
+    !values.every((value) => typeof value === 'string')
+  ) {
     throw new Error('URL documentation needs one or more HTTP(S) URLs.');
   }
   return values.map((value: string): URL => {
@@ -62,6 +69,33 @@ export function htmlPageTitle(html: string, fallback: string): string {
 /** Reader for an explicit allowlist of web documentation pages. */
 export class UrlsReader implements DocSourceReader {
   /**
+   * Fetch a bounded range of listed pages.
+   *
+   * Args:
+   *   source: Linked URL-list source.
+   *   _secret: Unused because URL pages are publicly readable.
+   *   cursor: Optional decimal URL offset.
+   *   limit: Maximum pages to fetch.
+   *
+   * Returns:
+   *   Bounded page batch and continuation cursor.
+   */
+  async listPageBatch(
+    source: DocSourceRecord,
+    _secret: string | undefined,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<DocPageBatch> {
+    void _secret;
+    const urls = parseUrlLocator(source.locator);
+    const offset = offsetFromCursor(cursor);
+    const selected = urls.slice(offset, offset + limit);
+    const pages = await this.fetchPages(source, selected);
+    const nextOffset = offset + pages.length;
+    return { pages, nextCursor: nextOffset < urls.length ? String(nextOffset) : undefined };
+  }
+
+  /**
    * Fetch each listed page and normalise HTML to Markdown.
    *
    * Args:
@@ -73,9 +107,23 @@ export class UrlsReader implements DocSourceReader {
    */
   async listPages(source: DocSourceRecord, _secret?: string): Promise<DocPage[]> {
     void _secret;
+    return await this.fetchPages(source, parseUrlLocator(source.locator));
+  }
+
+  /**
+   * Fetch and normalise a known-safe URL batch.
+   *
+   * Args:
+   *   source: Linked URL-list source.
+   *   urls: Validated HTTP(S) URLs.
+   *
+   * Returns:
+   *   Normalised pages in locator order.
+   */
+  private async fetchPages(source: DocSourceRecord, urls: URL[]): Promise<DocPage[]> {
     const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
     const pages: DocPage[] = [];
-    for (const url of parseUrlLocator(source.locator)) {
+    for (const url of urls) {
       const response = await fetch(url, {
         headers: { Accept: 'text/markdown, text/html;q=0.9, text/plain;q=0.8' },
         signal: AbortSignal.timeout(20_000),
@@ -92,9 +140,7 @@ export class UrlsReader implements DocSourceReader {
       pages.push({
         sourceId: source._id,
         ref: url.href,
-        title: isHtml
-          ? htmlPageTitle(body, fallback)
-          : markdownPageTitle(markdown, fallback),
+        title: isHtml ? htmlPageTitle(body, fallback) : markdownPageTitle(markdown, fallback),
         url: url.href,
         markdown,
         updatedAt: Date.now(),

@@ -13,14 +13,14 @@
     "dev": "tsx scripts/dev-no-auth-key.ts url && next dev -H localhost -p 3000",
     "dev:no-auth-key": "tsx scripts/dev-no-auth-key.ts init",
     "convex:dev": "convex dev",
-    "convex:up": "docker compose --env-file .env.local up -d",
+    "convex:up": "tsx scripts/dev-docs-dir.ts && docker compose --env-file .env.local up -d",
     "convex:down": "docker compose --env-file .env.local down",
     "convex:restart": "docker compose --env-file .env.local restart backend",
     "convex:admin-key": "docker compose --env-file .env.local exec backend ./generate_admin_key.sh",
     "model:up": "tsx scripts/model-up.ts",
     "model:down": "docker compose --env-file .env.local --profile model rm -sf model",
     "model:pull": "docker compose --env-file .env.local --profile model exec model ollama pull",
-    "sandbox:up": "docker compose --env-file .env.local --profile sandbox up -d sandbox backend",
+    "sandbox:up": "tsx scripts/dev-docs-dir.ts && docker compose --env-file .env.local --profile sandbox up -d sandbox backend",
     "sandbox:down": "docker compose --env-file .env.local --profile sandbox rm -sf sandbox",
     "sync:env": "./scripts/sync-convex-env.sh",
     "check:setup": "tsx scripts/check-setup.ts",
@@ -30,7 +30,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "probe:model": "tsx --env-file-if-exists=.env.local scripts/probe-model-endpoint.ts",
-    "probe:mcp": "tsx --env-file-if-exists=.env.local scripts/probe-mcp.ts"
+    "probe:mcp": "tsx --env-file-if-exists=.env.local scripts/probe-mcp.ts",
+    "probe:docs-source": "tsx --env-file-if-exists=.env.local scripts/probe-docs-source.ts"
   },
   "prettier": {
     "semi": true,
