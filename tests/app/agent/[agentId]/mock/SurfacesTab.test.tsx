@@ -48,13 +48,20 @@ describe('SurfacesTab credential row', (): void => {
     expect(markup).toContain('Land credential');
   });
 
-  it('shows the OAuth procedure without a landing field', (): void => {
+  it('shows the OAuth summary and procedure without a landing field', (): void => {
     const markup = renderCredentialRow({
       canLand: false,
+      detail: 'Ask IT to approve the app and follow the install link.',
       kind: 'oauth',
-      text: 'Ask IT to approve the app and follow the install link.',
+      label: 'Slack OAuth access',
+      text: 'OAuth install flow documented in Slack automation policy',
     });
-    expect(markup).toContain('OAuth approval procedure');
+    expect(markup).toContain(
+      'Slack OAuth access - OAuth install flow documented in Slack automation policy',
+    );
+    expect(markup).toContain(
+      'OAuth approval procedure: Ask IT to approve the app and follow the install link.',
+    );
     expect(markup).not.toContain('type="password"');
   });
 });

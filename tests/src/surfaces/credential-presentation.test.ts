@@ -54,8 +54,10 @@ describe('surface credential presentation', (): void => {
       }),
     ).toEqual({
       canLand: false,
+      detail: undefined,
       governanceFinding: undefined,
       kind: 'oauth',
+      label: undefined,
       text: 'Ask IT to approve the Day0 app, then follow the install link.',
     });
   });
@@ -73,10 +75,19 @@ describe('surface credential presentation', (): void => {
       }),
     ).toEqual({
       canLand: false,
+      detail: 'The automation registers its app from the team manifest template.',
       governanceFinding: undefined,
       kind: 'oauth',
-      text: 'The automation registers its app from the team manifest template.',
+      label: 'Slack OAuth access',
+      text: 'OAuth install flow documented in Slack automation policy',
     });
+    const long = 'x'.repeat(900);
+    expect(
+      presentSurfaceCredential({
+        credential: { found: 'none', method: 'oauth', location: long },
+        credentialLocation: 'OAuth install flow documented in policy',
+      }).detail,
+    ).toBe(`${'x'.repeat(400)}...`);
   });
 
   it('never substitutes orientation request labels for store metadata', (): void => {

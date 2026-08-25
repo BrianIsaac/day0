@@ -28,6 +28,8 @@ describe('surface credential redaction', (): void => {
     expect(redactTokenShapes('Password: hunter2\nNext line')).toBe(
       'Password: <redacted>\nNext line',
     );
+    const prose = 'using a bot token Bearer header. It names the usable methods.';
+    expect(redactTokenShapes(prose)).toBe(prose);
   });
 
   it('leaves a stored marker and ordinary prose alone', (): void => {

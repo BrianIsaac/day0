@@ -17,11 +17,15 @@ export interface CredentialOwnerSummary {
 
 export interface CredentialPresentation {
   canLand: boolean;
+  /** A longer documented procedure shown under the row, clipped for the card. */
+  detail?: string;
   governanceFinding?: string;
   kind: 'masked' | 'oauth' | 'landing' | 'unresolved';
   label?: string;
   text: string;
 }
+
+const DETAIL_LENGTH = 400;
 
 export interface CredentialPresentationInput {
   credential?: SurfaceCredentialFinding;
@@ -45,12 +49,20 @@ export function presentSurfaceCredential(
 ): CredentialPresentation {
   const governanceFinding = input.credential?.governanceFinding;
   if (input.credential?.method === 'oauth') {
-    const procedure = input.credential.location ?? input.credentialLocation;
+    const procedure = input.credential.location;
+    const summary = input.credentialLocation ?? procedure;
     return {
       canLand: false,
+      detail:
+        procedure && procedure !== summary
+          ? procedure.length > DETAIL_LENGTH
+            ? `${procedure.slice(0, DETAIL_LENGTH).trimEnd()}...`
+            : procedure
+          : undefined,
       governanceFinding,
       kind: 'oauth',
-      text: procedure ?? 'Follow the documented OAuth approval procedure.',
+      label: input.credential.label,
+      text: summary ?? 'Follow the documented OAuth approval procedure.',
     };
   }
 

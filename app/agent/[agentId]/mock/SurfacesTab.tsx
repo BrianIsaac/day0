@@ -79,7 +79,10 @@ export function CredentialRow(props: CredentialRowProps): React.ReactNode {
         {props.presentation.text}
       </p>
       {props.presentation.kind === 'oauth' ? (
-        <p className="mt-1 text-[var(--color-muted)]">OAuth approval procedure</p>
+        <p className="mt-1 text-[var(--color-muted)]">
+          OAuth approval procedure
+          {props.presentation.detail ? `: ${props.presentation.detail}` : ''}
+        </p>
       ) : null}
       {props.presentation.governanceFinding ? (
         <p className="mt-1 text-[var(--color-warn)]">{props.presentation.governanceFinding}</p>
@@ -320,7 +323,9 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   <dt className="text-[var(--color-muted)]">Cost / expiry</dt>
                   <dd>
                     {request.costBand || 'not stated'} /{' '}
-                    {request.expiresInDays ? `${request.expiresInDays} days` : 'not stated'}
+                    {request.expiresInDays
+                      ? `${request.expiresInDays} ${request.expiresInDays === 1 ? 'day' : 'days'}`
+                      : 'not stated'}
                   </dd>
                   <dt className="text-[var(--color-muted)]">Rollback</dt>
                   <dd>{request.rollback || 'not stated'}</dd>
