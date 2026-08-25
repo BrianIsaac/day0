@@ -1084,11 +1084,13 @@ export const run = internalAction({
     const declared = surfaces.filter(
       (surface: Doc<'surfaces'>): boolean => surface.verdict === 'declared',
     );
+    let scheduled = 0;
     for (const surface of declared) {
-      await ctx.scheduler.runAfter(0, internal.orientationActions.orientOne, {
+      const claimed: boolean = await ctx.runMutation(internal.surfaces.scheduleOrientation, {
         surfaceId: surface._id,
       });
+      if (claimed) scheduled += 1;
     }
-    return { scheduled: declared.length };
+    return { scheduled };
   },
 });

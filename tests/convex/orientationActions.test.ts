@@ -1045,6 +1045,50 @@ describe('orientation run', (): void => {
     )).toHaveLength(1);
   });
 
+  it('schedules at most one pending job per surface across repeated runs', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      { 'linear.md': LINEAR_RUNBOOK, 'slack.md': SLACK_RUNBOOK },
+      [
+        { name: 'Linear', class: 'kanban' },
+        { name: 'Slack', class: 'chat' },
+      ],
+    );
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(harness.action(internal.orientationActions.run, { agentId })).resolves.toEqual({
+      scheduled: 2,
+    });
+    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({
+      scheduled: 0,
+    });
+    const pending = async (): Promise<number> =>
+      (
+        await harness.run(
+          async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+        )
+      ).filter((job): boolean => job.state.kind === 'pending').length;
+    expect(await pending()).toBe(2);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await pending()).toBe(0);
+    const oriented = await surfacesBySlug(harness, agentId);
+    expect(oriented.linear.verdict).toBe('proposed');
+    expect(oriented.slack.verdict).toBe('proposed');
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+        (event): boolean => event.type === 'surface.proposed',
+      ),
+    ).toHaveLength(2);
+
+    await owner.mutation(api.surfaces.reject, { surfaceId: oriented.linear._id, reason: 'no' });
+    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({
+      scheduled: 1,
+    });
+    expect(await pending()).toBe(1);
+  });
+
   it('lets the owner re-run orientation for declared surfaces in real mode', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';

@@ -123,6 +123,8 @@ export default defineSchema({
     providerIdentityId: v.optional(v.string()),
     providerWorkspaceId: v.optional(v.string()),
     probeGeneration: v.optional(v.number()),
+    /** The pending orientation job for a declared row, so a re-run cannot double-schedule. */
+    orientationJobId: v.optional(v.id('_scheduled_functions')),
     waterfallPosition: v.optional(v.number()),
     intakeSkipReason: v.optional(v.string()),
     lastPolledAt: v.optional(v.number()),

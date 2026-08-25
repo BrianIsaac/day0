@@ -209,6 +209,33 @@ describe('surface persistence', (): void => {
   });
 });
 
+describe('orientation scheduling', (): void => {
+  it('claims one pending job per declared surface and refuses other verdicts', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await expect(
+      harness.mutation(internal.surfaces.scheduleOrientation, { surfaceId }),
+    ).resolves.toBe(true);
+    await expect(
+      harness.mutation(internal.surfaces.scheduleOrientation, { surfaceId }),
+    ).resolves.toBe(false);
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(jobs).toMatchObject([
+      { name: 'orientationActions:orientOne', args: [{ surfaceId }], state: { kind: 'pending' } },
+    ]);
+    expect((await readSurface(harness, surfaceId)).orientationJobId).toBe(jobs[0]._id);
+
+    await propose(harness, surfaceId);
+    await expect(
+      harness.mutation(internal.surfaces.scheduleOrientation, { surfaceId }),
+    ).resolves.toBe(false);
+  });
+});
+
 describe('orientation failure', (): void => {
   it('records a failure reason on a declared surface only', async (): Promise<void> => {
     const harness = convexTest(schema, convexModules);

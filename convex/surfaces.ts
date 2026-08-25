@@ -155,6 +155,33 @@ export const markAbsent = internalMutation({
 });
 
 /**
+ * Schedule the isolated orientation job for one declared surface, at most once.
+ *
+ * Charter approval and the owner's re-run control both come through here.
+ * A surface whose previous job is still pending or running is left alone,
+ * so two requests in quick succession cost one model call, not two, and
+ * only the surface id crosses the scheduler boundary.
+ */
+export const scheduleOrientation = internalMutation({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface || surface.verdict !== 'declared') return false;
+    if (surface.orientationJobId) {
+      const job = await ctx.db.system.get(surface.orientationJobId);
+      if (job && (job.state.kind === 'pending' || job.state.kind === 'inProgress')) return false;
+    }
+    const orientationJobId = await ctx.scheduler.runAfter(
+      0,
+      internal.orientationActions.orientOne,
+      { surfaceId: surface._id },
+    );
+    await ctx.db.patch(surface._id, { orientationJobId });
+    return true;
+  },
+});
+
+/**
  * Record that an orientation job failed before it could decide.
  *
  * The surface stays `declared`, because nothing was decided, but the card
