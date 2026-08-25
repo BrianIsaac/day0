@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 
+import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -10,6 +11,7 @@ import {
   choosePath,
   documentedEndpoints,
   evidenceLine,
+  extractCredentialFinding,
   explicitlyDeniesSurface,
   registryRemoteEndpoint,
   relevantSystemText,
@@ -18,6 +20,21 @@ import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 type DraftPath = 'mcp' | 'documented-api' | 'browser-driven' | 'escalate';
+
+/** Read a sanitised copy of one submitted Notion page. */
+function notionFixture(name: string): string {
+  return readFileSync(new URL(`../fixtures/notion-pages/${name}.md`, import.meta.url), 'utf8');
+}
+
+/** Load the deployment with a contract-level Lane A credential store. */
+function orientationModules(): Record<string, () => Promise<unknown>> {
+  return {
+    ...allConvexModules(),
+    '../../convex/credentials.ts': async (): Promise<
+      typeof import('./fakes/credentials')
+    > => await import('./fakes/credentials'),
+  };
+}
 
 const model = vi.hoisted(() => ({
   /** Path the mocked classifier proposes per system; unset means the model fails. */
@@ -35,7 +52,7 @@ vi.mock('../../src/lib/mastra', () => ({
       confidence: 0.9,
       reasoning: `Model draft for ${system}.`,
       scopeRequested: [],
-      credentialMethod: 'unknown',
+      credential: { found: 'none', method: 'unknown' },
       blastRadius: 'One system.',
       costBand: 'none',
       expiresInDays: 30,
@@ -169,6 +186,35 @@ async function surfacesBySlug(
   return Object.fromEntries(rows.map((row): [string, Doc<'surfaces'>] => [row.slug, row]));
 }
 
+/**
+ * Execute the isolated orientation job for every declared surface in a test.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   agentId: Agent whose declared surfaces should be oriented.
+ *
+ * Returns:
+ *   Counts of proposal and absence outcomes.
+ */
+async function orientDeclared(
+  harness: TestConvex<typeof schema>,
+  agentId: Id<'agents'>,
+): Promise<{ proposed: number; absent: number }> {
+  const surfaces = await surfacesBySlug(harness, agentId);
+  const outcomes = await Promise.all(
+    Object.values(surfaces).map(
+      async (surface) =>
+        await harness.action(internal.orientationActions.orientOne, {
+          surfaceId: surface._id,
+        }),
+    ),
+  );
+  return {
+    proposed: outcomes.filter((outcome) => outcome.outcome === 'proposed').length,
+    absent: outcomes.filter((outcome) => outcome.outcome === 'absent').length,
+  };
+}
+
 const LINEAR_RUNBOOK = [
   '# How to update a Linear ticket',
   '',
@@ -225,6 +271,7 @@ const ONBOARDING_PAGE = [
 
 afterEach((): void => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   restoreSurfaceMode();
   model.pathFor = undefined;
 });
@@ -301,6 +348,54 @@ describe('orientation evidence selection', (): void => {
   });
 });
 
+describe('credential extraction', (): void => {
+  const pages = [
+    'onboarding',
+    'linear-automation',
+    'slack-day0-app',
+    'northstar-crm',
+  ].map((name) => ({
+    sourceId: 'source-fixture',
+    ref: `${name}.md`,
+    title: name,
+    markdown: notionFixture(name),
+  }));
+
+  it('resolves a redacted Linear marker without exposing a value', (): void => {
+    const finding = extractCredentialFinding(pages, 'Linear');
+    expect(finding).toEqual({
+      found: 'value',
+      label: 'linear service token',
+      evidenceRef: 'linear-automation.md',
+      method: 'api-key',
+      governanceFinding: 'credential found in a shared page - rotate into a vault',
+      sourceId: 'source-fixture',
+    });
+    expect(JSON.stringify(finding)).not.toMatch(/Authorization: Bearer|ciphertext|plaintext/);
+  });
+
+  it('summarises Slack as an OAuth procedure with no value', (): void => {
+    const finding = extractCredentialFinding(pages, 'Slack');
+    expect(finding).toMatchObject({
+      found: 'location',
+      label: 'Slack OAuth access',
+      evidenceRef: 'slack-day0-app.md',
+      method: 'oauth',
+      sourceId: 'source-fixture',
+    });
+    expect(finding.location).toContain('configuration token');
+    expect(finding.location).toContain('OAuth redirect');
+    expect(finding.governanceFinding).toBeUndefined();
+  });
+
+  it('does not borrow credentials for systems whose fixture names no access value', (): void => {
+    expect(extractCredentialFinding(pages, 'Northstar CRM')).toEqual({
+      found: 'none',
+      method: 'unknown',
+    });
+  });
+});
+
 describe('URL attribution', (): void => {
   it('attributes a URL only when its sentence names the system or its host carries the slug', (): void => {
     const text =
@@ -367,13 +462,14 @@ describe('URL attribution', (): void => {
 
 describe('orientation run', (): void => {
   beforeEach((): void => {
+    vi.useFakeTimers();
     useSurfaceMode('real');
   });
 
   it("does not lend one system's MCP endpoint to another named in the same paragraph", async (): Promise<void> => {
     const fetchMock = stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
-    const harness = convexTest(schema, allConvexModules());
+    const harness = convexTest(schema, orientationModules());
     const agentId = await seedOrientation(
       harness,
       {
@@ -385,7 +481,7 @@ describe('orientation run', (): void => {
         { name: 'Slack', class: 'chat' },
       ],
     );
-    await expect(harness.action(internal.orientationActions.run, { agentId })).resolves.toEqual({
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({
       proposed: 2,
       absent: 0,
     });
@@ -412,7 +508,7 @@ describe('orientation run', (): void => {
   it('prefers a documented API over a denied MCP path, whatever the model says', async (): Promise<void> => {
     const fetchMock = stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
-    const harness = convexTest(schema, allConvexModules());
+    const harness = convexTest(schema, orientationModules());
     const agentId = await seedOrientation(
       harness,
       {
@@ -421,7 +517,7 @@ describe('orientation run', (): void => {
       },
       [{ name: 'Slack', class: 'chat' }],
     );
-    await expect(harness.action(internal.orientationActions.run, { agentId })).resolves.toEqual({
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({
       proposed: 1,
       absent: 0,
     });
@@ -437,7 +533,7 @@ describe('orientation run', (): void => {
   it('never writes a registry hit as the endpoint of a system the docs only mention', async (): Promise<void> => {
     const fetchMock = stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
-    const harness = convexTest(schema, allConvexModules());
+    const harness = convexTest(schema, orientationModules());
     const agentId = await seedOrientation(
       harness,
       {
@@ -446,7 +542,7 @@ describe('orientation run', (): void => {
       },
       [{ name: 'Northstar CRM', class: 'crm' }],
     );
-    await expect(harness.action(internal.orientationActions.run, { agentId })).resolves.toEqual({
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({
       proposed: 1,
       absent: 0,
     });
@@ -465,7 +561,7 @@ describe('orientation run', (): void => {
   it('files the three cards from the folder documentation even when the model is unavailable', async (): Promise<void> => {
     const fetchMock = stubRegistry();
     model.pathFor = undefined;
-    const harness = convexTest(schema, allConvexModules());
+    const harness = convexTest(schema, orientationModules());
     const agentId = await seedOrientation(
       harness,
       {
@@ -480,7 +576,7 @@ describe('orientation run', (): void => {
         { name: 'Northstar CRM', class: 'crm' },
       ],
     );
-    await expect(harness.action(internal.orientationActions.run, { agentId })).resolves.toEqual({
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({
       proposed: 2,
       absent: 1,
     });
@@ -503,24 +599,101 @@ describe('orientation run', (): void => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('builds credential findings from all four sanitised Notion fixtures', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, orientationModules());
+    const agentId = await seedOrientation(
+      harness,
+      {
+        'onboarding.md': notionFixture('onboarding'),
+        'linear-automation.md': notionFixture('linear-automation'),
+        'slack-day0-app.md': notionFixture('slack-day0-app'),
+        'northstar-crm.md': notionFixture('northstar-crm'),
+      },
+      [
+        { name: 'Linear', class: 'kanban' },
+        { name: 'Slack', class: 'chat' },
+        { name: 'Northstar CRM', class: 'crm' },
+      ],
+    );
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({
+      proposed: 2,
+      absent: 1,
+    });
+    const surfaces = await surfacesBySlug(harness, agentId);
+    expect(surfaces.linear.request).toMatchObject({
+      credential: {
+        found: 'value',
+        label: 'linear service token',
+        evidenceRef: 'linear-automation.md',
+        method: 'api-key',
+        governanceFinding: 'credential found in a shared page - rotate into a vault',
+      },
+    });
+    expect(surfaces.linear.request).not.toHaveProperty('credential.sourceId');
+    expect(surfaces.linear.credentialId).toBe('10000credentials');
+    expect(surfaces.linear.request).not.toHaveProperty('credential.plaintext');
+    expect(surfaces.slack).toMatchObject({
+      path: 'documented-api',
+      credentialLocation: expect.stringContaining('configuration token'),
+      request: {
+        credential: {
+          found: 'location',
+          evidenceRef: 'slack-day0-app.md',
+          method: 'oauth',
+        },
+      },
+    });
+    expect(surfaces['northstar-crm'].verdict).toBe('absent');
+  });
+
+  it('fans out one scheduled job per declared system and isolates a stale job', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, orientationModules());
+    const agentId = await seedOrientation(
+      harness,
+      { 'linear.md': LINEAR_RUNBOOK, 'slack.md': SLACK_RUNBOOK },
+      [
+        { name: 'Linear', class: 'kanban' },
+        { name: 'Slack', class: 'chat' },
+      ],
+    );
+    await expect(harness.action(internal.orientationActions.run, { agentId })).resolves.toEqual({
+      scheduled: 2,
+    });
+    const scheduled = await surfacesBySlug(harness, agentId);
+    expect(scheduled.linear.verdict).toBe('declared');
+    expect(scheduled.slack.verdict).toBe('declared');
+    await harness.mutation(internal.surfaces.markAbsent, {
+      surfaceId: scheduled.slack._id,
+      searched: ['Slack'],
+      whereFound: [],
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const completed = await surfacesBySlug(harness, agentId);
+    expect(completed.linear.verdict).toBe('proposed');
+    expect(completed.slack.verdict).toBe('absent');
+    expect((await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+      (event): boolean => event.type === 'surface.proposed',
+    )).toHaveLength(1);
+  });
+
   it('lets the owner re-run orientation for declared surfaces in real mode', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
-    const harness = convexTest(schema, allConvexModules());
+    const harness = convexTest(schema, orientationModules());
     const agentId = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK }, [
       { name: 'Linear', class: 'kanban' },
     ]);
     const owner = harness.withIdentity({ subject: 'owner' });
-    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({
-      proposed: 1,
-      absent: 0,
-    });
+    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({ scheduled: 1 });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const surfaceId = (await surfacesBySlug(harness, agentId)).linear._id;
     await owner.mutation(api.surfaces.reject, { surfaceId, reason: 'Wrong endpoint.' });
-    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({
-      proposed: 1,
-      absent: 0,
-    });
+    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({ scheduled: 1 });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect((await surfacesBySlug(harness, agentId)).linear).toMatchObject({
       verdict: 'proposed',
       endpoint: 'https://mcp.linear.app/mcp',

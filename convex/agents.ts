@@ -3,6 +3,7 @@ import { mutation, query, internalMutation, internalQuery } from './_generated/s
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
  * Agent CRUD + state transitions. Each agent is owned by one caller subject —
@@ -92,13 +93,11 @@ export const deploy = mutation({
       payload: { bossEmail: args.bossEmail },
       createdAt: Date.now(),
     });
-    for (const scope of [
-      'boss:message',
-      'docs:read',
-      'spreadsheet:read',
-      'social:read',
-      'ticket:read',
-    ]) {
+    const initialScopes =
+      SURFACE_MODE === 'mock'
+        ? ['boss:message', 'docs:read', 'spreadsheet:read', 'social:read', 'ticket:read']
+        : ['boss:message', 'docs:read'];
+    for (const scope of initialScopes) {
       await ctx.db.insert('permissionGrants', {
         agentId,
         scope,
@@ -168,5 +167,26 @@ export const grantedScopes = internalQuery({
       .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId))
       .collect();
     return all.filter((g) => !g.revokedAt);
+  },
+});
+
+/** Grant one read or write scope idempotently after a provider connection succeeds. */
+export const grantScope = internalMutation({
+  args: { agentId: v.id('agents'), scope: v.string() },
+  handler: async (ctx, args): Promise<{ added: boolean }> => {
+    const existing = await ctx.db
+      .query('permissionGrants')
+      .withIndex('by_agent_scope', (index) =>
+        index.eq('agentId', args.agentId).eq('scope', args.scope),
+      )
+      .filter((query) => query.eq(query.field('revokedAt'), undefined))
+      .first();
+    if (existing) return { added: false };
+    await ctx.db.insert('permissionGrants', {
+      agentId: args.agentId,
+      scope: args.scope,
+      createdAt: Date.now(),
+    });
+    return { added: true };
   },
 });

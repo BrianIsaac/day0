@@ -102,7 +102,9 @@ const SYSTEM_PROMPT = [
   'Provenance discipline: every evidence clause carries source "from manager 1:1 day-1" because v0.0 has no other source.',
   'Conservative defaults: in proposedBoundaries.willDo, prefer concrete narrow actions; in willNotDo, list adjacent roles you must NOT step on.',
   'If the manager left a topic vague (e.g. "figure it out"), capture it under openQuestions instead of inventing a goal.',
-  'List every tool or system the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
+  'List every product or service the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
+  'Return exactly one namedSystems row per product or service. Channels, DMs, pages, files, runbooks, queues, dashboards, tiles, views, sheets and tabs are locations inside a system, never separate systems.',
+  'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
 ].join('\n');
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
@@ -176,6 +178,89 @@ function ensureProvenance(items: EvidenceItem[]): EvidenceItem[] {
   }));
 }
 
+const DOCUMENT_LOCATION = /\b(?:page|runbook|folder|file|queue|documentation|handbook)\b/i;
+const CHANNEL_LOCATION = /(?:^|\s)(?:#[a-z0-9_-]+|dm\b|direct message\b|channel\b)/i;
+const UI_LOCATION = /\b(?:tile|dashboard|view)\b/i;
+
+/**
+ * Canonicalise a model-produced system name without maintaining a provider catalogue.
+ *
+ * Args:
+ *   system: Raw system row from charter synthesis.
+ *
+ * Returns:
+ *   The parent product name, or undefined when the row names only a document location.
+ */
+function canonicalSystemName(system: NamedSystem): string | undefined {
+  const name = system.name.trim().replace(/\s+/g, ' ');
+  if (!name) return undefined;
+  if (DOCUMENT_LOCATION.test(name)) return undefined;
+  const withoutChannel = name
+    .replace(/\s+#.*$/i, '')
+    .replace(/\s+(?:dm|direct message|channel)\b.*$/i, '')
+    .trim();
+  if (
+    withoutChannel &&
+    withoutChannel !== name &&
+    !/^(?:manager|boss|team|public|private)$/i.test(withoutChannel)
+  ) {
+    return withoutChannel;
+  }
+  if (CHANNEL_LOCATION.test(name)) return undefined;
+  if (UI_LOCATION.test(name)) {
+    const prefix = name
+      .split(/\s+/)
+      .slice(0, -1)
+      .filter((token: string, index: number): boolean => index === 0 || /^[A-Z0-9]/.test(token))
+      .join(' ')
+      .trim();
+    return prefix || undefined;
+  }
+  return name;
+}
+
+/**
+ * Collapse channels, DMs, documentation artefacts and UI objects to products.
+ *
+ * Args:
+ *   systems: Raw rows returned by charter synthesis.
+ *
+ * Returns:
+ *   One row per product in first-mentioned order with distinct evidence merged.
+ */
+export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSystem[] {
+  const canonicalRows = systems.flatMap(
+    (system: NamedSystem): Array<{ system: NamedSystem; name: string }> => {
+      const name = canonicalSystemName(system);
+      return name ? [{ system, name }] : [];
+    },
+  );
+  const normalised = new Map<string, NamedSystem>();
+  for (const system of systems) {
+    let name = canonicalSystemName(system);
+    if (!name && CHANNEL_LOCATION.test(system.name)) {
+      name = canonicalRows.find(
+        (row): boolean =>
+          row.system.class === system.class &&
+          new RegExp(`\\b${row.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(
+            system.whereMentioned,
+          ),
+      )?.name;
+    }
+    if (!name) continue;
+    const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const existing = normalised.get(key);
+    if (!existing) {
+      normalised.set(key, { ...system, name });
+      continue;
+    }
+    if (!existing.whereMentioned.includes(system.whereMentioned)) {
+      existing.whereMentioned = `${existing.whereMentioned}\n${system.whereMentioned}`;
+    }
+  }
+  return [...normalised.values()];
+}
+
 function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt: string): Charter {
   return {
     version: args.version,
@@ -186,7 +271,7 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
     shortTermGoals: raw.shortTermGoals,
     proposedBoundaries: raw.proposedBoundaries,
     namedCollaborators: raw.namedCollaborators,
-    namedSystems: raw.namedSystems,
+    namedSystems: normaliseNamedSystems(raw.namedSystems),
     priorityReading: raw.priorityReading,
     adjacentRoles: raw.adjacentRoles,
     approvalChain: {

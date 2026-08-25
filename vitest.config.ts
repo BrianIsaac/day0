@@ -1,6 +1,16 @@
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
+  resolve: {
+    alias: [
+      {
+        find: '@convex',
+        replacement: fileURLToPath(new URL('./convex', import.meta.url)),
+      },
+      { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
+    ],
+  },
   test: {
     passWithNoTests: true,
     projects: [
@@ -12,9 +22,22 @@ export default defineConfig({
         },
       },
       {
+        resolve: {
+          alias: [
+            {
+              find: '@convex',
+              replacement: fileURLToPath(new URL('./convex', import.meta.url)),
+            },
+            { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
+          ],
+        },
         test: {
           name: 'node',
-          include: ['tests/src/**/*.test.ts'],
+          include: [
+            'tests/src/**/*.test.ts',
+            'tests/app/**/*.test.tsx',
+            'tests/scripts/**/*.test.ts',
+          ],
           environment: 'node',
         },
       },

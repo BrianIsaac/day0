@@ -1,5 +1,12 @@
 import { cronJobs } from 'convex/server';
+import type { FunctionReference } from 'convex/server';
 import { internal } from './_generated/api';
+
+const intakeInternal = internal as unknown as {
+  intakeActions: {
+    pollAll: FunctionReference<'action', 'internal', Record<string, never>, unknown>;
+  };
+};
 
 /**
  * Scheduled maintenance the deployment owes itself.
@@ -21,5 +28,15 @@ crons.interval(
 );
 
 crons.interval('sync documentation sources', { minutes: 15 }, internal.docSyncActions.syncAll, {});
+
+// Phase 2 Lane B surface maintenance.
+crons.interval('re-probe connected surfaces', { hours: 1 }, internal.surfaceActions.reprobeAll, {});
+
+crons.interval(
+  'poll connected surfaces for work',
+  { minutes: 5 },
+  intakeInternal.intakeActions.pollAll,
+  {},
+);
 
 export default crons;

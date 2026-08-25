@@ -2,10 +2,12 @@
 
 import { z } from 'zod';
 import { v } from 'convex/values';
+import type { GenericId } from 'convex/values';
+import type { FunctionReference } from 'convex/server';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Doc } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -30,8 +32,14 @@ const orientationSchema = z.object({
   reasoning: z.string(),
   endpoint: z.string().optional(),
   scopeRequested: z.array(z.string()),
-  credentialOwner: z.string().optional(),
-  credentialMethod: z.enum(['api-key', 'bot-token', 'oauth', 'none', 'unknown']),
+  credential: z.object({
+    found: z.enum(['value', 'location', 'none']),
+    label: z.string().optional(),
+    location: z.string().optional(),
+    evidenceRef: z.string().optional(),
+    method: z.enum(['api-key', 'bot-token', 'oauth', 'unknown']),
+    governanceFinding: z.string().optional(),
+  }),
   blastRadius: z.string(),
   costBand: z.enum(['none', 'low', 'medium', 'high']),
   expiresInDays: z.number().int().positive(),
@@ -42,6 +50,47 @@ const orientationSchema = z.object({
 type OrientationDraft = z.infer<typeof orientationSchema>;
 type OrientationPath = OrientationDraft['path'];
 type Evidence = { sourceId: string; ref: string; quote: string; url?: string };
+type CredentialId = GenericId<'credentials'>;
+
+type StoreCredentialArgs = {
+  userId: string;
+  kind: 'value' | 'location' | 'oauth';
+  label: string;
+  plaintext?: string;
+  source: { sourceId: Id<'docSources'>; ref: string } | 'entered';
+  appId?: string;
+};
+
+const credentialInternal = internal as unknown as {
+  credentials: {
+    store: FunctionReference<'action', 'internal', StoreCredentialArgs, CredentialId>;
+  };
+};
+
+export type CredentialMethod = 'api-key' | 'bot-token' | 'oauth' | 'unknown';
+
+export interface CredentialFinding {
+  found: 'value' | 'location' | 'none';
+  label?: string;
+  location?: string;
+  evidenceRef?: string;
+  method: CredentialMethod;
+  governanceFinding?: string;
+  sourceId?: string;
+}
+
+export interface CredentialPage {
+  sourceId: string;
+  ref: string;
+  title: string;
+  markdown: string;
+}
+
+const CREDENTIAL_MARKER = /<credential:\s*([^,>]+),\s*stored>/gi;
+const CREDENTIAL_LOCATION = /\b(?:credential|api key|bot token|configuration token|access token)\b/i;
+const CREDENTIAL_OWNER_OR_LOCATION =
+  /\b(?:administrator|admin|owner|vault|approval|approve|issues?|provides?|hands? over|created? in|generated? in)\b/i;
+const GOVERNANCE_FINDING = 'credential found in a shared page - rotate into a vault';
 
 /** URLs the documentation attributes to one system, grouped by what they document. */
 export interface DocumentedEndpoints {
@@ -63,6 +112,8 @@ const orientationAgent = makeAgent(
     'You classify how a workplace system can be reached using only supplied team documentation.',
     'Never invent an endpoint, credential, tool, owner or approval.',
     'Prefer MCP when the evidence names MCP, documented-api when it names an HTTP API, browser-driven only when it names a web UI, and escalate otherwise.',
+    'Credential values are already replaced with <credential: label, stored>; report that marker as found=value without copying or inventing a value.',
+    'When the docs name a vault, administrator or OAuth installation procedure instead, report found=location and summarise only that documented location or procedure.',
     'The caller verifies every proposed path against literal evidence or the public MCP registry.',
   ].join('\n'),
 );
@@ -123,6 +174,123 @@ export function relevantSystemText(markdown: string, system: string): string {
       return tableLines.filter((line: string): boolean => line.toLowerCase().includes(needle));
     })
     .join('\n\n');
+}
+
+/**
+ * Infer the access method from redacted documentation text.
+ *
+ * Args:
+ *   text: System-scoped documentation and any credential label.
+ *
+ * Returns:
+ *   The safest method supported by literal wording in the documentation.
+ */
+function credentialMethodFor(text: string): CredentialMethod {
+  if (/\boauth\b|\bconfiguration token\b|\binstall(?:ation)?\b/i.test(text)) return 'oauth';
+  if (/\bbot token\b|\bxox[bpa]-\b/i.test(text)) return 'bot-token';
+  if (/\bapi key\b|\bservice token\b|\bpersonal key\b|\baccess token\b/i.test(text)) {
+    return 'api-key';
+  }
+  return 'unknown';
+}
+
+/**
+ * Summarise an OAuth landing procedure without adding ungrounded steps.
+ *
+ * Args:
+ *   text: Documentation scoped to the named system.
+ *
+ * Returns:
+ *   A compact procedure assembled from the documentation's own relevant lines.
+ */
+function oauthProcedure(text: string): string {
+  const lines = text
+    .split('\n')
+    .map((line: string): string => line.replace(/^\s*(?:\d+\.|[-*])\s*/, '').trim())
+    .filter(
+      (line: string): boolean =>
+        line.length > 0 &&
+        /\b(?:configuration token|manifest|install|oauth|bot token|administrator)\b/i.test(line),
+    );
+  return [...new Set(lines)].join(' ').slice(0, 1_000);
+}
+
+/**
+ * Extract credential metadata from pages whose values were redacted at sync.
+ *
+ * A stored marker is the only evidence of a value. OAuth and other location
+ * findings carry only the documented procedure or location. No return shape
+ * has a field capable of carrying plaintext.
+ *
+ * Args:
+ *   pages: Redacted pages already matched to the named system.
+ *   system: Manager-named system.
+ *
+ * Returns:
+ *   Structured credential evidence safe to persist in the request artefact.
+ */
+export function extractCredentialFinding(
+  pages: readonly CredentialPage[],
+  system: string,
+): CredentialFinding {
+  for (const page of pages) {
+    const scoped = relevantSystemText(page.markdown, system);
+    for (const match of scoped.matchAll(CREDENTIAL_MARKER)) {
+      const label = match[1]?.trim();
+      if (!label) continue;
+      const labelMethod = credentialMethodFor(label);
+      return {
+        found: 'value',
+        label,
+        evidenceRef: page.ref,
+        method: labelMethod === 'unknown' ? credentialMethodFor(scoped) : labelMethod,
+        governanceFinding: GOVERNANCE_FINDING,
+        sourceId: page.sourceId,
+      };
+    }
+  }
+
+  for (const page of pages) {
+    const scoped = relevantSystemText(page.markdown, system);
+    if (/\boauth\b|\bconfiguration token\b/i.test(scoped)) {
+      const location = oauthProcedure(scoped);
+      if (location) {
+        return {
+          found: 'location',
+          label: `${system} OAuth access`,
+          location,
+          evidenceRef: page.ref,
+          method: 'oauth',
+          sourceId: page.sourceId,
+        };
+      }
+    }
+  }
+
+  for (const page of pages) {
+    const scoped = relevantSystemText(page.markdown, system);
+    const location = scoped
+      .split('\n')
+      .map((line: string): string => line.trim())
+      .find(
+        (line: string): boolean =>
+          CREDENTIAL_LOCATION.test(line) &&
+          CREDENTIAL_OWNER_OR_LOCATION.test(line) &&
+          !NO_SURFACE_PATTERN.test(line),
+      );
+    if (location) {
+      return {
+        found: 'location',
+        label: `${system} access`,
+        location: location.slice(0, 500),
+        evidenceRef: page.ref,
+        method: credentialMethodFor(location),
+        sourceId: page.sourceId,
+      };
+    }
+  }
+
+  return { found: 'none', method: 'unknown' };
 }
 
 /**
@@ -329,7 +497,7 @@ function fallbackDraft(surface: Doc<'surfaces'>, relevantText: string): Orientat
     confidence: 0.6,
     reasoning: 'Classified conservatively from literal linked-documentation evidence.',
     scopeRequested: [`${surface.slug}:read`, `${surface.slug}:write`],
-    credentialMethod: 'unknown',
+    credential: { found: 'none', method: 'unknown' },
     blastRadius: 'One named work system for this agent.',
     costBand: 'none',
     expiresInDays: 30,
@@ -369,120 +537,214 @@ async function draftOrientation(
 }
 
 /**
- * Orient every declared system from owner-linked documentation.
+ * Validate a model-produced location finding against the pages it cites.
  *
- * Per declared surface: pages naming the system are the evidence; a denial
- * with no documented endpoint is `absent`; otherwise the model drafts the
- * connect request and `choosePath` admits a path from attributed URLs
- * alone. The public MCP Registry is consulted only when the docs mention
- * MCP without an endpoint, and its answer is a suggestion on the card for
- * IT to confirm, never the surface endpoint.
+ * Args:
+ *   draft: Model-produced credential metadata.
+ *   pages: Pages matched to this surface.
+ *
+ * Returns:
+ *   A safe location finding, or `none` when the claim is not evidence-backed.
+ */
+function validatedDraftCredential(
+  draft: OrientationDraft['credential'],
+  pages: readonly CredentialPage[],
+): CredentialFinding {
+  if (
+    draft.found !== 'location' ||
+    !draft.location?.trim() ||
+    !draft.evidenceRef ||
+    !pages.some((page: CredentialPage): boolean => page.ref === draft.evidenceRef)
+  ) {
+    return { found: 'none', method: 'unknown' };
+  }
+  const page = pages.find(
+    (candidate: CredentialPage): boolean => candidate.ref === draft.evidenceRef,
+  );
+  return {
+    found: 'location',
+    label: draft.label?.trim() || undefined,
+    location: draft.location.trim().slice(0, 500),
+    evidenceRef: draft.evidenceRef,
+    method: draft.method,
+    sourceId: page?.sourceId,
+  };
+}
+
+/**
+ * Orient one declared system from owner-linked documentation.
+ *
+ * Each scheduled invocation owns one surface, so a slow model or provider
+ * call cannot fail charter approval or prevent the other systems orienting.
+ * Only surface ids cross the scheduler boundary.
+ */
+export const orientOne = internalAction({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ outcome: 'proposed' | 'absent' | 'skipped'; surfaceId: Id<'surfaces'> }> => {
+    const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, args);
+    if (!context || context.surface.verdict !== 'declared') {
+      return { outcome: 'skipped', surfaceId: args.surfaceId };
+    }
+    const surface = context.surface;
+    const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
+      agentId: surface.agentId,
+    });
+    const matches = pages.filter((page: Doc<'docPages'>): boolean =>
+      page.markdown.toLowerCase().includes(surface.displayName.toLowerCase()),
+    );
+    const evidence: Evidence[] = matches.slice(0, 8).map(
+      (page: Doc<'docPages'>): Evidence => ({
+        sourceId: String(page.sourceId),
+        ref: page.ref,
+        quote: evidenceLine(page.markdown, surface.displayName) || page.title,
+        url: page.url,
+      }),
+    );
+    const relevantText = matches
+      .map((page: Doc<'docPages'>): string =>
+        relevantSystemText(page.markdown, surface.displayName),
+      )
+      .join('\n\n');
+    const endpoints = documentedEndpoints(
+      attributedUrls(relevantText, surface.displayName, surface.slug),
+    );
+    const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
+      explicitlyDeniesSurface(page.markdown, surface.displayName),
+    );
+    if (matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api)) {
+      const recorded = await ctx.runMutation(internal.surfaces.markAbsent, {
+        surfaceId: surface._id,
+        searched: [surface.displayName, surface.class],
+        whereFound: evidence,
+      });
+      return { outcome: recorded ? 'absent' : 'skipped', surfaceId: surface._id };
+    }
+
+    const draft = await draftOrientation(surface, relevantText);
+    const { path, endpoint } = choosePath(draft.path, endpoints);
+    const mentionsMcp = /\bmcp\b/i.test(relevantText);
+    const registrySuggestion =
+      path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
+        ? await discoverRegistryEndpoint(surface.displayName)
+        : undefined;
+    const credentialPages: CredentialPage[] = matches.map(
+      (page: Doc<'docPages'>): CredentialPage => ({
+        sourceId: String(page.sourceId),
+        ref: page.ref,
+        title: page.title,
+        markdown: page.markdown,
+      }),
+    );
+    const extractedCredential = extractCredentialFinding(
+      credentialPages,
+      surface.displayName,
+    );
+    const credential =
+      extractedCredential.found === 'none'
+        ? validatedDraftCredential(draft.credential, credentialPages)
+        : extractedCredential;
+    const openQuestions = [...draft.openQuestions];
+    if (registrySuggestion) {
+      openQuestions.push(
+        `Confirm the MCP endpoint with IT; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
+      );
+    } else if (!endpoint && openQuestions.length === 0) {
+      openQuestions.push('Confirm the approved connection endpoint.');
+    }
+
+    let credentialId: CredentialId | undefined;
+    if (
+      credential.found === 'value' &&
+      credential.label &&
+      credential.evidenceRef &&
+      credential.sourceId &&
+      context.agent.userId
+    ) {
+      try {
+        credentialId = await ctx.runAction(credentialInternal.credentials.store, {
+          userId: context.agent.userId,
+          kind: 'value',
+          label: credential.label,
+          source: {
+            sourceId: credential.sourceId as Id<'docSources'>,
+            ref: credential.evidenceRef,
+          },
+        });
+      } catch {
+        openQuestions.push('Re-sync the source so the stored credential marker can be resolved.');
+      }
+    }
+    const { sourceId: _sourceId, ...requestCredential } = credential;
+    void _sourceId;
+    const request = {
+      target: {
+        system: surface.displayName,
+        class: surface.class,
+        chosenPath: path,
+        fallbackPath: draft.fallbackPath,
+        confidence: endpoint ? draft.confidence : Math.min(draft.confidence, 0.65),
+        reasoning: draft.reasoning,
+      },
+      evidence,
+      scopeRequested:
+        draft.scopeRequested.length > 0
+          ? draft.scopeRequested
+          : [`${surface.slug}:read`, `${surface.slug}:write`],
+      credential: requestCredential,
+      registrySuggestion: registrySuggestion
+        ? {
+            endpoint: registrySuggestion,
+            note: 'Public MCP Registry match, not linked evidence. IT enters the endpoint after confirming it.',
+          }
+        : undefined,
+      blastRadius: draft.blastRadius,
+      costBand: draft.costBand,
+      expiresInDays: draft.expiresInDays,
+      rollback: draft.rollback,
+      openQuestions,
+    };
+    const recorded = await ctx.runMutation(internal.surfaces.propose, {
+      surfaceId: surface._id,
+      request,
+      whereFound: evidence,
+      path,
+      fallbackPath: draft.fallbackPath,
+      endpoint,
+      credentialId,
+      credentialLocation: credential.found === 'location' ? credential.location : undefined,
+      expiresInDays: draft.expiresInDays,
+    });
+    return { outcome: recorded ? 'proposed' : 'skipped', surfaceId: surface._id };
+  },
+});
+
+/**
+ * Schedule one isolated orientation action per declared surface.
+ *
+ * Args:
+ *   agentId: Agent whose declared systems should be oriented.
+ *
+ * Returns:
+ *   Number of per-surface actions placed on the scheduler.
  */
 export const run = internalAction({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<{ proposed: number; absent: number }> => {
+  handler: async (ctx, args): Promise<{ scheduled: number }> => {
     const surfaces: Doc<'surfaces'>[] = await ctx.runQuery(
       internal.orientationData.surfacesForAgent,
       args,
     );
-    const pages = await ctx.runQuery(internal.orientationData.pagesForAgent, args);
-    let proposed = 0;
-    let absent = 0;
-    for (const surface of surfaces.filter(
-      (row: Doc<'surfaces'>): boolean => row.verdict === 'declared',
-    )) {
-      const matches = pages.filter((page): boolean =>
-        page.markdown.toLowerCase().includes(surface.displayName.toLowerCase()),
-      );
-      const evidence: Evidence[] = matches.slice(0, 8).map(
-        (page): Evidence => ({
-          sourceId: String(page.sourceId),
-          ref: page.ref,
-          quote: evidenceLine(page.markdown, surface.displayName) || page.title,
-          url: page.url,
-        }),
-      );
-      const relevantText = matches
-        .map((page): string => relevantSystemText(page.markdown, surface.displayName))
-        .join('\n\n');
-      const endpoints = documentedEndpoints(
-        attributedUrls(relevantText, surface.displayName, surface.slug),
-      );
-      const explicitNone = matches.some((page): boolean =>
-        explicitlyDeniesSurface(page.markdown, surface.displayName),
-      );
-      if (matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api)) {
-        await ctx.runMutation(internal.surfaces.markAbsent, {
-          surfaceId: surface._id,
-          searched: [surface.displayName, surface.class],
-          whereFound: evidence,
-        });
-        absent += 1;
-        continue;
-      }
-
-      const draft = await draftOrientation(surface, relevantText);
-      const { path, endpoint } = choosePath(draft.path, endpoints);
-      const mentionsMcp = /\bmcp\b/i.test(relevantText);
-      const registrySuggestion =
-        path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
-          ? await discoverRegistryEndpoint(surface.displayName)
-          : undefined;
-      const credentialRef = /\b[A-Z][A-Z0-9_]*(?:TOKEN|KEY)\b/.exec(relevantText)?.[0];
-      const openQuestions = [...draft.openQuestions];
-      if (registrySuggestion) {
-        openQuestions.push(
-          `Confirm the MCP endpoint with IT; the public MCP Registry suggests ${registrySuggestion}, which is not linked evidence.`,
-        );
-      } else if (!endpoint && openQuestions.length === 0) {
-        openQuestions.push('Confirm the approved connection endpoint.');
-      }
-      const request = {
-        target: {
-          system: surface.displayName,
-          class: surface.class,
-          chosenPath: path,
-          fallbackPath: draft.fallbackPath,
-          confidence: endpoint ? draft.confidence : Math.min(draft.confidence, 0.65),
-          reasoning: draft.reasoning,
-        },
-        evidence,
-        scopeRequested:
-          draft.scopeRequested.length > 0
-            ? draft.scopeRequested
-            : [`${surface.slug}:read`, `${surface.slug}:write`],
-        credential: {
-          owner: draft.credentialOwner,
-          method: credentialRef?.includes('BOT')
-            ? 'bot-token'
-            : credentialRef
-              ? 'api-key'
-              : draft.credentialMethod,
-          envName: credentialRef || '',
-        },
-        registrySuggestion: registrySuggestion
-          ? {
-              endpoint: registrySuggestion,
-              note: 'Public MCP Registry match, not linked evidence. IT enters the endpoint after confirming it.',
-            }
-          : undefined,
-        blastRadius: draft.blastRadius,
-        costBand: draft.costBand,
-        expiresInDays: draft.expiresInDays,
-        rollback: draft.rollback,
-        openQuestions,
-      };
-      await ctx.runMutation(internal.surfaces.propose, {
+    const declared = surfaces.filter(
+      (surface: Doc<'surfaces'>): boolean => surface.verdict === 'declared',
+    );
+    for (const surface of declared) {
+      await ctx.scheduler.runAfter(0, internal.orientationActions.orientOne, {
         surfaceId: surface._id,
-        request,
-        whereFound: evidence,
-        path,
-        fallbackPath: draft.fallbackPath,
-        endpoint,
-        credentialRef,
       });
-      proposed += 1;
     }
-    return { proposed, absent };
+    return { scheduled: declared.length };
   },
 });

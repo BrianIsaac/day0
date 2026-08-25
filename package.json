@@ -30,7 +30,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "probe:model": "tsx --env-file-if-exists=.env.local scripts/probe-model-endpoint.ts",
-    "probe:mcp": "tsx --env-file-if-exists=.env.local scripts/probe-mcp.ts"
+    "probe:mcp": "tsx --env-file-if-exists=.env.local scripts/probe-mcp.ts",
+    "probe:surface": "tsx --env-file-if-exists=.env.local scripts/probe-surface.ts"
   },
   "prettier": {
     "semi": true,

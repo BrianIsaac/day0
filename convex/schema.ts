@@ -111,7 +111,21 @@ export default defineSchema({
     request: v.optional(v.any()),
     managerApprovedAt: v.optional(v.number()),
     itApprovedAt: v.optional(v.number()),
+    /** Phase 2 Lane B connection evidence. Credential contents remain in the
+     * lane-A credentials table and are decrypted only inside Node actions. */
+    credentialId: v.optional(v.id('credentials')),
+    credentialLocation: v.optional(v.string()),
+    managerDmChannelId: v.optional(v.string()),
     toolAllowlist: v.optional(v.array(v.string())),
+    toolArguments: v.optional(
+      v.array(v.object({ tool: v.string(), arguments: v.array(v.string()) })),
+    ),
+    providerIdentityId: v.optional(v.string()),
+    providerWorkspaceId: v.optional(v.string()),
+    probeGeneration: v.optional(v.number()),
+    waterfallPosition: v.optional(v.number()),
+    intakeSkipReason: v.optional(v.string()),
+    lastPolledAt: v.optional(v.number()),
     credentialRef: v.optional(v.string()),
     credentialLanded: v.boolean(),
     lastVerifiedAt: v.optional(v.number()),

@@ -3,7 +3,7 @@ import { action, internalMutation, mutation, query } from './_generated/server';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
 import { assertRealMode } from '../src/lib/surface-mode';
-import type { Doc } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -53,15 +53,19 @@ export const seedFromCharter = internalMutation({
       v.object({ name: v.string(), class: v.string(), whereMentioned: v.string() }),
     ),
   },
-  handler: async (ctx, args): Promise<void> => {
+  handler: async (ctx, args): Promise<Id<'surfaces'>[]> => {
+    const surfaceIds: Id<'surfaces'>[] = [];
     for (const system of args.namedSystems) {
       const slug = surfaceSlug(system.name);
       const existing = await ctx.db
         .query('surfaces')
         .withIndex('by_agent_slug', (index) => index.eq('agentId', args.agentId).eq('slug', slug))
         .unique();
-      if (existing) continue;
-      await ctx.db.insert('surfaces', {
+      if (existing) {
+        surfaceIds.push(existing._id);
+        continue;
+      }
+      const surfaceId = await ctx.db.insert('surfaces', {
         agentId: args.agentId,
         slug,
         displayName: system.name,
@@ -71,7 +75,9 @@ export const seedFromCharter = internalMutation({
         credentialLanded: false,
         createdAt: Date.now(),
       });
+      surfaceIds.push(surfaceId);
     }
+    return surfaceIds;
   },
 });
 
@@ -84,11 +90,15 @@ export const propose = internalMutation({
     path: v.string(),
     fallbackPath: v.string(),
     endpoint: v.optional(v.string()),
-    credentialRef: v.optional(v.string()),
+    credentialId: v.optional(v.id('credentials')),
+    credentialLocation: v.optional(v.string()),
+    expiresInDays: v.number(),
   },
-  handler: async (ctx, args): Promise<void> => {
+  handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
+    if (surface.verdict !== 'declared') return false;
+    const now = Date.now();
     await ctx.db.patch(args.surfaceId, {
       verdict: 'proposed',
       request: args.request,
@@ -96,21 +106,25 @@ export const propose = internalMutation({
       path: args.path,
       fallbackPath: args.fallbackPath,
       endpoint: args.endpoint,
-      credentialRef: args.credentialRef,
+      credentialId: args.credentialId,
+      credentialLocation: args.credentialLocation,
+      credentialRef: undefined,
+      expiresAt: now + args.expiresInDays * 24 * 60 * 60 * 1_000,
       reason: undefined,
     });
     await ctx.db.insert('events', {
       agentId: surface.agentId,
       type: 'surface.proposed',
       payload: { surfaceId: surface._id, path: args.path },
-      createdAt: Date.now(),
+      createdAt: now,
     });
     await ctx.db.insert('events', {
       agentId: surface.agentId,
       type: 'surface.oriented',
       payload: { surfaceId: surface._id, verdict: 'proposed' },
-      createdAt: Date.now(),
+      createdAt: now,
     });
+    return true;
   },
 });
 
@@ -121,9 +135,10 @@ export const markAbsent = internalMutation({
     searched: v.array(v.string()),
     whereFound: v.array(v.any()),
   },
-  handler: async (ctx, args): Promise<void> => {
+  handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
+    if (surface.verdict !== 'declared') return false;
     await ctx.db.patch(args.surfaceId, {
       verdict: 'absent',
       whereFound: args.whereFound,
@@ -135,6 +150,7 @@ export const markAbsent = internalMutation({
       payload: { surfaceId: surface._id, verdict: 'absent', searched: args.searched },
       createdAt: Date.now(),
     });
+    return true;
   },
 });
 
@@ -155,6 +171,173 @@ export const setStatus = internalMutation({
       reason: args.reason,
       credentialLanded: args.credentialLanded ?? surface.credentialLanded,
       lastVerifiedAt: args.lastVerifiedAt ?? surface.lastVerifiedAt,
+    });
+  },
+});
+
+/** Attach an encrypted credential reference without exposing its value. */
+export const attachCredential = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    credentialId: v.id('credentials'),
+    credentialLocation: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    const approved = surface.managerApprovedAt !== undefined && surface.itApprovedAt !== undefined;
+    await ctx.db.patch(surface._id, {
+      credentialId: args.credentialId,
+      credentialLocation: args.credentialLocation,
+      credentialRef: undefined,
+      credentialLanded: false,
+      verdict:
+        approved && (surface.verdict === 'ungranted' || surface.verdict === 'listed-dead')
+          ? 'approved'
+          : surface.verdict,
+      reason: approved ? undefined : surface.reason,
+    });
+  },
+});
+
+/** Reserve the next probe generation for an approved connection candidate. */
+export const beginProbe = internalMutation({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (
+      !surface ||
+      !['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)
+    ) {
+      return null;
+    }
+    const generation = (surface.probeGeneration ?? 0) + 1;
+    await ctx.db.patch(surface._id, { probeGeneration: generation });
+    return { surface: { ...surface, probeGeneration: generation }, generation };
+  },
+});
+
+/** Persist a safe probe failure while retaining no provider request material. */
+export const recordProbeFailure = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    generation: v.number(),
+    verdict: v.union(v.literal('ungranted'), v.literal('listed-dead')),
+    reason: v.string(),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    if (surface.probeGeneration !== args.generation) return false;
+    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+      return false;
+    }
+    await ctx.db.patch(surface._id, {
+      verdict: args.verdict,
+      reason: args.reason,
+      credentialLanded: false,
+    });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.probe-failed',
+      payload: { surfaceId: surface._id, verdict: args.verdict, reason: args.reason },
+      createdAt: Date.now(),
+    });
+    return true;
+  },
+});
+
+/** Persist one successful provider probe and its discovered safe metadata. */
+export const recordConnected = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    generation: v.number(),
+    toolAllowlist: v.array(v.string()),
+    toolArguments: v.array(v.object({ tool: v.string(), arguments: v.array(v.string()) })),
+    managerDmChannelId: v.optional(v.string()),
+    providerIdentityId: v.optional(v.string()),
+    providerWorkspaceId: v.optional(v.string()),
+    verifiedAt: v.number(),
+    expiresAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    if (surface.probeGeneration !== args.generation) return false;
+    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+      return false;
+    }
+    await ctx.db.patch(surface._id, {
+      verdict: 'connected',
+      reason: undefined,
+      credentialLanded: true,
+      lastVerifiedAt: args.verifiedAt,
+      toolAllowlist: args.toolAllowlist,
+      toolArguments: args.toolArguments,
+      managerDmChannelId: args.managerDmChannelId,
+      providerIdentityId: args.providerIdentityId,
+      providerWorkspaceId: args.providerWorkspaceId,
+      expiresAt: args.expiresAt ?? surface.expiresAt,
+    });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.connected',
+      payload: { surfaceId: surface._id },
+      createdAt: args.verifiedAt,
+    });
+    return true;
+  },
+});
+
+/** Demote an expired connected surface until its approval is renewed. */
+export const recordExpired = internalMutation({
+  args: { surfaceId: v.id('surfaces'), now: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (
+      !surface ||
+      surface.verdict !== 'connected' ||
+      surface.expiresAt === undefined ||
+      surface.expiresAt > args.now
+    ) {
+      return;
+    }
+    await ctx.db.patch(surface._id, {
+      verdict: 'approved',
+      reason: 'expired',
+      credentialLanded: false,
+      lastVerifiedAt: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.expired',
+      payload: { surfaceId: surface._id },
+      createdAt: args.now,
+    });
+  },
+});
+
+/** Record this poll's waterfall position and visible skip outcome. */
+export const recordIntake = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    waterfallPosition: v.number(),
+    skipReason: v.optional(v.string()),
+    polledAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) return;
+    await ctx.db.patch(surface._id, {
+      waterfallPosition: args.waterfallPosition,
+      intakeSkipReason: args.skipReason,
+      lastPolledAt:
+        args.polledAt === undefined
+          ? surface.lastPolledAt
+          : Math.max(surface.lastPolledAt ?? 0, args.polledAt),
     });
   },
 });
@@ -190,6 +373,9 @@ export const approve = mutation({
         payload: { surfaceId: surface._id },
         createdAt: now,
       });
+      await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+        surfaceId: surface._id,
+      });
     }
   },
 });
@@ -222,9 +408,19 @@ export const reject = mutation({
       path: undefined,
       fallbackPath: undefined,
       credentialRef: undefined,
+      credentialId: undefined,
+      credentialLocation: undefined,
+      managerDmChannelId: undefined,
       toolAllowlist: undefined,
+      toolArguments: undefined,
+      providerIdentityId: undefined,
+      providerWorkspaceId: undefined,
+      waterfallPosition: undefined,
+      intakeSkipReason: undefined,
+      lastPolledAt: undefined,
       credentialLanded: false,
       lastVerifiedAt: undefined,
+      expiresAt: undefined,
     });
     await ctx.db.insert('events', {
       agentId: surface.agentId,
@@ -244,7 +440,7 @@ export const reject = mutation({
  */
 export const reorient = action({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<{ proposed: number; absent: number }> => {
+  handler: async (ctx, args): Promise<{ scheduled: number }> => {
     await assertOwnsAgentAction(ctx, args.agentId);
     assertRealMode('Surface orientation');
     return await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });

@@ -4,9 +4,11 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { convexModules } from './modules';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
   vi.useRealTimers();
+  restoreSurfaceMode();
 });
 
 /**
@@ -96,5 +98,95 @@ describe('agent documentation selection', (): void => {
     await expect(readers(existing)).resolves.toEqual([agentId]);
     await expect(readers(later)).resolves.toEqual([agentId]);
     await expect(readers(excluded)).resolves.toEqual([]);
+  });
+});
+
+describe('agent surface grants', (): void => {
+  it('seeds provider grants in mock mode but only baseline grants in real mode', async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('mock');
+    const mockHarness = convexTest(schema, convexModules);
+    const mockAgent = await mockHarness.withIdentity({ subject: 'mock-owner' }).mutation(
+      api.agents.deploy,
+      { bossEmail: 'mock@day0.local' },
+    );
+    const mockScopes = await mockHarness.run(
+      async (ctx): Promise<string[]> =>
+        (
+          await ctx.db
+            .query('permissionGrants')
+            .withIndex('by_agent_scope', (index) => index.eq('agentId', mockAgent))
+            .collect()
+        )
+          .map((grant): string => grant.scope)
+          .sort(),
+    );
+    expect(mockScopes).toEqual([
+      'boss:message',
+      'docs:read',
+      'social:read',
+      'spreadsheet:read',
+      'ticket:read',
+    ]);
+
+    useSurfaceMode('real');
+    const realHarness = convexTest(schema, convexModules);
+    const realAgent = await realHarness.withIdentity({ subject: 'real-owner' }).mutation(
+      api.agents.deploy,
+      { bossEmail: 'real@day0.local' },
+    );
+    const realScopes = await realHarness.run(
+      async (ctx): Promise<string[]> =>
+        (
+          await ctx.db
+            .query('permissionGrants')
+            .withIndex('by_agent_scope', (index) => index.eq('agentId', realAgent))
+            .collect()
+        )
+          .map((grant): string => grant.scope)
+          .sort(),
+    );
+    expect(realScopes).toEqual(['boss:message', 'docs:read']);
+  });
+
+  it('grants an active scope idempotently and replaces a revoked grant', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'grant test',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await harness.run(
+      async (ctx): Promise<void> => {
+        await ctx.db.insert('permissionGrants', {
+          agentId,
+          scope: 'linear:read',
+          createdAt: 1,
+          revokedAt: 2,
+        });
+      },
+    );
+    await expect(
+      harness.mutation(internal.agents.grantScope, { agentId, scope: 'linear:read' }),
+    ).resolves.toEqual({ added: true });
+    await expect(
+      harness.mutation(internal.agents.grantScope, { agentId, scope: 'linear:read' }),
+    ).resolves.toEqual({ added: false });
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (index) =>
+            index.eq('agentId', agentId).eq('scope', 'linear:read'),
+          )
+          .collect(),
+    );
+    expect(grants).toHaveLength(2);
+    expect(grants.filter((grant): boolean => grant.revokedAt === undefined)).toHaveLength(1);
   });
 });
