@@ -1,4 +1,4 @@
-"use node";
+'use node';
 
 import { v } from 'convex/values';
 import { action, type ActionCtx } from './_generated/server';
@@ -11,16 +11,11 @@ import {
 import { draftExecutionPlan } from '../src/work/plan';
 import { runSkill } from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
-import type {
-  MockAction,
-  MockSurfaceSnapshot,
-  WorkCandidate,
-  WorkSourceCategory,
-} from '../src/work/types';
+import type { WorkCandidate, WorkSourceCategory } from '../src/work/types';
 import type { Doc, Id } from './_generated/dataModel';
-import type { MockWriteResult } from './mock';
 import { asAgentId } from '../src/lib/ids';
-import { actionIdempotencyKey } from '../src/work/idempotency';
+import { applySurfaceActions, readSurfaceSnapshot } from '../src/surfaces/registry';
+import type { AppliedAction } from '../src/surfaces/types';
 
 /**
  * Node actions for the work loop — Layer-2 evaluation, Layer-3 plan
@@ -75,7 +70,12 @@ function buildLookups(args: {
     findMatchingSkill: async (candidate, charter) => {
       void charter;
       const tokenise = (s: string) =>
-        new Set(s.toLowerCase().split(/\W+/).filter((t) => t.length >= 4));
+        new Set(
+          s
+            .toLowerCase()
+            .split(/\W+/)
+            .filter((t) => t.length >= 4),
+        );
       const candidateTokens = tokenise(`${candidate.title} ${candidate.contentSummary}`);
       const sourceTokens = candidate.sourceSystem.toLowerCase().split(/\W+/).filter(Boolean);
       let best: SimpleSkillRow | null = null;
@@ -186,10 +186,7 @@ export const evaluateWorkItem = action({
 
 export const draftPlan = action({
   args: { workItemId: v.id('workItems') },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ ok: boolean; reason?: string }> => {
+  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
     const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, {
       workItemId: args.workItemId,
     });
@@ -251,7 +248,12 @@ export const executeApprovedPlan = action({
     // the executor picks the matched skill rather than blindly falling
     // back to skills[0]. Source-system tokens count 4× content tokens.
     const tokenise = (s: string): Set<string> =>
-      new Set(s.toLowerCase().split(/\W+/).filter((t) => t.length >= 4));
+      new Set(
+        s
+          .toLowerCase()
+          .split(/\W+/)
+          .filter((t) => t.length >= 4),
+      );
     const candidateTokens = tokenise(`${candidate.title} ${candidate.contentSummary}`);
     const sourceTokens = candidate.sourceSystem.toLowerCase().split(/\W+/).filter(Boolean);
     let pickedSkill: Doc<'skills'> | undefined;
@@ -283,32 +285,36 @@ export const executeApprovedPlan = action({
     });
     if (!claim.claimed) return { ok: false, reason: claim.reason };
     try {
-      const mockEnv = await loadMockEnvSnapshot(ctx, agentId);
+      const mockEnv = await readSurfaceSnapshot(ctx, agentId, 'mock', []);
       const output = await runSkill({
-        skill: { name: pickedSkill.name, description: pickedSkill.description, body: pickedSkill.body },
+        skill: {
+          name: pickedSkill.name,
+          description: pickedSkill.description,
+          body: pickedSkill.body,
+        },
         plan,
         candidate,
         charter,
         mockEnv,
       });
-      const applied = await applyMockActions(ctx, {
-        agentId,
-        workItemId: args.workItemId,
-        runId: claim.runId,
-        actions: output.actions ?? [],
-      });
+      const applied = await applySurfaceActions(
+        ctx,
+        'mock',
+        [],
+        {
+          agentId,
+          workItemId: args.workItemId,
+          runId: claim.runId,
+        },
+        output.actions ?? [],
+      );
       // A run completes only when every action it emitted changed the work
       // environment. "At least one applied" is not enough: the skills are told
       // to DM the manager alongside the primary mutation, so a failed primary
       // action plus a delivered "I did it" DM would report the work as done
       // when only the claim about it landed.
-      const failures = applied.filter((a) => !a.ok);
-      if (applied.length === 0 || failures.length > 0) {
-        const reason =
-          applied.length === 0
-            ? 'skill emitted no actions, so nothing in the work environment changed'
-            : `${failures.length} of ${applied.length} actions did not change the work environment: ` +
-              failures.map((f) => `${f.tool} (${f.reason})`).join('; ');
+      const reason = completionFailure(applied);
+      if (reason) {
         await ctx.runMutation(internal.work.setFailed, {
           workItemId: args.workItemId,
           reason,
@@ -332,255 +338,27 @@ export const executeApprovedPlan = action({
   },
 });
 
-// ---------- Mock environment helpers ----------
-
-async function loadMockEnvSnapshot(
-  ctx: ActionCtx,
-  agentId: Id<'agents'>,
-): Promise<MockSurfaceSnapshot> {
-  const docs: Doc<'mockDocs'>[] = await ctx.runQuery(api.mock.listDocs, { agentId });
-  const sheets: Doc<'mockSpreadsheets'>[] = await ctx.runQuery(api.mock.listSpreadsheets, { agentId });
-  const channels: Doc<'mockSlackChannels'>[] = await ctx.runQuery(api.mock.listChannels, { agentId });
-  const tweets: Doc<'mockTweets'>[] = await ctx.runQuery(api.mock.listTweets, { agentId });
-  const tickets: Doc<'mockTickets'>[] = await ctx.runQuery(api.mock.listTickets, { agentId });
-
-  const spreadsheetsHydrated = await Promise.all(
-    sheets.map(async (s) => {
-      const detail = await ctx.runQuery(api.mock.getSpreadsheet, { agentId, slug: s.slug });
-      const rows = (detail?.rows ?? []) as Doc<'mockSpreadsheetRows'>[];
-      return {
-        slug: s.slug,
-        title: s.title,
-        tabs: s.tabs,
-        rows: rows.map((r) => ({
-          tabName: r.tabName,
-          cells: r.cells as Record<string, string>,
-        })),
-      };
-    }),
-  );
-
-  const channelsHydrated = await Promise.all(
-    channels.map(async (c) => {
-      const messages = (await ctx.runQuery(api.mock.listMessages, {
-        agentId,
-        channelSlug: c.slug,
-      })) as Doc<'mockSlackMessages'>[];
-      return {
-        slug: c.slug,
-        displayName: c.displayName,
-        kind: c.kind,
-        recentMessages: messages.slice(-12).map((m) => ({
-          sender: m.sender,
-          body: m.body,
-          threadKey: m.threadKey,
-        })),
-      };
-    }),
-  );
-
-  return {
-    howToGuides: docs
-      .filter((d) => d.category === 'how-to-guide')
-      .map((d) => ({ slug: d.slug, title: d.title, body: d.body })),
-    teamDocs: docs
-      .filter((d) => d.category === 'team-doc')
-      .map((d) => ({ slug: d.slug, title: d.title, body: d.body })),
-    spreadsheets: spreadsheetsHydrated,
-    slackChannels: channelsHydrated,
-    tweets: tweets.map((t) => ({
-      slug: t.slug,
-      author: t.author,
-      handle: t.handle,
-      body: t.body,
-    })),
-    tickets: tickets.map((t) => ({
-      slug: t.slug,
-      title: t.title,
-      status: t.status,
-      body: t.body,
-    })),
-  };
-}
-
-interface AppliedAction {
-  tool: string;
-  ok: boolean;
-  /**
-   * What this action changed, read off the write that landed rather than off
-   * the skill's account of it. The draft is written in the same model turn
-   * that emits the actions, so everything it says about the work is a
-   * prediction; this is the record.
-   */
-  effect?: string;
-  reason?: string;
-  /** What a real connector would send as its idempotency key for this action. */
-  idempotencyKey: string;
-}
-
-/** Keeps one ledger line readable in a card without losing what it identifies. */
-function clip(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
-
 /**
- * Interpret the executor's actions against the mock environment. An action
- * counts as applied only when its adapter reports that the environment
- * changed — a write against a slug the environment does not have resolves
- * without touching anything, and reporting that as applied work is how a work
- * item completes with nothing behind it.
+ * Explain why an applied-action ledger cannot complete its work item.
  *
- * Every action carries the key its adapter would deduplicate on. The mock
- * adapters share this transaction's database and cannot half-apply, so they
- * only record it; a connector that leaves the deployment must pass it to the
- * provider, because an interruption between an external effect and the local
- * completion record is otherwise indistinguishable from an effect that never
- * happened.
+ * Args:
+ *   applied: Evidence rows returned by the surface adapters.
+ *
+ * Returns:
+ *   Failure reason, or undefined when every proposed action landed.
  */
-async function applyMockActions(
-  ctx: ActionCtx,
-  run: {
-    agentId: Id<'agents'>;
-    workItemId: Id<'workItems'>;
-    runId: Id<'events'>;
-    actions: MockAction[];
-  },
-): Promise<AppliedAction[]> {
-  const { agentId, actions } = run;
-  const applied: AppliedAction[] = [];
-  for (const [index, action] of actions.entries()) {
-    const idempotencyKey = actionIdempotencyKey({
-      workItemId: run.workItemId,
-      runId: run.runId,
-      actionIndex: index,
-    });
-    const args = action.args ?? {};
-    try {
-      let result: MockWriteResult;
-      let effect = '';
-      switch (action.tool) {
-        case 'spreadsheet.appendRow': {
-          if (!args.sheetSlug || !args.tabName || !args.cells) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing sheetSlug/tabName/cells', idempotencyKey });
-            continue;
-          }
-          const cellsObj: Record<string, string> = {};
-          for (const c of args.cells) cellsObj[c.header] = c.value;
-          result = await ctx.runMutation(internal.mock.appendSpreadsheetRow, {
-            agentId,
-            sheetSlug: args.sheetSlug,
-            tabName: args.tabName,
-            cells: cellsObj,
-            addedBy: 'Day0 (agent)',
-          });
-          effect = clip(
-            `1 row appended to ${args.sheetSlug} · ${args.tabName} — ` +
-              args.cells.map((c) => `${c.header}=${c.value || '(blank)'}`).join(', '),
-            180,
-          );
-          break;
-        }
-        case 'slack.postMessage': {
-          if (!args.channelSlug || !args.body) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing channelSlug/body', idempotencyKey });
-            continue;
-          }
-          result = await ctx.runMutation(internal.mock.postSlackMessage, {
-            agentId,
-            channelSlug: args.channelSlug,
-            threadKey: args.threadKey,
-            sender: 'Day0',
-            senderKind: args.channelSlug.startsWith('dm-') ? 'agent-posted' : 'agent-draft',
-            body: args.body,
-          });
-          effect = clip(
-            `1 message posted to ${args.channelSlug}` +
-              `${args.threadKey ? ` · thread ${args.threadKey}` : ''} — “${args.body}”`,
-            180,
-          );
-          // A coworker only replies to a message that actually landed.
-          if (result.changed) {
-            await ctx.scheduler.runAfter(
-              3500 + Math.floor(Math.random() * 2500),
-              internal.coworker.replyToAgentMessage,
-              {
-                agentId,
-                channelSlug: args.channelSlug,
-                threadKey: args.threadKey,
-                originalBody: args.body,
-              },
-            );
-          }
-          break;
-        }
-        case 'twitter.reply': {
-          if (!args.tweetSlug || !args.body) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing tweetSlug/body', idempotencyKey });
-            continue;
-          }
-          result = await ctx.runMutation(internal.mock.postTweetReply, {
-            agentId,
-            tweetSlug: args.tweetSlug,
-            author: 'Day0',
-            handle: '@day0_agent',
-            body: args.body,
-            isAgentDraft: true,
-          });
-          effect = clip(`1 reply drafted on ${args.tweetSlug} — “${args.body}”`, 180);
-          break;
-        }
-        case 'ticket.update': {
-          if (!args.slug) {
-            applied.push({ tool: action.tool, ok: false, reason: 'missing slug', idempotencyKey });
-            continue;
-          }
-          result = await ctx.runMutation(internal.mock.updateTicket, {
-            agentId,
-            slug: args.slug,
-            status: args.status,
-            comment: args.comment,
-            commentAuthor: 'Day0',
-          });
-          effect = clip(
-            [
-              `ticket ${args.slug}`,
-              args.status ? `set to ${args.status}` : null,
-              args.comment ? `1 comment — “${args.comment}”` : null,
-            ]
-              .filter(Boolean)
-              .join(' · '),
-            180,
-          );
-          break;
-        }
-        default:
-          applied.push({
-            tool: (action as { tool: string }).tool,
-            ok: false,
-            reason: 'unknown tool',
-            idempotencyKey,
-          });
-          continue;
-      }
-      applied.push(
-        result.changed
-          ? { tool: action.tool, ok: true, effect, idempotencyKey }
-          : {
-              tool: action.tool,
-              ok: false,
-              reason: result.reason ?? 'the work environment did not change',
-              idempotencyKey,
-            },
-      );
-    } catch (err) {
-      applied.push({
-        tool: action.tool,
-        ok: false,
-        reason: (err as Error).message,
-        idempotencyKey,
-      });
-    }
+export function completionFailure(applied: AppliedAction[]): string | undefined {
+  const failures = applied.filter((action: AppliedAction): boolean => !action.ok);
+  if (applied.length === 0) {
+    return 'skill emitted no actions, so nothing in the work environment changed';
   }
-  return applied;
+  if (failures.length > 0) {
+    return (
+      `${failures.length} of ${applied.length} actions did not change the work environment: ` +
+      failures
+        .map((failure: AppliedAction): string => `${failure.tool} (${failure.reason})`)
+        .join('; ')
+    );
+  }
+  return undefined;
 }
