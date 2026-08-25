@@ -147,6 +147,23 @@ describe('surface persistence', (): void => {
     ).rejects.toThrow('forbidden');
   });
 
+  it('never seeds a surface for a documentation location', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const ids = await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: [
+        { name: 'Notion', class: 'docs', whereMentioned: 'The handbook is in Notion.' },
+        { name: 'Linear', class: 'kanban', whereMentioned: 'Work is in Linear.' },
+      ],
+    });
+    expect(ids).toHaveLength(1);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(owner.query(api.surfaces.listForAgent, { agentId })).resolves.toMatchObject([
+      { slug: 'linear', verdict: 'declared' },
+    ]);
+  });
+
   it('records an explicit absence with its search terms', async (): Promise<void> => {
     const harness = convexTest(schema, convexModules);
     const agentId = await seedAgent(harness);

@@ -219,8 +219,60 @@ function canonicalSystemName(system: NamedSystem): string | undefined {
   return name;
 }
 
+const DOMAIN_SUFFIX = /\.(?:app|com|io|dev|ai|co|net|org)$/i;
+
 /**
- * Collapse channels, DMs, documentation artefacts and UI objects to products.
+ * Split a product name into comparable words, ignoring a domain suffix.
+ *
+ * Args:
+ *   name: Canonical product name.
+ *
+ * Returns:
+ *   Lowercase alphanumeric words, so "Linear.app" and "Linear" compare equal.
+ */
+function productWords(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(DOMAIN_SUFFIX, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Decide whether one name's words open the other's.
+ *
+ * "Northstar" opens "Northstar CRM" and "Slack" opens "Slack workspace";
+ * "Microsoft Teams" and "Microsoft Excel" open neither.
+ *
+ * Args:
+ *   left: Words of one name.
+ *   right: Words of the other.
+ *
+ * Returns:
+ *   True when the shorter list is a leading run of the longer one.
+ */
+function oneOpensTheOther(left: readonly string[], right: readonly string[]): boolean {
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+  return (
+    shorter.length > 0 &&
+    shorter.every((word: string, index: number): boolean => longer[index] === word)
+  );
+}
+
+interface ProductRow {
+  words: string[];
+  system: NamedSystem;
+}
+
+/**
+ * Collapse channels, DMs, documentation artefacts, UI objects and spellings to products.
+ *
+ * Two rows are the same product when their words match, when one name opens
+ * the other ("Northstar" and "Northstar CRM"), or when they differ only by a
+ * domain suffix ("Linear.app" and "Linear"). A prefix merge is limited to rows
+ * of the same class, or a row of class `other`, so "Google Sheets" does not
+ * swallow "Google Docs". The shorter name is kept, because every page that
+ * names the longer one also names it, and its whole-word match stays exact.
  *
  * Args:
  *   systems: Raw rows returned by charter synthesis.
@@ -235,7 +287,7 @@ export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSys
       return name ? [{ system, name }] : [];
     },
   );
-  const normalised = new Map<string, NamedSystem>();
+  const rows: ProductRow[] = [];
   for (const system of systems) {
     let name = canonicalSystemName(system);
     if (!name && CHANNEL_LOCATION.test(system.name)) {
@@ -248,17 +300,34 @@ export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSys
       )?.name;
     }
     if (!name) continue;
-    const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '');
-    const existing = normalised.get(key);
+    const words = productWords(name);
+    const existing = rows.find((row: ProductRow): boolean => {
+      if (row.words.join(' ') === words.join(' ')) return true;
+      const compatible =
+        row.system.class === system.class ||
+        row.system.class === 'other' ||
+        system.class === 'other';
+      return compatible && oneOpensTheOther(row.words, words);
+    });
     if (!existing) {
-      normalised.set(key, { ...system, name });
+      rows.push({ words, system: { ...system, name } });
       continue;
     }
-    if (!existing.whereMentioned.includes(system.whereMentioned)) {
-      existing.whereMentioned = `${existing.whereMentioned}\n${system.whereMentioned}`;
+    const shorter =
+      words.length < existing.words.length ||
+      (words.length === existing.words.length && name.length < existing.system.name.length);
+    if (shorter) {
+      existing.words = words;
+      existing.system.name = name;
+    }
+    if (existing.system.class === 'other' && system.class !== 'other') {
+      existing.system.class = system.class;
+    }
+    if (!existing.system.whereMentioned.includes(system.whereMentioned)) {
+      existing.system.whereMentioned = `${existing.system.whereMentioned}\n${system.whereMentioned}`;
     }
   }
-  return [...normalised.values()];
+  return rows.map((row: ProductRow): NamedSystem => row.system);
 }
 
 function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt: string): Charter {

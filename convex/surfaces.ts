@@ -52,7 +52,13 @@ export const listForAgent = query({
   },
 });
 
-/** Seed one declared row per system named in the approved charter. */
+/**
+ * Seed one declared row per work system named in the approved charter.
+ *
+ * A system of class `docs` is a documentation location: it is configured on
+ * the documentation page and read from there, never discovered, connected or
+ * polled, so it stays on the charter card and gets no surface.
+ */
 export const seedFromCharter = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -63,6 +69,7 @@ export const seedFromCharter = internalMutation({
   handler: async (ctx, args): Promise<Id<'surfaces'>[]> => {
     const surfaceIds: Id<'surfaces'>[] = [];
     for (const system of args.namedSystems) {
+      if (system.class === 'docs') continue;
       const slug = surfaceSlug(system.name);
       const existing = await ctx.db
         .query('surfaces')

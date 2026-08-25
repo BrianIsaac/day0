@@ -107,6 +107,38 @@ describe('charter named systems', (): void => {
     ).toEqual(['Linear', 'Slack', 'Northstar CRM']);
   });
 
+  it('merges the same product named under different spellings', (): void => {
+    const rows = normaliseNamedSystems([
+      system('Northstar', 'crm', 'Accounts are in Northstar.'),
+      system('Northstar CRM', 'crm', 'Northstar CRM owns opportunities.'),
+      system('Slack', 'chat', 'Asks arrive in Slack.'),
+      system('slack', 'chat', 'DM me on slack.'),
+      system('Linear.app', 'kanban', 'Work is on Linear.app.'),
+      system('Linear', 'kanban', 'Linear is the queue.'),
+      system('Slack workspace', 'chat', 'The Slack workspace is day0.'),
+    ]);
+    expect(rows.map((entry): [string, string] => [entry.name, entry.class])).toEqual([
+      ['Northstar', 'crm'],
+      ['Slack', 'chat'],
+      ['Linear', 'kanban'],
+    ]);
+    expect(rows[0].whereMentioned).toBe(
+      'Accounts are in Northstar.\nNorthstar CRM owns opportunities.',
+    );
+    expect(rows[2].whereMentioned).toBe('Work is on Linear.app.\nLinear is the queue.');
+  });
+
+  it('does not merge different products that share a first word', (): void => {
+    expect(
+      normaliseNamedSystems([
+        system('Google Sheets', 'spreadsheet', 'Forecasts are in Google Sheets.'),
+        system('Google Docs', 'docs', 'Notes are in Google Docs.'),
+        system('Microsoft Teams', 'chat', 'Chat is Microsoft Teams.'),
+        system('Microsoft Excel', 'spreadsheet', 'Budgets are in Microsoft Excel.'),
+      ]).map((entry): string => entry.name),
+    ).toEqual(['Google Sheets', 'Google Docs', 'Microsoft Teams', 'Microsoft Excel']);
+  });
+
   it('renders each normalised system once in both charter artefacts', (): void => {
     const namedSystems = normaliseNamedSystems([
       system('Linear', 'kanban', tools),
