@@ -18,6 +18,10 @@ export interface SurfaceLiveness {
 /**
  * Resolve the effective connection verdict used by work evaluation.
  *
+ * An approved surface whose credential has landed but which no probe has
+ * verified yet stays `approved` (awaiting probe): the probe sets
+ * `listed-dead` explicitly on failure, so silence is not evidence of death.
+ *
  * Args:
  *   surface: Persisted connection and liveness fields.
  *   now: Current Unix timestamp in milliseconds.
@@ -27,6 +31,7 @@ export interface SurfaceLiveness {
  */
 export function verdictFor(surface: SurfaceLiveness, now: number): PersistedSurfaceVerdict {
   if (surface.verdict === 'approved' && !surface.credentialLanded) return 'ungranted';
+  if (surface.verdict === 'approved' && surface.lastVerifiedAt === undefined) return 'approved';
   if (surface.verdict !== 'connected' && surface.verdict !== 'approved') return surface.verdict;
   const liveAfter = now - LIVENESS_HOURS * 60 * 60 * 1_000;
   if (
