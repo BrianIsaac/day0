@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { agentReadsSource, validateLinkInput } from '../../convex/docSources';
+import { STALE_SYNC_MS, agentReadsSource, validateLinkInput } from '../../convex/docSources';
 import { convexModules } from './modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -367,5 +367,39 @@ describe('documentation sources in real mode', (): void => {
     });
     const credential = await harness.run(async (ctx) => await ctx.db.get(credentialId));
     expect(credential?.revokedAt).toEqual(expect.any(Number));
+  });
+
+  it('skips a source mid-sync and restarts one whose generation stopped progressing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-26T10:00:00Z'));
+    const harness = convexTest(schema, convexModules);
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toEqual([]);
+    vi.setSystemTime(new Date('2026-08-26T10:25:00Z'));
+    await expect(
+      harness.mutation(internal.docSources.recordSyncBatch, {
+        sourceId,
+        runId,
+        nextCursor: '25',
+        refs: [],
+        credentialRefs: [],
+        pageCount: 25,
+        redactionCount: 0,
+      }),
+    ).resolves.toBe(true);
+    vi.setSystemTime(new Date('2026-08-26T10:40:00Z'));
+    await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toEqual([]);
+    vi.setSystemTime(new Date(Date.parse('2026-08-26T10:25:00Z') + STALE_SYNC_MS + 1));
+    const stale = await harness.query(internal.docSources.listSyncable, {});
+    expect(stale.map((source) => source._id)).toEqual([sourceId]);
+    const replacementRunId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    expect(replacementRunId).not.toBe(runId);
+    await expect(
+      harness.query(internal.docSources.syncContext, { sourceId, runId }),
+    ).resolves.toBeNull();
+    const dead = await harness.run(async (ctx) => await ctx.db.get(runId));
+    expect(dead?.state).toBe('superseded');
   });
 });

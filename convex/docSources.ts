@@ -418,13 +418,29 @@ export const getInternal = internalQuery({
   handler: async (ctx, args) => await ctx.db.get(args.sourceId),
 });
 
-/** List sources eligible for periodic resync; empty outside real mode so the cron is inert. */
+/**
+ * How long a sync may sit in `linking` without progress before the periodic
+ * pass restarts it. A batch is bounded by the Node action limit (ten
+ * minutes), and every batch stamps the source, so a source older than this
+ * belongs to an action the runtime killed without reaching its catch block.
+ */
+export const STALE_SYNC_MS = 30 * 60 * 1000;
+
+/**
+ * List sources eligible for periodic resync; empty outside real mode so the
+ * cron is inert. A source mid-sync is skipped so the cron never races a
+ * continuation, unless it stopped progressing long enough ago to be
+ * abandoned, in which case `beginSync` supersedes the dead generation.
+ */
 export const listSyncable = internalQuery({
   args: {},
   handler: async (ctx) => {
     if (SURFACE_MODE !== 'real') return [];
     const sources = await ctx.db.query('docSources').collect();
-    return sources.filter((source) => source.status !== 'linking');
+    const now = Date.now();
+    return sources.filter(
+      (source) => source.status !== 'linking' || now - source.updatedAt > STALE_SYNC_MS,
+    );
   },
 });
 
@@ -545,6 +561,7 @@ export const recordSyncBatch = internalMutation({
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,
     });
+    await ctx.db.patch(source._id, { updatedAt: Date.now() });
     return true;
   },
 });
