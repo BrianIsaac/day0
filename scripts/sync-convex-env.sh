@@ -69,6 +69,7 @@ CLEAR_WHEN_EMPTY=(
   LINEAR_API_KEY
   SLACK_BOT_TOKEN
   SLACK_MCP_API_KEY
+  DAY0_SURFACE_MODE
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
@@ -164,9 +165,15 @@ fi
 
 # Convex function analysis does not supply NODE_ENV. The real-mode guard uses
 # the same development-only invariant as Next, so the local deployment must
-# receive that explicit value before modules are pushed.
+# receive that explicit value before modules are pushed. Leaving real mode
+# removes it again, and DAY0_SURFACE_MODE itself is cleared below when empty:
+# a deployment that kept `real` after .env.local went back to mock would keep
+# linking documentation and orienting surfaces while the local file said
+# otherwise.
 if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ]; then
   set_key NODE_ENV development "local real-mode guard"
+else
+  clear_key NODE_ENV "only needed by the real-mode guard"
 fi
 
 for key in "${KEYS[@]}"; do
@@ -180,7 +187,7 @@ for key in "${KEYS[@]}"; do
   value=$(read_local "$key")
   if [ -z "$value" ]; then
     if [[ " ${CLEAR_WHEN_EMPTY[*]} " == *" ${key} "* ]]; then
-      clear_key "$key" "empty in $ENV_FILE, so the deployment falls back to OpenAI"
+      clear_key "$key" "empty in $ENV_FILE, so the deployment falls back to its default"
     else
       echo "skip ${key} (empty in $ENV_FILE)"
     fi
