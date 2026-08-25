@@ -21,13 +21,10 @@ KEYS=(
   DAYTONA_API_KEY
   DAYTONA_API_URL
   SKILL_SANDBOX_SOCKET
-  NOTION_TOKEN
-  LINEAR_API_KEY
-  SLACK_BOT_TOKEN
-  SLACK_MCP_API_KEY
   DAY0_SURFACE_MODE
   DAY0_DOCS_ROOT
-  DAY0_SECRET_REFS
+  DAY0_CREDENTIAL_KEY
+  DAY0_NOTION_MCP_AUTH_TOKEN
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
   CLERK_JWT_ISSUER_DOMAIN
 )
@@ -65,11 +62,9 @@ declare -A ALIASED=(
 # previous value should remain available to an action.
 CLEAR_WHEN_EMPTY=(
   OPENAI_BASE_URL
-  NOTION_TOKEN
-  LINEAR_API_KEY
-  SLACK_BOT_TOKEN
-  SLACK_MCP_API_KEY
   DAY0_SURFACE_MODE
+  DAY0_CREDENTIAL_KEY
+  DAY0_NOTION_MCP_AUTH_TOKEN
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
@@ -95,6 +90,16 @@ if [ "$(read_local NEXT_PUBLIC_DEV_NO_AUTH)" = "true" ] && [ -z "$(read_local DE
   echo "       No-auth mode accepts only callers holding this machine's local key," >&2
   echo "       and the deployment needs its public half to check one. Run" >&2
   echo "       \`pnpm dev:no-auth-key\`, then re-run this script." >&2
+  exit 1
+fi
+if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ] && [ -z "$(read_local DAY0_CREDENTIAL_KEY)" ]; then
+  echo "error: DAY0_SURFACE_MODE=real in $ENV_FILE but DAY0_CREDENTIAL_KEY is empty." >&2
+  echo "       Run \`pnpm dev:no-auth-key\` once, then re-run this script." >&2
+  exit 1
+fi
+if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ] && [ -z "$(read_local DAY0_NOTION_MCP_AUTH_TOKEN)" ]; then
+  echo "error: DAY0_SURFACE_MODE=real in $ENV_FILE but DAY0_NOTION_MCP_AUTH_TOKEN is empty." >&2
+  echo "       Run \`pnpm dev:no-auth-key\` once, then re-run this script." >&2
   exit 1
 fi
 

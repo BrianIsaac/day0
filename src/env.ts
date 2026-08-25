@@ -56,7 +56,8 @@ const schema = z.object({
   NEXT_PUBLIC_DEV_NO_AUTH: z.string().optional(),
   DAY0_SURFACE_MODE: z.enum(['mock', 'real']).default('mock'),
   DAY0_DOCS_ROOT: z.string().default('/docs'),
-  DAY0_SECRET_REFS: z.string().optional(),
+  DAY0_CREDENTIAL_KEY: z.string().optional(),
+  DAY0_NOTION_MCP_AUTH_TOKEN: z.string().optional(),
 });
 
 /**
@@ -96,7 +97,8 @@ const OPTIONAL_STRINGS = [
   'NEXT_PUBLIC_DEV_NO_AUTH',
   'DAY0_SURFACE_MODE',
   'DAY0_DOCS_ROOT',
-  'DAY0_SECRET_REFS',
+  'DAY0_CREDENTIAL_KEY',
+  'DAY0_NOTION_MCP_AUTH_TOKEN',
 ] as const;
 
 /**
@@ -149,6 +151,7 @@ export const env = schema.parse(
     NEXT_PUBLIC_DEV_NO_AUTH: process.env.NEXT_PUBLIC_DEV_NO_AUTH,
     DAY0_SURFACE_MODE: process.env.DAY0_SURFACE_MODE,
     DAY0_DOCS_ROOT: process.env.DAY0_DOCS_ROOT,
-    DAY0_SECRET_REFS: process.env.DAY0_SECRET_REFS,
+    DAY0_CREDENTIAL_KEY: process.env.DAY0_CREDENTIAL_KEY,
+    DAY0_NOTION_MCP_AUTH_TOKEN: process.env.DAY0_NOTION_MCP_AUTH_TOKEN,
   }),
 );
