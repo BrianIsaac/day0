@@ -4,9 +4,12 @@ import { v } from 'convex/values';
 import { z } from 'zod';
 import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import { authorAndVerifySkill } from '../src/lib/skill-sandbox';
+import { surfaceInstructions } from '../src/work/execute-skill';
+import { toSurfaceRecord } from '../src/surfaces/records';
+import type { SurfaceRecord } from '../src/surfaces/types';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -28,16 +31,20 @@ import { authorAndVerifySkill } from '../src/lib/skill-sandbox';
  * adds environment + critic signals.
  */
 
-const AUTHOR_SYSTEM = [
+export const AUTHOR_SYSTEM = [
   'You are an autonomous workplace agent named Day0, authoring a new skill for yourself.',
   'A skill is a SKILL.md document that describes (a) when to invoke it, (b) the inputs it expects, (c) the procedure it follows step-by-step, (d) the format of its output, (e) the structured `actions[]` it MUST emit at the end. SKILL.md is loaded as a behavioural prior at execution time — write it as if instructing a junior practitioner who has never seen the system before.',
   '',
-  'Critical: at execution time the skill must emit a typed `actions[]` array of mock-environment mutations. SKILL.md must call this out explicitly with concrete examples. The available tools are:',
+  'Critical: at execution time the skill must emit a typed `actions[]` array of work-environment mutations. SKILL.md must call this out explicitly with concrete examples. The available tools are:',
   '  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }',
   '  - slack.postMessage    — { channelSlug, threadKey?, body }',
   '  - twitter.reply        — { tweetSlug, body }',
   '  - ticket.update        — { slug, status?, comment? }',
+  '  - mcp.call             — { surface, tool, toolArgsJson } - one tool call on a connected MCP surface; `toolArgsJson` is the JSON object of tool arguments as a string',
+  '  - http.request         — { surface, method, path, headersJson, body } - one request to a connected documented-API surface; `headersJson` is a JSON object as a string, `path` is relative to the surface endpoint',
   'If the skill\'s purpose is "draft a tweet reply", SKILL.md must state that it emits `{ tool: "twitter.reply", args: { tweetSlug, body } }`. If "update the spreadsheet", emit `spreadsheet.appendRow`. If the skill drafts text for human review, ALSO emit a `slack.postMessage` to `dm-manager` so the audit trail is visible. A skill that produces only prose with no actions is broken.',
+  '',
+  'Real surfaces: name the surface exactly as the Surfaces list does; take the action shape (tool names, argument names, paths) from the runbook for that system; write `{{secret}}` where the runbook shows the credential and never include a token or key; you may only target a connected surface, and the list of connected surfaces with their allowed tools, when any exist, follows below. Do not add a provenance trailer or a `username` to a message: the server appends the employee name and run id. A ticket status change must be preceded in the same response by a comment on that ticket. The first real call is the gated execution: the smoke test verifies shape and exit status offline and never contacts a surface.',
   '',
   'You also produce a small Python smoke test that demonstrates the skill\'s shape. The smoke test runs in a fresh Python 3.12 sandbox with no third-party packages. It must:',
   '  - Define a `run(inputs: dict) -> dict` function that mimics the skill\'s shape (input keys → output keys, including the `actions` list).',
@@ -52,6 +59,47 @@ const AUTHOR_SYSTEM = [
 ].join('\n');
 
 const skillAuthorAgent = makeAgent('day0-skill-author', AUTHOR_SYSTEM);
+
+/** What the author prompt needs from a skill row. */
+export interface AuthorPromptSkill {
+  name: string;
+  description: string;
+  rationale?: string;
+  requiredScopes?: string[];
+  targetSurface?: string;
+}
+
+/**
+ * Build the user prompt for one authoring run.
+ *
+ * The connected surfaces and their allowlists are appended only when one is
+ * connected, so a mock-mode prompt is the prompt it always was.
+ *
+ * Args:
+ *   skill: The proposed skill.
+ *   surfaces: The agent's surfaces.
+ *   now: Clock for the connection verdict.
+ *
+ * Returns:
+ *   The prompt text.
+ */
+export function buildAuthorPrompt(
+  skill: AuthorPromptSkill,
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+): string {
+  const surfaceGuidance = surfaceInstructions(surfaces, now);
+  return [
+    `Skill name: ${skill.name}`,
+    `Description: ${skill.description}`,
+    `Rationale (why I need this): ${skill.rationale ?? '(none)'}`,
+    `Required scopes: ${(skill.requiredScopes ?? []).join(', ')}`,
+    ...(skill.targetSurface ? [`Target surface: ${skill.targetSurface}`] : []),
+    ...(surfaceGuidance ? ['', surfaceGuidance] : []),
+    '',
+    'Author SKILL.md and smoke.py now.',
+  ].join('\n');
+}
 
 const authorSchema = z.object({
   body: z.string(),
@@ -105,14 +153,13 @@ export const authorAndRegisterSkill = action({
     if (!claim.claimed) return { ok: false, reason: claim.reason };
     const { runId, skill } = claim;
 
-    const userPrompt = [
-      `Skill name: ${skill.name}`,
-      `Description: ${skill.description}`,
-      `Rationale (why I need this): ${skill.rationale ?? '(none)'}`,
-      `Required scopes: ${(skill.requiredScopes ?? []).join(', ')}`,
-      '',
-      'Author SKILL.md and smoke.py now.',
-    ].join('\n');
+    // Real mode only in practice: the surfaces table is empty on the mock, so
+    // the mock author prompt is unchanged.
+    const surfaceRows: Doc<'surfaces'>[] = await ctx.runQuery(
+      internal.orientationData.surfacesForAgent,
+      { agentId: skill.agentId },
+    );
+    const userPrompt = buildAuthorPrompt(skill, surfaceRows.map(toSurfaceRecord), Date.now());
     type AuthoredSkill = z.infer<typeof authorSchema>;
     // The model layer rethrows failures prompt injection cannot fix, which is
     // right - but the dashboard fires this action and forgets it, so an
