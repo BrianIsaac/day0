@@ -109,6 +109,40 @@ async function firstMarkdownFile(directory: string): Promise<string | undefined>
 }
 
 /**
+ * Refuse any probe target that is not the exact allowlisted pair.
+ *
+ * A public action accepting arbitrary URLs could send a deployment
+ * credential to a caller-controlled host, so the credential reference and
+ * the URL must both match one allowlist entry exactly.
+ *
+ * Args:
+ *   url: Requested MCP URL.
+ *   headerEnv: Environment variable named as the bearer credential.
+ *
+ * Returns:
+ *   The allowlisted URL, normalised.
+ *
+ * Raises:
+ *   Error: If the reference is malformed, unknown, or paired with another URL.
+ */
+export function assertAllowlistedProbe(url: string, headerEnv: string): URL {
+  if (!/^[A-Z][A-Z0-9_]*$/.test(headerEnv)) {
+    throw new Error('headerEnv must be an uppercase environment variable name.');
+  }
+  const allowedUrl = MCP_PROBE_TARGETS[headerEnv];
+  let requested: URL;
+  try {
+    requested = new URL(url);
+  } catch {
+    throw new Error('MCP probe target and credential reference are not allowlisted.');
+  }
+  if (!allowedUrl || requested.href !== new URL(allowedUrl).href) {
+    throw new Error('MCP probe target and credential reference are not allowlisted.');
+  }
+  return requested;
+}
+
+/**
  * Discover one MCP server from inside the Convex Node action runtime.
  *
  * Args:
@@ -125,20 +159,9 @@ async function probeMcpHandler(
   _ctx: ActionCtx,
   args: { url: string; headerEnv: string },
 ): Promise<McpProbeResult> {
-  if (!/^[A-Z][A-Z0-9_]*$/.test(args.headerEnv)) {
-    throw new Error('headerEnv must be an uppercase environment variable name.');
-  }
-  const allowedUrl = MCP_PROBE_TARGETS[args.headerEnv];
-  if (!allowedUrl || new URL(args.url).href !== new URL(allowedUrl).href) {
-    throw new Error('MCP probe target and credential reference are not allowlisted.');
-  }
+  const url = assertAllowlistedProbe(args.url, args.headerEnv);
   const credential = process.env[args.headerEnv];
   if (!credential) throw new Error(`${args.headerEnv} is not configured in the deployment.`);
-
-  const url = new URL(args.url);
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('MCP probe URL must use http or https.');
-  }
 
   const client = new MCPClient({
     id: `day0-probe-${randomUUID()}`,

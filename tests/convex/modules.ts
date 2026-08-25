@@ -11,6 +11,8 @@ export const convexModules = {
     import('../../convex/docSyncActions'),
   '../../convex/mock.ts': (): Promise<typeof import('../../convex/mock')> =>
     import('../../convex/mock'),
+  '../../convex/orientationData.ts': (): Promise<typeof import('../../convex/orientationData')> =>
+    import('../../convex/orientationData'),
   '../../convex/reset.ts': (): Promise<typeof import('../../convex/reset')> =>
     import('../../convex/reset'),
   '../../convex/surfaces.ts': (): Promise<typeof import('../../convex/surfaces')> =>
