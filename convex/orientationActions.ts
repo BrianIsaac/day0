@@ -5,7 +5,7 @@ import { v } from 'convex/values';
 import type { GenericId } from 'convex/values';
 import type { FunctionReference } from 'convex/server';
 import { agentJson, makeAgent } from '../src/lib/mastra';
-import { internalAction } from './_generated/server';
+import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 
@@ -52,20 +52,36 @@ type OrientationPath = OrientationDraft['path'];
 type Evidence = { sourceId: string; ref: string; quote: string; url?: string };
 type CredentialId = GenericId<'credentials'>;
 
-type StoreCredentialArgs = {
-  userId: string;
-  kind: 'value' | 'location' | 'oauth';
+type StoredCredentialSummary = {
+  _id: CredentialId;
   label: string;
-  plaintext?: string;
-  source: { sourceId: Id<'docSources'>; ref: string } | 'entered';
-  appId?: string;
+  revokedAt?: number;
 };
 
+/**
+ * Lane A's read for a page-derived row, keyed the way its sync stored it.
+ *
+ * Orientation never calls `store`: the value was encrypted at sync time and
+ * the marker is the only thing left on the page, so resolving it is a read.
+ * Calling `store` without plaintext would be refused by lane A for a value
+ * kind, and inventing a value is exactly what this run must never do.
+ */
 const credentialInternal = internal as unknown as {
   credentials: {
-    store: FunctionReference<'action', 'internal', StoreCredentialArgs, CredentialId>;
+    bySourceForStore: FunctionReference<
+      'query',
+      'internal',
+      { userId: string; sourceId: Id<'docSources'>; ref: string },
+      StoredCredentialSummary | null
+    >;
   };
 };
+
+/**
+ * How many values lane A's sync can qualify on one page before its
+ * label-qualified refs stop being tried here.
+ */
+const MAX_CREDENTIALS_PER_PAGE = 8;
 
 export type CredentialMethod = 'api-key' | 'bot-token' | 'oauth' | 'unknown';
 
@@ -572,6 +588,69 @@ function validatedDraftCredential(
 }
 
 /**
+ * Source references lane A's sync may have used for a marker on one page.
+ *
+ * A page holding a single value is keyed by the page ref alone; a page
+ * holding several is keyed by the page ref qualified with the value's
+ * position and label. Both shapes are tried, exact page ref first.
+ *
+ * Args:
+ *   pageRef: Stable page reference the marker was found on.
+ *   label: Label carried by the marker.
+ *
+ * Returns:
+ *   Candidate refs in the order they should be looked up.
+ */
+export function candidateCredentialRefs(pageRef: string, label: string): string[] {
+  const qualified = Array.from(
+    { length: MAX_CREDENTIALS_PER_PAGE },
+    (_unused: unknown, index: number): string =>
+      `${pageRef}#credential=${index + 1}-${encodeURIComponent(label)}`,
+  );
+  return [pageRef, ...qualified];
+}
+
+/**
+ * Resolve a redacted marker to the encrypted row lane A stored at sync time.
+ *
+ * Args:
+ *   ctx: Action context used for the internal read.
+ *   userId: Owner of the documentation source.
+ *   sourceId: Source the page belongs to.
+ *   pageRef: Page the marker was found on.
+ *   label: Marker label, which must match the stored row's label.
+ *
+ * Returns:
+ *   The active row id, or undefined when no matching row exists or the read
+ *   itself is unavailable (lane A not deployed).
+ */
+async function resolveStoredCredential(
+  ctx: { runQuery: ActionCtx['runQuery'] },
+  userId: string,
+  sourceId: Id<'docSources'>,
+  pageRef: string,
+  label: string,
+): Promise<CredentialId | undefined> {
+  const wanted = label.trim().toLowerCase();
+  for (const ref of candidateCredentialRefs(pageRef, label)) {
+    let row: StoredCredentialSummary | null;
+    try {
+      row = await ctx.runQuery(credentialInternal.credentials.bySourceForStore, {
+        userId,
+        sourceId,
+        ref,
+      });
+    } catch {
+      return undefined;
+    }
+    if (!row) continue;
+    if (row.revokedAt !== undefined) continue;
+    if (row.label.trim().toLowerCase() === wanted) return row._id;
+  }
+  return undefined;
+}
+
+/**
  * Orient one declared system from owner-linked documentation.
  *
  * Each scheduled invocation owns one surface, so a slow model or provider
@@ -656,25 +735,21 @@ export const orientOne = internalAction({
     }
 
     let credentialId: CredentialId | undefined;
-    if (
-      credential.found === 'value' &&
-      credential.label &&
-      credential.evidenceRef &&
-      credential.sourceId &&
-      context.agent.userId
-    ) {
-      try {
-        credentialId = await ctx.runAction(credentialInternal.credentials.store, {
-          userId: context.agent.userId,
-          kind: 'value',
-          label: credential.label,
-          source: {
-            sourceId: credential.sourceId as Id<'docSources'>,
-            ref: credential.evidenceRef,
-          },
-        });
-      } catch {
-        openQuestions.push('Re-sync the source so the stored credential marker can be resolved.');
+    if (credential.found === 'value') {
+      credentialId =
+        credential.label && credential.evidenceRef && credential.sourceId && context.agent.userId
+          ? await resolveStoredCredential(
+              ctx,
+              context.agent.userId,
+              credential.sourceId as Id<'docSources'>,
+              credential.evidenceRef,
+              credential.label,
+            )
+          : undefined;
+      if (!credentialId) {
+        openQuestions.push(
+          'The stored credential marker could not be resolved to an encrypted row; re-sync the documentation source.',
+        );
       }
     }
     const { sourceId: _sourceId, ...requestCredential } = credential;

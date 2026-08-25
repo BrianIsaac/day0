@@ -17,6 +17,11 @@ import {
   relevantSystemText,
 } from '../../convex/orientationActions';
 import { allConvexModules } from './all-modules';
+import {
+  fakeCredentialState,
+  resetFakeCredentials,
+  seedFakeCredential,
+} from './fakes/credential-registry';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 type DraftPath = 'mcp' | 'documented-api' | 'browser-driven' | 'escalate';
@@ -123,43 +128,45 @@ async function seedOrientation(
   harness: TestConvex<typeof schema>,
   pages: Record<string, string>,
   systems: Array<{ name: string; class: string }>,
-): Promise<Id<'agents'>> {
-  const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
-    const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
-      name: 'orientation run test',
-      userId: 'owner',
-      state: 'active',
-      createdAt: 1,
-    });
-    const sourceId = await ctx.db.insert('docSources', {
-      userId: 'owner',
-      label: 'Team folder',
-      kind: 'folder',
-      locator: '.',
-      status: 'synced',
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    for (const [ref, markdown] of Object.entries(pages)) {
-      await ctx.db.insert('docPages', {
-        sourceId,
-        ref,
-        title: ref,
-        markdown,
+): Promise<{ agentId: Id<'agents'>; sourceId: Id<'docSources'> }> {
+  const seeded = await harness.run(
+    async (ctx): Promise<{ agentId: Id<'agents'>; sourceId: Id<'docSources'> }> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'orientation run test',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Team folder',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
         updatedAt: 1,
       });
-    }
-    return agentId;
-  });
+      for (const [ref, markdown] of Object.entries(pages)) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown,
+          updatedAt: 1,
+        });
+      }
+      return { agentId, sourceId };
+    },
+  );
   await harness.mutation(internal.surfaces.seedFromCharter, {
-    agentId,
+    agentId: seeded.agentId,
     namedSystems: systems.map((system) => ({
       ...system,
       whereMentioned: `${system.name} was named in the 1:1.`,
     })),
   });
-  return agentId;
+  return seeded;
 }
 
 /**
@@ -273,6 +280,7 @@ afterEach((): void => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   restoreSurfaceMode();
+  resetFakeCredentials();
   model.pathFor = undefined;
 });
 
@@ -470,7 +478,7 @@ describe('orientation run', (): void => {
     const fetchMock = stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
     const harness = convexTest(schema, orientationModules());
-    const agentId = await seedOrientation(
+    const { agentId } = await seedOrientation(
       harness,
       {
         'systems.md':
@@ -509,7 +517,7 @@ describe('orientation run', (): void => {
     const fetchMock = stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
     const harness = convexTest(schema, orientationModules());
-    const agentId = await seedOrientation(
+    const { agentId } = await seedOrientation(
       harness,
       {
         'slack.md':
@@ -534,7 +542,7 @@ describe('orientation run', (): void => {
     const fetchMock = stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
     const harness = convexTest(schema, orientationModules());
-    const agentId = await seedOrientation(
+    const { agentId } = await seedOrientation(
       harness,
       {
         'crm.md':
@@ -562,7 +570,7 @@ describe('orientation run', (): void => {
     const fetchMock = stubRegistry();
     model.pathFor = undefined;
     const harness = convexTest(schema, orientationModules());
-    const agentId = await seedOrientation(
+    const { agentId } = await seedOrientation(
       harness,
       {
         'onboarding.md': ONBOARDING_PAGE,
@@ -603,7 +611,7 @@ describe('orientation run', (): void => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
     const harness = convexTest(schema, orientationModules());
-    const agentId = await seedOrientation(
+    const { agentId, sourceId } = await seedOrientation(
       harness,
       {
         'onboarding.md': notionFixture('onboarding'),
@@ -617,6 +625,13 @@ describe('orientation run', (): void => {
         { name: 'Northstar CRM', class: 'crm' },
       ],
     );
+    const stored = seedFakeCredential({
+      userId: 'owner',
+      sourceId: String(sourceId),
+      ref: 'linear-automation.md',
+      label: 'linear service token',
+      plaintext: 'local-value-orientation-never-reads',
+    });
     await expect(orientDeclared(harness, agentId)).resolves.toEqual({
       proposed: 2,
       absent: 1,
@@ -632,7 +647,9 @@ describe('orientation run', (): void => {
       },
     });
     expect(surfaces.linear.request).not.toHaveProperty('credential.sourceId');
-    expect(surfaces.linear.credentialId).toBe('10000credentials');
+    expect(surfaces.linear.credentialId).toBe(stored._id);
+    expect(fakeCredentialState().storeCalls).toEqual([]);
+    expect(JSON.stringify(surfaces)).not.toContain('local-value-orientation-never-reads');
     expect(surfaces.linear.request).not.toHaveProperty('credential.plaintext');
     expect(surfaces.slack).toMatchObject({
       path: 'documented-api',
@@ -648,11 +665,65 @@ describe('orientation run', (): void => {
     expect(surfaces['northstar-crm'].verdict).toBe('absent');
   });
 
+  it('resolves a marker on a multi-value page through its label-qualified ref', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      { 'linear-automation.md': notionFixture('linear-automation') },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    seedFakeCredential({
+      userId: 'owner',
+      sourceId: String(sourceId),
+      ref: 'linear-automation.md#credential=1-some%20other%20secret',
+      label: 'some other secret',
+      plaintext: 'other',
+    });
+    const wanted = seedFakeCredential({
+      userId: 'owner',
+      sourceId: String(sourceId),
+      ref: 'linear-automation.md#credential=2-linear%20service%20token',
+      label: 'linear service token',
+      plaintext: 'linear',
+    });
+    await orientDeclared(harness, agentId);
+    expect((await surfacesBySlug(harness, agentId)).linear.credentialId).toBe(wanted._id);
+  });
+
+  it('leaves the credential unresolved, and says so, when no stored row matches the marker', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      { 'linear-automation.md': notionFixture('linear-automation') },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    seedFakeCredential({
+      userId: 'owner',
+      sourceId: String(sourceId),
+      ref: 'linear-automation.md',
+      label: 'linear service token',
+      plaintext: 'revoked',
+      revokedAt: 5,
+    });
+    await orientDeclared(harness, agentId);
+    const linear = (await surfacesBySlug(harness, agentId)).linear;
+    expect(linear.verdict).toBe('proposed');
+    expect(linear.credentialId).toBeUndefined();
+    expect((linear.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
+      'could not be resolved',
+    );
+    expect(fakeCredentialState().storeCalls).toEqual([]);
+  });
+
   it('fans out one scheduled job per declared system and isolates a stale job', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
     const harness = convexTest(schema, orientationModules());
-    const agentId = await seedOrientation(
+    const { agentId } = await seedOrientation(
       harness,
       { 'linear.md': LINEAR_RUNBOOK, 'slack.md': SLACK_RUNBOOK },
       [
@@ -684,7 +755,7 @@ describe('orientation run', (): void => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
     const harness = convexTest(schema, orientationModules());
-    const agentId = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK }, [
+    const { agentId } = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK }, [
       { name: 'Linear', class: 'kanban' },
     ]);
     const owner = harness.withIdentity({ subject: 'owner' });
