@@ -162,6 +162,13 @@ else
     clear_key "$NO_AUTH_JWKS" "after the flag that required it"
 fi
 
+# Convex function analysis does not supply NODE_ENV. The real-mode guard uses
+# the same development-only invariant as Next, so the local deployment must
+# receive that explicit value before modules are pushed.
+if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ]; then
+  set_key NODE_ENV development "local real-mode guard"
+fi
+
 for key in "${KEYS[@]}"; do
   override_var="${ALIASED[$key]:-}"
   override=""
