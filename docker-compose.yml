@@ -1,9 +1,9 @@
-# Self-hosted Convex backend — the same open-source binary the cloud service runs.
+# Self-hosted Convex backend - the same open-source binary the cloud service runs.
 # Lets the whole of Day0 run locally with no Convex account.
 #
 # Adapted from the upstream reference compose file:
 #   https://github.com/get-convex/convex-backend/blob/main/self-hosted/docker/docker-compose.yml
-# The AWS/S3/MySQL/Postgres passthrough env vars are dropped — the default
+# The AWS/S3/MySQL/Postgres passthrough env vars are dropped - the default
 # SQLite-in-a-volume storage is what local development wants. See upstream if you
 # need external storage.
 #
@@ -78,6 +78,9 @@ services:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${CONVEX_SITE_PROXY_PORT:-3211}:3211'
     volumes:
       - convex_data:/convex/data
+      # Owner-linked documentation is visible to Node actions but never writable
+      # from the backend. DAY0_DOCS_HOST_DIR is a host path; actions use /docs.
+      - ${DAY0_DOCS_HOST_DIR:-./docs-local}:/docs:ro
       # Where the `sandbox` service below puts its socket. Mounted whether or
       # not that service is running, so that starting it later needs nothing
       # here: an empty volume reads as "no local sandbox", which is exactly
@@ -205,6 +208,84 @@ services:
       interval: 15s
       timeout: 10s
       start_period: 5s
+
+  # Reads an operator-owned Notion workspace through Streamable HTTP. The
+  # integration token also authenticates the private compose-network endpoint;
+  # no port is published to the host.
+  notion-mcp:
+    profiles: ['real']
+    image: node:22-alpine
+    command:
+      [
+        'sh',
+        '-lc',
+        'npx -y @notionhq/notion-mcp-server --transport http --host 0.0.0.0 --port 3000',
+      ]
+    environment:
+      - NOTION_TOKEN=${NOTION_TOKEN:-}
+      - AUTH_TOKEN=${NOTION_TOKEN:-}
+    expose: ['3000']
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/mcp').then(() => process.exit(0)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+
+  # The posting tool is absent unless the operator supplies the manager's DM
+  # channel id. Public-channel writes remain disabled at the server boundary.
+  slack-mcp:
+    profiles: ['real']
+    image: ghcr.io/korotovsky/slack-mcp-server:latest
+    command: ['--transport', 'http']
+    environment:
+      - SLACK_MCP_XOXB_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_MCP_API_KEY=${SLACK_MCP_API_KEY:-}
+      - SLACK_MCP_ADD_MESSAGE_TOOL=${SLACK_MANAGER_DM_CHANNEL_ID:-}
+      - SLACK_MCP_HOST=0.0.0.0
+      - SLACK_MCP_PORT=13080
+    expose: ['13080']
+    healthcheck:
+      test: ['CMD', 'curl', '-sS', '-o', '/dev/null', 'http://127.0.0.1:13080/mcp']
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+
+  # The browser floor exposes read-only tools later through Day0's allowlist.
+  # The MCP server itself is not a security boundary, so it remains internal.
+  playwright-mcp:
+    profiles: ['real']
+    image: mcr.microsoft.com/playwright/mcp:latest
+    command:
+      [
+        '--port',
+        '8931',
+        '--host',
+        '0.0.0.0',
+        '--allowed-hosts',
+        'playwright-mcp:8931,localhost:8931,127.0.0.1:8931',
+        '--allowed-origins',
+        '${PLAYWRIGHT_ALLOWED_ORIGINS:-http://host.docker.internal:3000}',
+      ]
+    expose: ['8931']
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8931/mcp').then(() => process.exit(0)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
 
 volumes:
   convex_data:

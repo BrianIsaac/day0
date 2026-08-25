@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Push the env vars Convex actions need from .env.local to the Convex deployment.
-# Run once after `pnpm convex:dev` has provisioned the deployment — or, when
+# Run once after `pnpm convex:dev` has provisioned the deployment - or, when
 # self-hosting, as soon as CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY
 # are in .env.local and before the first push: `convex/auth.config.ts` reads
 # NEXT_PUBLIC_DEV_NO_AUTH and DEV_NO_AUTH_JWKS off the deployment at push time,
@@ -21,6 +21,10 @@ KEYS=(
   DAYTONA_API_KEY
   DAYTONA_API_URL
   SKILL_SANDBOX_SOCKET
+  NOTION_TOKEN
+  LINEAR_API_KEY
+  SLACK_BOT_TOKEN
+  SLACK_MCP_API_KEY
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
   CLERK_JWT_ISSUER_DOMAIN
 )
@@ -53,13 +57,15 @@ declare -A ALIASED=(
 
 # Keys whose absence is a setting rather than an omission, and so must be
 # removed from the deployment rather than left alone when .env.local has
-# nothing to say. OPENAI_BASE_URL unset means api.openai.com, so a reader
-# moving from a local model to a hosted one clears it here and would otherwise
-# leave a deployment still calling `http://model:11434/v1` - a model server
-# they have since stopped. That failure shows up only in the actions, which is
-# the confusing half: the chat streams from Next and the charter never arrives.
+# nothing to say. OPENAI_BASE_URL unset means api.openai.com. A missing provider
+# token likewise means that deployment access has been revoked, not that a
+# previous value should remain available to an action.
 CLEAR_WHEN_EMPTY=(
   OPENAI_BASE_URL
+  NOTION_TOKEN
+  LINEAR_API_KEY
+  SLACK_BOT_TOKEN
+  SLACK_MCP_API_KEY
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
