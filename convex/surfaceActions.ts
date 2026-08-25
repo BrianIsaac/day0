@@ -10,6 +10,7 @@ import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
+import { safeFailureMessage } from '../src/surfaces/redact';
 
 const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
   kanban: ['list_issues', 'get_issue', 'list_comments', 'create_comment', 'save_issue'],
@@ -184,14 +185,7 @@ export function slackMethodsFromPolicy(markdown: string): string[] {
  *   One flattened, clipped and token-redacted error message.
  */
 export function safeProviderError(error: unknown, credential: string): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const withoutExactValue = credential ? raw.replaceAll(credential, '<redacted>') : raw;
-  const withoutTokenShapes = withoutExactValue
-    .replace(/\b(?:lin_api_|xox[baprs]-|ntn_|secret_)[A-Za-z0-9_-]+\b/gi, '<redacted>')
-    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer <redacted>')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return (withoutTokenShapes || 'Provider probe failed.').slice(0, 300);
+  return safeFailureMessage(error, credential, 'Provider probe failed.');
 }
 
 /**

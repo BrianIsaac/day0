@@ -9,6 +9,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
+import { safeFailureMessage } from '../src/surfaces/redact';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
 
@@ -130,14 +131,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  *   A single safe line suitable for a surface card.
  */
 export function safeIntakeError(error: unknown, credential: string): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const safe = raw
-    .replaceAll(credential, '<redacted>')
-    .replace(/\b(?:lin_api_|xox[baprs]-|ntn_|secret_)[A-Za-z0-9_-]+\b/gi, '<redacted>')
-    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer <redacted>')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return (safe || 'Provider intake failed.').slice(0, 300);
+  return safeFailureMessage(error, credential, 'Provider intake failed.');
 }
 
 /**

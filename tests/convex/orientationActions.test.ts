@@ -48,25 +48,33 @@ function orientationModules(): Record<string, () => Promise<unknown>> {
 const model = vi.hoisted(() => ({
   /** Path the mocked classifier proposes per system; unset means the model fails. */
   pathFor: undefined as undefined | ((system: string) => DraftPath),
+  /** When set, the mocked classifier copies its whole input into every free-text field. */
+  echoInput: false,
+  /** Every prompt the mocked classifier received. */
+  prompts: [] as string[],
 }));
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: async ({ user }: { user: string }): Promise<Record<string, unknown>> => {
+    model.prompts.push(user);
     if (!model.pathFor) throw new Error('model unavailable in tests');
     const system = /^System: (.+)$/m.exec(user)?.[1] ?? '';
+    const echo = (text: string): string => (model.echoInput ? user : text);
     return {
       path: model.pathFor(system),
       fallbackPath: 'escalate',
       confidence: 0.9,
-      reasoning: `Model draft for ${system}.`,
-      scopeRequested: [],
-      credential: { found: 'none', method: 'unknown' },
-      blastRadius: 'One system.',
+      reasoning: echo(`Model draft for ${system}.`),
+      scopeRequested: [echo(`${system.toLowerCase()}:read`)],
+      credential: model.echoInput
+        ? { found: 'location', method: 'api-key', location: user, label: user, evidenceRef: 'access.md' }
+        : { found: 'none', method: 'unknown' },
+      blastRadius: echo('One system.'),
       costBand: 'none',
       expiresInDays: 30,
-      rollback: 'Reject the surface.',
-      openQuestions: [],
+      rollback: echo('Reject the surface.'),
+      openQuestions: model.echoInput ? [user] : [],
     };
   },
   agentText: async (): Promise<string> => '',
@@ -286,6 +294,8 @@ afterEach((): void => {
   restoreSurfaceMode();
   resetFakeCredentials();
   model.pathFor = undefined;
+  model.echoInput = false;
+  model.prompts.length = 0;
 });
 
 describe('orientation evidence selection', (): void => {
@@ -386,18 +396,49 @@ describe('credential extraction', (): void => {
     expect(JSON.stringify(finding)).not.toMatch(/Authorization: Bearer|ciphertext|plaintext/);
   });
 
-  it('summarises Slack as an OAuth procedure with no value', (): void => {
+  it('summarises Slack as an OAuth procedure with nothing found', (): void => {
     const finding = extractCredentialFinding(pages, 'Slack');
     expect(finding).toMatchObject({
-      found: 'location',
+      found: 'none',
       label: 'Slack OAuth access',
       evidenceRef: 'slack-day0-app.md',
       method: 'oauth',
       sourceId: 'source-fixture',
+      summary:
+        'OAuth install flow documented in slack-day0-app; the installing administrator lands the token',
     });
     expect(finding.location).toContain('configuration token');
     expect(finding.location).toContain('OAuth redirect');
     expect(finding.governanceFinding).toBeUndefined();
+  });
+
+  it('does not lend a stored marker to a system the marker label does not name', (): void => {
+    const shared = {
+      sourceId: 'source-fixture',
+      ref: 'systems.md',
+      title: 'Systems',
+      markdown:
+        '# Systems\n\nLinear service token: <credential: linear service token, stored>. Ask in Slack if it fails.',
+    };
+    expect(extractCredentialFinding([shared], 'Slack')).toEqual({ found: 'none', method: 'unknown' });
+    expect(extractCredentialFinding([shared], 'Linear')).toMatchObject({
+      found: 'value',
+      label: 'linear service token',
+    });
+  });
+
+  it('never carries a value that escaped redaction into a location finding', (): void => {
+    const value = ['lin', 'api', 'ReviewValue0123456789'].join('_');
+    const page = {
+      sourceId: 'source-fixture',
+      ref: 'access.md',
+      title: 'Access',
+      markdown: `# Access\n\nThe Linear api key the owner provides: ${value}\nThe owner provides the Linear api key on request.`,
+    };
+    const finding = extractCredentialFinding([page], 'Linear');
+    expect(finding).toMatchObject({ found: 'location' });
+    expect(finding.location).toBe('The owner provides the Linear api key on request.');
+    expect(JSON.stringify(finding)).not.toContain(value);
   });
 
   it('does not borrow credentials for systems whose fixture names no access value', (): void => {
@@ -763,16 +804,54 @@ describe('orientation run', (): void => {
     expect(surfaces.linear.request).not.toHaveProperty('credential.plaintext');
     expect(surfaces.slack).toMatchObject({
       path: 'documented-api',
-      credentialLocation: expect.stringContaining('configuration token'),
+      credentialLocation:
+        'OAuth install flow documented in slack-day0-app.md; the installing administrator lands the token',
       request: {
         credential: {
-          found: 'location',
+          found: 'none',
           evidenceRef: 'slack-day0-app.md',
           method: 'oauth',
+          location: expect.stringContaining('configuration token'),
         },
       },
     });
+    expect(surfaces.slack.credentialId).toBeUndefined();
+    expect(surfaces.slack.request).not.toHaveProperty('credential.summary');
     expect(surfaces['northstar-crm'].verdict).toBe('absent');
+  });
+
+  it('keeps a value that escaped redaction out of the model, the card and the events', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    model.echoInput = true;
+    const value = ['lin', 'api', 'ReviewValue0123456789abcdef'].join('_');
+    const raw = notionFixture('linear-automation').replace(
+      '<credential: linear service token, stored>',
+      value,
+    );
+    expect(raw).toContain(value);
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'access.md': `# Access\n\nLinear key: ${value} (the owner provides it)\n\nBearer ${value} goes in the header.`,
+        'linear-automation.md': raw,
+      },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
+    const linear = (await surfacesBySlug(harness, agentId)).linear;
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(linear.verdict).toBe('proposed');
+    expect(JSON.stringify(model.prompts)).not.toContain(value);
+    expect(JSON.stringify(model.prompts)).toContain('<redacted>');
+    expect(JSON.stringify({ linear, events })).not.toContain(value);
+    expect(linear.whereFound.map((item: { quote: string }): string => item.quote)).toContain(
+      'Linear key: <redacted> (the owner provides it)',
+    );
+    expect((linear.request as { credential: { found: string } }).credential.found).not.toBe(
+      'value',
+    );
   });
 
   it('resolves a marker on a multi-value page through its label-qualified ref', async (): Promise<void> => {

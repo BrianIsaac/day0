@@ -8,6 +8,7 @@ import { agentJson, makeAgent } from '../src/lib/mastra';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
+import { containsTokenShape, redactTokenShapes } from '../src/surfaces/redact';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -93,6 +94,8 @@ export interface CredentialFinding {
   method: CredentialMethod;
   governanceFinding?: string;
   sourceId?: string;
+  /** One line for the surface row and the probe's reason; never persisted in the request. */
+  summary?: string;
 }
 
 export interface CredentialPage {
@@ -131,7 +134,8 @@ const orientationAgent = makeAgent(
     'Never invent an endpoint, credential, tool, owner or approval.',
     'Prefer MCP when the evidence names MCP, documented-api when it names an HTTP API, browser-driven only when it names a web UI, and escalate otherwise.',
     'Credential values are already replaced with <credential: label, stored>; report that marker as found=value without copying or inventing a value.',
-    'When the docs name a vault, administrator or OAuth installation procedure instead, report found=location and summarise only that documented location or procedure.',
+    'When the docs name a vault or an administrator who holds the credential instead, report found=location and summarise only that documented location.',
+    'When the docs describe an OAuth installation procedure, report found=none with method=oauth and summarise only that documented procedure.',
     'The caller verifies every proposed path against literal evidence or the public MCP registry.',
   ].join('\n'),
 );
@@ -261,7 +265,7 @@ function credentialMethodFor(text: string): CredentialMethod {
  *   A compact procedure assembled from the documentation's own relevant lines.
  */
 function oauthProcedure(text: string): string {
-  const lines = text
+  const lines = redactTokenShapes(text)
     .split('\n')
     .map((line: string): string => line.replace(/^\s*(?:\d+\.|[-*])\s*/, '').trim())
     .filter(
@@ -270,6 +274,25 @@ function oauthProcedure(text: string): string {
         /\b(?:configuration token|manifest|install|oauth|bot token|administrator)\b/i.test(line),
     );
   return [...new Set(lines)].join(' ').slice(0, 1_000);
+}
+
+/**
+ * Decide whether a stored marker belongs to the named system.
+ *
+ * A marker is attributed only when the page is dedicated to the system or
+ * the marker's own label names it, so a shared page that stores Linear's
+ * token next to a sentence about Slack lends nothing to Slack.
+ *
+ * Args:
+ *   page: Page the marker was found on.
+ *   label: Label carried by the marker.
+ *   system: Manager-named system.
+ *
+ * Returns:
+ *   True when the marker is evidence for this system.
+ */
+function markerBelongsToSystem(page: CredentialPage, label: string, system: string): boolean {
+  return isDedicatedSystemPage(page.markdown, system) || namesSystem(label, system);
 }
 
 /**
@@ -294,7 +317,7 @@ export function extractCredentialFinding(
     const scoped = relevantSystemText(page.markdown, system);
     for (const match of scoped.matchAll(CREDENTIAL_MARKER)) {
       const label = match[1]?.trim();
-      if (!label) continue;
+      if (!label || !markerBelongsToSystem(page, label, system)) continue;
       const labelMethod = credentialMethodFor(label);
       return {
         found: 'value',
@@ -313,12 +336,13 @@ export function extractCredentialFinding(
       const location = oauthProcedure(scoped);
       if (location) {
         return {
-          found: 'location',
+          found: 'none',
           label: `${system} OAuth access`,
           location,
           evidenceRef: page.ref,
           method: 'oauth',
           sourceId: page.sourceId,
+          summary: `OAuth install flow documented in ${page.title}; the installing administrator lands the token`,
         };
       }
     }
@@ -333,16 +357,19 @@ export function extractCredentialFinding(
         (line: string): boolean =>
           CREDENTIAL_LOCATION.test(line) &&
           CREDENTIAL_OWNER_OR_LOCATION.test(line) &&
-          !NO_SURFACE_PATTERN.test(line),
+          !NO_SURFACE_PATTERN.test(line) &&
+          !containsTokenShape(line),
       );
     if (location) {
+      const clipped = location.slice(0, 500);
       return {
         found: 'location',
         label: `${system} access`,
-        location: location.slice(0, 500),
+        location: clipped,
         evidenceRef: page.ref,
         method: credentialMethodFor(location),
         sourceId: page.sourceId,
+        summary: clipped,
       };
     }
   }
@@ -691,13 +718,50 @@ function validatedDraftCredential(
   const page = pages.find(
     (candidate: CredentialPage): boolean => candidate.ref === draft.evidenceRef,
   );
+  const location = redactTokenShapes(draft.location.trim()).slice(0, 500);
   return {
     found: 'location',
-    label: draft.label?.trim() || undefined,
-    location: draft.location.trim().slice(0, 500),
+    label: draft.label ? redactTokenShapes(draft.label.trim()) || undefined : undefined,
+    location,
     evidenceRef: draft.evidenceRef,
     method: draft.method,
     sourceId: page?.sourceId,
+    summary: location,
+  };
+}
+
+/**
+ * Scrub every free-text field of a model draft.
+ *
+ * The model only ever receives redacted text, but a page that escaped
+ * redaction would otherwise be copied straight into the card by a model
+ * that quotes its input.
+ *
+ * Args:
+ *   draft: Schema-validated model output.
+ *
+ * Returns:
+ *   The same draft with token shapes removed from every string.
+ */
+function sanitisedDraft(draft: OrientationDraft): OrientationDraft {
+  return {
+    ...draft,
+    reasoning: redactTokenShapes(draft.reasoning),
+    endpoint: draft.endpoint ? redactTokenShapes(draft.endpoint) : undefined,
+    scopeRequested: draft.scopeRequested.map(redactTokenShapes),
+    credential: {
+      ...draft.credential,
+      label: draft.credential.label ? redactTokenShapes(draft.credential.label) : undefined,
+      location: draft.credential.location
+        ? redactTokenShapes(draft.credential.location)
+        : undefined,
+      governanceFinding: draft.credential.governanceFinding
+        ? redactTokenShapes(draft.credential.governanceFinding)
+        : undefined,
+    },
+    blastRadius: redactTokenShapes(draft.blastRadius),
+    rollback: redactTokenShapes(draft.rollback),
+    openQuestions: draft.openQuestions.map(redactTokenShapes),
   };
 }
 
@@ -792,15 +856,17 @@ export const orientOne = internalAction({
       (page: Doc<'docPages'>): Evidence => ({
         sourceId: String(page.sourceId),
         ref: page.ref,
-        quote: evidenceLine(page.markdown, surface.displayName) || page.title,
+        quote: redactTokenShapes(evidenceLine(page.markdown, surface.displayName) || page.title),
         url: page.url,
       }),
     );
-    const relevantText = matches
-      .map((page: Doc<'docPages'>): string =>
-        relevantSystemText(page.markdown, surface.displayName),
-      )
-      .join('\n\n');
+    const relevantText = redactTokenShapes(
+      matches
+        .map((page: Doc<'docPages'>): string =>
+          relevantSystemText(page.markdown, surface.displayName),
+        )
+        .join('\n\n'),
+    );
     const endpoints = documentedEndpoints(
       attributedUrls(relevantText, surface.displayName, surface.slug),
     );
@@ -816,7 +882,7 @@ export const orientOne = internalAction({
       return { outcome: recorded ? 'absent' : 'skipped', surfaceId: surface._id };
     }
 
-    const draft = await draftOrientation(surface, relevantText);
+    const draft = sanitisedDraft(await draftOrientation(surface, relevantText));
     const { path, endpoint } = choosePath(draft.path, endpoints);
     const mentionsMcp = /\bmcp\b/i.test(relevantText);
     const registrySuggestion =
@@ -836,7 +902,7 @@ export const orientOne = internalAction({
       surface.displayName,
     );
     const credential =
-      extractedCredential.found === 'none'
+      extractedCredential.found === 'none' && extractedCredential.method === 'unknown'
         ? validatedDraftCredential(draft.credential, credentialPages)
         : extractedCredential;
     const openQuestions = [...draft.openQuestions];
@@ -871,8 +937,9 @@ export const orientOne = internalAction({
         );
       }
     }
-    const { sourceId: _sourceId, ...requestCredential } = credential;
+    const { sourceId: _sourceId, summary: _summary, ...requestCredential } = credential;
     void _sourceId;
+    void _summary;
     const request = {
       target: {
         system: surface.displayName,
@@ -908,7 +975,7 @@ export const orientOne = internalAction({
       fallbackPath: draft.fallbackPath,
       endpoint,
       credentialId,
-      credentialLocation: credential.found === 'location' ? credential.location : undefined,
+      credentialLocation: credential.found === 'value' ? undefined : credential.summary,
       expiresInDays: draft.expiresInDays,
     });
     return { outcome: recorded ? 'proposed' : 'skipped', surfaceId: surface._id };

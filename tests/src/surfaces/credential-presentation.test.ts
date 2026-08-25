@@ -60,6 +60,25 @@ describe('surface credential presentation', (): void => {
     });
   });
 
+  it('shows a documented OAuth flow as a procedure when nothing was found', (): void => {
+    expect(
+      presentSurfaceCredential({
+        credential: {
+          found: 'none',
+          method: 'oauth',
+          label: 'Slack OAuth access',
+          location: 'The automation registers its app from the team manifest template.',
+        },
+        credentialLocation: 'OAuth install flow documented in Slack automation policy',
+      }),
+    ).toEqual({
+      canLand: false,
+      governanceFinding: undefined,
+      kind: 'oauth',
+      text: 'The automation registers its app from the team manifest template.',
+    });
+  });
+
   it('never substitutes orientation request labels for store metadata', (): void => {
     expect(
       presentSurfaceCredential({
