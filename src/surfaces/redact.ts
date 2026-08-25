@@ -73,6 +73,10 @@ export function redactSecret(text: string, secret: string): string {
 /**
  * Convert a provider or transport failure into one safe, bounded line.
  *
+ * Only the first non-empty line of the message is kept: a client library
+ * that appends its stack trace to the provider's answer would otherwise
+ * fill the card with file paths instead of the reason.
+ *
  * Args:
  *   error: The failure.
  *   secret: The decrypted value that must not appear in the line.
@@ -89,6 +93,11 @@ export function safeFailureMessage(
   maxLength = 300,
 ): string {
   const raw = error instanceof Error ? error.message : String(error);
-  const safe = redactSecret(raw, secret).replace(/\s+/g, ' ').trim();
+  const firstLine =
+    raw
+      .split(/\r?\n/)
+      .map((line: string): string => line.trim())
+      .find((line: string): boolean => line.length > 0) ?? '';
+  const safe = redactSecret(firstLine, secret).replace(/\s+/g, ' ').trim();
   return (safe || fallback).slice(0, maxLength);
 }

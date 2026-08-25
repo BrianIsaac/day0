@@ -25,7 +25,9 @@ describe('surface credential redaction', (): void => {
     expect(redactTokenShapes('- Service token (RevOps automation): `PASTE_VALUE_HERE`')).toBe(
       '- Service token (RevOps automation): <redacted>',
     );
-    expect(redactTokenShapes('Password: hunter2\nNext line')).toBe('Password: <redacted>\nNext line');
+    expect(redactTokenShapes('Password: hunter2\nNext line')).toBe(
+      'Password: <redacted>\nNext line',
+    );
   });
 
   it('leaves a stored marker and ordinary prose alone', (): void => {
@@ -42,12 +44,18 @@ describe('surface credential redaction', (): void => {
   it('removes an exact value and bounds a failure message', (): void => {
     expect(redactSecret('401 for local-value-only', 'local-value-only')).toBe('401 for <redacted>');
     const message = safeFailureMessage(
-      new Error(`local-value Bearer ${SLACK}\n${'x'.repeat(400)}`),
+      new Error(
+        `local-value Bearer ${SLACK} ${'x'.repeat(400)}\n    at Transport._send (/srv/app/index.mjs:1:1)`,
+      ),
       'local-value',
       'Provider failed.',
     );
     expect(message.startsWith('<redacted> Bearer <redacted> ')).toBe(true);
     expect(message).toHaveLength(300);
+    expect(message).not.toContain('/srv/app');
+    expect(
+      safeFailureMessage(new Error('\n\nFailed to connect: 401 Unauthorized\n    at x'), '', 'f'),
+    ).toBe('Failed to connect: 401 Unauthorized');
     expect(safeFailureMessage(new Error('   '), '', 'Provider failed.')).toBe('Provider failed.');
     expect(safeFailureMessage('plain string', '', 'Provider failed.')).toBe('plain string');
   });

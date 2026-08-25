@@ -59,13 +59,8 @@ describe('surface MCP probing', (): void => {
     expect(argumentNamesFromSchema({ properties: null })).toEqual([]);
   });
 
-  it('calls listTools, reads definitions, and disconnects without returning the bearer', async (): Promise<void> => {
+  it('reads definitions with errors, and disconnects without returning the bearer', async (): Promise<void> => {
     const credential = 'local-contract-value-never-persisted';
-    const listTools = vi.fn(
-      async (): Promise<Record<string, unknown>> => ({
-        surface_list_issues: {},
-      }),
-    );
     const listToolDefinitionsWithErrors = vi.fn(async () => ({
       definitions: {
         surface: {
@@ -78,7 +73,6 @@ describe('surface MCP probing', (): void => {
     }));
     const disconnect = vi.fn(async (): Promise<void> => undefined);
     const makeClient = vi.fn(() => ({
-      listTools,
       listToolDefinitionsWithErrors,
       disconnect,
     }));
@@ -94,7 +88,6 @@ describe('surface MCP probing', (): void => {
       toolAllowlist: ['list_issues'],
       toolArguments: [{ tool: 'list_issues', arguments: ['team', 'updatedAt'] }],
     });
-    expect(listTools).toHaveBeenCalledOnce();
     expect(listToolDefinitionsWithErrors).toHaveBeenCalledWith({
       perServerTimeoutMs: 30_000,
     });
@@ -117,14 +110,37 @@ describe('surface MCP probing', (): void => {
     const disconnect = vi.fn(async (): Promise<void> => undefined);
     await expect(
       probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', 'kanban', () => ({
-        listTools: async (): Promise<Record<string, unknown>> => {
+        listToolDefinitionsWithErrors: async () => {
           throw new Error('timed out');
         },
-        listToolDefinitionsWithErrors: async () => ({ definitions: {}, errors: {} }),
         disconnect,
       })),
     ).rejects.toThrow('timed out');
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("reports the provider's refusal rather than an empty catalogue", async (): Promise<void> => {
+    // The real Linear endpoint answers a bad bearer with 401; Mastra reports it
+    // in errors and returns no definitions. The reason must carry the 401.
+    const refused = async () => ({
+      definitions: {},
+      errors: {
+        surface:
+          'Failed to connect to MCP server surface: SdkHttpError: Error POSTing to endpoint: {"error":"invalid_token"}\n    at StreamableHTTPClientTransport._send (/srv/index.mjs:1:1)',
+      },
+    });
+    await expect(
+      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', 'kanban', () => ({
+        listToolDefinitionsWithErrors: refused,
+        disconnect: async (): Promise<void> => undefined,
+      })),
+    ).rejects.toThrow('invalid_token');
+    await expect(
+      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', 'kanban', () => ({
+        listToolDefinitionsWithErrors: async () => ({ definitions: { surface: {} }, errors: {} }),
+        disconnect: async (): Promise<void> => undefined,
+      })),
+    ).rejects.toThrow('MCP server returned no tools.');
   });
 });
 

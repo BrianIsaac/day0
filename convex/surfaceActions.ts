@@ -34,7 +34,6 @@ interface ToolDefinition {
 }
 
 interface McpProbeClient {
-  listTools(): Promise<Record<string, unknown>>;
   listToolDefinitionsWithErrors(options?: { perServerTimeoutMs?: number }): Promise<{
     definitions: Record<string, Record<string, ToolDefinition>>;
     errors: Record<string, string>;
@@ -248,14 +247,17 @@ export async function probeMcpSurface(
   const url = linearMcpEndpoint(endpoint);
   const client = makeClient(url, credential);
   try {
-    const executableTools = await client.listTools();
-    if (Object.keys(executableTools).length === 0) throw new Error('MCP server returned no tools.');
+    // Discovery with errors first: `listTools()` returns an empty map for a
+    // server that refused the bearer, which would read as "no tools" on the
+    // card when the provider actually answered 401.
     const { definitions, errors } = await client.listToolDefinitionsWithErrors({
       perServerTimeoutMs: 30_000,
     });
     if (errors.surface) throw new Error(errors.surface);
     const catalog = definitions.surface;
-    if (!catalog) throw new Error('MCP server returned no tool definitions.');
+    if (!catalog || Object.keys(catalog).length === 0) {
+      throw new Error('MCP server returned no tools.');
+    }
     return mcpAllowlist(catalog, surfaceClass);
   } finally {
     await client.disconnect();
