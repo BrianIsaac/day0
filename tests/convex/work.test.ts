@@ -73,6 +73,7 @@ async function seed(
       payload: { workItemId },
       createdAt: 1,
     });
+    if (state === 'executing') await ctx.db.patch(workItemId, { executionRunId: runId });
     return { agentId, workItemId, runId };
   });
 }
@@ -96,7 +97,7 @@ async function eventTypes(harness: Harness, agentId: Id<'agents'>): Promise<stri
 
 async function scheduledFunctionNames(harness: Harness): Promise<string[]> {
   const rows = await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect());
-  return rows.map((row) => row.name);
+  return rows.map((row) => row.name).sort();
 }
 
 async function pend(harness: Harness): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
@@ -160,7 +161,10 @@ describe('the exact-action gate', (): void => {
     );
     expect(events).toHaveLength(1);
     expect(events[0].payload).toEqual({ workItemId, runId, approvedIndexes: [0, 1], heldIndexes: [] });
-    expect(await scheduledFunctionNames(harness)).toEqual(['workActions:applyApprovedActions']);
+    expect(await scheduledFunctionNames(harness)).toEqual([
+      'work:recoverInterruptedApply',
+      'workActions:applyApprovedActions',
+    ]);
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, {
         workItemId,
@@ -175,7 +179,10 @@ describe('the exact-action gate', (): void => {
         reason: 'replace the first decision',
       }),
     ).rejects.toThrow('actions have already been approved');
-    expect(await scheduledFunctionNames(harness)).toEqual(['workActions:applyApprovedActions']);
+    expect(await scheduledFunctionNames(harness)).toEqual([
+      'work:recoverInterruptedApply',
+      'workActions:applyApprovedActions',
+    ]);
   });
 
   it('refuses approval from a non-owner, in the wrong state, or for an index outside the list', async (): Promise<void> => {
@@ -273,6 +280,7 @@ describe('the exact-action gate', (): void => {
     await harness.mutation(internal.work.claimApprovedActions, { workItemId });
     await harness.mutation(internal.work.setCompleted, {
       workItemId,
+      runId,
       output: {
         ...pendingOutput,
         applied: [
@@ -290,10 +298,11 @@ describe('the exact-action gate', (): void => {
   it('still refuses to complete a run with a failed unheld action', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const { workItemId } = await seed(harness, 'executing');
+    const { workItemId, runId } = await seed(harness, 'executing');
     await expect(
       harness.mutation(internal.work.setCompleted, {
         workItemId,
+        runId,
         output: {
           applied: [
             { tool: 'mcp.call', ok: true, held: true, idempotencyKey: 'k0' },
@@ -302,6 +311,127 @@ describe('the exact-action gate', (): void => {
         },
       }),
     ).rejects.toThrow('1 action(s) that did not change the work environment');
+  });
+
+  it('fences a stale run from holding or completing a newer execution', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing');
+    const newerRunId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: 2,
+      });
+      await ctx.db.patch(workItemId, { executionRunId: id });
+      return id;
+    });
+    await expect(
+      harness.mutation(internal.work.setActionsPending, {
+        workItemId,
+        runId,
+        output: pendingOutput,
+      }),
+    ).resolves.toEqual({ pending: false });
+    await expect(
+      harness.mutation(internal.work.setCompleted, {
+        workItemId,
+        runId,
+        output: { applied: [{ tool: 'mcp.call', ok: true }] },
+      }),
+    ).rejects.toThrow('execution run changed');
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'executing',
+      executionRunId: newerRunId,
+    });
+  });
+
+  it('records unknown outcomes after an interrupted apply and refuses replay', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await pend(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await expect(
+      harness.mutation(internal.work.recoverInterruptedApply, {
+        workItemId,
+        pendingRunId: runId,
+      }),
+    ).resolves.toEqual({ recovered: 'outcome-unknown' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.pendingRunId).toBe(runId);
+    expect((row.output as { applied: unknown[] }).applied).toEqual([
+      {
+        tool: 'mcp.call',
+        ok: false,
+        reason: 'outcome unknown after interrupted apply - verify provider before retry',
+        idempotencyKey: `${workItemId}:${runId}:0`,
+      },
+      {
+        tool: 'mcp.call',
+        ok: true,
+        held: true,
+        reason: 'not approved by the manager',
+        idempotencyKey: `${workItemId}:${runId}:1`,
+      },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).rejects.toThrow('reconcile the provider first');
+  });
+
+  it('reschedules an approved run that was interrupted before its apply claim', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await pend(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    await expect(
+      harness.mutation(internal.work.recoverInterruptedApply, {
+        workItemId,
+        pendingRunId: runId,
+      }),
+    ).resolves.toEqual({ recovered: 'rescheduled' });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'actions-pending',
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    expect(await scheduledFunctionNames(harness)).toEqual([
+      'work:recoverInterruptedApply',
+      'work:recoverInterruptedApply',
+      'workActions:applyApprovedActions',
+      'workActions:applyApprovedActions',
+    ]);
+  });
+
+  it('refuses retry when part of a failed run already landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing');
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      runId,
+      reason: 'one action failed',
+      output: {
+        applied: [
+          { tool: 'mcp.call', ok: true },
+          { tool: 'http.request', ok: false, reason: 'refused' },
+        ],
+      },
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).rejects.toThrow('reconcile the provider first');
   });
 
   it('counts a pending run as open work and as an existing claim', async (): Promise<void> => {

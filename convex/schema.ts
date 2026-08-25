@@ -224,6 +224,12 @@ export default defineSchema({
     /** Indexes into `output.actions` the manager approved. Every other index
      * is recorded as held when the approved ones are applied. */
     approvedIndexes: v.optional(v.array(v.number())),
+    /** The execution claim currently allowed to move this row. */
+    executionRunId: v.optional(v.id('events')),
+    /** The apply claim and its start time, used to recover an interrupted
+     * provider call without replaying an outcome that may already have landed. */
+    applyAttemptId: v.optional(v.id('events')),
+    applyClaimedAt: v.optional(v.number()),
     observedAt: v.number(),
     createdAt: v.number(),
   })

@@ -834,6 +834,17 @@ interface LedgerRow {
   providerId?: string;
 }
 
+/** Whether replay could duplicate an external effect whose outcome is durable or unknown. */
+export function retryRequiresReconciliation(
+  applied: readonly LedgerRow[],
+  skipReason?: string,
+): boolean {
+  return (
+    applied.some((action) => action.ok && !action.held) ||
+    skipReason?.includes('provider outcomes are unknown') === true
+  );
+}
+
 /**
  * The exact-action gate: every action the skill emitted, verbatim, with a
  * checkbox each. Nothing reaches a surface until the manager approves it here.
@@ -1046,6 +1057,7 @@ function WorkItemCard({
   const heldActions = appliedActions.filter((a) => a.held);
   const failedActions = appliedActions.filter((a) => !a.ok && !a.held);
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
+  const retryBlocked = retryRequiresReconciliation(appliedActions, item.skipReason);
   const awaitingSurface =
     verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
@@ -1225,16 +1237,15 @@ function WorkItemCard({
           ) : null}
           <button
             onClick={onRetryFailed}
-            className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30"
+            disabled={retryBlocked}
+            className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Retry
           </button>
-          {landedActions.length > 0 ? (
+          {retryBlocked ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry re-runs the whole plan, so the{' '}
-              {landedActions.length} action
-              {landedActions.length === 1 ? '' : 's'} that already landed
-              will be applied again.
+              Retry is disabled because a provider effect landed or may have landed. Reconcile the
+              provider before starting a new run.
             </p>
           ) : null}
         </div>

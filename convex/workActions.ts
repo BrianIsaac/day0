@@ -338,12 +338,13 @@ export const executeApprovedPlan = action({
         },
         output.actions ?? [],
       );
-      return await finishRun(ctx, args.workItemId, output, applied);
+      return await finishRun(ctx, args.workItemId, claim.runId, output, applied);
     } catch (err) {
       const reason = (err as Error).message;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId: args.workItemId,
         reason,
+        runId: claim.runId,
       });
       return { ok: false, reason };
     }
@@ -393,10 +394,14 @@ export const applyApprovedActions = internalAction({
           approvedIndexes: new Set(claim.approvedIndexes),
         },
       );
-      return await finishRun(ctx, args.workItemId, output, applied);
+      return await finishRun(ctx, args.workItemId, claim.runId, output, applied);
     } catch (err) {
       const reason = (err as Error).message;
-      await ctx.runMutation(internal.work.setFailed, { workItemId: args.workItemId, reason });
+      await ctx.runMutation(internal.work.setFailed, {
+        workItemId: args.workItemId,
+        reason,
+        runId: claim.runId,
+      });
       return { ok: false, reason };
     }
   },
@@ -455,6 +460,7 @@ async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<Surf
 async function finishRun(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
+  runId: Id<'events'>,
   output: ExecutionOutput,
   applied: AppliedAction[],
 ): Promise<{ ok: boolean; reason?: string }> {
@@ -463,12 +469,14 @@ async function finishRun(
     await ctx.runMutation(internal.work.setFailed, {
       workItemId,
       reason,
+      runId,
       output: { ...output, applied },
     });
     return { ok: false, reason };
   }
   await ctx.runMutation(internal.work.setCompleted, {
     workItemId,
+    runId,
     output: { ...output, applied },
   });
   return { ok: true };

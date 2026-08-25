@@ -8,7 +8,10 @@ vi.mock('../../app/agent/[agentId]/MockEnvironment', () => ({
   MockEnvironment: (): null => null,
 }));
 
-import { PendingActions } from '../../app/agent/[agentId]/AgentDashboard';
+import {
+  PendingActions,
+  retryRequiresReconciliation,
+} from '../../app/agent/[agentId]/AgentDashboard';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import type { MockAction } from '../../src/work/types';
 
@@ -71,5 +74,16 @@ describe('dashboard exact-action gate', (): void => {
     const html = render([action], false);
     expect(html).toContain('Loading the surface rules before approval.');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve selected \(1\)<\/button>/);
+  });
+
+  it('requires reconciliation for landed or interrupted provider effects', (): void => {
+    expect(retryRequiresReconciliation([{ tool: 'mcp.call', ok: true }])).toBe(true);
+    expect(
+      retryRequiresReconciliation(
+        [{ tool: 'mcp.call', ok: false, reason: 'unknown' }],
+        'apply was interrupted; provider outcomes are unknown',
+      ),
+    ).toBe(true);
+    expect(retryRequiresReconciliation([{ tool: 'mcp.call', ok: false }])).toBe(false);
   });
 });
