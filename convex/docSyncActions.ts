@@ -109,8 +109,8 @@ export async function persistPageBatch(
   let redactions = 0;
   for (const page of pages) {
     const unwrapped = unwrapWholePageFence(page.markdown);
-    const title = markdownPageTitle(unwrapped, page.title);
-    const result = redactCredentials(unwrapped, title);
+    const result = redactCredentials(unwrapped, markdownPageTitle(unwrapped, page.title));
+    const title = markdownPageTitle(result.markdown, result.title);
     for (const [index, credential] of result.credentials.entries()) {
       const ref = credentialSourceRef(page.ref, credential, result.credentials.length, index);
       await ctx.runAction(internal.credentials.store, {

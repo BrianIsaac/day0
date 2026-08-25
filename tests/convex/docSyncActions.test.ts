@@ -72,14 +72,16 @@ describe('documentation sync action helpers', (): void => {
   });
 
   it('stores raw values only in credential actions and persists markers everywhere else', async (): Promise<void> => {
+    const suffix = 'contract-value-0123456789abcdef';
     const values = [
-      token(['ntn'], '_', 'contract-value'),
-      token(['lin', 'api'], '_', 'contract-value'),
-      `xox${'b'}-contract-value`,
-      `xox${'p'}-contract-value`,
-      `xox${'a'}-contract-value`,
-      token(['secret'], '_', 'contract-value'),
-      'generic-contract-value',
+      token(['ntn'], '_', suffix),
+      token(['lin', 'api'], '_', suffix),
+      `xox${'b'}-${suffix}`,
+      `xox${'p'}-${suffix}`,
+      `xox${'a'}-${suffix}`,
+      token(['secret'], '_', suffix),
+      `generic-${suffix}`,
+      token(['ntn'], '_', `title-${suffix}`),
     ];
     const linearTemplate = readFileSync(
       'docs/submission/notion-pages/linear-automation.md',
@@ -93,12 +95,13 @@ describe('documentation sync action helpers', (): void => {
       `# Slack app\n\nValue: ${values[4]}`,
       `# Secret\n\nValue: ${values[5]}`,
       `# Billing\n\nAPI key: ${values[6]}`,
+      `# Heading ${values[7]}\n\nbody`,
     ];
     const pages: DocPage[] = bodies.map(
       (markdown: string, index: number): DocPage => ({
         sourceId: source()._id,
         ref: `page-${index}`,
-        title: `Page ${index}`,
+        title: index === bodies.length - 1 ? `Provider title ${values[7]}` : `Page ${index}`,
         markdown,
         updatedAt: 1,
       }),
@@ -139,6 +142,7 @@ describe('documentation sync action helpers', (): void => {
     }
     const persisted = JSON.stringify(mutationCalls);
     expect(persisted).toContain('<credential: linear service token, stored>');
+    expect(persisted).toContain('"title":"Heading <credential: notion connection token, stored>"');
     expect(persisted).toContain('body');
     expect(persisted).toContain('markdown');
     expect(persisted).not.toContain('events');
