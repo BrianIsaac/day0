@@ -21,10 +21,37 @@ import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { MockAction, ReplyTarget } from '../src/work/types';
+import type { DecisionKind } from '../src/work/manager-channel';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
   'apply was interrupted after its claim; provider outcomes are unknown and must be reconciled before retry';
+
+/** Avoid scheduling an outbound action when no connected manager channel can claim it. */
+async function scheduleDecisionRequest(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  kind: DecisionKind,
+): Promise<void> {
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .collect();
+  const available = surfaces.some(
+    (surface) =>
+      surface.class === 'chat' &&
+      surface.verdict === 'connected' &&
+      surface.credentialLanded &&
+      !!surface.credentialId &&
+      !!surface.managerDmChannelId,
+  );
+  if (available) {
+    await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
+      workItemId: row._id,
+      kind,
+    });
+  }
+}
 
 /**
  * Read the authority and connection state used at the provider boundary.
@@ -285,7 +312,10 @@ export const decidePlan = internalMutation({
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'plan-pending') return { approved: false };
     const agent = await ctx.db.get(row.agentId);
-    if (!agent || !autonomousActionsOn(agent)) return { approved: false };
+    if (!agent || !autonomousActionsOn(agent)) {
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
     await ctx.db.patch(args.workItemId, { state: 'plan-approved' });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -294,6 +324,130 @@ export const decidePlan = internalMutation({
       createdAt: Date.now(),
     });
     return { approved: true };
+  },
+});
+
+/** Claim the only outbound message for one parked decision state. */
+export const prepareDecisionRequest = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    kind: v.union(v.literal('plan'), v.literal('actions')),
+    decisionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    const expectedState = args.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+    if (row.state !== expectedState) {
+      return { prepared: false as const, reason: `work item is ${row.state}` };
+    }
+    if (row.decision?.kind === args.kind && !row.decision.decidedAt) {
+      return { prepared: false as const, reason: 'decision request already claimed' };
+    }
+    if (!/^[23456789abcdefghjkmnpqrstuvwxyz]{6}$/.test(args.decisionId)) {
+      throw new Error('decision id is not a six-character random token');
+    }
+    const collision = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', row.agentId).eq('decision.id', args.decisionId),
+      )
+      .first();
+    if (collision && collision._id !== row._id) {
+      return { prepared: false as const, reason: 'decision id collision' };
+    }
+    const agent = await ctx.db.get(row.agentId);
+    if (!agent) return { prepared: false as const, reason: 'agent not found' };
+    const surfaceRows = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+      .collect();
+    const chat = surfaceRows
+      .filter(
+        (surface) =>
+          surface.class === 'chat' &&
+          surface.verdict === 'connected' &&
+          surface.credentialLanded &&
+          !!surface.credentialId &&
+          !!surface.managerDmChannelId,
+      )
+      .sort(
+        (left, right) =>
+          (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
+            (right.waterfallPosition ?? Number.MAX_SAFE_INTEGER) ||
+          left.createdAt - right.createdAt,
+      )[0];
+    if (!chat?.managerDmChannelId) {
+      return { prepared: false as const, reason: 'no connected manager chat channel' };
+    }
+    const grants = await ctx.db
+      .query('permissionGrants')
+      .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId))
+      .collect();
+    const actions = actionsOf(row.output);
+    const heldIndexes =
+      args.kind === 'actions'
+        ? indexesWith(verdictList(row.actionVerdicts, actions.length), 'held')
+        : [];
+    if (args.kind === 'actions' && heldIndexes.length === 0) {
+      return { prepared: false as const, reason: 'no held actions need a decision' };
+    }
+    const requestRunId = await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.decision-requesting',
+      payload: { workItemId: row._id, decisionId: args.decisionId, kind: args.kind },
+      createdAt: Date.now(),
+    });
+    const decision = {
+      id: args.decisionId,
+      kind: args.kind as DecisionKind,
+      requestedAt: Date.now(),
+      channel: chat.managerDmChannelId,
+      surfaceSlug: chat.slug,
+      surfaceName: chat.displayName,
+    };
+    await ctx.db.patch(row._id, { decision });
+    return {
+      prepared: true as const,
+      agentId: row.agentId,
+      agentName: agent.name,
+      title: row.title,
+      plan: row.plan,
+      output: row.output,
+      heldIndexes,
+      decisionId: args.decisionId,
+      requestRunId,
+      surface: toSurfaceRecord(chat),
+      surfaces: surfaceRows.map(toSurfaceRecord),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+    };
+  },
+});
+
+/** Attach provider evidence, or a bounded failure, to the claimed request. */
+export const recordDecisionRequest = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    ts: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row?.decision || row.decision.id !== args.decisionId) return false;
+    await ctx.db.patch(row._id, {
+      decision: {
+        ...row.decision,
+        ...(args.ts ? { ts: args.ts } : {}),
+        ...(args.failure
+          ? {
+              requestFailedAt: Date.now(),
+              requestFailure: args.failure.slice(0, 240),
+            }
+          : {}),
+      },
+    });
+    return true;
   },
 });
 
@@ -743,6 +897,7 @@ export const setActionsPending = internalMutation({
       payload,
       createdAt: Date.now(),
     });
+    await scheduleDecisionRequest(ctx, row, 'actions');
     return { pending: true, phase: 'manager' };
   },
 });
@@ -798,6 +953,7 @@ export const setAwaitingApproval = internalMutation({
       },
       createdAt: Date.now(),
     });
+    await scheduleDecisionRequest(ctx, row, 'actions');
     return { parked: true };
   },
 });

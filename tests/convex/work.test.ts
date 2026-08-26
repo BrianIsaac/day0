@@ -88,6 +88,15 @@ async function seed(
       createdAt: 1,
     });
     if (options.withSlack) {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'team chat token',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
       await ctx.db.insert('surfaces', {
         agentId,
         slug: 'slack',
@@ -97,7 +106,9 @@ async function seed(
         endpoint: 'https://slack.com/api/',
         path: 'documented-api',
         toolAllowlist: ['chat.postMessage'],
+        toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
         managerDmChannelId: 'D0MANAGER',
+        credentialId,
         credentialLanded: true,
         lastVerifiedAt: Date.now(),
         whereFound: [],
@@ -259,6 +270,65 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
       approved: true,
     });
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+  });
+});
+
+describe('manager channel request claims', (): void => {
+  it('claims a plan decision once and stores the selected chat surface', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending', undefined, { withSlack: true });
+
+    const first = await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    expect(first).toMatchObject({
+      prepared: true,
+      decisionId: 'ab3xyz',
+      surface: { slug: 'slack', displayName: 'Slack', managerDmChannelId: 'D0MANAGER' },
+    });
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+      }),
+    ).toEqual({ prepared: false, reason: 'decision request already claimed' });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      kind: 'plan',
+      channel: 'D0MANAGER',
+      surfaceName: 'Slack',
+    });
+  });
+
+  it('claims an action decision only when the parked run has held rows', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(
+      harness,
+      'executing',
+      ['boss:message', 'linear:read'],
+      { withSlack: true },
+    );
+    await harness.mutation(internal.work.setActionsPending, {
+      workItemId,
+      runId,
+      output: pendingOutput,
+    });
+
+    const prepared = await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'ef5rst',
+    });
+    expect(prepared).toMatchObject({ prepared: true, heldIndexes: [0, 1] });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ef5rst',
+      kind: 'actions',
+    });
   });
 });
 

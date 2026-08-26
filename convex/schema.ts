@@ -295,6 +295,24 @@ export default defineSchema({
     proposedSkillId: v.optional(v.id('skills')),
     output: v.optional(v.any()),
     skipReason: v.optional(v.string()),
+    /** A single-use decision requested through the manager's main chat surface. */
+    decision: v.optional(
+      v.object({
+        id: v.string(),
+        kind: v.union(v.literal('plan'), v.literal('actions')),
+        requestedAt: v.number(),
+        channel: v.string(),
+        surfaceSlug: v.string(),
+        surfaceName: v.string(),
+        ts: v.optional(v.string()),
+        requestFailedAt: v.optional(v.number()),
+        requestFailure: v.optional(v.string()),
+        decidedAt: v.optional(v.number()),
+        outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
+        decidedVia: v.optional(v.union(v.literal('dashboard'), v.literal('channel'))),
+        duplicateNotifiedAt: v.optional(v.number()),
+      }),
+    ),
     // ---- Lane C (executors and the gate) ----
     /** The run whose actions are pending; preserved through approval so the
      * apply step keys its idempotency off the same claim as the skill run. */
@@ -341,6 +359,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_agent_state', ['agentId', 'state'])
+    .index('by_agent_decision', ['agentId', 'decision.id'])
     .index('by_extId', ['sourceSystem', 'externalId']),
 
   skills: defineTable({

@@ -46,6 +46,7 @@ export interface SurfaceRecord {
   path?: SurfacePath;
   endpoint?: string;
   toolAllowlist?: string[];
+  toolArguments?: Array<{ tool: string; arguments: string[] }>;
   credentialId?: string;
   credentialKind?: CredentialKind;
   managerDmChannelId?: string;

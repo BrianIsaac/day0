@@ -559,6 +559,7 @@ function surfaceAuthorityShape(surface: SurfaceRecord): string {
     path: surface.path,
     endpoint: surface.endpoint,
     toolAllowlist: [...(surface.toolAllowlist ?? [])].sort(),
+    toolArguments: surface.toolArguments,
     credentialId: surface.credentialId,
     credentialKind: surface.credentialKind,
     managerDmChannelId: surface.managerDmChannelId,
