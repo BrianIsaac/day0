@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -29,6 +29,30 @@ const TABS: Array<{ key: TabKey; label: string; sublabel: string }> = [
   { key: 'surfaces', label: 'Surfaces', sublabel: 'connections + evidence' },
 ];
 
+const TAB_KEYS = new Set<string>(TABS.map((tab): TabKey => tab.key));
+
+/**
+ * Read the tab a location hash names.
+ *
+ * A card link such as `#surfaces` (the awaiting-connection deferral on a work
+ * item) must switch the tab, not only scroll, so the hash is honoured on
+ * mount and on every `hashchange`. The Surfaces tab exists only in real mode;
+ * elsewhere its hash names nothing.
+ *
+ * Args:
+ *   hash: `window.location.hash`, with or without the leading `#`.
+ *   isReal: Whether the deployment runs in real mode.
+ *
+ * Returns:
+ *   The tab key the hash names, or undefined when it names no tab.
+ */
+export function tabFromHash(hash: string, isReal: boolean): TabKey | undefined {
+  const key = decodeURIComponent(hash.replace(/^#/, '')).trim().toLowerCase();
+  if (!TAB_KEYS.has(key)) return undefined;
+  if (key === 'surfaces' && !isReal) return undefined;
+  return key as TabKey;
+}
+
 export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const [active, setActive] = useState<TabKey>('slack');
 
@@ -45,6 +69,16 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const mode: EnvironmentMode = isReal ? 'real' : 'mock';
   const surfaces = useQuery(api.surfaces.listForAgent, isReal ? { agentId } : 'skip');
   const tabs = isReal ? TABS : TABS.filter((tab) => tab.key !== 'surfaces');
+
+  useEffect(() => {
+    const follow = (): void => {
+      const named = tabFromHash(window.location.hash, isReal);
+      if (named) setActive(named);
+    };
+    follow();
+    window.addEventListener('hashchange', follow);
+    return (): void => window.removeEventListener('hashchange', follow);
+  }, [isReal]);
 
   const counts: Record<TabKey, number | undefined> = {
     slack: channels?.length,

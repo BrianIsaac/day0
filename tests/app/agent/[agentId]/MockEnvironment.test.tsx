@@ -18,7 +18,7 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Id } from '../../../../convex/_generated/dataModel';
-import { MockEnvironment } from '../../../../app/agent/[agentId]/MockEnvironment';
+import { MockEnvironment, tabFromHash } from '../../../../app/agent/[agentId]/MockEnvironment';
 
 const agentId = 'agent-1' as Id<'agents'>;
 
@@ -40,5 +40,20 @@ describe('MockEnvironment caption and tabs', (): void => {
     expect(markup).toContain('mock-only and stay empty');
     expect(markup).toContain('Surfaces');
     expect(markup).toContain('no Slack channels are mirrored here in real mode');
+  });
+});
+
+describe('tab selection from the location hash', (): void => {
+  it('names a tab from the hash the card link carries', (): void => {
+    expect(tabFromHash('#surfaces', true)).toBe('surfaces');
+    expect(tabFromHash('surfaces', true)).toBe('surfaces');
+    expect(tabFromHash('#Docs', true)).toBe('docs');
+    expect(tabFromHash('#tickets', false)).toBe('tickets');
+  });
+
+  it('ignores hashes that name no tab, and the Surfaces tab outside real mode', (): void => {
+    expect(tabFromHash('', true)).toBeUndefined();
+    expect(tabFromHash('#work-item-1', true)).toBeUndefined();
+    expect(tabFromHash('#surfaces', false)).toBeUndefined();
   });
 });
