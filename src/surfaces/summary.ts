@@ -1,5 +1,11 @@
 import type { MockAction } from '../work/types';
-import { parseSurfaceAction, targetChannel, type JsonObject, type ParsedSurfaceAction } from './policy';
+import {
+  isManagerDm,
+  parseSurfaceAction,
+  targetChannel,
+  type JsonObject,
+  type ParsedSurfaceAction,
+} from './policy';
 import type { SurfaceRecord } from './types';
 
 /**
@@ -17,8 +23,12 @@ export const SUMMARY_TEXT_LIMIT = 120;
 const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'] as const;
 const STATE_KEYS = ['state', 'status', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'] as const;
 const TEXT_KEYS = ['body', 'text', 'comment', 'message'] as const;
+const CHANNEL_KEYS = ['channel', 'channel_id', 'channelId', 'conversation', 'conversationId'] as const;
+const THREAD_KEYS = ['thread_ts', 'threadTs', 'thread_id', 'threadId', 'threadKey', 'parentId', 'replyTo', 'reply_to'] as const;
 const READ_VERB = /^(?:get|read|fetch|retrieve|show|describe)$/i;
 const LIST_VERB = /^(?:list|search|query|find)$/i;
+const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+const PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/gi;
 
 function firstString(record: JsonObject, keys: readonly string[]): string | undefined {
   for (const key of keys) {
@@ -39,13 +49,32 @@ function firstString(record: JsonObject, keys: readonly string[]): string | unde
  *   The excerpt, with an ellipsis when cut.
  */
 export function excerpt(text: string, limit = SUMMARY_TEXT_LIMIT): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = text
+    .replace(BIDI_CONTROLS, '')
+    .replace(PLACEHOLDER, '[credential]')
+    .replace(/\s+/g, ' ')
+    .trim();
   return flat.length > limit ? `${flat.slice(0, limit).trimEnd()}…` : flat;
+}
+
+/** Render an untrusted identifier on one line without bidi controls or unbounded length. */
+function label(text: string, limit = 80): string {
+  return excerpt(text.replaceAll('<', '‹').replaceAll('>', '›'), limit);
+}
+
+/** Quote body text so it cannot visually continue the action grammar. */
+function quote(text: string): string {
+  return JSON.stringify(excerpt(text));
+}
+
+function fieldList(keys: readonly string[]): string {
+  const shown = keys.slice(0, 6).map((key) => label(key, 40));
+  return `${shown.join(', ')}${keys.length > shown.length ? `, +${keys.length - shown.length} more` : ''}`;
 }
 
 function surfaceName(slug: string | undefined, surfaces: readonly SurfaceRecord[]): string {
   if (!slug) return '?';
-  return surfaces.find((surface) => surface.slug === slug)?.displayName ?? slug;
+  return label(surfaces.find((surface) => surface.slug === slug)?.displayName ?? slug);
 }
 
 /** Split `save_comment` into its verb and the noun it acts on. */
@@ -66,36 +95,48 @@ function describeMcpCall(
   if (/^save_comment$/i.test(parsed.tool) || (/comment/i.test(noun) && text !== undefined)) {
     const commentId = firstString(args, ['id']);
     const target = firstString(args, ['issueId', 'issue_id', 'issue', 'ticketId', 'ticket']);
-    const quoted = text === undefined ? '' : `: ${excerpt(text)}`;
-    if (commentId && !target) return `Edit comment ${commentId} on ${name}${quoted}`;
-    if (firstString(args, ['parentId'])) return `Reply on ${target ?? name}${quoted}`;
-    return `Comment on ${target ?? name}${quoted}`;
+    const quoted = text === undefined ? '' : `: ${quote(text)}`;
+    if (commentId) {
+      return `Edit comment ${label(commentId)} on ${name}${target ? ` for ${label(target)}` : ''}${quoted}`;
+    }
+    if (firstString(args, ['parentId'])) return `Reply on ${target ? label(target) : name}${quoted}`;
+    return `Comment on ${target ? label(target) : name}${quoted}`;
   }
   if (/^(?:save|update|set|change|transition|move)$/i.test(verb) && noun) {
     const state = firstString(args, STATE_KEYS);
-    if (ref && state) return `Move ${ref} to ${state} on ${name}`;
+    const extraFields = Object.keys(args).filter(
+      (key) =>
+        !(ISSUE_KEYS as readonly string[]).includes(key) &&
+        !(STATE_KEYS as readonly string[]).includes(key),
+    );
+    if (ref && state) {
+      const extras = extraFields.length ? `; also update ${fieldList(extraFields)}` : '';
+      return `Move ${label(ref)} to ${label(state)} on ${name}${extras}`;
+    }
     if (ref) {
       const fields = Object.keys(args).filter((key) => !(ISSUE_KEYS as readonly string[]).includes(key));
-      return `Update ${noun} ${ref} on ${name}${fields.length ? ` (${fields.join(', ')})` : ''}`;
+      return `Update ${label(noun)} ${label(ref)} on ${name}${fields.length ? ` (${fieldList(fields)})` : ''}`;
     }
     const title = firstString(args, ['title', 'name']);
-    return `Create ${noun} on ${name}${title ? `: ${excerpt(title)}` : ''}`;
+    const createFields = Object.keys(args).filter((key) => key !== 'title' && key !== 'name');
+    const extras = createFields.length ? `; also set ${fieldList(createFields)}` : '';
+    return `Create ${label(noun)} on ${name}${title ? `: ${quote(title)}` : ''}${extras}`;
   }
   if (READ_VERB.test(verb) && noun) {
-    return `Read ${noun}${ref ? ` ${ref}` : ''} on ${name}`;
+    return `Read ${label(noun)}${ref ? ` ${label(ref)}` : ''} on ${name}`;
   }
   if (LIST_VERB.test(verb) && noun) {
-    if (ref) return `List ${noun} on ${ref}`;
+    if (ref) return `List ${label(noun)} on ${label(ref)}`;
     const scope = firstString(args, ['project', 'team', 'query']);
-    return `List ${noun} on ${name}${scope ? ` (${scope})` : ''}`;
+    return `List ${label(noun)} on ${name}${scope ? ` (${label(scope)})` : ''}`;
   }
   if (/^(?:create|add|post)$/i.test(verb) && noun) {
-    return `Create ${noun} on ${name}${text ? `: ${excerpt(text)}` : ''}`;
+    return `Create ${label(noun)} on ${name}${text ? `: ${quote(text)}` : ''}`;
   }
   if (/^(?:delete|remove|archive)$/i.test(verb) && noun) {
-    return `${verb[0].toUpperCase()}${verb.slice(1)} ${noun}${ref ? ` ${ref}` : ''} on ${name}`;
+    return `${verb[0].toUpperCase()}${verb.slice(1)} ${label(noun)}${ref ? ` ${label(ref)}` : ''} on ${name}`;
   }
-  return `${parsed.tool} on ${name}`;
+  return `${label(parsed.tool)} on ${name}`;
 }
 
 function describeHttpRequest(
@@ -109,17 +150,26 @@ function describeHttpRequest(
   const isChatPost =
     parsed.method !== 'GET' &&
     parsed.method !== 'HEAD' &&
-    (/chat\.postMessage$/.test(parsed.path) || (surface?.class === 'chat' && text !== undefined));
+    /^\/*chat\.postMessage$/.test(parsed.path) &&
+    surface?.class === 'chat' &&
+    text !== undefined;
   if (isChatPost) {
     const channel = targetChannel(parsed);
-    const quoted = text === undefined ? '' : `: ${excerpt(text)}`;
-    if (surface?.managerDmChannelId && channel === surface.managerDmChannelId) {
-      return `Send ${surface.managerName ?? 'the manager'} a ${name} DM${quoted}`;
+    const quoted = `: ${quote(text)}`;
+    const extraFields = Object.keys(body ?? {}).filter(
+      (key) =>
+        key !== 'text' &&
+        !(CHANNEL_KEYS as readonly string[]).includes(key) &&
+        !(THREAD_KEYS as readonly string[]).includes(key),
+    );
+    const extras = extraFields.length ? `; also send ${fieldList(extraFields)}` : '';
+    if (surface && isManagerDm(parsed, surface)) {
+      return `Send ${surface.managerName ? label(surface.managerName) : 'the manager'} a ${name} DM${quoted}${extras}`;
     }
     const thread = body && firstString(body, ['thread_ts']) ? ' (in thread)' : '';
-    return `Post to ${name} channel ${channel ?? '(unknown)'}${thread}${quoted}`;
+    return `Post to ${name} channel ${channel ? label(channel) : '(unknown)'}${thread}${quoted}${extras}`;
   }
-  return `${parsed.method} ${parsed.path} on ${name}`;
+  return `${parsed.method} ${label(parsed.path, 120)} on ${name}`;
 }
 
 /**
@@ -143,7 +193,7 @@ export function summariseAction(action: MockAction, surfaces: readonly SurfaceRe
         : describeHttpRequest(parsed.action, surfaces);
     }
     const tool = action.tool === 'mcp.call' ? firstString(args, ['tool']) ?? action.tool : action.tool;
-    return `${tool} on ${surfaceName(slug, surfaces)}`;
+    return `${label(tool)} on ${surfaceName(slug, surfaces)}`;
   }
-  return slug ? `${action.tool} on ${slug}` : action.tool;
+  return slug ? `${label(action.tool)} on ${label(slug)}` : label(action.tool);
 }

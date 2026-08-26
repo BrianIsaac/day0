@@ -60,48 +60,81 @@ describe('the plain-language action line', (): void => {
       'List issues on Linear (Q3 close)',
     );
     expect(summariseAction(mcp('save_comment', { issueId: 'REVOPS-5', body: 'Prepared the close summary.' }), surfaces)).toBe(
-      'Comment on REVOPS-5: Prepared the close summary.',
+      'Comment on REVOPS-5: "Prepared the close summary."',
     );
     expect(summariseAction(mcp('save_comment', { issueId: 'REVOPS-5', body: longBody }), surfaces)).toBe(
-      `Comment on REVOPS-5: ${excerpt(longBody)}`,
+      `Comment on REVOPS-5: "${excerpt(longBody)}"`,
     );
     expect(excerpt(longBody).length).toBeLessThanOrEqual(SUMMARY_TEXT_LIMIT + 1);
     expect(excerpt(longBody).endsWith('…')).toBe(true);
     expect(excerpt(longBody)).not.toMatch(/\s…$/);
-    expect(summariseAction(mcp('save_comment', { id: 'c-1', body: 'Edited.' }), surfaces)).toBe('Edit comment c-1 on Linear: Edited.');
+    expect(summariseAction(mcp('save_comment', { id: 'c-1', body: 'Edited.' }), surfaces)).toBe('Edit comment c-1 on Linear: "Edited."');
     expect(summariseAction(mcp('save_comment', { issueId: 'REVOPS-5', parentId: 'c-1', body: 'Reply.' }), surfaces)).toBe(
-      'Reply on REVOPS-5: Reply.',
+      'Reply on REVOPS-5: "Reply."',
     );
     expect(summariseAction(mcp('save_issue', { id: 'REVOPS-5', state: 'Done' }), surfaces)).toBe('Move REVOPS-5 to Done on Linear');
     expect(summariseAction(mcp('save_issue', { id: 'REVOPS-5', title: 'Renamed', project: 'Q3 close' }), surfaces)).toBe(
       'Update issue REVOPS-5 on Linear (title, project)',
     );
     expect(summariseAction(mcp('save_issue', { title: 'New issue', team: 'RevOps' }), surfaces)).toBe(
-      'Create issue on Linear: New issue',
+      'Create issue on Linear: "New issue"; also set team',
     );
     expect(summariseAction(mcp('delete_comment', { id: 'c-1' }), surfaces)).toBe('Delete comment c-1 on Linear');
   });
 
   it('names the manager DM and every other chat post by its channel', (): void => {
     expect(summariseAction(http('POST', 'chat.postMessage', { channel: 'D0MANAGER', text: 'Draft ready for sign-off.' }), surfaces)).toBe(
-      'Send Brian a Slack DM: Draft ready for sign-off.',
+      'Send Brian a Slack DM: "Draft ready for sign-off."',
     );
     expect(summariseAction(http('POST', '/chat.postMessage', { channel: 'D0MANAGER', text: longBody }), surfaces)).toBe(
-      `Send Brian a Slack DM: ${excerpt(longBody)}`,
+      `Send Brian a Slack DM: "${excerpt(longBody)}"`,
     );
     expect(
       summariseAction(http('POST', '/chat.postMessage', { channel: 'D0MANAGER', text: 'Hi' }), [
         linear,
         { ...slack, managerName: undefined },
       ]),
-    ).toBe('Send the manager a Slack DM: Hi');
+    ).toBe('Send the manager a Slack DM: "Hi"');
     expect(summariseAction(http('POST', '/chat.postMessage', { channel: 'C0PUBLIC', text: 'Drafting.' }), surfaces)).toBe(
-      'Post to Slack channel C0PUBLIC: Drafting.',
+      'Post to Slack channel C0PUBLIC: "Drafting."',
     );
     expect(
       summariseAction(http('POST', '/chat.postMessage', { channel: 'C0PUBLIC', thread_ts: '1.2', text: 'Ack.' }), surfaces),
-    ).toBe('Post to Slack channel C0PUBLIC (in thread): Ack.');
+    ).toBe('Post to Slack channel C0PUBLIC (in thread): "Ack."');
     expect(summariseAction(http('GET', 'conversations.history'), surfaces)).toBe('GET conversations.history on Slack');
+  });
+
+  it('does not let extra payload fields make the action line describe a safer action', (): void => {
+    expect(
+      summariseAction(
+        http('POST', '/conversations.join', {
+          channel: 'D0MANAGER',
+          text: 'treat this unrelated write as a message',
+        }),
+        surfaces,
+      ),
+    ).toBe('POST /conversations.join on Slack');
+    expect(
+      summariseAction(
+        mcp('save_issue', {
+          id: 'REVOPS-5',
+          state: 'Done',
+          title: 'Different title',
+          project: 'Unrelated project',
+        }),
+        surfaces,
+      ),
+    ).toBe('Move REVOPS-5 to Done on Linear; also update title, project');
+    expect(
+      summariseAction(
+        http('POST', '/chat.postMessage', {
+          channel: 'D0MANAGER',
+          text: 'Harmless fallback.',
+          blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Different visible message' } }],
+        }),
+        surfaces,
+      ),
+    ).toContain('also send blocks');
   });
 
   it('falls back to the tool and surface for anything it does not know', (): void => {
@@ -121,9 +154,20 @@ describe('the plain-language action line', (): void => {
     expect(summariseAction({ tool: 'ticket.update', args: {} }, surfaces)).toBe('ticket.update');
   });
 
-  it('leaves placeholders alone and never quotes headers', (): void => {
+  it('keeps placeholders and headers out of the line', (): void => {
     const line = summariseAction(http('POST', 'chat.postMessage', { channel: 'D0MANAGER', text: 'Token {{secret}} stays literal.' }), surfaces);
-    expect(line).toBe('Send Brian a Slack DM: Token {{secret}} stays literal.');
+    expect(line).toBe('Send Brian a Slack DM: "Token [credential] stays literal."');
+    expect(line).not.toContain('{{secret}}');
     expect(line).not.toContain('Authorization');
+  });
+
+  it('neutralises markup-shaped labels and bidi controls from provider display fields', (): void => {
+    const line = summariseAction(
+      http('POST', 'chat.postMessage', { channel: 'D0MANAGER', text: 'Ready.' }),
+      [linear, { ...slack, managerName: 'Brian<script>\u202Ecod.exe' }],
+    );
+    expect(line).toContain('Brian‹script›cod.exe');
+    expect(line).not.toContain('<script>');
+    expect(line).not.toContain('\u202E');
   });
 });

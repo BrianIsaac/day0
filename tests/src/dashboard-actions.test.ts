@@ -70,8 +70,8 @@ describe('dashboard exact-action gate', (): void => {
     const html = render([dm, publicPost], [{ held: false }, { held: true, reason: 'public post held for the manager' }]);
     expect(html).toContain(longBody);
     // The plain line comes first, the held reason on the same line, and the literal payload is folded away.
-    expect(html).toMatch(/<p[^>]*>Send Brian a Slack DM: Draft ready\.<\/p>/);
-    expect(html).toMatch(/<p[^>]*>Post to Slack channel C0PUBLIC: x{120}…<span[^>]*> · held · public post held for the manager<\/span><\/p>/);
+    expect(html).toMatch(/<p[^>]*>Send Brian a Slack DM: &quot;Draft ready\.&quot;<\/p>/);
+    expect(html).toMatch(/<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · held · public post held for the manager<\/span><\/p>/);
     expect(html.indexOf('Send Brian a Slack DM')).toBeLessThan(html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'));
     expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
     expect(html).not.toMatch(/<details[^>]*open/);
