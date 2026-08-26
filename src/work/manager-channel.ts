@@ -10,9 +10,20 @@ export type DecisionReply =
   | { verb: 'approve'; id: string }
   | { verb: 'reject'; id: string; reason: string };
 
-/** Parse only the bounded command prefix; trailing reject text is inert audit prose. */
+/**
+ * Parse only the bounded command prefix; trailing reject text is inert audit prose.
+ *
+ * The request shows the command in quotes (Reply “approve ab3xyz”), and a manager
+ * who copies it, wraps it in a code span or ends it with a full stop has still
+ * given the command. Those wrappers are stripped; prose before the verb or after
+ * an approve is not a command.
+ */
 export function parseDecisionReply(text: string): DecisionReply | undefined {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = text
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s"'“”‘’`]+/, '')
+    .replace(/[\s"'“”‘’`.!]+$/, '')
+    .trim();
   const match = /^(approve|reject)\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:\s+(.*))?$/i.exec(
     flat,
   );

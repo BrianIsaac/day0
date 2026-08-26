@@ -121,4 +121,22 @@ describe('manager channel decision requests', (): void => {
     expect(parseDecisionReply('approve sequential-123')).toBeUndefined();
     expect(parseDecisionReply('approve ab')).toBeUndefined();
   });
+
+  it('accepts the quoted form the request shows, and ordinary punctuation around the command', (): void => {
+    // The request says: Reply “approve ab3xyz” - a manager who copies it keeps the quotes.
+    expect(parseDecisionReply('“approve ab3xyz”')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('"approve ab3xyz"')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('`approve ab3xyz`')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('Approve ab3xyz.')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('approve ab3xyz!')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('“reject ab3xyz not this week”')).toEqual({
+      verb: 'reject',
+      id: 'ab3xyz',
+      reason: 'not this week',
+    });
+    // Still bounded: prose before the verb is not a command; prose after an approve
+    // never was one either (it is ignored, as before).
+    expect(parseDecisionReply('“please approve ab3xyz”')).toBeUndefined();
+    expect(parseDecisionReply('approve ab3xyz thanks')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+  });
 });
