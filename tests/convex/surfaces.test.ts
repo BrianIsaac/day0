@@ -1,6 +1,6 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import type { GenericId } from 'convex/values';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -604,6 +604,36 @@ describe('surface connection lifecycle metadata', (): void => {
 });
 
 describe('surface approval state machine', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+  });
+
+  it('refuses approval and rejection server-side in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    const owner = harness.withIdentity({ subject: 'owner' });
+
+    await expect(
+      owner.mutation(liveApi.surfaces.approve, { surfaceId, role: 'manager' }),
+    ).rejects.toThrow('local real-mode feature');
+    await expect(
+      owner.mutation(liveApi.surfaces.reject, { surfaceId, reason: 'No.' }),
+    ).rejects.toThrow('local real-mode feature');
+
+    const surface = await readSurface(harness, surfaceId);
+    expect(surface.verdict).toBe('proposed');
+    expect(surface.managerApprovedAt).toBeUndefined();
+    expect(surface.itApprovedAt).toBeUndefined();
+    expect(await eventTypes(harness)).not.toContain('surface.approved');
+    expect(
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect()),
+    ).toHaveLength(0);
+  });
+
   it('requires both approvals and emits surface.approved exactly once', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);

@@ -481,6 +481,7 @@ export const recordIntake = internalMutation({
 export const approve = mutation({
   args: { surfaceId: v.id('surfaces'), role: v.union(v.literal('manager'), v.literal('it')) },
   handler: async (ctx, args): Promise<void> => {
+    assertRealMode('Surface approval');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
@@ -519,6 +520,7 @@ export const approve = mutation({
 export const reject = mutation({
   args: { surfaceId: v.id('surfaces'), reason: v.string() },
   handler: async (ctx, args): Promise<void> => {
+    assertRealMode('Surface rejection');
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
