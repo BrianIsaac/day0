@@ -23,6 +23,7 @@ export const HELD_NOT_APPROVED = 'not approved by the manager';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
 export const USERNAME_REFUSED = 'skill-supplied username refused';
+export const MOCK_VERB_REFUSED = 'mock verb refused in real mode';
 
 /** Emoji every message through a shared chat credential carries as its avatar. */
 export const SHARED_IDENTITY_ICON = ':briefcase:';

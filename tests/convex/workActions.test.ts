@@ -18,6 +18,7 @@ const recorded = vi.hoisted(() => ({
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; authorization: string; body: unknown }>,
   skillRuns: 0,
+  skillModes: [] as Array<string | undefined>,
 }));
 
 const skillOutput: ExecutionOutput = {
@@ -71,8 +72,9 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/work/execute-skill')>();
   return {
     ...original,
-    runSkill: async (): Promise<ExecutionOutput> => {
+    runSkill: async (args: { mode?: string }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
+      recorded.skillModes.push(args.mode);
       return skillOutput;
     },
   };
@@ -351,6 +353,7 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
     expect(JSON.stringify(row.output)).not.toContain('plain-cred');
     expect(recorded.skillRuns).toBe(1);
+    expect(recorded.skillModes.at(-1)).toBe('real');
     await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({
       ok: false,
       reason: 'workItem state is completed; expected actions-pending',

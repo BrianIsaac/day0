@@ -5,13 +5,14 @@ import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type FetchLike } from './http';
 import { McpAdapter, type CreateMcpClient } from './mcp';
-import { mockAdapter } from './mock';
+import { MOCK_TOOLS, mockAdapter } from './mock';
 import {
   applyProvenance,
   describeAction,
   HELD_NOT_APPROVED,
   heldReason,
   isSurfaceTool,
+  MOCK_VERB_REFUSED,
   NO_GRANT,
   parseSurfaceAction,
   requiredScope,
@@ -54,10 +55,13 @@ export interface ApplyOptions {
 /**
  * Resolve action verbs to their adapters for one execution mode.
  *
- * Mock mode maps only the four legacy verbs. Real mode adds `mcp.call` and
- * `http.request` when their runtime dependencies are supplied, and keeps the
- * mock adapter for the legacy verbs so skills authored against the mock still
- * run against the mock tables.
+ * Mock mode maps only the four legacy verbs. Real mode maps `mcp.call` and
+ * `http.request` when their runtime dependencies are supplied, and nothing
+ * else: the mock tables are not a work surface in real mode (the seed never
+ * fills them), and a legacy verb would otherwise write there without the
+ * surface, grant and held checks every real action passes. No demo path
+ * needs a mock verb in real mode - the manager DM goes through the connected
+ * chat surface and the audit comment through the kanban surface.
  *
  * Args:
  *   mode: Deployment surface mode.
@@ -73,7 +77,7 @@ export function resolveAdapters(
   deps?: RealAdapterDeps,
 ): ReadonlyMap<string, SurfaceAdapter> {
   const adapters = new Map<string, SurfaceAdapter>(
-    mockAdapter.tools.map((tool: MockAction['tool']) => [tool, mockAdapter]),
+    mode === 'mock' ? mockAdapter.tools.map((tool: MockAction['tool']) => [tool, mockAdapter]) : [],
   );
   if (mode === 'real' && deps) {
     const now = deps.now ?? ((): number => Date.now());
@@ -91,6 +95,10 @@ export function resolveAdapters(
 
 /**
  * Read the environment snapshot through the registered adapters.
+ *
+ * Callers pass `'mock'` even in real mode: the mirrored documentation lives
+ * in the mock docs table and is read-only context, which is not a write
+ * surface.
  *
  * Args:
  *   ctx: Convex action context.
@@ -188,7 +196,11 @@ export async function applySurfaceActions(
     }
     const adapter = adapters.get(action.tool);
     if (!adapter) {
-      applied.push(refused(action.tool, 'unknown tool', idempotencyKey));
+      const reason =
+        mode === 'real' && (MOCK_TOOLS as readonly string[]).includes(action.tool)
+          ? `${MOCK_VERB_REFUSED} (${action.tool} writes to the mock tables; target a connected surface with mcp.call or http.request)`
+          : 'unknown tool';
+      applied.push(refused(action.tool, reason, idempotencyKey));
       continue;
     }
     if (!isSurfaceTool(action.tool)) {

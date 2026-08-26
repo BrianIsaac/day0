@@ -7,6 +7,7 @@ import { MOCK_TOOLS, mockAdapter } from '../../../src/surfaces/mock';
 import {
   HELD_NOT_APPROVED,
   HELD_PUBLIC_POST,
+  MOCK_VERB_REFUSED,
   STATUS_WITHOUT_COMMENT,
   TRAILER_REFUSED,
 } from '../../../src/surfaces/policy';
@@ -107,19 +108,45 @@ function deps(recorded: Recorded, mcpResult: (tool: string) => unknown = (): unk
 }
 
 describe('surface adapter registry', (): void => {
-  it('keeps every legacy mock verb on the mock adapter in both modes', (): void => {
-    for (const mode of ['mock', 'real'] as const) {
-      const adapters = resolveAdapters(mode, []);
-      for (const tool of MOCK_TOOLS) expect(adapters.get(tool)).toBe(mockAdapter);
-      expect(adapters.has('mcp.call')).toBe(false);
-    }
+  it('maps the legacy mock verbs in mock mode only', (): void => {
+    const mock = resolveAdapters('mock', []);
+    for (const tool of MOCK_TOOLS) expect(mock.get(tool)).toBe(mockAdapter);
+    expect(mock.has('mcp.call')).toBe(false);
+    const real = resolveAdapters('real', [linear], deps({ mcp: [], http: [] }));
+    for (const tool of MOCK_TOOLS) expect(real.has(tool)).toBe(false);
+    expect(resolveAdapters('real', []).size).toBe(0);
+  });
+
+  it('refuses a mock verb in real mode with a plain reason and no write', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear],
+      run,
+      [
+        { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'Draft ready.' } },
+        { tool: 'ticket.update', args: { slug: 'REVOPS-5', status: 'done', comment: 'Done.' } },
+        comment,
+      ],
+      { deps: deps(recorded), grants: new Set(['linear:write']) },
+    );
+    expect(applied[0]).toEqual({
+      tool: 'slack.postMessage',
+      ok: false,
+      reason: `${MOCK_VERB_REFUSED} (slack.postMessage writes to the mock tables; target a connected surface with mcp.call or http.request)`,
+      idempotencyKey: 'wi_1:run_1:0',
+    });
+    expect(applied[1]).toMatchObject({ tool: 'ticket.update', ok: false, reason: expect.stringContaining(MOCK_VERB_REFUSED) });
+    expect(applied[2]).toMatchObject({ tool: 'mcp.call', ok: true });
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
   });
 
   it('adds the two surface verbs in real mode when the runtime supplies dependencies', (): void => {
     const adapters = resolveAdapters('real', [linear], deps({ mcp: [], http: [] }));
     expect(adapters.get('mcp.call')).toBeInstanceOf(McpAdapter);
     expect(adapters.get('http.request')).toBeInstanceOf(HttpAdapter);
-    expect(adapters.get('ticket.update')).toBe(mockAdapter);
+    expect(adapters.has('ticket.update')).toBe(false);
     expect(resolveAdapters('mock', [linear], deps({ mcp: [], http: [] })).has('mcp.call')).toBe(false);
   });
 

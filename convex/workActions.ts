@@ -396,6 +396,7 @@ async function holdRealActions(
       charter: args.charter,
       mockEnv,
       surfaces: await loadSurfaces(ctx, args.agentId),
+      mode: 'real',
     });
     const pending = await ctx.runMutation(internal.work.setActionsPending, {
       workItemId: args.workItemId,

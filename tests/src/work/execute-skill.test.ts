@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
-import { actionArgsSchema, executeSchema, surfaceInstructions } from '../../../src/work/execute-skill';
+import {
+  actionArgsSchema,
+  executeSchema,
+  executorPreamble,
+  surfaceInstructions,
+} from '../../../src/work/execute-skill';
 import { ACTION_TOOLS } from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
@@ -74,5 +79,28 @@ describe('surface guidance in the executor prompt', (): void => {
     expect(text).toContain('`dm-manager`');
     expect(text).toContain('Do not add a provenance trailer');
     expect(text).toContain('status change on a ticket must be preceded');
+  });
+});
+
+describe('executor preamble by mode', (): void => {
+  it('teaches the four mock verbs and the mock fanout rules in mock mode', (): void => {
+    const text = executorPreamble('mock');
+    for (const verb of ['spreadsheet.appendRow', 'slack.postMessage', 'twitter.reply', 'ticket.update']) {
+      expect(text).toContain(`  - ${verb}`);
+    }
+    expect(text).toContain('`slack.postMessage` to `dm-manager`');
+    expect(text).not.toContain('refused');
+  });
+
+  it('refuses the mock verbs and teaches the surface rules in real mode', (): void => {
+    const text = executorPreamble('real');
+    expect(text).toContain('The mock verbs (spreadsheet.appendRow, slack.postMessage, twitter.reply, ticket.update) do not exist on this deployment');
+    expect(text).toContain('refused if emitted');
+    expect(text).toContain('If no surface is connected, emit no actions');
+    expect(text).toContain('add the audit comment on the originating issue through `mcp.call`');
+    expect(text).toContain('`http.request` to `chat.postMessage`');
+    expect(text).not.toContain('  - ticket.update');
+    expect(text).not.toContain('`dm-manager`');
+    expect(text).toContain('A draft (human-readable)');
   });
 });
