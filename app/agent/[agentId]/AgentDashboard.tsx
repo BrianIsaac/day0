@@ -15,14 +15,15 @@ import {
   skillApprovalRefusal,
 } from '../../../src/surfaces/policy';
 import {
-  AGENT_POSTURES,
-  agentPosture,
-  skillTrust,
-  type AgentPosture,
-} from '../../../src/work/posture';
+  AUTONOMY_WARNING,
+  autonomousActionsOn,
+  autonomyLabel,
+  HELD_BEFORE_AUTONOMY_NOTE,
+  HELD_WHILE_SUPERVISED_NOTE,
+} from '../../../src/work/autonomy';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
-import type { SurfaceRecord } from '../../../src/surfaces/types';
+import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
 import { replyTargetFor } from '../../../src/work/reply-target';
 import type { MockAction } from '../../../src/work/types';
@@ -179,6 +180,7 @@ export function AgentDashboard({ agentId }: Props) {
             surfaces={surfaces}
             registeredSkillCount={(registeredSkills ?? []).length}
             charterApproved={!!charter?.approved}
+            autonomousActions={agent ? autonomousActionsOn(agent) : false}
           />
         </div>
 
@@ -189,7 +191,6 @@ export function AgentDashboard({ agentId }: Props) {
             unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
             authoringFailure={authoringFailure}
             onAuthoringAttempt={setLastAttempt}
-            showTrust={surfaceConfig?.mode === 'real'}
           />
           <EventTicker events={events ?? []} />
         </div>
@@ -203,68 +204,132 @@ export function AgentDashboard({ agentId }: Props) {
   );
 }
 
-/** How the header names each posture. */
-const POSTURE_LABELS: Record<AgentPosture, string> = {
-  'cold-start': 'cold-start posture',
-  supervised: 'supervised posture',
-  trusted: 'trusted posture',
-};
-
-/** What each posture does, for the control's title. */
-const POSTURE_TITLES: Record<AgentPosture, string> = {
-  'cold-start': 'Every action is held for your approval. Moves to supervised on its own once the first work item completes.',
-  supervised:
-    'Reads, the DM to you and audit comments on the item being worked apply on their own once a skill has two approved runs; public posts and system-of-record changes always wait for you.',
-  trusted: 'The same ladder with no per-skill window: every skill applies its reads, your DM and audit comments on its own.',
+/** What each state of the switch does, for its title. */
+const AUTONOMY_TITLES: Record<'off' | 'on', string> = {
+  off: 'Supervised: reads and the DM to you apply on their own; every other action waits for your approval of the exact payload.',
+  on: 'Autonomous: the agent acts on connected systems without asking, within the connections and skills you have approved.',
 };
 
 /**
- * The header chip as the manager's posture control, real mode only.
+ * The confirmation shown before autonomous actions are turned on.
  *
  * Args:
- *   posture: The agent's current posture.
+ *   onConfirm: Turn the switch on.
+ *   onCancel: Leave it off.
+ *   busy: Whether the change is in flight.
+ *
+ * Returns:
+ *   The warning in the operator's words with its two buttons.
+ */
+export function AutonomyConfirm({
+  onConfirm,
+  onCancel,
+  busy = false,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-label="Turn on autonomous actions"
+      className="absolute right-0 top-full mt-2 w-80 p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
+    >
+      <p className="font-medium text-[var(--color-warn)] mb-1">Turn on autonomous actions?</p>
+      <p className="mb-3 leading-relaxed">{AUTONOMY_WARNING}</p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onConfirm}
+          className="px-3 py-1 rounded-md bg-[var(--color-warn)] text-[var(--color-bg)] font-medium disabled:opacity-60"
+        >
+          Turn on
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+          className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The header chip as the manager's autonomous-actions switch, real mode only.
+ *
+ * Turning it on opens the confirmation; turning it off needs none. The chip
+ * names the state plainly ("Supervised" / "Autonomous") beside the switch.
+ *
+ * Args:
+ *   on: Whether autonomous actions are on.
  *   tone: The chip's colour classes.
  *   onChange: Persist the manager's choice.
  *
  * Returns:
- *   A labelled select styled as the chip.
+ *   The labelled switch styled as the chip.
  */
-export function PostureControl({
-  posture,
+export function AutonomyControl({
+  on,
   tone,
   onChange,
 }: {
-  posture: AgentPosture;
+  on: boolean;
   tone: string;
-  onChange: (posture: AgentPosture) => Promise<unknown>;
+  onChange: (on: boolean) => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function persist(next: boolean): void {
+    setBusy(true);
+    setError(null);
+    onChange(next)
+      .then(() => setConfirming(false))
+      .catch((err: unknown) => setError((err as Error).message))
+      .finally(() => setBusy(false));
+  }
+
   return (
-    <label className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${tone}`} title={POSTURE_TITLES[posture]}>
-      <span>Active ·</span>
-      <select
-        aria-label="agent posture"
-        value={posture}
-        disabled={busy}
-        onChange={(event) => {
-          const next = event.target.value as AgentPosture;
-          setBusy(true);
-          setError(null);
-          onChange(next)
-            .catch((err: unknown) => setError((err as Error).message))
-            .finally(() => setBusy(false));
-        }}
-        className="bg-transparent text-xs font-medium cursor-pointer disabled:cursor-wait focus:outline-none"
+    <div className="relative">
+      <div
+        className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${tone}`}
+        title={AUTONOMY_TITLES[on ? 'on' : 'off']}
       >
-        {AGENT_POSTURES.map((option) => (
-          <option key={option} value={option}>
-            {POSTURE_LABELS[option]}
-          </option>
-        ))}
-      </select>
-      {error ? <span className="text-[10px] text-[var(--color-danger)]">{error}</span> : null}
-    </label>
+        <span>Active · {autonomyLabel(on)}</span>
+        <span className="text-[10px] font-normal opacity-80">Autonomous actions</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Autonomous actions"
+          disabled={busy}
+          onClick={() => {
+            if (on) persist(false);
+            else setConfirming(true);
+          }}
+          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors disabled:cursor-wait ${
+            on ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-muted)]/40'
+          }`}
+        >
+          <span
+            className={`inline-block h-3 w-3 rounded-full bg-[var(--color-bg)] transition-transform ${
+              on ? 'translate-x-3.5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+        {error ? <span className="text-[10px] text-[var(--color-danger)]">{error}</span> : null}
+      </div>
+      {confirming && !on ? (
+        <AutonomyConfirm busy={busy} onConfirm={() => persist(true)} onCancel={() => setConfirming(false)} />
+      ) : null}
+    </div>
   );
 }
 
@@ -277,7 +342,7 @@ function Header({
   charter: Doc<'charters'> | null;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
-  const setPosture = useMutation(api.posture.setPosture);
+  const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
     'day-one-in-progress': {
@@ -313,14 +378,14 @@ function Header({
           <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">
             {surfaceConfig?.label || 'loading'}
           </span>
-          {/* In real mode the chip is the manager's posture control; the
-              hosted mock has no gate for a posture to change, so it keeps the
-              static label. */}
+          {/* In real mode the chip is the manager's autonomous-actions
+              switch; the hosted mock has no gate for the switch to change, so
+              it keeps the static label. */}
           {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
-            <PostureControl
-              posture={agentPosture(agent)}
+            <AutonomyControl
+              on={autonomousActionsOn(agent)}
               tone={s.tone}
-              onChange={(posture) => setPosture({ agentId: agent._id, posture })}
+              onChange={(on) => setAutonomousActions({ agentId: agent._id, on })}
             />
           ) : (
             <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.tone}`}>{s.text}</span>
@@ -623,11 +688,8 @@ function RegisteredSkillsPanel({
   unregistered,
   authoringFailure,
   onAuthoringAttempt,
-  showTrust,
 }: {
   skills: Doc<'skills'>[];
-  /** Real mode only: where each skill stands in its supervised window. */
-  showTrust: boolean;
   /**
    * Authored but never registered: `authoring` (a run is holding it now, or no
    * sandbox ran), `failed` (the sandbox said no), and `verified` (registration
@@ -689,15 +751,6 @@ function RegisteredSkillsPanel({
               <div className="flex-1">
                 <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
                 <div className="text-[var(--color-muted)] text-xs">{s.description}</div>
-                {showTrust ? (
-                  <div
-                    className={`text-[10px] mt-0.5 ${
-                      skillTrust(s).trusted ? 'text-[var(--color-ok)]' : 'text-[var(--color-warn)]'
-                    }`}
-                  >
-                    {skillTrust(s).label}
-                  </div>
-                ) : null}
               </div>
             </li>
           ))}
@@ -801,11 +854,14 @@ function WorkQueue({
   surfaces,
   registeredSkillCount,
   charterApproved,
+  autonomousActions,
 }: {
   workItems: Doc<'workItems'>[];
   surfaces: SurfaceRecord[];
   registeredSkillCount: number;
   charterApproved: boolean;
+  /** Whether the agent's autonomous-actions switch is on, for the cards' wording. */
+  autonomousActions: boolean;
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -888,6 +944,7 @@ function WorkQueue({
               key={item._id}
               item={item}
               surfaces={surfaces}
+              autonomousActions={autonomousActions}
               onApprovePlan={() => approvePlan({ workItemId: item._id })}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={() => retryFailed({ workItemId: item._id })}
@@ -929,9 +986,26 @@ interface LedgerRow {
   ok: boolean;
   held?: boolean;
   awaitingApproval?: boolean;
+  /** What authorised the row: the manager's approval, the toggle, or a standing grant. */
+  authority?: ActionAuthority;
   effect?: string;
   reason?: string;
   providerId?: string;
+}
+
+/**
+ * The headline of the landed-changes list, naming how many applied under the toggle.
+ *
+ * Args:
+ *   landed: The ledger rows that reached the work environment.
+ *
+ * Returns:
+ *   `3 changes reached the work environment · 3 applied autonomously`, or without the tail.
+ */
+export function landedHeadline(landed: ReadonlyArray<{ authority?: ActionAuthority }>): string {
+  const autonomous = landed.filter((row) => row.authority === 'autonomous').length;
+  const head = `${landed.length} ${landed.length === 1 ? 'change' : 'changes'} reached the work environment`;
+  return autonomous > 0 ? `${head} · ${autonomous} applied autonomously` : head;
 }
 
 /**
@@ -1026,6 +1100,7 @@ export function PendingActions({
   verdicts,
   surfaces,
   replyTarget,
+  autonomousActions = false,
   onApprove,
   onReject,
 }: {
@@ -1033,6 +1108,8 @@ export function PendingActions({
   verdicts: ActionVerdict[];
   surfaces: SurfaceRecord[];
   replyTarget?: ReplyTarget;
+  /** Whether the agent's switch is on now; the card says why the rows are waiting either way. */
+  autonomousActions?: boolean;
   onApprove: (approvedIndexes: number[]) => Promise<unknown>;
   onReject: (reason: string) => Promise<unknown>;
 }) {
@@ -1084,6 +1161,11 @@ export function PendingActions({
   return (
     <div className="mt-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
       <p className="text-[var(--color-warn)] font-medium mb-1">{pendingHeadline(verdicts)}</p>
+      {heldIndexes.length > 0 ? (
+        <p className="text-[var(--color-muted)] mb-1">
+          {autonomousActions ? HELD_BEFORE_AUTONOMY_NOTE : HELD_WHILE_SUPERVISED_NOTE}
+        </p>
+      ) : null}
       {actions.length === 0 ? (
         <p className="text-[var(--color-muted)]">
           The skill emitted no actions. Approving lands nothing; reject to send it back.
@@ -1196,6 +1278,7 @@ export function PendingActions({
 function WorkItemCard({
   item,
   surfaces,
+  autonomousActions,
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -1204,6 +1287,7 @@ function WorkItemCard({
 }: {
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
+  autonomousActions: boolean;
   onApprovePlan: () => void;
   onCancelPlan: () => void;
   onRetryFailed: () => void;
@@ -1322,7 +1406,8 @@ function WorkItemCard({
       {item.state === 'executing' && item.applyPhase === 'auto' ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">
           applying {item.approvedIndexes?.length ?? 0}{' '}
-          {(item.approvedIndexes?.length ?? 0) === 1 ? 'action' : 'actions'} automatically…
+          {(item.approvedIndexes?.length ?? 0) === 1 ? 'action' : 'actions'}{' '}
+          {autonomousActions ? 'autonomously' : 'automatically'}…
         </p>
       ) : null}
 
@@ -1333,6 +1418,7 @@ function WorkItemCard({
           verdicts={pendingVerdicts(item.actionVerdicts, output.actions?.length ?? 0)}
           surfaces={surfaces}
           replyTarget={replyTargetFor(item)}
+          autonomousActions={autonomousActions}
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />
@@ -1347,10 +1433,7 @@ function WorkItemCard({
           apart, which is the whole of the failure this panel answers. */}
       {landedActions.length > 0 ? (
         <div className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs">
-          <p className="text-[var(--color-ok)] font-medium mb-1">
-            {landedActions.length} {landedActions.length === 1 ? 'change' : 'changes'} reached the
-            work environment
-          </p>
+          <p className="text-[var(--color-ok)] font-medium mb-1">{landedHeadline(landedActions)}</p>
           <ul className="space-y-0.5 text-[var(--color-fg)]">
             {landedActions.map((a, i) => (
               <li key={i}>

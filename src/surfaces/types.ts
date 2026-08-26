@@ -73,8 +73,18 @@ export interface ActionOutcome {
   outcomeUnknown?: boolean;
   /** A placeholder written by the auto phase for a row the manager has not decided. */
   awaitingApproval?: boolean;
+  /**
+   * What authorised a surface row the adapter was asked to apply: the
+   * manager's approval of the literal payload, the autonomous-actions
+   * toggle, or the agent's standing grant (a read or the manager DM in the
+   * auto phase while the toggle is off). The audit trail shows the mode.
+   */
+  authority?: ActionAuthority;
   providerId?: string;
 }
+
+/** Who or what authorised an applied surface action. */
+export type ActionAuthority = 'manager' | 'autonomous' | 'standing';
 
 export interface AppliedAction extends ActionOutcome {
   tool: string;

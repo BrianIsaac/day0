@@ -5,6 +5,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { autonomousActionsOn } from '../../src/work/autonomy';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -147,8 +148,11 @@ describe('agent surface grants', (): void => {
           .sort(),
     );
     expect(realScopes).toEqual(['boss:message', 'docs:read']);
+    // Autonomous actions are off from deployment: the field is absent, which reads as off.
     const realRow = await realHarness.run(async (ctx) => await ctx.db.get(realAgent));
-    expect(realRow?.posture).toBe('cold-start');
+    expect(realRow?.autonomousActions).toBeUndefined();
+    expect(realRow?.posture).toBeUndefined();
+    expect(autonomousActionsOn(realRow ?? {})).toBe(false);
   });
 
   it('grants an active scope idempotently and replaces a revoked grant', async (): Promise<void> => {
@@ -190,5 +194,84 @@ describe('agent surface grants', (): void => {
     );
     expect(grants).toHaveLength(2);
     expect(grants.filter((grant): boolean => grant.revokedAt === undefined)).toHaveLength(1);
+  });
+});
+
+describe('the autonomous-actions switch', (): void => {
+  it('lets the owner turn it on and off with an event per change, and refuses a stranger', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await expect(
+      harness.withIdentity({ subject: 'intruder' }).mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toThrow('forbidden');
+    await expect(harness.mutation(api.agents.setAutonomousActions, { agentId, on: true })).rejects.toThrow();
+    const owner = harness.withIdentity({ subject: 'owner' });
+    // Off is what an absent field already is, so setting it records nothing.
+    await expect(owner.mutation(api.agents.setAutonomousActions, { agentId, on: false })).resolves.toEqual({
+      ok: true,
+      autonomousActions: false,
+      changed: false,
+    });
+    await expect(owner.mutation(api.agents.setAutonomousActions, { agentId, on: true })).resolves.toEqual({
+      ok: true,
+      autonomousActions: true,
+      changed: true,
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions).toBe(true);
+    await expect(owner.mutation(api.agents.setAutonomousActions, { agentId, on: true })).resolves.toEqual({
+      ok: true,
+      autonomousActions: true,
+      changed: false,
+    });
+    await expect(owner.mutation(api.agents.setAutonomousActions, { agentId, on: false })).resolves.toEqual({
+      ok: true,
+      autonomousActions: false,
+      changed: true,
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions).toBe(false);
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(events.map((event) => [event.type, event.payload])).toEqual([
+      ['agent.autonomy-changed', { from: false, to: true, reason: 'set by the manager' }],
+      ['agent.autonomy-changed', { from: true, to: false, reason: 'set by the manager' }],
+    ]);
+  });
+
+  it('is refused in mock mode before the ownership check, and leaves the row alone', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toThrow('Autonomous actions is a local real-mode feature; this deployment runs in mock mode.');
+    await expect(harness.mutation(api.agents.setAutonomousActions, { agentId, on: true })).rejects.toThrow(
+      'local real-mode feature',
+    );
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions).toBeUndefined();
+    expect(await harness.run(async (ctx) => await ctx.db.query('events').collect())).toEqual([]);
   });
 });

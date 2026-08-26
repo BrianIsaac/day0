@@ -26,7 +26,6 @@ import type * as onboarding from "../onboarding.js";
 import type * as orientationActions from "../orientationActions.js";
 import type * as orientationData from "../orientationData.js";
 import type * as ownership from "../ownership.js";
-import type * as posture from "../posture.js";
 import type * as probeActions from "../probeActions.js";
 import type * as reset from "../reset.js";
 import type * as seed from "../seed.js";
@@ -64,7 +63,6 @@ declare const fullApi: ApiFromModules<{
   orientationActions: typeof orientationActions;
   orientationData: typeof orientationData;
   ownership: typeof ownership;
-  posture: typeof posture;
   probeActions: typeof probeActions;
   reset: typeof reset;
   seed: typeof seed;

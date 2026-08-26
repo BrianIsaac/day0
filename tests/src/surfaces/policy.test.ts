@@ -8,10 +8,8 @@ import {
   describeAction,
   grantingScopes,
   grantRefusal,
-  HELD_COLD_START,
   HELD_MUTATION,
   HELD_PUBLIC_POST,
-  HELD_SUPERVISED,
   heldReason,
   isAutomatic,
   isAuditComment,
@@ -19,6 +17,7 @@ import {
   isStatusChange,
   MALFORMED_ACTION,
   MOCK_VERB_REFUSED,
+  needsStandingGrant,
   normaliseActionVerdict,
   parseSurfaceAction,
   provenanceTrailer,
@@ -33,7 +32,6 @@ import {
   surfaceRefusal,
   TRAILER_REFUSED,
   USERNAME_REFUSED,
-  workingTargets,
   type ParsedSurfaceAction,
   type ReviewScope,
 } from '../../../src/surfaces/policy';
@@ -310,8 +308,10 @@ describe('the manager DM grant', (): void => {
   });
 });
 
-/** The ladder with nothing held back: the table decides each row. */
-const trusted: ReviewScope = { posture: 'trusted', skill: undefined, targets: ['iss-1'] };
+/** The supervised state, the default: the classification table decides each row. */
+const supervised: ReviewScope = { autonomousActions: false };
+/** The switch on: every applicable row applies on its own. */
+const autonomous: ReviewScope = { autonomousActions: true };
 
 describe('reviewing a held run', (): void => {
   it('refuses every row the gate cannot apply, with the reason the ledger would record', (): void => {
@@ -331,13 +331,13 @@ describe('reviewing a held run', (): void => {
       [linear, slack],
       grants,
       now,
-      trusted,
+      supervised,
     );
     // A write with no standing grant is held for the manager, never refused: the
     // approval of the literal payload is its authority.
     expect(verdicts).toEqual([
       { disposition: 'auto' },
-      { disposition: 'held', reason: 'write held for the manager' },
+      { disposition: 'held', reason: HELD_MUTATION },
       { disposition: 'auto' },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
       { disposition: 'refused', reason: 'unknown surface' },
@@ -347,14 +347,16 @@ describe('reviewing a held run', (): void => {
       { disposition: 'refused', reason: 'unknown tool' },
     ]);
     expect(
-      reviewAction(comment(), [{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], grants, now, trusted),
+      reviewAction(comment(), [{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], grants, now, supervised),
     ).toEqual({ disposition: 'refused', reason: 'surface not connected (listed-dead)' });
-    expect(reviewAction(comment(), [linear], new Set(['linear:write']), now, trusted)).toEqual({
-      disposition: 'auto',
+    // A standing write grant does not make a write automatic while the switch is off.
+    expect(reviewAction(comment(), [linear], new Set(['linear:write']), now, supervised)).toEqual({
+      disposition: 'held',
+      reason: HELD_MUTATION,
     });
   });
 
-  it('refuses a surface operation that is absent from the probed allowlist', (): void => {
+  it('refuses a surface operation that is absent from the probed allowlist, whatever the switch', (): void => {
     const unlisted: MockAction = {
       tool: 'mcp.call',
       args: {
@@ -363,35 +365,39 @@ describe('reviewing a held run', (): void => {
         toolArgsJson: '{"id":"iss-1"}',
       },
     };
-    expect(reviewAction(unlisted, [linear], new Set(['linear:write']), now, trusted)).toEqual({
-      disposition: 'refused',
-      reason: 'tool not in the surface allowlist (delete_issue)',
-    });
-    expect(reviewAction(chatJoin('D0MANAGER'), [slack], new Set(['slack:write']), now, trusted)).toEqual({
-      disposition: 'refused',
-      reason: 'tool not in the surface allowlist (conversations.join)',
-    });
+    for (const scope of [supervised, autonomous]) {
+      expect(reviewAction(unlisted, [linear], new Set(['linear:write']), now, scope)).toEqual({
+        disposition: 'refused',
+        reason: 'tool not in the surface allowlist (delete_issue)',
+      });
+      expect(reviewAction(chatJoin('D0MANAGER'), [slack], new Set(['slack:write']), now, scope)).toEqual({
+        disposition: 'refused',
+        reason: 'tool not in the surface allowlist (conversations.join)',
+      });
+    }
   });
 
-  it('refuses actions whose provenance fields will be refused at apply', (): void => {
+  it('refuses actions whose provenance fields will be refused at apply, whatever the switch', (): void => {
     const forged = comment('Done.\n\n-- Someone Else (Day0) · run wi_9/run_9');
-    expect(reviewAction(forged, [linear], new Set(['linear:write']), now, trusted)).toEqual({
-      disposition: 'refused',
-      reason: TRAILER_REFUSED,
-    });
-    expect(
-      reviewAction(
-        chatPost('D0MANAGER', { username: 'Someone Else' }),
-        [slack],
-        new Set(['boss:message']),
-        now,
-        trusted,
-      ),
-    ).toEqual({ disposition: 'refused', reason: USERNAME_REFUSED });
+    for (const scope of [supervised, autonomous]) {
+      expect(reviewAction(forged, [linear], new Set(['linear:write']), now, scope)).toEqual({
+        disposition: 'refused',
+        reason: TRAILER_REFUSED,
+      });
+      expect(
+        reviewAction(
+          chatPost('D0MANAGER', { username: 'Someone Else' }),
+          [slack],
+          new Set(['boss:message']),
+          now,
+          scope,
+        ),
+      ).toEqual({ disposition: 'refused', reason: USERNAME_REFUSED });
+    }
   });
 });
 
-describe('the posture ladder', (): void => {
+describe('the autonomous-actions switch', (): void => {
   const grants = new Set(['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write']);
   const slackReads: SurfaceRecord = {
     ...slack,
@@ -425,6 +431,7 @@ describe('the posture ladder', (): void => {
       headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
     },
   };
+  const stateChange = mcp('save_issue', { id: 'REVOPS-10', state: 'Done' });
   const demo: MockAction[] = [
     mcp('get_issue', { id: 'REVOPS-10' }),
     mcp('list_comments', { issueId: 'REVOPS-10' }),
@@ -433,28 +440,20 @@ describe('the posture ladder', (): void => {
     comment('Audit note.', 'REVOPS-10'),
     comment('Audit note.', 'REVOPS-11'),
     publicReply,
-    mcp('save_issue', { id: 'REVOPS-10', state: 'Done' }),
+    stateChange,
     mcp('save_issue', { title: 'New issue', team: 'RevOps' }),
     mcp('create_issue', { title: 'New issue' }),
     mcp('delete_issue', { id: 'REVOPS-10' }),
     rpcGet,
   ];
-  const scope = (posture: ReviewScope['posture'], completed?: number): ReviewScope => ({
-    posture,
-    skill: completed === undefined ? undefined : { supervisedRunsCompleted: completed },
-    targets: workingTargets({
-      externalId: 'REVOPS-10',
-      contentRefs: ['https://linear.app/day00/issue/REVOPS-10/record-the-sign-off'],
-    }),
-  });
 
-  it('classifies the demo shapes: reads, the DM and a working-target comment apply on their own', (): void => {
-    expect(reviewActions(demo, surfaces, grants, now, scope('trusted'))).toEqual([
+  it('off: reads and the DM apply on their own and every other write is held with its reason', (): void => {
+    expect(reviewActions(demo, surfaces, grants, now, supervised)).toEqual([
       { disposition: 'auto' },
       { disposition: 'auto' },
       { disposition: 'auto' },
       { disposition: 'auto' },
-      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_MUTATION },
       { disposition: 'held', reason: HELD_MUTATION },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
       { disposition: 'held', reason: HELD_MUTATION },
@@ -464,75 +463,97 @@ describe('the posture ladder', (): void => {
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ]);
     // H2 kept: an RPC mutation over GET is a write, so with slack:read alone it is held rather than read on its own.
-    expect(reviewAction(rpcGet, surfaces, new Set(['slack:read']), now, scope('trusted'))).toEqual({
+    expect(reviewAction(rpcGet, surfaces, new Set(['slack:read']), now, supervised)).toEqual({
       disposition: 'held',
       reason: HELD_PUBLIC_POST,
     });
     // A read without its standing grant, and the DM without boss:message, stay refused.
-    expect(reviewAction(historyGet, surfaces, new Set(['boss:message']), now, scope('trusted'))).toEqual({
+    expect(reviewAction(historyGet, surfaces, new Set(['boss:message']), now, supervised)).toEqual({
       disposition: 'refused',
       reason: 'no grant (slack:read)',
     });
-    expect(reviewAction(chatPost('D0MANAGER'), surfaces, new Set(['slack:read']), now, scope('trusted'))).toEqual({
+    expect(reviewAction(chatPost('D0MANAGER'), surfaces, new Set(['slack:read']), now, supervised)).toEqual({
       disposition: 'refused',
       reason: 'no grant (boss:message)',
     });
-    // A working-target comment without linear:write is held, not automatic.
-    expect(reviewAction(comment('x', 'REVOPS-10'), surfaces, new Set(['linear:read']), now, scope('trusted'))).toEqual({
-      disposition: 'held',
-      reason: 'write held for the manager',
-    });
-    expect(actionClass(parsed(rpcGet), slackReads, [])).toBe('public-post');
-    expect(actionClass(parsed(historyGet), slackReads, [])).toBe('read');
-    expect(actionClass(parsed(comment('x', 'revops-10')), linearAll, ['revops-10'])).toBe('working-comment');
-    expect(actionClass(parsed(comment('x', 'REVOPS-11')), linearAll, ['revops-10'])).toBe('mutation');
-    expect(isAutomatic(parsed(publicReply), slackReads, [])).toBe(false);
-    expect(isAutomatic(parsed(chatPost('D0MANAGER')), slackReads, [])).toBe(true);
+    // An unrecognised HTTP write on a non-chat surface is held as a plain write.
+    const httpWrite: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'linear', method: 'POST', path: '/issues', body: '{}' },
+    };
+    expect(actionClass(parsed(httpWrite), { ...linearAll, path: 'documented-api', endpoint: 'https://api.linear.app/' })).toBe('write');
+    expect(actionClass(parsed(rpcGet), slackReads)).toBe('public-post');
+    expect(actionClass(parsed(historyGet), slackReads)).toBe('read');
+    expect(actionClass(parsed(chatPost('D0MANAGER')), slackReads)).toBe('manager-dm');
+    expect(actionClass(parsed(comment('x', 'revops-10')), linearAll)).toBe('mutation');
+    expect(isAutomatic(parsed(publicReply), slackReads, false)).toBe(false);
+    expect(isAutomatic(parsed(comment()), linearAll, false)).toBe(false);
+    expect(isAutomatic(parsed(chatPost('D0MANAGER')), slackReads, false)).toBe(true);
+    expect(isAutomatic(parsed(historyGet), slackReads, false)).toBe(true);
   });
 
-  it('holds every applicable row in cold start and inside a supervised skill window, refusals unchanged', (): void => {
-    const rows = [demo[0], demo[3], demo[4], demo[6], comment('x', 'REVOPS-10')];
-    const coldStart = reviewActions(rows, surfaces, new Set(['boss:message', 'linear:read']), now, scope('cold-start', 5));
-    expect(coldStart).toEqual([
-      { disposition: 'held', reason: HELD_COLD_START },
-      { disposition: 'held', reason: HELD_COLD_START },
-      { disposition: 'held', reason: HELD_COLD_START },
-      { disposition: 'held', reason: HELD_COLD_START },
-      { disposition: 'held', reason: HELD_COLD_START },
-    ]);
-    expect(reviewActions([demo[2]], surfaces, new Set(['boss:message']), now, scope('cold-start', 5))).toEqual([
-      { disposition: 'refused', reason: 'no grant (slack:read)' },
-    ]);
-    expect(reviewActions(rows, surfaces, grants, now, scope('supervised', 1)).map((v) => v.disposition)).toEqual([
-      'held',
-      'held',
-      'held',
-      'held',
-      'held',
-    ]);
-    expect(reviewActions(rows, surfaces, grants, now, scope('supervised', 1))[0]).toEqual({
-      disposition: 'held',
-      reason: HELD_SUPERVISED,
+  it('on: every non-refused row applies on its own, and the switch is the write authority', (): void => {
+    expect(reviewActions(demo, surfaces, grants, now, autonomous)).toEqual(
+      Array.from({ length: demo.length }, () => ({ disposition: 'auto' })),
+    );
+    // A write with no standing grant applies under the switch: the toggle is the
+    // manager's standing authority for writes on connected surfaces.
+    expect(reviewAction(comment('x', 'REVOPS-10'), surfaces, new Set(['linear:read']), now, autonomous)).toEqual({
+      disposition: 'auto',
     });
-    // No skill recorded on the run reads as supervised too.
-    expect(reviewAction(demo[0], surfaces, grants, now, scope('supervised'))).toEqual({
-      disposition: 'held',
-      reason: HELD_SUPERVISED,
+    expect(reviewAction(publicReply, surfaces, new Set(['boss:message']), now, autonomous)).toEqual({ disposition: 'auto' });
+    expect(reviewAction(stateChange, surfaces, new Set(), now, autonomous)).toEqual({ disposition: 'auto' });
+    // A read and the DM still need their own grants.
+    expect(reviewAction(historyGet, surfaces, new Set(['boss:message']), now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (slack:read)',
     });
-    expect(reviewActions(rows, surfaces, grants, now, scope('supervised', 2)).map((v) => v.disposition)).toEqual([
-      'auto',
-      'auto',
-      'auto',
-      'held',
-      'auto',
-    ]);
-    expect(reviewActions(rows, surfaces, grants, now, scope('trusted', 0)).map((v) => v.disposition)).toEqual([
-      'auto',
-      'auto',
-      'auto',
-      'held',
-      'auto',
-    ]);
+    expect(reviewAction(chatPost('D0MANAGER'), surfaces, new Set(['slack:read']), now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (boss:message)',
+    });
+    // The refusal list is unchanged: outside the allowlist, forged provenance, a mock verb, an unknown tool, malformed.
+    expect(reviewAction(mcp('archive_issue', { id: 'REVOPS-10' }), surfaces, grants, now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: 'tool not in the surface allowlist (archive_issue)',
+    });
+    expect(reviewAction(comment('Done.\n\n-- Someone Else (Day0) · run wi_9/run_9', 'REVOPS-10'), surfaces, grants, now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: TRAILER_REFUSED,
+    });
+    expect(reviewAction({ tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'x' } }, surfaces, grants, now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: expect.stringContaining(MOCK_VERB_REFUSED),
+    });
+    expect(reviewAction({ tool: 'frobnicate', args: {} } as unknown as MockAction, surfaces, grants, now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: 'unknown tool',
+    });
+    expect(reviewAction(mcp('save_comment', {}), surfaces, grants, now, autonomous).disposition).toBe('auto');
+    expect(
+      reviewAction({ tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{not json' } }, surfaces, grants, now, autonomous),
+    ).toEqual({ disposition: 'refused', reason: expect.stringContaining(MALFORMED_ACTION) });
+    expect(isAutomatic(parsed(publicReply), slackReads, true)).toBe(true);
+    expect(isAutomatic(parsed(stateChange), linearAll, true)).toBe(true);
+  });
+
+  it('lets the switch stand in for the write grant and for nothing else', (): void => {
+    const bossOnly = new Set(['boss:message', 'linear:read']);
+    expect(needsStandingGrant(parsed(historyGet), slackReads)).toBe(true);
+    expect(needsStandingGrant(parsed(chatPost('D0MANAGER')), slackReads)).toBe(true);
+    expect(needsStandingGrant(parsed(comment()), linearAll)).toBe(false);
+    expect(needsStandingGrant(parsed(publicReply), slackReads)).toBe(false);
+    expect(needsStandingGrant(parsed(stateChange), linearAll)).toBe(false);
+    expect(grantRefusal(parsed(comment()), linearAll, bossOnly)).toBe('no grant (linear:write)');
+    expect(grantRefusal(parsed(comment()), linearAll, bossOnly, false)).toBe('no grant (linear:write)');
+    expect(grantRefusal(parsed(comment()), linearAll, bossOnly, true)).toBeUndefined();
+    expect(grantRefusal(parsed(publicReply), slackReads, bossOnly)).toBe('no grant (slack:write)');
+    expect(grantRefusal(parsed(publicReply), slackReads, bossOnly, true)).toBeUndefined();
+    expect(grantRefusal(parsed(stateChange), linearAll, new Set(), true)).toBeUndefined();
+    expect(grantRefusal(parsed(rpcGet), slackReads, new Set(['slack:read']), true)).toBeUndefined();
+    expect(grantRefusal(parsed(historyGet), slackReads, bossOnly, true)).toBe('no grant (slack:read)');
+    expect(grantRefusal(parsed(chatPost('D0MANAGER')), slackReads, new Set(['slack:read']), true)).toBe('no grant (boss:message)');
+    expect(grantRefusal(parsed(chatPost('D0MANAGER')), slackReads, bossOnly, true)).toBeUndefined();
   });
 
   it('reads verdicts persisted before dispositions existed', (): void => {
@@ -547,19 +568,6 @@ describe('the posture ladder', (): void => {
       reason: HELD_PUBLIC_POST,
     });
     expect(normaliseActionVerdict({})).toEqual({ disposition: 'held', reason: 'write held for the manager' });
-  });
-
-  it('collects the identifiers a work item is about', (): void => {
-    expect(
-      workingTargets({
-        externalId: 'REVOPS-10',
-        contentRefs: ['https://linear.app/day00/issue/REVOPS-10/record', 'see also REVOPS-3 and revops-4'],
-      }),
-    ).toEqual(['revops-10', 'revops-3']);
-    expect(workingTargets({ externalId: 'C0BSF04TZ19:1787746453.202809', contentRefs: [] })).toEqual([
-      'c0bsf04tz19:1787746453.202809',
-    ]);
-    expect(workingTargets({ externalId: '  ', contentRefs: [] })).toEqual([]);
   });
 });
 

@@ -235,39 +235,41 @@ describe('applying surface actions', (): void => {
     });
   });
 
-  it('in the auto phase applies only reads, the DM and working-target comments, and defers the rest', async (): Promise<void> => {
+  it('in the auto phase with the switch off applies only reads and the DM, and defers the rest', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const read: MockAction = {
       tool: 'mcp.call',
       args: { surface: 'linear', tool: 'list_issues', toolArgsJson: JSON.stringify({ project: 'Q3 close' }) },
     };
-    // A stale verdict lists the public post and the status change as approved; the backstop refuses them.
+    // A verdict written while the switch was on lists the comment and the public
+    // post as approved; with the switch off now the backstop refuses them.
     const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [read, comment, dm, publicPost, status], {
       deps: deps(recorded),
       grants,
       approvedIndexes: new Set([0, 1, 2, 3]),
       deferredIndexes: new Set([4]),
-      autoTargets: ['iss-1'],
+      autoPhase: true,
+      autonomousActions: false,
       now,
     });
-    expect(applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
-      [true, false, undefined],
-      [true, false, undefined],
-      [true, false, undefined],
-      [false, false, NOT_AUTOMATIC],
-      [true, true, AWAITING_APPROVAL],
+    expect(applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason, entry.authority])).toEqual([
+      [true, false, undefined, 'standing'],
+      [false, false, NOT_AUTOMATIC, undefined],
+      [true, false, undefined, 'standing'],
+      [false, false, NOT_AUTOMATIC, undefined],
+      [true, true, AWAITING_APPROVAL, undefined],
     ]);
     expect(applied[4]).toMatchObject({ awaitingApproval: true, idempotencyKey: 'wi_1:run_1:4' });
-    expect(recorded.mcp.map((call) => call.tool)).toEqual(['list_issues', 'save_comment']);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['list_issues']);
     expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
 
-    // A comment on an issue the run is not working on is not automatic either,
-    // and a working-target comment with no standing write grant is refused in the auto phase.
+    // A standing write grant does not make a comment automatic while the switch
+    // is off, and without the grant the refusal names the scope first.
     const other = await applySurfaceActions(ctx, 'real', [linear], run, [comment], {
       deps: deps(recorded),
       grants,
       approvedIndexes: new Set([0]),
-      autoTargets: ['iss-2'],
+      autoPhase: true,
       now,
     });
     expect(other[0]).toMatchObject({ ok: false, reason: NOT_AUTOMATIC });
@@ -275,7 +277,7 @@ describe('applying surface actions', (): void => {
       deps: deps(recorded),
       grants: new Set(['linear:read']),
       approvedIndexes: new Set([0]),
-      autoTargets: ['iss-1'],
+      autoPhase: true,
       now,
     });
     expect(ungranted[0]).toMatchObject({ ok: false, reason: 'no grant (linear:write)' });
@@ -289,6 +291,60 @@ describe('applying surface actions', (): void => {
     expect(noBoss[0]).toMatchObject({ ok: false, reason: 'no grant (boss:message)' });
   });
 
+  it('in the auto phase with the switch on applies every row, needs no write grant, and records the authority', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const read: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'list_issues', toolArgsJson: JSON.stringify({ project: 'Q3 close' }) },
+    };
+    // No write grant at all: the switch is the manager's standing authority for writes.
+    const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [read, comment, dm, publicPost, status], {
+      deps: deps(recorded),
+      grants: new Set(['boss:message', 'linear:read', 'slack:read']),
+      approvedIndexes: new Set([0, 1, 2, 3, 4]),
+      autoPhase: true,
+      autonomousActions: true,
+      now,
+    });
+    expect(applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason, entry.authority])).toEqual([
+      [true, false, undefined, 'autonomous'],
+      [true, false, undefined, 'autonomous'],
+      [true, false, undefined, 'autonomous'],
+      [true, false, undefined, 'autonomous'],
+      [true, false, undefined, 'autonomous'],
+    ]);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['list_issues', 'save_comment', 'save_issue']);
+    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER', 'C0PUBLIC']);
+    // The trailer and the shared identity are still added by the server.
+    expect((recorded.http[1].body as { text: string; username: string }).text).toContain('-- Priya (Day0) · run wi_1/run_1');
+
+    // A read and the DM still need their own grants under the switch.
+    const noGrants = await applySurfaceActions(ctx, 'real', [linear, slack], run, [read, dm, comment], {
+      deps: deps(recorded),
+      grants: new Set(),
+      approvedIndexes: new Set([0, 1, 2]),
+      autoPhase: true,
+      autonomousActions: true,
+      now,
+    });
+    expect(noGrants.map((entry) => [entry.ok, entry.reason])).toEqual([
+      [false, 'no grant (linear:read)'],
+      [false, 'no grant (boss:message)'],
+      [true, undefined],
+    ]);
+
+    // The manager's approval by index records its own authority.
+    const approved = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
+      deps: deps(recorded),
+      grants: new Set(['linear:read']),
+      approvedIndexes: new Set([0]),
+      now,
+    });
+    expect(approved[0]).toMatchObject({ ok: true, authority: 'manager' });
+    expect(approved[1]).toMatchObject({ held: true, reason: HELD_NOT_APPROVED });
+    expect(approved[1].authority).toBeUndefined();
+  });
+
   it('carries a prior phase\'s ledger forward so a status change sees the comment that landed', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const first = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
@@ -296,10 +352,11 @@ describe('applying surface actions', (): void => {
       grants,
       approvedIndexes: new Set([0]),
       deferredIndexes: new Set([1]),
-      autoTargets: ['iss-1'],
+      autoPhase: true,
+      autonomousActions: true,
       now,
     });
-    expect(first[0]).toMatchObject({ ok: true, providerId: 'prov-1' });
+    expect(first[0]).toMatchObject({ ok: true, providerId: 'prov-1', authority: 'autonomous' });
     expect(first[1]).toMatchObject({ held: true, awaitingApproval: true });
     const second = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
       deps: deps(recorded),
@@ -309,7 +366,7 @@ describe('applying surface actions', (): void => {
       now,
     });
     expect(second[0]).toBe(first[0]);
-    expect(second[1]).toMatchObject({ ok: true, idempotencyKey: 'wi_1:run_1:1' });
+    expect(second[1]).toMatchObject({ ok: true, idempotencyKey: 'wi_1:run_1:1', authority: 'manager' });
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
   });
 
@@ -576,12 +633,12 @@ describe('applying surface actions', (): void => {
       reason: 'no grant (slack:write)',
     });
     expect(recorded.http).toHaveLength(0);
-    // With the write grant it is still not automatic: the auto phase refuses it.
+    // With the write grant it is still not automatic while the switch is off: the auto phase refuses it.
     const auto = await applySurfaceActions(ctx, 'real', [slack], run, [smuggled], {
       deps: deps(recorded),
       grants: new Set(['slack:read', 'slack:write']),
       approvedIndexes: new Set([0]),
-      autoTargets: [],
+      autoPhase: true,
       now,
     });
     expect(auto[0]).toMatchObject({ ok: false, reason: NOT_AUTOMATIC });

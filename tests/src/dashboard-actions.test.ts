@@ -9,14 +9,17 @@ vi.mock('../../app/agent/[agentId]/MockEnvironment', () => ({
 }));
 
 import {
+  AutonomyConfirm,
+  AutonomyControl,
   cancelledReason,
+  landedHeadline,
   PendingActions,
   pendingHeadline,
   pendingVerdicts,
-  PostureControl,
   retryRequiresReconciliation,
 } from '../../app/agent/[agentId]/AgentDashboard';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
+import { AUTONOMY_WARNING, HELD_BEFORE_AUTONOMY_NOTE, HELD_WHILE_SUPERVISED_NOTE } from '../../src/work/autonomy';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import type { MockAction, ReplyTarget } from '../../src/work/types';
 
@@ -49,6 +52,7 @@ function render(
   actions: MockAction[],
   verdicts: ActionVerdict[] = actions.map((): ActionVerdict => ({ disposition: 'held', reason: HELD_MUTATION })),
   replyTarget?: ReplyTarget,
+  autonomousActions = false,
 ): string {
   return renderToStaticMarkup(
     createElement(PendingActions, {
@@ -56,6 +60,7 @@ function render(
       verdicts,
       surfaces: [connectedSlack],
       replyTarget,
+      autonomousActions,
       onApprove: vi.fn(async (): Promise<void> => {}),
       onReject: vi.fn(async (): Promise<void> => {}),
     }),
@@ -85,6 +90,9 @@ describe('dashboard exact-action gate', (): void => {
     );
     expect(html).toContain(longBody);
     expect(html).toContain('1 action awaiting your approval · 1 refused by the gate · nothing has reached a surface');
+    // The card says plainly why the row is waiting.
+    expect(html).toContain(HELD_WHILE_SUPERVISED_NOTE);
+    expect(html).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
     // The plain line comes first, the reason on the same line, and the literal payload is folded away.
     expect(html).toMatch(/<p[^>]*>Send Brian a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/);
     expect(html).toMatch(/<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · refused · no grant \(slack:write\)<\/span><\/p>/);
@@ -115,6 +123,12 @@ describe('dashboard exact-action gate', (): void => {
     ];
     const html = render([read, dm, reply], verdicts, { channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1787746453.202809' });
     expect(html).toContain('2 applied automatically · 1 action awaiting your approval');
+    expect(html).toContain(HELD_WHILE_SUPERVISED_NOTE);
+    // A run held before the switch was turned on still needs the click, and says so.
+    const after = render([read, dm, reply], verdicts, undefined, true);
+    expect(after).toContain(HELD_BEFORE_AUTONOMY_NOTE);
+    expect(after).not.toContain(HELD_WHILE_SUPERVISED_NOTE);
+    expect(render([dm], [{ disposition: 'refused', reason: 'x' }])).not.toContain('held for your approval');
     expect(html).not.toContain('Read issue REVOPS-10');
     expect(html).not.toContain('Send Brian a Slack DM');
     expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
@@ -140,19 +154,48 @@ describe('dashboard exact-action gate', (): void => {
     ]);
   });
 
-  it('renders the posture control with the current posture selected and the three options', (): void => {
-    const html = renderToStaticMarkup(
-      createElement(PostureControl, {
-        posture: 'supervised',
-        tone: 'tone',
-        onChange: vi.fn(async (): Promise<void> => {}),
-      }),
+  it('renders the autonomous-actions switch with its state named plainly, off and on', (): void => {
+    const off = renderToStaticMarkup(
+      createElement(AutonomyControl, { on: false, tone: 'tone', onChange: vi.fn(async (): Promise<void> => {}) }),
     );
-    expect(html).toContain('Active ·');
-    expect(html).toMatch(/<select[^>]*aria-label="agent posture"/);
-    expect(html).toMatch(/<option(?=[^>]*selected="")(?=[^>]*value="supervised")[^>]*>supervised posture<\/option>/);
-    expect(html).toContain('value="cold-start">cold-start posture</option>');
-    expect(html).toContain('value="trusted">trusted posture</option>');
+    expect(off).toContain('Active · Supervised');
+    expect(off).toContain('Autonomous actions');
+    expect(off).toMatch(/<button[^>]*role="switch"[^>]*aria-checked="false"[^>]*aria-label="Autonomous actions"/);
+    expect(off).not.toContain(AUTONOMY_WARNING);
+    expect(off).not.toContain('supervised posture');
+    const on = renderToStaticMarkup(
+      createElement(AutonomyControl, { on: true, tone: 'tone', onChange: vi.fn(async (): Promise<void> => {}) }),
+    );
+    expect(on).toContain('Active · Autonomous');
+    expect(on).toMatch(/<button[^>]*role="switch"[^>]*aria-checked="true"/);
+    expect(on).not.toContain(AUTONOMY_WARNING);
+  });
+
+  it('renders the confirmation with the warning in the operator\'s words and its two buttons', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
+    );
+    expect(html).toMatch(/<div[^>]*role="alertdialog"[^>]*aria-label="Turn on autonomous actions"/);
+    expect(html).toContain('Turn on autonomous actions?');
+    expect(html).toContain('The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.');
+    expect(html).toContain('Turn this on only after its behaviour has been what you want.');
+    expect(html).toContain('Skills and connections still need your approval either way.');
+    expect(html).toMatch(/<button[^>]*>Turn on<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Cancel<\/button>/);
+    expect(renderToStaticMarkup(createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn(), busy: true }))).toMatch(
+      /<button[^>]*disabled=""[^>]*>Turn on<\/button>/,
+    );
+  });
+
+  it('names how many landed changes applied under the switch', (): void => {
+    expect(landedHeadline([{ authority: 'autonomous' }, { authority: 'autonomous' }, { authority: 'autonomous' }])).toBe(
+      '3 changes reached the work environment · 3 applied autonomously',
+    );
+    expect(landedHeadline([{ authority: 'standing' }, { authority: 'manager' }, { authority: 'autonomous' }])).toBe(
+      '3 changes reached the work environment · 1 applied autonomously',
+    );
+    expect(landedHeadline([{ authority: 'manager' }])).toBe('1 change reached the work environment');
+    expect(landedHeadline([{}, {}])).toBe('2 changes reached the work environment');
   });
 
   it('explains a cancelled item from its recorded reason, else from what it was doing', (): void => {

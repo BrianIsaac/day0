@@ -31,6 +31,7 @@ import {
   type ParsedSurfaceAction,
 } from './policy';
 import type {
+  ActionAuthority,
   AdapterRun,
   AppliedAction,
   SurfaceAdapter,
@@ -70,11 +71,21 @@ export interface ApplyOptions {
    */
   priorLedger?: ReadonlyArray<AppliedAction | undefined>;
   /**
-   * Identifiers the run is working on. When set, this is the auto phase: a
-   * row that is not a read, the manager DM or a comment on one of these is
-   * refused even if it was listed, so a stale verdict cannot send it.
+   * Whether this is the auto phase, applying what the gate decided at hold
+   * time with no manager in the loop. A row that is not automatic now (a
+   * write while the toggle is off) is refused even if it was listed, so a
+   * verdict written before the manager turned autonomous actions off cannot
+   * send it.
    */
-  autoTargets?: readonly string[];
+  autoPhase?: boolean;
+  /**
+   * Whether the agent's autonomous-actions toggle is on now. Under it every
+   * non-refused row is automatic and a write needs no standing grant: the
+   * toggle is the manager's standing authority for writes on connected
+   * surfaces within their probed allowlist. A read and the manager DM still
+   * need their own grants.
+   */
+  autonomousActions?: boolean;
   /** Clock for the connection verdict. */
   now?: number;
 }
@@ -170,11 +181,13 @@ function refused(tool: string, reason: string, idempotencyKey: string): AppliedA
  *
  * Every surface action passes the same rules before its adapter runs:
  * arguments parse under the size cap, the surface is known and connected,
- * the agent holds the scope the action needs, in the auto phase the row is
- * one the ladder applies on its own, a status change follows a landed audit
- * comment, and provenance is added by the server. Actions not approved for
- * this phase are recorded as held (or as awaiting the manager) so the ledger
- * accounts for every index the skill emitted.
+ * the action has its authority (a standing grant, the manager's approval or
+ * the autonomous-actions toggle), in the auto phase the row is one the gate
+ * applies on its own, a status change follows a landed audit comment, and
+ * provenance is added by the server. Actions not approved for this phase are
+ * recorded as held (or as awaiting the manager) so the ledger accounts for
+ * every index the skill emitted. Every row an adapter applies records what
+ * authorised it.
  *
  * Args:
  *   ctx: Convex action context.
@@ -203,6 +216,19 @@ export async function applySurfaceActions(
   }
   const adapters = resolveAdapters(mode, surfaces, options.deps);
   const now = options.now ?? Date.now();
+  const autoPhase = options.autoPhase === true;
+  const autonomousActions = options.autonomousActions === true;
+  // A write the manager approved by index is authorised by that approval; in
+  // the auto phase, or an apply with no approval list at all, it needs a
+  // standing grant or the toggle.
+  const managerApproved = options.approvedIndexes !== undefined && !autoPhase;
+  const authority: ActionAuthority | undefined = autoPhase
+    ? autonomousActions
+      ? 'autonomous'
+      : 'standing'
+    : managerApproved
+      ? 'manager'
+      : undefined;
   const applied: AppliedAction[] = [];
   const parsedByIndex: Array<ParsedSurfaceAction | undefined> = [];
   for (const [index, action] of actions.entries()) {
@@ -267,18 +293,21 @@ export async function applySurfaceActions(
       continue;
     }
     // A read and the manager DM always need their standing grant. A write
-    // needs one to apply on its own (the auto phase, or an apply with no
-    // approval list at all); a write the manager approved by index is
-    // authorised by that approval.
-    const managerApproved = options.approvedIndexes !== undefined && options.autoTargets === undefined;
+    // needs one, or the toggle, to apply on its own; a write the manager
+    // approved by index is authorised by that approval.
     if (needsStandingGrant(parsed.action, surface) || !managerApproved) {
-      const ungranted = grantRefusal(parsed.action, surface, options.grants ?? new Set());
+      const ungranted = grantRefusal(
+        parsed.action,
+        surface,
+        options.grants ?? new Set(),
+        autonomousActions,
+      );
       if (ungranted) {
         applied.push(refused(action.tool, ungranted, idempotencyKey));
         continue;
       }
     }
-    if (options.autoTargets && !isAutomatic(parsed.action, surface, options.autoTargets)) {
+    if (autoPhase && !isAutomatic(parsed.action, surface, autonomousActions)) {
       applied.push(refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
       continue;
     }
@@ -314,15 +343,14 @@ export async function applySurfaceActions(
       applied.push(refused(action.tool, provenance.reason, idempotencyKey));
       continue;
     }
-    applied.push(
-      await adapter.apply(
-        ctx,
-        { ...run, agentName: run.agentName ?? 'Day0' },
-        serialiseSurfaceAction(provenance.action),
-        index,
-        idempotencyKey,
-      ),
+    const outcome = await adapter.apply(
+      ctx,
+      { ...run, agentName: run.agentName ?? 'Day0' },
+      serialiseSurfaceAction(provenance.action),
+      index,
+      idempotencyKey,
     );
+    applied.push(authority ? { ...outcome, authority } : outcome);
   }
   return applied;
 }

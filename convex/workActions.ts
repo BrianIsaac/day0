@@ -432,17 +432,18 @@ type LedgerOutput = ExecutionOutput & { applied?: Array<AppliedAction | undefine
 /**
  * Apply the approved actions of the current phase, with the run id the skill ran under.
  *
- * Scheduled by `work.setActionsPending` for the ladder's auto rows and by
+ * Scheduled by `work.setActionsPending` for the gate's auto rows and by
  * `work.approveActions` for the manager's. The claim records the apply
  * attempt exactly once, so a second schedule after a restart re-applies with
  * the same idempotency keys rather than alongside a first apply that is
  * still running. In the auto phase the held rows are deferred (a placeholder
- * in the ledger, no adapter call) and every row is re-checked to be a read,
- * the manager DM or a working-target comment; in the approved phase the auto
- * rows' ledger entries are carried forward and the rows the manager left out
- * are recorded as not approved. Every applied row passes the registry's
- * rules (grant, comment before status, attribution, provenance) and then its
- * adapter.
+ * in the ledger, no adapter call) and every row is re-checked against the
+ * toggle as it is now: a read or the manager DM, or any row while autonomous
+ * actions are on; in the approved phase the auto rows' ledger entries are
+ * carried forward and the rows the manager left out are recorded as not
+ * approved. Every applied row passes the registry's rules (authority,
+ * comment before status, attribution, provenance) and then its adapter, and
+ * records what authorised it.
  */
 export const applyApprovedActions = internalAction({
   args: { workItemId: v.id('workItems') },
@@ -482,7 +483,8 @@ export const applyApprovedActions = internalAction({
           heldReasons: new Map(claim.heldReasons),
           deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
           priorLedger,
-          autoTargets: claim.phase === 'auto' ? claim.targets : undefined,
+          autoPhase: claim.phase === 'auto',
+          autonomousActions: claim.autonomousActions,
         },
       );
       return await finishRun(ctx, args.workItemId, claim, output, applied);

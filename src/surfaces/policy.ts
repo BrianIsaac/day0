@@ -1,4 +1,3 @@
-import { holdsEveryRow, type AgentPosture } from '../work/posture';
 import type { MockAction } from '../work/types';
 import { MOCK_TOOLS } from './mock';
 import type { AppliedAction, CredentialKind, SurfaceRecord } from './types';
@@ -23,8 +22,6 @@ export const TOOL_NOT_ALLOWED = 'tool not in the surface allowlist';
 export const HELD_PUBLIC_POST = 'public post held for the manager';
 export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 export const HELD_WRITE = 'write held for the manager';
-export const HELD_COLD_START = 'held in cold-start posture';
-export const HELD_SUPERVISED = 'held while the skill is supervised';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
 export const AWAITING_APPROVAL = "awaiting the manager's approval";
 export const NOT_AUTOMATIC = 'not an automatic action';
@@ -443,21 +440,30 @@ export function grantingScopes(parsed: ParsedSurfaceAction, surface: SurfaceReco
 }
 
 /**
- * Why an action has no grant, if it has none.
+ * Why an action has no standing authority, if it has none.
+ *
+ * A read and the manager DM need their own scope whatever else is true.
+ * Any other write is authorised by `<surface>:write`, or, when autonomous
+ * actions are on, by the toggle itself: it is the manager's standing
+ * authority for writes on connected surfaces within their probed allowlist,
+ * so a write with no scope of its own applies under it.
  *
  * Args:
  *   parsed: A parsed surface action.
  *   surface: The surface it targets.
  *   grants: The agent's live permission scopes.
+ *   autonomousActions: Whether the agent's autonomous-actions toggle is on.
  *
  * Returns:
- *   `no grant (<scope>)`, or undefined when a granting scope is held.
+ *   `no grant (<scope>)`, or undefined when the action is authorised.
  */
 export function grantRefusal(
   parsed: ParsedSurfaceAction,
   surface: SurfaceRecord,
   grants: ReadonlySet<string>,
+  autonomousActions = false,
 ): string | undefined {
+  if (autonomousActions && !needsStandingGrant(parsed, surface)) return undefined;
   const scopes = grantingScopes(parsed, surface);
   if (scopes.some((scope) => grants.has(scope))) return undefined;
   return `${NO_GRANT} (${scopes[0]})`;
@@ -600,35 +606,8 @@ export function normaliseActionVerdict(row: {
   return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
 }
 
-/** What kind of change an applicable action makes, which decides its disposition. */
-export type ActionClass =
-  | 'read'
-  | 'manager-dm'
-  | 'working-comment'
-  | 'public-post'
-  | 'mutation'
-  | 'write';
-
-/**
- * The identifiers a work item is about, for the working-comment rule.
- *
- * Args:
- *   item: The work item's external id and references.
- *
- * Returns:
- *   The external id plus every `KEY-123`-shaped identifier in the references.
- */
-export function workingTargets(item: {
-  externalId: string;
-  contentRefs: readonly string[];
-}): string[] {
-  const targets = new Set<string>();
-  if (item.externalId.trim()) targets.add(item.externalId.trim().toLowerCase());
-  for (const ref of item.contentRefs) {
-    for (const match of ref.matchAll(/\b([A-Z][A-Z0-9]*-\d+)\b/g)) targets.add(match[1].toLowerCase());
-  }
-  return [...targets];
-}
+/** What kind of change an applicable action makes, which decides its disposition and its held reason. */
+export type ActionClass = 'read' | 'manager-dm' | 'public-post' | 'mutation' | 'write';
 
 /**
  * Classify an applicable action by what it changes.
@@ -636,24 +615,14 @@ export function workingTargets(item: {
  * Args:
  *   parsed: A parsed surface action.
  *   surface: The surface it targets.
- *   targets: Identifiers the run is working on, lower-cased.
  *
  * Returns:
  *   The class.
  */
-export function actionClass(
-  parsed: ParsedSurfaceAction,
-  surface: SurfaceRecord,
-  targets: readonly string[],
-): ActionClass {
+export function actionClass(parsed: ParsedSurfaceAction, surface: SurfaceRecord): ActionClass {
   if (actionIntent(parsed) === 'read') return 'read';
   if (isManagerDm(parsed, surface)) return 'manager-dm';
   if (heldReason(parsed, surface)) return 'public-post';
-  if (isAuditComment(parsed)) {
-    const issue = targetIssue(parsed);
-    if (issue !== undefined && targets.includes(issue.trim().toLowerCase())) return 'working-comment';
-    return 'mutation';
-  }
   if (parsed.kind === 'mcp.call') return 'mutation';
   return 'write';
 }
@@ -662,11 +631,12 @@ export function actionClass(
  * Whether an action needs a standing grant to be applied at all.
  *
  * A read and the manager DM apply without the manager, so they need the
- * scope that authorises them (`<surface>:read`, `boss:message`). Every other
- * write is either applied on its own because a standing write grant and the
- * ladder allow it, or held for the manager, whose approval of the literal
- * payload is the authority; a missing write grant therefore keeps a write
- * out of the auto phase rather than out of the run.
+ * scope that authorises them (`<surface>:read`, `boss:message`) and are
+ * refused without it. Every other write is authorised either by the manager
+ * (their approval of the literal payload, or the autonomous-actions toggle)
+ * or by a standing `<surface>:write`; a missing write grant therefore keeps a
+ * write out of the auto phase while the toggle is off rather than out of the
+ * run.
  *
  * Args:
  *   parsed: A parsed surface action.
@@ -722,33 +692,28 @@ export function refusalFor(
   return { refused: false, parsed: parsed.action, surface };
 }
 
-/** The run's place on the ladder, read inside the hold transaction. */
+/** What the hold transaction reads about the agent before deciding a run. */
 export interface ReviewScope {
-  /** The agent's posture. */
-  posture: AgentPosture;
-  /** The skill that produced the run; undefined holds every row. */
-  skill: { supervisedRunsCompleted?: number | undefined } | undefined;
-  /** Identifiers the run is working on, from `workingTargets`. */
-  targets: readonly string[];
+  /** Whether the agent's autonomous-actions toggle is on. */
+  autonomousActions: boolean;
 }
 
 /**
  * Decide at hold time what the gate will do with one action.
  *
- * Refusals come first and are the same whatever the posture. An applicable
- * row is `auto` when it is a read, the manager DM or an audit comment on a
- * target the run is working on through a standing write grant, and `held`
- * for every other write - a public post or thread reply, a system-of-record
- * mutation, a create or a delete, or a comment the agent has no standing
- * grant for. In cold start, and in supervised posture while the skill is
- * still inside its supervised window, every applicable row is held instead.
+ * Refusals come first and are the same whether the toggle is on or off.
+ * With autonomous actions off, an applicable row is `auto` when it is a
+ * read or the manager DM and `held` for every other write - a public post
+ * or thread reply, a system-of-record mutation, a create or a delete, or any
+ * other write - whatever standing grant the agent holds. With autonomous
+ * actions on, every applicable row is `auto`.
  *
  * Args:
  *   action: The action as the skill emitted it.
  *   surfaces: The agent's surfaces.
  *   grants: The agent's live permission scopes.
  *   now: Clock for the liveness verdict.
- *   scope: Posture, skill trust and the run's targets.
+ *   scope: The agent's toggle.
  *
  * Returns:
  *   The verdict.
@@ -762,20 +727,11 @@ export function reviewAction(
 ): ActionVerdict {
   const refusal = refusalFor(action, surfaces, grants, now);
   if (refusal.refused) return { disposition: 'refused', reason: refusal.reason };
-  if (holdsEveryRow(scope.posture, scope.skill)) {
-    return {
-      disposition: 'held',
-      reason: scope.posture === 'cold-start' ? HELD_COLD_START : HELD_SUPERVISED,
-    };
-  }
-  switch (actionClass(refusal.parsed, refusal.surface, scope.targets)) {
+  if (scope.autonomousActions) return { disposition: 'auto' };
+  switch (actionClass(refusal.parsed, refusal.surface)) {
     case 'read':
     case 'manager-dm':
       return { disposition: 'auto' };
-    case 'working-comment':
-      return grantRefusal(refusal.parsed, refusal.surface, grants)
-        ? { disposition: 'held', reason: HELD_WRITE }
-        : { disposition: 'auto' };
     case 'public-post':
       return { disposition: 'held', reason: HELD_PUBLIC_POST };
     case 'mutation':
@@ -793,7 +749,7 @@ export function reviewAction(
  *   surfaces: The agent's surfaces.
  *   grants: The agent's live permission scopes.
  *   now: Clock for the liveness verdict.
- *   scope: Posture, skill trust and the run's targets.
+ *   scope: The agent's toggle.
  *
  * Returns:
  *   One verdict per action, in order.
@@ -811,25 +767,27 @@ export function reviewActions(
 /**
  * Whether an action may be applied without a human step right now.
  *
- * The auto phase's backstop: apply re-reads the surfaces and grants and asks
- * this of every row it is about to send, so a stale verdict cannot let a
- * public post or a mutation through on its own.
+ * The auto phase's backstop: apply re-reads the surfaces, the grants and
+ * the toggle and asks this of every row it is about to send, so a verdict
+ * written while the toggle was on cannot send a public post or a mutation
+ * after the manager has turned it off.
  *
  * Args:
  *   parsed: A parsed surface action that passed every refusal.
  *   surface: Its surface.
- *   targets: Identifiers the run is working on.
+ *   autonomousActions: Whether the agent's toggle is on now.
  *
  * Returns:
- *   True for a read, the manager DM or a working-target comment.
+ *   True for every row under the toggle; otherwise for a read or the manager DM.
  */
 export function isAutomatic(
   parsed: ParsedSurfaceAction,
   surface: SurfaceRecord,
-  targets: readonly string[],
+  autonomousActions: boolean,
 ): boolean {
-  const kind = actionClass(parsed, surface, targets);
-  return kind === 'read' || kind === 'manager-dm' || kind === 'working-comment';
+  if (autonomousActions) return true;
+  const kind = actionClass(parsed, surface);
+  return kind === 'read' || kind === 'manager-dm';
 }
 
 /**

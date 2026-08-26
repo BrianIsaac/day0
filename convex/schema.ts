@@ -30,10 +30,17 @@ export default defineSchema({
       v.literal('charter-pending'),
       v.literal('active'),
     ),
-    /** The action posture ladder. Absent reads as `cold-start`, the deploy
-     * default: every applicable row is held until the first work item
-     * completes, then `supervised` applies the ladder per skill, and
-     * `trusted` applies it with no per-skill window. See `src/work/posture.ts`. */
+    /** Whether the agent may act on connected systems without asking.
+     * Absent reads as `false`, the supervised state: reads and the manager
+     * DM apply on their own and every other write waits for the manager.
+     * `true` applies every non-refused row in the auto phase. Only about
+     * actions; skill and surface approval are unchanged. See
+     * `src/work/autonomy.ts`. */
+    autonomousActions: v.optional(v.boolean()),
+    /** REMOVED 26 Aug (late): the posture ladder this toggle replaced. Kept
+     * optional for one more deployment so rows the ladder wrote still
+     * validate at push; nothing reads or writes it. Delete once the primary
+     * has been pushed and its rows no longer carry it. */
     posture: v.optional(
       v.union(v.literal('cold-start'), v.literal('supervised'), v.literal('trusted')),
     ),
@@ -309,10 +316,10 @@ export default defineSchema({
       ),
     ),
     /** Indexes into `output.actions` to apply in the current phase: the auto
-     * rows when the ladder approved them, the manager's list afterwards.
+     * rows when the gate classified them, the manager's list afterwards.
      * Every other index is recorded as held (or as awaiting the manager). */
     approvedIndexes: v.optional(v.array(v.number())),
-    /** Which phase `approvedIndexes` belongs to. `auto` applies the ladder's
+    /** Which phase `approvedIndexes` belongs to. `auto` applies the gate's
      * rows straight from the hold; `approved` applies the manager's. */
     applyPhase: v.optional(v.union(v.literal('auto'), v.literal('approved'))),
     /** Where a reply to this work belongs when it came from a chat thread:
@@ -377,9 +384,10 @@ export default defineSchema({
      * `skills.migrateSandboxIdField`. */
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
-    /** Runs the manager approved without rejecting a row, in a row. Absent is
-     * zero; reaching `SKILL_SUPERVISED_RUNS` graduates the skill out of its
-     * supervised window, and a rejection starts the count again. */
+    /** REMOVED 26 Aug (late): the posture ladder's per-skill supervised-run
+     * counter, replaced by `agents.autonomousActions`. Kept optional for one
+     * more deployment so rows the ladder wrote still validate at push;
+     * nothing reads or writes it. */
     supervisedRunsCompleted: v.optional(v.number()),
     createdAt: v.number(),
     registeredAt: v.optional(v.number()),

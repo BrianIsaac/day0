@@ -8,18 +8,11 @@ import {
   HELD_NOT_APPROVED,
   normaliseActionVerdict,
   reviewActions,
-  workingTargets,
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import type { AppliedAction } from '../src/surfaces/types';
-import { SURFACE_MODE } from '../src/lib/surface-mode';
-import {
-  agentPosture,
-  nextSupervisedRuns,
-  SKILL_SUPERVISED_RUNS,
-  type SupervisedDecision,
-} from '../src/work/posture';
+import { autonomousActionsOn } from '../src/work/autonomy';
 import type { MockAction } from '../src/work/types';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
@@ -46,13 +39,14 @@ export const INTERRUPTED_APPLY_REASON =
  * gate, so approval applies with the same idempotency keys the run would have
  * used had it not paused.
  *
- * The posture ladder splits the gate into two phases over the same claim and
- * apply path. Rows the ladder classifies `auto` are applied straight from the
- * hold while the row is still `executing` (`applyPhase: 'auto'`); when the
- * run also has `held` rows it then parks at `actions-pending` with the auto
- * rows already in the ledger, and the manager's approval runs the second
- * phase (`applyPhase: 'approved'`). A run with no held row never enters
- * `actions-pending`; a run with no auto row parks at once, as before.
+ * The gate runs in two phases over the same claim and apply path. Rows it
+ * classifies `auto` (reads and the manager DM; every non-refused row once
+ * the manager has turned autonomous actions on) are applied straight from
+ * the hold while the row is still `executing` (`applyPhase: 'auto'`); when
+ * the run also has `held` rows it then parks at `actions-pending` with the
+ * auto rows already in the ledger, and the manager's approval runs the
+ * second phase (`applyPhase: 'approved'`). A run with no held row never
+ * enters `actions-pending`; a run with no auto row parks at once.
  */
 
 /**
@@ -434,44 +428,8 @@ export const setCompleted = internalMutation({
       payload: { workItemId: args.workItemId, output: args.output },
       createdAt: Date.now(),
     });
-    await leaveColdStart(ctx, row.agentId, args.workItemId);
   },
 });
-
-/**
- * Move an agent from cold start to supervised once its first work item completes.
- *
- * Cold start is "the first work item only": every row held, whatever the
- * class. The transition is made in the transaction that records the
- * completion, in real mode only, so the hosted mock's rows and event feed
- * stay as they were.
- *
- * Args:
- *   ctx: Mutation context.
- *   agentId: The agent.
- *   workItemId: The work item that completed.
- */
-async function leaveColdStart(
-  ctx: MutationCtx,
-  agentId: Id<'agents'>,
-  workItemId: Id<'workItems'>,
-): Promise<void> {
-  if (SURFACE_MODE !== 'real') return;
-  const agent = await ctx.db.get(agentId);
-  if (!agent || agentPosture(agent) !== 'cold-start') return;
-  await ctx.db.patch(agentId, { posture: 'supervised' });
-  await ctx.db.insert('events', {
-    agentId,
-    type: 'agent.posture-changed',
-    payload: {
-      from: 'cold-start',
-      to: 'supervised',
-      reason: 'first work item completed',
-      workItemId,
-    },
-    createdAt: Date.now(),
-  });
-}
 
 export const setFailed = internalMutation({
   args: {
@@ -515,10 +473,10 @@ export const setFailed = internalMutation({
 /**
  * Decide, inside the hold transaction, what the gate will do with each action.
  *
- * The surfaces, grants, posture and skill trust are read in the same
- * transaction that holds the run, so the verdicts describe the run the
- * manager is about to review (or that is about to apply on its own) and a
- * row refused here is refused at approval rather than failing at apply.
+ * The surfaces, grants and the agent's autonomous-actions toggle are read in
+ * the same transaction that holds the run, so the verdicts describe the run
+ * the manager is about to review (or that is about to apply on its own) and
+ * a row refused here is refused at approval rather than failing at apply.
  *
  * Args:
  *   ctx: Mutation context.
@@ -526,16 +484,15 @@ export const setFailed = internalMutation({
  *   actions: The actions the skill emitted.
  *
  * Returns:
- *   One verdict per action.
+ *   The verdicts, one per action, and the toggle they were decided under.
  */
 async function reviewHeldActions(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   actions: MockAction[],
-): Promise<ActionVerdict[]> {
-  const [agent, skill, surfaceRows, grantRows] = await Promise.all([
+): Promise<{ verdicts: ActionVerdict[]; autonomousActions: boolean }> {
+  const [agent, surfaceRows, grantRows] = await Promise.all([
     ctx.db.get(row.agentId),
-    row.skillId ? ctx.db.get(row.skillId) : Promise.resolve(null),
     ctx.db
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
@@ -547,17 +504,17 @@ async function reviewHeldActions(
   ]);
   if (!agent) throw new Error('agent not found');
   const grants = new Set(grantRows.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
-  return reviewActions(
-    actions,
-    surfaceRows.map((surface) => toSurfaceRecord(surface)),
-    grants,
-    Date.now(),
-    {
-      posture: agentPosture(agent),
-      skill: skill ?? undefined,
-      targets: workingTargets(row),
-    },
-  );
+  const autonomousActions = autonomousActionsOn(agent);
+  return {
+    verdicts: reviewActions(
+      actions,
+      surfaceRows.map((surface) => toSurfaceRecord(surface)),
+      grants,
+      Date.now(),
+      { autonomousActions },
+    ),
+    autonomousActions,
+  };
 }
 
 /**
@@ -630,60 +587,17 @@ async function scheduleApply(
 }
 
 /**
- * Count the manager's decision on a held run towards the skill's supervised window.
- *
- * An approval with every held row ticked counts one; an approval that left
- * a held row out, and a rejection, start the count again. The skill row and
- * the event land in the caller's transaction.
- *
- * Args:
- *   ctx: Mutation context.
- *   row: The work item decided.
- *   decision: What the manager did.
- */
-async function recordSupervisedDecision(
-  ctx: MutationCtx,
-  row: Doc<'workItems'>,
-  decision: SupervisedDecision,
-): Promise<void> {
-  if (!row.skillId) return;
-  const skill = await ctx.db.get(row.skillId);
-  if (!skill) return;
-  const before = skill.supervisedRunsCompleted ?? 0;
-  const after = nextSupervisedRuns(skill.supervisedRunsCompleted, decision);
-  await ctx.db.patch(skill._id, { supervisedRunsCompleted: after });
-  const type =
-    decision.kind === 'approved' && !decision.rejectedAny
-      ? after === SKILL_SUPERVISED_RUNS
-        ? 'skill.graduated'
-        : 'skill.supervised-run-approved'
-      : 'skill.supervision-reset';
-  await ctx.db.insert('events', {
-    agentId: row.agentId,
-    type,
-    payload: {
-      skillId: skill._id,
-      name: skill.name,
-      workItemId: row._id,
-      supervisedRunsCompleted: after,
-      previous: before,
-      window: SKILL_SUPERVISED_RUNS,
-      trusted: after >= SKILL_SUPERVISED_RUNS,
-    },
-    createdAt: Date.now(),
-  });
-}
-
-/**
- * Hold an executing run at the exact-action gate and apply what the ladder allows.
+ * Hold an executing run at the exact-action gate and apply what the gate allows.
  *
  * Called by the action that ran the skill, in real mode, instead of applying
  * anything itself. The draft, notes and literal `actions` are persisted with
- * the run id and one verdict per row. Rows the ladder classifies `auto` are
+ * the run id and one verdict per row. Rows the gate classifies `auto` are
  * approved here and applied by the same scheduled path a manager's approval
  * uses, while the row stays `executing`; when nothing is `auto` the row moves
- * to `actions-pending` at once. Guarded on `executing` so a late caller
- * cannot reopen a run the manager has already decided.
+ * to `actions-pending` at once. The hold event records whether autonomous
+ * actions were on, so the audit trail shows the mode the verdicts were
+ * decided under. Guarded on `executing` so a late caller cannot reopen a run
+ * the manager has already decided.
  */
 export const setActionsPending = internalMutation({
   args: { workItemId: v.id('workItems'), runId: v.id('events'), output: v.any() },
@@ -697,7 +611,11 @@ export const setActionsPending = internalMutation({
     if (row.executionRunId !== args.runId) return { pending: false };
     const actions = (args.output as { actions?: unknown[] }).actions;
     if (!Array.isArray(actions)) throw new Error('output.actions must be a list');
-    const actionVerdicts = await reviewHeldActions(ctx, row, actions as MockAction[]);
+    const { verdicts: actionVerdicts, autonomousActions } = await reviewHeldActions(
+      ctx,
+      row,
+      actions as MockAction[],
+    );
     const autoIndexes = indexesWith(actionVerdicts, 'auto');
     const heldIndexes = indexesWith(actionVerdicts, 'held');
     const refusedIndexes = indexesWith(actionVerdicts, 'refused');
@@ -708,6 +626,7 @@ export const setActionsPending = internalMutation({
       autoIndexes,
       heldIndexes,
       refusedIndexes,
+      autonomousActions,
     };
     if (autoIndexes.length > 0) {
       await ctx.db.patch(args.workItemId, {
@@ -810,7 +729,7 @@ export const setAwaitingApproval = internalMutation({
  * than it showed. Only `held` rows can be approved: an `auto` row was applied
  * before the manager saw the card and a `refused` row can never be applied.
  * Approving nothing is allowed and lands nothing: every held row is then
- * recorded as not approved, and the skill's supervised window starts again.
+ * recorded as not approved.
  */
 export const approveActions = mutation({
   args: {
@@ -863,12 +782,6 @@ export const approveActions = mutation({
       },
       createdAt: Date.now(),
     });
-    if (heldIndexes.length > 0) {
-      await recordSupervisedDecision(ctx, row, {
-        kind: 'approved',
-        rejectedAny: rejectedIndexes.length > 0,
-      });
-    }
     await scheduleApply(ctx, args.workItemId, row.pendingRunId);
     return { ok: true, approvedIndexes };
   },
@@ -926,7 +839,6 @@ export const rejectActions = mutation({
       payload: { workItemId: args.workItemId, reason: skipReason },
       createdAt: Date.now(),
     });
-    await recordSupervisedDecision(ctx, row, { kind: 'rejected' });
     return { ok: true };
   },
 });
@@ -940,7 +852,9 @@ export const rejectActions = mutation({
  * that applies. In the auto phase the row is still `executing` and the fence
  * is the absent attempt id; in the approved phase it moves the row from
  * `actions-pending` back to `executing`. The caller gets everything it needs
- * from the row so it never re-reads state that may have moved.
+ * from the row so it never re-reads state that may have moved. The toggle is
+ * read here, in the claim's transaction, so the apply backstop sees the
+ * manager's latest word rather than the one the hold was decided under.
  */
 export const claimApprovedActions = internalMutation({
   args: { workItemId: v.id('workItems') },
@@ -957,7 +871,7 @@ export const claimApprovedActions = internalMutation({
         approvedIndexes: number[];
         heldIndexes: number[];
         heldReasons: Array<[number, string]>;
-        targets: string[];
+        autonomousActions: boolean;
         output: unknown;
       }
     | { claimed: false; reason: string }
@@ -971,6 +885,9 @@ export const claimApprovedActions = internalMutation({
     }
     if (!row.pendingRunId) return { claimed: false, reason: 'workItem has no pending run' };
     if (!row.approvedIndexes) return { claimed: false, reason: 'no actions have been approved' };
+    // A missing agent row is the apply action's failure to report (it fences
+    // the run as outcome-unknown); the claim only needs the switch's value.
+    const agent = await ctx.db.get(row.agentId);
     const applyAttemptId = await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.actions-applying',
@@ -996,7 +913,7 @@ export const claimApprovedActions = internalMutation({
       approvedIndexes: row.approvedIndexes,
       heldIndexes: indexesWith(verdictList(row.actionVerdicts, count), 'held'),
       heldReasons: refusedReasonEntries(row.actionVerdicts, count),
-      targets: workingTargets(row),
+      autonomousActions: agent ? autonomousActionsOn(agent) : false,
       output: row.output,
     };
   },
@@ -1005,7 +922,7 @@ export const claimApprovedActions = internalMutation({
 /**
  * Recover an apply action that disappeared across a backend interruption.
  *
- * An unclaimed approved set - the manager's, or the ladder's auto rows - is
+ * An unclaimed approved set - the manager's, or the gate's auto rows - is
  * safe to reschedule. Once an apply claim exists, the provider may already
  * have accepted a request, so recovery records every outcome of this phase
  * as unknown, keeps what an earlier phase already recorded, and refuses
@@ -1037,7 +954,7 @@ export const recoverInterruptedApply = internalMutation({
     const verdicts = verdictList(row.actionVerdicts, count);
     const prior = ledgerOf(row.output);
     // In the auto phase a held row was never offered to the manager, so it
-    // keeps the reason the ladder held it for; in the approved phase an
+    // keeps the reason the gate held it for; in the approved phase an
     // unapproved held row is one the manager left out.
     const heldReasonFor = (index: number): string => {
       const verdict = verdicts[index];
