@@ -332,6 +332,39 @@ describe('manager channel request claims', (): void => {
     });
   });
 
+  it('asks for no reply through a chat surface whose manager identity has not been probed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    // A Slack surface connected before the branch carries the DM channel but no
+    // `managerUserId` until its next re-probe. Intake cannot read replies from it,
+    // so a request that says "reply approve <id>" would be answered into silence.
+    await harness.run(async (ctx) => {
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!slack) throw new Error('chat surface missing');
+      await ctx.db.patch(slack._id, { managerUserId: undefined });
+    });
+
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: false,
+    });
+    expect(await scheduledFunctionNames(harness)).not.toContain(
+      'managerChannelActions:requestDecision',
+    );
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'gh6npq',
+      }),
+    ).toEqual({ prepared: false, reason: 'no connected manager chat channel' });
+    expect((await readItem(harness, workItemId)).decision).toBeUndefined();
+  });
 });
 
 describe('single-use manager decisions', (): void => {

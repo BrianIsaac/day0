@@ -27,6 +27,24 @@ export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
   'apply was interrupted after its claim; provider outcomes are unknown and must be reconciled before retry';
 
+/**
+ * A connected chat surface the manager can be asked through and answered from.
+ *
+ * The DM channel alone is not enough: intake reads replies only from a
+ * surface whose probe also recorded the manager's provider user id, so a
+ * request sent without it would ask for a reply nobody reads.
+ */
+function isManagerChannel(surface: Doc<'surfaces'>): boolean {
+  return (
+    surface.class === 'chat' &&
+    surface.verdict === 'connected' &&
+    surface.credentialLanded &&
+    !!surface.credentialId &&
+    !!surface.managerDmChannelId &&
+    !!surface.managerUserId
+  );
+}
+
 /** Avoid scheduling an outbound action when no connected manager channel can claim it. */
 async function scheduleDecisionRequest(
   ctx: MutationCtx,
@@ -37,14 +55,7 @@ async function scheduleDecisionRequest(
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
     .collect();
-  const available = surfaces.some(
-    (surface) =>
-      surface.class === 'chat' &&
-      surface.verdict === 'connected' &&
-      surface.credentialLanded &&
-      !!surface.credentialId &&
-      !!surface.managerDmChannelId,
-  );
+  const available = surfaces.some(isManagerChannel);
   if (available) {
     await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
       workItemId: row._id,
@@ -369,14 +380,7 @@ export const prepareDecisionRequest = internalMutation({
       .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
       .collect();
     const chat = surfaceRows
-      .filter(
-        (surface) =>
-          surface.class === 'chat' &&
-          surface.verdict === 'connected' &&
-          surface.credentialLanded &&
-          !!surface.credentialId &&
-          !!surface.managerDmChannelId,
-      )
+      .filter(isManagerChannel)
       .sort(
         (left, right) =>
           (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -

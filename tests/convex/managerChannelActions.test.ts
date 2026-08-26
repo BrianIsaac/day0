@@ -66,6 +66,7 @@ describe('the outbound manager-channel action', (): void => {
         toolAllowlist: ['chat.postMessage'],
         toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
         managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
         credentialId,
         credentialKind: 'value',
         credentialLanded: true,
