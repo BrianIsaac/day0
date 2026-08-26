@@ -5,6 +5,7 @@ import {
   applyProvenance,
   containsProvenanceTrailer,
   describeAction,
+  reviewPayload,
   HELD_PUBLIC_POST,
   heldEligible,
   heldReason,
@@ -299,5 +300,53 @@ describe('skill approval and card rendering', (): void => {
     expect(describeAction({ tool: 'spreadsheet.appendRow', args: { sheetSlug: 'q4', tabName: 'Won', cells: [{ header: 'Name', value: 'A' }] } })).toBe(
       'spreadsheet.appendRow · {sheetSlug: "q4", tabName: "Won", cells: ["Name=A"]}',
     );
+  });
+});
+
+describe('review payload for the approval card', (): void => {
+  it('shows only the arguments the verb reads, and only the non-empty ones, verbatim', (): void => {
+    const flat: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        body: '',
+        cells: [],
+        channelSlug: '',
+        comment: '',
+        headersJson: '',
+        method: '',
+        path: '',
+        sheetSlug: '',
+        slug: '',
+        status: 'open',
+        surface: 'linear',
+        tabName: '',
+        threadKey: '',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit note."}',
+        tweetSlug: '',
+      },
+    };
+    expect(reviewPayload(flat)).toEqual({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit note."}' },
+    });
+    expect(
+      reviewPayload({
+        tool: 'http.request',
+        args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{"Authorization":"Bearer {{secret}}"}', body: '{"channel":"D1","text":"hi"}', status: 'open', cells: [] },
+      }),
+    ).toEqual({
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{"Authorization":"Bearer {{secret}}"}', body: '{"channel":"D1","text":"hi"}' },
+    });
+    expect(reviewPayload({ tool: 'ticket.update', args: { slug: 'REVOPS-5', status: 'done', comment: '', surface: 'linear' } })).toEqual({
+      tool: 'ticket.update',
+      args: { slug: 'REVOPS-5', status: 'done' },
+    });
+    expect(reviewPayload({ tool: 'spreadsheet.appendRow', args: { sheetSlug: 's', tabName: 't', cells: [{ header: 'h', value: '' }] } })).toEqual({
+      tool: 'spreadsheet.appendRow',
+      args: { sheetSlug: 's', tabName: 't', cells: [{ header: 'h', value: '' }] },
+    });
+    expect(reviewPayload({ tool: 'mcp.call' } as MockAction)).toEqual({ tool: 'mcp.call', args: {} });
   });
 });

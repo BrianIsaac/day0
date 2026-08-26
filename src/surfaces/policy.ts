@@ -562,6 +562,44 @@ function compact(value: unknown, max = 80): string {
   return String(value);
 }
 
+/** The argument names each verb reads; everything else in the flat bag is another verb's default. */
+const VERB_ARGUMENTS: Readonly<Record<string, readonly string[]>> = {
+  'mcp.call': ['surface', 'tool', 'toolArgsJson'],
+  'http.request': ['surface', 'method', 'path', 'headersJson', 'body'],
+  'spreadsheet.appendRow': ['sheetSlug', 'tabName', 'cells'],
+  'slack.postMessage': ['channelSlug', 'threadKey', 'body'],
+  'twitter.reply': ['tweetSlug', 'body'],
+  'ticket.update': ['slug', 'status', 'comment'],
+};
+
+/**
+ * The action as the manager should read it on the approval card.
+ *
+ * The executor emits every action through one flat argument bag, so a
+ * surface call arrives with a dozen empty mock-verb fields and their
+ * defaults. Only the arguments the verb reads are shown, and among those
+ * only the ones that carry a value; the JSON strings the server parses
+ * (`toolArgsJson`, `headersJson`, `body`) are shown exactly as emitted, so
+ * nothing the server will act on is hidden or reshaped.
+ *
+ * Args:
+ *   action: The action as the skill emitted it.
+ *
+ * Returns:
+ *   The same verb with the arguments it reads, non-empty ones only.
+ */
+export function reviewPayload(action: MockAction): { tool: string; args: JsonObject } {
+  const wanted = VERB_ARGUMENTS[action.tool];
+  const bag = (action.args ?? {}) as JsonObject;
+  const args: JsonObject = {};
+  for (const key of wanted ?? Object.keys(bag)) {
+    const value = bag[key];
+    if (value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) continue;
+    args[key] = value;
+  }
+  return { tool: action.tool, args };
+}
+
 /**
  * Describe an action verbatim for the manager's approval card.
  *
