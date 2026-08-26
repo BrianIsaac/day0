@@ -146,9 +146,19 @@ describe('executor preamble by mode', (): void => {
       mockEnv: emptyMock,
       now,
     });
-    expect(prompt.toLowerCase()).not.toMatch(
-      /for your approval|queued only after manager approval|pending manager approval/,
-    );
+    // Every sentence of the ON prompt that mentions approval is either the mode
+    // instruction itself, its precedence header, or conditional on the switch. An
+    // unconditional "the manager approves" sentence is stale under ON.
+    const stale = prompt
+      .split(/(?<=[.!?])\s+|\n/)
+      .filter((sentence) => /approv/i.test(sentence))
+      .filter((sentence) => !/autonomous actions/i.test(sentence))
+      .filter((sentence) => !sentence.includes('takes precedence'))
+      // The plan's own approval happened either way (a click or the switch).
+      .filter((sentence) => !/plan has been approved/.test(sentence));
+    expect(stale).toEqual([]);
+    expect(prompt).toContain('The plan has been approved; you are authorised to act.');
+    expect(executorPreamble('real', false)).not.toMatch(/lands as emitted|applied as emitted/);
   });
 
   it('puts the live mode after a legacy skill body so it takes precedence', (): void => {
@@ -161,7 +171,13 @@ describe('executor preamble by mode', (): void => {
       mockEnv: emptyMock,
       now,
     });
-    expect(prompt.lastIndexOf(actionModeInstruction(true))).toBeGreaterThan(prompt.indexOf(legacy));
+    const header = '--- Live run context (takes precedence over approval wording in the skill body) ---';
+    expect(prompt.endsWith(`${header}\n${actionModeInstruction(true)}`)).toBe(true);
+    expect(prompt.indexOf(header)).toBeGreaterThan(prompt.indexOf(legacy));
+    // The mock prompt carries no such trailer: the mode is a real-surface concern.
+    expect(
+      executorInstructions({ mode: 'mock', autonomousActions: true, skillBody: legacy, surfaces: [], mockEnv: emptyMock, now }),
+    ).not.toContain(header);
   });
 
   it('prints the reply target line the preamble refers to', (): void => {

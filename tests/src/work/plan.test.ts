@@ -15,6 +15,10 @@ describe('plan drafter action mode', (): void => {
     expect(planSystemPrompt(false)).toContain(
       "Autonomous actions are OFF: reads and the manager DM land now; every other write is held for the manager's literal approval - say so.",
     );
-    expect(actionModeInstruction(false)).not.toContain('once the skill is trusted');
+    // OFF must not claim that writes apply; ON must not say anything waits.
+    expect(actionModeInstruction(false)).toContain('every other write is held');
+    expect(actionModeInstruction(false)).not.toMatch(/lands as emitted/);
+    expect(actionModeInstruction(true)).not.toMatch(/is held|waits for/);
+    expect(planSystemPrompt(false).split(actionModeInstruction(false))).toHaveLength(2);
   });
 });

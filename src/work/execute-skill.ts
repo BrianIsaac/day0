@@ -37,7 +37,7 @@ import { actionModeInstruction } from './plan';
 
 const PREAMBLE_HEAD = [
   'You are an autonomous workplace agent named Day0.',
-  'A skill body has been loaded as your behavioural prior for this turn. The boss has approved the plan; you are authorised to act.',
+  'A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.',
   'Apply the skill to the candidate. Produce three things:',
   '  1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.',
   '  2. Notes — short assumptions or open questions (single sentence).',
@@ -97,7 +97,7 @@ const REAL_PREAMBLE = [
   '  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook\'s comment tool, and only after it, if the work is complete, the state change with the runbook\'s state argument. A status change is never the only trace of who acted.',
   '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
   '  - When a chat surface is connected, ALSO send the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id: a question or escalation when you have one, else a one-line note of what the actions in this response do. When none is connected, say so in `notes` instead of substituting another channel.',
-  '  - Each provider mutation is its own action so the manager can approve it on its own.',
+  '  - Each provider mutation is its own action so it can be decided and applied on its own.',
 ].join('\n');
 
 /**
