@@ -10,6 +10,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { DEFAULT_POSTURE } from '../src/work/posture';
 
 /**
  * Agent CRUD + state transitions. Each agent is owned by one caller subject —
@@ -91,6 +92,7 @@ export const deploy = mutation({
         : undefined,
       userId: identity.subject,
       state: 'deployed',
+      posture: DEFAULT_POSTURE,
       createdAt: Date.now(),
     });
     await ctx.db.insert('events', {

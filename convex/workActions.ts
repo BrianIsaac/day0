@@ -406,7 +406,13 @@ async function holdRealActions(
     if (!pending.pending) {
       return { ok: false, reason: 'the run was moved on before its actions could be held' };
     }
-    return { ok: true, reason: 'actions pending the manager\'s approval' };
+    return {
+      ok: true,
+      reason:
+        pending.phase === 'auto'
+          ? 'automatic actions applying'
+          : "actions pending the manager's approval",
+    };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     await ctx.runMutation(internal.work.setFailed, {
@@ -418,15 +424,23 @@ async function holdRealActions(
   }
 }
 
+/** A ledger as the row carries it between the two phases. */
+type LedgerOutput = ExecutionOutput & { applied?: Array<AppliedAction | undefined> };
+
 /**
- * Apply the actions the manager approved, with the run id the skill ran under.
+ * Apply the approved actions of the current phase, with the run id the skill ran under.
  *
- * Scheduled by `work.approveActions`. The claim moves the row back to
- * `executing` exactly once, so a second approval after a restart re-applies
- * with the same idempotency keys rather than alongside a first apply that is
- * still running. Indexes the manager did not approve are recorded as held;
- * the approved ones pass the registry's rules (grant, held public post,
- * comment before status, provenance) and then their adapter.
+ * Scheduled by `work.setActionsPending` for the ladder's auto rows and by
+ * `work.approveActions` for the manager's. The claim records the apply
+ * attempt exactly once, so a second schedule after a restart re-applies with
+ * the same idempotency keys rather than alongside a first apply that is
+ * still running. In the auto phase the held rows are deferred (a placeholder
+ * in the ledger, no adapter call) and every row is re-checked to be a read,
+ * the manager DM or a working-target comment; in the approved phase the auto
+ * rows' ledger entries are carried forward and the rows the manager left out
+ * are recorded as not approved. Every applied row passes the registry's
+ * rules (grant, comment before status, attribution, provenance) and then its
+ * adapter.
  */
 export const applyApprovedActions = internalAction({
   args: { workItemId: v.id('workItems') },
@@ -443,7 +457,11 @@ export const applyApprovedActions = internalAction({
         internal.agents.grantedScopes,
         { agentId: claim.agentId },
       );
-      const output = claim.output as ExecutionOutput;
+      const output = claim.output as LedgerOutput;
+      const priorLedger =
+        claim.phase === 'approved'
+          ? (output.applied ?? []).map((entry) => (entry && !entry.awaitingApproval ? entry : undefined))
+          : undefined;
       const applied = await applySurfaceActions(
         ctx,
         SURFACE_MODE,
@@ -460,9 +478,12 @@ export const applyApprovedActions = internalAction({
           grants: new Set(grantRows.map((grant) => grant.scope)),
           approvedIndexes: new Set(claim.approvedIndexes),
           heldReasons: new Map(claim.heldReasons),
+          deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
+          priorLedger,
+          autoTargets: claim.phase === 'auto' ? claim.targets : undefined,
         },
       );
-      return await finishRun(ctx, args.workItemId, claim.runId, output, applied);
+      return await finishRun(ctx, args.workItemId, claim, output, applied);
     } catch (err) {
       const reason = (err as Error).message;
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
@@ -506,28 +527,41 @@ async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<Surf
   return rows.map((row) => toSurfaceRecord(row));
 }
 
+/** What `finishRun` needs from the apply claim. */
+interface FinishClaim {
+  runId: Id<'events'>;
+  applyAttemptId: Id<'events'>;
+  phase: 'auto' | 'approved';
+}
+
+/** Why a deferred row stays unapplied when the auto phase fails. */
+export const NOT_APPLIED_AFTER_FAILURE = 'not applied because an automatic action failed';
+
 /**
- * Record the outcome of an applied run.
+ * Record the outcome of an applied phase.
  *
  * A run completes only when every action it emitted changed the work
  * environment or was held. "At least one applied" is not enough: the skills
  * are told to DM the manager alongside the primary mutation, so a failed
  * primary action plus a delivered "I did it" DM would report the work as done
- * when only the claim about it landed.
+ * when only the claim about it landed. After the auto phase a run that still
+ * has rows awaiting the manager is parked rather than completed; a failure in
+ * the auto phase fails the run and the deferred rows never reach the manager.
  *
  * Args:
  *   ctx: Convex action context.
  *   workItemId: The work item.
+ *   claim: The run, the apply attempt and the phase.
  *   output: The skill's draft, notes and actions.
  *   applied: The ledger.
  *
  * Returns:
- *   Whether the run completed.
+ *   Whether the phase ended well.
  */
 async function finishRun(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
-  runId: Id<'events'>,
+  claim: FinishClaim,
   output: ExecutionOutput,
   applied: AppliedAction[],
 ): Promise<{ ok: boolean; reason?: string }> {
@@ -541,17 +575,34 @@ async function finishRun(
             .join('; ')}`
         : undefined;
   if (reason) {
+    const settled = applied.map((entry) =>
+      entry.awaitingApproval
+        ? { ...entry, awaitingApproval: undefined, reason: NOT_APPLIED_AFTER_FAILURE }
+        : entry,
+    );
     await ctx.runMutation(internal.work.setFailed, {
       workItemId,
       reason,
-      runId,
-      output: { ...output, applied },
+      runId: claim.runId,
+      output: { ...output, applied: settled },
     });
     return { ok: false, reason };
   }
+  if (claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
+    const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
+      workItemId,
+      runId: claim.runId,
+      applyAttemptId: claim.applyAttemptId,
+      output: { ...output, applied },
+    });
+    if (!parked.parked) {
+      return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
+    }
+    return { ok: true, reason: "automatic actions applied; the rest await the manager's approval" };
+  }
   await ctx.runMutation(internal.work.setCompleted, {
     workItemId,
-    runId,
+    runId: claim.runId,
     output: { ...output, applied },
   });
   return { ok: true };

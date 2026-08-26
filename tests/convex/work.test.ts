@@ -7,6 +7,13 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { PLAN_CANCELLED_REASON } from '../../convex/work';
+import {
+  AWAITING_APPROVAL,
+  HELD_COLD_START,
+  HELD_MUTATION,
+  HELD_PUBLIC_POST,
+  HELD_SUPERVISED,
+} from '../../src/surfaces/policy';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -43,17 +50,28 @@ const pendingOutput = {
  * Returns:
  *   The agent, work item and claim event ids.
  */
+interface SeedOptions {
+  /** The agent's posture; absent seeds a row without the field (cold start). */
+  posture?: Doc<'agents'>['posture'];
+  /** Seeds a registered skill with this counter and attaches it to the work item. */
+  supervisedRunsCompleted?: number;
+  /** A connected Slack surface beside Linear. */
+  withSlack?: boolean;
+}
+
 async function seed(
   harness: Harness,
   state: Doc<'workItems'>['state'] = 'executing',
   grants: string[] = ['boss:message', 'linear:read', 'linear:write'],
-): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
+  options: SeedOptions = {},
+): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'>; skillId?: Id<'skills'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
       name: 'Priya',
       userId: 'owner',
       state: 'active',
+      ...(options.posture ? { posture: options.posture } : {}),
       createdAt: 1,
     });
     for (const scope of grants) {
@@ -73,6 +91,37 @@ async function seed(
       whereFound: [],
       createdAt: 1,
     });
+    if (options.withSlack) {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        toolAllowlist: ['chat.postMessage'],
+        managerDmChannelId: 'D0MANAGER',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      });
+    }
+    let skillId: Id<'skills'> | undefined;
+    if (options.supervisedRunsCompleted !== undefined) {
+      skillId = await ctx.db.insert('skills', {
+        agentId,
+        name: 'update-linear-ticket',
+        description: 'Comment on and close a linear ticket.',
+        body: 'Comment, then close.',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        supervisedRunsCompleted: options.supervisedRunsCompleted,
+        createdAt: 1,
+        registeredAt: 1,
+      });
+    }
     const workItemId = await ctx.db.insert('workItems', {
       agentId,
       sourceCategory: 'ticket-queue',
@@ -83,6 +132,7 @@ async function seed(
       contentRefs: [],
       state,
       plan: { summary: 'Comment then close.', steps: ['comment', 'close'] },
+      ...(skillId ? { skillId } : {}),
       observedAt: 1,
       createdAt: 1,
     });
@@ -93,9 +143,39 @@ async function seed(
       createdAt: 1,
     });
     if (state === 'executing') await ctx.db.patch(workItemId, { executionRunId: runId });
-    return { agentId, workItemId, runId };
+    return { agentId, workItemId, runId, skillId };
   });
 }
+
+async function eventsOfType(harness: Harness, agentId: Id<'agents'>, type: string): Promise<Doc<'events'>[]> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .filter((q) => q.eq(q.field('type'), type))
+        .collect(),
+  );
+}
+
+const readIssue = { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-1"}' } };
+const workingComment = {
+  tool: 'mcp.call',
+  args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-1","body":"Audit note."}' },
+};
+const managerDm = {
+  tool: 'http.request',
+  args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', body: '{"channel":"D0MANAGER","text":"Done."}' },
+};
+const publicReply = {
+  tool: 'http.request',
+  args: {
+    surface: 'slack',
+    method: 'POST',
+    path: '/chat.postMessage',
+    body: '{"channel":"C0PUBLIC","thread_ts":"1787746453.202809","text":"Covered."}',
+  },
+};
 
 async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
   const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
@@ -157,14 +237,20 @@ describe('the exact-action gate', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, runId } = await seed(harness, 'executing');
     const result = await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output: pendingOutput });
-    expect(result).toEqual({ pending: true });
+    expect(result).toEqual({ pending: true, phase: 'manager' });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('actions-pending');
     expect(row.pendingRunId).toBe(runId);
     expect(row.approvedIndexes).toBeUndefined();
+    expect(row.applyPhase).toBeUndefined();
     expect(row.output).toEqual(pendingOutput);
-    expect(row.actionVerdicts).toEqual([{ held: false }, { held: false }]);
+    // An agent row without a posture is in cold start: every applicable row is held.
+    expect(row.actionVerdicts).toEqual([
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+    ]);
     expect(await eventTypes(harness, agentId)).toContain('work.actions-pending');
+    expect(await scheduledFunctionNames(harness)).toEqual([]);
   });
 
   it('persists a verdict per action at hold time, with the reason a held row carries', async (): Promise<void> => {
@@ -182,23 +268,23 @@ describe('the exact-action gate', (): void => {
     await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
     const row = await readItem(harness, workItemId);
     expect(row.actionVerdicts).toEqual([
-      { held: false },
-      { held: true, reason: 'no grant (linear:write)' },
-      { held: true, reason: 'no grant (linear:write)' },
-      { held: true, reason: 'unknown surface' },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'refused', reason: 'unknown surface' },
     ]);
-    const pendingEvents = await harness.run(
-      async (ctx) =>
-        await ctx.db
-          .query('events')
-          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-          .filter((q) => q.eq(q.field('type'), 'work.actions-pending'))
-          .collect(),
-    );
-    expect(pendingEvents[0].payload).toEqual({ workItemId, runId, actionCount: 4, heldIndexes: [1, 2, 3] });
+    const pendingEvents = await eventsOfType(harness, agentId, 'work.actions-pending');
+    expect(pendingEvents[0].payload).toEqual({
+      workItemId,
+      runId,
+      actionCount: 4,
+      autoIndexes: [],
+      heldIndexes: [0],
+      refusedIndexes: [1, 2, 3],
+    });
   });
 
-  it('refuses approve-all while a row is held and applies the rest by selection', async (): Promise<void> => {
+  it('refuses a refused row at approval and applies the rest by selection', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId, runId } = await seed(harness, 'executing', ['boss:message', 'linear:read']);
@@ -212,25 +298,26 @@ describe('the exact-action gate', (): void => {
     await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1] }),
-    ).rejects.toThrow('action 2 is held (no grant (linear:write)); approve the others by selection');
+    ).rejects.toThrow('action 2 is refused (no grant (linear:write)); approve the others by selection');
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] }),
-    ).rejects.toThrow('action 2 is held');
+    ).rejects.toThrow('action 2 is refused');
     expect((await readItem(harness, workItemId)).approvedIndexes).toBeUndefined();
     expect(await scheduledFunctionNames(harness)).toEqual([]);
     const result = await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
     expect(result).toEqual({ ok: true, approvedIndexes: [0] });
+    expect((await readItem(harness, workItemId)).applyPhase).toBe('approved');
     const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
-    expect(claim).toMatchObject({ claimed: true, approvedIndexes: [0], heldReasons: [[1, 'no grant (linear:write)']] });
-    const approved = await harness.run(
-      async (ctx) =>
-        await ctx.db
-          .query('events')
-          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-          .filter((q) => q.eq(q.field('type'), 'work.actions-approved'))
-          .collect(),
-    );
-    expect(approved[0].payload).toMatchObject({ approvedIndexes: [0], heldIndexes: [1] });
+    expect(claim).toMatchObject({
+      claimed: true,
+      phase: 'approved',
+      approvedIndexes: [0],
+      heldIndexes: [0],
+      heldReasons: [[1, 'no grant (linear:write)']],
+      targets: ['revops-1'],
+    });
+    const approved = await eventsOfType(harness, agentId, 'work.actions-approved');
+    expect(approved[0].payload).toMatchObject({ approvedIndexes: [0], rejectedIndexes: [], refusedIndexes: [1], autoIndexes: [] });
   });
 
   it('refuses to hold a run that is not executing, and an output without actions', async (): Promise<void> => {
@@ -268,7 +355,14 @@ describe('the exact-action gate', (): void => {
           .collect(),
     );
     expect(events).toHaveLength(1);
-    expect(events[0].payload).toEqual({ workItemId, runId, approvedIndexes: [0, 1], heldIndexes: [] });
+    expect(events[0].payload).toEqual({
+      workItemId,
+      runId,
+      approvedIndexes: [0, 1],
+      rejectedIndexes: [],
+      refusedIndexes: [],
+      autoIndexes: [],
+    });
     expect(await scheduledFunctionNames(harness)).toEqual([
       'work:recoverInterruptedApply',
       'workActions:applyApprovedActions',
@@ -540,6 +634,288 @@ describe('the exact-action gate', (): void => {
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
+  });
+
+  it('applies the auto rows straight from the hold and parks the held ones after they land', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write'], {
+      posture: 'supervised',
+      supervisedRunsCompleted: 2,
+      withSlack: true,
+    });
+    const output = { draft: 'd', notes: '', actions: [readIssue, workingComment, managerDm, publicReply, pendingOutput.actions[1]] };
+    const result = await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
+    expect(result).toEqual({ pending: true, phase: 'auto' });
+    const held = await readItem(harness, workItemId);
+    expect(held.state).toBe('executing');
+    expect(held.applyPhase).toBe('auto');
+    expect(held.approvedIndexes).toEqual([0, 1, 2]);
+    expect(held.actionVerdicts).toEqual([
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_PUBLIC_POST },
+      { disposition: 'held', reason: HELD_MUTATION },
+    ]);
+    expect(await eventTypes(harness, agentId)).toEqual(['work.execution-claimed', 'work.actions-auto-applying']);
+    expect((await eventsOfType(harness, agentId, 'work.actions-auto-applying'))[0].payload).toEqual({
+      workItemId,
+      runId,
+      actionCount: 5,
+      autoIndexes: [0, 1, 2],
+      heldIndexes: [3, 4],
+      refusedIndexes: [],
+    });
+    expect(await scheduledFunctionNames(harness)).toEqual(['work:recoverInterruptedApply', 'workActions:applyApprovedActions']);
+    // The manager cannot decide while the auto phase is in flight.
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [3] }),
+    ).rejects.toThrow('expected actions-pending');
+
+    const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    expect(claim).toMatchObject({ claimed: true, phase: 'auto', approvedIndexes: [0, 1, 2], heldIndexes: [3, 4], heldReasons: [], targets: ['revops-1'] });
+    if (!claim.claimed) throw new Error('unreachable');
+    expect(await harness.mutation(internal.work.claimApprovedActions, { workItemId })).toEqual({
+      claimed: false,
+      reason: 'workItem state is executing; expected actions-pending',
+    });
+    const applied = [
+      { tool: 'mcp.call', ok: true, effect: 'read', idempotencyKey: 'k0' },
+      { tool: 'mcp.call', ok: true, providerId: 'c-1', idempotencyKey: 'k1' },
+      { tool: 'http.request', ok: true, providerId: '1.1', idempotencyKey: 'k2' },
+      { tool: 'http.request', ok: true, held: true, awaitingApproval: true, reason: AWAITING_APPROVAL, idempotencyKey: 'k3' },
+      { tool: 'mcp.call', ok: true, held: true, awaitingApproval: true, reason: AWAITING_APPROVAL, idempotencyKey: 'k4' },
+    ];
+    await expect(
+      harness.mutation(internal.work.setAwaitingApproval, { workItemId, runId, applyAttemptId: runId, output: { ...output, applied } }),
+    ).resolves.toEqual({ parked: false });
+    await expect(
+      harness.mutation(internal.work.setAwaitingApproval, { workItemId, runId, applyAttemptId: claim.applyAttemptId, output: { ...output, applied } }),
+    ).resolves.toEqual({ parked: true });
+    const parked = await readItem(harness, workItemId);
+    expect(parked).toMatchObject({ state: 'actions-pending', pendingRunId: runId, executionRunId: runId });
+    expect(parked.approvedIndexes).toBeUndefined();
+    expect(parked.applyPhase).toBeUndefined();
+    expect(parked.applyAttemptId).toBeUndefined();
+    expect((await eventsOfType(harness, agentId, 'work.actions-pending'))[0].payload).toEqual({
+      workItemId,
+      runId,
+      actionCount: 5,
+      autoIndexes: [0, 1, 2],
+      heldIndexes: [3, 4],
+      refusedIndexes: [],
+      autoApplied: true,
+    });
+    // An auto row cannot be approved again; the held ones can, and the claim carries the auto ledger.
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1, 3] }),
+    ).rejects.toThrow('action 2 was applied automatically and cannot be approved again');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [3] });
+    const second = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    expect(second).toMatchObject({ claimed: true, phase: 'approved', approvedIndexes: [3], heldIndexes: [3, 4] });
+    expect((second as { output: { applied: unknown[] } }).output.applied).toEqual(applied);
+    expect((await eventsOfType(harness, agentId, 'work.actions-approved'))[0].payload).toMatchObject({
+      approvedIndexes: [3],
+      rejectedIndexes: [4],
+      autoIndexes: [0, 1, 2],
+    });
+  });
+
+  it('holds every applicable row in cold start and inside a supervised window', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const cold = await seed(harness, 'executing', undefined, { posture: 'cold-start', supervisedRunsCompleted: 5 });
+    await harness.mutation(internal.work.setActionsPending, { workItemId: cold.workItemId, runId: cold.runId, output: { draft: 'd', notes: '', actions: [readIssue, workingComment] } });
+    expect((await readItem(harness, cold.workItemId)).actionVerdicts).toEqual([
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+    ]);
+    const supervised = await seed(harness, 'executing', undefined, { posture: 'supervised', supervisedRunsCompleted: 1 });
+    await harness.mutation(internal.work.setActionsPending, { workItemId: supervised.workItemId, runId: supervised.runId, output: { draft: 'd', notes: '', actions: [readIssue, workingComment] } });
+    expect((await readItem(harness, supervised.workItemId)).actionVerdicts).toEqual([
+      { disposition: 'held', reason: HELD_SUPERVISED },
+      { disposition: 'held', reason: HELD_SUPERVISED },
+    ]);
+    const trusted = await seed(harness, 'executing', undefined, { posture: 'trusted' });
+    await harness.mutation(internal.work.setActionsPending, { workItemId: trusted.workItemId, runId: trusted.runId, output: { draft: 'd', notes: '', actions: [readIssue, workingComment] } });
+    expect((await readItem(harness, trusted.workItemId)).actionVerdicts).toEqual([{ disposition: 'auto' }, { disposition: 'auto' }]);
+  });
+
+  it('counts the manager\'s decisions towards the skill\'s supervised window and resets on a rejection', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId, skillId } = await seed(harness, 'executing', undefined, { posture: 'supervised', supervisedRunsCompleted: 0 });
+    if (!skillId) throw new Error('skill missing');
+    const counter = async (): Promise<number | undefined> =>
+      (await harness.run(async (ctx) => await ctx.db.get(skillId)))?.supervisedRunsCompleted;
+    await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output: pendingOutput });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1] });
+    expect(await counter()).toBe(1);
+    expect((await eventsOfType(harness, agentId, 'skill.supervised-run-approved'))[0].payload).toMatchObject({
+      skillId,
+      workItemId,
+      supervisedRunsCompleted: 1,
+      previous: 0,
+      window: 2,
+      trusted: false,
+    });
+    // A second run approved in full graduates the skill.
+    const second = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'Second',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'executing',
+        skillId,
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const run = await ctx.db.insert('events', { agentId, type: 'work.execution-claimed', payload: { workItemId: id }, createdAt: 2 });
+      await ctx.db.patch(id, { executionRunId: run });
+      return { workItemId: id, runId: run };
+    });
+    await harness.mutation(internal.work.setActionsPending, { workItemId: second.workItemId, runId: second.runId, output: pendingOutput });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0, 1] });
+    expect(await counter()).toBe(2);
+    expect((await eventsOfType(harness, agentId, 'skill.graduated'))[0].payload).toMatchObject({ supervisedRunsCompleted: 2, trusted: true });
+    // A partial approval, or a rejection, starts the count again.
+    const third = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-3',
+        title: 'Third',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'executing',
+        skillId,
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const run = await ctx.db.insert('events', { agentId, type: 'work.execution-claimed', payload: { workItemId: id }, createdAt: 3 });
+      await ctx.db.patch(id, { executionRunId: run });
+      return { workItemId: id, runId: run };
+    });
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { posture: 'cold-start' }));
+    await harness.mutation(internal.work.setActionsPending, { workItemId: third.workItemId, runId: third.runId, output: pendingOutput });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId: third.workItemId, pendingRunId: third.runId, approvedIndexes: [0] });
+    expect(await counter()).toBe(0);
+    expect((await eventsOfType(harness, agentId, 'skill.supervision-reset'))[0].payload).toMatchObject({ supervisedRunsCompleted: 0, previous: 2 });
+    const fourth = await seed(harness, 'executing', undefined, { posture: 'supervised', supervisedRunsCompleted: 1 });
+    await harness.mutation(internal.work.setActionsPending, { workItemId: fourth.workItemId, runId: fourth.runId, output: pendingOutput });
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId: fourth.workItemId, pendingRunId: fourth.runId, reason: 'no' });
+    expect((await harness.run(async (ctx) => await ctx.db.get(fourth.skillId!)))?.supervisedRunsCompleted).toBe(0);
+  });
+
+  it('keeps the auto rows in the ledger when the held ones are rejected, and fences retry on them', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'actions-pending', undefined, { posture: 'supervised', supervisedRunsCompleted: 2 });
+    const applied = [
+      { tool: 'mcp.call', ok: true, providerId: 'c-1', idempotencyKey: 'k0' },
+      { tool: 'mcp.call', ok: true, held: true, awaitingApproval: true, reason: AWAITING_APPROVAL, idempotencyKey: 'k1' },
+    ];
+    await harness.run(async (ctx) =>
+      await ctx.db.patch(workItemId, {
+        pendingRunId: runId,
+        executionRunId: runId,
+        actionVerdicts: [{ disposition: 'auto' }, { disposition: 'held', reason: HELD_MUTATION }],
+        output: { ...pendingOutput, applied },
+      }),
+    );
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'not now' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect((row.output as { applied: unknown[] }).applied).toEqual([
+      applied[0],
+      { tool: 'mcp.call', ok: true, held: true, reason: 'rejected by the manager: not now', idempotencyKey: 'k1' },
+    ]);
+    await expect(harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId })).rejects.toThrow('reconcile the provider first');
+  });
+
+  it('reschedules an unclaimed auto phase and records unknown outcomes for a claimed one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing', ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write'], {
+      posture: 'trusted',
+      withSlack: true,
+    });
+    await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output: { draft: 'd', notes: '', actions: [readIssue, publicReply] } });
+    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId })).resolves.toEqual({ recovered: 'rescheduled' });
+    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId })).resolves.toEqual({ recovered: 'outcome-unknown' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect((row.output as { applied: Array<Record<string, unknown>> }).applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
+      [false, false, 'outcome unknown after interrupted apply - verify provider before retry'],
+      [true, true, HELD_PUBLIC_POST],
+    ]);
+  });
+
+  it('keeps a prior phase\'s landed rows when the approved phase is interrupted', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'actions-pending', undefined, { posture: 'trusted' });
+    const landed = { tool: 'mcp.call', ok: true, providerId: 'c-1', idempotencyKey: 'k0' };
+    await harness.run(async (ctx) =>
+      await ctx.db.patch(workItemId, {
+        pendingRunId: runId,
+        executionRunId: runId,
+        actionVerdicts: [{ disposition: 'auto' }, { disposition: 'held', reason: HELD_MUTATION }],
+        output: { ...pendingOutput, applied: [landed, { tool: 'mcp.call', ok: true, held: true, awaitingApproval: true, reason: AWAITING_APPROVAL, idempotencyKey: 'k1' }] },
+      }),
+    );
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] });
+    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId })).resolves.toEqual({ recovered: 'outcome-unknown' });
+    const row = await readItem(harness, workItemId);
+    expect((row.output as { applied: unknown[] }).applied).toEqual([
+      landed,
+      expect.objectContaining({ ok: false, reason: 'outcome unknown after interrupted apply - verify provider before retry' }),
+    ]);
+  });
+
+  it('moves an agent from cold start to supervised when its first work item completes, in real mode only', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing');
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId,
+      runId,
+      output: { ...pendingOutput, applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'k0' }] },
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.posture).toBe('supervised');
+    expect((await eventsOfType(harness, agentId, 'agent.posture-changed'))[0].payload).toEqual({
+      from: 'cold-start',
+      to: 'supervised',
+      reason: 'first work item completed',
+      workItemId,
+    });
+    // A second completion changes nothing; a manager-set posture is not overridden.
+    const trusted = await seed(harness, 'executing', undefined, { posture: 'trusted' });
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId: trusted.workItemId,
+      runId: trusted.runId,
+      output: { ...pendingOutput, applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'k0' }] },
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(trusted.agentId)))?.posture).toBe('trusted');
+
+    useSurfaceMode('mock');
+    const mockHarness = convexTest(schema, allConvexModules());
+    const mock = await seed(mockHarness, 'executing');
+    await mockHarness.mutation(internal.work.setCompleted, {
+      workItemId: mock.workItemId,
+      runId: mock.runId,
+      output: { ...pendingOutput, applied: [{ tool: 'slack.postMessage', ok: true, idempotencyKey: 'k0' }] },
+    });
+    expect((await mockHarness.run(async (ctx) => await ctx.db.get(mock.agentId)))?.posture).toBeUndefined();
+    expect(await eventTypes(mockHarness, mock.agentId)).not.toContain('agent.posture-changed');
   });
 
   it('counts a pending run as open work and as an existing claim', async (): Promise<void> => {

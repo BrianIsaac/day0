@@ -1,3 +1,4 @@
+import { holdsEveryRow, type AgentPosture } from '../work/posture';
 import type { MockAction } from '../work/types';
 import { MOCK_TOOLS } from './mock';
 import type { AppliedAction, CredentialKind, SurfaceRecord } from './types';
@@ -20,7 +21,13 @@ export const UNKNOWN_SURFACE = 'unknown surface';
 export const SURFACE_NOT_CONNECTED = 'surface not connected';
 export const TOOL_NOT_ALLOWED = 'tool not in the surface allowlist';
 export const HELD_PUBLIC_POST = 'public post held for the manager';
+export const HELD_MUTATION = 'system-of-record mutation held for the manager';
+export const HELD_WRITE = 'write held for the manager';
+export const HELD_COLD_START = 'held in cold-start posture';
+export const HELD_SUPERVISED = 'held while the skill is supervised';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
+export const AWAITING_APPROVAL = "awaiting the manager's approval";
+export const NOT_AUTOMATIC = 'not an automatic action';
 export const UNKNOWN_TOOL = 'unknown tool';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
@@ -554,25 +561,169 @@ export function toolRefusal(
     : `${TOOL_NOT_ALLOWED} (${operation})`;
 }
 
-/** What the gate decided about one held action before the manager sees it. */
-export type ActionVerdict = { held: false } | { held: true; reason: string };
+/** How the gate will treat one row of a run. */
+export type ActionDisposition = 'auto' | 'held' | 'refused';
 
 /**
- * Decide at hold time whether an action can be applied at all.
+ * What the gate decided about one action when the run was held.
  *
- * This is every registry check that depends on nothing that happens during
- * apply: the verb, its shape, the surface's connection, the verb-to-path
- * match, the public-post rule and the grant. A row that fails one is held
- * with that reason from the moment the run is held, so the manager reviews
- * the run the gate will actually apply and a held row never reaches apply.
- * Rules that depend on earlier rows landing (comment before status change,
- * attribution) stay at apply time.
+ * `auto` applies without a human step, `held` waits for the manager to
+ * approve the literal payload, `refused` can never be applied and says why.
+ */
+export type ActionVerdict =
+  | { disposition: 'auto' }
+  | { disposition: 'held'; reason: string }
+  | { disposition: 'refused'; reason: string };
+
+/**
+ * Read a persisted verdict, including the shape written before dispositions.
+ *
+ * Rows held before the ladder carried `{ held: boolean }`: `held: true` meant
+ * the gate would not apply the row at all, which is `refused` now, and
+ * `held: false` meant the manager approves it, which is `held`.
+ *
+ * Args:
+ *   row: The persisted verdict.
+ *
+ * Returns:
+ *   The verdict in the current shape.
+ */
+export function normaliseActionVerdict(row: {
+  held?: boolean;
+  disposition?: string;
+  reason?: string;
+}): ActionVerdict {
+  if (row.disposition === 'auto') return { disposition: 'auto' };
+  if (row.disposition === 'held') return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
+  if (row.disposition === 'refused') return { disposition: 'refused', reason: row.reason ?? 'refused' };
+  if (row.held === true) return { disposition: 'refused', reason: row.reason ?? 'refused' };
+  return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
+}
+
+/** What kind of change an applicable action makes, which decides its disposition. */
+export type ActionClass =
+  | 'read'
+  | 'manager-dm'
+  | 'working-comment'
+  | 'public-post'
+  | 'mutation'
+  | 'write';
+
+/**
+ * The identifiers a work item is about, for the working-comment rule.
+ *
+ * Args:
+ *   item: The work item's external id and references.
+ *
+ * Returns:
+ *   The external id plus every `KEY-123`-shaped identifier in the references.
+ */
+export function workingTargets(item: {
+  externalId: string;
+  contentRefs: readonly string[];
+}): string[] {
+  const targets = new Set<string>();
+  if (item.externalId.trim()) targets.add(item.externalId.trim().toLowerCase());
+  for (const ref of item.contentRefs) {
+    for (const match of ref.matchAll(/\b([A-Z][A-Z0-9]*-\d+)\b/g)) targets.add(match[1].toLowerCase());
+  }
+  return [...targets];
+}
+
+/**
+ * Classify an applicable action by what it changes.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *   targets: Identifiers the run is working on, lower-cased.
+ *
+ * Returns:
+ *   The class.
+ */
+export function actionClass(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  targets: readonly string[],
+): ActionClass {
+  if (actionIntent(parsed) === 'read') return 'read';
+  if (isManagerDm(parsed, surface)) return 'manager-dm';
+  if (heldReason(parsed, surface)) return 'public-post';
+  if (isAuditComment(parsed)) {
+    const issue = targetIssue(parsed);
+    if (issue !== undefined && targets.includes(issue.trim().toLowerCase())) return 'working-comment';
+    return 'mutation';
+  }
+  if (parsed.kind === 'mcp.call') return 'mutation';
+  return 'write';
+}
+
+/**
+ * Why an action can never be applied, if it cannot.
+ *
+ * Every registry check that depends on nothing that happens during apply:
+ * the verb, its shape, the surface's connection, the verb-to-path match,
+ * the probed allowlist, the grant and the provenance fields.
  *
  * Args:
  *   action: The action as the skill emitted it.
  *   surfaces: The agent's surfaces.
  *   grants: The agent's live permission scopes.
  *   now: Clock for the liveness verdict.
+ *
+ * Returns:
+ *   The refusal, or the parsed action and its surface when it may be applied.
+ */
+export function refusalFor(
+  action: MockAction,
+  surfaces: readonly SurfaceRecord[],
+  grants: ReadonlySet<string>,
+  now: number,
+): { refused: true; reason: string } | { refused: false; parsed: ParsedSurfaceAction; surface: SurfaceRecord } {
+  if (!isSurfaceTool(action.tool)) {
+    const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
+    return { refused: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
+  }
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok) return { refused: true, reason: parsed.reason };
+  const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+  const refusal = surfaceRefusal(surface, now);
+  if (!surface || refusal) return { refused: true, reason: refusal ?? UNKNOWN_SURFACE };
+  const reason =
+    pathRefusal(parsed.action, surface) ??
+    toolRefusal(parsed.action, surface) ??
+    grantRefusal(parsed.action, surface, grants) ??
+    provenanceRefusal(parsed.action, surface);
+  if (reason) return { refused: true, reason };
+  return { refused: false, parsed: parsed.action, surface };
+}
+
+/** The run's place on the ladder, read inside the hold transaction. */
+export interface ReviewScope {
+  /** The agent's posture. */
+  posture: AgentPosture;
+  /** The skill that produced the run; undefined holds every row. */
+  skill: { supervisedRunsCompleted?: number | undefined } | undefined;
+  /** Identifiers the run is working on, from `workingTargets`. */
+  targets: readonly string[];
+}
+
+/**
+ * Decide at hold time what the gate will do with one action.
+ *
+ * Refusals come first and are the same whatever the posture. An applicable
+ * row is `auto` when it is a read, the manager DM or an audit comment on a
+ * target the run is working on, and `held` for every other write - a public
+ * post or thread reply, a system-of-record mutation, a create or a delete.
+ * In cold start, and in supervised posture while the skill is still inside
+ * its supervised window, every applicable row is held instead.
+ *
+ * Args:
+ *   action: The action as the skill emitted it.
+ *   surfaces: The agent's surfaces.
+ *   grants: The agent's live permission scopes.
+ *   now: Clock for the liveness verdict.
+ *   scope: Posture, skill trust and the run's targets.
  *
  * Returns:
  *   The verdict.
@@ -582,23 +733,28 @@ export function reviewAction(
   surfaces: readonly SurfaceRecord[],
   grants: ReadonlySet<string>,
   now: number,
+  scope: ReviewScope,
 ): ActionVerdict {
-  if (!isSurfaceTool(action.tool)) {
-    const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
-    return { held: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
+  const refusal = refusalFor(action, surfaces, grants, now);
+  if (refusal.refused) return { disposition: 'refused', reason: refusal.reason };
+  if (holdsEveryRow(scope.posture, scope.skill)) {
+    return {
+      disposition: 'held',
+      reason: scope.posture === 'cold-start' ? HELD_COLD_START : HELD_SUPERVISED,
+    };
   }
-  const parsed = parseSurfaceAction(action);
-  if (!parsed.ok) return { held: true, reason: parsed.reason };
-  const surface = surfaces.find((row) => row.slug === parsed.action.surface);
-  const refusal = surfaceRefusal(surface, now);
-  if (!surface || refusal) return { held: true, reason: refusal ?? UNKNOWN_SURFACE };
-  const reason =
-    pathRefusal(parsed.action, surface) ??
-    toolRefusal(parsed.action, surface) ??
-    heldReason(parsed.action, surface) ??
-    grantRefusal(parsed.action, surface, grants) ??
-    provenanceRefusal(parsed.action, surface);
-  return reason ? { held: true, reason } : { held: false };
+  switch (actionClass(refusal.parsed, refusal.surface, scope.targets)) {
+    case 'read':
+    case 'manager-dm':
+    case 'working-comment':
+      return { disposition: 'auto' };
+    case 'public-post':
+      return { disposition: 'held', reason: HELD_PUBLIC_POST };
+    case 'mutation':
+      return { disposition: 'held', reason: HELD_MUTATION };
+    default:
+      return { disposition: 'held', reason: HELD_WRITE };
+  }
 }
 
 /**
@@ -609,6 +765,7 @@ export function reviewAction(
  *   surfaces: The agent's surfaces.
  *   grants: The agent's live permission scopes.
  *   now: Clock for the liveness verdict.
+ *   scope: Posture, skill trust and the run's targets.
  *
  * Returns:
  *   One verdict per action, in order.
@@ -618,8 +775,33 @@ export function reviewActions(
   surfaces: readonly SurfaceRecord[],
   grants: ReadonlySet<string>,
   now: number,
+  scope: ReviewScope,
 ): ActionVerdict[] {
-  return actions.map((action) => reviewAction(action, surfaces, grants, now));
+  return actions.map((action) => reviewAction(action, surfaces, grants, now, scope));
+}
+
+/**
+ * Whether an action may be applied without a human step right now.
+ *
+ * The auto phase's backstop: apply re-reads the surfaces and grants and asks
+ * this of every row it is about to send, so a stale verdict cannot let a
+ * public post or a mutation through on its own.
+ *
+ * Args:
+ *   parsed: A parsed surface action that passed every refusal.
+ *   surface: Its surface.
+ *   targets: Identifiers the run is working on.
+ *
+ * Returns:
+ *   True for a read, the manager DM or a working-target comment.
+ */
+export function isAutomatic(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  targets: readonly string[],
+): boolean {
+  const kind = actionClass(parsed, surface, targets);
+  return kind === 'read' || kind === 'manager-dm' || kind === 'working-comment';
 }
 
 /**

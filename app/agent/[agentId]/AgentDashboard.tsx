@@ -10,9 +10,16 @@ import { MockEnvironment } from './MockEnvironment';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
 import {
   type ActionVerdict,
+  normaliseActionVerdict,
   reviewPayload,
   skillApprovalRefusal,
 } from '../../../src/surfaces/policy';
+import {
+  AGENT_POSTURES,
+  agentPosture,
+  skillTrust,
+  type AgentPosture,
+} from '../../../src/work/posture';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction } from '../../../src/surfaces/summary';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
@@ -181,6 +188,7 @@ export function AgentDashboard({ agentId }: Props) {
             unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
             authoringFailure={authoringFailure}
             onAuthoringAttempt={setLastAttempt}
+            showTrust={surfaceConfig?.mode === 'real'}
           />
           <EventTicker events={events ?? []} />
         </div>
@@ -194,6 +202,71 @@ export function AgentDashboard({ agentId }: Props) {
   );
 }
 
+/** How the header names each posture. */
+const POSTURE_LABELS: Record<AgentPosture, string> = {
+  'cold-start': 'cold-start posture',
+  supervised: 'supervised posture',
+  trusted: 'trusted posture',
+};
+
+/** What each posture does, for the control's title. */
+const POSTURE_TITLES: Record<AgentPosture, string> = {
+  'cold-start': 'Every action is held for your approval. Moves to supervised on its own once the first work item completes.',
+  supervised:
+    'Reads, the DM to you and audit comments on the item being worked apply on their own once a skill has two approved runs; public posts and system-of-record changes always wait for you.',
+  trusted: 'The same ladder with no per-skill window: every skill applies its reads, your DM and audit comments on its own.',
+};
+
+/**
+ * The header chip as the manager's posture control, real mode only.
+ *
+ * Args:
+ *   posture: The agent's current posture.
+ *   tone: The chip's colour classes.
+ *   onChange: Persist the manager's choice.
+ *
+ * Returns:
+ *   A labelled select styled as the chip.
+ */
+export function PostureControl({
+  posture,
+  tone,
+  onChange,
+}: {
+  posture: AgentPosture;
+  tone: string;
+  onChange: (posture: AgentPosture) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <label className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${tone}`} title={POSTURE_TITLES[posture]}>
+      <span>Active ·</span>
+      <select
+        aria-label="agent posture"
+        value={posture}
+        disabled={busy}
+        onChange={(event) => {
+          const next = event.target.value as AgentPosture;
+          setBusy(true);
+          setError(null);
+          onChange(next)
+            .catch((err: unknown) => setError((err as Error).message))
+            .finally(() => setBusy(false));
+        }}
+        className="bg-transparent text-xs font-medium cursor-pointer disabled:cursor-wait focus:outline-none"
+      >
+        {AGENT_POSTURES.map((option) => (
+          <option key={option} value={option}>
+            {POSTURE_LABELS[option]}
+          </option>
+        ))}
+      </select>
+      {error ? <span className="text-[10px] text-[var(--color-danger)]">{error}</span> : null}
+    </label>
+  );
+}
+
 function Header({
   agent,
   charter,
@@ -203,6 +276,7 @@ function Header({
   charter: Doc<'charters'> | null;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
+  const setPosture = useMutation(api.posture.setPosture);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
     'day-one-in-progress': {
@@ -238,7 +312,18 @@ function Header({
           <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">
             {surfaceConfig?.label || 'loading'}
           </span>
-          <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.tone}`}>{s.text}</span>
+          {/* In real mode the chip is the manager's posture control; the
+              hosted mock has no gate for a posture to change, so it keeps the
+              static label. */}
+          {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
+            <PostureControl
+              posture={agentPosture(agent)}
+              tone={s.tone}
+              onChange={(posture) => setPosture({ agentId: agent._id, posture })}
+            />
+          ) : (
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.tone}`}>{s.text}</span>
+          )}
         </div>
       </div>
     </header>
@@ -537,8 +622,11 @@ function RegisteredSkillsPanel({
   unregistered,
   authoringFailure,
   onAuthoringAttempt,
+  showTrust,
 }: {
   skills: Doc<'skills'>[];
+  /** Real mode only: where each skill stands in its supervised window. */
+  showTrust: boolean;
   /**
    * Authored but never registered: `authoring` (a run is holding it now, or no
    * sandbox ran), `failed` (the sandbox said no), and `verified` (registration
@@ -600,6 +688,15 @@ function RegisteredSkillsPanel({
               <div className="flex-1">
                 <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
                 <div className="text-[var(--color-muted)] text-xs">{s.description}</div>
+                {showTrust ? (
+                  <div
+                    className={`text-[10px] mt-0.5 ${
+                      skillTrust(s).trusted ? 'text-[var(--color-ok)]' : 'text-[var(--color-warn)]'
+                    }`}
+                  >
+                    {skillTrust(s).label}
+                  </div>
+                ) : null}
               </div>
             </li>
           ))}
@@ -830,6 +927,7 @@ interface LedgerRow {
   tool: string;
   ok: boolean;
   held?: boolean;
+  awaitingApproval?: boolean;
   effect?: string;
   reason?: string;
   providerId?: string;
@@ -873,10 +971,11 @@ export function retryRequiresReconciliation(
 }
 
 /**
- * The per-row verdicts for a held run, one per action.
+ * The verdict per action index, as the gate persisted it.
  *
- * A run held before verdicts were persisted has none; its rows are treated
- * as approvable and the registry still applies its own rules at apply time.
+ * A row held before verdicts existed has none; it reads as `held`, which is
+ * what the manager's approval meant then, and the server's apply-time checks
+ * still stand behind it.
  *
  * Args:
  *   verdicts: The verdicts persisted when the run was held.
@@ -889,15 +988,37 @@ export function pendingVerdicts(
   verdicts: Doc<'workItems'>['actionVerdicts'] | undefined,
   count: number,
 ): ActionVerdict[] {
-  return Array.from({ length: count }, (_, index): ActionVerdict => {
-    const verdict = verdicts?.[index];
-    return verdict?.held ? { held: true, reason: verdict.reason ?? 'held' } : { held: false };
-  });
+  return Array.from({ length: count }, (_, index): ActionVerdict =>
+    normaliseActionVerdict(verdicts?.[index] ?? {}),
+  );
 }
 
 /**
- * The exact-action gate: every action the skill emitted, verbatim, with a
- * checkbox each. Nothing reaches a surface until the manager approves it here.
+ * The one-line headline of the gate box.
+ *
+ * Args:
+ *   verdicts: The run's verdicts.
+ *
+ * Returns:
+ *   `2 applied automatically · 1 awaiting your approval`, or the no-auto form.
+ */
+export function pendingHeadline(verdicts: readonly ActionVerdict[]): string {
+  const auto = verdicts.filter((verdict) => verdict.disposition === 'auto').length;
+  const held = verdicts.filter((verdict) => verdict.disposition === 'held').length;
+  const refused = verdicts.filter((verdict) => verdict.disposition === 'refused').length;
+  const awaiting = `${held} ${held === 1 ? 'action' : 'actions'} awaiting your approval`;
+  const refusedNote = refused > 0 ? ` · ${refused} refused by the gate` : '';
+  if (auto > 0) {
+    return `${auto} applied automatically · ${awaiting}${refusedNote}`;
+  }
+  return `${awaiting}${refusedNote} · nothing has reached a surface`;
+}
+
+/**
+ * The exact-action gate: every row the ladder did not apply on its own,
+ * verbatim, with a checkbox each. Rows classified `auto` were applied before
+ * the manager saw the card and are listed with the changes that reached the
+ * work environment; nothing else reaches a surface until it is approved here.
  */
 export function PendingActions({
   actions,
@@ -912,18 +1033,25 @@ export function PendingActions({
   onApprove: (approvedIndexes: number[]) => Promise<unknown>;
   onReject: (reason: string) => Promise<unknown>;
 }) {
-  // The gate decided which rows are held when it held the run (a public
-  // post, a missing grant, an unconnected surface); those rows cannot be
-  // ticked, the server refuses them at approval, and "Approve all" is
-  // disabled while one exists so the button never promises what the gate
-  // will not deliver.
-  const heldIndexes = useMemo(
-    () => new Set(verdicts.flatMap((verdict, index) => (verdict.held ? [index] : []))),
+  // The gate decided each row when it held the run: `auto` rows are already
+  // applied and are not shown here; `refused` rows (a missing grant, an
+  // unconnected surface, a forged trailer) cannot be ticked and the server
+  // refuses them at approval; `held` rows are the manager's to approve. The
+  // "Approve all" button is disabled while a refused row exists so it never
+  // promises what the gate will not deliver.
+  const refusedIndexes = useMemo(
+    () => new Set(verdicts.flatMap((verdict, index) => (verdict.disposition === 'refused' ? [index] : []))),
     [verdicts],
   );
-  const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(actions.map((_, index) => index).filter((index) => !heldIndexes.has(index))),
+  const heldIndexes = useMemo(
+    () => verdicts.flatMap((verdict, index) => (verdict.disposition === 'held' ? [index] : [])),
+    [verdicts],
   );
+  const shown = useMemo(
+    () => actions.map((action, index) => ({ action, index })).filter(({ index }) => verdicts[index]?.disposition !== 'auto'),
+    [actions, verdicts],
+  );
+  const [selected, setSelected] = useState<Set<number>>(() => new Set(heldIndexes));
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -949,22 +1077,19 @@ export function PendingActions({
     });
   }
 
-  const anyHeld = heldIndexes.size > 0;
+  const anyRefused = refusedIndexes.size > 0;
   return (
     <div className="mt-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
-      <p className="text-[var(--color-warn)] font-medium mb-1">
-        {actions.length} {actions.length === 1 ? 'action' : 'actions'} awaiting your approval ·
-        nothing has reached a surface
-      </p>
+      <p className="text-[var(--color-warn)] font-medium mb-1">{pendingHeadline(verdicts)}</p>
       {actions.length === 0 ? (
         <p className="text-[var(--color-muted)]">
           The skill emitted no actions. Approving lands nothing; reject to send it back.
         </p>
       ) : (
         <ul className="space-y-1.5">
-          {actions.map((action, index) => {
+          {shown.map(({ action, index }) => {
             const verdict = verdicts[index];
-            const heldByGate = verdict?.held === true;
+            const refused = verdict?.disposition === 'refused';
             const on = selected.has(index);
             return (
               <li key={index} className="flex items-start gap-2">
@@ -972,15 +1097,17 @@ export function PendingActions({
                   type="checkbox"
                   className="mt-0.5"
                   checked={on}
-                  disabled={busy || heldByGate}
+                  disabled={busy || refused}
                   onChange={(event) => toggle(index, event.target.checked)}
                   aria-label={`approve action ${index + 1}`}
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-[var(--color-fg)] break-words">
                     {summariseAction(action, surfaces)}
-                    {heldByGate ? (
-                      <span className="text-[var(--color-warn)]"> · held · {verdict.reason}</span>
+                    {refused ? (
+                      <span className="text-[var(--color-warn)]"> · refused · {verdict.reason}</span>
+                    ) : verdict?.disposition === 'held' ? (
+                      <span className="text-[var(--color-muted)]"> · {verdict.reason}</span>
                     ) : null}
                   </p>
                   <details className="mt-0.5">
@@ -990,10 +1117,10 @@ export function PendingActions({
                     <ActionPayload action={action} />
                   </details>
                   <div className="flex items-center gap-2 mt-0.5">
-                    {!heldByGate && !on ? (
+                    {!refused && !on ? (
                       <span className="text-[10px] text-[var(--color-muted)]">held · will not be sent</span>
                     ) : null}
-                    {heldByGate ? null : on ? (
+                    {refused ? null : on ? (
                       <button
                         type="button"
                         disabled={busy}
@@ -1030,13 +1157,13 @@ export function PendingActions({
         </button>
         <button
           type="button"
-          disabled={busy || anyHeld || actions.length === 0}
+          disabled={busy || anyRefused || heldIndexes.length === 0}
           title={
-            anyHeld
-              ? 'A row in this run is held by the gate and cannot be approved; approve the rest by selection.'
+            anyRefused
+              ? 'A row in this run is refused by the gate and cannot be approved; approve the rest by selection.'
               : undefined
           }
-          onClick={() => submit(() => onApprove(actions.map((_, index) => index)))}
+          onClick={() => submit(() => onApprove(heldIndexes))}
           className="px-3 py-1 rounded-md border border-[var(--color-ok)]/40 text-[var(--color-ok)] text-xs disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Approve all
@@ -1103,7 +1230,8 @@ function WorkItemCard({
       }
     | undefined;
   const appliedActions = output?.applied ?? [];
-  const heldActions = appliedActions.filter((a) => a.held);
+  // A row the auto phase deferred is in the gate box above, not in the ledger's held list.
+  const heldActions = appliedActions.filter((a) => a.held && !a.awaitingApproval);
   const failedActions = appliedActions.filter((a) => !a.ok && !a.held);
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
   const retryBlocked = retryRequiresReconciliation(appliedActions, item.skipReason);
@@ -1188,7 +1316,14 @@ function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'actions-pending' && output ? (
+      {item.state === 'executing' && item.applyPhase === 'auto' ? (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">
+          applying {item.approvedIndexes?.length ?? 0}{' '}
+          {(item.approvedIndexes?.length ?? 0) === 1 ? 'action' : 'actions'} automatically…
+        </p>
+      ) : null}
+
+      {item.state === 'actions-pending' && output && item.approvedIndexes === undefined ? (
         <PendingActions
           key={`${item._id}:${item.pendingRunId ?? ''}`}
           actions={output.actions ?? []}
@@ -1197,6 +1332,8 @@ function WorkItemCard({
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />
+      ) : item.state === 'actions-pending' && item.approvedIndexes !== undefined ? (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">applying the approved actions…</p>
       ) : null}
 
       {/* The record of the run, ahead of the prose that describes it. The draft

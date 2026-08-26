@@ -30,6 +30,13 @@ export default defineSchema({
       v.literal('charter-pending'),
       v.literal('active'),
     ),
+    /** The action posture ladder. Absent reads as `cold-start`, the deploy
+     * default: every applicable row is held until the first work item
+     * completes, then `supervised` applies the ladder per skill, and
+     * `trusted` applies it with no per-skill window. See `src/work/posture.ts`. */
+    posture: v.optional(
+      v.union(v.literal('cold-start'), v.literal('supervised'), v.literal('trusted')),
+    ),
     createdAt: v.number(),
   })
     .index('by_bossEmail', ['bossEmail'])
@@ -285,14 +292,29 @@ export default defineSchema({
     /** The run whose actions are pending; preserved through approval so the
      * apply step keys its idempotency off the same claim as the skill run. */
     pendingRunId: v.optional(v.id('events')),
-    // One verdict per `output.actions` row, decided when the run was held: a
-    // held row shows its reason on the card and is refused at approval.
+    // One verdict per `output.actions` row, decided when the run was held:
+    // `auto` applies with no human step, `held` waits for the manager's
+    // approval of the literal payload, `refused` is never applied and shows
+    // its reason. `held` is the pre-ladder boolean, kept so rows written
+    // before dispositions still validate (`normaliseActionVerdict` reads it).
     actionVerdicts: v.optional(
-      v.array(v.object({ held: v.boolean(), reason: v.optional(v.string()) })),
+      v.array(
+        v.object({
+          held: v.optional(v.boolean()),
+          disposition: v.optional(
+            v.union(v.literal('auto'), v.literal('held'), v.literal('refused')),
+          ),
+          reason: v.optional(v.string()),
+        }),
+      ),
     ),
-    /** Indexes into `output.actions` the manager approved. Every other index
-     * is recorded as held when the approved ones are applied. */
+    /** Indexes into `output.actions` to apply in the current phase: the auto
+     * rows when the ladder approved them, the manager's list afterwards.
+     * Every other index is recorded as held (or as awaiting the manager). */
     approvedIndexes: v.optional(v.array(v.number())),
+    /** Which phase `approvedIndexes` belongs to. `auto` applies the ladder's
+     * rows straight from the hold; `approved` applies the manager's. */
+    applyPhase: v.optional(v.union(v.literal('auto'), v.literal('approved'))),
     /** The execution claim currently allowed to move this row. */
     executionRunId: v.optional(v.id('events')),
     /** The apply claim and its start time, used to recover an interrupted
@@ -346,6 +368,10 @@ export default defineSchema({
      * `skills.migrateSandboxIdField`. */
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
+    /** Runs the manager approved without rejecting a row, in a row. Absent is
+     * zero; reaching `SKILL_SUPERVISED_RUNS` graduates the skill out of its
+     * supervised window, and a rejection starts the count again. */
+    supervisedRunsCompleted: v.optional(v.number()),
     createdAt: v.number(),
     registeredAt: v.optional(v.number()),
   })

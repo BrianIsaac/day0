@@ -1,19 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACTION_JSON_LIMIT_BYTES,
+  actionClass,
   actionIntent,
   applyProvenance,
   containsProvenanceTrailer,
   describeAction,
   grantingScopes,
   grantRefusal,
+  HELD_COLD_START,
+  HELD_MUTATION,
   HELD_PUBLIC_POST,
+  HELD_SUPERVISED,
   heldReason,
+  isAutomatic,
   isAuditComment,
   isManagerDm,
   isStatusChange,
   MALFORMED_ACTION,
   MOCK_VERB_REFUSED,
+  normaliseActionVerdict,
   parseSurfaceAction,
   provenanceTrailer,
   requiredScope,
@@ -27,7 +33,9 @@ import {
   surfaceRefusal,
   TRAILER_REFUSED,
   USERNAME_REFUSED,
+  workingTargets,
   type ParsedSurfaceAction,
+  type ReviewScope,
 } from '../../../src/surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
@@ -302,8 +310,11 @@ describe('the manager DM grant', (): void => {
   });
 });
 
+/** The ladder with nothing held back: the table decides each row. */
+const trusted: ReviewScope = { posture: 'trusted', skill: undefined, targets: ['iss-1'] };
+
 describe('reviewing a held run', (): void => {
-  it('holds every row the gate cannot apply, with the reason the ledger would record', (): void => {
+  it('refuses every row the gate cannot apply, with the reason the ledger would record', (): void => {
     const grants = new Set(['boss:message', 'linear:read']);
     const verdicts = reviewActions(
       [
@@ -320,26 +331,28 @@ describe('reviewing a held run', (): void => {
       [linear, slack],
       grants,
       now,
+      trusted,
     );
     expect(verdicts).toEqual([
-      { held: false },
-      { held: true, reason: 'no grant (linear:write)' },
-      { held: false },
-      { held: true, reason: HELD_PUBLIC_POST },
-      { held: true, reason: 'unknown surface' },
-      { held: true, reason: 'http.request is not allowed on surface path mcp' },
-      { held: true, reason: expect.stringContaining(MALFORMED_ACTION) },
-      { held: true, reason: expect.stringContaining(MOCK_VERB_REFUSED) },
-      { held: true, reason: 'unknown tool' },
+      { disposition: 'auto' },
+      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'auto' },
+      { disposition: 'refused', reason: 'no grant (slack:write)' },
+      { disposition: 'refused', reason: 'unknown surface' },
+      { disposition: 'refused', reason: 'http.request is not allowed on surface path mcp' },
+      { disposition: 'refused', reason: expect.stringContaining(MALFORMED_ACTION) },
+      { disposition: 'refused', reason: expect.stringContaining(MOCK_VERB_REFUSED) },
+      { disposition: 'refused', reason: 'unknown tool' },
     ]);
-    expect(reviewAction(comment(), [{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], grants, now)).toEqual({
-      held: true,
-      reason: 'surface not connected (listed-dead)',
+    expect(
+      reviewAction(comment(), [{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], grants, now, trusted),
+    ).toEqual({ disposition: 'refused', reason: 'surface not connected (listed-dead)' });
+    expect(reviewAction(comment(), [linear], new Set(['linear:write']), now, trusted)).toEqual({
+      disposition: 'auto',
     });
-    expect(reviewAction(comment(), [linear], new Set(['linear:write']), now)).toEqual({ held: false });
   });
 
-  it('holds a surface operation that is absent from the probed allowlist', (): void => {
+  it('refuses a surface operation that is absent from the probed allowlist', (): void => {
     const unlisted: MockAction = {
       tool: 'mcp.call',
       args: {
@@ -348,20 +361,20 @@ describe('reviewing a held run', (): void => {
         toolArgsJson: '{"id":"iss-1"}',
       },
     };
-    expect(reviewAction(unlisted, [linear], new Set(['linear:write']), now)).toEqual({
-      held: true,
+    expect(reviewAction(unlisted, [linear], new Set(['linear:write']), now, trusted)).toEqual({
+      disposition: 'refused',
       reason: 'tool not in the surface allowlist (delete_issue)',
     });
-    expect(reviewAction(chatJoin('D0MANAGER'), [slack], new Set(['slack:write']), now)).toEqual({
-      held: true,
+    expect(reviewAction(chatJoin('D0MANAGER'), [slack], new Set(['slack:write']), now, trusted)).toEqual({
+      disposition: 'refused',
       reason: 'tool not in the surface allowlist (conversations.join)',
     });
   });
 
-  it('holds actions whose provenance fields will be refused at apply', (): void => {
+  it('refuses actions whose provenance fields will be refused at apply', (): void => {
     const forged = comment('Done.\n\n-- Someone Else (Day0) · run wi_9/run_9');
-    expect(reviewAction(forged, [linear], new Set(['linear:write']), now)).toEqual({
-      held: true,
+    expect(reviewAction(forged, [linear], new Set(['linear:write']), now, trusted)).toEqual({
+      disposition: 'refused',
       reason: TRAILER_REFUSED,
     });
     expect(
@@ -370,8 +383,164 @@ describe('reviewing a held run', (): void => {
         [slack],
         new Set(['boss:message']),
         now,
+        trusted,
       ),
-    ).toEqual({ held: true, reason: USERNAME_REFUSED });
+    ).toEqual({ disposition: 'refused', reason: USERNAME_REFUSED });
+  });
+});
+
+describe('the posture ladder', (): void => {
+  const grants = new Set(['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write']);
+  const slackReads: SurfaceRecord = {
+    ...slack,
+    toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.history', 'conversations.replies'],
+  };
+  const linearAll: SurfaceRecord = {
+    ...linear,
+    toolAllowlist: [...(linear.toolAllowlist ?? []), 'list_comments', 'create_issue', 'delete_issue'],
+  };
+  const surfaces = [linearAll, slackReads];
+  const mcp = (tool: string, toolArgs: Record<string, unknown>): MockAction => ({
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool, toolArgsJson: JSON.stringify(toolArgs) },
+  });
+  const publicReply = chatPost('C0PUBLIC', { thread_ts: '1787746453.202809' });
+  const rpcGet: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'GET',
+      path: '/chat.postMessage?channel=C0PUBLIC&text=smuggled',
+      headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+    },
+  };
+  const historyGet: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'GET',
+      path: '/conversations.history?channel=C0PUBLIC',
+      headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+    },
+  };
+  const demo: MockAction[] = [
+    mcp('get_issue', { id: 'REVOPS-10' }),
+    mcp('list_comments', { issueId: 'REVOPS-10' }),
+    historyGet,
+    chatPost('D0MANAGER'),
+    comment('Audit note.', 'REVOPS-10'),
+    comment('Audit note.', 'REVOPS-11'),
+    publicReply,
+    mcp('save_issue', { id: 'REVOPS-10', state: 'Done' }),
+    mcp('save_issue', { title: 'New issue', team: 'RevOps' }),
+    mcp('create_issue', { title: 'New issue' }),
+    mcp('delete_issue', { id: 'REVOPS-10' }),
+    rpcGet,
+  ];
+  const scope = (posture: ReviewScope['posture'], completed?: number): ReviewScope => ({
+    posture,
+    skill: completed === undefined ? undefined : { supervisedRunsCompleted: completed },
+    targets: workingTargets({
+      externalId: 'REVOPS-10',
+      contentRefs: ['https://linear.app/day00/issue/REVOPS-10/record-the-sign-off'],
+    }),
+  });
+
+  it('classifies the demo shapes: reads, the DM and a working-target comment apply on their own', (): void => {
+    expect(reviewActions(demo, surfaces, grants, now, scope('trusted'))).toEqual([
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_PUBLIC_POST },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_PUBLIC_POST },
+    ]);
+    // H2 kept: an RPC mutation over GET is a write, so without slack:write it is refused rather than read.
+    expect(reviewAction(rpcGet, surfaces, new Set(['slack:read']), now, scope('trusted'))).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (slack:write)',
+    });
+    expect(actionClass(parsed(rpcGet), slackReads, [])).toBe('public-post');
+    expect(actionClass(parsed(historyGet), slackReads, [])).toBe('read');
+    expect(actionClass(parsed(comment('x', 'revops-10')), linearAll, ['revops-10'])).toBe('working-comment');
+    expect(actionClass(parsed(comment('x', 'REVOPS-11')), linearAll, ['revops-10'])).toBe('mutation');
+    expect(isAutomatic(parsed(publicReply), slackReads, [])).toBe(false);
+    expect(isAutomatic(parsed(chatPost('D0MANAGER')), slackReads, [])).toBe(true);
+  });
+
+  it('holds every applicable row in cold start and inside a supervised skill window, refusals unchanged', (): void => {
+    const rows = [demo[0], demo[3], demo[4], demo[6], comment('x', 'REVOPS-10')];
+    const coldStart = reviewActions(rows, surfaces, new Set(['boss:message', 'linear:read']), now, scope('cold-start', 5));
+    expect(coldStart).toEqual([
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'refused', reason: 'no grant (slack:write)' },
+      { disposition: 'refused', reason: 'no grant (linear:write)' },
+    ]);
+    expect(reviewActions(rows, surfaces, grants, now, scope('supervised', 1)).map((v) => v.disposition)).toEqual([
+      'held',
+      'held',
+      'held',
+      'held',
+      'held',
+    ]);
+    expect(reviewActions(rows, surfaces, grants, now, scope('supervised', 1))[0]).toEqual({
+      disposition: 'held',
+      reason: HELD_SUPERVISED,
+    });
+    // No skill recorded on the run reads as supervised too.
+    expect(reviewAction(demo[0], surfaces, grants, now, scope('supervised'))).toEqual({
+      disposition: 'held',
+      reason: HELD_SUPERVISED,
+    });
+    expect(reviewActions(rows, surfaces, grants, now, scope('supervised', 2)).map((v) => v.disposition)).toEqual([
+      'auto',
+      'auto',
+      'auto',
+      'held',
+      'auto',
+    ]);
+    expect(reviewActions(rows, surfaces, grants, now, scope('trusted', 0)).map((v) => v.disposition)).toEqual([
+      'auto',
+      'auto',
+      'auto',
+      'held',
+      'auto',
+    ]);
+  });
+
+  it('reads verdicts persisted before dispositions existed', (): void => {
+    expect(normaliseActionVerdict({ held: true, reason: 'no grant (linear:write)' })).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (linear:write)',
+    });
+    expect(normaliseActionVerdict({ held: false })).toEqual({ disposition: 'held', reason: 'write held for the manager' });
+    expect(normaliseActionVerdict({ disposition: 'auto', held: false })).toEqual({ disposition: 'auto' });
+    expect(normaliseActionVerdict({ disposition: 'held', reason: HELD_PUBLIC_POST })).toEqual({
+      disposition: 'held',
+      reason: HELD_PUBLIC_POST,
+    });
+    expect(normaliseActionVerdict({})).toEqual({ disposition: 'held', reason: 'write held for the manager' });
+  });
+
+  it('collects the identifiers a work item is about', (): void => {
+    expect(
+      workingTargets({
+        externalId: 'REVOPS-10',
+        contentRefs: ['https://linear.app/day00/issue/REVOPS-10/record', 'see also REVOPS-3 and revops-4'],
+      }),
+    ).toEqual(['revops-10', 'revops-3']);
+    expect(workingTargets({ externalId: 'C0BSF04TZ19:1787746453.202809', contentRefs: [] })).toEqual([
+      'c0bsf04tz19:1787746453.202809',
+    ]);
+    expect(workingTargets({ externalId: '  ', contentRefs: [] })).toEqual([]);
   });
 });
 

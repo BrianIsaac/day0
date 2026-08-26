@@ -8,7 +8,14 @@ import schema from '../../convex/schema';
 import { completionFailure } from '../../convex/workActions';
 import { INTERRUPTED_APPLY_REASON } from '../../convex/work';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
-import { HELD_NOT_APPROVED, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
+import {
+  AWAITING_APPROVAL,
+  HELD_COLD_START,
+  HELD_MUTATION,
+  HELD_NOT_APPROVED,
+  HELD_PUBLIC_POST,
+  HELD_SUPERVISED,
+} from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
 import type { ExecutionOutput } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
@@ -21,6 +28,7 @@ const recorded = vi.hoisted(() => ({
   failMcpAfterRequest: false,
   skillRuns: 0,
   skillModes: [] as Array<string | undefined>,
+  skillOutput: undefined as ExecutionOutput | undefined,
 }));
 
 const skillOutput: ExecutionOutput = {
@@ -77,7 +85,7 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     runSkill: async (args: { mode?: string }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
       recorded.skillModes.push(args.mode);
-      return skillOutput;
+      return recorded.skillOutput ?? skillOutput;
     },
   };
 });
@@ -94,7 +102,7 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
     createMastraMcpClient: (options: McpClientOptions): McpClientLike => ({
       listTools: async () =>
         Object.fromEntries(
-          ['save_comment', 'save_issue'].map((tool) => [
+          ['save_comment', 'save_issue', 'get_issue', 'list_comments'].map((tool) => [
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
@@ -126,6 +134,8 @@ afterEach((): void => {
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
   recorded.skillRuns = 0;
+  recorded.skillModes.length = 0;
+  recorded.skillOutput = undefined;
   restoreSurfaceMode();
 });
 
@@ -149,10 +159,18 @@ interface Seeded {
  * Returns:
  *   The agent and the plan-approved work item.
  */
+interface SeedOptions {
+  /** The agent's posture; absent seeds a row without the field, which is cold start. */
+  posture?: 'cold-start' | 'supervised' | 'trusted';
+  /** The registered skill's supervised-run counter. */
+  supervisedRunsCompleted?: number;
+}
+
 async function seed(
   harness: Harness,
   mode: 'mock' | 'real',
   grants: string[] = ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write'],
+  options: SeedOptions = {},
 ): Promise<Seeded> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
@@ -160,6 +178,7 @@ async function seed(
       name: 'Priya',
       userId: 'owner',
       state: 'active',
+      ...(options.posture ? { posture: options.posture } : {}),
       createdAt: 1,
     });
     await ctx.db.insert('charters', {
@@ -181,6 +200,9 @@ async function seed(
       body: 'Comment, then close.',
       sourceType: 'agent-authored',
       state: 'registered',
+      ...(options.supervisedRunsCompleted !== undefined
+        ? { supervisedRunsCompleted: options.supervisedRunsCompleted }
+        : {}),
       createdAt: 1,
       registeredAt: 1,
     });
@@ -197,7 +219,7 @@ async function seed(
         verdict: 'connected',
         endpoint: 'https://mcp.linear.app/mcp',
         path: 'mcp',
-        toolAllowlist: ['save_comment', 'save_issue'],
+        toolAllowlist: ['save_comment', 'save_issue', 'get_issue', 'list_comments'],
         credentialId: 'cred-linear',
         ...live,
       } as never);
@@ -227,7 +249,7 @@ async function seed(
       agentId,
       sourceCategory: 'ticket-queue',
       sourceSystem: 'linear',
-      externalId: 'REVOPS-1',
+      externalId: 'iss-1',
       title: 'Add the close-summary audit note',
       contentSummary: 'linear ticket work',
       contentRefs: [],
@@ -300,11 +322,12 @@ describe('executing an approved plan through the gate', (): void => {
     expect(row.state).toBe('actions-pending');
     expect(row.pendingRunId).toBeDefined();
     expect((row.output as ExecutionOutput).actions).toEqual(skillOutput.actions);
+    // No posture on the row is cold start: every applicable row, the public post included, waits for the manager.
     expect(row.actionVerdicts).toEqual([
-      { held: false },
-      { held: false },
-      { held: false },
-      { held: true, reason: HELD_PUBLIC_POST },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
     ]);
     expect(recorded.mcp).toHaveLength(0);
     expect(recorded.http).toHaveLength(0);
@@ -329,9 +352,6 @@ describe('executing an approved plan through the gate', (): void => {
     // The row is what survives a backend restart: state, run id and actions are
     // persisted, and approval reads only them.
     if (!runId) throw new Error('pending run missing');
-    await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] }),
-    ).rejects.toThrow(`action 4 is held (${HELD_PUBLIC_POST})`);
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2] });
     const applied = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect(applied).toEqual({ ok: true });
@@ -348,7 +368,7 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
     expect(ledger(row)[0].providerId).toBe('save_comment-id');
     expect(ledger(row)[2].providerId).toBe('1787654400.000200');
-    expect(ledger(row)[3].reason).toBe(HELD_PUBLIC_POST);
+    expect(ledger(row)[3].reason).toBe(HELD_NOT_APPROVED);
     expect(recorded.mcp).toEqual([
       {
         server: 'linear',
@@ -395,7 +415,7 @@ describe('executing an approved plan through the gate', (): void => {
       [true, true, HELD_NOT_APPROVED],
       [false, false, 'status change without audit comment'],
       [true, false, undefined],
-      [true, true, HELD_PUBLIC_POST],
+      [true, true, HELD_NOT_APPROVED],
     ]);
     expect(recorded.mcp).toHaveLength(0);
     expect(recorded.http).toHaveLength(1);
@@ -410,11 +430,14 @@ describe('executing an approved plan through the gate', (): void => {
     const runId = pending.pendingRunId;
     if (!runId) throw new Error('pending run missing');
     expect(pending.actionVerdicts).toEqual([
-      { held: false },
-      { held: false },
-      { held: false },
-      { held: true, reason: HELD_PUBLIC_POST },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'refused', reason: 'no grant (slack:write)' },
     ]);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] }),
+    ).rejects.toThrow('action 4 is refused (no grant (slack:write))');
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2] });
     await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
@@ -423,7 +446,7 @@ describe('executing an approved plan through the gate', (): void => {
       [true, false, undefined],
       [true, false, undefined],
       [true, false, undefined],
-      [true, true, HELD_PUBLIC_POST],
+      [true, true, 'no grant (slack:write)'],
     ]);
     expect(ledger(row)[2].providerId).toBe('1787654400.000200');
     expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
@@ -438,14 +461,14 @@ describe('executing an approved plan through the gate', (): void => {
     const runId = pending.pendingRunId;
     if (!runId) throw new Error('pending run missing');
     expect(pending.actionVerdicts).toEqual([
-      { held: true, reason: 'no grant (linear:write)' },
-      { held: true, reason: 'no grant (linear:write)' },
-      { held: false },
-      { held: true, reason: HELD_PUBLIC_POST },
+      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'refused', reason: 'no grant (slack:write)' },
     ]);
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] }),
-    ).rejects.toThrow('action 1 is held (no grant (linear:write))');
+    ).rejects.toThrow('action 1 is refused (no grant (linear:write))');
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [2] });
     await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
@@ -454,7 +477,7 @@ describe('executing an approved plan through the gate', (): void => {
       [true, true, 'no grant (linear:write)'],
       [true, true, 'no grant (linear:write)'],
       [true, false, undefined],
-      [true, true, HELD_PUBLIC_POST],
+      [true, true, 'no grant (slack:write)'],
     ]);
     expect(recorded.mcp).toHaveLength(0);
     expect(recorded.http).toHaveLength(1);
@@ -541,17 +564,11 @@ describe('executing an approved plan through the gate', (): void => {
 
   it('keeps the mock path single-shot: no gate, applied in the same call', async (): Promise<void> => {
     useSurfaceMode('mock');
-    vi.doMock('../../src/work/execute-skill', async (importOriginal) => {
-      const original = await importOriginal<typeof import('../../src/work/execute-skill')>();
-      return {
-        ...original,
-        runSkill: async (): Promise<ExecutionOutput> => ({
-          draft: 'Draft.',
-          notes: '',
-          actions: [{ tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'Draft ready for review.' } }],
-        }),
-      };
-    });
+    recorded.skillOutput = {
+      draft: 'Draft.',
+      notes: '',
+      actions: [{ tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'Draft ready for review.' } }],
+    };
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'mock');
     const result = await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
@@ -563,6 +580,224 @@ describe('executing an approved plan through the gate', (): void => {
     expect(ledger(row)[0]).toMatchObject({ tool: 'slack.postMessage', ok: true });
     const messages = await harness.run(async (ctx) => await ctx.db.query('mockSlackMessages').collect());
     expect(messages.map((message) => message.body)).toEqual(['Draft ready for review.']);
+  });
+});
+
+/** The demo run: two reads, the audit comment on the item, the manager DM, and a threaded public reply. */
+const ladderOutput: ExecutionOutput = {
+  draft: 'Checked coverage.',
+  notes: '',
+  actions: [
+    { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) } },
+    { tool: 'mcp.call', args: { surface: 'linear', tool: 'list_comments', toolArgsJson: JSON.stringify({ issueId: 'iss-1' }) } },
+    skillOutput.actions[0],
+    skillOutput.actions[2],
+    {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body: JSON.stringify({ channel: 'C0PUBLIC', thread_ts: '1787746453.202809', text: 'Covered.' }),
+      },
+    },
+  ],
+};
+
+async function events(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'events'>[]> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .collect(),
+  );
+}
+
+async function addWorkItem(harness: Harness, agentId: Id<'agents'>, externalId: string): Promise<Id<'workItems'>> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId,
+        title: `Ticket ${externalId}`,
+        contentSummary: 'linear ticket work',
+        contentRefs: [],
+        state: 'plan-approved',
+        plan: { summary: 's', steps: ['a'], expectedOutputType: 'ticket-update', riskNotes: '', reversibility: 'r', estimatedMinutes: 1 },
+        observedAt: 1,
+        createdAt: 1,
+      }),
+  );
+}
+
+describe('the posture ladder through the gate', (): void => {
+  it('applies an all-auto run without a stop: reads, the working comment and the DM land and the item completes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...ladderOutput, actions: ladderOutput.actions.slice(0, 4) };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', undefined, { posture: 'supervised', supervisedRunsCompleted: 2 });
+    const result = await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    expect(result).toEqual({ ok: true, reason: 'automatic actions applying' });
+    const held = await readItem(harness, workItemId);
+    expect(held.state).toBe('executing');
+    expect(held.applyPhase).toBe('auto');
+    expect(held.approvedIndexes).toEqual([0, 1, 2, 3]);
+    expect(held.actionVerdicts).toEqual([{ disposition: 'auto' }, { disposition: 'auto' }, { disposition: 'auto' }, { disposition: 'auto' }]);
+    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(row.approvedIndexes).toBeUndefined();
+    expect(row.applyPhase).toBeUndefined();
+    expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false])).toEqual([
+      [true, false],
+      [true, false],
+      [true, false],
+      [true, false],
+    ]);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'list_comments', 'save_comment']);
+    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
+    const types = (await events(harness, agentId)).map((event) => event.type);
+    expect(types).toEqual(['work.execution-claimed', 'work.actions-auto-applying', 'work.actions-applying', 'work.completed']);
+    expect(types).not.toContain('work.actions-pending');
+    // Nothing was decided by the manager, so the skill's counter is untouched.
+    const skill = await harness.run(async (ctx) => (await ctx.db.query('skills').collect())[0]);
+    expect(skill.supervisedRunsCompleted).toBe(2);
+  });
+
+  it('applies the auto rows, parks the public reply, then sends it in its thread once approved', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = ladderOutput;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', undefined, { posture: 'supervised', supervisedRunsCompleted: 2 });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({
+      ok: true,
+      reason: "automatic actions applied; the rest await the manager's approval",
+    });
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+    expect(parked.approvedIndexes).toBeUndefined();
+    expect(parked.applyPhase).toBeUndefined();
+    expect(ledger(parked).map((entry) => [entry.ok, entry.held ?? false, entry.awaitingApproval ?? false, entry.reason])).toEqual([
+      [true, false, false, undefined],
+      [true, false, false, undefined],
+      [true, false, false, undefined],
+      [true, false, false, undefined],
+      [true, true, true, AWAITING_APPROVAL],
+    ]);
+    expect(recorded.http).toHaveLength(1);
+    const pendingEvent = (await events(harness, agentId)).find((event) => event.type === 'work.actions-pending');
+    expect(pendingEvent?.payload).toMatchObject({ autoIndexes: [0, 1, 2, 3], heldIndexes: [4], refusedIndexes: [], autoApplied: true });
+    const runId = parked.pendingRunId;
+    if (!runId) throw new Error('pending run missing');
+
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [4] });
+    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    // The auto rows' ledger entries are carried forward unchanged; the reply landed in the thread.
+    expect(ledger(row).slice(0, 4)).toEqual(ledger(parked).slice(0, 4));
+    expect(ledger(row)[4]).toMatchObject({ ok: true, providerId: '1787654400.000200', idempotencyKey: `${workItemId}:${runId}:4` });
+    expect(ledger(row)[4].held).toBeUndefined();
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'list_comments', 'save_comment']);
+    expect(recorded.http.map((call) => call.body)).toEqual([
+      expect.objectContaining({ channel: 'D0MANAGER' }),
+      expect.objectContaining({ channel: 'C0PUBLIC', thread_ts: '1787746453.202809', text: `Covered.\n\n-- Priya (Day0) · run ${workItemId}/${runId}` }),
+    ]);
+    const skill = await harness.run(async (ctx) => (await ctx.db.query('skills').collect())[0]);
+    expect(skill.supervisedRunsCompleted).toBe(3);
+  });
+
+  it('lands nothing more when the held reply is rejected, keeps the auto rows, and fences retry', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = ladderOutput;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, { posture: 'supervised', supervisedRunsCompleted: 2 });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const parked = await readItem(harness, workItemId);
+    if (!parked.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: parked.pendingRunId, reason: 'not in that thread' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toBe('rejected by the manager: not in that thread');
+    expect(ledger(row).slice(0, 4)).toEqual(ledger(parked).slice(0, 4));
+    expect(ledger(row)[4]).toMatchObject({ ok: true, held: true, reason: 'rejected by the manager: not in that thread' });
+    expect(ledger(row)[4].awaitingApproval).toBeUndefined();
+    expect(recorded.http).toHaveLength(1);
+    await expect(harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId })).rejects.toThrow('reconcile the provider first');
+    const skill = await harness.run(async (ctx) => (await ctx.db.query('skills').collect())[0]);
+    expect(skill.supervisedRunsCompleted).toBe(0);
+  });
+
+  it('holds every row in cold start, then moves the agent to supervised when the item completes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = ladderOutput;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', undefined, { posture: 'cold-start', supervisedRunsCompleted: 9 });
+    const result = await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    expect(result).toEqual({ ok: true, reason: "actions pending the manager's approval" });
+    const pending = await readItem(harness, workItemId);
+    expect(pending.state).toBe('actions-pending');
+    expect(pending.actionVerdicts?.map((verdict) => verdict.reason)).toEqual(Array(5).fill(HELD_COLD_START));
+    expect(recorded.mcp).toHaveLength(0);
+    expect(recorded.http).toHaveLength(0);
+    if (!pending.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: pending.pendingRunId, approvedIndexes: [0, 1, 2, 3, 4] });
+    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.posture).toBe('supervised');
+    expect((await events(harness, agentId)).map((event) => event.type)).toContain('agent.posture-changed');
+  });
+
+  it('graduates a supervised skill on its third run: two approved runs held, the third applies its auto rows', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = ladderOutput;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', undefined, { posture: 'supervised', supervisedRunsCompleted: 0 });
+    const skillRow = async (): Promise<Doc<'skills'>> => await harness.run(async (ctx) => (await ctx.db.query('skills').collect())[0]);
+    const runHeld = async (id: Id<'workItems'>): Promise<void> => {
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId: id });
+      const pending = await readItem(harness, id);
+      expect(pending.state).toBe('actions-pending');
+      expect(pending.actionVerdicts?.map((verdict) => verdict.reason)).toEqual(Array(5).fill(HELD_SUPERVISED));
+      if (!pending.pendingRunId) throw new Error('pending run missing');
+      await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId: id, pendingRunId: pending.pendingRunId, approvedIndexes: [0, 1, 2, 3, 4] });
+      await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId: id })).resolves.toEqual({ ok: true });
+    };
+    await runHeld(workItemId);
+    expect((await skillRow()).supervisedRunsCompleted).toBe(1);
+    const second = await addWorkItem(harness, agentId, 'iss-2');
+    await runHeld(second);
+    expect((await skillRow()).supervisedRunsCompleted).toBe(2);
+    expect((await events(harness, agentId)).map((event) => event.type)).toContain('skill.graduated');
+
+    const third = await addWorkItem(harness, agentId, 'iss-1');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId: third });
+    const row = await readItem(harness, third);
+    expect(row.state).toBe('executing');
+    expect(row.applyPhase).toBe('auto');
+    expect(row.actionVerdicts).toEqual([
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_PUBLIC_POST },
+    ]);
+  });
+
+  it('classifies a state change on the working item as held, not automatic', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0], skillOutput.actions[1]] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, { posture: 'trusted' });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.actionVerdicts).toEqual([{ disposition: 'auto' }, { disposition: 'held', reason: HELD_MUTATION }]);
   });
 });
 

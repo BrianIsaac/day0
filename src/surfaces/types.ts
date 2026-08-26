@@ -71,6 +71,8 @@ export interface ActionOutcome {
   held?: boolean;
   /** The provider received the request but no authoritative outcome came back. */
   outcomeUnknown?: boolean;
+  /** A placeholder written by the auto phase for a row the manager has not decided. */
+  awaitingApproval?: boolean;
   providerId?: string;
 }
 

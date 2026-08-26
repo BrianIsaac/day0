@@ -8,12 +8,14 @@ import { McpAdapter, type CreateMcpClient } from './mcp';
 import { MOCK_TOOLS, mockAdapter } from './mock';
 import {
   applyProvenance,
+  AWAITING_APPROVAL,
   describeAction,
   grantRefusal,
   HELD_NOT_APPROVED,
-  heldReason,
+  isAutomatic,
   isSurfaceTool,
   mockVerbRefusal,
+  NOT_AUTOMATIC,
   parseSurfaceAction,
   pathRefusal,
   serialiseSurfaceAction,
@@ -51,10 +53,27 @@ export interface ApplyOptions {
   deps?: RealAdapterDeps;
   /** Live permission scopes; a surface action without its scope is refused. */
   grants?: ReadonlySet<string>;
-  /** Indexes the manager approved; every other index is recorded as held. */
+  /** Indexes to apply in this phase; every other index is recorded as held. */
   approvedIndexes?: ReadonlySet<number>;
   /** Reasons rows were held when the run was held; an unapproved index carries its own over `HELD_NOT_APPROVED`. */
   heldReasons?: ReadonlyMap<number, string>;
+  /**
+   * Rows the manager has not decided yet. Each gets a placeholder ledger row
+   * (`AWAITING_APPROVAL`) and no adapter call; the approved phase replaces it.
+   */
+  deferredIndexes?: ReadonlySet<number>;
+  /**
+   * Ledger rows an earlier phase already decided, by index. They are carried
+   * verbatim and their actions re-parsed, so the rules that read earlier rows
+   * (comment before status, shared-write attribution) see what landed.
+   */
+  priorLedger?: ReadonlyArray<AppliedAction | undefined>;
+  /**
+   * Identifiers the run is working on. When set, this is the auto phase: a
+   * row that is not a read, the manager DM or a comment on one of these is
+   * refused even if it was listed, so a stale verdict cannot send it.
+   */
+  autoTargets?: readonly string[];
   /** Clock for the connection verdict. */
   now?: number;
 }
@@ -149,11 +168,12 @@ function refused(tool: string, reason: string, idempotencyKey: string): AppliedA
  * Apply skill actions through the adapter registry in their original order.
  *
  * Every surface action passes the same rules before its adapter runs:
- * arguments parse under the size cap, the surface is known and connected, a
- * public post is held rather than sent, the agent holds the scope the action
- * needs, a status change follows a landed audit comment, and provenance is
- * added by the server. Actions the manager did not approve are recorded as
- * held so the ledger accounts for every index the skill emitted.
+ * arguments parse under the size cap, the surface is known and connected,
+ * the agent holds the scope the action needs, in the auto phase the row is
+ * one the ladder applies on its own, a status change follows a landed audit
+ * comment, and provenance is added by the server. Actions not approved for
+ * this phase are recorded as held (or as awaiting the manager) so the ledger
+ * accounts for every index the skill emitted.
  *
  * Args:
  *   ctx: Convex action context.
@@ -190,12 +210,21 @@ export async function applySurfaceActions(
       runId: run.runId,
       actionIndex: index,
     });
+    const prior = options.priorLedger?.[index];
+    if (prior) {
+      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+      if (parsed?.ok) parsedByIndex[index] = parsed.action;
+      applied.push(prior);
+      continue;
+    }
     if (options.approvedIndexes && !options.approvedIndexes.has(index)) {
+      const deferred = options.deferredIndexes?.has(index) === true;
       applied.push({
         tool: action.tool,
         ok: true,
         held: true,
-        reason: options.heldReasons?.get(index) ?? HELD_NOT_APPROVED,
+        reason: deferred ? AWAITING_APPROVAL : options.heldReasons?.get(index) ?? HELD_NOT_APPROVED,
+        ...(deferred ? { awaitingApproval: true } : {}),
         effect: describeAction(action),
         idempotencyKey,
       });
@@ -236,21 +265,13 @@ export async function applySurfaceActions(
       applied.push(refused(action.tool, unlisted, idempotencyKey));
       continue;
     }
-    const held = heldReason(parsed.action, surface);
-    if (held) {
-      applied.push({
-        tool: action.tool,
-        ok: true,
-        held: true,
-        reason: held,
-        effect: describeAction(action),
-        idempotencyKey,
-      });
-      continue;
-    }
     const ungranted = grantRefusal(parsed.action, surface, options.grants ?? new Set());
     if (ungranted) {
       applied.push(refused(action.tool, ungranted, idempotencyKey));
+      continue;
+    }
+    if (options.autoTargets && !isAutomatic(parsed.action, surface, options.autoTargets)) {
+      applied.push(refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
       continue;
     }
     if (statusChangeWithoutComment(parsed.action, index, parsedByIndex, applied)) {

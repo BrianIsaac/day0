@@ -5,9 +5,11 @@ import { HttpAdapter } from '../../../src/surfaces/http';
 import { McpAdapter, type McpClientLike, type McpClientOptions } from '../../../src/surfaces/mcp';
 import { MOCK_TOOLS, mockAdapter } from '../../../src/surfaces/mock';
 import {
+  AWAITING_APPROVAL,
   HELD_NOT_APPROVED,
   HELD_PUBLIC_POST,
   MOCK_VERB_REFUSED,
+  NOT_AUTOMATIC,
   STATUS_WITHOUT_COMMENT,
   TRAILER_REFUSED,
 } from '../../../src/surfaces/policy';
@@ -192,16 +194,105 @@ describe('applying surface actions', (): void => {
     ]);
   });
 
-  it('holds a public post without executing it and completes the rest', async (): Promise<void> => {
+  it('holds a public post the manager did not approve and sends the one they did, in its thread', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
-    const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [comment, publicPost, dm], {
+    const threadedReply: MockAction = {
+      ...dm,
+      args: {
+        ...dm.args,
+        body: JSON.stringify({ channel: 'C0PUBLIC', thread_ts: '1787746453.202809', text: 'Checked: covered.' }),
+      },
+    };
+    const unapproved = await applySurfaceActions(ctx, 'real', [linear, slack], run, [comment, threadedReply, dm], {
       deps: deps(recorded),
       grants,
+      approvedIndexes: new Set([0, 2]),
+      heldReasons: new Map(),
       now,
     });
-    expect(applied[1]).toMatchObject({ tool: 'http.request', ok: true, held: true, reason: HELD_PUBLIC_POST });
-    expect(applied[1].effect).toContain('C0PUBLIC');
+    expect(unapproved[1]).toMatchObject({ tool: 'http.request', ok: true, held: true, reason: HELD_NOT_APPROVED });
+    expect(unapproved[1].effect).toContain('C0PUBLIC');
     expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
+
+    const approved = await applySurfaceActions(ctx, 'real', [linear, slack], run, [comment, threadedReply, dm], {
+      deps: deps(recorded),
+      grants,
+      approvedIndexes: new Set([0, 1, 2]),
+      now,
+    });
+    expect(approved[1]).toMatchObject({ ok: true, providerId: '1.1' });
+    expect(approved[1].held).toBeUndefined();
+    expect(recorded.http[1]).toEqual({
+      url: 'https://slack.com/api/chat.postMessage',
+      body: {
+        channel: 'C0PUBLIC',
+        thread_ts: '1787746453.202809',
+        text: 'Checked: covered.\n\n-- Priya (Day0) · run wi_1/run_1',
+        username: 'Priya (Day0)',
+        icon_emoji: ':briefcase:',
+      },
+    });
+  });
+
+  it('in the auto phase applies only reads, the DM and working-target comments, and defers the rest', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const read: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'list_issues', toolArgsJson: JSON.stringify({ project: 'Q3 close' }) },
+    };
+    // A stale verdict lists the public post and the status change as approved; the backstop refuses them.
+    const applied = await applySurfaceActions(ctx, 'real', [linear, slack], run, [read, comment, dm, publicPost, status], {
+      deps: deps(recorded),
+      grants,
+      approvedIndexes: new Set([0, 1, 2, 3]),
+      deferredIndexes: new Set([4]),
+      autoTargets: ['iss-1'],
+      now,
+    });
+    expect(applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
+      [true, false, undefined],
+      [true, false, undefined],
+      [true, false, undefined],
+      [false, false, NOT_AUTOMATIC],
+      [true, true, AWAITING_APPROVAL],
+    ]);
+    expect(applied[4]).toMatchObject({ awaitingApproval: true, idempotencyKey: 'wi_1:run_1:4' });
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['list_issues', 'save_comment']);
+    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
+
+    // A comment on an issue the run is not working on is not automatic either.
+    const other = await applySurfaceActions(ctx, 'real', [linear], run, [comment], {
+      deps: deps(recorded),
+      grants,
+      approvedIndexes: new Set([0]),
+      autoTargets: ['iss-2'],
+      now,
+    });
+    expect(other[0]).toMatchObject({ ok: false, reason: NOT_AUTOMATIC });
+  });
+
+  it('carries a prior phase\'s ledger forward so a status change sees the comment that landed', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const first = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
+      deps: deps(recorded),
+      grants,
+      approvedIndexes: new Set([0]),
+      deferredIndexes: new Set([1]),
+      autoTargets: ['iss-1'],
+      now,
+    });
+    expect(first[0]).toMatchObject({ ok: true, providerId: 'prov-1' });
+    expect(first[1]).toMatchObject({ held: true, awaitingApproval: true });
+    const second = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
+      deps: deps(recorded),
+      grants,
+      approvedIndexes: new Set([1]),
+      priorLedger: [first[0], undefined],
+      now,
+    });
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toMatchObject({ ok: true, idempotencyKey: 'wi_1:run_1:1' });
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
   });
 
   it('records unapproved indexes as held and applies the approved ones', async (): Promise<void> => {
@@ -404,7 +495,7 @@ describe('applying surface actions', (): void => {
     });
     expect(applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
       [true, false, undefined],
-      [true, true, HELD_PUBLIC_POST],
+      [false, false, 'no grant (slack:write)'],
       [false, false, 'no grant (slack:write)'],
     ]);
     expect(applied[0].providerId).toBe('1.1');
@@ -463,10 +554,19 @@ describe('applying surface actions', (): void => {
       now,
     });
     expect(applied[0]).toMatchObject({
-      ok: true,
-      held: true,
-      reason: HELD_PUBLIC_POST,
+      ok: false,
+      reason: 'no grant (slack:write)',
     });
+    expect(recorded.http).toHaveLength(0);
+    // With the write grant it is still not automatic: the auto phase refuses it.
+    const auto = await applySurfaceActions(ctx, 'real', [slack], run, [smuggled], {
+      deps: deps(recorded),
+      grants: new Set(['slack:read', 'slack:write']),
+      approvedIndexes: new Set([0]),
+      autoTargets: [],
+      now,
+    });
+    expect(auto[0]).toMatchObject({ ok: false, reason: NOT_AUTOMATIC });
     expect(recorded.http).toHaveLength(0);
   });
 

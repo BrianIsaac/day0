@@ -147,6 +147,8 @@ describe('agent surface grants', (): void => {
           .sort(),
     );
     expect(realScopes).toEqual(['boss:message', 'docs:read']);
+    const realRow = await realHarness.run(async (ctx) => await ctx.db.get(realAgent));
+    expect(realRow?.posture).toBe('cold-start');
   });
 
   it('grants an active scope idempotently and replaces a revoked grant', async (): Promise<void> => {
