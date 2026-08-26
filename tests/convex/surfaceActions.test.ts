@@ -529,7 +529,13 @@ describe('credential landing from the card', (): void => {
         class: method === 'oauth' ? 'chat' : 'kanban',
         verdict: 'proposed',
         whereFound: [],
-        request: { credential: { found: 'none', method } },
+        request: {
+          credential: {
+            found: 'none',
+            label: method === 'oauth' ? 'Slack bot token' : 'Linear API key',
+            method,
+          },
+        },
         credentialLocation:
           method === 'oauth' ? 'OAuth install flow documented in the policy' : 'ask the admin',
         credentialLanded: false,
@@ -548,7 +554,7 @@ describe('credential landing from the card', (): void => {
     await expect(
       owner.action(liveApi.surfaceActions.landCredential, {
         surfaceId,
-        label: 'Slack shared bot token',
+        label: 'xoxb-shared-token-value',
         plaintext: 'xoxb-shared-token-value',
       }),
     ).resolves.toEqual({ landed: true, probeScheduled: false });
@@ -560,7 +566,7 @@ describe('credential landing from the card', (): void => {
     expect(stored.credentials).toHaveLength(1);
     expect(stored.credentials[0]).toMatchObject({
       kind: 'value',
-      label: 'Slack shared bot token',
+      label: 'Slack bot token',
       source: 'entered',
       userId: 'owner',
     });
@@ -586,7 +592,11 @@ describe('credential landing from the card', (): void => {
     });
     const credentials = await harness.run(async (ctx) => await ctx.db.query('credentials').collect());
     expect(credentials).toHaveLength(1);
-    expect(credentials[0]).toMatchObject({ kind: 'location', label: 'Linear credential', source: 'entered' });
+    expect(credentials[0]).toMatchObject({
+      kind: 'location',
+      label: 'Linear API key',
+      source: 'entered',
+    });
     await expect(
       harness
         .withIdentity({ subject: 'stranger' })

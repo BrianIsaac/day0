@@ -565,10 +565,17 @@ export const landCredential = action({
     const method = (context.surface.request as { credential?: { method?: unknown } } | undefined)
       ?.credential?.method;
     const kind = method === 'oauth' ? 'value' : 'location';
+    const documentedLabel = (
+      context.surface.request as { credential?: { label?: unknown } } | undefined
+    )?.credential?.label;
+    const label =
+      typeof documentedLabel === 'string' && documentedLabel.trim()
+        ? documentedLabel.trim().slice(0, 160)
+        : `${context.surface.displayName} credential`;
     const credentialId: CredentialId = await ctx.runAction(credentialInternal.credentials.store, {
       userId: context.agent.userId,
       kind,
-      label: args.label.trim() || `${context.surface.displayName} credential`,
+      label,
       plaintext,
       source: 'entered',
     });
