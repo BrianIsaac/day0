@@ -17,6 +17,8 @@ import {
   parseSurfaceAction,
   requiredScope,
   serialiseSurfaceAction,
+  SHARED_WRITE_WITHOUT_ATTRIBUTION,
+  sharedWriteWithoutAttribution,
   STATUS_WITHOUT_COMMENT,
   statusChangeWithoutComment,
   surfaceRefusal,
@@ -255,6 +257,20 @@ export async function applySurfaceActions(
       applied.push(refused(action.tool, STATUS_WITHOUT_COMMENT, idempotencyKey));
       continue;
     }
+    const credentialKind = surface.credentialKind ?? 'value';
+    if (
+      sharedWriteWithoutAttribution(
+        parsed.action,
+        surface,
+        credentialKind,
+        index,
+        parsedByIndex,
+        applied,
+      )
+    ) {
+      applied.push(refused(action.tool, SHARED_WRITE_WITHOUT_ATTRIBUTION, idempotencyKey));
+      continue;
+    }
     const provenance = applyProvenance(
       parsed.action,
       surface,
@@ -263,7 +279,7 @@ export async function applySurfaceActions(
         workItemId: run.workItemId,
         runId: run.runId,
       },
-      surface.credentialKind ?? 'value',
+      credentialKind,
     );
     if (!provenance.ok) {
       applied.push(refused(action.tool, provenance.reason, idempotencyKey));

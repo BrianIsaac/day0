@@ -240,6 +240,88 @@ describe('applying surface actions', (): void => {
     expect(alone[0]).toMatchObject({ ok: false, reason: STATUS_WITHOUT_COMMENT });
   });
 
+  it('refuses an otherwise allowlisted shared-token write that has no attributable content', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const titleEdit: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'iss-1', title: 'Changed without an audit note' }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [linear], run, [titleEdit], {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+
+    expect(applied[0]).toMatchObject({
+      ok: false,
+      reason: 'shared credential write without attributable content',
+    });
+    expect(recorded.mcp).toHaveLength(0);
+
+    const attributed = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear],
+      run,
+      [comment, titleEdit],
+      { deps: deps(recorded), grants, now },
+    );
+    expect(attributed.map((row) => row.ok)).toEqual([true, true]);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
+
+    recorded.mcp = [];
+    const dedicated = await applySurfaceActions(
+      ctx,
+      'real',
+      [{ ...linear, credentialKind: 'oauth' }],
+      run,
+      [titleEdit],
+      { deps: deps(recorded), grants, now },
+    );
+    expect(dedicated[0].ok).toBe(true);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_issue']);
+
+    const crm: SurfaceRecord = {
+      ...linear,
+      slug: 'northstar-crm',
+      displayName: 'Northstar CRM',
+      class: 'crm',
+      endpoint: 'https://crm.day0.local/api/',
+      path: 'documented-api',
+      toolAllowlist: ['records/1'],
+      credentialId: 'cred-crm',
+    };
+    const httpRecorded: Recorded = { mcp: [], http: [] };
+    const genericHttp = await applySurfaceActions(
+      ctx,
+      'real',
+      [crm],
+      run,
+      [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'northstar-crm',
+            method: 'PATCH',
+            path: '/records/1',
+            headersJson: '{}',
+            body: '{"stage":"closed"}',
+          },
+        },
+      ],
+      { deps: deps(httpRecorded), grants: new Set(['northstar-crm:write']), now },
+    );
+    expect(genericHttp[0]).toMatchObject({
+      ok: false,
+      reason: 'shared credential write without attributable content',
+    });
+    expect(httpRecorded.http).toHaveLength(0);
+  });
+
   it('refuses an action without its grant before any adapter runs', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const applied = await applySurfaceActions(ctx, 'real', [linear], run, [comment], {

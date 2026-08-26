@@ -24,6 +24,8 @@ export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
 export const USERNAME_REFUSED = 'skill-supplied username refused';
 export const MOCK_VERB_REFUSED = 'mock verb refused in real mode';
+export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
+  'shared credential write without attributable content';
 
 /** Emoji every message through a shared chat credential carries as its avatar. */
 export const SHARED_IDENTITY_ICON = ':briefcase:';
@@ -394,6 +396,16 @@ export function statusChangeWithoutComment(
   ledger: ReadonlyArray<AppliedAction | undefined>,
 ): boolean {
   if (!isStatusChange(parsed)) return false;
+  return !hasLandedAuditComment(parsed, index, earlier, ledger);
+}
+
+/** Whether an earlier action landed an attributed audit comment on the same target. */
+function hasLandedAuditComment(
+  parsed: ParsedSurfaceAction,
+  index: number,
+  earlier: ReadonlyArray<ParsedSurfaceAction | undefined>,
+  ledger: ReadonlyArray<AppliedAction | undefined>,
+): boolean {
   const issue = targetIssue(parsed);
   for (let position = 0; position < index; position += 1) {
     const candidate = earlier[position];
@@ -402,9 +414,9 @@ export function statusChangeWithoutComment(
     if (candidate.surface !== parsed.surface || !isAuditComment(candidate)) continue;
     const commentIssue = targetIssue(candidate);
     if (issue !== undefined && commentIssue !== undefined && issue !== commentIssue) continue;
-    return false;
+    return true;
   }
-  return true;
+  return false;
 }
 
 export interface ProvenanceRun {
@@ -431,6 +443,31 @@ function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean 
   if (actionIntent(parsed) !== 'write') return false;
   if (/chat\.postMessage$/.test(parsed.path)) return true;
   return surface.class === 'chat' && typeof parsed.bodyJson?.text === 'string';
+}
+
+/**
+ * Whether a shared-credential write lacks content that identifies its actor and run.
+ *
+ * Comments and chat messages receive the server-side trailer directly. An
+ * issue mutation may instead rely on a landed, trailer-bearing comment on
+ * the same issue earlier in this run (the status-change rule is the common
+ * case). Other writes through shared credentials are refused because the
+ * provider would otherwise record an action attributable only to the shared
+ * account. Dedicated OAuth apps remain attributable through their own bot.
+ */
+export function sharedWriteWithoutAttribution(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  credentialKind: CredentialKind,
+  index: number,
+  earlier: ReadonlyArray<ParsedSurfaceAction | undefined>,
+  ledger: ReadonlyArray<AppliedAction | undefined>,
+): boolean {
+  if (credentialKind === 'oauth' || actionIntent(parsed) === 'read') return false;
+  if (isAuditComment(parsed)) return false;
+  if (parsed.kind === 'http.request') return !isChatPost(parsed, surface);
+  if (targetIssue(parsed) === undefined) return true;
+  return !hasLandedAuditComment(parsed, index, earlier, ledger);
 }
 
 /**
