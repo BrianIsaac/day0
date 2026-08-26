@@ -248,6 +248,30 @@ describe('the manager DM grant', (): void => {
         }),
       },
     };
+    const alternateSmuggledChannel: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'slack',
+        tool: 'post_message',
+        toolArgsJson: JSON.stringify({
+          channel: 'D0MANAGER',
+          conversation_id: 'C0PUBLIC',
+          text: 'ambiguous destination',
+        }),
+      },
+    };
+    const alternateThread: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'slack',
+        tool: 'post_message',
+        toolArgsJson: JSON.stringify({
+          channel: 'D0MANAGER',
+          text: 'thread reply',
+          thread: '1787738163.314789',
+        }),
+      },
+    };
     expect(isManagerDm(parsed(chatPost('D0MANAGER')), slack)).toBe(true);
     expect(isManagerDm(parsed({ ...chatPost('D0MANAGER'), args: { ...chatPost('D0MANAGER').args, method: 'PUT' } }), slack)).toBe(false);
     expect(isManagerDm(parsed(chatPost('C0PUBLIC')), slack)).toBe(false);
@@ -257,6 +281,8 @@ describe('the manager DM grant', (): void => {
     expect(isManagerDm(parsed(threadedReply), slack)).toBe(false);
     expect(isManagerDm(parsed(deleteMessage), mcpChat)).toBe(false);
     expect(isManagerDm(parsed(smuggledChannel), mcpChat)).toBe(false);
+    expect(isManagerDm(parsed(alternateSmuggledChannel), mcpChat)).toBe(false);
+    expect(isManagerDm(parsed(alternateThread), mcpChat)).toBe(false);
     expect(isManagerDm(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }), slack)).toBe(false);
     expect(isManagerDm(parsed(comment()), linear)).toBe(false);
     expect(isManagerDm(parsed(comment()), { ...linear, class: 'chat', managerDmChannelId: 'iss-1' })).toBe(false);

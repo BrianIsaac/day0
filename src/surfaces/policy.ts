@@ -67,9 +67,7 @@ const HTTP_MUTATION_WORDS = new Set([
 const STATUS_TOOL = /^(?:save|update|set|change|transition|move)[_-]|status|state/i;
 const STATUS_KEYS = ['status', 'state', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'];
 const COMMENT_TOOL = /comment|message|post|reply|note/i;
-const CHANNEL_KEYS = ['channel', 'channel_id', 'channelId', 'conversation', 'conversationId'];
 const MESSAGE_KEYS = ['text', 'body', 'message', 'content'];
-const THREAD_KEYS = ['thread_ts', 'threadTs', 'thread_id', 'threadId', 'threadKey', 'parentId', 'replyTo', 'reply_to'];
 const MCP_CHAT_POST_TOOLS = new Set([
   'chat.postmessage',
   'chat_postmessage',
@@ -298,6 +296,28 @@ function firstString(record: JsonObject, keys: readonly string[]): string | unde
   return undefined;
 }
 
+function semanticKey(key: string): string {
+  return key.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function isDestinationKey(key: string): boolean {
+  const normalised = semanticKey(key);
+  return (
+    normalised.includes('channel') ||
+    normalised.includes('conversation') ||
+    /^(?:destination|destinationid|recipient|recipientid|to)$/.test(normalised)
+  );
+}
+
+function isThreadKey(key: string): boolean {
+  const normalised = semanticKey(key);
+  return (
+    normalised.includes('thread') ||
+    normalised.includes('reply') ||
+    normalised.includes('parent')
+  );
+}
+
 /**
  * The chat channel or conversation an action posts to, when it names one.
  *
@@ -309,27 +329,30 @@ function firstString(record: JsonObject, keys: readonly string[]): string | unde
  */
 export function targetChannel(parsed: ParsedSurfaceAction): string | undefined {
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
-  return record ? firstString(record, CHANNEL_KEYS) : undefined;
+  if (!record) return undefined;
+  for (const [key, value] of Object.entries(record)) {
+    if (isDestinationKey(key) && typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return undefined;
 }
 
 /** Whether every destination alias supplied by an action names one exact channel. */
 function targetsOnlyChannel(parsed: ParsedSurfaceAction, expected: string): boolean {
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   if (!record) return false;
-  const channels = CHANNEL_KEYS.flatMap((key) => {
-    const value = record[key];
-    return typeof value === 'string' && value.trim() !== '' ? [value] : [];
-  });
-  return channels.length > 0 && channels.every((channel) => channel === expected);
+  const destinations = Object.entries(record).filter(([key]) => isDestinationKey(key));
+  return (
+    destinations.length > 0 &&
+    destinations.every(([, value]) => typeof value === 'string' && value.trim() === expected)
+  );
 }
 
 /** Whether an action asks the provider to place a message inside an existing thread. */
 function hasThreadTarget(parsed: ParsedSurfaceAction): boolean {
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   if (!record) return false;
-  return THREAD_KEYS.some((key) => {
-    const value = record[key];
-    return value !== undefined && value !== null && value !== '';
+  return Object.entries(record).some(([key, value]) => {
+    return isThreadKey(key) && value !== undefined && value !== null && value !== '' && value !== false;
   });
 }
 
