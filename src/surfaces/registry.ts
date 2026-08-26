@@ -22,6 +22,7 @@ import {
   STATUS_WITHOUT_COMMENT,
   statusChangeWithoutComment,
   surfaceRefusal,
+  toolRefusal,
   UNKNOWN_SURFACE,
   UNKNOWN_TOOL,
   type ParsedSurfaceAction,
@@ -228,6 +229,11 @@ export async function applySurfaceActions(
     const pathMismatch = pathRefusal(parsed.action, surface);
     if (pathMismatch) {
       applied.push(refused(action.tool, pathMismatch, idempotencyKey));
+      continue;
+    }
+    const unlisted = toolRefusal(parsed.action, surface);
+    if (unlisted) {
+      applied.push(refused(action.tool, unlisted, idempotencyKey));
       continue;
     }
     const held = heldReason(parsed.action, surface);

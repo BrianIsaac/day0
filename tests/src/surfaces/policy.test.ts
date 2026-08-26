@@ -43,7 +43,7 @@ const linear: SurfaceRecord = {
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
   path: 'mcp',
-  toolAllowlist: ['save_comment', 'save_issue', 'list_issues'],
+  toolAllowlist: ['get_issue', 'save_comment', 'save_issue', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
 };
@@ -57,6 +57,7 @@ const slack: SurfaceRecord = {
   lastVerifiedAt: now,
   endpoint: 'https://slack.com/api/',
   path: 'documented-api',
+  toolAllowlist: ['auth.test', 'users.lookupByEmail', 'conversations.open', 'chat.postMessage'],
   credentialId: 'cred-slack',
   credentialKind: 'value',
   managerDmChannelId: 'D0MANAGER',
@@ -306,6 +307,25 @@ describe('reviewing a held run', (): void => {
       reason: 'surface not connected (listed-dead)',
     });
     expect(reviewAction(comment(), [linear], new Set(['linear:write']), now)).toEqual({ held: false });
+  });
+
+  it('holds a surface operation that is absent from the probed allowlist', (): void => {
+    const unlisted: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'delete_issue',
+        toolArgsJson: '{"id":"iss-1"}',
+      },
+    };
+    expect(reviewAction(unlisted, [linear], new Set(['linear:write']), now)).toEqual({
+      held: true,
+      reason: 'tool not in the surface allowlist (delete_issue)',
+    });
+    expect(reviewAction(chatJoin('D0MANAGER'), [slack], new Set(['slack:write']), now)).toEqual({
+      held: true,
+      reason: 'tool not in the surface allowlist (conversations.join)',
+    });
   });
 });
 

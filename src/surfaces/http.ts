@@ -6,6 +6,7 @@ import { clipEffect } from './mock';
 import {
   actionIntent,
   parseSurfaceAction,
+  resolveRequestUrl,
   surfaceRefusal,
   TOOL_NOT_ALLOWED,
   type ParsedHttpRequest,
@@ -45,43 +46,7 @@ export interface HttpAdapterDeps {
  * Raises:
  *   Error: If the endpoint is not a URL or the path escapes it.
  */
-export function resolveRequestUrl(endpoint: string, path: string): URL {
-  const base = new URL(endpoint);
-  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
-    throw new Error('surface endpoint must be an HTTP URL without userinfo');
-  }
-  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
-  const rawPath = path.trim();
-  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(rawPath)) {
-    throw new Error('path escapes the surface endpoint');
-  }
-  let decodedPath = rawPath;
-  for (let pass = 0; pass < 3; pass += 1) {
-    try {
-      const decoded = decodeURIComponent(decodedPath);
-      if (decoded === decodedPath) break;
-      decodedPath = decoded;
-    } catch {
-      throw new Error('path has invalid percent encoding');
-    }
-  }
-  if (
-    decodedPath.includes('\\') ||
-    /(?:^|\/)\.{1,2}(?:\/|$)/.test(decodedPath.split(/[?#]/, 1)[0])
-  ) {
-    throw new Error('path escapes the surface endpoint');
-  }
-  const target = new URL(rawPath.replace(/^\/+/, ''), base);
-  if (
-    target.origin !== base.origin ||
-    target.username ||
-    target.password ||
-    !target.pathname.startsWith(base.pathname)
-  ) {
-    throw new Error('path escapes the surface endpoint');
-  }
-  return target;
-}
+export { resolveRequestUrl };
 
 /**
  * Read at most the response evidence limit without treating truncation as JSON.

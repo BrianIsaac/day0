@@ -390,7 +390,11 @@ describe('applying surface actions', (): void => {
         }),
       },
     };
-    const applied = await applySurfaceActions(ctx, 'real', [slack], run, [dm, publicPost, join], {
+    const slackWithJoin = {
+      ...slack,
+      toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.join'],
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [slackWithJoin], run, [dm, publicPost, join], {
       deps: deps(recorded),
       grants: new Set(['boss:message', 'linear:read', 'linear:write']),
       now,
@@ -423,7 +427,7 @@ describe('applying surface actions', (): void => {
     const escaped = await applySurfaceActions(
       ctx,
       'real',
-      [{ ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.join'] }],
+      [slackWithJoin],
       run,
       [textSmuggledJoin, threadedReply],
       {

@@ -426,6 +426,72 @@ export function pathRefusal(parsed: ParsedSurfaceAction, surface: SurfaceRecord)
   return `${parsed.kind} is not allowed on surface path ${surface.path ?? 'unknown'}`;
 }
 
+/**
+ * Resolve a documented HTTP operation without allowing the path to leave its endpoint.
+ *
+ * This lives with the pure gate policy so hold-time review and the HTTP adapter
+ * derive the same allowlist name from the same safe URL.
+ */
+export function resolveRequestUrl(endpoint: string, path: string): URL {
+  const base = new URL(endpoint);
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
+    throw new Error('surface endpoint must be an HTTP URL without userinfo');
+  }
+  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  const rawPath = path.trim();
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(rawPath)) {
+    throw new Error('path escapes the surface endpoint');
+  }
+  let decodedPath = rawPath;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const decoded = decodeURIComponent(decodedPath);
+      if (decoded === decodedPath) break;
+      decodedPath = decoded;
+    } catch {
+      throw new Error('path has invalid percent encoding');
+    }
+  }
+  if (
+    decodedPath.includes('\\') ||
+    /(?:^|\/)\.{1,2}(?:\/|$)/.test(decodedPath.split(/[?#]/, 1)[0])
+  ) {
+    throw new Error('path escapes the surface endpoint');
+  }
+  const target = new URL(rawPath.replace(/^\/+/, ''), base);
+  if (
+    target.origin !== base.origin ||
+    target.username ||
+    target.password ||
+    !target.pathname.startsWith(base.pathname)
+  ) {
+    throw new Error('path escapes the surface endpoint');
+  }
+  return target;
+}
+
+/** Why an operation is outside the surface's probed allowlist, if it is. */
+export function toolRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+): string | undefined {
+  let operation = parsed.kind === 'mcp.call' ? parsed.tool : '';
+  if (parsed.kind === 'http.request') {
+    let target: URL;
+    try {
+      target = resolveRequestUrl(surface.endpoint ?? '', parsed.path);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    const base = new URL(surface.endpoint ?? '');
+    if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+    operation = target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
+  }
+  return surface.toolAllowlist?.includes(operation)
+    ? undefined
+    : `${TOOL_NOT_ALLOWED} (${operation})`;
+}
+
 /** What the gate decided about one held action before the manager sees it. */
 export type ActionVerdict = { held: false } | { held: true; reason: string };
 
@@ -466,6 +532,7 @@ export function reviewAction(
   if (!surface || refusal) return { held: true, reason: refusal ?? UNKNOWN_SURFACE };
   const reason =
     pathRefusal(parsed.action, surface) ??
+    toolRefusal(parsed.action, surface) ??
     heldReason(parsed.action, surface) ??
     grantRefusal(parsed.action, surface, grants);
   return reason ? { held: true, reason } : { held: false };
