@@ -13,6 +13,13 @@ import { SurfacesTab } from './mock/SurfacesTab';
 
 type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets' | 'surfaces';
 
+export type EnvironmentMode = 'mock' | 'real';
+
+const CAPTIONS: Record<EnvironmentMode, string> = {
+  mock: 'Mock surfaces - when the agent runs a skill, edits land here in real time',
+  real: 'Real surfaces - the Docs tab mirrors the linked documentation; Slack, Spreadsheet, Twitter and Tickets are mock-only and stay empty; the agent acts through the connections on the Surfaces tab',
+};
+
 const TABS: Array<{ key: TabKey; label: string; sublabel: string }> = [
   { key: 'slack', label: 'Slack', sublabel: 'channels + DMs' },
   { key: 'spreadsheet', label: 'Spreadsheet', sublabel: 'Q4 Revenue Tracker' },
@@ -35,6 +42,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   // The Surfaces tab exists only in real mode; the hosted mock keeps its
   // five synthetic surfaces and never asks for connection verdicts.
   const isReal = config?.mode === 'real';
+  const mode: EnvironmentMode = isReal ? 'real' : 'mock';
   const surfaces = useQuery(api.surfaces.listForAgent, isReal ? { agentId } : 'skip');
   const tabs = isReal ? TABS : TABS.filter((tab) => tab.key !== 'surfaces');
 
@@ -55,11 +63,9 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
         <div>
           <h2 className="text-sm font-semibold tracking-tight">
-            {config?.mode === 'real' ? 'Work environment' : 'Mock work environment'}
+            {isReal ? 'Work environment' : 'Mock work environment'}
           </h2>
-          <p className="text-[10px] text-[var(--color-muted)]">
-            Live surfaces — when the agent runs a skill, edits land here in real time
-          </p>
+          <p className="text-[10px] text-[var(--color-muted)]">{CAPTIONS[mode]}</p>
         </div>
       </div>
 
@@ -102,11 +108,11 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
       </nav>
 
       <div className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
-        {active === 'docs' ? <DocsTab agentId={agentId} /> : null}
-        {active === 'spreadsheet' ? <SpreadsheetTab agentId={agentId} /> : null}
-        {active === 'slack' ? <SlackTab agentId={agentId} /> : null}
-        {active === 'tweet' ? <TwitterTab agentId={agentId} /> : null}
-        {active === 'tickets' ? <TicketsTab agentId={agentId} /> : null}
+        {active === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
+        {active === 'spreadsheet' ? <SpreadsheetTab agentId={agentId} mode={mode} /> : null}
+        {active === 'slack' ? <SlackTab agentId={agentId} mode={mode} /> : null}
+        {active === 'tweet' ? <TwitterTab agentId={agentId} mode={mode} /> : null}
+        {active === 'tickets' ? <TicketsTab agentId={agentId} mode={mode} /> : null}
         {active === 'surfaces' && isReal ? <SurfacesTab agentId={agentId} /> : null}
       </div>
     </section>

@@ -5,7 +5,19 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 
-export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
+/** What an empty docs list means in each surface mode. */
+export const EMPTY_DOCS: Record<'mock' | 'real', string> = {
+  mock: 'no docs yet - seed first',
+  real: 'no documentation mirrored yet in real mode - link a source on /documentation and its pages appear here after the next sync',
+};
+
+export function DocsTab({
+  agentId,
+  mode = 'mock',
+}: {
+  agentId: Id<'agents'>;
+  mode?: 'mock' | 'real';
+}) {
   const docs = useQuery(api.mock.listDocs, { agentId });
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
 
@@ -31,7 +43,7 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
 
   if (!docs) return <div className="text-xs text-[var(--color-muted)]">loading docs…</div>;
   if (sortedDocs.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">no docs yet — seed first</div>;
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</div>;
 
   return (
     <div className="grid grid-cols-[12rem_1fr] gap-4 h-full">

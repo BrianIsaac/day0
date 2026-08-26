@@ -4,14 +4,19 @@ import { v } from 'convex/values';
 import { action } from './_generated/server';
 import { internal } from './_generated/api';
 import { assertOwnsAgentAction } from './ownership';
+import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 
 /**
- * Seed the demo environment for an agent. Idempotent — safe to call
- * multiple times. Installs the bundled "see-internal-docs" skill and
- * seeds the mock work environment (Slack, spreadsheet, docs, twitter,
- * tickets). Work items are NOT seeded here — they're generated from
- * the boss's approved charter in `onboarding.postCharterApproval` so
- * the queue reflects the role the boss actually described.
+ * Seed the demo environment for an agent. Idempotent - safe to call
+ * multiple times. Installs the bundled "see-internal-docs" skill and, in
+ * mock mode only, seeds the mock work environment (Slack, spreadsheet, docs,
+ * twitter, tickets). In real mode the agent's environment is the discovered
+ * surfaces and the documentation mirrored from the linked sources, so the
+ * synthetic channels, tracker, tweet, tickets and docs are never written
+ * beside the real pages. Work items are NOT seeded here - in mock mode they
+ * are generated from the boss's approved charter in
+ * `onboarding.postCharterApproval`, in real mode intake polls the connected
+ * surfaces.
  */
 
 const SEE_DOCS_SKILL_BODY = `# SKILL: see-internal-docs
@@ -45,7 +50,7 @@ export const seedDemo = action({
   handler: async (
     ctx,
     args,
-  ): Promise<{ skillsInstalled: number; mockEnvSeeded: boolean }> => {
+  ): Promise<{ skillsInstalled: number; mockEnvSeeded: boolean; mode: SurfaceMode }> => {
     await assertOwnsAgentAction(ctx, args.agentId);
     await ctx.runMutation(internal.skills.installBuiltin, {
       agentId: args.agentId,
@@ -54,8 +59,10 @@ export const seedDemo = action({
       body: SEE_DOCS_SKILL_BODY,
     });
 
+    if (SURFACE_MODE === 'real') {
+      return { skillsInstalled: 1, mockEnvSeeded: false, mode: SURFACE_MODE };
+    }
     await ctx.runMutation(internal.mockSeed.seedMockEnvironment, { agentId: args.agentId });
-
-    return { skillsInstalled: 1, mockEnvSeeded: true };
+    return { skillsInstalled: 1, mockEnvSeeded: true, mode: SURFACE_MODE };
   },
 });
