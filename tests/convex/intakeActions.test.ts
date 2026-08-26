@@ -163,7 +163,10 @@ function runtimeHarness(
       if (surface && record.polledAt !== undefined) surface.lastPolledAt = record.polledAt;
     },
     seed: async (candidate: SeededCandidate): Promise<void> => {
-      seeds.set(`${candidate.sourceSystem}:${candidate.externalId}`, candidate);
+      seeds.set(
+        `${String(candidate.agentId)}:${candidate.sourceSystem}:${candidate.externalId}`,
+        candidate,
+      );
     },
   };
   return { records, runtime, seeds };
@@ -367,7 +370,7 @@ describe('real surface intake', (): void => {
       },
     ]);
     expect(disconnect).toHaveBeenCalledOnce();
-    expect(harness.seeds.get('linear:issue-1')).toMatchObject({
+    expect(harness.seeds.get('agent-intake:linear:issue-1')).toMatchObject({
       sourceCategory: 'ticket-queue',
       sourceSystem: 'linear',
       externalId: 'issue-1',
@@ -375,7 +378,7 @@ describe('real surface intake', (): void => {
       priority: 'High',
       requesterLabel: 'Priya',
     });
-    expect(harness.seeds.get('slack:1770000000.000100')).toMatchObject({
+    expect(harness.seeds.get('agent-intake:slack:1770000000.000100')).toMatchObject({
       sourceCategory: 'event-stream',
       sourceSystem: 'slack',
       externalId: '1770000000.000100',
@@ -538,6 +541,23 @@ describe('real surface intake', (): void => {
       title: 'First observed title',
     });
   });
+
+  it('makes the intake runtime fake preserve the agent part of the deduplication tuple', async (): Promise<void> => {
+    const harness = runtimeHarness([], [], new Map());
+    const candidate: Omit<SeededCandidate, 'agentId'> = {
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: 'same-provider-id',
+      title: 'Same external issue',
+      contentSummary: 'Visible to two different agents.',
+      contentRefs: [],
+    };
+
+    await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-one') });
+    await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-two') });
+
+    expect(harness.seeds.size).toBe(2);
+  });
 });
 
 describe('intake provider contracts', (): void => {
@@ -664,7 +684,7 @@ describe('intake provider contracts', (): void => {
           ]),
       }),
     ).resolves.toMatchObject({ candidates: 1, polled: 1, skipped: 0 });
-    expect([...bounded.seeds.keys()]).toEqual(['linear:in-project']);
+    expect([...bounded.seeds.keys()]).toEqual(['agent-intake:linear:in-project']);
 
     const unbounded = harnessFor();
     await expect(
@@ -866,7 +886,7 @@ describe('intake provider contracts', (): void => {
       { project: 'Q3 close' },
       { project: 'Q3 close', updatedAt: '2026-08-26T01:59:59.999Z' },
     ]);
-    expect([...harness.seeds.keys()]).toEqual(['linear:boundary-issue']);
+    expect([...harness.seeds.keys()]).toEqual(['agent-intake:linear:boundary-issue']);
   });
 
   it('maps the shapes Linear\'s live MCP server returns, not only GraphQL-style objects', (): void => {
