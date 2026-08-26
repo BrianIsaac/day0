@@ -17,6 +17,20 @@ export type WorkSourceCategory =
 
 export type WorkDecision = 'claim' | 'queue' | 'skip' | 'defer' | 'needs-skill';
 
+/**
+ * Where a reply to a chat-sourced work item belongs: the channel the ask was
+ * posted in and, for a threaded reply, the message to reply under. A skill
+ * addresses the public reply from this rather than from the ask's URL.
+ */
+export interface ReplyTarget {
+  /** The provider channel id (`C0…`). */
+  channel: string;
+  /** The channel's display name without the `#`, when known. */
+  channelName?: string;
+  /** The `thread_ts` a threaded reply carries; absent for a top-level post. */
+  threadTs?: string;
+}
+
 export interface WorkCandidate {
   sourceCategory: WorkSourceCategory;
   sourceSystem: string;
@@ -27,6 +41,7 @@ export interface WorkCandidate {
   observedAt: Date;
   priority?: string;
   requesterLabel?: string;
+  replyTarget?: ReplyTarget;
 }
 
 export type WorkVerdict =

@@ -18,7 +18,7 @@ import {
 } from '../../app/agent/[agentId]/AgentDashboard';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
 import type { SurfaceRecord } from '../../src/surfaces/types';
-import type { MockAction } from '../../src/work/types';
+import type { MockAction, ReplyTarget } from '../../src/work/types';
 
 const connectedSlack: SurfaceRecord = {
   slug: 'slack',
@@ -48,12 +48,14 @@ const dm: MockAction = {
 function render(
   actions: MockAction[],
   verdicts: ActionVerdict[] = actions.map((): ActionVerdict => ({ disposition: 'held', reason: HELD_MUTATION })),
+  replyTarget?: ReplyTarget,
 ): string {
   return renderToStaticMarkup(
     createElement(PendingActions, {
       actions,
       verdicts,
       surfaces: [connectedSlack],
+      replyTarget,
       onApprove: vi.fn(async (): Promise<void> => {}),
       onReject: vi.fn(async (): Promise<void> => {}),
     }),
@@ -111,11 +113,11 @@ describe('dashboard exact-action gate', (): void => {
       { disposition: 'auto' },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ];
-    const html = render([read, dm, reply], verdicts);
+    const html = render([read, dm, reply], verdicts, { channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1787746453.202809' });
     expect(html).toContain('2 applied automatically · 1 action awaiting your approval');
     expect(html).not.toContain('Read issue REVOPS-10');
     expect(html).not.toContain('Send Brian a Slack DM');
-    expect(html).toContain('Post to Slack channel C0BSF04TZ19 (in thread): &quot;Covered.&quot;');
+    expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
     expect(html).toMatch(/<input type="checkbox"[^>]*aria-label="approve action 3" checked=""/);
     expect(html).not.toMatch(/aria-label="approve action 1"/);
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);

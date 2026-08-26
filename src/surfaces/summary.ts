@@ -1,4 +1,4 @@
-import type { MockAction } from '../work/types';
+import type { MockAction, ReplyTarget } from '../work/types';
 import {
   isManagerDm,
   parseSurfaceAction,
@@ -16,6 +16,14 @@ import type { SurfaceRecord } from './types';
  * so the card can never say more than the payload does, and an unknown verb
  * falls back to `<tool> on <surface>`.
  */
+
+export type { ReplyTarget };
+
+/** What the line builder knows about the work item beyond the action. */
+export interface SummaryContext {
+  /** Where a reply to the work item's source belongs, when it came from a chat thread. */
+  replyTarget?: ReplyTarget;
+}
 
 /** How much of a comment or message body the line quotes. */
 export const SUMMARY_TEXT_LIMIT = 120;
@@ -142,6 +150,7 @@ function describeMcpCall(
 function describeHttpRequest(
   parsed: Extract<ParsedSurfaceAction, { kind: 'http.request' }>,
   surfaces: readonly SurfaceRecord[],
+  context: SummaryContext,
 ): string {
   const surface = surfaces.find((row) => row.slug === parsed.surface);
   const name = surfaceName(parsed.surface, surfaces);
@@ -165,7 +174,19 @@ function describeHttpRequest(
     if (surface && isManagerDm(parsed, surface)) {
       return `Send ${surface.managerName ? label(surface.managerName) : 'the manager'} a ${name} DM${quoted}${extras}`;
     }
-    const thread = body && firstString(body, ['thread_ts']) ? ' (in thread)' : '';
+    const threadTs = body ? firstString(body, ['thread_ts']) : undefined;
+    const target = context.replyTarget;
+    // The ask's own channel reads as a reply to it; anything else stays the
+    // channel id the payload names, so the line never claims a thread it is
+    // not in.
+    if (target && channel === target.channel && target.channelName) {
+      const where = `#${label(target.channelName)}`;
+      if (threadTs !== undefined && threadTs === target.threadTs) {
+        return `Reply in ${where} thread${quoted}${extras}`;
+      }
+      if (threadTs === undefined) return `Post in ${where}${quoted}${extras}`;
+    }
+    const thread = threadTs !== undefined ? ' (in thread)' : '';
     return `Post to ${name} channel ${channel ? label(channel) : '(unknown)'}${thread}${quoted}${extras}`;
   }
   return `${parsed.method} ${label(parsed.path, 120)} on ${name}`;
@@ -177,11 +198,16 @@ function describeHttpRequest(
  * Args:
  *   action: The action as the skill emitted it.
  *   surfaces: The agent's surfaces, for display names and the manager DM.
+ *   context: The work item's reply target, when it came from a chat thread.
  *
  * Returns:
  *   One line: what the action does, to what, with the start of any body.
  */
-export function summariseAction(action: MockAction, surfaces: readonly SurfaceRecord[]): string {
+export function summariseAction(
+  action: MockAction,
+  surfaces: readonly SurfaceRecord[],
+  context: SummaryContext = {},
+): string {
   const args = (action.args ?? {}) as JsonObject;
   const slug = firstString(args, ['surface', 'channelSlug', 'sheetSlug', 'tweetSlug', 'slug']);
   if (action.tool === 'mcp.call' || action.tool === 'http.request') {
@@ -189,7 +215,7 @@ export function summariseAction(action: MockAction, surfaces: readonly SurfaceRe
     if (parsed.ok) {
       return parsed.action.kind === 'mcp.call'
         ? describeMcpCall(parsed.action, surfaces)
-        : describeHttpRequest(parsed.action, surfaces);
+        : describeHttpRequest(parsed.action, surfaces, context);
     }
     const tool = action.tool === 'mcp.call' ? firstString(args, ['tool']) ?? action.tool : action.tool;
     return `${label(tool)} on ${surfaceName(slug, surfaces)}`;

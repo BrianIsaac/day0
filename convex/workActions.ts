@@ -12,6 +12,7 @@ import { draftExecutionPlan } from '../src/work/plan';
 import { runSkill } from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import type { WorkCandidate, WorkSourceCategory } from '../src/work/types';
+import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
 import { asAgentId } from '../src/lib/ids';
 import {
@@ -55,6 +56,7 @@ function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
     observedAt: new Date(row.observedAt),
     priority: row.priority,
     requesterLabel: row.requesterLabel,
+    replyTarget: replyTargetFor(row),
   };
 }
 

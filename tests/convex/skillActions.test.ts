@@ -39,6 +39,8 @@ describe('skill author prompts', (): void => {
     expect(AUTHOR_SYSTEM).toContain('http.request         — { surface, method, path, headersJson, body }');
     expect(AUTHOR_SYSTEM).toContain('name the surface exactly as the Surfaces list does');
     expect(AUTHOR_SYSTEM).toContain('take the action shape (tool names, argument names, paths) from the runbook');
+    expect(AUTHOR_SYSTEM).toContain('emit the reply as its own `http.request` POST `chat.postMessage` action with `channel` set to the source channel and `thread_ts` set to the source thread timestamp');
+    expect(AUTHOR_SYSTEM).toContain('it must never carry a draft reply that belongs in the channel');
     expect(AUTHOR_SYSTEM).toContain('never include a token or key');
     expect(AUTHOR_SYSTEM).toContain('you may only target a connected surface');
     expect(AUTHOR_SYSTEM).toContain('The first real call is the gated execution');

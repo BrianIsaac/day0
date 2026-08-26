@@ -21,7 +21,7 @@ import {
   type AgentPosture,
 } from '../../../src/work/posture';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
-import { summariseAction } from '../../../src/surfaces/summary';
+import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
 import type { MockAction } from '../../../src/work/types';
@@ -1024,12 +1024,14 @@ export function PendingActions({
   actions,
   verdicts,
   surfaces,
+  replyTarget,
   onApprove,
   onReject,
 }: {
   actions: MockAction[];
   verdicts: ActionVerdict[];
   surfaces: SurfaceRecord[];
+  replyTarget?: ReplyTarget;
   onApprove: (approvedIndexes: number[]) => Promise<unknown>;
   onReject: (reason: string) => Promise<unknown>;
 }) {
@@ -1103,7 +1105,7 @@ export function PendingActions({
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-[var(--color-fg)] break-words">
-                    {summariseAction(action, surfaces)}
+                    {summariseAction(action, surfaces, { replyTarget })}
                     {refused ? (
                       <span className="text-[var(--color-warn)]"> · refused · {verdict.reason}</span>
                     ) : verdict?.disposition === 'held' ? (
@@ -1329,6 +1331,7 @@ function WorkItemCard({
           actions={output.actions ?? []}
           verdicts={pendingVerdicts(item.actionVerdicts, output.actions?.length ?? 0)}
           surfaces={surfaces}
+          replyTarget={item.replyTarget}
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />

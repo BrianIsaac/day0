@@ -315,6 +315,15 @@ export default defineSchema({
     /** Which phase `approvedIndexes` belongs to. `auto` applies the ladder's
      * rows straight from the hold; `approved` applies the manager's. */
     applyPhase: v.optional(v.union(v.literal('auto'), v.literal('approved'))),
+    /** Where a reply to this work belongs when it came from a chat thread:
+     * the source channel and message, so a skill can address the thread. */
+    replyTarget: v.optional(
+      v.object({
+        channel: v.string(),
+        channelName: v.optional(v.string()),
+        threadTs: v.optional(v.string()),
+      }),
+    ),
     /** The execution claim currently allowed to move this row. */
     executionRunId: v.optional(v.id('events')),
     /** The apply claim and its start time, used to recover an interrupted

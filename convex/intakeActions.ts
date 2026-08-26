@@ -102,6 +102,8 @@ interface SlackMessage {
   text: string;
   ts: string;
   user?: string;
+  /** The parent message when the mention itself sits inside a thread. */
+  threadTs?: string;
 }
 
 type IntakeFetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -750,6 +752,7 @@ async function slackHistory(
         ts: row.ts,
         text: row.text,
         user: typeof row.user === 'string' ? row.user : undefined,
+        threadTs: typeof row.thread_ts === 'string' ? row.thread_ts : undefined,
       });
     }
     const nextCursor = slackCursor(payload);
@@ -795,6 +798,9 @@ export function slackCandidate(
     contentRefs: [`https://app.slack.com/client/${teamId}/${channel.id}/thread/${threadKey}`],
     observedAt: new Date(observedAt),
     requesterLabel: message.user,
+    // A reply belongs in the ask's thread: under the mention itself, or under
+    // the parent when the mention was already a threaded message.
+    replyTarget: { channel: channel.id, channelName: channel.name, threadTs: message.threadTs ?? message.ts },
   };
 }
 
@@ -863,6 +869,7 @@ async function seedCandidate(
     contentRefs: candidate.contentRefs,
     priority: candidate.priority,
     requesterLabel: candidate.requesterLabel,
+    replyTarget: candidate.replyTarget,
   });
 }
 

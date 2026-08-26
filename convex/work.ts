@@ -106,6 +106,13 @@ export const seedItem = internalMutation({
     contentRefs: v.array(v.string()),
     priority: v.optional(v.string()),
     requesterLabel: v.optional(v.string()),
+    replyTarget: v.optional(
+      v.object({
+        channel: v.string(),
+        channelName: v.optional(v.string()),
+        threadTs: v.optional(v.string()),
+      }),
+    ),
   },
   handler: async (ctx, args): Promise<Id<'workItems'>> => {
     const existing = await ctx.db
