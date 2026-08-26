@@ -326,7 +326,13 @@ describe('real surface intake', (): void => {
           response_metadata: { next_cursor: '' },
         });
       }
-      return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+      return slackResponse({
+        ok: true,
+        messages: [
+          { ts: '1770000000.000100', user: 'USECOND', text: '<@UBOT> second channel request' },
+        ],
+        response_metadata: { next_cursor: '' },
+      });
     });
 
     const result = await runIntakeSweep(harness.runtime, {
@@ -336,7 +342,7 @@ describe('real surface intake', (): void => {
       fetcher: slackFetch,
     });
 
-    expect(result).toEqual({ candidates: 2, mode: 'real', polled: 2, skipped: 2, surfaces: 4 });
+    expect(result).toEqual({ candidates: 3, mode: 'real', polled: 2, skipped: 2, surfaces: 4 });
     expect(
       harness.records.map((record): [string, number] => [
         String(record.surfaceId),
@@ -378,13 +384,18 @@ describe('real surface intake', (): void => {
       priority: 'High',
       requesterLabel: 'Priya',
     });
-    expect(harness.seeds.get('agent-intake:slack:1770000000.000100')).toMatchObject({
+    expect(harness.seeds.get('agent-intake:slack:CASKS:1770000000.000100')).toMatchObject({
       sourceCategory: 'event-stream',
       sourceSystem: 'slack',
-      externalId: '1770000000.000100',
+      externalId: 'CASKS:1770000000.000100',
       contentSummary: '<@UBOT> please review REVOPS-1',
       contentRefs: ['https://app.slack.com/client/TTEAM/CASKS/thread/CASKS-1770000000000100'],
       requesterLabel: 'UUSER',
+    });
+    expect(harness.seeds.get('agent-intake:slack:CREVOPS:1770000000.000100')).toMatchObject({
+      externalId: 'CREVOPS:1770000000.000100',
+      contentSummary: '<@UBOT> second channel request',
+      requesterLabel: 'USECOND',
     });
     const historyUrls = slackFetch.mock.calls
       .map(([input]): URL => new URL(String(input)))
@@ -956,7 +967,7 @@ describe('intake provider contracts', (): void => {
       }),
     ).resolves.toMatchObject({ candidates: 1, polled: 1 });
     expect([...harness.seeds.keys()]).toEqual([
-      `agent-intake:slack:${String(firstPollAt / 1_000)}.000000`,
+      `agent-intake:slack:CASKS:${String(firstPollAt / 1_000)}.000000`,
     ]);
     expect(historyUrls.slice(-2).every((url) => url.searchParams.get('inclusive') === 'true')).toBe(
       true,

@@ -789,7 +789,7 @@ export function slackCandidate(
   return {
     sourceCategory: 'event-stream',
     sourceSystem: surface.slug,
-    externalId: message.ts,
+    externalId: `${channel.id}:${message.ts}`,
     title: `Slack mention in #${channel.name}`,
     contentSummary: message.text.slice(0, 4_000),
     contentRefs: [`https://app.slack.com/client/${teamId}/${channel.id}/thread/${threadKey}`],
