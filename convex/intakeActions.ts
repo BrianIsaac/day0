@@ -1,7 +1,6 @@
 'use node';
 
 import { randomUUID } from 'node:crypto';
-import { MCPClient } from '@mastra/mcp';
 import type { ToolExecutionContext } from '@mastra/core/tools';
 import type { FunctionReference } from 'convex/server';
 import type { GenericId } from 'convex/values';
@@ -10,6 +9,7 @@ import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
 
@@ -491,7 +491,7 @@ export function linearCandidate(
  *   The bounded client contract used by intake.
  */
 function createMcpClient(endpoint: URL, credential: string): McpIntakeClient {
-  return new MCPClient({
+  return createSecretMcpClient({
     id: `day0-intake-${randomUUID()}`,
     servers: {
       surface: {

@@ -1,5 +1,3 @@
-import { MCPClient } from '@mastra/mcp';
-import { noopLogger } from '@mastra/core/logger';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
@@ -13,6 +11,7 @@ import {
   type ParsedMcpCall,
 } from './policy';
 import { redactValue } from './secrets';
+import { createSecretMcpClient } from './mcp-client';
 import type { AdapterRun, AppliedAction, SurfaceAdapter, SurfaceRecord } from './types';
 
 export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['tool'][];
@@ -66,7 +65,7 @@ export interface InterpretedToolResult {
  *   A connected-on-demand Mastra MCP client.
  */
 export function createMastraMcpClient(options: McpClientOptions): McpClientLike {
-  const client = new MCPClient({
+  const client = createSecretMcpClient({
     id: `day0-${options.serverName}-${globalThis.crypto.randomUUID()}`,
     servers: {
       [options.serverName]: {
@@ -75,13 +74,10 @@ export function createMastraMcpClient(options: McpClientOptions): McpClientLike 
         ...(options.bearer
           ? { requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } } }
           : {}),
-        enableServerLogs: false,
-        onToolError: 'throw',
       },
     },
     timeout: MCP_TIMEOUT_MS,
   });
-  client.__setLogger(noopLogger);
   return {
     listTools: async (): Promise<Record<string, McpToolLike>> => {
       const { tools, errors } = await client.listToolsWithErrors({

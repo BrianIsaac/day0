@@ -1,7 +1,6 @@
 'use node';
 
 import { randomUUID } from 'node:crypto';
-import { MCPClient } from '@mastra/mcp';
 import { v } from 'convex/values';
 import type { GenericId } from 'convex/values';
 import type { FunctionReference } from 'convex/server';
@@ -10,6 +9,7 @@ import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
+import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { safeFailureMessage } from '../src/surfaces/redact';
 
 const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
@@ -213,7 +213,7 @@ export function linearMcpEndpoint(endpoint: string | undefined): URL {
  *   A client exposing only the discovery methods used by probing.
  */
 function createMcpClient(endpoint: URL, credential: string): McpProbeClient {
-  return new MCPClient({
+  return createSecretMcpClient({
     id: `day0-surface-probe-${randomUUID()}`,
     servers: {
       surface: {

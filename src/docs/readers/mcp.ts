@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { MCPClient } from '@mastra/mcp';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
+import { createSecretMcpClient } from '../../surfaces/mcp-client';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
 const SERVER_NAME = 'docs';
@@ -93,7 +93,7 @@ export function sessionBoundFetch(
 /** Create the production Mastra client for one credential-bound session. */
 function productionClient(config: McpConnectionConfig): McpClientLike {
   const session = sessionBoundFetch(config);
-  const client = new MCPClient({
+  const client = createSecretMcpClient({
     id: config.id,
     servers: {
       [SERVER_NAME]: {
