@@ -661,7 +661,9 @@ export const setActionsPending = internalMutation({
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'executing') return { pending: false };
-    if (row.executionRunId !== args.runId) return { pending: false };
+    if (row.executionRunId !== args.runId || row.pendingRunId !== undefined) {
+      return { pending: false };
+    }
     const actions = (args.output as { actions?: unknown[] }).actions;
     if (!Array.isArray(actions)) throw new Error('output.actions must be a list');
     const { verdicts: actionVerdicts, autonomousActions } = await reviewHeldActions(

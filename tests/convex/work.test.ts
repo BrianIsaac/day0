@@ -730,6 +730,35 @@ describe('the exact-action gate', (): void => {
     expect((await eventTypes(harness, agentId)).filter((type) => type.startsWith('skill.') || type.startsWith('agent.'))).toEqual([]);
   });
 
+  it('does not let a duplicate hold clear a claimed auto-phase attempt', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(
+      harness,
+      'executing',
+      ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write'],
+      { withSlack: true },
+    );
+    const output = { draft: 'd', notes: '', actions: [readIssue, publicReply] };
+    await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
+    const firstClaim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    if (!firstClaim.claimed) throw new Error('first apply claim missing');
+
+    await expect(
+      harness.mutation(internal.work.setActionsPending, { workItemId, runId, output }),
+    ).resolves.toEqual({ pending: false });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      applyPhase: 'auto',
+      applyAttemptId: firstClaim.applyAttemptId,
+    });
+    await expect(
+      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+    ).resolves.toEqual({
+      claimed: false,
+      reason: 'workItem state is executing; expected actions-pending',
+    });
+  });
+
   it('with the switch on classifies every non-refused row auto, and the claim reads the switch as it is then', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
