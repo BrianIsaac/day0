@@ -581,7 +581,7 @@ async function pollLinear(
         seen += 1;
         const project = issueProject(issue);
         if (project !== undefined) withProject += 1;
-        if (!request.projectEnforced && project?.toLowerCase() !== wantedProject) continue;
+        if (project !== undefined && project.toLowerCase() !== wantedProject) continue;
         const updatedAt = typeof issue.updatedAt === 'string' ? Date.parse(issue.updatedAt) : NaN;
         if (
           surface.lastPolledAt !== undefined &&

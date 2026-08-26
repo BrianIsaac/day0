@@ -677,6 +677,47 @@ describe('intake provider contracts', (): void => {
     expect(unbounded.records[0].skipReason).toContain('cannot be bounded to project Q3 close');
     expect(unbounded.seeds.size).toBe(0);
 
+    const ignoredProviderFilter = runtimeHarness(
+      [
+        surfaceRow('linear', 'Linear', 'kanban', {
+          credentialId: linearCredential,
+          endpoint: 'https://mcp.linear.app/mcp',
+          toolAllowlist: ['list_issues'],
+          lastPolledAt: Date.parse('2026-08-26T01:00:00.000Z'),
+        }),
+      ],
+      [
+        pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+        pageRow('linear.md', 'Linear', LINEAR),
+      ],
+      new Map([[String(linearCredential), 'linear-test-value']]),
+    );
+    await expect(
+      runIntakeSweep(ignoredProviderFilter.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        makeMcpClient: () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: {
+                list_issues: { inputSchema: { properties: { project: {}, limit: {} } } },
+              },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (): Promise<unknown> => ({
+              issues: [
+                issue('provider-leak', { name: 'Q4 plan' }, '2026-08-26T02:00:00.000Z'),
+              ],
+            }),
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        }),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 1, skipped: 0 });
+    expect(ignoredProviderFilter.seeds.size).toBe(0);
+
   });
 
   it('does not checkpoint or seed a Linear poll whose pagination is incomplete', async (): Promise<void> => {
