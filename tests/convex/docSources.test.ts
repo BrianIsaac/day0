@@ -4,7 +4,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { STALE_SYNC_MS, agentReadsSource, validateLinkInput } from '../../convex/docSources';
-import { convexModules } from './modules';
+import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
@@ -114,7 +114,7 @@ describe('documentation source validation', (): void => {
   });
 
   it('reads every owner source except the excluded ones, honouring legacy inclusion lists', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const result = await harness.run(async (ctx) => {
       const first = await ctx.db.insert('docSources', {
         userId: 'owner',
@@ -166,7 +166,7 @@ describe('documentation source validation', (): void => {
 describe('documentation sources in mock mode', (): void => {
   it('refuses to link any location, including link-local metadata URLs', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const harness = convexTest(schema, convexModules).withIdentity({ subject: 'owner' });
+    const harness = convexTest(schema, allConvexModules()).withIdentity({ subject: 'owner' });
     await expect(
       harness.action(api.docSources.link, { label: 'Team folder', kind: 'folder', locator: '.' }),
     ).rejects.toThrow('real-mode feature');
@@ -182,7 +182,7 @@ describe('documentation sources in mock mode', (): void => {
 
   it('refuses resync and unlink and leaves existing rows untouched', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
     await expect(owner.mutation(api.docSources.resync, { sourceId })).rejects.toThrow(
@@ -200,7 +200,7 @@ describe('documentation sources in mock mode', (): void => {
 
   it('leaves the periodic sync with nothing to do', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     await seedSyncedSource(harness);
     await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toEqual([]);
   });
@@ -210,7 +210,7 @@ describe('documentation sources in real mode', (): void => {
   it('links and lists only the caller-owned source', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const owner = harness.withIdentity({ subject: 'owner' });
     const sourceId = await owner.action(api.docSources.link, {
       label: 'Team folder',
@@ -226,7 +226,7 @@ describe('documentation sources in real mode', (): void => {
 
   it('persists only a credential id on an authenticated source', async (): Promise<void> => {
     useSurfaceMode('real');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const sourceId = await harness.mutation(internal.docSources.createSource, {
       userId: 'owner',
       label: 'Notion handbook',
@@ -259,7 +259,7 @@ describe('documentation sources in real mode', (): void => {
 
   it('unlinks stored pages and per-agent mirrors together', async (): Promise<void> => {
     useSurfaceMode('real');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
     await expect(owner.mutation(api.docSources.unlink, { sourceId })).resolves.toEqual({
@@ -275,7 +275,7 @@ describe('documentation sources in real mode', (): void => {
 
   it('refuses resync and unlink of a source owned by another caller', async (): Promise<void> => {
     useSurfaceMode('real');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness, 'owner');
     const other = harness.withIdentity({ subject: 'other-owner' });
     await expect(other.mutation(api.docSources.resync, { sourceId })).rejects.toThrow('not found');
@@ -290,7 +290,7 @@ describe('documentation sources in real mode', (): void => {
 
   it('schedules synced sources for the periodic resync', async (): Promise<void> => {
     useSurfaceMode('real');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toMatchObject([
       { _id: sourceId },
@@ -299,7 +299,7 @@ describe('documentation sources in real mode', (): void => {
 
   it('keeps stale pages through continuations and deletes them only on the fenced final batch', async (): Promise<void> => {
     useSurfaceMode('real');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.upsertPage, {
@@ -373,7 +373,7 @@ describe('documentation sources in real mode', (): void => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-26T10:00:00Z'));
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toEqual([]);

@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { convexModules } from './modules';
+import { allConvexModules } from './all-modules';
 
 describe('documentation schema', (): void => {
   it('stores owner-level sources, pages and agent source selections', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const result = await harness.run(async (ctx) => {
       const sourceId = await ctx.db.insert('docSources', {
         userId: 'owner',
@@ -61,7 +61,7 @@ describe('documentation schema', (): void => {
 
 describe('surface connection evidence persistence', (): void => {
   it('retains provider evidence while advancing intake checkpoints monotonically', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
         bossEmail: 'boss@day0.local',
@@ -120,7 +120,7 @@ describe('surface connection evidence persistence', (): void => {
 
 describe('exact-action gate schema', (): void => {
   it('stores a pending run with its run id, approved indexes and a surface-targeting skill', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const result = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
         bossEmail: 'boss@day0.local',

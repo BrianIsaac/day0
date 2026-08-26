@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { convexModules } from './modules';
+import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
@@ -44,7 +44,7 @@ async function seedSource(
 describe('agent documentation selection', (): void => {
   it('refuses to exclude a source owned by another caller', async (): Promise<void> => {
     vi.useFakeTimers();
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedSource(harness, 'other-owner', 'Private docs');
     const owner = harness.withIdentity({ subject: 'owner' });
     await expect(
@@ -58,7 +58,7 @@ describe('agent documentation selection', (): void => {
 
   it('persists an owned exclusion and drops an empty one', async (): Promise<void> => {
     vi.useFakeTimers();
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedSource(harness, 'owner', 'Team docs');
     const owner = harness.withIdentity({ subject: 'owner' });
     const excluding = await owner.mutation(api.agents.deploy, {
@@ -81,7 +81,7 @@ describe('agent documentation selection', (): void => {
 
   it('inherits a source linked after deploy unless it was excluded', async (): Promise<void> => {
     vi.useFakeTimers();
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const existing = await seedSource(harness, 'owner', 'Existing');
     const excluded = await seedSource(harness, 'owner', 'Excluded');
     const owner = harness.withIdentity({ subject: 'owner' });
@@ -105,7 +105,7 @@ describe('agent surface grants', (): void => {
   it('seeds provider grants in mock mode but only baseline grants in real mode', async (): Promise<void> => {
     vi.useFakeTimers();
     useSurfaceMode('mock');
-    const mockHarness = convexTest(schema, convexModules);
+    const mockHarness = convexTest(schema, allConvexModules());
     const mockAgent = await mockHarness.withIdentity({ subject: 'mock-owner' }).mutation(
       api.agents.deploy,
       { bossEmail: 'mock@day0.local' },
@@ -130,7 +130,7 @@ describe('agent surface grants', (): void => {
     ]);
 
     useSurfaceMode('real');
-    const realHarness = convexTest(schema, convexModules);
+    const realHarness = convexTest(schema, allConvexModules());
     const realAgent = await realHarness.withIdentity({ subject: 'real-owner' }).mutation(
       api.agents.deploy,
       { bossEmail: 'real@day0.local' },
@@ -150,7 +150,7 @@ describe('agent surface grants', (): void => {
   });
 
   it('grants an active scope idempotently and replaces a revoked grant', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {

@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
-import { convexModules } from './modules';
+import { allConvexModules } from './all-modules';
 
 /**
  * Seed one owner with an agent and linked documentation.
@@ -44,7 +44,7 @@ async function seedOwner(harness: ReturnType<typeof convexTest>): Promise<string
 
 describe('reset documentation retention', (): void => {
   it('keeps owner-level documentation by default', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
     await expect(owner.mutation(api.reset.deleteMyData, {})).resolves.toEqual({
@@ -55,7 +55,7 @@ describe('reset documentation retention', (): void => {
   });
 
   it('removes documentation only when explicitly requested', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
     await expect(

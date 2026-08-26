@@ -2,11 +2,11 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
-import { convexModules } from './modules';
+import { allConvexModules } from './all-modules';
 
 describe('mock documentation mirrors', (): void => {
   it('preserves source metadata when a page is upserted', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const ids = await harness.run(async (ctx) => {
       const sourceId = await ctx.db.insert('docSources', {
         userId: 'owner',
