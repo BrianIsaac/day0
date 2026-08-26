@@ -172,7 +172,6 @@ export default defineSchema({
     waterfallPosition: v.optional(v.number()),
     intakeSkipReason: v.optional(v.string()),
     lastPolledAt: v.optional(v.number()),
-    credentialRef: v.optional(v.string()),
     credentialLanded: v.boolean(),
     lastVerifiedAt: v.optional(v.number()),
     expiresAt: v.optional(v.number()),
