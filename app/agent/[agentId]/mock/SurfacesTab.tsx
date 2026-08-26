@@ -11,6 +11,7 @@ import {
   type CredentialPresentation,
   type SurfaceCredentialFinding,
 } from '@/surfaces/credential-presentation';
+import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '@/surfaces/waterfall';
 
 type SurfaceEvidence = {
@@ -119,6 +120,25 @@ export function CredentialRow(props: CredentialRowProps): React.ReactNode {
 }
 
 /** Render evidence-backed connection requests and absence verdicts. */
+/**
+ * One evidence quote: an index tag becomes the page title linked to the page,
+ * anything else is shown as stored.
+ */
+export function EvidenceQuote({ quote }: { quote?: string }): React.ReactNode {
+  const link = pageLinkFromQuote(quote);
+  if (!link) return <>{quote}</>;
+  return (
+    <a
+      href={link.url}
+      target="_blank"
+      rel="noreferrer"
+      className="text-[var(--color-fg)] underline decoration-[var(--color-border)]"
+    >
+      {link.title}
+    </a>
+  );
+}
+
 export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });
@@ -370,7 +390,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                       <span className="text-[var(--color-muted)]">{label}</span>
                     )}
                     <br />
-                    {item.quote}
+                    <EvidenceQuote quote={item.quote} />
                   </blockquote>
                 );
               })}

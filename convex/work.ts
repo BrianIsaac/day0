@@ -256,6 +256,22 @@ export const retryFailed = mutation({
   },
 });
 
+/** Why a work item is `cancelled` after the manager turned its plan down. */
+export const PLAN_CANCELLED_REASON = 'plan cancelled by the manager';
+
+/**
+ * Why a work item is `cancelled` after the skill proposed for it was rejected.
+ *
+ * Args:
+ *   skillName: The rejected skill's name.
+ *
+ * Returns:
+ *   The reason the card shows in place of the pre-cancel verdict.
+ */
+export function skillRejectedReason(skillName: string): string {
+  return `skill proposal "${skillName}" rejected by the manager`;
+}
+
 export const cancelPlan = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
@@ -263,11 +279,11 @@ export const cancelPlan = mutation({
     if (row.state !== 'plan-pending') {
       throw new Error(`workItem state is ${row.state}; expected plan-pending`);
     }
-    await ctx.db.patch(args.workItemId, { state: 'cancelled' });
+    await ctx.db.patch(args.workItemId, { state: 'cancelled', skipReason: PLAN_CANCELLED_REASON });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.cancelled',
-      payload: { workItemId: args.workItemId },
+      payload: { workItemId: args.workItemId, reason: PLAN_CANCELLED_REASON },
       createdAt: Date.now(),
     });
     return { ok: true };

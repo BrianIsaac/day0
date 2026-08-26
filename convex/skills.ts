@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
-import { applyVerdict } from './work';
+import { applyVerdict, skillRejectedReason } from './work';
 import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
@@ -398,7 +398,10 @@ export const reject = mutation({
     }
     await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
     if (row.proposedFor) {
-      await ctx.db.patch(row.proposedFor, { state: 'cancelled' });
+      await ctx.db.patch(row.proposedFor, {
+        state: 'cancelled',
+        skipReason: skillRejectedReason(row.name),
+      });
     }
     await ctx.db.insert('events', {
       agentId: row.agentId,

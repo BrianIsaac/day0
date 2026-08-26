@@ -83,6 +83,23 @@ async function propose(harness: Harness, agentId: Id<'agents'>, workItemId: Id<'
   });
 }
 
+describe('rejecting a proposed skill', (): void => {
+  it('cancels the work item it was proposed for and records why', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    const skillId = await propose(harness, agentId, workItemId);
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId });
+    const [skill, work] = await harness.run(async (ctx) => [await ctx.db.get(skillId), await ctx.db.get(workItemId)]);
+    expect(skill?.state).toBe('rejected');
+    expect(work).toMatchObject({
+      state: 'cancelled',
+      skipReason: 'skill proposal "update-linear-ticket" rejected by the manager',
+    });
+    await expect(harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId })).resolves.toEqual({ ok: true });
+  });
+});
+
 describe('skills that target a surface', (): void => {
   it('names the source surface and its read and write scopes when the work came from one', async (): Promise<void> => {
     useSurfaceMode('real');

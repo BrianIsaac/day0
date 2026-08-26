@@ -835,6 +835,32 @@ interface LedgerRow {
   providerId?: string;
 }
 
+/**
+ * Why a cancelled work item stopped, for the card.
+ *
+ * Rows cancelled since the reason was recorded carry it in `skipReason`; an
+ * older row is read from what it was doing when it was cancelled.
+ *
+ * Args:
+ *   item: The cancelled work item's reason, verdict and plan.
+ *
+ * Returns:
+ *   One sentence in place of the pre-cancel verdict.
+ */
+export function cancelledReason(item: {
+  skipReason?: string;
+  verdict?: { decision?: string; suggestedSkillName?: string };
+  plan?: unknown;
+}): string {
+  if (item.skipReason) return item.skipReason;
+  if (item.verdict?.decision === 'needs-skill') {
+    const name = item.verdict.suggestedSkillName;
+    return name ? `skill proposal "${name}" rejected by the manager` : 'skill proposal rejected by the manager';
+  }
+  if (item.plan) return 'plan cancelled by the manager';
+  return 'cancelled by the manager';
+}
+
 /** Whether replay could duplicate an external effect whose outcome is durable or unknown. */
 export function retryRequiresReconciliation(
   applied: readonly LedgerRow[],
@@ -1107,7 +1133,14 @@ function WorkItemCard({
         </div>
       </div>
 
-      {verdict ? (
+      {item.state === 'cancelled' ? (
+        <div className="mt-2 text-xs">
+          <span className="text-[var(--color-muted)]">cancelled:</span>{' '}
+          <span className="text-[var(--color-fg)]">
+            {cancelledReason({ skipReason: item.skipReason, verdict, plan })}
+          </span>
+        </div>
+      ) : verdict ? (
         <div className="mt-2 text-xs">
           <span className="text-[var(--color-muted)]">verdict:</span>{' '}
           {verdict.decision === 'defer' && verdict.reason === 'awaiting-connection' ? (

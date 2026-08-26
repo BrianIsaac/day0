@@ -9,6 +9,7 @@ vi.mock('../../app/agent/[agentId]/MockEnvironment', () => ({
 }));
 
 import {
+  cancelledReason,
   PendingActions,
   retryRequiresReconciliation,
 } from '../../app/agent/[agentId]/AgentDashboard';
@@ -90,6 +91,20 @@ describe('dashboard exact-action gate', (): void => {
     const html = render([action]);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
+  });
+
+  it('explains a cancelled item from its recorded reason, else from what it was doing', (): void => {
+    expect(cancelledReason({ skipReason: 'skill proposal "linear-action-revops-6" rejected by the manager' })).toBe(
+      'skill proposal "linear-action-revops-6" rejected by the manager',
+    );
+    expect(
+      cancelledReason({
+        verdict: { decision: 'needs-skill', suggestedSkillName: 'linear-action-revops-6' },
+      }),
+    ).toBe('skill proposal "linear-action-revops-6" rejected by the manager');
+    expect(cancelledReason({ verdict: { decision: 'needs-skill' } })).toBe('skill proposal rejected by the manager');
+    expect(cancelledReason({ verdict: { decision: 'claim' }, plan: { summary: 'x' } })).toBe('plan cancelled by the manager');
+    expect(cancelledReason({})).toBe('cancelled by the manager');
   });
 
   it('requires reconciliation for landed or interrupted provider effects', (): void => {

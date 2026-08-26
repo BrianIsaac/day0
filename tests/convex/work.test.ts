@@ -6,6 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { PLAN_CANCELLED_REASON } from '../../convex/work';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -127,6 +128,28 @@ async function pend(harness: Harness): Promise<{ agentId: Id<'agents'>; workItem
   });
   return ids;
 }
+
+describe('cancelling a pending plan', (): void => {
+  it('records why the item is cancelled and refuses any other state', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    await harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('cancelled');
+    expect(row.skipReason).toBe(PLAN_CANCELLED_REASON);
+    const cancelled = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.cancelled',
+        ),
+    );
+    expect(cancelled.map((event) => event.payload)).toEqual([{ workItemId, reason: PLAN_CANCELLED_REASON }]);
+    await expect(harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId })).rejects.toThrow(
+      'expected plan-pending',
+    );
+  });
+});
 
 describe('the exact-action gate', (): void => {
   it('holds an executing run with its literal actions and run id', async (): Promise<void> => {
