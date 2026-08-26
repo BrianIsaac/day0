@@ -47,6 +47,7 @@ const HTTP_MUTATION_WORDS = new Set([
   'close',
   'create',
   'delete',
+  'execute',
   'invite',
   'join',
   'kick',
@@ -66,6 +67,7 @@ const HTTP_MUTATION_WORDS = new Set([
   'send',
   'set',
   'transition',
+  'trigger',
   'unpin',
   'update',
 ]);

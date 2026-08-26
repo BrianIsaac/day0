@@ -769,6 +769,52 @@ describe('applying surface actions', (): void => {
     expect(recorded).toEqual({ mcp: [], http: [] });
   });
 
+  it('does not auto-apply execute or trigger operations dressed as reads', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const actions: MockAction[] = [
+      {
+        tool: 'mcp.call',
+        args: {
+          surface: 'linear',
+          tool: 'list_and_execute_workflow',
+          toolArgsJson: JSON.stringify({ workflow: 'close' }),
+        },
+      },
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'GET',
+          path: '/conversations.history?action=trigger',
+          headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        },
+      },
+    ];
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [
+        { ...linear, toolAllowlist: [...(linear.toolAllowlist ?? []), 'list_and_execute_workflow'] },
+        { ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.history'] },
+      ],
+      run,
+      actions,
+      {
+        deps: deps(recorded, undefined, [...(linear.toolAllowlist ?? []), 'list_and_execute_workflow']),
+        grants: new Set(['linear:read', 'slack:read']),
+        approvedIndexes: new Set([0, 1]),
+        autoPhase: true,
+        autonomousActions: false,
+        now,
+      },
+    );
+    expect(applied.map((entry) => [entry.ok, entry.reason])).toEqual([
+      [false, 'no grant (linear:write)'],
+      [false, 'no grant (slack:write)'],
+    ]);
+    expect(recorded).toEqual({ mcp: [], http: [] });
+  });
+
   it('records the hold-time reason on an unapproved row', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const applied = await applySurfaceActions(ctx, 'real', [slack], run, [dm, publicPost, comment], {

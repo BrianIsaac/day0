@@ -502,6 +502,28 @@ describe('the autonomous-actions switch', (): void => {
     expect(
       reviewAction(readDressedMutation, [linearWithDressedMutation], new Set(['linear:read']), now, supervised),
     ).toEqual({ disposition: 'held', reason: HELD_MUTATION });
+
+    const executeDressedAsList = mcp('list_and_execute_workflow', { workflow: 'close' });
+    expect(
+      reviewAction(
+        executeDressedAsList,
+        [{ ...linearAll, toolAllowlist: [...(linearAll.toolAllowlist ?? []), 'list_and_execute_workflow'] }],
+        new Set(['linear:read']),
+        now,
+        supervised,
+      ),
+    ).toEqual({ disposition: 'held', reason: HELD_MUTATION });
+    const triggerDressedAsGet: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'GET',
+        path: '/conversations.history?action=trigger',
+      },
+    };
+    expect(
+      reviewAction(triggerDressedAsGet, surfaces, new Set(['slack:read']), now, supervised),
+    ).toEqual({ disposition: 'held', reason: HELD_PUBLIC_POST });
   });
 
   it('on: every non-refused row applies on its own, and the switch is the write authority', (): void => {
