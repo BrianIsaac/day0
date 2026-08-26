@@ -558,9 +558,13 @@ export const landCredential = action({
     if (!context.agent.userId) throw new Error('Agent has no owner.');
     const plaintext = args.plaintext.trim();
     if (!plaintext) throw new Error('Credential value is required.');
+    // A value typed into the card is never the product of an OAuth install:
+    // on an `oauth` surface it is the shared bot token landed as the fallback,
+    // a shared credential like any other, so writes through it carry
+    // provenance. Only the install flow itself stores kind `oauth`.
     const method = (context.surface.request as { credential?: { method?: unknown } } | undefined)
       ?.credential?.method;
-    const kind = method === 'oauth' ? 'oauth' : 'location';
+    const kind = method === 'oauth' ? 'value' : 'location';
     const credentialId: CredentialId = await ctx.runAction(credentialInternal.credentials.store, {
       userId: context.agent.userId,
       kind,

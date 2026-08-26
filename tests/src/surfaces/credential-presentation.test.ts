@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { presentSurfaceCredential } from '../../../src/surfaces/credential-presentation';
+import {
+  OAUTH_FALLBACK_LABEL,
+  OAUTH_FALLBACK_NOTE,
+  presentSurfaceCredential,
+} from '../../../src/surfaces/credential-presentation';
 
 describe('surface credential presentation', (): void => {
   it('uses encrypted-store metadata for a shared-page marker', (): void => {
@@ -43,7 +47,7 @@ describe('surface credential presentation', (): void => {
     });
   });
 
-  it('shows an OAuth procedure without offering a plaintext field', (): void => {
+  it('shows an OAuth procedure with the labelled shared-token fallback landing', (): void => {
     expect(
       presentSurfaceCredential({
         credential: {
@@ -53,12 +57,32 @@ describe('surface credential presentation', (): void => {
         },
       }),
     ).toEqual({
-      canLand: false,
+      canLand: true,
       detail: undefined,
       governanceFinding: undefined,
       kind: 'oauth',
       label: undefined,
+      landingLabel: OAUTH_FALLBACK_LABEL,
+      landingNote: OAUTH_FALLBACK_NOTE,
       text: 'Ask IT to approve the Day0 app, then follow the install link.',
+    });
+    expect(OAUTH_FALLBACK_LABEL).toBe('Land a shared bot token (fallback)');
+    expect(OAUTH_FALLBACK_NOTE).toContain('shared credential');
+  });
+
+  it('shows the stored metadata, not the fallback, once a token is landed on an OAuth surface', (): void => {
+    expect(
+      presentSurfaceCredential({
+        credential: { found: 'none', method: 'oauth', label: 'Slack OAuth access' },
+        credentialId: 'credential-2',
+        summary: { _id: 'credential-2', label: 'Slack shared bot token', source: 'entered' },
+      }),
+    ).toEqual({
+      canLand: false,
+      governanceFinding: undefined,
+      kind: 'masked',
+      label: 'Slack shared bot token',
+      text: 'entered by IT (masked)',
     });
   });
 
@@ -74,11 +98,13 @@ describe('surface credential presentation', (): void => {
         credentialLocation: 'OAuth install flow documented in Slack automation policy',
       }),
     ).toEqual({
-      canLand: false,
+      canLand: true,
       detail: 'The automation registers its app from the team manifest template.',
       governanceFinding: undefined,
       kind: 'oauth',
       label: 'Slack OAuth access',
+      landingLabel: OAUTH_FALLBACK_LABEL,
+      landingNote: OAUTH_FALLBACK_NOTE,
       text: 'OAuth install flow documented in Slack automation policy',
     });
     const long = 'x'.repeat(900);

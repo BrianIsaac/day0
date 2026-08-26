@@ -48,12 +48,14 @@ describe('SurfacesTab credential row', (): void => {
     expect(markup).toContain('Land credential');
   });
 
-  it('shows the OAuth summary and procedure without a landing field', (): void => {
+  it('shows the OAuth summary, the procedure and the labelled fallback landing field', (): void => {
     const markup = renderCredentialRow({
-      canLand: false,
+      canLand: true,
       detail: 'Ask IT to approve the app and follow the install link.',
       kind: 'oauth',
       label: 'Slack OAuth access',
+      landingLabel: 'Land a shared bot token (fallback)',
+      landingNote: 'Until the install flow exists the administrator may land the shared token.',
       text: 'OAuth install flow documented in Slack automation policy',
     });
     expect(markup).toContain(
@@ -62,6 +64,20 @@ describe('SurfacesTab credential row', (): void => {
     expect(markup).toContain(
       'OAuth approval procedure: Ask IT to approve the app and follow the install link.',
     );
+    expect(markup).toContain('Until the install flow exists the administrator may land the shared token.');
+    expect(markup).toContain('type="password"');
+    expect(markup).toContain('Land a shared bot token (fallback)');
+    expect(markup).not.toContain('>Land credential<');
+  });
+
+  it('keeps the OAuth row read-only once the fallback token is stored', (): void => {
+    const markup = renderCredentialRow({
+      canLand: false,
+      kind: 'masked',
+      label: 'Slack shared bot token',
+      text: 'entered by IT (masked)',
+    });
+    expect(markup).toContain('Slack shared bot token - entered by IT (masked)');
     expect(markup).not.toContain('type="password"');
   });
 });
