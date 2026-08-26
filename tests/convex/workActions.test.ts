@@ -413,6 +413,49 @@ describe('executing an approved plan through the gate', (): void => {
     });
   });
 
+  it('applies a pending row written before dispositions, reply targets and the switch existed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [skillOutput.actions[0], skillOutput.actions[3]],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    const runId = pending.pendingRunId;
+    if (!runId) throw new Error('pending run missing');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        actionVerdicts: [
+          { held: false },
+          { held: true, reason: HELD_PUBLIC_POST },
+        ],
+        replyTarget: undefined,
+      });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(ledger(row)[0]).toMatchObject({ ok: true, authority: 'manager' });
+    expect(ledger(row)[1]).toMatchObject({
+      ok: true,
+      held: true,
+      reason: HELD_PUBLIC_POST,
+    });
+    expect(recorded.mcp).toHaveLength(1);
+    expect(recorded.http).toHaveLength(0);
+  });
+
   it('holds unapproved indexes and fails a status change whose comment was held', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
