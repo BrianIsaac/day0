@@ -732,6 +732,7 @@ async function slackHistory(
   lastPolledAt?: number,
 ): Promise<SlackMessage[]> {
   const messages: SlackMessage[] = [];
+  const cursors = new Set<string>();
   let cursor: string | undefined;
   for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
     const payload = await slackGet(fetcher, credential, 'conversations.history', {
@@ -751,8 +752,16 @@ async function slackHistory(
         user: typeof row.user === 'string' ? row.user : undefined,
       });
     }
-    cursor = slackCursor(payload);
-    if (!cursor) break;
+    const nextCursor = slackCursor(payload);
+    if (!nextCursor) break;
+    if (cursors.has(nextCursor)) {
+      throw new Error('Slack conversations.history repeated a cursor before pagination completed.');
+    }
+    if (pageIndex === MAX_SLACK_HISTORY_PAGES - 1) {
+      throw new Error('Slack conversations.history pagination did not complete within the page limit.');
+    }
+    cursors.add(nextCursor);
+    cursor = nextCursor;
   }
   return messages;
 }

@@ -815,6 +815,79 @@ describe('intake provider contracts', (): void => {
     expect(cycle.seeds.size).toBe(0);
   });
 
+  it('does not checkpoint or seed Slack history whose pagination is incomplete', async (): Promise<void> => {
+    const slackCredential = id<'credentials'>('credential-slack');
+    const makeHarness = (): ReturnType<typeof runtimeHarness> =>
+      runtimeHarness(
+        [
+          surfaceRow('slack', 'Slack', 'chat', {
+            credentialId: slackCredential,
+            endpoint: 'https://slack.com/api/',
+            toolAllowlist: ['conversations.list', 'conversations.history'],
+            providerIdentityId: 'UBOT',
+            providerWorkspaceId: 'TTEAM',
+          }),
+        ],
+        [pageRow('slack.md', 'Slack policy', SLACK)],
+        new Map([[String(slackCredential), 'slack-test-value']]),
+      );
+    const fetcher =
+      (nextCursor: (cursor: string | undefined) => string | undefined) =>
+      async (input: string | URL | Request): Promise<Response> => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith('/conversations.list')) {
+          return slackResponse({
+            ok: true,
+            channels: [
+              { id: 'CASKS', name: 'revops-asks' },
+              { id: 'CREVOPS', name: 'revops' },
+            ],
+            response_metadata: { next_cursor: '' },
+          });
+        }
+        const cursor = url.searchParams.get('cursor') ?? undefined;
+        const page = cursor ? Number(cursor.replace('page-', '')) + 1 : 1;
+        return slackResponse({
+          ok: true,
+          messages: [
+            { ts: `177000000${page}.000100`, user: 'UUSER', text: '<@UBOT> request' },
+          ],
+          response_metadata: { next_cursor: nextCursor(cursor) },
+        });
+      };
+
+    const overLimit = makeHarness();
+    await expect(
+      runIntakeSweep(overLimit.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher: fetcher(
+          (cursor): string =>
+            `page-${cursor ? Number(cursor.replace('page-', '')) + 1 : 1}`,
+        ),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(overLimit.records[0]).toMatchObject({
+      skipReason: expect.stringContaining('pagination did not complete'),
+    });
+    expect(overLimit.records[0].polledAt).toBeUndefined();
+    expect(overLimit.seeds.size).toBe(0);
+
+    const cycle = makeHarness();
+    await expect(
+      runIntakeSweep(cycle.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher: fetcher((): string => 'same-page'),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(cycle.records[0]).toMatchObject({
+      skipReason: expect.stringContaining('repeated a cursor'),
+    });
+    expect(cycle.records[0].polledAt).toBeUndefined();
+    expect(cycle.seeds.size).toBe(0);
+  });
+
   it('overlaps a Linear checkpoint so an issue first visible on the timestamp boundary is not missed', async (): Promise<void> => {
     const firstPollAt = Date.parse('2026-08-26T02:00:00.000Z');
     const secondPollAt = Date.parse('2026-08-26T03:00:00.000Z');
