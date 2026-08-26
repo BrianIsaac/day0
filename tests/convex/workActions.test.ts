@@ -17,6 +17,7 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 const recorded = vi.hoisted(() => ({
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; authorization: string; body: unknown }>,
+  failMcpAfterRequest: false,
   skillRuns: 0,
   skillModes: [] as Array<string | undefined>,
 }));
@@ -97,6 +98,9 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
             {
               execute: async (args: unknown): Promise<unknown> => {
                 recorded.mcp.push({ server: options.serverName, tool, args, bearer: options.bearer ?? '' });
+                if (recorded.failMcpAfterRequest) {
+                  throw new Error('socket closed after provider accepted the request');
+                }
                 return { content: [{ type: 'text', text: JSON.stringify({ id: `${tool}-id` }) }] };
               },
             },
@@ -119,6 +123,7 @@ vi.stubGlobal(
 afterEach((): void => {
   recorded.mcp.length = 0;
   recorded.http.length = 0;
+  recorded.failMcpAfterRequest = false;
   recorded.skillRuns = 0;
   restoreSurfaceMode();
 });
@@ -380,6 +385,36 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
     expect(recorded.mcp).toHaveLength(0);
     expect(recorded.http).toHaveLength(1);
+  });
+
+  it('refuses retry when a provider transport fails after an approved request was sent', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    if (!pending.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: pending.pendingRunId,
+      approvedIndexes: [0],
+    });
+    recorded.failMcpAfterRequest = true;
+
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ ok: false });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(ledger(failed)[0]).toMatchObject({
+      ok: false,
+      outcomeUnknown: true,
+      reason: 'socket closed after provider accepted the request',
+    });
+    expect(recorded.mcp).toHaveLength(1);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).rejects.toThrow('reconcile the provider first');
   });
 
   it('runs the skill again with a fresh run id after a rejection and retry', async (): Promise<void> => {

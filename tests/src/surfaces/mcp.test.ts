@@ -140,7 +140,11 @@ describe('MCP adapter', (): void => {
       },
     });
     const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
-    expect(result).toMatchObject({ ok: false, reason: '401 unauthorised for bearer <redacted>' });
+    expect(result).toMatchObject({
+      ok: false,
+      outcomeUnknown: true,
+      reason: '401 unauthorised for bearer <redacted>',
+    });
     expect(client.disconnected).toBe(1);
   });
 
@@ -161,6 +165,7 @@ describe('MCP adapter', (): void => {
     });
     await expect(adapter(client).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
       ok: false,
+      outcomeUnknown: true,
       reason: 'transport offline',
     });
   });

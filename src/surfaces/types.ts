@@ -67,6 +67,8 @@ export interface ActionOutcome {
   effect?: string;
   reason?: string;
   held?: boolean;
+  /** The provider received the request but no authoritative outcome came back. */
+  outcomeUnknown?: boolean;
   providerId?: string;
 }
 
