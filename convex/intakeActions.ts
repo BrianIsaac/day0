@@ -318,7 +318,7 @@ export function linearListArguments(
       'updated_at',
     ]);
     if (updatedName) {
-      args[updatedName] = new Date(lastPolledAt).toISOString();
+      args[updatedName] = new Date(Math.max(0, lastPolledAt - 1)).toISOString();
       checkpointEnforced = true;
     }
   }
@@ -586,7 +586,7 @@ async function pollLinear(
         if (
           surface.lastPolledAt !== undefined &&
           Number.isFinite(updatedAt) &&
-          updatedAt <= surface.lastPolledAt
+          updatedAt < surface.lastPolledAt
         ) {
           continue;
         }

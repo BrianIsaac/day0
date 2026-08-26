@@ -355,13 +355,13 @@ describe('real surface intake', (): void => {
       {
         project: 'Q3 close',
         team: 'REVOPS',
-        updatedAt: '2026-08-26T01:00:00.000Z',
+        updatedAt: '2026-08-26T00:59:59.999Z',
         limit: 100,
       },
       {
         project: 'Q3 close',
         team: 'REVOPS',
-        updatedAt: '2026-08-26T01:00:00.000Z',
+        updatedAt: '2026-08-26T00:59:59.999Z',
         limit: 100,
         cursor: 'next-page',
       },
@@ -561,7 +561,7 @@ describe('intake provider contracts', (): void => {
       args: {
         projectName: 'Q3 close',
         teamKey: 'REVOPS',
-        updated_since: '2026-08-26T01:00:00.000Z',
+        updated_since: '2026-08-26T00:59:59.999Z',
         page_size: 100,
         after: 'cursor-2',
       },
@@ -676,6 +676,7 @@ describe('intake provider contracts', (): void => {
     ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
     expect(unbounded.records[0].skipReason).toContain('cannot be bounded to project Q3 close');
     expect(unbounded.seeds.size).toBe(0);
+
   });
 
   it('does not checkpoint or seed a Linear poll whose pagination is incomplete', async (): Promise<void> => {
@@ -751,6 +752,80 @@ describe('intake provider contracts', (): void => {
     });
     expect(cycle.records[0].polledAt).toBeUndefined();
     expect(cycle.seeds.size).toBe(0);
+  });
+
+  it('overlaps a Linear checkpoint so an issue first visible on the timestamp boundary is not missed', async (): Promise<void> => {
+    const firstPollAt = Date.parse('2026-08-26T02:00:00.000Z');
+    const secondPollAt = Date.parse('2026-08-26T03:00:00.000Z');
+    const linearCredential = id<'credentials'>('credential-linear');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('linear', 'Linear', 'kanban', {
+          credentialId: linearCredential,
+          endpoint: 'https://mcp.linear.app/mcp',
+          toolAllowlist: ['list_issues'],
+        }),
+      ],
+      [
+        pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+        pageRow('linear.md', 'Linear automation', LINEAR),
+      ],
+      new Map([[String(linearCredential), 'linear-test-value']]),
+    );
+    const requests: Record<string, unknown>[] = [];
+    let poll = 0;
+    const makeMcpClient = () => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: {
+            list_issues: {
+              inputSchema: { properties: { project: {}, updatedAt: {} } },
+            },
+          },
+        },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (args: Record<string, unknown>): Promise<unknown> => {
+          requests.push(args);
+          poll += 1;
+          return poll === 1
+            ? { issues: [] }
+            : {
+                issues: [
+                  {
+                    id: 'boundary-issue',
+                    title: 'Appeared after the prior snapshot',
+                    url: 'https://linear.app/day0/issue/REVOPS-boundary',
+                    updatedAt: new Date(firstPollAt).toISOString(),
+                  },
+                ],
+              };
+        },
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => firstPollAt,
+        makeMcpClient,
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 1 });
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => secondPollAt,
+        makeMcpClient,
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 1 });
+
+    expect(requests).toEqual([
+      { project: 'Q3 close' },
+      { project: 'Q3 close', updatedAt: '2026-08-26T01:59:59.999Z' },
+    ]);
+    expect([...harness.seeds.keys()]).toEqual(['linear:boundary-issue']);
   });
 
   it('maps the shapes Linear\'s live MCP server returns, not only GraphQL-style objects', (): void => {
