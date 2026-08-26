@@ -45,6 +45,17 @@ describe('whole-page Markdown fence handling', (): void => {
     expect(unwrapWholePageFence(manifest)).toBe(manifest);
   });
 
+  it('ignores empty provider blocks after the closing fence, as Notion renders a trailing paragraph', (): void => {
+    const body = '```markdown\n# Northstar CRM\n\nNo approved surface is recorded.\n```\n<empty-block/>\n';
+    expect(unwrapWholePageFence(body)).toBe('# Northstar CRM\n\nNo approved surface is recorded.\n<empty-block/>\n');
+    expect(unwrapWholePageFence('```md\n# Page\n```\n<empty-block/>\n<empty-block/>')).toBe(
+      '# Page\n<empty-block/>\n<empty-block/>',
+    );
+    expect(unwrapWholePageFence('```md\n# Page\n```\nTrailing prose')).toBe(
+      '```md\n# Page\n```\nTrailing prose',
+    );
+  });
+
   it('unwraps each handbook template pasted as one block, with any accepted info string', (): void => {
     for (const name of [
       'onboarding.md',
