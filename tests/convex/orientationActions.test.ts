@@ -819,6 +819,22 @@ describe('orientation run', (): void => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('uses the provider page title as dedicated evidence when Markdown has no H1', async (): Promise<void> => {
+    stubRegistry();
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      { 'Northstar CRM': 'No approved connection surface is recorded.' },
+      [{ name: 'Northstar CRM', class: 'crm' }],
+    );
+
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 0, absent: 1 });
+    const surface = (await surfacesBySlug(harness, agentId))['northstar-crm'];
+    expect(surface.whereFound).toEqual([
+      expect.objectContaining({ ref: 'Northstar CRM', quote: 'Northstar CRM' }),
+    ]);
+  });
+
   it('builds credential findings from all four sanitised Notion fixtures', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';

@@ -260,13 +260,21 @@ export function evidenceQuote(
  * Args:
  *   markdown: Documentation page content.
  *   system: Manager-named system.
+ *   title: Provider page title when it is stored separately from Markdown.
  *
  * Returns:
- *   True when the first markdown heading names the system.
+ *   True when the first Markdown heading or the provider page title names the system.
  */
-export function isDedicatedSystemPage(markdown: string, system: string): boolean {
+export function isDedicatedSystemPage(
+  markdown: string,
+  system: string,
+  title?: string,
+): boolean {
   const heading = /^#\s+(.+)$/m.exec(markdown)?.[1];
-  return heading !== undefined && namesSystem(heading, system);
+  return (
+    (heading !== undefined && namesSystem(heading, system)) ||
+    (title !== undefined && namesSystem(title, system))
+  );
 }
 
 /**
@@ -275,12 +283,13 @@ export function isDedicatedSystemPage(markdown: string, system: string): boolean
  * Args:
  *   markdown: Documentation page content.
  *   system: Manager-named system.
+ *   title: Provider page title when it is stored separately from Markdown.
  *
  * Returns:
  *   The whole dedicated page, or only paragraphs that name the system.
  */
-export function relevantSystemText(markdown: string, system: string): string {
-  if (isDedicatedSystemPage(markdown, system)) return markdown;
+export function relevantSystemText(markdown: string, system: string, title?: string): string {
+  if (isDedicatedSystemPage(markdown, system, title)) return markdown;
   const pattern = systemNamePattern(system);
   return markdown
     .split(/\n\s*\n/)
@@ -350,7 +359,7 @@ function oauthProcedure(text: string): string {
  *   True when the marker is evidence for this system.
  */
 function markerBelongsToSystem(page: CredentialPage, label: string, system: string): boolean {
-  return isDedicatedSystemPage(page.markdown, system) || namesSystem(label, system);
+  return isDedicatedSystemPage(page.markdown, system, page.title) || namesSystem(label, system);
 }
 
 /**
@@ -372,7 +381,7 @@ export function extractCredentialFinding(
   system: string,
 ): CredentialFinding {
   for (const page of pages) {
-    const scoped = relevantSystemText(page.markdown, system);
+    const scoped = relevantSystemText(page.markdown, system, page.title);
     for (const match of scoped.matchAll(CREDENTIAL_MARKER)) {
       const label = match[1]?.trim();
       if (!label || !markerBelongsToSystem(page, label, system)) continue;
@@ -389,7 +398,7 @@ export function extractCredentialFinding(
   }
 
   for (const page of pages) {
-    const scoped = relevantSystemText(page.markdown, system);
+    const scoped = relevantSystemText(page.markdown, system, page.title);
     if (/\boauth\b|\bconfiguration token\b/i.test(scoped)) {
       const location = oauthProcedure(scoped);
       if (location) {
@@ -407,7 +416,7 @@ export function extractCredentialFinding(
   }
 
   for (const page of pages) {
-    const scoped = relevantSystemText(page.markdown, system);
+    const scoped = relevantSystemText(page.markdown, system, page.title);
     const location = scoped
       .split('\n')
       .map((line: string): string => line.trim())
@@ -441,12 +450,17 @@ export function extractCredentialFinding(
  * Args:
  *   markdown: Documentation page content.
  *   system: Manager-named system.
+ *   title: Provider page title when it is stored separately from Markdown.
  *
  * Returns:
  *   True only when relevant text explicitly denies an approved connection.
  */
-export function explicitlyDeniesSurface(markdown: string, system: string): boolean {
-  if (isDedicatedSystemPage(markdown, system)) return NO_SURFACE_PATTERN.test(markdown);
+export function explicitlyDeniesSurface(
+  markdown: string,
+  system: string,
+  title?: string,
+): boolean {
+  if (isDedicatedSystemPage(markdown, system, title)) return NO_SURFACE_PATTERN.test(markdown);
   const pattern = systemNamePattern(system);
   return markdown
     .split('\n')
@@ -948,7 +962,7 @@ export function selectEvidence(
       page,
       quote: evidenceQuote(page.markdown, system, slug) ?? {
         quote: page.title,
-        attributed: false,
+        attributed: namesSystem(page.title, system),
       },
     }),
   );
@@ -1011,13 +1025,13 @@ export async function orientSurface(
     agentId: surface.agentId,
   });
   const matches = pages.filter((page: Doc<'docPages'>): boolean =>
-    namesSystem(page.markdown, surface.displayName),
+    namesSystem(`${page.title}\n${page.markdown}`, surface.displayName),
   );
   const evidence: Evidence[] = selectEvidence(matches, surface.displayName, surface.slug);
   const relevantText = redactTokenShapes(
     matches
       .map((page: Doc<'docPages'>): string =>
-        relevantSystemText(page.markdown, surface.displayName),
+        relevantSystemText(page.markdown, surface.displayName, page.title),
       )
       .join('\n\n'),
   );
@@ -1025,7 +1039,7 @@ export async function orientSurface(
     attributedUrls(relevantText, surface.displayName, surface.slug),
   );
   const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
-    explicitlyDeniesSurface(page.markdown, surface.displayName),
+    explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
   );
   if (matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api)) {
     const recorded = await ctx.runMutation(internal.surfaces.markAbsent, {

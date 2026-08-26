@@ -87,7 +87,10 @@ describe('whole-page Markdown fence handling', (): void => {
     expect(unwrapWholePageFence(unclosedInner)).toBe(unclosedInner);
     expect(unwrapWholePageFence('```md\r\nA\r\nB\r\n```\r\n')).toBe('A\nB\n');
     expect(unwrapWholePageFence('# Plain\n\nNo fence')).toBe('# Plain\n\nNo fence');
+    expect(unwrapWholePageFence('')).toBe('');
+    expect(unwrapWholePageFence('<empty-block/>\n')).toBe('<empty-block/>\n');
     expect(unwrapWholePageFence('```md\n```')).toBe('');
+    expect(unwrapWholePageFence('```md\n```\n<empty-block/>')).toBe('<empty-block/>');
   });
 });
 
