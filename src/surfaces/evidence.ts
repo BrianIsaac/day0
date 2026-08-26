@@ -28,7 +28,24 @@ export function pageLinkFromQuote(quote: string | undefined): PageLink | undefin
   const match = PAGE_TAG.exec(quote);
   if (!match) return undefined;
   const [, url, rawTitle] = match;
-  if (!/^https?:\/\//i.test(url)) return undefined;
-  const title = rawTitle.replace(/\s+/g, ' ').trim();
+  if (/[\u0000-\u001f\u007f]/.test(url)) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    !parsed.hostname ||
+    parsed.username ||
+    parsed.password
+  ) {
+    return undefined;
+  }
+  const title = rawTitle
+    .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   return { url, title: title || url };
 }

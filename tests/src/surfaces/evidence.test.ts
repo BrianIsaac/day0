@@ -20,6 +20,8 @@ describe('evidence page links', (): void => {
     expect(pageLinkFromQuote('# Linear automation')).toBeUndefined();
     expect(pageLinkFromQuote('See <page url="https://n.example/p/1">Linear</page> for the token.')).toBeUndefined();
     expect(pageLinkFromQuote('<page url="javascript:alert(1)">Linear</page>')).toBeUndefined();
+    expect(pageLinkFromQuote('<page url="https://notion.example@evil.example/p/1">Linear</page>')).toBeUndefined();
+    expect(pageLinkFromQuote('<page url="https://">Linear</page>')).toBeUndefined();
     expect(pageLinkFromQuote('<page url="https://n.example/p/1">Linear</page> <page url="https://n.example/p/2">Slack</page>')).toBeUndefined();
     expect(pageLinkFromQuote(undefined)).toBeUndefined();
     expect(pageLinkFromQuote('')).toBeUndefined();
