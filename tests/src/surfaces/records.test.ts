@@ -16,13 +16,10 @@ describe('surface row narrowing', (): void => {
     expect(credentialKindFor({ ...base, credentialKind: 'location' })).toBe('location');
   });
 
-  it('falls back to the connect request method, sharing by default', (): void => {
-    expect(credentialKindFor({ ...base, request: { credential: { method: 'oauth' } } })).toBe(
-      'oauth',
-    );
-    expect(credentialKindFor({ ...base, request: { credential: { method: 'api-key' } } })).toBe(
-      'value',
-    );
+  it('treats a row without a stored kind as a shared key, whatever the request expected', (): void => {
+    expect(
+      credentialKindFor({ ...base, request: { credential: { method: 'oauth' } } } as never),
+    ).toBe('value');
     expect(credentialKindFor({ ...base, credentialKind: 'unknown' })).toBe('value');
     expect(credentialKindFor(base)).toBe('value');
   });
@@ -36,7 +33,7 @@ describe('surface row narrowing', (): void => {
       credentialId: 'cred-1',
       managerDmChannelId: 'D1',
       request: { target: { reasoning: 'secret-bearing prose' } },
-    });
+    } as never);
     expect(record).toEqual({
       ...base,
       path: 'mcp',

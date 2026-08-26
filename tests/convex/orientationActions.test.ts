@@ -809,6 +809,7 @@ describe('orientation run', (): void => {
     });
     expect(surfaces.linear.request).not.toHaveProperty('credential.sourceId');
     expect(surfaces.linear.credentialId).toBe(stored._id);
+    expect(surfaces.linear.credentialKind).toBe('value');
     expect(fakeCredentialState().storeCalls).toEqual([]);
     expect(JSON.stringify(surfaces)).not.toContain('local-value-orientation-never-reads');
     expect(surfaces.linear.request).not.toHaveProperty('credential.plaintext');
@@ -888,7 +889,7 @@ describe('orientation run', (): void => {
       plaintext: 'linear',
     });
     await orientDeclared(harness, agentId);
-    expect((await surfacesBySlug(harness, agentId)).linear.credentialId).toBe(wanted._id);
+    expect((await surfacesBySlug(harness, agentId)).linear).toMatchObject({ credentialId: wanted._id, credentialKind: 'value' });
   });
 
   it('leaves the credential unresolved, and says so, when no stored row matches the marker', async (): Promise<void> => {

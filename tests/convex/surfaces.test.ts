@@ -532,11 +532,13 @@ describe('surface connection lifecycle metadata', (): void => {
     await harness.mutation(internal.surfaces.attachCredential, {
       surfaceId,
       credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialKind: 'location',
       credentialLocation: 'entered by IT approver',
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'approved',
       credentialId: '10000credentials',
+      credentialKind: 'location',
       credentialLocation: 'entered by IT approver',
       credentialLanded: false,
     });
@@ -686,9 +688,17 @@ describe('surface approval state machine', (): void => {
 
     await propose(harness, surfaceId);
     await owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' });
+    await harness.mutation(internal.surfaces.attachCredential, {
+      surfaceId,
+      credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialKind: 'value',
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({ credentialKind: 'value' });
     await owner.mutation(api.surfaces.reject, { surfaceId, reason: 'Wrong endpoint.' });
     const rejected = await readSurface(harness, surfaceId);
     expect(rejected).toMatchObject({ verdict: 'declared', reason: 'Wrong endpoint.' });
+    expect(rejected.credentialId).toBeUndefined();
+    expect(rejected.credentialKind).toBeUndefined();
     expect(rejected.managerApprovedAt).toBeUndefined();
     expect(rejected.itApprovedAt).toBeUndefined();
     expect(rejected.endpoint).toBeUndefined();

@@ -575,6 +575,7 @@ export const landCredential = action({
     await ctx.runMutation(internal.surfaces.attachCredential, {
       surfaceId: context.surface._id,
       credentialId,
+      credentialKind: kind,
       credentialLocation: context.surface.credentialLocation,
     });
     const probeScheduled =

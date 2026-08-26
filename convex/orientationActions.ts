@@ -55,9 +55,16 @@ type CredentialId = GenericId<'credentials'>;
 
 type StoredCredentialSummary = {
   _id: CredentialId;
+  kind: 'value' | 'location' | 'oauth';
   label: string;
   revokedAt?: number;
 };
+
+/** The stored row an orientation run attaches to a surface. */
+interface ResolvedCredential {
+  credentialId: CredentialId;
+  kind: StoredCredentialSummary['kind'];
+}
 
 /**
  * Lane A's read for a page-derived row, keyed the way its sync stored it.
@@ -843,7 +850,7 @@ async function resolveStoredCredential(
   sourceId: Id<'docSources'>,
   pageRef: string,
   label: string,
-): Promise<CredentialId | undefined> {
+): Promise<ResolvedCredential | undefined> {
   const wanted = label.trim().toLowerCase();
   for (const ref of candidateCredentialRefs(pageRef, label)) {
     let row: StoredCredentialSummary | null;
@@ -858,7 +865,9 @@ async function resolveStoredCredential(
     }
     if (!row) continue;
     if (row.revokedAt !== undefined) continue;
-    if (row.label.trim().toLowerCase() === wanted) return row._id;
+    if (row.label.trim().toLowerCase() === wanted) {
+      return { credentialId: row._id, kind: row.kind };
+    }
   }
   return undefined;
 }
@@ -979,9 +988,9 @@ export async function orientSurface(
     openQuestions.push('Confirm the approved connection endpoint.');
   }
 
-  let credentialId: CredentialId | undefined;
+  let stored: ResolvedCredential | undefined;
   if (credential.found === 'value') {
-    credentialId =
+    stored =
       credential.label && credential.evidenceRef && credential.sourceId && context.agent.userId
         ? await resolveStoredCredential(
             ctx,
@@ -991,7 +1000,7 @@ export async function orientSurface(
             credential.label,
           )
         : undefined;
-    if (!credentialId) {
+    if (!stored) {
       openQuestions.push(
         'The stored credential marker could not be resolved to an encrypted row; re-sync the documentation source.',
       );
@@ -1034,7 +1043,8 @@ export async function orientSurface(
     path,
     fallbackPath: draft.fallbackPath,
     endpoint,
-    credentialId,
+    credentialId: stored?.credentialId,
+    credentialKind: stored?.kind,
     credentialLocation: credential.found === 'value' ? undefined : credential.summary,
     expiresInDays: draft.expiresInDays,
   });

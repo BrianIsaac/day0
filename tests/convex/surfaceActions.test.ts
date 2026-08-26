@@ -567,6 +567,7 @@ describe('credential landing from the card', (): void => {
     expect(JSON.stringify(stored)).not.toContain('xoxb-shared-token-value');
     expect(stored.surface).toMatchObject({
       credentialId: stored.credentials[0]._id,
+      credentialKind: 'value',
       credentialLanded: false,
       credentialLocation: 'OAuth install flow documented in the policy',
     });

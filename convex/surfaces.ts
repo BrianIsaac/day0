@@ -95,6 +95,8 @@ export const seedFromCharter = internalMutation({
   },
 });
 
+const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
+
 /** Store an evidence-backed connect request. */
 export const propose = internalMutation({
   args: {
@@ -105,6 +107,7 @@ export const propose = internalMutation({
     fallbackPath: v.string(),
     endpoint: v.optional(v.string()),
     credentialId: v.optional(v.id('credentials')),
+    credentialKind: v.optional(credentialKind),
     credentialLocation: v.optional(v.string()),
     expiresInDays: v.number(),
   },
@@ -121,6 +124,7 @@ export const propose = internalMutation({
       fallbackPath: args.fallbackPath,
       endpoint: args.endpoint,
       credentialId: args.credentialId,
+      credentialKind: args.credentialId ? args.credentialKind : undefined,
       credentialLocation: args.credentialLocation,
       credentialRef: undefined,
       expiresAt: now + args.expiresInDays * 24 * 60 * 60 * 1_000,
@@ -245,6 +249,7 @@ export const attachCredential = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
     credentialId: v.id('credentials'),
+    credentialKind,
     credentialLocation: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<void> => {
@@ -253,6 +258,7 @@ export const attachCredential = internalMutation({
     const approved = surface.managerApprovedAt !== undefined && surface.itApprovedAt !== undefined;
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
+      credentialKind: args.credentialKind,
       credentialLocation: args.credentialLocation,
       credentialRef: undefined,
       credentialLanded: false,
@@ -534,6 +540,7 @@ export const reject = mutation({
       fallbackPath: undefined,
       credentialRef: undefined,
       credentialId: undefined,
+      credentialKind: undefined,
       credentialLocation: undefined,
       managerDmChannelId: undefined,
       toolAllowlist: undefined,
