@@ -1,6 +1,7 @@
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
+import type { PersistedSurfaceVerdict } from './verdict';
 
 export type SurfaceMode = 'mock' | 'real';
 
@@ -21,13 +22,42 @@ export function isSurfacePath(value: unknown): value is SurfacePath {
   return typeof value === 'string' && SURFACE_PATHS.includes(value as SurfacePath);
 }
 
-export interface SurfaceDescriptor {
+export const CREDENTIAL_KINDS = ['value', 'location', 'oauth'] as const;
+
+/**
+ * How a surface's credential was landed. `value` and `location` are shared
+ * keys handed over to the agent, so writes through them carry the employee's
+ * name; `oauth` is a dedicated app that posts as itself.
+ */
+export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
+
+/**
+ * The surface fields the executors read. A structural subset of the
+ * `surfaces` row: the adapters never depend on the whole document, so a row
+ * from any lane's schema revision can be narrowed to this shape.
+ */
+export interface SurfaceRecord {
   slug: string;
+  displayName: string;
+  class: string;
+  verdict: PersistedSurfaceVerdict;
+  credentialLanded: boolean;
+  lastVerifiedAt?: number;
   path?: SurfacePath;
+  endpoint?: string;
+  toolAllowlist?: string[];
+  credentialId?: string;
+  credentialKind?: CredentialKind;
+  managerDmChannelId?: string;
 }
+
+/** @deprecated Use `SurfaceRecord`; kept so callers that pass `[]` still type-check. */
+export type SurfaceDescriptor = SurfaceRecord;
 
 export interface AdapterRun {
   agentId: Id<'agents'>;
+  /** The employee's display name, written into provenance trailers and chat identity. */
+  agentName: string;
   workItemId: Id<'workItems'>;
   runId: Id<'events'>;
 }
@@ -47,6 +77,10 @@ export interface AppliedAction extends ActionOutcome {
 
 export interface SurfaceAdapter {
   readonly tools: readonly MockAction['tool'][];
+  /**
+   * Apply one action. The adapter receives the action after the registry has
+   * parsed its arguments, checked the grant, and decided whether it is held.
+   */
   read(ctx: ActionCtx, agentId: Id<'agents'>): Promise<Partial<MockSurfaceSnapshot>>;
   apply(
     ctx: ActionCtx,

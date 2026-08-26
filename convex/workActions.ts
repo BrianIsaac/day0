@@ -1,7 +1,7 @@
 'use node';
 
 import { v } from 'convex/values';
-import { action, type ActionCtx } from './_generated/server';
+import { action, internalAction, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import {
   evaluateCandidate,
@@ -14,8 +14,17 @@ import type { Charter } from '../src/agent/charter';
 import type { WorkCandidate, WorkSourceCategory } from '../src/work/types';
 import type { Doc, Id } from './_generated/dataModel';
 import { asAgentId } from '../src/lib/ids';
-import { applySurfaceActions, readSurfaceSnapshot } from '../src/surfaces/registry';
-import type { AppliedAction } from '../src/surfaces/types';
+import {
+  applySurfaceActions,
+  readSurfaceSnapshot,
+  type RealAdapterDeps,
+} from '../src/surfaces/registry';
+import type { AppliedAction, SurfaceRecord } from '../src/surfaces/types';
+import { decryptCredential } from '../src/surfaces/credentials';
+import { createMastraMcpClient } from '../src/surfaces/mcp';
+import { toSurfaceRecord } from '../src/surfaces/records';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
+import type { ExecutionOutput } from '../src/work/types';
 
 /**
  * Node actions for the work loop — Layer-2 evaluation, Layer-3 plan
@@ -287,6 +296,17 @@ export const executeApprovedPlan = action({
       skillId: pickedSkill._id,
     });
     if (!claim.claimed) return { ok: false, reason: claim.reason };
+    if (SURFACE_MODE === 'real') {
+      return await holdRealActions(ctx, {
+        workItemId: args.workItemId,
+        agentId,
+        runId: claim.runId,
+        skill: pickedSkill,
+        plan,
+        candidate,
+        charter,
+      });
+    }
     try {
       const mockEnv = await readSurfaceSnapshot(ctx, agentId, 'mock', []);
       const output = await runSkill({
@@ -340,6 +360,201 @@ export const executeApprovedPlan = action({
     }
   },
 });
+
+/**
+ * Run a real-surface skill and stop it at the exact-action gate.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: Work, run, skill and evaluation context.
+ *
+ * Returns:
+ *   The pending result, or the fenced failure.
+ */
+async function holdRealActions(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    agentId: Id<'agents'>;
+    runId: Id<'events'>;
+    skill: SimpleSkillRow;
+    plan: Awaited<ReturnType<typeof draftExecutionPlan>>;
+    candidate: WorkCandidate;
+    charter: Charter;
+  },
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const mockEnv = await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
+    const output = await runSkill({
+      skill: {
+        name: args.skill.name,
+        description: args.skill.description,
+        body: args.skill.body,
+      },
+      plan: args.plan,
+      candidate: args.candidate,
+      charter: args.charter,
+      mockEnv,
+      surfaces: await loadSurfaces(ctx, args.agentId),
+    });
+    const pending = await ctx.runMutation(internal.work.setActionsPending, {
+      workItemId: args.workItemId,
+      runId: args.runId,
+      output,
+    });
+    if (!pending.pending) {
+      return { ok: false, reason: 'the run was moved on before its actions could be held' };
+    }
+    return { ok: true, reason: 'actions pending the manager\'s approval' };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await ctx.runMutation(internal.work.setFailed, {
+      workItemId: args.workItemId,
+      reason,
+      runId: args.runId,
+    });
+    return { ok: false, reason };
+  }
+}
+
+/**
+ * Apply the actions the manager approved, with the run id the skill ran under.
+ *
+ * Scheduled by `work.approveActions`. The claim moves the row back to
+ * `executing` exactly once, so a second approval after a restart re-applies
+ * with the same idempotency keys rather than alongside a first apply that is
+ * still running. Indexes the manager did not approve are recorded as held;
+ * the approved ones pass the registry's rules (grant, held public post,
+ * comment before status, provenance) and then their adapter.
+ */
+export const applyApprovedActions = internalAction({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
+    const claim = await ctx.runMutation(internal.work.claimApprovedActions, {
+      workItemId: args.workItemId,
+    });
+    if (!claim.claimed) return { ok: false, reason: claim.reason };
+    try {
+      const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: claim.agentId });
+      if (!agent) throw new Error('agent not found');
+      const surfaces = await loadSurfaces(ctx, claim.agentId);
+      const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(
+        internal.agents.grantedScopes,
+        { agentId: claim.agentId },
+      );
+      const output = claim.output as ExecutionOutput;
+      const applied = await applySurfaceActions(
+        ctx,
+        SURFACE_MODE,
+        surfaces,
+        {
+          agentId: claim.agentId,
+          agentName: agent.name,
+          workItemId: args.workItemId,
+          runId: claim.runId,
+        },
+        output.actions ?? [],
+        {
+          deps: realAdapterDeps(),
+          grants: new Set(grantRows.map((grant) => grant.scope)),
+          approvedIndexes: new Set(claim.approvedIndexes),
+        },
+      );
+      return await finishRun(ctx, args.workItemId, claim.runId, output, applied);
+    } catch (err) {
+      const reason = (err as Error).message;
+      await ctx.runMutation(internal.work.setFailed, {
+        workItemId: args.workItemId,
+        reason,
+        runId: claim.runId,
+      });
+      return { ok: false, reason };
+    }
+  },
+});
+
+/**
+ * The runtime the real-mode adapters run in: credentials decrypted through
+ * the credentials action, Mastra's MCP client, and the Node `fetch`.
+ *
+ * Returns:
+ *   Adapter dependencies for this action runtime.
+ */
+function realAdapterDeps(): RealAdapterDeps {
+  return {
+    decrypt: decryptCredential,
+    createMcpClient: createMastraMcpClient,
+    fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
+  };
+}
+
+/**
+ * Load the agent's surfaces as the executors read them.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agentId: The agent.
+ *
+ * Returns:
+ *   Executor-facing surface records.
+ */
+async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {
+  const rows: Doc<'surfaces'>[] = await ctx.runQuery(internal.orientationData.surfacesForAgent, {
+    agentId,
+  });
+  return rows.map((row) => toSurfaceRecord(row));
+}
+
+/**
+ * Record the outcome of an applied run.
+ *
+ * A run completes only when every action it emitted changed the work
+ * environment or was held. "At least one applied" is not enough: the skills
+ * are told to DM the manager alongside the primary mutation, so a failed
+ * primary action plus a delivered "I did it" DM would report the work as done
+ * when only the claim about it landed.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   workItemId: The work item.
+ *   output: The skill's draft, notes and actions.
+ *   applied: The ledger.
+ *
+ * Returns:
+ *   Whether the run completed.
+ */
+async function finishRun(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  runId: Id<'events'>,
+  output: ExecutionOutput,
+  applied: AppliedAction[],
+): Promise<{ ok: boolean; reason?: string }> {
+  const failures = applied.filter((action: AppliedAction): boolean => !action.ok && !action.held);
+  const reason =
+    applied.length === 0
+      ? 'skill emitted no actions, so nothing in the work environment changed'
+      : failures.length > 0
+        ? `${failures.length} of ${applied.length} actions did not change the work environment: ${failures
+            .map((failure: AppliedAction): string => `${failure.tool} (${failure.reason})`)
+            .join('; ')}`
+        : undefined;
+  if (reason) {
+    await ctx.runMutation(internal.work.setFailed, {
+      workItemId,
+      reason,
+      runId,
+      output: { ...output, applied },
+    });
+    return { ok: false, reason };
+  }
+  await ctx.runMutation(internal.work.setCompleted, {
+    workItemId,
+    runId,
+    output: { ...output, applied },
+  });
+  return { ok: true };
+}
 
 /**
  * Explain why an applied-action ledger cannot complete its work item.

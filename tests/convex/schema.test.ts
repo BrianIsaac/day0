@@ -117,3 +117,53 @@ describe('surface connection evidence persistence', (): void => {
     });
   });
 });
+
+describe('exact-action gate schema', (): void => {
+  it('stores a pending run with its run id, approved indexes and a surface-targeting skill', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const result = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'gate test',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const runId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: {},
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Gate',
+        contentSummary: 'Gate',
+        contentRefs: [],
+        state: 'actions-pending',
+        pendingRunId: runId,
+        approvedIndexes: [0, 2],
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const skillId = await ctx.db.insert('skills', {
+        agentId,
+        name: 'update-linear-ticket',
+        description: 'd',
+        body: '',
+        sourceType: 'agent-authored',
+        state: 'proposed',
+        targetSurface: 'linear',
+        createdAt: 1,
+      });
+      return { item: await ctx.db.get(workItemId), skill: await ctx.db.get(skillId), runId };
+    });
+    expect(result.item?.state).toBe('actions-pending');
+    expect(result.item?.pendingRunId).toBe(result.runId);
+    expect(result.item?.approvedIndexes).toEqual([0, 2]);
+    expect(result.skill?.targetSurface).toBe('linear');
+  });
+});

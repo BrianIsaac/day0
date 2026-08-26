@@ -54,6 +54,26 @@ export interface ExecutionPlan {
   estimatedMinutes: number;
 }
 
+/** The four verbs that write to the per-agent mock environment. */
+export const MOCK_ACTION_TOOLS = [
+  'spreadsheet.appendRow',
+  'slack.postMessage',
+  'twitter.reply',
+  'ticket.update',
+] as const;
+
+/**
+ * The two generic verbs that reach a discovered real surface. Their arguments
+ * travel as JSON strings so the flat argument bag stays a valid strict schema.
+ */
+export const SURFACE_ACTION_TOOLS = ['mcp.call', 'http.request'] as const;
+
+export const ACTION_TOOLS = [...MOCK_ACTION_TOOLS, ...SURFACE_ACTION_TOOLS] as const;
+
+export type MockActionTool = (typeof MOCK_ACTION_TOOLS)[number];
+export type SurfaceActionTool = (typeof SURFACE_ACTION_TOOLS)[number];
+export type ActionTool = (typeof ACTION_TOOLS)[number];
+
 export interface MockActionArgs {
   // spreadsheet.appendRow
   sheetSlug?: string;
@@ -62,7 +82,7 @@ export interface MockActionArgs {
   // slack.postMessage
   channelSlug?: string;
   threadKey?: string;
-  // shared body
+  // shared body: slack/twitter text, or the http.request body
   body?: string;
   // twitter.reply
   tweetSlug?: string;
@@ -70,10 +90,19 @@ export interface MockActionArgs {
   slug?: string;
   status?: 'open' | 'in-progress' | 'blocked' | 'done';
   comment?: string;
+  // mcp.call and http.request: the connected surface slug, exactly as listed
+  surface?: string;
+  // mcp.call
+  tool?: string;
+  toolArgsJson?: string;
+  // http.request
+  method?: string;
+  path?: string;
+  headersJson?: string;
 }
 
 export interface MockAction {
-  tool: 'spreadsheet.appendRow' | 'slack.postMessage' | 'twitter.reply' | 'ticket.update';
+  tool: ActionTool;
   args: MockActionArgs;
 }
 

@@ -260,6 +260,10 @@ export default defineSchema({
       v.literal('skipped'),
       v.literal('deferred'),
       v.literal('needs-skill'),
+      // ---- Lane C (executors and the gate): the exact-action gate ----
+      // Between `runSkill` and apply in real mode: `output.actions` is
+      // persisted and nothing reaches a surface until the manager approves.
+      v.literal('actions-pending'),
     ),
     verdict: v.optional(v.any()),
     plan: v.optional(v.any()),
@@ -267,6 +271,19 @@ export default defineSchema({
     proposedSkillId: v.optional(v.id('skills')),
     output: v.optional(v.any()),
     skipReason: v.optional(v.string()),
+    // ---- Lane C (executors and the gate) ----
+    /** The run whose actions are pending; preserved through approval so the
+     * apply step keys its idempotency off the same claim as the skill run. */
+    pendingRunId: v.optional(v.id('events')),
+    /** Indexes into `output.actions` the manager approved. Every other index
+     * is recorded as held when the approved ones are applied. */
+    approvedIndexes: v.optional(v.array(v.number())),
+    /** The execution claim currently allowed to move this row. */
+    executionRunId: v.optional(v.id('events')),
+    /** The apply claim and its start time, used to recover an interrupted
+     * provider call without replaying an outcome that may already have landed. */
+    applyAttemptId: v.optional(v.id('events')),
+    applyClaimedAt: v.optional(v.number()),
     observedAt: v.number(),
     createdAt: v.number(),
   })
@@ -291,6 +308,10 @@ export default defineSchema({
     proposedFor: v.optional(v.id('workItems')),
     rationale: v.optional(v.string()),
     requiredScopes: v.optional(v.array(v.string())),
+    // ---- Lane C (executors and the gate) ----
+    /** The surface slug a real-mode skill acts on; approval refuses the skill
+     * while that surface is not connected. Absent for mock-only skills. */
+    targetSurface: v.optional(v.string()),
     /** The authoring run that currently holds this skill, and when it took it.
      * Authoring is an exclusive, fenced run: a second run cannot start while
      * this is set and unexpired, and a run may only write its result while this
