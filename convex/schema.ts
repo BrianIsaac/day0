@@ -283,6 +283,11 @@ export default defineSchema({
     /** The run whose actions are pending; preserved through approval so the
      * apply step keys its idempotency off the same claim as the skill run. */
     pendingRunId: v.optional(v.id('events')),
+    // One verdict per `output.actions` row, decided when the run was held: a
+    // held row shows its reason on the card and is refused at approval.
+    actionVerdicts: v.optional(
+      v.array(v.object({ held: v.boolean(), reason: v.optional(v.string()) })),
+    ),
     /** Indexes into `output.actions` the manager approved. Every other index
      * is recorded as held when the approved ones are applied. */
     approvedIndexes: v.optional(v.array(v.number())),

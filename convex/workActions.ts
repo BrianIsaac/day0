@@ -459,6 +459,7 @@ export const applyApprovedActions = internalAction({
           deps: realAdapterDeps(),
           grants: new Set(grantRows.map((grant) => grant.scope)),
           approvedIndexes: new Set(claim.approvedIndexes),
+          heldReasons: new Map(claim.heldReasons),
         },
       );
       return await finishRun(ctx, args.workItemId, claim.runId, output, applied);

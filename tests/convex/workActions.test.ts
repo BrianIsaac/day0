@@ -149,7 +149,11 @@ interface Seeded {
  * Returns:
  *   The agent and the plan-approved work item.
  */
-async function seed(harness: Harness, mode: 'mock' | 'real'): Promise<Seeded> {
+async function seed(
+  harness: Harness,
+  mode: 'mock' | 'real',
+  grants: string[] = ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write'],
+): Promise<Seeded> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -180,7 +184,7 @@ async function seed(harness: Harness, mode: 'mock' | 'real'): Promise<Seeded> {
       createdAt: 1,
       registeredAt: 1,
     });
-    for (const scope of ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write']) {
+    for (const scope of grants) {
       await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
     }
     if (mode === 'real') {
@@ -296,6 +300,12 @@ describe('executing an approved plan through the gate', (): void => {
     expect(row.state).toBe('actions-pending');
     expect(row.pendingRunId).toBeDefined();
     expect((row.output as ExecutionOutput).actions).toEqual(skillOutput.actions);
+    expect(row.actionVerdicts).toEqual([
+      { held: false },
+      { held: false },
+      { held: false },
+      { held: true, reason: HELD_PUBLIC_POST },
+    ]);
     expect(recorded.mcp).toHaveLength(0);
     expect(recorded.http).toHaveLength(0);
     const events = await harness.run(
@@ -319,7 +329,10 @@ describe('executing an approved plan through the gate', (): void => {
     // The row is what survives a backend restart: state, run id and actions are
     // persisted, and approval reads only them.
     if (!runId) throw new Error('pending run missing');
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] }),
+    ).rejects.toThrow(`action 4 is held (${HELD_PUBLIC_POST})`);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2] });
     const applied = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect(applied).toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
@@ -382,7 +395,66 @@ describe('executing an approved plan through the gate', (): void => {
       [true, true, HELD_NOT_APPROVED],
       [false, false, 'status change without audit comment'],
       [true, false, undefined],
-      [true, true, HELD_NOT_APPROVED],
+      [true, true, HELD_PUBLIC_POST],
+    ]);
+    expect(recorded.mcp).toHaveLength(0);
+    expect(recorded.http).toHaveLength(1);
+  });
+
+  it('carries the manager DM on boss:message alone and holds nothing that was granted', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', ['boss:message', 'linear:read', 'linear:write', 'slack:read']);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    const runId = pending.pendingRunId;
+    if (!runId) throw new Error('pending run missing');
+    expect(pending.actionVerdicts).toEqual([
+      { held: false },
+      { held: false },
+      { held: false },
+      { held: true, reason: HELD_PUBLIC_POST },
+    ]);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2] });
+    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
+      [true, false, undefined],
+      [true, false, undefined],
+      [true, false, undefined],
+      [true, true, HELD_PUBLIC_POST],
+    ]);
+    expect(ledger(row)[2].providerId).toBe('1787654400.000200');
+    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
+  });
+
+  it('holds an ungranted write from the moment the run is held, so it never reaches apply', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', ['boss:message', 'linear:read', 'slack:read']);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    const runId = pending.pendingRunId;
+    if (!runId) throw new Error('pending run missing');
+    expect(pending.actionVerdicts).toEqual([
+      { held: true, reason: 'no grant (linear:write)' },
+      { held: true, reason: 'no grant (linear:write)' },
+      { held: false },
+      { held: true, reason: HELD_PUBLIC_POST },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] }),
+    ).rejects.toThrow('action 1 is held (no grant (linear:write))');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [2] });
+    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
+      [true, true, 'no grant (linear:write)'],
+      [true, true, 'no grant (linear:write)'],
+      [true, false, undefined],
+      [true, true, HELD_PUBLIC_POST],
     ]);
     expect(recorded.mcp).toHaveLength(0);
     expect(recorded.http).toHaveLength(1);

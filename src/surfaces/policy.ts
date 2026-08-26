@@ -1,4 +1,5 @@
 import type { MockAction } from '../work/types';
+import { MOCK_TOOLS } from './mock';
 import type { AppliedAction, CredentialKind, SurfaceRecord } from './types';
 import { verdictFor } from './verdict';
 
@@ -20,6 +21,7 @@ export const SURFACE_NOT_CONNECTED = 'surface not connected';
 export const TOOL_NOT_ALLOWED = 'tool not in the surface allowlist';
 export const HELD_PUBLIC_POST = 'public post held for the manager';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
+export const UNKNOWN_TOOL = 'unknown tool';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
 export const USERNAME_REFUSED = 'skill-supplied username refused';
@@ -282,22 +284,169 @@ export function heldReason(parsed: ParsedSurfaceAction, surface: SurfaceRecord):
   return undefined;
 }
 
+/** The scope every agent holds from deployment; on a surface it authorises the manager DM alone. */
+export const BOSS_MESSAGE_SCOPE = 'boss:message';
+
 /**
- * Whether an action as emitted would be held on its surface.
+ * Whether an action is the manager DM.
+ *
+ * Exactly one real action qualifies: a `chat.postMessage`-class write on a
+ * chat surface whose target channel is that surface's manager DM channel, as
+ * the connection probe recorded it. A chat write anywhere else is a public
+ * post, and a write on any other surface class is never a DM.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   True for the manager DM.
+ */
+export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
+  if (surface.class !== 'chat' || !surface.managerDmChannelId) return false;
+  if (actionIntent(parsed) !== 'write') return false;
+  const posts =
+    parsed.kind === 'http.request' ? isChatPost(parsed, surface) : COMMENT_TOOL.test(parsed.tool);
+  return posts && targetChannel(parsed) === surface.managerDmChannelId;
+}
+
+/**
+ * The scopes any one of which authorises an action.
+ *
+ * The manager DM is what `boss:message` means on a real chat surface, so the
+ * DM is granted by either `boss:message` or the surface's own write scope;
+ * every other action needs exactly `requiredScope`. The first entry is the
+ * scope a refusal names.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   The granting scopes, most specific first.
+ */
+export function grantingScopes(parsed: ParsedSurfaceAction, surface: SurfaceRecord): string[] {
+  const scope = requiredScope(parsed);
+  return isManagerDm(parsed, surface) ? [BOSS_MESSAGE_SCOPE, scope] : [scope];
+}
+
+/**
+ * Why an action has no grant, if it has none.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *   grants: The agent's live permission scopes.
+ *
+ * Returns:
+ *   `no grant (<scope>)`, or undefined when a granting scope is held.
+ */
+export function grantRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  grants: ReadonlySet<string>,
+): string | undefined {
+  const scopes = grantingScopes(parsed, surface);
+  if (scopes.some((scope) => grants.has(scope))) return undefined;
+  return `${NO_GRANT} (${scopes[0]})`;
+}
+
+/**
+ * The refusal for a legacy mock verb emitted in real mode.
+ *
+ * Args:
+ *   tool: The verb.
+ *
+ * Returns:
+ *   The reason the ledger records.
+ */
+export function mockVerbRefusal(tool: string): string {
+  return `${MOCK_VERB_REFUSED} (${tool} writes to the mock tables; target a connected surface with mcp.call or http.request)`;
+}
+
+/**
+ * Why a surface verb may not run on the surface's connection path, if it may not.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   A refusal reason, or undefined when the verb matches the path.
+ */
+export function pathRefusal(parsed: ParsedSurfaceAction, surface: SurfaceRecord): string | undefined {
+  const mismatch =
+    parsed.kind === 'mcp.call'
+      ? surface.path !== 'mcp' && surface.path !== 'browser-driven'
+      : surface.path !== 'documented-api';
+  if (!mismatch) return undefined;
+  return `${parsed.kind} is not allowed on surface path ${surface.path ?? 'unknown'}`;
+}
+
+/** What the gate decided about one held action before the manager sees it. */
+export type ActionVerdict = { held: false } | { held: true; reason: string };
+
+/**
+ * Decide at hold time whether an action can be applied at all.
+ *
+ * This is every registry check that depends on nothing that happens during
+ * apply: the verb, its shape, the surface's connection, the verb-to-path
+ * match, the public-post rule and the grant. A row that fails one is held
+ * with that reason from the moment the run is held, so the manager reviews
+ * the run the gate will actually apply and a held row never reaches apply.
+ * Rules that depend on earlier rows landing (comment before status change,
+ * attribution) stay at apply time.
  *
  * Args:
  *   action: The action as the skill emitted it.
  *   surfaces: The agent's surfaces.
+ *   grants: The agent's live permission scopes.
+ *   now: Clock for the liveness verdict.
  *
  * Returns:
- *   True when the parsed action targets a known surface and would be held.
+ *   The verdict.
  */
-export function heldEligible(action: MockAction, surfaces: readonly SurfaceRecord[]): boolean {
-  if (!isSurfaceTool(action.tool)) return false;
+export function reviewAction(
+  action: MockAction,
+  surfaces: readonly SurfaceRecord[],
+  grants: ReadonlySet<string>,
+  now: number,
+): ActionVerdict {
+  if (!isSurfaceTool(action.tool)) {
+    const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
+    return { held: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
+  }
   const parsed = parseSurfaceAction(action);
-  if (!parsed.ok) return false;
+  if (!parsed.ok) return { held: true, reason: parsed.reason };
   const surface = surfaces.find((row) => row.slug === parsed.action.surface);
-  return surface !== undefined && heldReason(parsed.action, surface) !== undefined;
+  const refusal = surfaceRefusal(surface, now);
+  if (!surface || refusal) return { held: true, reason: refusal ?? UNKNOWN_SURFACE };
+  const reason =
+    pathRefusal(parsed.action, surface) ??
+    heldReason(parsed.action, surface) ??
+    grantRefusal(parsed.action, surface, grants);
+  return reason ? { held: true, reason } : { held: false };
+}
+
+/**
+ * Review every action of a held run.
+ *
+ * Args:
+ *   actions: The actions as the skill emitted them.
+ *   surfaces: The agent's surfaces.
+ *   grants: The agent's live permission scopes.
+ *   now: Clock for the liveness verdict.
+ *
+ * Returns:
+ *   One verdict per action, in order.
+ */
+export function reviewActions(
+  actions: readonly MockAction[],
+  surfaces: readonly SurfaceRecord[],
+  grants: ReadonlySet<string>,
+  now: number,
+): ActionVerdict[] {
+  return actions.map((action) => reviewAction(action, surfaces, grants, now));
 }
 
 /**

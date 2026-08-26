@@ -4,6 +4,9 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 import { actionIdempotencyKey } from '../src/work/idempotency';
+import { reviewActions, type ActionVerdict } from '../src/surfaces/policy';
+import { toSurfaceRecord } from '../src/surfaces/records';
+import type { MockAction } from '../src/work/types';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
@@ -317,6 +320,7 @@ export const claimForExecution = internalMutation({
       executionRunId: runId,
       pendingRunId: undefined,
       approvedIndexes: undefined,
+      actionVerdicts: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
     });
@@ -371,6 +375,7 @@ export const setCompleted = internalMutation({
       output: args.output,
       pendingRunId: undefined,
       approvedIndexes: undefined,
+      actionVerdicts: undefined,
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
@@ -407,6 +412,7 @@ export const setFailed = internalMutation({
       skipReason: args.reason,
       pendingRunId: undefined,
       approvedIndexes: undefined,
+      actionVerdicts: undefined,
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
@@ -420,6 +426,60 @@ export const setFailed = internalMutation({
     });
   },
 });
+
+/**
+ * Decide, inside the hold transaction, which of a run's actions can be applied.
+ *
+ * The surfaces and grants are read in the same transaction that holds the
+ * run, so the verdicts describe the run the manager is about to review and
+ * a row held here is refused at approval rather than failing at apply.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   agentId: The agent whose surfaces and grants apply.
+ *   actions: The actions the skill emitted.
+ *
+ * Returns:
+ *   One verdict per action.
+ */
+async function reviewHeldActions(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  actions: MockAction[],
+): Promise<ActionVerdict[]> {
+  const surfaceRows = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .collect();
+  const grantRows = await ctx.db
+    .query('permissionGrants')
+    .withIndex('by_agent_scope', (q) => q.eq('agentId', agentId))
+    .collect();
+  const grants = new Set(grantRows.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
+  return reviewActions(
+    actions,
+    surfaceRows.map((row) => toSurfaceRecord(row)),
+    grants,
+    Date.now(),
+  );
+}
+
+/**
+ * The hold-time reasons of a run's held rows, keyed by action index.
+ *
+ * Args:
+ *   verdicts: The verdicts persisted when the run was held.
+ *
+ * Returns:
+ *   `[index, reason]` pairs for every held row.
+ */
+function heldReasonEntries(
+  verdicts: Doc<'workItems'>['actionVerdicts'] | undefined,
+): Array<[number, string]> {
+  return (verdicts ?? []).flatMap((verdict, index): Array<[number, string]> =>
+    verdict.held ? [[index, verdict.reason ?? 'held']] : [],
+  );
+}
 
 /**
  * Pause an executing run at the exact-action gate.
@@ -439,16 +499,24 @@ export const setActionsPending = internalMutation({
     if (row.executionRunId !== args.runId) return { pending: false };
     const actions = (args.output as { actions?: unknown[] }).actions;
     if (!Array.isArray(actions)) throw new Error('output.actions must be a list');
+    const actionVerdicts = await reviewHeldActions(ctx, row.agentId, actions as MockAction[]);
+    const heldIndexes = actionVerdicts.flatMap((verdict, index) => (verdict.held ? [index] : []));
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       output: args.output,
       pendingRunId: args.runId,
       approvedIndexes: undefined,
+      actionVerdicts,
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.actions-pending',
-      payload: { workItemId: args.workItemId, runId: args.runId, actionCount: actions.length },
+      payload: {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        actionCount: actions.length,
+        heldIndexes,
+      },
       createdAt: Date.now(),
     });
     return { pending: true };
@@ -487,6 +555,12 @@ export const approveActions = mutation({
     for (const index of approvedIndexes) {
       if (!Number.isInteger(index) || index < 0 || index >= actions.length) {
         throw new Error(`action index ${index} is outside the pending list`);
+      }
+      const verdict = row.actionVerdicts?.[index];
+      if (verdict?.held) {
+        throw new Error(
+          `action ${index + 1} is held (${verdict.reason ?? 'held'}); approve the others by selection`,
+        );
       }
     }
     await ctx.db.patch(args.workItemId, { approvedIndexes });
@@ -537,6 +611,7 @@ export const rejectActions = mutation({
       skipReason,
       pendingRunId: undefined,
       approvedIndexes: undefined,
+      actionVerdicts: undefined,
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
@@ -571,6 +646,7 @@ export const claimApprovedActions = internalMutation({
         agentId: Id<'agents'>;
         runId: Id<'events'>;
         approvedIndexes: number[];
+        heldReasons: Array<[number, string]>;
         output: unknown;
       }
     | { claimed: false; reason: string }
@@ -598,6 +674,7 @@ export const claimApprovedActions = internalMutation({
       agentId: row.agentId,
       runId: row.pendingRunId,
       approvedIndexes: row.approvedIndexes,
+      heldReasons: heldReasonEntries(row.actionVerdicts),
       output: row.output,
     };
   },
@@ -633,12 +710,13 @@ export const recoverInterruptedApply = internalMutation({
       [key: string]: unknown;
     };
     const approved = new Set(row.approvedIndexes ?? []);
+    const heldReasons = new Map(heldReasonEntries(row.actionVerdicts));
     const applied = (output.actions ?? []).map((action, index) => ({
       tool: typeof action.tool === 'string' ? action.tool : 'unknown',
       ok: !approved.has(index),
       ...(approved.has(index)
         ? { reason: 'outcome unknown after interrupted apply - verify provider before retry' }
-        : { held: true, reason: 'not approved by the manager' }),
+        : { held: true, reason: heldReasons.get(index) ?? 'not approved by the manager' }),
       idempotencyKey: actionIdempotencyKey({
         workItemId: args.workItemId,
         runId: args.pendingRunId,
