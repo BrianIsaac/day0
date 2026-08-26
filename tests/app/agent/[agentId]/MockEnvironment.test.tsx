@@ -18,7 +18,11 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Id } from '../../../../convex/_generated/dataModel';
-import { MockEnvironment, tabFromHash } from '../../../../app/agent/[agentId]/MockEnvironment';
+import {
+  activeTabForEnvironment,
+  MockEnvironment,
+  tabFromHash,
+} from '../../../../app/agent/[agentId]/MockEnvironment';
 
 const agentId = 'agent-1' as Id<'agents'>;
 
@@ -60,6 +64,13 @@ describe('tab selection from the location hash', (): void => {
   it('ignores hashes that name no tab, and the Surfaces tab outside real mode', (): void => {
     expect(tabFromHash('', true)).toBeUndefined();
     expect(tabFromHash('#work-item-1', true)).toBeUndefined();
+    expect(tabFromHash('#%E0%A4%A', true)).toBeUndefined();
     expect(tabFromHash('#surfaces', false)).toBeUndefined();
+  });
+
+  it('moves off Surfaces if the resolved mode no longer exposes that tab', (): void => {
+    expect(activeTabForEnvironment('surfaces', '#surfaces', false)).toBe('slack');
+    expect(activeTabForEnvironment('docs', '#unknown', false)).toBe('docs');
+    expect(activeTabForEnvironment('slack', '#surfaces', true)).toBe('surfaces');
   });
 });

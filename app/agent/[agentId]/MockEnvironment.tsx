@@ -11,7 +11,7 @@ import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
 import { SurfacesTab } from './mock/SurfacesTab';
 
-type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets' | 'surfaces';
+export type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets' | 'surfaces';
 
 export type EnvironmentMode = 'mock' | 'real';
 
@@ -48,10 +48,26 @@ const TAB_KEYS = new Set<string>(TABS.map((tab): TabKey => tab.key));
  *   The tab key the hash names, or undefined when it names no tab.
  */
 export function tabFromHash(hash: string, isReal: boolean): TabKey | undefined {
-  const key = decodeURIComponent(hash.replace(/^#/, '')).trim().toLowerCase();
+  let key: string;
+  try {
+    key = decodeURIComponent(hash.replace(/^#/, '')).trim().toLowerCase();
+  } catch {
+    return undefined;
+  }
   if (!TAB_KEYS.has(key)) return undefined;
   if (key === 'surfaces' && !isReal) return undefined;
   return key as TabKey;
+}
+
+/** Keep the selected tab valid as hashes and the resolved deployment mode change. */
+export function activeTabForEnvironment(
+  active: TabKey,
+  hash: string,
+  isReal: boolean,
+): TabKey {
+  const named = tabFromHash(hash, isReal);
+  if (named) return named;
+  return !isReal && active === 'surfaces' ? 'slack' : active;
 }
 
 export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
@@ -73,8 +89,9 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
 
   useEffect(() => {
     const follow = (): void => {
-      const named = tabFromHash(window.location.hash, isReal);
-      if (named) setActive(named);
+      setActive((current): TabKey =>
+        activeTabForEnvironment(current, window.location.hash, isReal),
+      );
     };
     follow();
     window.addEventListener('hashchange', follow);
