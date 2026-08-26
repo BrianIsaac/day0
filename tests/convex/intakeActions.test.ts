@@ -678,6 +678,81 @@ describe('intake provider contracts', (): void => {
     expect(unbounded.seeds.size).toBe(0);
   });
 
+  it('does not checkpoint or seed a Linear poll whose pagination is incomplete', async (): Promise<void> => {
+    const checkpoint = Date.parse('2026-08-26T01:00:00.000Z');
+    const linearCredential = id<'credentials'>('credential-linear');
+    const makeHarness = (): ReturnType<typeof runtimeHarness> =>
+      runtimeHarness(
+        [
+          surfaceRow('linear', 'Linear', 'kanban', {
+            credentialId: linearCredential,
+            endpoint: 'https://mcp.linear.app/mcp',
+            toolAllowlist: ['list_issues'],
+            lastPolledAt: checkpoint,
+          }),
+        ],
+        [
+          pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+          pageRow('linear.md', 'Linear', LINEAR),
+        ],
+        new Map([[String(linearCredential), 'linear-test-value']]),
+      );
+    const client = (nextCursor: (cursor: string | undefined) => string | undefined) => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: {
+            list_issues: {
+              inputSchema: { properties: { project: {}, updatedAt: {}, cursor: {} } },
+            },
+          },
+        },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (args: Record<string, unknown>): Promise<unknown> => ({
+          issues: [
+            {
+              id: `issue-${String(args.cursor ?? 'first')}`,
+              title: 'Provider page row',
+              updatedAt: '2026-08-26T02:00:00.000Z',
+            },
+          ],
+          nextCursor: nextCursor(typeof args.cursor === 'string' ? args.cursor : undefined),
+        }),
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+
+    const overLimit = makeHarness();
+    await expect(
+      runIntakeSweep(overLimit.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        makeMcpClient: () =>
+          client((cursor) => `page-${cursor ? Number(cursor.replace('page-', '')) + 1 : 1}`),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(overLimit.records[0]).toMatchObject({
+      skipReason: expect.stringContaining('pagination did not complete'),
+    });
+    expect(overLimit.records[0].polledAt).toBeUndefined();
+    expect(overLimit.seeds.size).toBe(0);
+
+    const cycle = makeHarness();
+    await expect(
+      runIntakeSweep(cycle.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        makeMcpClient: () => client(() => 'same-page'),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(cycle.records[0]).toMatchObject({
+      skipReason: expect.stringContaining('repeated a cursor'),
+    });
+    expect(cycle.records[0].polledAt).toBeUndefined();
+    expect(cycle.seeds.size).toBe(0);
+  });
+
   it('maps the shapes Linear\'s live MCP server returns, not only GraphQL-style objects', (): void => {
     const surface = surfaceRow('linear', 'Linear', 'kanban', {
       credentialId: id<'credentials'>('credential-linear'),

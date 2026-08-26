@@ -598,7 +598,13 @@ async function pollLinear(
           `Linear list_issues has no project argument and its issues carry no project field, so intake cannot be bounded to project ${scope.project}.`,
         );
       }
-      if (!page.nextCursor || cursors.has(page.nextCursor)) break;
+      if (!page.nextCursor) break;
+      if (cursors.has(page.nextCursor)) {
+        throw new Error('Linear list_issues repeated a cursor before pagination completed.');
+      }
+      if (pageIndex === MAX_MCP_PAGES - 1) {
+        throw new Error('Linear list_issues pagination did not complete within the page limit.');
+      }
       cursors.add(page.nextCursor);
       cursor = page.nextCursor;
     }
