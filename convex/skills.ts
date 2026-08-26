@@ -131,7 +131,10 @@ async function surfaceSlugForWork(
   workItemId: Id<'workItems'>,
 ): Promise<string | undefined> {
   const item = await ctx.db.get(workItemId);
-  if (!item || item.agentId !== agentId) return undefined;
+  if (!item) throw new Error('work item for skill proposal not found');
+  if (item.agentId !== agentId) {
+    throw new Error('skill and work item belong to different agents');
+  }
   if (SURFACE_MODE !== 'real') return undefined;
   const surfaces = await ctx.db
     .query('surfaces')
@@ -398,10 +401,19 @@ export const reject = mutation({
     }
     await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
     if (row.proposedFor) {
-      await ctx.db.patch(row.proposedFor, {
-        state: 'cancelled',
-        skipReason: skillRejectedReason(row.name),
-      });
+      const sourceWork = await ctx.db.get(row.proposedFor);
+      if (sourceWork && sourceWork.agentId !== row.agentId) {
+        throw new Error('skill and work item belong to different agents');
+      }
+      const stillWaitingForThisProposal =
+        sourceWork?.state === 'needs-skill' &&
+        (!sourceWork.proposedSkillId || sourceWork.proposedSkillId === args.skillId);
+      if (stillWaitingForThisProposal) {
+        await ctx.db.patch(row.proposedFor, {
+          state: 'cancelled',
+          skipReason: skillRejectedReason(row.name),
+        });
+      }
     }
     await ctx.db.insert('events', {
       agentId: row.agentId,
