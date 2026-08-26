@@ -6,6 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { completionFailure } from '../../convex/workActions';
+import { INTERRUPTED_APPLY_REASON } from '../../convex/work';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import { HELD_NOT_APPROVED, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
@@ -415,6 +416,34 @@ describe('executing an approved plan through the gate', (): void => {
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
     ).rejects.toThrow('reconcile the provider first');
+  });
+
+  it('fences every failure after an approved apply has been claimed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    if (!pending.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: pending.pendingRunId,
+      approvedIndexes: [0],
+    });
+    await harness.run(async (ctx) => await ctx.db.delete(agentId));
+
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: false, reason: 'agent not found' });
+    const failed = await readItem(harness, workItemId);
+    expect(failed).toMatchObject({
+      state: 'failed',
+      skipReason: INTERRUPTED_APPLY_REASON,
+    });
+    expect(ledger(failed)[0]).toMatchObject({
+      ok: false,
+      reason: 'outcome unknown after interrupted apply - verify provider before retry',
+    });
   });
 
   it('runs the skill again with a fresh run id after a rejection and retry', async (): Promise<void> => {

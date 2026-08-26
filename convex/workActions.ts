@@ -464,10 +464,9 @@ export const applyApprovedActions = internalAction({
       return await finishRun(ctx, args.workItemId, claim.runId, output, applied);
     } catch (err) {
       const reason = (err as Error).message;
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
-        reason,
-        runId: claim.runId,
+        pendingRunId: claim.runId,
       });
       return { ok: false, reason };
     }
