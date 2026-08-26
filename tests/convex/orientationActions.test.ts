@@ -13,7 +13,7 @@ import {
   choosePath,
   documentedEndpoints,
   draftOrientation,
-  evidenceLine,
+  evidenceQuote,
   extractCredentialFinding,
   explicitlyDeniesSurface,
   hostCarriesSlug,
@@ -23,6 +23,7 @@ import {
   orientSurface,
   registryRemoteEndpoint,
   relevantSystemText,
+  selectEvidence,
   type OrientationCtx,
   type OrientationDraftResult,
 } from '../../convex/orientationActions';
@@ -309,50 +310,100 @@ afterEach((): void => {
 });
 
 describe('orientation evidence selection', (): void => {
-  it('returns the exact documentation line naming a system', (): void => {
-    expect(evidenceLine('# Systems\nUse Linear for the queue.\n', 'Linear')).toBe(
-      'Use Linear for the queue.',
-    );
-    expect(evidenceLine('# Systems\nNo match.\n', 'Slack')).toBeUndefined();
-  });
-
-  it('does not apply another system denial to the named system', (): void => {
-    const page = [
-      '# Systems',
-      '',
-      '| Linear | Formal queue |',
-      '| Northstar CRM | No approved connection surface is recorded. |',
-    ].join('\n');
-    expect(explicitlyDeniesSurface(page, 'Linear')).toBe(false);
-    expect(explicitlyDeniesSurface(page, 'Northstar CRM')).toBe(true);
-    const queue = [
-      '## REVOPS-402',
-      '',
-      '- Source: Linear project `REVOPS`',
-      '- Request: inspect Northstar CRM.',
-      '- Acceptance: if no approved surface exists, ask the manager.',
-    ].join('\n');
-    expect(explicitlyDeniesSurface(queue, 'Linear')).toBe(false);
-  });
-
-  it('recognises denials phrased as no server or not approved', (): void => {
+  it('quotes the sentence naming a system, and nothing when the page does not name it', (): void => {
+    expect(evidenceQuote('# Systems\nUse Linear for the queue.\n', 'Linear', 'linear')).toEqual({
+      quote: 'Use Linear for the queue.',
+      attributed: false,
+    });
+    expect(evidenceQuote('# Systems\nNo match.\n', 'Slack', 'slack')).toBeUndefined();
     expect(
-      explicitlyDeniesSurface(
-        '# Slack\n\nThere is no MCP server for Slack that we approve. Use the Web API at https://slack.com/api/',
-        'Slack',
+      evidenceQuote('Slackbot posts reminders. Use Slack for asks. Then file it.', 'Slack', 'slack'),
+    ).toEqual({ quote: 'Use Slack for asks.', attributed: false });
+  });
+
+  it('prefers a sentence that attributes something to the system over one that mentions it', (): void => {
+    const shared = [
+      '# Working rules',
+      '',
+      '- One logical message per action; preserve the originating Linear identifier in the text.',
+      '- Linear is reached over MCP at https://mcp.linear.app/mcp. Slack is the team chat.',
+    ].join('\n');
+    expect(evidenceQuote(shared, 'Linear', 'linear')).toEqual({
+      quote: '- Linear is reached over MCP at https://mcp.linear.app/mcp.',
+      attributed: true,
+    });
+    expect(evidenceQuote(shared, 'Slack', 'slack')).toEqual({
+      quote: 'Slack is the team chat.',
+      attributed: false,
+    });
+    expect(evidenceQuote('# Linear automation\n\nWorkspace `day0`.', 'Linear', 'linear')).toEqual({
+      quote: '# Linear automation',
+      attributed: true,
+    });
+    expect(
+      evidenceQuote(
+        '| Northstar CRM | Records used during close. No approved connection surface is recorded. |',
+        'Northstar CRM',
+        'northstar-crm',
       ),
-    ).toBe(true);
-    expect(explicitlyDeniesSurface('# Access\n\nThe Jira MCP is not approved.', 'Jira')).toBe(true);
-    expect(explicitlyDeniesSurface('Jira is not an approved surface for this team.', 'Jira')).toBe(
-      true,
-    );
+    ).toEqual({
+      quote: '| Northstar CRM | Records used during close. No approved connection surface is recorded. |',
+      attributed: true,
+    });
     expect(
-      explicitlyDeniesSurface('Jira changes not approved by the manager are held.', 'Jira'),
-    ).toBe(true);
-    expect(explicitlyDeniesSurface(LINEAR_RUNBOOK, 'Linear')).toBe(false);
-    expect(explicitlyDeniesSurface(SLACK_RUNBOOK, 'Slack')).toBe(false);
-    expect(explicitlyDeniesSurface(ONBOARDING_PAGE, 'Linear')).toBe(false);
-    expect(explicitlyDeniesSurface(ONBOARDING_PAGE, 'Northstar CRM')).toBe(true);
+      evidenceQuote('# Access\n\nLinear key: <redacted> (the owner provides it)', 'Linear', 'linear'),
+    ).toEqual({ quote: 'Linear key: <redacted> (the owner provides it)', attributed: true });
+    expect(
+      evidenceQuote('<page url="https://app.notion.com/p/abc">Linear Automation</page>', 'Linear', 'linear'),
+    ).toEqual({
+      quote: '<page url="https://app.notion.com/p/abc">Linear Automation</page>',
+      attributed: true,
+    });
+    expect(evidenceQuote('See https://linear.app/docs for the rest.', 'Linear', 'linear')).toEqual({
+      quote: 'See https://linear.app/docs for the rest.',
+      attributed: true,
+    });
+  });
+
+  it('cites only attributing pages when any page attributes, else the mentions', (): void => {
+    const page = (ref: string, markdown: string): Doc<'docPages'> =>
+      ({ _id: ref, _creationTime: 1, sourceId: 'source-1', ref, title: ref, markdown, updatedAt: 1 }) as unknown as Doc<'docPages'>;
+    const slackPolicy = page(
+      'slack.md',
+      '# Slack automation policy\n\n- One logical message per action; preserve the originating Linear identifier or Slack thread timestamp in the text.',
+    );
+    const onboarding = page('onboarding.md', notionFixture('onboarding'));
+    const linearPage = page('linear.md', notionFixture('linear-automation'));
+    const cited = selectEvidence([slackPolicy, onboarding, linearPage], 'Linear', 'linear');
+    expect(cited).toEqual([
+      { sourceId: 'source-1', ref: 'linear.md', quote: '# Linear automation', url: undefined },
+    ]);
+    expect(selectEvidence([slackPolicy, onboarding], 'Linear', 'linear')).toEqual([
+      {
+        sourceId: 'source-1',
+        ref: 'slack.md',
+        quote: '- One logical message per action; preserve the originating Linear identifier or Slack thread timestamp in the text.',
+        url: undefined,
+      },
+      {
+        sourceId: 'source-1',
+        ref: 'onboarding.md',
+        quote: '| Linear | Team `REVOPS`, project `Q3 close`, is the formal work queue and audit trail.',
+        url: undefined,
+      },
+    ]);
+    const northstar = selectEvidence(
+      [onboarding, page('northstar.md', notionFixture('northstar-crm'))],
+      'Northstar CRM',
+      'northstar-crm',
+    );
+    expect(northstar.map((item): [string, string] => [item.ref, item.quote])).toEqual([
+      [
+        'onboarding.md',
+        '| Northstar CRM | Internal account and opportunity records used during close. No approved connection surface is recorded. | Business Systems owner |',
+      ],
+      ['northstar.md', '# Northstar CRM'],
+    ]);
   });
 
   it('uses the whole content of a dedicated runbook', (): void => {
@@ -500,7 +551,7 @@ describe('URL attribution', (): void => {
     expect(relevantSystemText('# Tools\n\nSlackbot answers questions.\n\nSlack is chat.', 'Slack')).toBe(
       'Slack is chat.',
     );
-    expect(evidenceLine(slackbot, 'Slack')).toBeUndefined();
+    expect(evidenceQuote(slackbot, 'Slack', 'slack')).toBeUndefined();
   });
 
   it('attributes a host to a system only when its labels carry the slug', (): void => {

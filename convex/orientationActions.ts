@@ -186,22 +186,72 @@ export function namesSystem(text: string, system: string): boolean {
   return systemNamePattern(system).test(text);
 }
 
+/** A quote chosen for a surface card, and whether it attributes anything to the system. */
+export interface EvidenceQuote {
+  quote: string;
+  /**
+   * True when the sentence documents the system rather than merely naming it:
+   * the heading of its dedicated page, a sentence attributing a URL to it, a
+   * sentence denying it a surface, or a sentence carrying its credential marker.
+   */
+  attributed: boolean;
+}
+
+const CREDENTIAL_MARK = /<credential:[^>]*>|<redacted>/i;
+
 /**
- * Select a concise evidence line that names a system.
+ * Select the sentence of a page that best evidences a system.
+ *
+ * The endpoint attribution rule applied to quotes: sentences are the unit,
+ * a sentence counts when its prose names the system as a whole word (URL
+ * text does not count) or when it carries a URL attributed to the system,
+ * and a sentence that attributes something to the system - a URL, a
+ * credential marker, the heading of its own page, or a line denying it a
+ * surface - is preferred over one that only mentions it.
+ * A Slack policy line
+ * that says to preserve the Linear identifier names Linear but attributes
+ * nothing to it, so it is evidence for Linear only when nothing better exists.
  *
  * Args:
  *   markdown: Documentation page content.
  *   system: Manager-named system to locate.
+ *   slug: The system's surface slug.
  *
  * Returns:
- *   The first matching line, or undefined when the page does not name it.
+ *   The attributing sentence when there is one, else the first naming
+ *   sentence, else undefined when the page does not name the system.
  */
-export function evidenceLine(markdown: string, system: string): string | undefined {
+export function evidenceQuote(
+  markdown: string,
+  system: string,
+  slug: string,
+): EvidenceQuote | undefined {
   const pattern = systemNamePattern(system);
-  return markdown
-    .split('\n')
-    .find((line: string): boolean => pattern.test(line))
-    ?.trim();
+  let mention: string | undefined;
+  for (const line of markdown.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const heading = /^#\s+(.+)$/.exec(trimmed)?.[1];
+    if (heading !== undefined) {
+      if (pattern.test(heading)) return { quote: trimmed, attributed: true };
+      continue;
+    }
+    // A denial is read per line, as `explicitlyDeniesSurface` reads it: in a
+    // table row the sentence that denies rarely repeats the system's name.
+    if (pattern.test(trimmed.replace(URL_PATTERN, ' ')) && NO_SURFACE_PATTERN.test(trimmed)) {
+      return { quote: trimmed, attributed: true };
+    }
+    for (const raw of trimmed.split(SENTENCE_BOUNDARY)) {
+      const sentence = raw.trim();
+      const urls = attributedUrls(sentence, system, slug);
+      const named = pattern.test(sentence.replace(URL_PATTERN, ' '));
+      if (!named && urls.length === 0) continue;
+      const attributed = urls.length > 0 || CREDENTIAL_MARK.test(redactTokenShapes(sentence));
+      if (attributed) return { quote: sentence, attributed: true };
+      mention ??= sentence;
+    }
+  }
+  return mention === undefined ? undefined : { quote: mention, attributed: false };
 }
 
 /**
@@ -872,6 +922,47 @@ async function resolveStoredCredential(
   return undefined;
 }
 
+/**
+ * Choose the pages and quotes a surface card cites.
+ *
+ * Every page that attributes something to the system is cited with its
+ * attributing sentence. Pages that only mention the system are cited only
+ * when no page attributes anything, so a card never quotes a co-occurrence
+ * beside real evidence. At most eight pages are cited, in page order.
+ *
+ * Args:
+ *   pages: Pages whose text names the system.
+ *   system: Manager-named system.
+ *   slug: The system's surface slug.
+ *
+ * Returns:
+ *   Evidence entries with token shapes redacted.
+ */
+export function selectEvidence(
+  pages: readonly Doc<'docPages'>[],
+  system: string,
+  slug: string,
+): Evidence[] {
+  const quoted = pages.map(
+    (page: Doc<'docPages'>): { page: Doc<'docPages'>; quote: EvidenceQuote } => ({
+      page,
+      quote: evidenceQuote(page.markdown, system, slug) ?? {
+        quote: page.title,
+        attributed: false,
+      },
+    }),
+  );
+  const attributed = quoted.filter(({ quote }): boolean => quote.attributed);
+  return (attributed.length > 0 ? attributed : quoted).slice(0, 8).map(
+    ({ page, quote }): Evidence => ({
+      sourceId: String(page.sourceId),
+      ref: page.ref,
+      quote: redactTokenShapes(quote.quote),
+      url: page.url,
+    }),
+  );
+}
+
 /** Outcome of one isolated orientation job. */
 export interface OrientationOutcome {
   outcome: 'proposed' | 'absent' | 'skipped' | 'failed';
@@ -922,14 +1013,7 @@ export async function orientSurface(
   const matches = pages.filter((page: Doc<'docPages'>): boolean =>
     namesSystem(page.markdown, surface.displayName),
   );
-  const evidence: Evidence[] = matches.slice(0, 8).map(
-    (page: Doc<'docPages'>): Evidence => ({
-      sourceId: String(page.sourceId),
-      ref: page.ref,
-      quote: redactTokenShapes(evidenceLine(page.markdown, surface.displayName) || page.title),
-      url: page.url,
-    }),
-  );
+  const evidence: Evidence[] = selectEvidence(matches, surface.displayName, surface.slug);
   const relevantText = redactTokenShapes(
     matches
       .map((page: Doc<'docPages'>): string =>
