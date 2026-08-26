@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import {
@@ -9,6 +8,7 @@ import {
   type McpConnectionConfig,
 } from '../../../../src/docs/readers/mcp';
 import type { DocSourceRecord } from '../../../../src/docs/types';
+import { notionPageTemplate, type NotionPageName } from '../../../fixtures/notion-pages';
 
 /** Wrap one object in the MCP text-content result shape. */
 function textResult(value: Record<string, unknown>): Record<string, unknown> {
@@ -32,7 +32,7 @@ afterEach((): void => {
 
 describe('whole-page Markdown fence handling', (): void => {
   it('unwraps the Slack policy while preserving its nested JSON fence', (): void => {
-    const policy = readFileSync('docs/submission/notion-pages/slack-day0-app.md', 'utf8').trim();
+    const policy = notionPageTemplate('slack-day0-app').trim();
     const providerBody = `\`\`\`\`markdown\n${policy}\n\`\`\`\``;
     const unwrapped = unwrapWholePageFence(providerBody);
     expect(unwrapped).toContain('# Slack automation policy');
@@ -57,13 +57,14 @@ describe('whole-page Markdown fence handling', (): void => {
   });
 
   it('unwraps each handbook template pasted as one block, with any accepted info string', (): void => {
-    for (const name of [
-      'onboarding.md',
-      'linear-automation.md',
-      'slack-day0-app.md',
-      'northstar-crm.md',
-    ]) {
-      const template = readFileSync(`docs/submission/notion-pages/${name}`, 'utf8').trim();
+    const names: NotionPageName[] = [
+      'onboarding',
+      'linear-automation',
+      'slack-day0-app',
+      'northstar-crm',
+    ];
+    for (const name of names) {
+      const template = notionPageTemplate(name).trim();
       for (const opener of ['```', '```md', '```markdown', '```MARKDOWN', '~~~', '````markdown']) {
         const closer = opener.replace(/[^`~]/g, '');
         expect(unwrapWholePageFence(`\n${opener}\n${template}\n${closer}\n\n`)).toBe(

@@ -1,5 +1,9 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import {
+  LINEAR_TOKEN_PLACEHOLDER,
+  notionPageTemplate,
+  type NotionPageName,
+} from '../../fixtures/notion-pages';
 import {
   credentialMarker,
   credentialSourceRef,
@@ -142,9 +146,10 @@ describe('documentation credential redaction', (): void => {
   });
 
   it('redacts the Linear automation template before it can be mirrored', (): void => {
-    const template = readFileSync('docs/submission/notion-pages/linear-automation.md', 'utf8');
+    const template = notionPageTemplate('linear-automation');
+    expect(template).toContain(LINEAR_TOKEN_PLACEHOLDER);
     const value = token(['lin', 'api'], `runtime${SUFFIX}`);
-    const page = template.replace('PASTE_LINEAR_API_KEY_HERE', value);
+    const page = template.replace(LINEAR_TOKEN_PLACEHOLDER, value);
     const result = redactCredentials(page, 'Linear automation');
     expect(result.markdown).toContain(credentialMarker('linear service token'));
     expect(result.markdown).not.toContain(value);
@@ -153,8 +158,9 @@ describe('documentation credential redaction', (): void => {
   });
 
   it('stores nothing from the three value-free templates', (): void => {
-    for (const name of ['onboarding.md', 'slack-day0-app.md', 'northstar-crm.md']) {
-      const template = readFileSync(`docs/submission/notion-pages/${name}`, 'utf8');
+    const names: NotionPageName[] = ['onboarding', 'slack-day0-app', 'northstar-crm'];
+    for (const name of names) {
+      const template = notionPageTemplate(name);
       const result = redactCredentials(template, name);
       expect(result.credentials).toEqual([]);
       expect(result.markdown).toBe(template);
