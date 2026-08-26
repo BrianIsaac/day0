@@ -629,11 +629,13 @@ async function scheduleApply(
   ctx: MutationCtx,
   workItemId: Id<'workItems'>,
   pendingRunId: Id<'events'>,
+  phase: 'auto' | 'approved',
 ): Promise<void> {
   await ctx.scheduler.runAfter(0, internal.workActions.applyApprovedActions, { workItemId });
   await ctx.scheduler.runAfter(APPLY_RECOVERY_MS, internal.work.recoverInterruptedApply, {
     workItemId,
     pendingRunId,
+    phase,
   });
 }
 
@@ -695,7 +697,7 @@ export const setActionsPending = internalMutation({
         payload,
         createdAt: Date.now(),
       });
-      await scheduleApply(ctx, args.workItemId, args.runId);
+      await scheduleApply(ctx, args.workItemId, args.runId, 'auto');
       return { pending: true, phase: 'auto' };
     }
     await ctx.db.patch(args.workItemId, {
@@ -833,7 +835,7 @@ export const approveActions = mutation({
       },
       createdAt: Date.now(),
     });
-    await scheduleApply(ctx, args.workItemId, row.pendingRunId);
+    await scheduleApply(ctx, args.workItemId, row.pendingRunId, 'approved');
     return { ok: true, approvedIndexes };
   },
 });
@@ -982,17 +984,27 @@ export const claimApprovedActions = internalMutation({
  * automatic replay.
  */
 export const recoverInterruptedApply = internalMutation({
-  args: { workItemId: v.id('workItems'), pendingRunId: v.id('events') },
+  args: {
+    workItemId: v.id('workItems'),
+    pendingRunId: v.id('events'),
+    phase: v.union(v.literal('auto'), v.literal('approved')),
+  },
   handler: async (
     ctx,
     args,
   ): Promise<{ recovered: 'ignored' | 'rescheduled' | 'outcome-unknown' }> => {
     const row = await ctx.db.get(args.workItemId);
-    if (!row || row.executionRunId !== args.pendingRunId) return { recovered: 'ignored' };
+    if (
+      !row ||
+      row.executionRunId !== args.pendingRunId ||
+      row.applyPhase !== args.phase
+    ) {
+      return { recovered: 'ignored' };
+    }
     const unclaimedAuto =
       row.state === 'executing' && row.applyPhase === 'auto' && row.applyAttemptId === undefined;
     if ((row.state === 'actions-pending' && row.approvedIndexes !== undefined) || unclaimedAuto) {
-      await scheduleApply(ctx, args.workItemId, args.pendingRunId);
+      await scheduleApply(ctx, args.workItemId, args.pendingRunId, args.phase);
       return { recovered: 'rescheduled' };
     }
     if (row.state !== 'executing' || !row.applyAttemptId || !row.applyClaimedAt) {

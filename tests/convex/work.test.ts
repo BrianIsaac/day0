@@ -566,6 +566,7 @@ describe('the exact-action gate', (): void => {
       harness.mutation(internal.work.recoverInterruptedApply, {
         workItemId,
         pendingRunId: runId,
+        phase: 'approved',
       }),
     ).resolves.toEqual({ recovered: 'outcome-unknown' });
     const row = await readItem(harness, workItemId);
@@ -604,6 +605,7 @@ describe('the exact-action gate', (): void => {
       harness.mutation(internal.work.recoverInterruptedApply, {
         workItemId,
         pendingRunId: runId,
+        phase: 'approved',
       }),
     ).resolves.toEqual({ recovered: 'rescheduled' });
     expect(await readItem(harness, workItemId)).toMatchObject({
@@ -848,9 +850,9 @@ describe('the exact-action gate', (): void => {
       withSlack: true,
     });
     await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output: { draft: 'd', notes: '', actions: [readIssue, publicReply] } });
-    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId })).resolves.toEqual({ recovered: 'rescheduled' });
+    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId, phase: 'auto' })).resolves.toEqual({ recovered: 'rescheduled' });
     await harness.mutation(internal.work.claimApprovedActions, { workItemId });
-    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId })).resolves.toEqual({ recovered: 'outcome-unknown' });
+    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId, phase: 'auto' })).resolves.toEqual({ recovered: 'outcome-unknown' });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect((row.output as { applied: Array<Record<string, unknown>> }).applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
@@ -874,12 +876,59 @@ describe('the exact-action gate', (): void => {
     );
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] });
     await harness.mutation(internal.work.claimApprovedActions, { workItemId });
-    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId })).resolves.toEqual({ recovered: 'outcome-unknown' });
+    await expect(harness.mutation(internal.work.recoverInterruptedApply, { workItemId, pendingRunId: runId, phase: 'approved' })).resolves.toEqual({ recovered: 'outcome-unknown' });
     const row = await readItem(harness, workItemId);
     expect((row.output as { applied: unknown[] }).applied).toEqual([
       landed,
       expect.objectContaining({ ok: false, reason: 'outcome unknown after interrupted apply - verify provider before retry' }),
     ]);
+  });
+
+  it('ignores the auto-phase recovery timer after the manager phase has been claimed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'actions-pending');
+    const landed = { tool: 'mcp.call', ok: true, providerId: 'read-1', idempotencyKey: 'k0' };
+    await harness.run(async (ctx) =>
+      await ctx.db.patch(workItemId, {
+        pendingRunId: runId,
+        executionRunId: runId,
+        actionVerdicts: [{ disposition: 'auto' }, { disposition: 'held', reason: HELD_MUTATION }],
+        output: {
+          ...pendingOutput,
+          applied: [
+            landed,
+            {
+              tool: 'mcp.call',
+              ok: true,
+              held: true,
+              awaitingApproval: true,
+              reason: AWAITING_APPROVAL,
+              idempotencyKey: 'k1',
+            },
+          ],
+        },
+      }),
+    );
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [1],
+    });
+    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+
+    await expect(
+      harness.mutation(internal.work.recoverInterruptedApply, {
+        workItemId,
+        pendingRunId: runId,
+        phase: 'auto',
+      }),
+    ).resolves.toEqual({ recovered: 'ignored' });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'executing',
+      applyPhase: 'approved',
+      approvedIndexes: [1],
+    });
   });
 
   it('counts a pending run as open work and as an existing claim', async (): Promise<void> => {

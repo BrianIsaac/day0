@@ -511,6 +511,7 @@ export const applyApprovedActions = internalAction({
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
         pendingRunId: claim.runId,
+        phase: claim.phase,
       });
       return { ok: false, reason };
     }
