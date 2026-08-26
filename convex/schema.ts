@@ -30,6 +30,20 @@ export default defineSchema({
       v.literal('charter-pending'),
       v.literal('active'),
     ),
+    /** Whether the agent may act on connected systems without asking.
+     * Absent reads as `false`, the supervised state: reads and the manager
+     * DM apply on their own and every other write waits for the manager.
+     * `true` applies every non-refused row in the auto phase. Only about
+     * actions; skill and surface approval are unchanged. See
+     * `src/work/autonomy.ts`. */
+    autonomousActions: v.optional(v.boolean()),
+    /** REMOVED 26 Aug (late): the posture ladder this toggle replaced. Kept
+     * optional for one more deployment so rows the ladder wrote still
+     * validate at push; nothing reads or writes it. Delete once the primary
+     * has been pushed and its rows no longer carry it. */
+    posture: v.optional(
+      v.union(v.literal('cold-start'), v.literal('supervised'), v.literal('trusted')),
+    ),
     createdAt: v.number(),
   })
     .index('by_bossEmail', ['bossEmail'])
@@ -285,14 +299,38 @@ export default defineSchema({
     /** The run whose actions are pending; preserved through approval so the
      * apply step keys its idempotency off the same claim as the skill run. */
     pendingRunId: v.optional(v.id('events')),
-    // One verdict per `output.actions` row, decided when the run was held: a
-    // held row shows its reason on the card and is refused at approval.
+    // One verdict per `output.actions` row, decided when the run was held:
+    // `auto` applies with no human step, `held` waits for the manager's
+    // approval of the literal payload, `refused` is never applied and shows
+    // its reason. `held` is the pre-ladder boolean, kept so rows written
+    // before dispositions still validate (`normaliseActionVerdict` reads it).
     actionVerdicts: v.optional(
-      v.array(v.object({ held: v.boolean(), reason: v.optional(v.string()) })),
+      v.array(
+        v.object({
+          held: v.optional(v.boolean()),
+          disposition: v.optional(
+            v.union(v.literal('auto'), v.literal('held'), v.literal('refused')),
+          ),
+          reason: v.optional(v.string()),
+        }),
+      ),
     ),
-    /** Indexes into `output.actions` the manager approved. Every other index
-     * is recorded as held when the approved ones are applied. */
+    /** Indexes into `output.actions` to apply in the current phase: the auto
+     * rows when the gate classified them, the manager's list afterwards.
+     * Every other index is recorded as held (or as awaiting the manager). */
     approvedIndexes: v.optional(v.array(v.number())),
+    /** Which phase `approvedIndexes` belongs to. `auto` applies the gate's
+     * rows straight from the hold; `approved` applies the manager's. */
+    applyPhase: v.optional(v.union(v.literal('auto'), v.literal('approved'))),
+    /** Where a reply to this work belongs when it came from a chat thread:
+     * the source channel and message, so a skill can address the thread. */
+    replyTarget: v.optional(
+      v.object({
+        channel: v.string(),
+        channelName: v.optional(v.string()),
+        threadTs: v.optional(v.string()),
+      }),
+    ),
     /** The execution claim currently allowed to move this row. */
     executionRunId: v.optional(v.id('events')),
     /** The apply claim and its start time, used to recover an interrupted
@@ -346,6 +384,11 @@ export default defineSchema({
      * `skills.migrateSandboxIdField`. */
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
+    /** REMOVED 26 Aug (late): the posture ladder's per-skill supervised-run
+     * counter, replaced by `agents.autonomousActions`. Kept optional for one
+     * more deployment so rows the ladder wrote still validate at push;
+     * nothing reads or writes it. */
+    supervisedRunsCompleted: v.optional(v.number()),
     createdAt: v.number(),
     registeredAt: v.optional(v.number()),
   })

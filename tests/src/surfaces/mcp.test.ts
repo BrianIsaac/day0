@@ -9,7 +9,11 @@ import {
   type McpClientOptions,
 } from '../../../src/surfaces/mcp';
 import { TOOL_NOT_ALLOWED } from '../../../src/surfaces/policy';
-import type { AdapterRun, SurfaceRecord } from '../../../src/surfaces/types';
+import type {
+  AdapterRun,
+  BeforeSurfaceTransport,
+  SurfaceRecord,
+} from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
@@ -89,11 +93,17 @@ function fakeClient(results: Record<string, (args: unknown) => Promise<unknown>>
   return fake;
 }
 
-function adapter(client: FakeClient, surfaces: SurfaceRecord[] = [linear], secret = 'lin-secret'): McpAdapter {
+function adapter(
+  client: FakeClient,
+  surfaces: SurfaceRecord[] = [linear],
+  secret = 'lin-secret',
+  beforeTransport?: BeforeSurfaceTransport,
+): McpAdapter {
   return new McpAdapter(surfaces, {
     decrypt: vi.fn(async (): Promise<string> => secret),
     createClient: client.create,
     now: (): number => now,
+    beforeTransport,
   });
 }
 
@@ -119,6 +129,29 @@ describe('MCP adapter', (): void => {
       { tool: 'linear_save_comment', args: { issueId: 'iss-1', body: 'Audit note.' } },
     ]);
     expect(client.disconnected).toBe(1);
+  });
+
+  it('revalidates authority after decrypt and before opening the MCP connection', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }),
+    });
+    const beforeTransport = vi.fn(async (): Promise<string> => 'not an automatic action');
+    const result = await adapter(client, [linear], 'lin-secret', beforeTransport).apply(
+      ctx,
+      run,
+      commentCall,
+      0,
+      'k',
+    );
+    expect(result).toEqual({
+      tool: 'mcp.call',
+      ok: false,
+      reason: 'not an automatic action',
+      idempotencyKey: 'k',
+    });
+    expect(beforeTransport).toHaveBeenCalledWith(commentCall, linear);
+    expect(client.options).toHaveLength(0);
+    expect(client.executions).toHaveLength(0);
   });
 
   it('reports the server error text and still disconnects', async (): Promise<void> => {

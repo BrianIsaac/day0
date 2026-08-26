@@ -9,7 +9,8 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
-import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
+import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
 
 /**
  * Agent CRUD + state transitions. Each agent is owned by one caller subject —
@@ -211,4 +212,35 @@ export const grantScope = internalMutation({
   args: { agentId: v.id('agents'), scope: v.string() },
   handler: async (ctx, args): Promise<{ added: boolean }> =>
     await grantScopeInTransaction(ctx, args.agentId, args.scope),
+});
+
+/**
+ * The manager's switch: whether the agent may act on connected systems
+ * without asking.
+ *
+ * Owner-scoped, real mode only: the hosted mock has no gate for the switch
+ * to change, so it is refused there before the ownership check, and the
+ * header keeps its static label. Off is the deploy default (an absent field
+ * reads as off). Every change that changes anything is an event; setting
+ * the value the row already has records nothing.
+ */
+export const setAutonomousActions = mutation({
+  args: { agentId: v.id('agents'), on: v.boolean() },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ ok: true; autonomousActions: boolean; changed: boolean }> => {
+    assertRealMode('Autonomous actions');
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const from = autonomousActionsOn(agent);
+    if (from === args.on) return { ok: true, autonomousActions: from, changed: false };
+    await ctx.db.patch(args.agentId, { autonomousActions: args.on });
+    await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'agent.autonomy-changed',
+      payload: { from, to: args.on, reason: AUTONOMY_CHANGE_REASON },
+      createdAt: Date.now(),
+    });
+    return { ok: true, autonomousActions: args.on, changed: true };
+  },
 });

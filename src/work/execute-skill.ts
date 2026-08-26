@@ -8,6 +8,7 @@ import {
   type ExecutionPlan,
   type MockAction,
   type MockSurfaceSnapshot,
+  type ReplyTarget,
   type WorkCandidate,
 } from './types';
 import type { SurfaceMode, SurfaceRecord } from '../surfaces/types';
@@ -79,7 +80,7 @@ const MOCK_VERBS = 'spreadsheet.appendRow, slack.postMessage, twitter.reply, tic
 
 const REAL_PREAMBLE = [
   ...PREAMBLE_HEAD,
-  '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment, and every one of them is held for the manager, who approves each literal action before it is sent.',
+  '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. The gate decides each one: reads and the manager DM apply on their own; every public post, thread reply, comment and system-of-record change is held for the manager, who approves the literal payload before it is sent, unless the manager has turned autonomous actions on, in which case it is applied exactly as you emit it. Write every action as it should land.',
   ...DRAFT_DISCIPLINE,
   'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
@@ -87,12 +88,14 @@ const REAL_PREAMBLE = [
   '',
   'Discipline:',
   '  - Stay inside charter boundaries.',
-  '  - Never invent an issue id, channel id, state name or value you do not have; take identifiers from the candidate `Refs:` line or the runbook and say in `notes` what is unknown.',
-  '  - Cold-start posture: the manager DM through the connected chat surface is the only outbound message; a post to any other channel is held for the manager and never sent.',
+  '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
+  '  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager\'s approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.',
+  '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
   '',
   'Closing the loop:',
   '  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook\'s comment tool, and only after it, if the work is complete, the state change with the runbook\'s state argument. A status change is never the only trace of who acted.',
-  '  - When a chat surface is connected, ALSO send the manager DM summarising the draft for review through `http.request` to `chat.postMessage` with the manager DM channel id. When none is connected, say so in `notes` instead of substituting another channel.',
+  '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
+  '  - When a chat surface is connected, ALSO send the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id: a question or escalation when you have one, else a one-line note of what the actions in this response do. When none is connected, say so in `notes` instead of substituting another channel.',
   '  - Each provider mutation is its own action so the manager can approve it on its own.',
 ].join('\n');
 
@@ -230,11 +233,26 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
     '  - http.request - { surface, method, path, headersJson, body }: `path` is relative to the surface endpoint; `headersJson` is a JSON object of headers; `body` is the request body.',
     '  - Write `{{secret}}` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.',
     '  - You may only target a surface listed above. A system without a connected surface gets no action; say so in `notes`.',
-    '  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager and never sent.',
+    '  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager\'s approval unless autonomous actions are on.',
     '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
     '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
   );
   return lines.join('\n');
+}
+
+/**
+ * The prompt line that tells the skill where a public reply belongs.
+ *
+ * Args:
+ *   target: The work item's reply target.
+ *
+ * Returns:
+ *   `Reply target: channel C0… (#revops-asks), thread_ts 1787…`.
+ */
+export function replyTargetLine(target: ReplyTarget): string {
+  const name = target.channelName ? ` (#${target.channelName})` : '';
+  const thread = target.threadTs ? `, thread_ts ${target.threadTs}` : ', top-level post';
+  return `Reply target: channel ${target.channel}${name}${thread}`;
 }
 
 function renderHowTos(guides: MockSurfaceSnapshot['howToGuides']): string {
@@ -322,6 +340,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `From: ${candidate.requesterLabel ?? '(unknown)'}`,
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
+    ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
     `Body:`,
     candidate.contentSummary,
     '',

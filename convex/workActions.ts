@@ -12,6 +12,7 @@ import { draftExecutionPlan } from '../src/work/plan';
 import { runSkill } from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import type { WorkCandidate, WorkSourceCategory } from '../src/work/types';
+import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
 import { asAgentId } from '../src/lib/ids';
 import {
@@ -19,12 +20,27 @@ import {
   readSurfaceSnapshot,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import type { AppliedAction, SurfaceRecord } from '../src/surfaces/types';
+import type {
+  AppliedAction,
+  BeforeSurfaceTransport,
+  SurfaceRecord,
+} from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import type { ExecutionOutput } from '../src/work/types';
+import {
+  grantRefusal,
+  isAutomatic,
+  needsStandingGrant,
+  NOT_AUTOMATIC,
+  parseSurfaceAction,
+  pathRefusal,
+  surfaceRefusal,
+  toolRefusal,
+  UNKNOWN_SURFACE,
+} from '../src/surfaces/policy';
 
 /**
  * Node actions for the work loop — Layer-2 evaluation, Layer-3 plan
@@ -55,6 +71,7 @@ function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
     observedAt: new Date(row.observedAt),
     priority: row.priority,
     requesterLabel: row.requesterLabel,
+    replyTarget: replyTargetFor(row),
   };
 }
 
@@ -406,7 +423,13 @@ async function holdRealActions(
     if (!pending.pending) {
       return { ok: false, reason: 'the run was moved on before its actions could be held' };
     }
-    return { ok: true, reason: 'actions pending the manager\'s approval' };
+    return {
+      ok: true,
+      reason:
+        pending.phase === 'auto'
+          ? 'automatic actions applying'
+          : "actions pending the manager's approval",
+    };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     await ctx.runMutation(internal.work.setFailed, {
@@ -418,15 +441,24 @@ async function holdRealActions(
   }
 }
 
+/** A ledger as the row carries it between the two phases. */
+type LedgerOutput = ExecutionOutput & { applied?: Array<AppliedAction | undefined> };
+
 /**
- * Apply the actions the manager approved, with the run id the skill ran under.
+ * Apply the approved actions of the current phase, with the run id the skill ran under.
  *
- * Scheduled by `work.approveActions`. The claim moves the row back to
- * `executing` exactly once, so a second approval after a restart re-applies
- * with the same idempotency keys rather than alongside a first apply that is
- * still running. Indexes the manager did not approve are recorded as held;
- * the approved ones pass the registry's rules (grant, held public post,
- * comment before status, provenance) and then their adapter.
+ * Scheduled by `work.setActionsPending` for the gate's auto rows and by
+ * `work.approveActions` for the manager's. The claim records the apply
+ * attempt exactly once, so a second schedule after a restart re-applies with
+ * the same idempotency keys rather than alongside a first apply that is
+ * still running. In the auto phase the held rows are deferred (a placeholder
+ * in the ledger, no adapter call) and every row is re-checked against the
+ * toggle as it is now: a read or the manager DM, or any row while autonomous
+ * actions are on; in the approved phase the auto rows' ledger entries are
+ * carried forward and the rows the manager left out are recorded as not
+ * approved. Every applied row passes the registry's rules (authority,
+ * comment before status, attribution, provenance) and then its adapter, and
+ * records what authorised it.
  */
 export const applyApprovedActions = internalAction({
   args: { workItemId: v.id('workItems') },
@@ -443,7 +475,11 @@ export const applyApprovedActions = internalAction({
         internal.agents.grantedScopes,
         { agentId: claim.agentId },
       );
-      const output = claim.output as ExecutionOutput;
+      const output = claim.output as LedgerOutput;
+      const priorLedger =
+        claim.phase === 'approved'
+          ? (output.applied ?? []).map((entry) => (entry && !entry.awaitingApproval ? entry : undefined))
+          : undefined;
       const applied = await applySurfaceActions(
         ctx,
         SURFACE_MODE,
@@ -456,18 +492,26 @@ export const applyApprovedActions = internalAction({
         },
         output.actions ?? [],
         {
-          deps: realAdapterDeps(),
+          deps: realAdapterDeps(
+            authorityBeforeTransport(ctx, claim.agentId, claim.phase),
+          ),
           grants: new Set(grantRows.map((grant) => grant.scope)),
           approvedIndexes: new Set(claim.approvedIndexes),
           heldReasons: new Map(claim.heldReasons),
+          deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
+          priorLedger,
+          autoPhase: claim.phase === 'auto',
+          autonomousActions: claim.autonomousActions,
+          replyTarget: claim.replyTarget,
         },
       );
-      return await finishRun(ctx, args.workItemId, claim.runId, output, applied);
+      return await finishRun(ctx, args.workItemId, claim, output, applied);
     } catch (err) {
       const reason = (err as Error).message;
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
         pendingRunId: claim.runId,
+        phase: claim.phase,
       });
       return { ok: false, reason };
     }
@@ -481,11 +525,66 @@ export const applyApprovedActions = internalAction({
  * Returns:
  *   Adapter dependencies for this action runtime.
  */
-function realAdapterDeps(): RealAdapterDeps {
+function realAdapterDeps(beforeTransport?: BeforeSurfaceTransport): RealAdapterDeps {
   return {
     decrypt: decryptCredential,
     createMcpClient: createMastraMcpClient,
     fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
+    beforeTransport,
+  };
+}
+
+function surfaceAuthorityShape(surface: SurfaceRecord): string {
+  return JSON.stringify({
+    slug: surface.slug,
+    verdict: surface.verdict,
+    credentialLanded: surface.credentialLanded,
+    lastVerifiedAt: surface.lastVerifiedAt,
+    path: surface.path,
+    endpoint: surface.endpoint,
+    toolAllowlist: [...(surface.toolAllowlist ?? [])].sort(),
+    credentialId: surface.credentialId,
+    credentialKind: surface.credentialKind,
+    managerDmChannelId: surface.managerDmChannelId,
+  });
+}
+
+/** Re-read every mutable authority input immediately before provider transport. */
+function authorityBeforeTransport(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  phase: 'auto' | 'approved',
+): BeforeSurfaceTransport {
+  return async (action, claimedSurface): Promise<string | undefined> => {
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok) return parsed.reason;
+    const authority = await ctx.runQuery(internal.work.transportAuthority, {
+      agentId,
+      surfaceSlug: parsed.action.surface,
+    });
+    if (!authority.agentExists) return 'agent not found';
+    const surface = authority.surface;
+    if (!surface) return UNKNOWN_SURFACE;
+    if (surfaceAuthorityShape(surface) !== surfaceAuthorityShape(claimedSurface)) {
+      return 'surface authority changed before transport';
+    }
+    const refusal =
+      surfaceRefusal(surface, Date.now()) ??
+      pathRefusal(parsed.action, surface) ??
+      toolRefusal(parsed.action, surface);
+    if (refusal) return refusal;
+    if (phase === 'auto' && !isAutomatic(parsed.action, surface, authority.autonomousActions)) {
+      return NOT_AUTOMATIC;
+    }
+    if (needsStandingGrant(parsed.action, surface) || phase === 'auto') {
+      return grantRefusal(
+        parsed.action,
+        surface,
+        new Set(authority.grants),
+        phase === 'auto' && authority.autonomousActions,
+      );
+    }
+    return undefined;
   };
 }
 
@@ -506,28 +605,41 @@ async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<Surf
   return rows.map((row) => toSurfaceRecord(row));
 }
 
+/** What `finishRun` needs from the apply claim. */
+interface FinishClaim {
+  runId: Id<'events'>;
+  applyAttemptId: Id<'events'>;
+  phase: 'auto' | 'approved';
+}
+
+/** Why a deferred row stays unapplied when the auto phase fails. */
+export const NOT_APPLIED_AFTER_FAILURE = 'not applied because an automatic action failed';
+
 /**
- * Record the outcome of an applied run.
+ * Record the outcome of an applied phase.
  *
  * A run completes only when every action it emitted changed the work
  * environment or was held. "At least one applied" is not enough: the skills
  * are told to DM the manager alongside the primary mutation, so a failed
  * primary action plus a delivered "I did it" DM would report the work as done
- * when only the claim about it landed.
+ * when only the claim about it landed. After the auto phase a run that still
+ * has rows awaiting the manager is parked rather than completed; a failure in
+ * the auto phase fails the run and the deferred rows never reach the manager.
  *
  * Args:
  *   ctx: Convex action context.
  *   workItemId: The work item.
+ *   claim: The run, the apply attempt and the phase.
  *   output: The skill's draft, notes and actions.
  *   applied: The ledger.
  *
  * Returns:
- *   Whether the run completed.
+ *   Whether the phase ended well.
  */
 async function finishRun(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
-  runId: Id<'events'>,
+  claim: FinishClaim,
   output: ExecutionOutput,
   applied: AppliedAction[],
 ): Promise<{ ok: boolean; reason?: string }> {
@@ -541,17 +653,34 @@ async function finishRun(
             .join('; ')}`
         : undefined;
   if (reason) {
+    const settled = applied.map((entry) =>
+      entry.awaitingApproval
+        ? { ...entry, awaitingApproval: undefined, reason: NOT_APPLIED_AFTER_FAILURE }
+        : entry,
+    );
     await ctx.runMutation(internal.work.setFailed, {
       workItemId,
       reason,
-      runId,
-      output: { ...output, applied },
+      runId: claim.runId,
+      output: { ...output, applied: settled },
     });
     return { ok: false, reason };
   }
+  if (claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
+    const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {
+      workItemId,
+      runId: claim.runId,
+      applyAttemptId: claim.applyAttemptId,
+      output: { ...output, applied },
+    });
+    if (!parked.parked) {
+      return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
+    }
+    return { ok: true, reason: "automatic actions applied; the rest await the manager's approval" };
+  }
   await ctx.runMutation(internal.work.setCompleted, {
     workItemId,
-    runId,
+    runId: claim.runId,
     output: { ...output, applied },
   });
   return { ok: true };

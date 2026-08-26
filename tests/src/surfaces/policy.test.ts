@@ -1,19 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACTION_JSON_LIMIT_BYTES,
+  actionClass,
   actionIntent,
   applyProvenance,
   containsProvenanceTrailer,
   describeAction,
   grantingScopes,
   grantRefusal,
+  HELD_MUTATION,
   HELD_PUBLIC_POST,
   heldReason,
+  isAutomatic,
   isAuditComment,
   isManagerDm,
   isStatusChange,
   MALFORMED_ACTION,
   MOCK_VERB_REFUSED,
+  needsStandingGrant,
+  normaliseActionVerdict,
   parseSurfaceAction,
   provenanceTrailer,
   requiredScope,
@@ -28,6 +33,7 @@ import {
   TRAILER_REFUSED,
   USERNAME_REFUSED,
   type ParsedSurfaceAction,
+  type ReviewScope,
 } from '../../../src/surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
@@ -161,9 +167,12 @@ describe('intent, scope and connection', (): void => {
   it('classifies reads by tool prefix or HTTP method and defaults to write', (): void => {
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues' } }))).toBe('read');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue' } }))).toBe('read');
+    expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_and_delete_issues' } }))).toBe('write');
     expect(actionIntent(parsed(comment()))).toBe('write');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'frobnicate' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }))).toBe('read');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', method: 'HEAD', path: 'conversations.history', body: '{"mark":"read"}' } }))).toBe('write');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history?operation=delete' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: '/chat.postMessage?channel=D0MANAGER&text=smuggled' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', method: 'HEAD', path: '/conversations.open?users=U1' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'northstar', path: '/contacts/42' } }))).toBe('read');
@@ -302,8 +311,13 @@ describe('the manager DM grant', (): void => {
   });
 });
 
+/** The supervised state, the default: the classification table decides each row. */
+const supervised: ReviewScope = { autonomousActions: false };
+/** The switch on: every applicable row applies on its own. */
+const autonomous: ReviewScope = { autonomousActions: true };
+
 describe('reviewing a held run', (): void => {
-  it('holds every row the gate cannot apply, with the reason the ledger would record', (): void => {
+  it('refuses every row the gate cannot apply, with the reason the ledger would record', (): void => {
     const grants = new Set(['boss:message', 'linear:read']);
     const verdicts = reviewActions(
       [
@@ -320,26 +334,32 @@ describe('reviewing a held run', (): void => {
       [linear, slack],
       grants,
       now,
+      supervised,
     );
+    // A write with no standing grant is held for the manager, never refused: the
+    // approval of the literal payload is its authority.
     expect(verdicts).toEqual([
-      { held: false },
-      { held: true, reason: 'no grant (linear:write)' },
-      { held: false },
-      { held: true, reason: HELD_PUBLIC_POST },
-      { held: true, reason: 'unknown surface' },
-      { held: true, reason: 'http.request is not allowed on surface path mcp' },
-      { held: true, reason: expect.stringContaining(MALFORMED_ACTION) },
-      { held: true, reason: expect.stringContaining(MOCK_VERB_REFUSED) },
-      { held: true, reason: 'unknown tool' },
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_PUBLIC_POST },
+      { disposition: 'refused', reason: 'unknown surface' },
+      { disposition: 'refused', reason: 'http.request is not allowed on surface path mcp' },
+      { disposition: 'refused', reason: expect.stringContaining(MALFORMED_ACTION) },
+      { disposition: 'refused', reason: expect.stringContaining(MOCK_VERB_REFUSED) },
+      { disposition: 'refused', reason: 'unknown tool' },
     ]);
-    expect(reviewAction(comment(), [{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], grants, now)).toEqual({
-      held: true,
-      reason: 'surface not connected (listed-dead)',
+    expect(
+      reviewAction(comment(), [{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], grants, now, supervised),
+    ).toEqual({ disposition: 'refused', reason: 'surface not connected (listed-dead)' });
+    // A standing write grant does not make a write automatic while the switch is off.
+    expect(reviewAction(comment(), [linear], new Set(['linear:write']), now, supervised)).toEqual({
+      disposition: 'held',
+      reason: HELD_MUTATION,
     });
-    expect(reviewAction(comment(), [linear], new Set(['linear:write']), now)).toEqual({ held: false });
   });
 
-  it('holds a surface operation that is absent from the probed allowlist', (): void => {
+  it('refuses a surface operation that is absent from the probed allowlist, whatever the switch', (): void => {
     const unlisted: MockAction = {
       tool: 'mcp.call',
       args: {
@@ -348,30 +368,260 @@ describe('reviewing a held run', (): void => {
         toolArgsJson: '{"id":"iss-1"}',
       },
     };
-    expect(reviewAction(unlisted, [linear], new Set(['linear:write']), now)).toEqual({
-      held: true,
-      reason: 'tool not in the surface allowlist (delete_issue)',
-    });
-    expect(reviewAction(chatJoin('D0MANAGER'), [slack], new Set(['slack:write']), now)).toEqual({
-      held: true,
-      reason: 'tool not in the surface allowlist (conversations.join)',
-    });
+    for (const scope of [supervised, autonomous]) {
+      expect(reviewAction(unlisted, [linear], new Set(['linear:write']), now, scope)).toEqual({
+        disposition: 'refused',
+        reason: 'tool not in the surface allowlist (delete_issue)',
+      });
+      expect(reviewAction(chatJoin('D0MANAGER'), [slack], new Set(['slack:write']), now, scope)).toEqual({
+        disposition: 'refused',
+        reason: 'tool not in the surface allowlist (conversations.join)',
+      });
+    }
   });
 
-  it('holds actions whose provenance fields will be refused at apply', (): void => {
+  it('refuses actions whose provenance fields will be refused at apply, whatever the switch', (): void => {
     const forged = comment('Done.\n\n-- Someone Else (Day0) · run wi_9/run_9');
-    expect(reviewAction(forged, [linear], new Set(['linear:write']), now)).toEqual({
-      held: true,
-      reason: TRAILER_REFUSED,
+    for (const scope of [supervised, autonomous]) {
+      expect(reviewAction(forged, [linear], new Set(['linear:write']), now, scope)).toEqual({
+        disposition: 'refused',
+        reason: TRAILER_REFUSED,
+      });
+      expect(
+        reviewAction(
+          chatPost('D0MANAGER', { username: 'Someone Else' }),
+          [slack],
+          new Set(['boss:message']),
+          now,
+          scope,
+        ),
+      ).toEqual({ disposition: 'refused', reason: USERNAME_REFUSED });
+    }
+  });
+});
+
+describe('the autonomous-actions switch', (): void => {
+  const grants = new Set(['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write']);
+  const slackReads: SurfaceRecord = {
+    ...slack,
+    toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.history', 'conversations.replies'],
+  };
+  const linearAll: SurfaceRecord = {
+    ...linear,
+    toolAllowlist: [...(linear.toolAllowlist ?? []), 'list_comments', 'create_issue', 'delete_issue'],
+  };
+  const surfaces = [linearAll, slackReads];
+  const mcp = (tool: string, toolArgs: Record<string, unknown>): MockAction => ({
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool, toolArgsJson: JSON.stringify(toolArgs) },
+  });
+  const publicReply = chatPost('C0PUBLIC', { thread_ts: '1787746453.202809' });
+  const rpcGet: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'GET',
+      path: '/chat.postMessage?channel=C0PUBLIC&text=smuggled',
+      headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+    },
+  };
+  const historyGet: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'GET',
+      path: '/conversations.history?channel=C0PUBLIC',
+      headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+    },
+  };
+  const stateChange = mcp('save_issue', { id: 'REVOPS-10', state: 'Done' });
+  const demo: MockAction[] = [
+    mcp('get_issue', { id: 'REVOPS-10' }),
+    mcp('list_comments', { issueId: 'REVOPS-10' }),
+    historyGet,
+    chatPost('D0MANAGER'),
+    comment('Audit note.', 'REVOPS-10'),
+    comment('Audit note.', 'REVOPS-11'),
+    publicReply,
+    stateChange,
+    mcp('save_issue', { title: 'New issue', team: 'RevOps' }),
+    mcp('create_issue', { title: 'New issue' }),
+    mcp('delete_issue', { id: 'REVOPS-10' }),
+    rpcGet,
+  ];
+
+  it('off: reads and the DM apply on their own and every other write is held with its reason', (): void => {
+    expect(reviewActions(demo, surfaces, grants, now, supervised)).toEqual([
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_PUBLIC_POST },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_MUTATION },
+      { disposition: 'held', reason: HELD_PUBLIC_POST },
+    ]);
+    // H2 kept: an RPC mutation over GET is a write, so with slack:read alone it is held rather than read on its own.
+    expect(reviewAction(rpcGet, surfaces, new Set(['slack:read']), now, supervised)).toEqual({
+      disposition: 'held',
+      reason: HELD_PUBLIC_POST,
     });
+    // A read without its standing grant, and the DM without boss:message, stay refused.
+    expect(reviewAction(historyGet, surfaces, new Set(['boss:message']), now, supervised)).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (slack:read)',
+    });
+    expect(reviewAction(chatPost('D0MANAGER'), surfaces, new Set(['slack:read']), now, supervised)).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (boss:message)',
+    });
+    // An unrecognised HTTP write on a non-chat surface is held as a plain write.
+    const httpWrite: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'linear', method: 'POST', path: '/issues', body: '{}' },
+    };
+    expect(actionClass(parsed(httpWrite), { ...linearAll, path: 'documented-api', endpoint: 'https://api.linear.app/' })).toBe('write');
+    expect(actionClass(parsed(rpcGet), slackReads)).toBe('public-post');
+    expect(actionClass(parsed(historyGet), slackReads)).toBe('read');
+    expect(actionClass(parsed(chatPost('D0MANAGER')), slackReads)).toBe('manager-dm');
+    expect(actionClass(parsed(comment('x', 'revops-10')), linearAll)).toBe('mutation');
+    expect(isAutomatic(parsed(publicReply), slackReads, false)).toBe(false);
+    expect(isAutomatic(parsed(comment()), linearAll, false)).toBe(false);
+    expect(isAutomatic(parsed(chatPost('D0MANAGER')), slackReads, false)).toBe(true);
+    expect(isAutomatic(parsed(historyGet), slackReads, false)).toBe(true);
+
+    const readDressedMutation = mcp('list_and_delete_issues', { ids: ['REVOPS-10'] });
+    const linearWithDressedMutation = {
+      ...linearAll,
+      toolAllowlist: [...(linearAll.toolAllowlist ?? []), 'list_and_delete_issues'],
+    };
+    expect(
+      reviewAction(readDressedMutation, [linearWithDressedMutation], new Set(['linear:read']), now, supervised),
+    ).toEqual({ disposition: 'held', reason: HELD_MUTATION });
+
+    const executeDressedAsList = mcp('list_and_execute_workflow', { workflow: 'close' });
     expect(
       reviewAction(
-        chatPost('D0MANAGER', { username: 'Someone Else' }),
-        [slack],
-        new Set(['boss:message']),
+        executeDressedAsList,
+        [{ ...linearAll, toolAllowlist: [...(linearAll.toolAllowlist ?? []), 'list_and_execute_workflow'] }],
+        new Set(['linear:read']),
         now,
+        supervised,
       ),
-    ).toEqual({ held: true, reason: USERNAME_REFUSED });
+    ).toEqual({ disposition: 'held', reason: HELD_MUTATION });
+    const triggerDressedAsGet: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'GET',
+        path: '/conversations.history?action=trigger',
+      },
+    };
+    expect(
+      reviewAction(triggerDressedAsGet, surfaces, new Set(['slack:read']), now, supervised),
+    ).toEqual({ disposition: 'held', reason: HELD_PUBLIC_POST });
+  });
+
+  it('on: every non-refused row applies on its own, and the switch is the write authority', (): void => {
+    expect(reviewActions(demo, surfaces, grants, now, autonomous)).toEqual(
+      Array.from({ length: demo.length }, () => ({ disposition: 'auto' })),
+    );
+    // A write with no standing grant applies under the switch: the toggle is the
+    // manager's standing authority for writes on connected surfaces.
+    expect(reviewAction(comment('x', 'REVOPS-10'), surfaces, new Set(['linear:read']), now, autonomous)).toEqual({
+      disposition: 'auto',
+    });
+    expect(reviewAction(publicReply, surfaces, new Set(['boss:message']), now, autonomous)).toEqual({ disposition: 'auto' });
+    expect(reviewAction(stateChange, surfaces, new Set(), now, autonomous)).toEqual({ disposition: 'auto' });
+    // A read and the DM still need their own grants.
+    expect(reviewAction(historyGet, surfaces, new Set(['boss:message']), now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (slack:read)',
+    });
+    expect(reviewAction(chatPost('D0MANAGER'), surfaces, new Set(['slack:read']), now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (boss:message)',
+    });
+    // The refusal list is unchanged: outside the allowlist, forged provenance, a mock verb, an unknown tool, malformed.
+    expect(reviewAction(mcp('archive_issue', { id: 'REVOPS-10' }), surfaces, grants, now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: 'tool not in the surface allowlist (archive_issue)',
+    });
+    expect(reviewAction(comment('Done.\n\n-- Someone Else (Day0) · run wi_9/run_9', 'REVOPS-10'), surfaces, grants, now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: TRAILER_REFUSED,
+    });
+    expect(reviewAction({ tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'x' } }, surfaces, grants, now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: expect.stringContaining(MOCK_VERB_REFUSED),
+    });
+    expect(reviewAction({ tool: 'frobnicate', args: {} } as unknown as MockAction, surfaces, grants, now, autonomous)).toEqual({
+      disposition: 'refused',
+      reason: 'unknown tool',
+    });
+    expect(reviewAction(mcp('save_comment', {}), surfaces, grants, now, autonomous).disposition).toBe('auto');
+    expect(
+      reviewAction({ tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{not json' } }, surfaces, grants, now, autonomous),
+    ).toEqual({ disposition: 'refused', reason: expect.stringContaining(MALFORMED_ACTION) });
+    expect(isAutomatic(parsed(publicReply), slackReads, true)).toBe(true);
+    expect(isAutomatic(parsed(stateChange), linearAll, true)).toBe(true);
+  });
+
+  it('binds an autonomous public reply to the work item source channel and thread', (): void => {
+    const replyTarget = {
+      channel: 'C0PUBLIC',
+      channelName: 'revops-asks',
+      threadTs: '1787746453.202809',
+    };
+    const scope = { autonomousActions: true, replyTarget };
+    expect(reviewAction(publicReply, surfaces, grants, now, scope)).toEqual({ disposition: 'auto' });
+    for (const action of [
+      chatPost('C0OTHER', { thread_ts: replyTarget.threadTs }),
+      chatPost(replyTarget.channel, { thread_ts: '1787000000.000001' }),
+      chatPost(replyTarget.channel, { thread_ts: replyTarget.threadTs, reply_broadcast: true }),
+    ]) {
+      expect(reviewAction(action, surfaces, grants, now, scope)).toEqual({
+        disposition: 'refused',
+        reason: 'chat reply does not match the work item reply target',
+      });
+    }
+  });
+
+  it('lets the switch stand in for the write grant and for nothing else', (): void => {
+    const bossOnly = new Set(['boss:message', 'linear:read']);
+    expect(needsStandingGrant(parsed(historyGet), slackReads)).toBe(true);
+    expect(needsStandingGrant(parsed(chatPost('D0MANAGER')), slackReads)).toBe(true);
+    expect(needsStandingGrant(parsed(comment()), linearAll)).toBe(false);
+    expect(needsStandingGrant(parsed(publicReply), slackReads)).toBe(false);
+    expect(needsStandingGrant(parsed(stateChange), linearAll)).toBe(false);
+    expect(grantRefusal(parsed(comment()), linearAll, bossOnly)).toBe('no grant (linear:write)');
+    expect(grantRefusal(parsed(comment()), linearAll, bossOnly, false)).toBe('no grant (linear:write)');
+    expect(grantRefusal(parsed(comment()), linearAll, bossOnly, true)).toBeUndefined();
+    expect(grantRefusal(parsed(publicReply), slackReads, bossOnly)).toBe('no grant (slack:write)');
+    expect(grantRefusal(parsed(publicReply), slackReads, bossOnly, true)).toBeUndefined();
+    expect(grantRefusal(parsed(stateChange), linearAll, new Set(), true)).toBeUndefined();
+    expect(grantRefusal(parsed(rpcGet), slackReads, new Set(['slack:read']), true)).toBeUndefined();
+    expect(grantRefusal(parsed(historyGet), slackReads, bossOnly, true)).toBe('no grant (slack:read)');
+    expect(grantRefusal(parsed(chatPost('D0MANAGER')), slackReads, new Set(['slack:read']), true)).toBe('no grant (boss:message)');
+    expect(grantRefusal(parsed(chatPost('D0MANAGER')), slackReads, bossOnly, true)).toBeUndefined();
+  });
+
+  it('reads verdicts persisted before dispositions existed', (): void => {
+    expect(normaliseActionVerdict({ held: true, reason: 'no grant (linear:write)' })).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (linear:write)',
+    });
+    expect(normaliseActionVerdict({ held: false })).toEqual({ disposition: 'held', reason: 'write held for the manager' });
+    expect(normaliseActionVerdict({ disposition: 'auto', held: false })).toEqual({ disposition: 'auto' });
+    expect(normaliseActionVerdict({ disposition: 'held', reason: HELD_PUBLIC_POST })).toEqual({
+      disposition: 'held',
+      reason: HELD_PUBLIC_POST,
+    });
+    expect(normaliseActionVerdict({})).toEqual({ disposition: 'held', reason: 'write held for the manager' });
   });
 });
 

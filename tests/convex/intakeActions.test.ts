@@ -329,7 +329,12 @@ describe('real surface intake', (): void => {
       return slackResponse({
         ok: true,
         messages: [
-          { ts: '1770000000.000100', user: 'USECOND', text: '<@UBOT> second channel request' },
+          {
+            ts: '1770000000.000100',
+            thread_ts: '1769999999.000001',
+            user: 'USECOND',
+            text: '<@UBOT> second channel request',
+          },
         ],
         response_metadata: { next_cursor: '' },
       });
@@ -391,11 +396,15 @@ describe('real surface intake', (): void => {
       contentSummary: '<@UBOT> please review REVOPS-1',
       contentRefs: ['https://app.slack.com/client/TTEAM/CASKS/thread/CASKS-1770000000000100'],
       requesterLabel: 'UUSER',
+      // A reply belongs under the mention itself when it was a top-level message.
+      replyTarget: { channel: 'CASKS', channelName: 'revops-asks', threadTs: '1770000000.000100' },
     });
     expect(harness.seeds.get('agent-intake:slack:CREVOPS:1770000000.000100')).toMatchObject({
       externalId: 'CREVOPS:1770000000.000100',
       contentSummary: '<@UBOT> second channel request',
       requesterLabel: 'USECOND',
+      // ... and under the parent when the mention was itself a threaded reply.
+      replyTarget: { channel: 'CREVOPS', threadTs: '1769999999.000001' },
     });
     const historyUrls = slackFetch.mock.calls
       .map(([input]): URL => new URL(String(input)))

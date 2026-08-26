@@ -12,7 +12,13 @@ import {
 } from './policy';
 import { redactValue } from './secrets';
 import { createSecretMcpClient } from './mcp-client';
-import type { AdapterRun, AppliedAction, SurfaceAdapter, SurfaceRecord } from './types';
+import type {
+  AdapterRun,
+  AppliedAction,
+  BeforeSurfaceTransport,
+  SurfaceAdapter,
+  SurfaceRecord,
+} from './types';
 
 export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['tool'][];
 export const MCP_TIMEOUT_MS = 30_000;
@@ -42,6 +48,7 @@ export interface McpAdapterDeps {
   decrypt: DecryptCredential;
   createClient: CreateMcpClient;
   now: () => number;
+  beforeTransport?: BeforeSurfaceTransport;
 }
 
 /** What the adapter reads out of a tool result, whichever shape the server used. */
@@ -251,6 +258,10 @@ export class McpAdapter implements SurfaceAdapter {
     let writeAttempted = false;
     try {
       if (surface.credentialId) bearer = await this.deps.decrypt(ctx, surface.credentialId);
+      const authorityRefusal = await this.deps.beforeTransport?.(action, surface);
+      if (authorityRefusal) {
+        return { tool: action.tool, ok: false, reason: authorityRefusal, idempotencyKey };
+      }
       const client = this.deps.createClient({
         serverName: surface.slug,
         url,

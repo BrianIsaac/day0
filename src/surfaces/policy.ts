@@ -1,4 +1,4 @@
-import type { MockAction } from '../work/types';
+import type { MockAction, ReplyTarget } from '../work/types';
 import { MOCK_TOOLS } from './mock';
 import type { AppliedAction, CredentialKind, SurfaceRecord } from './types';
 import { verdictFor } from './verdict';
@@ -20,7 +20,11 @@ export const UNKNOWN_SURFACE = 'unknown surface';
 export const SURFACE_NOT_CONNECTED = 'surface not connected';
 export const TOOL_NOT_ALLOWED = 'tool not in the surface allowlist';
 export const HELD_PUBLIC_POST = 'public post held for the manager';
+export const HELD_MUTATION = 'system-of-record mutation held for the manager';
+export const HELD_WRITE = 'write held for the manager';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
+export const AWAITING_APPROVAL = "awaiting the manager's approval";
+export const NOT_AUTOMATIC = 'not an automatic action';
 export const UNKNOWN_TOOL = 'unknown tool';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
@@ -28,6 +32,7 @@ export const USERNAME_REFUSED = 'skill-supplied username refused';
 export const MOCK_VERB_REFUSED = 'mock verb refused in real mode';
 export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
   'shared credential write without attributable content';
+export const REPLY_TARGET_REFUSED = 'chat reply does not match the work item reply target';
 
 /** Emoji every message through a shared chat credential carries as its avatar. */
 export const SHARED_IDENTITY_ICON = ':briefcase:';
@@ -42,6 +47,7 @@ const HTTP_MUTATION_WORDS = new Set([
   'close',
   'create',
   'delete',
+  'execute',
   'invite',
   'join',
   'kick',
@@ -61,6 +67,7 @@ const HTTP_MUTATION_WORDS = new Set([
   'send',
   'set',
   'transition',
+  'trigger',
   'unpin',
   'update',
 ]);
@@ -110,6 +117,24 @@ export type ParsedSurfaceAction = ParsedMcpCall | ParsedHttpRequest;
 export type ParseResult =
   | { ok: true; action: ParsedSurfaceAction }
   | { ok: false; reason: string };
+
+function operationTokens(value: string): string[] {
+  let decoded = value;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded
+    .replace(/([a-z0-9])([A-Z])/g, '$1.$2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
 
 /**
  * Whether a verb targets a discovered real surface rather than the mock.
@@ -262,16 +287,14 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
 export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
   if (parsed.kind === 'http.request') {
     if (parsed.method !== 'GET' && parsed.method !== 'HEAD') return 'write';
+    if (parsed.body !== undefined && parsed.body.trim() !== '') return 'write';
     // RPC APIs can accept mutations over GET. Treat an operation carrying an
     // explicit mutation verb as a write even when its transport method lies.
-    const tokens = parsed.path
-      .split(/[?#]/, 1)[0]
-      .replace(/([a-z0-9])([A-Z])/g, '$1.$2')
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean);
-    return tokens.some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
+    return operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token))
+      ? 'write'
+      : 'read';
   }
+  if (operationTokens(parsed.tool).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
   return READ_TOOL_PREFIX.test(parsed.tool) ? 'read' : 'write';
 }
 
@@ -415,6 +438,34 @@ export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord)
   return posts && targetsOnlyChannel(parsed, surface.managerDmChannelId);
 }
 
+/** Why a public chat reply escapes the source channel or thread, if it does. */
+export function replyTargetRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  target: ReplyTarget | undefined,
+): string | undefined {
+  if (!target || surface.class !== 'chat' || isManagerDm(parsed, surface)) return undefined;
+  const isReply = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
+  if (!isReply) return undefined;
+  const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
+  if (!record || !targetsOnlyChannel(parsed, target.channel)) return REPLY_TARGET_REFUSED;
+  const broadcast = Object.entries(record).find(
+    ([key]) => semanticKey(key) === 'replybroadcast',
+  )?.[1];
+  if (broadcast !== undefined && broadcast !== null && broadcast !== false && broadcast !== '') {
+    return REPLY_TARGET_REFUSED;
+  }
+  const threadTargets = Object.entries(record).filter(
+    ([key]) => isThreadKey(key) && semanticKey(key) !== 'replybroadcast',
+  );
+  return threadTargets.length > 0 &&
+    threadTargets.every(([, value]) =>
+      typeof value === 'string' && value.trim() === target.threadTs,
+    )
+    ? undefined
+    : REPLY_TARGET_REFUSED;
+}
+
 /**
  * The scopes any one of which authorises an action.
  *
@@ -436,21 +487,30 @@ export function grantingScopes(parsed: ParsedSurfaceAction, surface: SurfaceReco
 }
 
 /**
- * Why an action has no grant, if it has none.
+ * Why an action has no standing authority, if it has none.
+ *
+ * A read and the manager DM need their own scope whatever else is true.
+ * Any other write is authorised by `<surface>:write`, or, when autonomous
+ * actions are on, by the toggle itself: it is the manager's standing
+ * authority for writes on connected surfaces within their probed allowlist,
+ * so a write with no scope of its own applies under it.
  *
  * Args:
  *   parsed: A parsed surface action.
  *   surface: The surface it targets.
  *   grants: The agent's live permission scopes.
+ *   autonomousActions: Whether the agent's autonomous-actions toggle is on.
  *
  * Returns:
- *   `no grant (<scope>)`, or undefined when a granting scope is held.
+ *   `no grant (<scope>)`, or undefined when the action is authorised.
  */
 export function grantRefusal(
   parsed: ParsedSurfaceAction,
   surface: SurfaceRecord,
   grants: ReadonlySet<string>,
+  autonomousActions = false,
 ): string | undefined {
+  if (autonomousActions && !needsStandingGrant(parsed, surface)) return undefined;
   const scopes = grantingScopes(parsed, surface);
   if (scopes.some((scope) => grants.has(scope))) return undefined;
   return `${NO_GRANT} (${scopes[0]})`;
@@ -554,25 +614,155 @@ export function toolRefusal(
     : `${TOOL_NOT_ALLOWED} (${operation})`;
 }
 
-/** What the gate decided about one held action before the manager sees it. */
-export type ActionVerdict = { held: false } | { held: true; reason: string };
+/** How the gate will treat one row of a run. */
+export type ActionDisposition = 'auto' | 'held' | 'refused';
 
 /**
- * Decide at hold time whether an action can be applied at all.
+ * What the gate decided about one action when the run was held.
  *
- * This is every registry check that depends on nothing that happens during
- * apply: the verb, its shape, the surface's connection, the verb-to-path
- * match, the public-post rule and the grant. A row that fails one is held
- * with that reason from the moment the run is held, so the manager reviews
- * the run the gate will actually apply and a held row never reaches apply.
- * Rules that depend on earlier rows landing (comment before status change,
- * attribution) stay at apply time.
+ * `auto` applies without a human step, `held` waits for the manager to
+ * approve the literal payload, `refused` can never be applied and says why.
+ */
+export type ActionVerdict =
+  | { disposition: 'auto' }
+  | { disposition: 'held'; reason: string }
+  | { disposition: 'refused'; reason: string };
+
+/**
+ * Read a persisted verdict, including the shape written before dispositions.
+ *
+ * Rows held before the ladder carried `{ held: boolean }`: `held: true` meant
+ * the gate would not apply the row at all, which is `refused` now, and
+ * `held: false` meant the manager approves it, which is `held`.
+ *
+ * Args:
+ *   row: The persisted verdict.
+ *
+ * Returns:
+ *   The verdict in the current shape.
+ */
+export function normaliseActionVerdict(row: {
+  held?: boolean;
+  disposition?: string;
+  reason?: string;
+}): ActionVerdict {
+  if (row.disposition === 'auto') return { disposition: 'auto' };
+  if (row.disposition === 'held') return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
+  if (row.disposition === 'refused') return { disposition: 'refused', reason: row.reason ?? 'refused' };
+  if (row.held === true) return { disposition: 'refused', reason: row.reason ?? 'refused' };
+  return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
+}
+
+/** What kind of change an applicable action makes, which decides its disposition and its held reason. */
+export type ActionClass = 'read' | 'manager-dm' | 'public-post' | 'mutation' | 'write';
+
+/**
+ * Classify an applicable action by what it changes.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   The class.
+ */
+export function actionClass(parsed: ParsedSurfaceAction, surface: SurfaceRecord): ActionClass {
+  if (actionIntent(parsed) === 'read') return 'read';
+  if (isManagerDm(parsed, surface)) return 'manager-dm';
+  if (heldReason(parsed, surface)) return 'public-post';
+  if (parsed.kind === 'mcp.call') return 'mutation';
+  return 'write';
+}
+
+/**
+ * Whether an action needs a standing grant to be applied at all.
+ *
+ * A read and the manager DM apply without the manager, so they need the
+ * scope that authorises them (`<surface>:read`, `boss:message`) and are
+ * refused without it. Every other write is authorised either by the manager
+ * (their approval of the literal payload, or the autonomous-actions toggle)
+ * or by a standing `<surface>:write`; a missing write grant therefore keeps a
+ * write out of the auto phase while the toggle is off rather than out of the
+ * run.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   True for a read or the manager DM.
+ */
+export function needsStandingGrant(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
+  return actionIntent(parsed) === 'read' || isManagerDm(parsed, surface);
+}
+
+/**
+ * Why an action can never be applied, if it cannot.
+ *
+ * Every registry check that depends on nothing that happens during apply:
+ * the verb, its shape, the surface's connection, the verb-to-path match,
+ * the probed allowlist, the standing grant of a read or the manager DM, and
+ * the provenance fields.
  *
  * Args:
  *   action: The action as the skill emitted it.
  *   surfaces: The agent's surfaces.
  *   grants: The agent's live permission scopes.
  *   now: Clock for the liveness verdict.
+ *
+ * Returns:
+ *   The refusal, or the parsed action and its surface when it may be applied.
+ */
+export function refusalFor(
+  action: MockAction,
+  surfaces: readonly SurfaceRecord[],
+  grants: ReadonlySet<string>,
+  now: number,
+): { refused: true; reason: string } | { refused: false; parsed: ParsedSurfaceAction; surface: SurfaceRecord } {
+  if (!isSurfaceTool(action.tool)) {
+    const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
+    return { refused: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
+  }
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok) return { refused: true, reason: parsed.reason };
+  const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+  const refusal = surfaceRefusal(surface, now);
+  if (!surface || refusal) return { refused: true, reason: refusal ?? UNKNOWN_SURFACE };
+  const reason =
+    pathRefusal(parsed.action, surface) ??
+    toolRefusal(parsed.action, surface) ??
+    (needsStandingGrant(parsed.action, surface)
+      ? grantRefusal(parsed.action, surface, grants)
+      : undefined) ??
+    provenanceRefusal(parsed.action, surface);
+  if (reason) return { refused: true, reason };
+  return { refused: false, parsed: parsed.action, surface };
+}
+
+/** What the hold transaction reads about the agent before deciding a run. */
+export interface ReviewScope {
+  /** Whether the agent's autonomous-actions toggle is on. */
+  autonomousActions: boolean;
+  /** Exact source channel and thread for event-stream replies. */
+  replyTarget?: ReplyTarget;
+}
+
+/**
+ * Decide at hold time what the gate will do with one action.
+ *
+ * Refusals come first and are the same whether the toggle is on or off.
+ * With autonomous actions off, an applicable row is `auto` when it is a
+ * read or the manager DM and `held` for every other write - a public post
+ * or thread reply, a system-of-record mutation, a create or a delete, or any
+ * other write - whatever standing grant the agent holds. With autonomous
+ * actions on, every applicable row is `auto`.
+ *
+ * Args:
+ *   action: The action as the skill emitted it.
+ *   surfaces: The agent's surfaces.
+ *   grants: The agent's live permission scopes.
+ *   now: Clock for the liveness verdict.
+ *   scope: The agent's toggle.
  *
  * Returns:
  *   The verdict.
@@ -582,23 +772,24 @@ export function reviewAction(
   surfaces: readonly SurfaceRecord[],
   grants: ReadonlySet<string>,
   now: number,
+  scope: ReviewScope,
 ): ActionVerdict {
-  if (!isSurfaceTool(action.tool)) {
-    const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
-    return { held: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
+  const refusal = refusalFor(action, surfaces, grants, now);
+  if (refusal.refused) return { disposition: 'refused', reason: refusal.reason };
+  const replyRefusal = replyTargetRefusal(refusal.parsed, refusal.surface, scope.replyTarget);
+  if (replyRefusal) return { disposition: 'refused', reason: replyRefusal };
+  if (scope.autonomousActions) return { disposition: 'auto' };
+  switch (actionClass(refusal.parsed, refusal.surface)) {
+    case 'read':
+    case 'manager-dm':
+      return { disposition: 'auto' };
+    case 'public-post':
+      return { disposition: 'held', reason: HELD_PUBLIC_POST };
+    case 'mutation':
+      return { disposition: 'held', reason: HELD_MUTATION };
+    default:
+      return { disposition: 'held', reason: HELD_WRITE };
   }
-  const parsed = parseSurfaceAction(action);
-  if (!parsed.ok) return { held: true, reason: parsed.reason };
-  const surface = surfaces.find((row) => row.slug === parsed.action.surface);
-  const refusal = surfaceRefusal(surface, now);
-  if (!surface || refusal) return { held: true, reason: refusal ?? UNKNOWN_SURFACE };
-  const reason =
-    pathRefusal(parsed.action, surface) ??
-    toolRefusal(parsed.action, surface) ??
-    heldReason(parsed.action, surface) ??
-    grantRefusal(parsed.action, surface, grants) ??
-    provenanceRefusal(parsed.action, surface);
-  return reason ? { held: true, reason } : { held: false };
 }
 
 /**
@@ -609,6 +800,7 @@ export function reviewAction(
  *   surfaces: The agent's surfaces.
  *   grants: The agent's live permission scopes.
  *   now: Clock for the liveness verdict.
+ *   scope: The agent's toggle.
  *
  * Returns:
  *   One verdict per action, in order.
@@ -618,8 +810,35 @@ export function reviewActions(
   surfaces: readonly SurfaceRecord[],
   grants: ReadonlySet<string>,
   now: number,
+  scope: ReviewScope,
 ): ActionVerdict[] {
-  return actions.map((action) => reviewAction(action, surfaces, grants, now));
+  return actions.map((action) => reviewAction(action, surfaces, grants, now, scope));
+}
+
+/**
+ * Whether an action may be applied without a human step right now.
+ *
+ * The auto phase's backstop: apply re-reads the surfaces, the grants and
+ * the toggle and asks this of every row it is about to send, so a verdict
+ * written while the toggle was on cannot send a public post or a mutation
+ * after the manager has turned it off.
+ *
+ * Args:
+ *   parsed: A parsed surface action that passed every refusal.
+ *   surface: Its surface.
+ *   autonomousActions: Whether the agent's toggle is on now.
+ *
+ * Returns:
+ *   True for every row under the toggle; otherwise for a read or the manager DM.
+ */
+export function isAutomatic(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  autonomousActions: boolean,
+): boolean {
+  if (autonomousActions) return true;
+  const kind = actionClass(parsed, surface);
+  return kind === 'read' || kind === 'manager-dm';
 }
 
 /**

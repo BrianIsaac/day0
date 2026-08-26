@@ -12,7 +12,13 @@ import {
   type ParsedHttpRequest,
 } from './policy';
 import { hasPlaceholder, injectSecret, redactValue, SecretTemplateError } from './secrets';
-import type { AdapterRun, AppliedAction, SurfaceAdapter, SurfaceRecord } from './types';
+import type {
+  AdapterRun,
+  AppliedAction,
+  BeforeSurfaceTransport,
+  SurfaceAdapter,
+  SurfaceRecord,
+} from './types';
 
 export const HTTP_TOOLS = ['http.request'] as const satisfies readonly MockAction['tool'][];
 export const HTTP_TIMEOUT_MS = 20_000;
@@ -25,6 +31,7 @@ export interface HttpAdapterDeps {
   decrypt: DecryptCredential;
   fetch: FetchLike;
   now: () => number;
+  beforeTransport?: BeforeSurfaceTransport;
 }
 
 /**
@@ -213,6 +220,10 @@ export class HttpAdapter implements SurfaceAdapter {
         request.body === undefined || request.method === 'GET' || request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
+      const authorityRefusal = await this.deps.beforeTransport?.(action, surface);
+      if (authorityRefusal) {
+        return { tool: action.tool, ok: false, reason: authorityRefusal, idempotencyKey };
+      }
       writeAttempted = actionIntent(request) === 'write';
       const response = await this.deps.fetch(url, {
         method: request.method,

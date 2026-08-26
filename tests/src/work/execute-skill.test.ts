@@ -4,6 +4,7 @@ import {
   actionArgsSchema,
   executeSchema,
   executorPreamble,
+  replyTargetLine,
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { ACTION_TOOLS } from '../../../src/work/types';
@@ -102,5 +103,26 @@ describe('executor preamble by mode', (): void => {
     expect(text).not.toContain('  - ticket.update');
     expect(text).not.toContain('`dm-manager`');
     expect(text).toContain('A draft (human-readable)');
+  });
+
+  it('emits a public reply as its own threaded chat.postMessage and keeps the DM for questions', (): void => {
+    const text = executorPreamble('real');
+    expect(text).toContain('A reply to a channel or thread is its own action, never text inside another message');
+    expect(text).toContain('`channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line');
+    expect(text).toContain("The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on)");
+    expect(text).toContain('The manager DM through the connected chat surface is for questions and escalation');
+    expect(text).toContain('It never carries a draft that belongs in a channel or thread');
+    expect(text).toContain('reads and the manager DM apply on their own; every public post, thread reply, comment and system-of-record change is held for the manager');
+    expect(text).toContain('unless the manager has turned autonomous actions on, in which case it is applied exactly as you emit it');
+    expect(text).not.toContain('audit comments on the item you are working may apply on their own');
+    expect(text).not.toContain('Cold-start posture');
+    expect(executorPreamble('mock')).not.toContain('Reply target');
+  });
+
+  it('prints the reply target line the preamble refers to', (): void => {
+    expect(replyTargetLine({ channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1787746453.202809' })).toBe(
+      'Reply target: channel C0BSF04TZ19 (#revops-asks), thread_ts 1787746453.202809',
+    );
+    expect(replyTargetLine({ channel: 'C0BSF04TZ19' })).toBe('Reply target: channel C0BSF04TZ19, top-level post');
   });
 });

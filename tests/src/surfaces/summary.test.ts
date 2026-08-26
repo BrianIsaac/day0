@@ -101,6 +101,39 @@ describe('the plain-language action line', (): void => {
     expect(
       summariseAction(http('POST', '/chat.postMessage', { channel: 'C0PUBLIC', thread_ts: '1.2', text: 'Ack.' }), surfaces),
     ).toBe('Post to Slack channel C0PUBLIC (in thread): "Ack."');
+    // A post into the ask's own channel reads as the reply it is; a different thread or channel keeps the id.
+    const replyTarget = { channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1787746453.202809' };
+    expect(
+      summariseAction(
+        http('POST', '/chat.postMessage', { channel: 'C0BSF04TZ19', thread_ts: '1787746453.202809', text: 'Covered.' }),
+        surfaces,
+        { replyTarget },
+      ),
+    ).toBe('Reply in #revops-asks thread: "Covered."');
+    expect(
+      summariseAction(http('POST', '/chat.postMessage', { channel: 'C0BSF04TZ19', text: 'Covered.' }), surfaces, { replyTarget }),
+    ).toBe('Post in #revops-asks: "Covered."');
+    expect(
+      summariseAction(
+        http('POST', '/chat.postMessage', { channel: 'C0BSF04TZ19', thread_ts: '9.9', text: 'Covered.' }),
+        surfaces,
+        { replyTarget },
+      ),
+    ).toBe('Post to Slack channel C0BSF04TZ19 (in thread): "Covered."');
+    expect(
+      summariseAction(
+        http('POST', '/chat.postMessage', { channel: 'C0OTHER', thread_ts: '1787746453.202809', text: 'Covered.' }),
+        surfaces,
+        { replyTarget },
+      ),
+    ).toBe('Post to Slack channel C0OTHER (in thread): "Covered."');
+    expect(
+      summariseAction(
+        http('POST', '/chat.postMessage', { channel: 'C0BSF04TZ19', thread_ts: '1787746453.202809', text: 'Covered.' }),
+        surfaces,
+        { replyTarget: { channel: 'C0BSF04TZ19', threadTs: '1787746453.202809' } },
+      ),
+    ).toBe('Post to Slack channel C0BSF04TZ19 (in thread): "Covered."');
     expect(summariseAction(http('GET', 'conversations.history'), surfaces)).toBe('GET conversations.history on Slack');
   });
 
@@ -125,16 +158,19 @@ describe('the plain-language action line', (): void => {
         surfaces,
       ),
     ).toBe('Move REVOPS-5 to Done on Linear; also update title, project');
-    expect(
-      summariseAction(
-        http('POST', '/chat.postMessage', {
-          channel: 'D0MANAGER',
-          text: 'Harmless fallback.',
-          blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Different visible message' } }],
-        }),
-        surfaces,
-      ),
-    ).toContain('also send blocks');
+    const richMessage = summariseAction(
+      http('POST', '/chat.postMessage', {
+        channel: 'D0MANAGER',
+        text: 'Harmless fallback.',
+        reply_broadcast: true,
+        blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Different visible message' } }],
+        attachments: [{ fallback: 'Second attachment effect' }],
+      }),
+      surfaces,
+    );
+    expect(richMessage).toContain('reply_broadcast=true');
+    expect(richMessage).toContain('Different visible message');
+    expect(richMessage).toContain('Second attachment effect');
   });
 
   it('falls back to the tool and surface for anything it does not know', (): void => {

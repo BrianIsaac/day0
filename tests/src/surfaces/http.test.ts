@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { HttpAdapter, HTTP_TIMEOUT_MS, providerIdFrom, resolveRequestUrl } from '../../../src/surfaces/http';
-import type { AdapterRun, SurfaceRecord } from '../../../src/surfaces/types';
+import type {
+  AdapterRun,
+  BeforeSurfaceTransport,
+  SurfaceRecord,
+} from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
@@ -59,11 +63,17 @@ function fakeFetch(respond: (url: URL, init: RequestInit) => Response | Promise<
   return fake;
 }
 
-function adapter(fetchImpl: FakeFetch, surfaces: SurfaceRecord[] = [slack], secret = 'xoxb-test-value'): HttpAdapter {
+function adapter(
+  fetchImpl: FakeFetch,
+  surfaces: SurfaceRecord[] = [slack],
+  secret = 'xoxb-test-value',
+  beforeTransport?: BeforeSurfaceTransport,
+): HttpAdapter {
   return new HttpAdapter(surfaces, {
     decrypt: vi.fn(async (): Promise<string> => secret),
     fetch: fetchImpl.fetch,
     now: (): number => now,
+    beforeTransport,
   });
 }
 
@@ -94,6 +104,26 @@ describe('HTTP adapter', (): void => {
     expect(call.init.body).toBe(JSON.stringify({ channel: 'D0MANAGER', text: 'Draft ready.' }));
     expect(call.init.signal).toBeInstanceOf(AbortSignal);
     expect(call.init.redirect).toBe('manual');
+  });
+
+  it('revalidates authority after decrypt and before fetch', async (): Promise<void> => {
+    const fetchImpl = fakeFetch((): Response => new Response('should not be called'));
+    const beforeTransport = vi.fn(async (): Promise<string> => 'agent not found');
+    const result = await adapter(fetchImpl, [slack], 'xoxb-test-value', beforeTransport).apply(
+      ctx,
+      run,
+      post,
+      0,
+      'k',
+    );
+    expect(result).toEqual({
+      tool: 'http.request',
+      ok: false,
+      reason: 'agent not found',
+      idempotencyKey: 'k',
+    });
+    expect(beforeTransport).toHaveBeenCalledWith(post, slack);
+    expect(fetchImpl.calls).toHaveLength(0);
   });
 
   it('never echoes the request headers or the secret into the ledger', async (): Promise<void> => {
