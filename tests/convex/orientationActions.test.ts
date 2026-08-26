@@ -1,6 +1,5 @@
 /** @vitest-environment node */
 
-import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { getFunctionName } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
@@ -28,6 +27,7 @@ import {
   type OrientationDraftResult,
 } from '../../convex/orientationActions';
 import { allConvexModules } from './all-modules';
+import { sanitisedNotionPage, type NotionPageName } from '../fixtures/notion-pages';
 import {
   fakeCredentialState,
   resetFakeCredentials,
@@ -37,9 +37,9 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 type DraftPath = 'mcp' | 'documented-api' | 'browser-driven' | 'escalate';
 
-/** Read a sanitised copy of one submitted Notion page. */
-function notionFixture(name: string): string {
-  return readFileSync(new URL(`../fixtures/notion-pages/${name}.md`, import.meta.url), 'utf8');
+/** Read one submitted Notion page as documentation sync mirrors it (token redacted to its marker). */
+function notionFixture(name: NotionPageName): string {
+  return sanitisedNotionPage(name);
 }
 
 /** Load the deployment with a contract-level Lane A credential store. */
@@ -388,7 +388,7 @@ describe('orientation evidence selection', (): void => {
       {
         sourceId: 'source-1',
         ref: 'onboarding.md',
-        quote: '| Linear | Team `REVOPS`, project `Q3 close`, is the formal work queue and audit trail.',
+        quote: '- Keep formal status and audit comments on the originating Linear issue.',
         url: undefined,
       },
     ]);
@@ -432,12 +432,13 @@ describe('orientation evidence selection', (): void => {
 });
 
 describe('credential extraction', (): void => {
-  const pages = [
+  const names: NotionPageName[] = [
     'onboarding',
     'linear-automation',
     'slack-day0-app',
     'northstar-crm',
-  ].map((name) => ({
+  ];
+  const pages = names.map((name) => ({
     sourceId: 'source-fixture',
     ref: `${name}.md`,
     title: name,

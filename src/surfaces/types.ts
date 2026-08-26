@@ -49,6 +49,8 @@ export interface SurfaceRecord {
   credentialId?: string;
   credentialKind?: CredentialKind;
   managerDmChannelId?: string;
+  /** The manager's Slack display name, read at probe time; names the DM on the card. */
+  managerName?: string;
 }
 
 /** @deprecated Use `SurfaceRecord`; kept so callers that pass `[]` still type-check. */

@@ -1,4 +1,5 @@
 import type { MockAction } from '../work/types';
+import { MOCK_TOOLS } from './mock';
 import type { AppliedAction, CredentialKind, SurfaceRecord } from './types';
 import { verdictFor } from './verdict';
 
@@ -20,6 +21,7 @@ export const SURFACE_NOT_CONNECTED = 'surface not connected';
 export const TOOL_NOT_ALLOWED = 'tool not in the surface allowlist';
 export const HELD_PUBLIC_POST = 'public post held for the manager';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
+export const UNKNOWN_TOOL = 'unknown tool';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
 export const USERNAME_REFUSED = 'skill-supplied username refused';
@@ -32,10 +34,52 @@ export const SHARED_IDENTITY_ICON = ':briefcase:';
 
 const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 const READ_TOOL_PREFIX = /^(?:list|get|search|read|fetch|retrieve|query|find|describe|show)(?:[_-]|$)/i;
+const HTTP_MUTATION_WORDS = new Set([
+  'add',
+  'approve',
+  'archive',
+  'cancel',
+  'close',
+  'create',
+  'delete',
+  'invite',
+  'join',
+  'kick',
+  'leave',
+  'mark',
+  'move',
+  'open',
+  'pin',
+  'post',
+  'publish',
+  'reject',
+  'remove',
+  'rename',
+  'reply',
+  'save',
+  'schedule',
+  'send',
+  'set',
+  'transition',
+  'unpin',
+  'update',
+]);
 const STATUS_TOOL = /^(?:save|update|set|change|transition|move)[_-]|status|state/i;
 const STATUS_KEYS = ['status', 'state', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'];
 const COMMENT_TOOL = /comment|message|post|reply|note/i;
-const CHANNEL_KEYS = ['channel', 'channel_id', 'channelId', 'conversation', 'conversationId'];
+const MESSAGE_KEYS = ['text', 'body', 'message', 'content'];
+const MCP_CHAT_POST_TOOLS = new Set([
+  'chat.postmessage',
+  'chat_postmessage',
+  'chat_post_message',
+  'postmessage',
+  'post_message',
+  'sendmessage',
+  'send_message',
+  'createmessage',
+  'create_message',
+  'slack_post_message',
+]);
 const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'];
 const TRAILER_MARK = /--\s[^\n]*\(Day0\)\s·\srun\s/;
 
@@ -217,7 +261,16 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
  */
 export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
   if (parsed.kind === 'http.request') {
-    return parsed.method === 'GET' || parsed.method === 'HEAD' ? 'read' : 'write';
+    if (parsed.method !== 'GET' && parsed.method !== 'HEAD') return 'write';
+    // RPC APIs can accept mutations over GET. Treat an operation carrying an
+    // explicit mutation verb as a write even when its transport method lies.
+    const tokens = parsed.path
+      .split(/[?#]/, 1)[0]
+      .replace(/([a-z0-9])([A-Z])/g, '$1.$2')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    return tokens.some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
   }
   return READ_TOOL_PREFIX.test(parsed.tool) ? 'read' : 'write';
 }
@@ -243,6 +296,28 @@ function firstString(record: JsonObject, keys: readonly string[]): string | unde
   return undefined;
 }
 
+function semanticKey(key: string): string {
+  return key.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function isDestinationKey(key: string): boolean {
+  const normalised = semanticKey(key);
+  return (
+    normalised.includes('channel') ||
+    normalised.includes('conversation') ||
+    /^(?:destination|destinationid|recipient|recipientid|to)$/.test(normalised)
+  );
+}
+
+function isThreadKey(key: string): boolean {
+  const normalised = semanticKey(key);
+  return (
+    normalised.includes('thread') ||
+    normalised.includes('reply') ||
+    normalised.includes('parent')
+  );
+}
+
 /**
  * The chat channel or conversation an action posts to, when it names one.
  *
@@ -254,7 +329,37 @@ function firstString(record: JsonObject, keys: readonly string[]): string | unde
  */
 export function targetChannel(parsed: ParsedSurfaceAction): string | undefined {
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
-  return record ? firstString(record, CHANNEL_KEYS) : undefined;
+  if (!record) return undefined;
+  for (const [key, value] of Object.entries(record)) {
+    if (isDestinationKey(key) && typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return undefined;
+}
+
+/** Whether every destination alias supplied by an action names one exact channel. */
+function targetsOnlyChannel(parsed: ParsedSurfaceAction, expected: string): boolean {
+  const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
+  if (!record) return false;
+  const destinations = Object.entries(record).filter(([key]) => isDestinationKey(key));
+  return (
+    destinations.length > 0 &&
+    destinations.every(([, value]) => typeof value === 'string' && value.trim() === expected)
+  );
+}
+
+/** Whether an action asks the provider to place a message inside an existing thread. */
+function hasThreadTarget(parsed: ParsedSurfaceAction): boolean {
+  const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
+  if (!record) return false;
+  return Object.entries(record).some(([key, value]) => {
+    return isThreadKey(key) && value !== undefined && value !== null && value !== '' && value !== false;
+  });
+}
+
+/** Whether an MCP call is narrowly a new chat-message operation with content. */
+function isMcpChatPost(parsed: ParsedMcpCall): boolean {
+  if (!MCP_CHAT_POST_TOOLS.has(parsed.tool.toLowerCase())) return false;
+  return MESSAGE_KEYS.some((key) => typeof parsed.toolArgs[key] === 'string');
 }
 
 /**
@@ -274,30 +379,247 @@ export function heldReason(parsed: ParsedSurfaceAction, surface: SurfaceRecord):
   if (actionIntent(parsed) === 'read') return undefined;
   if (surface.class === 'social') return HELD_PUBLIC_POST;
   if (surface.class === 'chat') {
-    const channel = targetChannel(parsed);
-    if (!surface.managerDmChannelId || channel !== surface.managerDmChannelId) {
+    if (
+      !surface.managerDmChannelId ||
+      !targetsOnlyChannel(parsed, surface.managerDmChannelId)
+    ) {
       return HELD_PUBLIC_POST;
     }
   }
   return undefined;
 }
 
+/** The scope every agent holds from deployment; on a surface it authorises the manager DM alone. */
+export const BOSS_MESSAGE_SCOPE = 'boss:message';
+
 /**
- * Whether an action as emitted would be held on its surface.
+ * Whether an action is the manager DM.
+ *
+ * Exactly one real action qualifies: a `chat.postMessage`-class write on a
+ * chat surface whose target channel is that surface's manager DM channel, as
+ * the connection probe recorded it. A chat write anywhere else is a public
+ * post, and a write on any other surface class is never a DM.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   True for the manager DM.
+ */
+export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
+  if (surface.class !== 'chat' || !surface.managerDmChannelId) return false;
+  if (actionIntent(parsed) !== 'write') return false;
+  if (hasThreadTarget(parsed)) return false;
+  const posts = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
+  return posts && targetsOnlyChannel(parsed, surface.managerDmChannelId);
+}
+
+/**
+ * The scopes any one of which authorises an action.
+ *
+ * The manager DM is what `boss:message` means on a real chat surface, so the
+ * DM is granted by either `boss:message` or the surface's own write scope;
+ * every other action needs exactly `requiredScope`. The first entry is the
+ * scope a refusal names.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   The granting scopes, most specific first.
+ */
+export function grantingScopes(parsed: ParsedSurfaceAction, surface: SurfaceRecord): string[] {
+  const scope = requiredScope(parsed);
+  return isManagerDm(parsed, surface) ? [BOSS_MESSAGE_SCOPE, scope] : [scope];
+}
+
+/**
+ * Why an action has no grant, if it has none.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *   grants: The agent's live permission scopes.
+ *
+ * Returns:
+ *   `no grant (<scope>)`, or undefined when a granting scope is held.
+ */
+export function grantRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  grants: ReadonlySet<string>,
+): string | undefined {
+  const scopes = grantingScopes(parsed, surface);
+  if (scopes.some((scope) => grants.has(scope))) return undefined;
+  return `${NO_GRANT} (${scopes[0]})`;
+}
+
+/**
+ * The refusal for a legacy mock verb emitted in real mode.
+ *
+ * Args:
+ *   tool: The verb.
+ *
+ * Returns:
+ *   The reason the ledger records.
+ */
+export function mockVerbRefusal(tool: string): string {
+  return `${MOCK_VERB_REFUSED} (${tool} writes to the mock tables; target a connected surface with mcp.call or http.request)`;
+}
+
+/**
+ * Why a surface verb may not run on the surface's connection path, if it may not.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   A refusal reason, or undefined when the verb matches the path.
+ */
+export function pathRefusal(parsed: ParsedSurfaceAction, surface: SurfaceRecord): string | undefined {
+  const mismatch =
+    parsed.kind === 'mcp.call'
+      ? surface.path !== 'mcp' && surface.path !== 'browser-driven'
+      : surface.path !== 'documented-api';
+  if (!mismatch) return undefined;
+  return `${parsed.kind} is not allowed on surface path ${surface.path ?? 'unknown'}`;
+}
+
+/**
+ * Resolve a documented HTTP operation without allowing the path to leave its endpoint.
+ *
+ * This lives with the pure gate policy so hold-time review and the HTTP adapter
+ * derive the same allowlist name from the same safe URL.
+ */
+export function resolveRequestUrl(endpoint: string, path: string): URL {
+  const base = new URL(endpoint);
+  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
+    throw new Error('surface endpoint must be an HTTP URL without userinfo');
+  }
+  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  const rawPath = path.trim();
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(rawPath)) {
+    throw new Error('path escapes the surface endpoint');
+  }
+  let decodedPath = rawPath;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const decoded = decodeURIComponent(decodedPath);
+      if (decoded === decodedPath) break;
+      decodedPath = decoded;
+    } catch {
+      throw new Error('path has invalid percent encoding');
+    }
+  }
+  if (
+    decodedPath.includes('\\') ||
+    /(?:^|\/)\.{1,2}(?:\/|$)/.test(decodedPath.split(/[?#]/, 1)[0])
+  ) {
+    throw new Error('path escapes the surface endpoint');
+  }
+  const target = new URL(rawPath.replace(/^\/+/, ''), base);
+  if (
+    target.origin !== base.origin ||
+    target.username ||
+    target.password ||
+    !target.pathname.startsWith(base.pathname)
+  ) {
+    throw new Error('path escapes the surface endpoint');
+  }
+  return target;
+}
+
+/** Why an operation is outside the surface's probed allowlist, if it is. */
+export function toolRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+): string | undefined {
+  let operation = parsed.kind === 'mcp.call' ? parsed.tool : '';
+  if (parsed.kind === 'http.request') {
+    let target: URL;
+    try {
+      target = resolveRequestUrl(surface.endpoint ?? '', parsed.path);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    const base = new URL(surface.endpoint ?? '');
+    if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+    operation = target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
+  }
+  return surface.toolAllowlist?.includes(operation)
+    ? undefined
+    : `${TOOL_NOT_ALLOWED} (${operation})`;
+}
+
+/** What the gate decided about one held action before the manager sees it. */
+export type ActionVerdict = { held: false } | { held: true; reason: string };
+
+/**
+ * Decide at hold time whether an action can be applied at all.
+ *
+ * This is every registry check that depends on nothing that happens during
+ * apply: the verb, its shape, the surface's connection, the verb-to-path
+ * match, the public-post rule and the grant. A row that fails one is held
+ * with that reason from the moment the run is held, so the manager reviews
+ * the run the gate will actually apply and a held row never reaches apply.
+ * Rules that depend on earlier rows landing (comment before status change,
+ * attribution) stay at apply time.
  *
  * Args:
  *   action: The action as the skill emitted it.
  *   surfaces: The agent's surfaces.
+ *   grants: The agent's live permission scopes.
+ *   now: Clock for the liveness verdict.
  *
  * Returns:
- *   True when the parsed action targets a known surface and would be held.
+ *   The verdict.
  */
-export function heldEligible(action: MockAction, surfaces: readonly SurfaceRecord[]): boolean {
-  if (!isSurfaceTool(action.tool)) return false;
+export function reviewAction(
+  action: MockAction,
+  surfaces: readonly SurfaceRecord[],
+  grants: ReadonlySet<string>,
+  now: number,
+): ActionVerdict {
+  if (!isSurfaceTool(action.tool)) {
+    const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
+    return { held: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
+  }
   const parsed = parseSurfaceAction(action);
-  if (!parsed.ok) return false;
+  if (!parsed.ok) return { held: true, reason: parsed.reason };
   const surface = surfaces.find((row) => row.slug === parsed.action.surface);
-  return surface !== undefined && heldReason(parsed.action, surface) !== undefined;
+  const refusal = surfaceRefusal(surface, now);
+  if (!surface || refusal) return { held: true, reason: refusal ?? UNKNOWN_SURFACE };
+  const reason =
+    pathRefusal(parsed.action, surface) ??
+    toolRefusal(parsed.action, surface) ??
+    heldReason(parsed.action, surface) ??
+    grantRefusal(parsed.action, surface, grants) ??
+    provenanceRefusal(parsed.action, surface);
+  return reason ? { held: true, reason } : { held: false };
+}
+
+/**
+ * Review every action of a held run.
+ *
+ * Args:
+ *   actions: The actions as the skill emitted them.
+ *   surfaces: The agent's surfaces.
+ *   grants: The agent's live permission scopes.
+ *   now: Clock for the liveness verdict.
+ *
+ * Returns:
+ *   One verdict per action, in order.
+ */
+export function reviewActions(
+  actions: readonly MockAction[],
+  surfaces: readonly SurfaceRecord[],
+  grants: ReadonlySet<string>,
+  now: number,
+): ActionVerdict[] {
+  return actions.map((action) => reviewAction(action, surfaces, grants, now));
 }
 
 /**
@@ -441,9 +763,34 @@ export type ProvenanceResult =
  *   True for a write to a chat surface that carries message text.
  */
 function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
-  if (actionIntent(parsed) !== 'write') return false;
-  if (/chat\.postMessage$/.test(parsed.path)) return true;
-  return surface.class === 'chat' && typeof parsed.bodyJson?.text === 'string';
+  return (
+    parsed.method === 'POST' &&
+    surface.class === 'chat' &&
+    /^\/*chat\.postMessage$/.test(parsed.path) &&
+    typeof parsed.bodyJson?.text === 'string'
+  );
+}
+
+/** A skill-supplied provenance field that the server will refuse at apply. */
+export function provenanceRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+): string | undefined {
+  if (parsed.kind === 'mcp.call') {
+    if (!isAuditComment(parsed)) return undefined;
+    return containsProvenanceTrailer(parsed.toolArgs.body as string)
+      ? TRAILER_REFUSED
+      : undefined;
+  }
+  if (parsed.body !== undefined && containsProvenanceTrailer(parsed.body)) {
+    return TRAILER_REFUSED;
+  }
+  if (!isChatPost(parsed, surface) || !parsed.bodyJson) return undefined;
+  return parsed.bodyJson.username !== undefined ||
+    parsed.bodyJson.icon_emoji !== undefined ||
+    parsed.bodyJson.icon_url !== undefined
+    ? USERNAME_REFUSED
+    : undefined;
 }
 
 /**
@@ -497,31 +844,22 @@ export function applyProvenance(
   run: ProvenanceRun,
   credentialKind: CredentialKind,
 ): ProvenanceResult {
+  const refusal = provenanceRefusal(parsed, surface);
+  if (refusal) return { ok: false, reason: refusal };
   const shared = credentialKind !== 'oauth';
   const trailer = provenanceTrailer(run.agentName, run.workItemId, run.runId);
   if (parsed.kind === 'mcp.call') {
     if (!isAuditComment(parsed)) return { ok: true, action: parsed };
     const body = parsed.toolArgs.body as string;
-    if (containsProvenanceTrailer(body)) return { ok: false, reason: TRAILER_REFUSED };
     if (!shared) return { ok: true, action: parsed };
     return {
       ok: true,
       action: { ...parsed, toolArgs: { ...parsed.toolArgs, body: `${body}\n\n${trailer}` } },
     };
   }
-  if (parsed.body !== undefined && containsProvenanceTrailer(parsed.body)) {
-    return { ok: false, reason: TRAILER_REFUSED };
-  }
   if (!isChatPost(parsed, surface)) return { ok: true, action: parsed };
   const bodyJson = parsed.bodyJson;
   if (!bodyJson) return { ok: true, action: parsed };
-  if (
-    bodyJson.username !== undefined ||
-    bodyJson.icon_emoji !== undefined ||
-    bodyJson.icon_url !== undefined
-  ) {
-    return { ok: false, reason: USERNAME_REFUSED };
-  }
   if (!shared) return { ok: true, action: parsed };
   const text = typeof bodyJson.text === 'string' ? bodyJson.text : '';
   const next: JsonObject = {

@@ -83,7 +83,89 @@ async function propose(harness: Harness, agentId: Id<'agents'>, workItemId: Id<'
   });
 }
 
+describe('rejecting a proposed skill', (): void => {
+  it('cancels the work item it was proposed for and records why', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    const skillId = await propose(harness, agentId, workItemId);
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId });
+    const [skill, work] = await harness.run(async (ctx) => [await ctx.db.get(skillId), await ctx.db.get(workItemId)]);
+    expect(skill?.state).toBe('rejected');
+    expect(work).toMatchObject({
+      state: 'cancelled',
+      skipReason: 'skill proposal "update-linear-ticket" rejected by the manager',
+    });
+    await expect(harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId })).resolves.toEqual({ ok: true });
+  });
+
+  it('does not cancel source work that moved on before the proposal was rejected', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    const skillId = await propose(harness, agentId, workItemId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'completed',
+        output: { applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'already:landed:0' }] },
+      });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId });
+
+    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe('completed');
+  });
+
+  it('does not cancel work that is now waiting for a different proposal', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    const staleSkillId = await propose(harness, agentId, workItemId);
+    const currentSkillId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('skills', {
+        agentId,
+        name: 'current-proposal',
+        description: 'Current proposal.',
+        body: '',
+        sourceType: 'agent-authored',
+        state: 'proposed',
+        proposedFor: workItemId,
+        createdAt: 2,
+      });
+      await ctx.db.patch(workItemId, { proposedSkillId: id });
+      return id;
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId: staleSkillId });
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(workItemId))).toMatchObject({
+      state: 'needs-skill',
+      proposedSkillId: currentSkillId,
+    });
+  });
+});
+
 describe('skills that target a surface', (): void => {
+  it('refuses to create a proposal against another agent\'s work', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const first = await seedAgentAndWork(harness, 'linear');
+    const second = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'second@day0.local',
+        name: 'Second',
+        userId: 'second-owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      return agentId;
+    });
+    await expect(propose(harness, second, first.workItemId)).rejects.toThrow(
+      'skill and work item belong to different agents',
+    );
+    expect(await harness.run(async (ctx) => await ctx.db.query('skills').collect())).toEqual([]);
+  });
+
   it('names the source surface and its read and write scopes when the work came from one', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

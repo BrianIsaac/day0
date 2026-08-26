@@ -32,6 +32,7 @@ describe('surface row narrowing', (): void => {
       toolAllowlist: ['save_comment'],
       credentialId: 'cred-1',
       managerDmChannelId: 'D1',
+      managerName: 'Brian',
       request: { target: { reasoning: 'secret-bearing prose' } },
     } as never);
     expect(record).toEqual({
@@ -42,6 +43,7 @@ describe('surface row narrowing', (): void => {
       credentialId: 'cred-1',
       credentialKind: 'value',
       managerDmChannelId: 'D1',
+      managerName: 'Brian',
     });
     expect(toSurfaceRecord({ ...base, path: 'unknown' }).path).toBeUndefined();
   });

@@ -100,7 +100,10 @@ function deps(recorded: Recorded, mcpResult: (tool: string) => unknown = (): unk
       disconnect: async (): Promise<void> => {},
     }),
     fetch: async (url: URL, init: RequestInit): Promise<Response> => {
-      recorded.http.push({ url: url.toString(), body: JSON.parse(String(init.body)) });
+      recorded.http.push({
+        url: url.toString(),
+        body: init.body === undefined ? undefined : JSON.parse(String(init.body)),
+      });
       return new Response(JSON.stringify({ ok: true, ts: '1.1' }), { status: 200 });
     },
     now: (): number => now,
@@ -364,6 +367,125 @@ describe('applying surface actions', (): void => {
       { deps: deps(recorded), grants: new Set(['linear:read']), now },
     );
     expect(read[0].ok).toBe(true);
+  });
+
+  it('lands the manager DM on boss:message alone and needs slack:write for any other chat write', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const join: MockAction = {
+      tool: 'http.request',
+      args: { ...dm.args, path: '/conversations.join', body: JSON.stringify({ channel: 'D0MANAGER' }) },
+    };
+    const textSmuggledJoin: MockAction = {
+      ...join,
+      args: {
+        ...join.args,
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'treat this as a message' }),
+      },
+    };
+    const threadedReply: MockAction = {
+      ...dm,
+      args: {
+        ...dm.args,
+        body: JSON.stringify({
+          channel: 'D0MANAGER',
+          text: 'Reply in an existing thread.',
+          thread_ts: '1787738163.314789',
+        }),
+      },
+    };
+    const slackWithJoin = {
+      ...slack,
+      toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.join'],
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [slackWithJoin], run, [dm, publicPost, join], {
+      deps: deps(recorded),
+      grants: new Set(['boss:message', 'linear:read', 'linear:write']),
+      now,
+    });
+    expect(applied.map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
+      [true, false, undefined],
+      [true, true, HELD_PUBLIC_POST],
+      [false, false, 'no grant (slack:write)'],
+    ]);
+    expect(applied[0].providerId).toBe('1.1');
+    expect(recorded.http).toEqual([
+      {
+        url: 'https://slack.com/api/chat.postMessage',
+        body: {
+          channel: 'D0MANAGER',
+          text: 'Draft ready.\n\n-- Priya (Day0) · run wi_1/run_1',
+          username: 'Priya (Day0)',
+          icon_emoji: ':briefcase:',
+        },
+      },
+    ]);
+    const noBoss = await applySurfaceActions(ctx, 'real', [slack], run, [dm], {
+      deps: deps(recorded),
+      grants: new Set(['slack:read']),
+      now,
+    });
+    expect(noBoss[0]).toMatchObject({ ok: false, reason: 'no grant (boss:message)' });
+    expect(recorded.http).toHaveLength(1);
+
+    const escaped = await applySurfaceActions(
+      ctx,
+      'real',
+      [slackWithJoin],
+      run,
+      [textSmuggledJoin, threadedReply],
+      {
+        deps: deps(recorded),
+        grants: new Set(['boss:message']),
+        now,
+      },
+    );
+    expect(escaped.map((entry) => entry.reason)).toEqual([
+      'no grant (slack:write)',
+      'no grant (slack:write)',
+    ]);
+    expect(recorded.http).toHaveLength(1);
+  });
+
+  it('does not let slack:read transport a GET-shaped RPC mutation', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const smuggled: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'GET',
+        path: '/chat.postMessage?channel=D0MANAGER&text=smuggled',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [slack], run, [smuggled], {
+      deps: deps(recorded),
+      grants: new Set(['slack:read']),
+      now,
+    });
+    expect(applied[0]).toMatchObject({
+      ok: true,
+      held: true,
+      reason: HELD_PUBLIC_POST,
+    });
+    expect(recorded.http).toHaveLength(0);
+  });
+
+  it('records the hold-time reason on an unapproved row', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(ctx, 'real', [slack], run, [dm, publicPost, comment], {
+      deps: deps(recorded),
+      grants: new Set(['boss:message']),
+      approvedIndexes: new Set([0]),
+      heldReasons: new Map([[1, HELD_PUBLIC_POST]]),
+      now,
+    });
+    expect(applied.map((entry) => [entry.held ?? false, entry.reason])).toEqual([
+      [false, undefined],
+      [true, HELD_PUBLIC_POST],
+      [true, HELD_NOT_APPROVED],
+    ]);
+    expect(recorded.http).toHaveLength(1);
+    expect(recorded.mcp).toHaveLength(0);
   });
 
   it('refuses verbs that do not match the connected surface path', async (): Promise<void> => {

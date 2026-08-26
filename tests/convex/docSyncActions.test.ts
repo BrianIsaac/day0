@@ -1,7 +1,6 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +11,7 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate } from '../fixtures/notion-pages';
 import {
   SYNC_BATCH_SIZE,
   categoryForPage,
@@ -91,10 +91,10 @@ describe('documentation sync action helpers', (): void => {
       `generic-${suffix}`,
       token(['ntn'], '_', `title-${suffix}`),
     ];
-    const linearTemplate = readFileSync(
-      'docs/submission/notion-pages/linear-automation.md',
-      'utf8',
-    ).replace('PASTE_LINEAR_API_KEY_HERE', values[1]);
+    const linearTemplate = notionPageTemplate('linear-automation').replace(
+      LINEAR_TOKEN_PLACEHOLDER,
+      values[1],
+    );
     const bodies = [
       `# Notion\n\nValue: ${values[0]}`,
       linearTemplate,

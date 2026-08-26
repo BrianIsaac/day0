@@ -9,12 +9,12 @@ import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
 import {
-  describeAction,
-  heldEligible,
+  type ActionVerdict,
   reviewPayload,
   skillApprovalRefusal,
 } from '../../../src/surfaces/policy';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
+import { summariseAction } from '../../../src/surfaces/summary';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
 import type { MockAction } from '../../../src/work/types';
@@ -169,7 +169,6 @@ export function AgentDashboard({ agentId }: Props) {
           <WorkQueue
             workItems={workItems ?? []}
             surfaces={surfaces}
-            surfacesReady={surfaceConfig?.mode !== 'real' || surfaceRows !== undefined}
             registeredSkillCount={(registeredSkills ?? []).length}
             charterApproved={!!charter?.approved}
           />
@@ -702,13 +701,11 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 function WorkQueue({
   workItems,
   surfaces,
-  surfacesReady,
   registeredSkillCount,
   charterApproved,
 }: {
   workItems: Doc<'workItems'>[];
   surfaces: SurfaceRecord[];
-  surfacesReady: boolean;
   registeredSkillCount: number;
   charterApproved: boolean;
 }) {
@@ -793,7 +790,6 @@ function WorkQueue({
               key={item._id}
               item={item}
               surfaces={surfaces}
-              surfacesReady={surfacesReady}
               onApprovePlan={() => approvePlan({ workItemId: item._id })}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={() => retryFailed({ workItemId: item._id })}
@@ -839,6 +835,32 @@ interface LedgerRow {
   providerId?: string;
 }
 
+/**
+ * Why a cancelled work item stopped, for the card.
+ *
+ * Rows cancelled since the reason was recorded carry it in `skipReason`; an
+ * older row is read from what it was doing when it was cancelled.
+ *
+ * Args:
+ *   item: The cancelled work item's reason, verdict and plan.
+ *
+ * Returns:
+ *   One sentence in place of the pre-cancel verdict.
+ */
+export function cancelledReason(item: {
+  skipReason?: string;
+  verdict?: { decision?: string; suggestedSkillName?: string };
+  plan?: unknown;
+}): string {
+  if (item.skipReason) return item.skipReason;
+  if (item.verdict?.decision === 'needs-skill') {
+    const name = item.verdict.suggestedSkillName;
+    return name ? `skill proposal "${name}" rejected by the manager` : 'skill proposal rejected by the manager';
+  }
+  if (item.plan) return 'plan cancelled by the manager';
+  return 'cancelled by the manager';
+}
+
 /** Whether replay could duplicate an external effect whose outcome is durable or unknown. */
 export function retryRequiresReconciliation(
   applied: readonly LedgerRow[],
@@ -851,31 +873,56 @@ export function retryRequiresReconciliation(
 }
 
 /**
+ * The per-row verdicts for a held run, one per action.
+ *
+ * A run held before verdicts were persisted has none; its rows are treated
+ * as approvable and the registry still applies its own rules at apply time.
+ *
+ * Args:
+ *   verdicts: The verdicts persisted when the run was held.
+ *   count: How many actions the run holds.
+ *
+ * Returns:
+ *   A verdict per action index.
+ */
+export function pendingVerdicts(
+  verdicts: Doc<'workItems'>['actionVerdicts'] | undefined,
+  count: number,
+): ActionVerdict[] {
+  return Array.from({ length: count }, (_, index): ActionVerdict => {
+    const verdict = verdicts?.[index];
+    return verdict?.held ? { held: true, reason: verdict.reason ?? 'held' } : { held: false };
+  });
+}
+
+/**
  * The exact-action gate: every action the skill emitted, verbatim, with a
  * checkbox each. Nothing reaches a surface until the manager approves it here.
  */
 export function PendingActions({
   actions,
+  verdicts,
   surfaces,
-  surfacesReady,
   onApprove,
   onReject,
 }: {
   actions: MockAction[];
+  verdicts: ActionVerdict[];
   surfaces: SurfaceRecord[];
-  surfacesReady: boolean;
   onApprove: (approvedIndexes: number[]) => Promise<unknown>;
   onReject: (reason: string) => Promise<unknown>;
 }) {
-  // A public post is held by the server whatever the manager ticks, so it
-  // starts unticked and "Approve all" is disabled while one exists: approving
-  // everything would promise something the gate will not deliver.
-  const heldEligibleIndexes = useMemo(
-    () => new Set(actions.flatMap((action, index) => (heldEligible(action, surfaces) ? [index] : []))),
-    [actions, surfaces],
+  // The gate decided which rows are held when it held the run (a public
+  // post, a missing grant, an unconnected surface); those rows cannot be
+  // ticked, the server refuses them at approval, and "Approve all" is
+  // disabled while one exists so the button never promises what the gate
+  // will not deliver.
+  const heldIndexes = useMemo(
+    () => new Set(verdicts.flatMap((verdict, index) => (verdict.held ? [index] : []))),
+    [verdicts],
   );
   const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(actions.map((_, index) => index).filter((index) => !heldEligibleIndexes.has(index))),
+    () => new Set(actions.map((_, index) => index).filter((index) => !heldIndexes.has(index))),
   );
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -902,16 +949,13 @@ export function PendingActions({
     });
   }
 
-  const anyHeldEligible = heldEligibleIndexes.size > 0;
+  const anyHeld = heldIndexes.size > 0;
   return (
     <div className="mt-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
       <p className="text-[var(--color-warn)] font-medium mb-1">
         {actions.length} {actions.length === 1 ? 'action' : 'actions'} awaiting your approval ·
         nothing has reached a surface
       </p>
-      {!surfacesReady ? (
-        <p className="text-[var(--color-muted)]">Loading the surface rules before approval.</p>
-      ) : null}
       {actions.length === 0 ? (
         <p className="text-[var(--color-muted)]">
           The skill emitted no actions. Approving lands nothing; reject to send it back.
@@ -919,7 +963,8 @@ export function PendingActions({
       ) : (
         <ul className="space-y-1.5">
           {actions.map((action, index) => {
-            const willHold = heldEligibleIndexes.has(index);
+            const verdict = verdicts[index];
+            const heldByGate = verdict?.held === true;
             const on = selected.has(index);
             return (
               <li key={index} className="flex items-start gap-2">
@@ -927,25 +972,28 @@ export function PendingActions({
                   type="checkbox"
                   className="mt-0.5"
                   checked={on}
-                  disabled={busy}
+                  disabled={busy || heldByGate}
                   onChange={(event) => toggle(index, event.target.checked)}
                   aria-label={`approve action ${index + 1}`}
                 />
                 <div className="flex-1 min-w-0">
-                  <ActionPayload action={action} />
-                  <span className="block text-[10px] text-[var(--color-muted)]">
-                    {describeAction(action)}
-                  </span>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {willHold ? (
-                      <span className="text-[10px] text-[var(--color-muted)]">
-                        public post · will be held for you even if approved
-                      </span>
+                  <p className="text-xs text-[var(--color-fg)] break-words">
+                    {summariseAction(action, surfaces)}
+                    {heldByGate ? (
+                      <span className="text-[var(--color-warn)]"> · held · {verdict.reason}</span>
                     ) : null}
-                    {!on ? (
+                  </p>
+                  <details className="mt-0.5">
+                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                      exact payload
+                    </summary>
+                    <ActionPayload action={action} />
+                  </details>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {!heldByGate && !on ? (
                       <span className="text-[10px] text-[var(--color-muted)]">held · will not be sent</span>
                     ) : null}
-                    {on ? (
+                    {heldByGate ? null : on ? (
                       <button
                         type="button"
                         disabled={busy}
@@ -974,7 +1022,7 @@ export function PendingActions({
       <div className="flex flex-wrap items-center gap-2 mt-2">
         <button
           type="button"
-          disabled={busy || !surfacesReady || actions.length === 0}
+          disabled={busy || actions.length === 0}
           onClick={() => submit(() => onApprove([...selected].sort((a, b) => a - b)))}
           className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
         >
@@ -982,10 +1030,10 @@ export function PendingActions({
         </button>
         <button
           type="button"
-          disabled={busy || !surfacesReady || anyHeldEligible || actions.length === 0}
+          disabled={busy || anyHeld || actions.length === 0}
           title={
-            anyHeldEligible
-              ? 'A public post is in this run; it is held for you whatever is approved, so approve the rest by selection.'
+            anyHeld
+              ? 'A row in this run is held by the gate and cannot be approved; approve the rest by selection.'
               : undefined
           }
           onClick={() => submit(() => onApprove(actions.map((_, index) => index)))}
@@ -1018,7 +1066,6 @@ export function PendingActions({
 function WorkItemCard({
   item,
   surfaces,
-  surfacesReady,
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -1027,7 +1074,6 @@ function WorkItemCard({
 }: {
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
-  surfacesReady: boolean;
   onApprovePlan: () => void;
   onCancelPlan: () => void;
   onRetryFailed: () => void;
@@ -1087,7 +1133,14 @@ function WorkItemCard({
         </div>
       </div>
 
-      {verdict ? (
+      {item.state === 'cancelled' ? (
+        <div className="mt-2 text-xs">
+          <span className="text-[var(--color-muted)]">cancelled:</span>{' '}
+          <span className="text-[var(--color-fg)]">
+            {cancelledReason({ skipReason: item.skipReason, verdict, plan })}
+          </span>
+        </div>
+      ) : verdict ? (
         <div className="mt-2 text-xs">
           <span className="text-[var(--color-muted)]">verdict:</span>{' '}
           {verdict.decision === 'defer' && verdict.reason === 'awaiting-connection' ? (
@@ -1137,10 +1190,10 @@ function WorkItemCard({
 
       {item.state === 'actions-pending' && output ? (
         <PendingActions
-          key={`${item._id}:${item.pendingRunId ?? ''}:${surfacesReady ? surfaces.map((surface) => `${surface.slug}:${surface.verdict}:${surface.managerDmChannelId ?? ''}`).join('|') : 'loading'}`}
+          key={`${item._id}:${item.pendingRunId ?? ''}`}
           actions={output.actions ?? []}
+          verdicts={pendingVerdicts(item.actionVerdicts, output.actions?.length ?? 0)}
           surfaces={surfaces}
-          surfacesReady={surfacesReady}
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />

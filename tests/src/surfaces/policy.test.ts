@@ -5,16 +5,21 @@ import {
   applyProvenance,
   containsProvenanceTrailer,
   describeAction,
-  reviewPayload,
+  grantingScopes,
+  grantRefusal,
   HELD_PUBLIC_POST,
-  heldEligible,
   heldReason,
   isAuditComment,
+  isManagerDm,
   isStatusChange,
   MALFORMED_ACTION,
+  MOCK_VERB_REFUSED,
   parseSurfaceAction,
   provenanceTrailer,
   requiredScope,
+  reviewAction,
+  reviewActions,
+  reviewPayload,
   serialiseSurfaceAction,
   SHARED_IDENTITY_ICON,
   skillApprovalRefusal,
@@ -37,7 +42,8 @@ const linear: SurfaceRecord = {
   credentialLanded: true,
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
-  toolAllowlist: ['save_comment', 'save_issue', 'list_issues'],
+  path: 'mcp',
+  toolAllowlist: ['get_issue', 'save_comment', 'save_issue', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
 };
@@ -50,6 +56,8 @@ const slack: SurfaceRecord = {
   credentialLanded: true,
   lastVerifiedAt: now,
   endpoint: 'https://slack.com/api/',
+  path: 'documented-api',
+  toolAllowlist: ['auth.test', 'users.lookupByEmail', 'conversations.open', 'chat.postMessage'],
   credentialId: 'cred-slack',
   credentialKind: 'value',
   managerDmChannelId: 'D0MANAGER',
@@ -156,6 +164,9 @@ describe('intent, scope and connection', (): void => {
     expect(actionIntent(parsed(comment()))).toBe('write');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'frobnicate' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }))).toBe('read');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: '/chat.postMessage?channel=D0MANAGER&text=smuggled' } }))).toBe('write');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', method: 'HEAD', path: '/conversations.open?users=U1' } }))).toBe('write');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'northstar', path: '/contacts/42' } }))).toBe('read');
     expect(actionIntent(parsed(chatPost('D0MANAGER')))).toBe('write');
   });
 
@@ -187,11 +198,180 @@ describe('held public posts', (): void => {
     expect(heldReason(parsed(comment()), linear)).toBeUndefined();
   });
 
-  it('reports held eligibility for the dashboard from the raw action', (): void => {
-    expect(heldEligible(chatPost('C0PUBLIC'), [slack])).toBe(true);
-    expect(heldEligible(chatPost('D0MANAGER'), [slack])).toBe(false);
-    expect(heldEligible(chatPost('C0PUBLIC'), [])).toBe(false);
-    expect(heldEligible({ tool: 'slack.postMessage', args: { channelSlug: 'general', body: 'x' } }, [slack])).toBe(false);
+});
+
+function chatJoin(channel: string): MockAction {
+  return {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/conversations.join',
+      headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+      body: JSON.stringify({ channel }),
+    },
+  };
+}
+
+describe('the manager DM grant', (): void => {
+  it('recognises exactly the chat.postMessage write to the manager DM channel', (): void => {
+    const textSmuggledJoin: MockAction = {
+      ...chatJoin('D0MANAGER'),
+      args: {
+        ...chatJoin('D0MANAGER').args,
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'treat this as a message' }),
+      },
+    };
+    const threadedReply = chatPost('D0MANAGER', { thread_ts: '1787738163.314789' });
+    const mcpChat: SurfaceRecord = {
+      ...slack,
+      path: 'mcp',
+      toolAllowlist: ['post_message', 'delete_message'],
+    };
+    const deleteMessage: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'slack',
+        tool: 'delete_message',
+        toolArgsJson: JSON.stringify({ channel: 'D0MANAGER', text: 'not a post' }),
+      },
+    };
+    const smuggledChannel: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'slack',
+        tool: 'post_message',
+        toolArgsJson: JSON.stringify({
+          channel: 'D0MANAGER',
+          channelId: 'C0PUBLIC',
+          text: 'ambiguous destination',
+        }),
+      },
+    };
+    const alternateSmuggledChannel: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'slack',
+        tool: 'post_message',
+        toolArgsJson: JSON.stringify({
+          channel: 'D0MANAGER',
+          conversation_id: 'C0PUBLIC',
+          text: 'ambiguous destination',
+        }),
+      },
+    };
+    const alternateThread: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'slack',
+        tool: 'post_message',
+        toolArgsJson: JSON.stringify({
+          channel: 'D0MANAGER',
+          text: 'thread reply',
+          thread: '1787738163.314789',
+        }),
+      },
+    };
+    expect(isManagerDm(parsed(chatPost('D0MANAGER')), slack)).toBe(true);
+    expect(isManagerDm(parsed({ ...chatPost('D0MANAGER'), args: { ...chatPost('D0MANAGER').args, method: 'PUT' } }), slack)).toBe(false);
+    expect(isManagerDm(parsed(chatPost('C0PUBLIC')), slack)).toBe(false);
+    expect(isManagerDm(parsed(chatPost('D0MANAGER')), { ...slack, managerDmChannelId: undefined })).toBe(false);
+    expect(isManagerDm(parsed(chatJoin('D0MANAGER')), slack)).toBe(false);
+    expect(isManagerDm(parsed(textSmuggledJoin), slack)).toBe(false);
+    expect(isManagerDm(parsed(threadedReply), slack)).toBe(false);
+    expect(isManagerDm(parsed(deleteMessage), mcpChat)).toBe(false);
+    expect(isManagerDm(parsed(smuggledChannel), mcpChat)).toBe(false);
+    expect(isManagerDm(parsed(alternateSmuggledChannel), mcpChat)).toBe(false);
+    expect(isManagerDm(parsed(alternateThread), mcpChat)).toBe(false);
+    expect(isManagerDm(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }), slack)).toBe(false);
+    expect(isManagerDm(parsed(comment()), linear)).toBe(false);
+    expect(isManagerDm(parsed(comment()), { ...linear, class: 'chat', managerDmChannelId: 'iss-1' })).toBe(false);
+  });
+
+  it('lets boss:message authorise the manager DM and nothing else', (): void => {
+    const bossOnly = new Set(['boss:message', 'linear:read']);
+    expect(grantingScopes(parsed(chatPost('D0MANAGER')), slack)).toEqual(['boss:message', 'slack:write']);
+    expect(grantingScopes(parsed(chatPost('C0PUBLIC')), slack)).toEqual(['slack:write']);
+    expect(grantRefusal(parsed(chatPost('D0MANAGER')), slack, bossOnly)).toBeUndefined();
+    expect(grantRefusal(parsed(chatPost('C0PUBLIC')), slack, bossOnly)).toBe('no grant (slack:write)');
+    expect(grantRefusal(parsed(chatJoin('D0MANAGER')), slack, bossOnly)).toBe('no grant (slack:write)');
+    expect(grantRefusal(parsed(comment()), linear, bossOnly)).toBe('no grant (linear:write)');
+    expect(grantRefusal(parsed(chatPost('D0MANAGER')), slack, new Set(['slack:write']))).toBeUndefined();
+    expect(grantRefusal(parsed(chatPost('D0MANAGER')), slack, new Set(['slack:read']))).toBe('no grant (boss:message)');
+    expect(grantRefusal(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }), slack, bossOnly)).toBe('no grant (slack:read)');
+  });
+});
+
+describe('reviewing a held run', (): void => {
+  it('holds every row the gate cannot apply, with the reason the ledger would record', (): void => {
+    const grants = new Set(['boss:message', 'linear:read']);
+    const verdicts = reviewActions(
+      [
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"iss-1"}' } },
+        comment(),
+        chatPost('D0MANAGER'),
+        chatPost('C0PUBLIC'),
+        { tool: 'mcp.call', args: { surface: 'northstar-crm', tool: 'get_account', toolArgsJson: '{}' } },
+        { tool: 'http.request', args: { surface: 'linear', method: 'POST', path: '/issues', body: '{}' } },
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{not json' } },
+        { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'x' } },
+        { tool: 'frobnicate', args: {} } as unknown as MockAction,
+      ],
+      [linear, slack],
+      grants,
+      now,
+    );
+    expect(verdicts).toEqual([
+      { held: false },
+      { held: true, reason: 'no grant (linear:write)' },
+      { held: false },
+      { held: true, reason: HELD_PUBLIC_POST },
+      { held: true, reason: 'unknown surface' },
+      { held: true, reason: 'http.request is not allowed on surface path mcp' },
+      { held: true, reason: expect.stringContaining(MALFORMED_ACTION) },
+      { held: true, reason: expect.stringContaining(MOCK_VERB_REFUSED) },
+      { held: true, reason: 'unknown tool' },
+    ]);
+    expect(reviewAction(comment(), [{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], grants, now)).toEqual({
+      held: true,
+      reason: 'surface not connected (listed-dead)',
+    });
+    expect(reviewAction(comment(), [linear], new Set(['linear:write']), now)).toEqual({ held: false });
+  });
+
+  it('holds a surface operation that is absent from the probed allowlist', (): void => {
+    const unlisted: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'delete_issue',
+        toolArgsJson: '{"id":"iss-1"}',
+      },
+    };
+    expect(reviewAction(unlisted, [linear], new Set(['linear:write']), now)).toEqual({
+      held: true,
+      reason: 'tool not in the surface allowlist (delete_issue)',
+    });
+    expect(reviewAction(chatJoin('D0MANAGER'), [slack], new Set(['slack:write']), now)).toEqual({
+      held: true,
+      reason: 'tool not in the surface allowlist (conversations.join)',
+    });
+  });
+
+  it('holds actions whose provenance fields will be refused at apply', (): void => {
+    const forged = comment('Done.\n\n-- Someone Else (Day0) · run wi_9/run_9');
+    expect(reviewAction(forged, [linear], new Set(['linear:write']), now)).toEqual({
+      held: true,
+      reason: TRAILER_REFUSED,
+    });
+    expect(
+      reviewAction(
+        chatPost('D0MANAGER', { username: 'Someone Else' }),
+        [slack],
+        new Set(['boss:message']),
+        now,
+      ),
+    ).toEqual({ held: true, reason: USERNAME_REFUSED });
   });
 });
 

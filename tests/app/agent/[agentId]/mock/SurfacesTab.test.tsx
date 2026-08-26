@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   CredentialRow,
+  EvidenceQuote,
   type CredentialRowProps,
 } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
 import type { CredentialPresentation } from '../../../../../src/surfaces/credential-presentation';
@@ -79,5 +80,25 @@ describe('SurfacesTab credential row', (): void => {
     });
     expect(markup).toContain('Slack shared bot token - entered by IT (masked)');
     expect(markup).not.toContain('type="password"');
+  });
+});
+
+describe('SurfacesTab evidence quote', (): void => {
+  it('renders an index tag as the page title linked to the page', (): void => {
+    const markup = renderToStaticMarkup(
+      <EvidenceQuote quote='<page url="https://app.notion.com/p/3c7a382da0a080968de5fd7bf18e5f21">Linear Automation</page>' />,
+    );
+    expect(markup).toBe(
+      '<a href="https://app.notion.com/p/3c7a382da0a080968de5fd7bf18e5f21" target="_blank" rel="noreferrer" class="text-[var(--color-fg)] underline decoration-[var(--color-border)]">Linear Automation</a>',
+    );
+    expect(markup).not.toContain('&lt;page');
+  });
+
+  it('leaves every other quote as stored', (): void => {
+    expect(renderToStaticMarkup(<EvidenceQuote quote="# Linear automation" />)).toBe('# Linear automation');
+    expect(renderToStaticMarkup(<EvidenceQuote quote='<page url="ftp://x">Linear</page>' />)).toBe(
+      '&lt;page url=&quot;ftp://x&quot;&gt;Linear&lt;/page&gt;',
+    );
+    expect(renderToStaticMarkup(<EvidenceQuote quote={undefined} />)).toBe('');
   });
 });

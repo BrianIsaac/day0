@@ -9,9 +9,11 @@ vi.mock('../../app/agent/[agentId]/MockEnvironment', () => ({
 }));
 
 import {
+  cancelledReason,
   PendingActions,
   retryRequiresReconciliation,
 } from '../../app/agent/[agentId]/AgentDashboard';
+import type { ActionVerdict } from '../../src/surfaces/policy';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import type { MockAction } from '../../src/work/types';
 
@@ -26,14 +28,15 @@ const connectedSlack: SurfaceRecord = {
   endpoint: 'https://slack.com/api/',
   toolAllowlist: ['chat.postMessage'],
   managerDmChannelId: 'D0MANAGER',
+  managerName: 'Brian',
 };
 
-function render(actions: MockAction[], surfacesReady = true): string {
+function render(actions: MockAction[], verdicts: ActionVerdict[] = actions.map(() => ({ held: false }))): string {
   return renderToStaticMarkup(
     createElement(PendingActions, {
       actions,
+      verdicts,
       surfaces: [connectedSlack],
-      surfacesReady,
       onApprove: vi.fn(async (): Promise<void> => {}),
       onReject: vi.fn(async (): Promise<void> => {}),
     }),
@@ -48,32 +51,60 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
   });
 
-  it('shows the complete literal action and disables approve-all for a held action', (): void => {
+  it('shows the complete literal action, the gate reason on a held row, and disables approve-all', (): void => {
     const longBody = 'x'.repeat(240);
-    const action: MockAction = {
+    const dm: MockAction = {
       tool: 'http.request',
       args: {
         surface: 'slack',
         method: 'POST',
         path: '/chat.postMessage',
         headersJson: '{"Authorization":"Bearer {{secret}}"}',
-        body: JSON.stringify({ channel: 'C0PUBLIC', text: longBody }),
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'Draft ready.' }),
       },
     };
-    const html = render([action]);
+    const publicPost: MockAction = {
+      tool: 'http.request',
+      args: { ...dm.args, body: JSON.stringify({ channel: 'C0PUBLIC', text: longBody }) },
+    };
+    const html = render([dm, publicPost], [{ held: false }, { held: true, reason: 'public post held for the manager' }]);
     expect(html).toContain(longBody);
-    expect(html).toContain('public post · will be held for you even if approved');
+    // The plain line comes first, the held reason on the same line, and the literal payload is folded away.
+    expect(html).toMatch(/<p[^>]*>Send Brian a Slack DM: &quot;Draft ready\.&quot;<\/p>/);
+    expect(html).toMatch(/<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · held · public post held for the manager<\/span><\/p>/);
+    expect(html.indexOf('Send Brian a Slack DM')).toBeLessThan(html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'));
+    expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
+    expect(html).not.toMatch(/<details[^>]*open/);
+    expect(html).toContain('{{secret}}');
+    expect(html).toMatch(/<input type="checkbox"[^>]*aria-label="approve action 1" checked=""/);
+    expect(html).toMatch(/<input type="checkbox"[^>]*disabled="" aria-label="approve action 2"\/>/);
+    expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
+    expect(html).not.toMatch(/approve action 2"[^]*?reject this action/);
   });
 
-  it('keeps approval disabled until surface rules have loaded', (): void => {
+  it('enables approve-all when every row is approvable', (): void => {
     const action: MockAction = {
-      tool: 'http.request',
-      args: { surface: 'slack', path: '/chat.postMessage' },
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-5"}' },
     };
-    const html = render([action], false);
-    expect(html).toContain('Loading the surface rules before approval.');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve selected \(1\)<\/button>/);
+    const html = render([action]);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
+  });
+
+  it('explains a cancelled item from its recorded reason, else from what it was doing', (): void => {
+    expect(cancelledReason({ skipReason: 'skill proposal "linear-action-revops-6" rejected by the manager' })).toBe(
+      'skill proposal "linear-action-revops-6" rejected by the manager',
+    );
+    expect(
+      cancelledReason({
+        verdict: { decision: 'needs-skill', suggestedSkillName: 'linear-action-revops-6' },
+      }),
+    ).toBe('skill proposal "linear-action-revops-6" rejected by the manager');
+    expect(cancelledReason({ verdict: { decision: 'needs-skill' } })).toBe('skill proposal rejected by the manager');
+    expect(cancelledReason({ verdict: { decision: 'claim' }, plan: { summary: 'x' } })).toBe('plan cancelled by the manager');
+    expect(cancelledReason({})).toBe('cancelled by the manager');
   });
 
   it('requires reconciliation for landed or interrupted provider effects', (): void => {

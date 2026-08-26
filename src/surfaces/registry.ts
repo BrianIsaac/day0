@@ -9,19 +9,22 @@ import { MOCK_TOOLS, mockAdapter } from './mock';
 import {
   applyProvenance,
   describeAction,
+  grantRefusal,
   HELD_NOT_APPROVED,
   heldReason,
   isSurfaceTool,
-  MOCK_VERB_REFUSED,
-  NO_GRANT,
+  mockVerbRefusal,
   parseSurfaceAction,
-  requiredScope,
+  pathRefusal,
   serialiseSurfaceAction,
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
   sharedWriteWithoutAttribution,
   STATUS_WITHOUT_COMMENT,
   statusChangeWithoutComment,
   surfaceRefusal,
+  toolRefusal,
+  UNKNOWN_SURFACE,
+  UNKNOWN_TOOL,
   type ParsedSurfaceAction,
 } from './policy';
 import type {
@@ -50,6 +53,8 @@ export interface ApplyOptions {
   grants?: ReadonlySet<string>;
   /** Indexes the manager approved; every other index is recorded as held. */
   approvedIndexes?: ReadonlySet<number>;
+  /** Reasons rows were held when the run was held; an unapproved index carries its own over `HELD_NOT_APPROVED`. */
+  heldReasons?: ReadonlyMap<number, string>;
   /** Clock for the connection verdict. */
   now?: number;
 }
@@ -190,7 +195,7 @@ export async function applySurfaceActions(
         tool: action.tool,
         ok: true,
         held: true,
-        reason: HELD_NOT_APPROVED,
+        reason: options.heldReasons?.get(index) ?? HELD_NOT_APPROVED,
         effect: describeAction(action),
         idempotencyKey,
       });
@@ -200,8 +205,8 @@ export async function applySurfaceActions(
     if (!adapter) {
       const reason =
         mode === 'real' && (MOCK_TOOLS as readonly string[]).includes(action.tool)
-          ? `${MOCK_VERB_REFUSED} (${action.tool} writes to the mock tables; target a connected surface with mcp.call or http.request)`
-          : 'unknown tool';
+          ? mockVerbRefusal(action.tool)
+          : UNKNOWN_TOOL;
       applied.push(refused(action.tool, reason, idempotencyKey));
       continue;
     }
@@ -218,22 +223,17 @@ export async function applySurfaceActions(
     const surface = surfaces.find((row) => row.slug === parsed.action.surface);
     const refusal = surfaceRefusal(surface, now);
     if (!surface || refusal) {
-      applied.push(refused(action.tool, refusal ?? 'unknown surface', idempotencyKey));
+      applied.push(refused(action.tool, refusal ?? UNKNOWN_SURFACE, idempotencyKey));
       continue;
     }
-    if (
-      (parsed.action.kind === 'mcp.call' &&
-        surface.path !== 'mcp' &&
-        surface.path !== 'browser-driven') ||
-      (parsed.action.kind === 'http.request' && surface.path !== 'documented-api')
-    ) {
-      applied.push(
-        refused(
-          action.tool,
-          `${action.tool} is not allowed on surface path ${surface.path ?? 'unknown'}`,
-          idempotencyKey,
-        ),
-      );
+    const pathMismatch = pathRefusal(parsed.action, surface);
+    if (pathMismatch) {
+      applied.push(refused(action.tool, pathMismatch, idempotencyKey));
+      continue;
+    }
+    const unlisted = toolRefusal(parsed.action, surface);
+    if (unlisted) {
+      applied.push(refused(action.tool, unlisted, idempotencyKey));
       continue;
     }
     const held = heldReason(parsed.action, surface);
@@ -248,9 +248,9 @@ export async function applySurfaceActions(
       });
       continue;
     }
-    const scope = requiredScope(parsed.action);
-    if (!options.grants?.has(scope)) {
-      applied.push(refused(action.tool, `${NO_GRANT} (${scope})`, idempotencyKey));
+    const ungranted = grantRefusal(parsed.action, surface, options.grants ?? new Set());
+    if (ungranted) {
+      applied.push(refused(action.tool, ungranted, idempotencyKey));
       continue;
     }
     if (statusChangeWithoutComment(parsed.action, index, parsedByIndex, applied)) {

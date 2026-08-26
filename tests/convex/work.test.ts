@@ -6,6 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { PLAN_CANCELLED_REASON } from '../../convex/work';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -45,6 +46,7 @@ const pendingOutput = {
 async function seed(
   harness: Harness,
   state: Doc<'workItems'>['state'] = 'executing',
+  grants: string[] = ['boss:message', 'linear:read', 'linear:write'],
 ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
@@ -52,6 +54,23 @@ async function seed(
       name: 'Priya',
       userId: 'owner',
       state: 'active',
+      createdAt: 1,
+    });
+    for (const scope of grants) {
+      await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
+    }
+    await ctx.db.insert('surfaces', {
+      agentId,
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      verdict: 'connected',
+      endpoint: 'https://mcp.linear.app/mcp',
+      path: 'mcp',
+      toolAllowlist: ['get_issue', 'save_comment', 'save_issue'],
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+      whereFound: [],
       createdAt: 1,
     });
     const workItemId = await ctx.db.insert('workItems', {
@@ -110,6 +129,28 @@ async function pend(harness: Harness): Promise<{ agentId: Id<'agents'>; workItem
   return ids;
 }
 
+describe('cancelling a pending plan', (): void => {
+  it('records why the item is cancelled and refuses any other state', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    await harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('cancelled');
+    expect(row.skipReason).toBe(PLAN_CANCELLED_REASON);
+    const cancelled = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.cancelled',
+        ),
+    );
+    expect(cancelled.map((event) => event.payload)).toEqual([{ workItemId, reason: PLAN_CANCELLED_REASON }]);
+    await expect(harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId })).rejects.toThrow(
+      'expected plan-pending',
+    );
+  });
+});
+
 describe('the exact-action gate', (): void => {
   it('holds an executing run with its literal actions and run id', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -122,7 +163,74 @@ describe('the exact-action gate', (): void => {
     expect(row.pendingRunId).toBe(runId);
     expect(row.approvedIndexes).toBeUndefined();
     expect(row.output).toEqual(pendingOutput);
+    expect(row.actionVerdicts).toEqual([{ held: false }, { held: false }]);
     expect(await eventTypes(harness, agentId)).toContain('work.actions-pending');
+  });
+
+  it('persists a verdict per action at hold time, with the reason a held row carries', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', ['boss:message', 'linear:read']);
+    const output = {
+      ...pendingOutput,
+      actions: [
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"i"}' } },
+        ...pendingOutput.actions,
+        { tool: 'http.request', args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', body: '{"channel":"D0MANAGER","text":"hi"}' } },
+      ],
+    };
+    await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
+    const row = await readItem(harness, workItemId);
+    expect(row.actionVerdicts).toEqual([
+      { held: false },
+      { held: true, reason: 'no grant (linear:write)' },
+      { held: true, reason: 'no grant (linear:write)' },
+      { held: true, reason: 'unknown surface' },
+    ]);
+    const pendingEvents = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.actions-pending'))
+          .collect(),
+    );
+    expect(pendingEvents[0].payload).toEqual({ workItemId, runId, actionCount: 4, heldIndexes: [1, 2, 3] });
+  });
+
+  it('refuses approve-all while a row is held and applies the rest by selection', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', ['boss:message', 'linear:read']);
+    const output = {
+      ...pendingOutput,
+      actions: [
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"i"}' } },
+        pendingOutput.actions[0],
+      ],
+    };
+    await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1] }),
+    ).rejects.toThrow('action 2 is held (no grant (linear:write)); approve the others by selection');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] }),
+    ).rejects.toThrow('action 2 is held');
+    expect((await readItem(harness, workItemId)).approvedIndexes).toBeUndefined();
+    expect(await scheduledFunctionNames(harness)).toEqual([]);
+    const result = await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
+    expect(result).toEqual({ ok: true, approvedIndexes: [0] });
+    const claim = await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    expect(claim).toMatchObject({ claimed: true, approvedIndexes: [0], heldReasons: [[1, 'no grant (linear:write)']] });
+    const approved = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.actions-approved'))
+          .collect(),
+    );
+    expect(approved[0].payload).toMatchObject({ approvedIndexes: [0], heldIndexes: [1] });
   });
 
   it('refuses to hold a run that is not executing, and an output without actions', async (): Promise<void> => {
