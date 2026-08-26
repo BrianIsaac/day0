@@ -6,6 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { completionFailure } from '../../convex/workActions';
+import { INTERRUPTED_APPLY_REASON } from '../../convex/work';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import { HELD_NOT_APPROVED, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
@@ -17,7 +18,9 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 const recorded = vi.hoisted(() => ({
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; authorization: string; body: unknown }>,
+  failMcpAfterRequest: false,
   skillRuns: 0,
+  skillModes: [] as Array<string | undefined>,
 }));
 
 const skillOutput: ExecutionOutput = {
@@ -28,13 +31,13 @@ const skillOutput: ExecutionOutput = {
       tool: 'mcp.call',
       args: {
         surface: 'linear',
-        tool: 'create_comment',
+        tool: 'save_comment',
         toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Prepared the close summary.' }),
       },
     },
     {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', status: 'Done' }) },
+      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', state: 'Done' }) },
     },
     {
       tool: 'http.request',
@@ -71,8 +74,9 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/work/execute-skill')>();
   return {
     ...original,
-    runSkill: async (): Promise<ExecutionOutput> => {
+    runSkill: async (args: { mode?: string }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
+      recorded.skillModes.push(args.mode);
       return skillOutput;
     },
   };
@@ -90,11 +94,14 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
     createMastraMcpClient: (options: McpClientOptions): McpClientLike => ({
       listTools: async () =>
         Object.fromEntries(
-          ['create_comment', 'save_issue'].map((tool) => [
+          ['save_comment', 'save_issue'].map((tool) => [
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
                 recorded.mcp.push({ server: options.serverName, tool, args, bearer: options.bearer ?? '' });
+                if (recorded.failMcpAfterRequest) {
+                  throw new Error('socket closed after provider accepted the request');
+                }
                 return { content: [{ type: 'text', text: JSON.stringify({ id: `${tool}-id` }) }] };
               },
             },
@@ -117,6 +124,7 @@ vi.stubGlobal(
 afterEach((): void => {
   recorded.mcp.length = 0;
   recorded.http.length = 0;
+  recorded.failMcpAfterRequest = false;
   recorded.skillRuns = 0;
   restoreSurfaceMode();
 });
@@ -185,7 +193,7 @@ async function seed(harness: Harness, mode: 'mock' | 'real'): Promise<Seeded> {
         verdict: 'connected',
         endpoint: 'https://mcp.linear.app/mcp',
         path: 'mcp',
-        toolAllowlist: ['create_comment', 'save_issue'],
+        toolAllowlist: ['save_comment', 'save_issue'],
         credentialId: 'cred-linear',
         ...live,
       } as never);
@@ -325,17 +333,17 @@ describe('executing an approved plan through the gate', (): void => {
       [true, false],
       [true, true],
     ]);
-    expect(ledger(row)[0].providerId).toBe('create_comment-id');
+    expect(ledger(row)[0].providerId).toBe('save_comment-id');
     expect(ledger(row)[2].providerId).toBe('1787654400.000200');
     expect(ledger(row)[3].reason).toBe(HELD_PUBLIC_POST);
     expect(recorded.mcp).toEqual([
       {
         server: 'linear',
-        tool: 'create_comment',
+        tool: 'save_comment',
         args: { issueId: 'iss-1', body: `Prepared the close summary.\n\n-- Priya (Day0) · run ${workItemId}/${runId}` },
         bearer: 'plain-cred-linear',
       },
-      { server: 'linear', tool: 'save_issue', args: { id: 'iss-1', status: 'Done' }, bearer: 'plain-cred-linear' },
+      { server: 'linear', tool: 'save_issue', args: { id: 'iss-1', state: 'Done' }, bearer: 'plain-cred-linear' },
     ]);
     expect(recorded.http).toEqual([
       {
@@ -351,6 +359,7 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
     expect(JSON.stringify(row.output)).not.toContain('plain-cred');
     expect(recorded.skillRuns).toBe(1);
+    expect(recorded.skillModes.at(-1)).toBe('real');
     await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({
       ok: false,
       reason: 'workItem state is completed; expected actions-pending',
@@ -377,6 +386,64 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
     expect(recorded.mcp).toHaveLength(0);
     expect(recorded.http).toHaveLength(1);
+  });
+
+  it('refuses retry when a provider transport fails after an approved request was sent', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    if (!pending.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: pending.pendingRunId,
+      approvedIndexes: [0],
+    });
+    recorded.failMcpAfterRequest = true;
+
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ ok: false });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(ledger(failed)[0]).toMatchObject({
+      ok: false,
+      outcomeUnknown: true,
+      reason: 'socket closed after provider accepted the request',
+    });
+    expect(recorded.mcp).toHaveLength(1);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).rejects.toThrow('reconcile the provider first');
+  });
+
+  it('fences every failure after an approved apply has been claimed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const pending = await readItem(harness, workItemId);
+    if (!pending.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: pending.pendingRunId,
+      approvedIndexes: [0],
+    });
+    await harness.run(async (ctx) => await ctx.db.delete(agentId));
+
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: false, reason: 'agent not found' });
+    const failed = await readItem(harness, workItemId);
+    expect(failed).toMatchObject({
+      state: 'failed',
+      skipReason: INTERRUPTED_APPLY_REASON,
+    });
+    expect(ledger(failed)[0]).toMatchObject({
+      ok: false,
+      reason: 'outcome unknown after interrupted apply - verify provider before retry',
+    });
   });
 
   it('runs the skill again with a fresh run id after a rejection and retry', async (): Promise<void> => {

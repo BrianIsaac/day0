@@ -33,6 +33,7 @@ vi.mock('@mastra/mcp', () => ({
 }));
 
 import { createMastraMcpClient, MCP_TIMEOUT_MS } from '../../../src/surfaces/mcp';
+import { createSecretMcpClient } from '../../../src/surfaces/mcp-client';
 
 beforeEach((): void => {
   fake.configs.length = 0;
@@ -73,5 +74,25 @@ describe('Mastra MCP client safety configuration', (): void => {
     expect(config.servers.playwright).not.toHaveProperty('requestInit');
     fake.errors = { playwright: 'connection refused' };
     await expect(client.listTools()).rejects.toThrow('connection refused');
+  });
+
+  it('overrides unsafe logging options for every configured server', (): void => {
+    const client = createSecretMcpClient({
+      servers: {
+        docs: { url: new URL('https://docs.example/mcp'), enableServerLogs: true },
+        surface: { url: new URL('https://surface.example/mcp'), onToolError: 'return' },
+      },
+    });
+    const config = fake.configs[0] as { servers: Record<string, Record<string, unknown>> };
+    expect(config.servers.docs).toMatchObject({
+      enableServerLogs: false,
+      onToolError: 'throw',
+    });
+    expect(config.servers.surface).toMatchObject({
+      enableServerLogs: false,
+      onToolError: 'throw',
+    });
+    expect(client).toBeDefined();
+    expect(fake.loggers).toEqual([quietLogger]);
   });
 });

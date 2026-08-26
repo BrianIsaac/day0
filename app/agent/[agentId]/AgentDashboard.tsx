@@ -8,7 +8,12 @@ import { ChatRoom } from './ChatRoom';
 import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
-import { describeAction, heldEligible, skillApprovalRefusal } from '../../../src/surfaces/policy';
+import {
+  describeAction,
+  heldEligible,
+  reviewPayload,
+  skillApprovalRefusal,
+} from '../../../src/surfaces/policy';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
@@ -927,9 +932,7 @@ export function PendingActions({
                   aria-label={`approve action ${index + 1}`}
                 />
                 <div className="flex-1 min-w-0">
-                  <code className="block font-mono text-[10px] text-[var(--color-fg)] whitespace-pre-wrap break-words">
-                    {JSON.stringify(action, null, 2)}
-                  </code>
+                  <ActionPayload action={action} />
                   <span className="block text-[10px] text-[var(--color-muted)]">
                     {describeAction(action)}
                   </span>
@@ -1271,5 +1274,22 @@ function EventTicker({ events }: { events: Doc<'events'>[] }) {
         ))}
       </ul>
     </Card>
+  );
+}
+
+/**
+ * The literal payload of one held action, readable.
+ *
+ * Args:
+ *   props: The action as the skill emitted it.
+ *
+ * Returns:
+ *   The verb and the arguments it reads, as JSON.
+ */
+export function ActionPayload({ action }: { action: MockAction }): React.ReactNode {
+  return (
+    <code className="block font-mono text-[10px] text-[var(--color-fg)] whitespace-pre-wrap break-words">
+      {JSON.stringify(reviewPayload(action), null, 2)}
+    </code>
   );
 }

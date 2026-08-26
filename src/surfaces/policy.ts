@@ -23,6 +23,9 @@ export const HELD_NOT_APPROVED = 'not approved by the manager';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
 export const USERNAME_REFUSED = 'skill-supplied username refused';
+export const MOCK_VERB_REFUSED = 'mock verb refused in real mode';
+export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
+  'shared credential write without attributable content';
 
 /** Emoji every message through a shared chat credential carries as its avatar. */
 export const SHARED_IDENTITY_ICON = ':briefcase:';
@@ -393,17 +396,28 @@ export function statusChangeWithoutComment(
   ledger: ReadonlyArray<AppliedAction | undefined>,
 ): boolean {
   if (!isStatusChange(parsed)) return false;
+  return !hasLandedAuditComment(parsed, index, earlier, ledger);
+}
+
+/** Whether an earlier action landed an attributed audit comment on the same target. */
+function hasLandedAuditComment(
+  parsed: ParsedSurfaceAction,
+  index: number,
+  earlier: ReadonlyArray<ParsedSurfaceAction | undefined>,
+  ledger: ReadonlyArray<AppliedAction | undefined>,
+): boolean {
   const issue = targetIssue(parsed);
+  if (issue === undefined) return false;
   for (let position = 0; position < index; position += 1) {
     const candidate = earlier[position];
     const row = ledger[position];
     if (!candidate || !row || !row.ok || row.held) continue;
     if (candidate.surface !== parsed.surface || !isAuditComment(candidate)) continue;
     const commentIssue = targetIssue(candidate);
-    if (issue !== undefined && commentIssue !== undefined && issue !== commentIssue) continue;
-    return false;
+    if (commentIssue !== issue) continue;
+    return true;
   }
-  return true;
+  return false;
 }
 
 export interface ProvenanceRun {
@@ -430,6 +444,31 @@ function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean 
   if (actionIntent(parsed) !== 'write') return false;
   if (/chat\.postMessage$/.test(parsed.path)) return true;
   return surface.class === 'chat' && typeof parsed.bodyJson?.text === 'string';
+}
+
+/**
+ * Whether a shared-credential write lacks content that identifies its actor and run.
+ *
+ * Comments and chat messages receive the server-side trailer directly. An
+ * issue mutation may instead rely on a landed, trailer-bearing comment on
+ * the same issue earlier in this run (the status-change rule is the common
+ * case). Other writes through shared credentials are refused because the
+ * provider would otherwise record an action attributable only to the shared
+ * account. Dedicated OAuth apps remain attributable through their own bot.
+ */
+export function sharedWriteWithoutAttribution(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  credentialKind: CredentialKind,
+  index: number,
+  earlier: ReadonlyArray<ParsedSurfaceAction | undefined>,
+  ledger: ReadonlyArray<AppliedAction | undefined>,
+): boolean {
+  if (credentialKind === 'oauth' || actionIntent(parsed) === 'read') return false;
+  if (isAuditComment(parsed)) return false;
+  if (parsed.kind === 'http.request') return !isChatPost(parsed, surface);
+  if (targetIssue(parsed) === undefined) return true;
+  return !hasLandedAuditComment(parsed, index, earlier, ledger);
 }
 
 /**
@@ -561,6 +600,44 @@ function compact(value: unknown, max = 80): string {
   return String(value);
 }
 
+/** The argument names each verb reads; everything else in the flat bag is another verb's default. */
+const VERB_ARGUMENTS: Readonly<Record<string, readonly string[]>> = {
+  'mcp.call': ['surface', 'tool', 'toolArgsJson'],
+  'http.request': ['surface', 'method', 'path', 'headersJson', 'body'],
+  'spreadsheet.appendRow': ['sheetSlug', 'tabName', 'cells'],
+  'slack.postMessage': ['channelSlug', 'threadKey', 'body'],
+  'twitter.reply': ['tweetSlug', 'body'],
+  'ticket.update': ['slug', 'status', 'comment'],
+};
+
+/**
+ * The action as the manager should read it on the approval card.
+ *
+ * The executor emits every action through one flat argument bag, so a
+ * surface call arrives with a dozen empty mock-verb fields and their
+ * defaults. Only the arguments the verb reads are shown, and among those
+ * only the ones that carry a value; the JSON strings the server parses
+ * (`toolArgsJson`, `headersJson`, `body`) are shown exactly as emitted, so
+ * nothing the server will act on is hidden or reshaped.
+ *
+ * Args:
+ *   action: The action as the skill emitted it.
+ *
+ * Returns:
+ *   The same verb with the arguments it reads, non-empty ones only.
+ */
+export function reviewPayload(action: MockAction): { tool: string; args: JsonObject } {
+  const wanted = VERB_ARGUMENTS[action.tool];
+  const bag = (action.args ?? {}) as JsonObject;
+  const args: JsonObject = {};
+  for (const key of wanted ?? Object.keys(bag)) {
+    const value = bag[key];
+    if (value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) continue;
+    args[key] = value;
+  }
+  return { tool: action.tool, args };
+}
+
 /**
  * Describe an action verbatim for the manager's approval card.
  *
@@ -568,7 +645,7 @@ function compact(value: unknown, max = 80): string {
  *   action: The action as the skill emitted it.
  *
  * Returns:
- *   One line such as `mcp.call linear · create_comment · {issueId: "…", body: "…"}`.
+ *   One line such as `mcp.call linear · save_comment · {issueId: "…", body: "…"}`.
  */
 export function describeAction(action: MockAction): string {
   const args = action.args ?? {};

@@ -5,7 +5,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { isReprobeCandidate } from '../../convex/orientationData';
-import { convexModules } from './modules';
+import { allConvexModules } from './all-modules';
 
 /**
  * Seed one owner-level source with a single page.
@@ -46,7 +46,7 @@ async function seedSource(
 
 describe('orientation data boundary', (): void => {
   it('returns only the pages the agent inherits from its owner', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const kept = await seedSource(harness, 'owner', 'Kept');
     const excluded = await seedSource(harness, 'owner', 'Excluded');
     await seedSource(harness, 'other-owner', 'Foreign');
@@ -67,7 +67,7 @@ describe('orientation data boundary', (): void => {
   });
 
   it('returns nothing for an agent without an owner', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     await seedSource(harness, 'owner', 'Kept');
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
@@ -84,7 +84,7 @@ describe('orientation data boundary', (): void => {
   });
 
   it('returns only the surfaces of the requested agent', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const [mine, theirs] = await harness.run(async (ctx): Promise<Id<'agents'>[]> => {
       const ids: Id<'agents'>[] = [];
       for (const name of ['mine', 'theirs']) {
@@ -124,7 +124,7 @@ describe('orientation data boundary', (): void => {
   });
 
   it('re-probes connected rows and dead rows that still hold a credential and both approvals', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
@@ -173,7 +173,7 @@ describe('orientation data boundary', (): void => {
   });
 
   it('returns all agent surfaces to the deployment-local intake sweep', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentIds = await harness.run(
       async (ctx): Promise<Id<'agents'>[]> =>
         await Promise.all(

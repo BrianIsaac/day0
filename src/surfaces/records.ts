@@ -18,17 +18,17 @@ export interface SurfaceRowLike {
   credentialId?: string;
   credentialKind?: string;
   managerDmChannelId?: string;
-  request?: unknown;
 }
 
 /**
  * Decide whether writes through a surface's credential need the employee's
  * name on them.
  *
- * A `credentials.kind` stored on the row wins. Without it, the connect
- * request's credential method decides: an `oauth` install is a dedicated app
- * that posts as itself, and every other landing is a shared key handed over to
- * the agent, so the shared rule is the default.
+ * The kind is the one copied onto the row from the credentials table when
+ * the credential was attached (`surfaces.propose`, `surfaces.attachCredential`),
+ * so it says how the value was actually landed rather than what the connect
+ * request expected. A row without one is treated as a shared key: an `oauth`
+ * app posts as itself only when the install flow stored it as such.
  *
  * Args:
  *   row: The surface row.
@@ -40,9 +40,7 @@ export function credentialKindFor(row: SurfaceRowLike): CredentialKind {
   if (CREDENTIAL_KINDS.includes(row.credentialKind as CredentialKind)) {
     return row.credentialKind as CredentialKind;
   }
-  const method = (row.request as { credential?: { method?: unknown } } | undefined)?.credential
-    ?.method;
-  return method === 'oauth' ? 'oauth' : 'value';
+  return 'value';
 }
 
 /**

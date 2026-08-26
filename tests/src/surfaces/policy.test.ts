@@ -5,6 +5,7 @@ import {
   applyProvenance,
   containsProvenanceTrailer,
   describeAction,
+  reviewPayload,
   HELD_PUBLIC_POST,
   heldEligible,
   heldReason,
@@ -36,7 +37,7 @@ const linear: SurfaceRecord = {
   credentialLanded: true,
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
-  toolAllowlist: ['create_comment', 'save_issue', 'list_issues'],
+  toolAllowlist: ['save_comment', 'save_issue', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
 };
@@ -59,14 +60,14 @@ const run = { agentName: 'Priya', workItemId: 'wi_1', runId: 'run_1' };
 function comment(body = 'Prepared the close summary.', issueId = 'iss-1'): MockAction {
   return {
     tool: 'mcp.call',
-    args: { surface: 'linear', tool: 'create_comment', toolArgsJson: JSON.stringify({ issueId, body }) },
+    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId, body }) },
   };
 }
 
 function statusChange(id = 'iss-1'): MockAction {
   return {
     tool: 'mcp.call',
-    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id, status: 'Done' }) },
+    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id, state: 'Done' }) },
   };
 }
 
@@ -94,7 +95,7 @@ describe('surface action parsing', (): void => {
     expect(parsed(comment())).toEqual({
       kind: 'mcp.call',
       surface: 'linear',
-      tool: 'create_comment',
+      tool: 'save_comment',
       toolArgs: { issueId: 'iss-1', body: 'Prepared the close summary.' },
     });
   });
@@ -116,7 +117,7 @@ describe('surface action parsing', (): void => {
   });
 
   it.each<[string, MockAction]>([
-    ['missing surface', { tool: 'mcp.call', args: { tool: 'create_comment' } }],
+    ['missing surface', { tool: 'mcp.call', args: { tool: 'save_comment' } }],
     ['missing tool', { tool: 'mcp.call', args: { surface: 'linear' } }],
     ['invalid JSON', { tool: 'mcp.call', args: { surface: 'linear', tool: 'x', toolArgsJson: '{not json' } }],
     ['non-object JSON', { tool: 'mcp.call', args: { surface: 'linear', tool: 'x', toolArgsJson: '[1,2]' } }],
@@ -275,6 +276,23 @@ describe('comment before status change', (): void => {
     const landed: AppliedAction = { tool: 'mcp.call', ok: true, idempotencyKey: 'k0' };
     expect(statusChangeWithoutComment(parsed(statusChange('iss-2')), 1, [parsed(comment('c', 'iss-1'))], [landed])).toBe(true);
     expect(statusChangeWithoutComment(parsed(statusChange('iss-1')), 1, [parsed(comment('c', 'iss-1'))], [landed])).toBe(false);
+    expect(
+      statusChangeWithoutComment(
+        parsed(statusChange('iss-1')),
+        1,
+        [
+          parsed({
+            tool: 'mcp.call',
+            args: {
+              surface: 'linear',
+              tool: 'save_comment',
+              toolArgsJson: JSON.stringify({ projectId: 'project-1', body: 'Project note.' }),
+            },
+          }),
+        ],
+        [landed],
+      ),
+    ).toBe(true);
     expect(statusChangeWithoutComment(parsed(comment()), 0, [], [])).toBe(false);
   });
 });
@@ -290,7 +308,7 @@ describe('skill approval and card rendering', (): void => {
   });
 
   it('describes every verb verbatim on one line', (): void => {
-    expect(describeAction(comment())).toBe('mcp.call linear · create_comment · {issueId: "iss-1", body: "Prepared the close summary."}');
+    expect(describeAction(comment())).toBe('mcp.call linear · save_comment · {issueId: "iss-1", body: "Prepared the close summary."}');
     expect(describeAction(chatPost('D0MANAGER'))).toBe(
       'http.request slack · POST /chat.postMessage · headers {Authorization: "Bearer {{secret}}"} · body "{"channel":"D0MANAGER","text":"Draft ready."}"',
     );
@@ -299,5 +317,53 @@ describe('skill approval and card rendering', (): void => {
     expect(describeAction({ tool: 'spreadsheet.appendRow', args: { sheetSlug: 'q4', tabName: 'Won', cells: [{ header: 'Name', value: 'A' }] } })).toBe(
       'spreadsheet.appendRow · {sheetSlug: "q4", tabName: "Won", cells: ["Name=A"]}',
     );
+  });
+});
+
+describe('review payload for the approval card', (): void => {
+  it('shows only the arguments the verb reads, and only the non-empty ones, verbatim', (): void => {
+    const flat: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        body: '',
+        cells: [],
+        channelSlug: '',
+        comment: '',
+        headersJson: '',
+        method: '',
+        path: '',
+        sheetSlug: '',
+        slug: '',
+        status: 'open',
+        surface: 'linear',
+        tabName: '',
+        threadKey: '',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit note."}',
+        tweetSlug: '',
+      },
+    };
+    expect(reviewPayload(flat)).toEqual({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit note."}' },
+    });
+    expect(
+      reviewPayload({
+        tool: 'http.request',
+        args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{"Authorization":"Bearer {{secret}}"}', body: '{"channel":"D1","text":"hi"}', status: 'open', cells: [] },
+      }),
+    ).toEqual({
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{"Authorization":"Bearer {{secret}}"}', body: '{"channel":"D1","text":"hi"}' },
+    });
+    expect(reviewPayload({ tool: 'ticket.update', args: { slug: 'REVOPS-5', status: 'done', comment: '', surface: 'linear' } })).toEqual({
+      tool: 'ticket.update',
+      args: { slug: 'REVOPS-5', status: 'done' },
+    });
+    expect(reviewPayload({ tool: 'spreadsheet.appendRow', args: { sheetSlug: 's', tabName: 't', cells: [{ header: 'h', value: '' }] } })).toEqual({
+      tool: 'spreadsheet.appendRow',
+      args: { sheetSlug: 's', tabName: 't', cells: [{ header: 'h', value: '' }] },
+    });
+    expect(reviewPayload({ tool: 'mcp.call' } as MockAction)).toEqual({ tool: 'mcp.call', args: {} });
   });
 });

@@ -7,6 +7,7 @@ import { MOCK_TOOLS, mockAdapter } from '../../../src/surfaces/mock';
 import {
   HELD_NOT_APPROVED,
   HELD_PUBLIC_POST,
+  MOCK_VERB_REFUSED,
   STATUS_WITHOUT_COMMENT,
   TRAILER_REFUSED,
 } from '../../../src/surfaces/policy';
@@ -32,7 +33,7 @@ const linear: SurfaceRecord = {
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
   path: 'mcp',
-  toolAllowlist: ['create_comment', 'save_issue', 'list_issues'],
+  toolAllowlist: ['save_comment', 'save_issue', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
 };
@@ -54,11 +55,11 @@ const slack: SurfaceRecord = {
 
 const comment: MockAction = {
   tool: 'mcp.call',
-  args: { surface: 'linear', tool: 'create_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note.' }) },
+  args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note.' }) },
 };
 const status: MockAction = {
   tool: 'mcp.call',
-  args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', status: 'Done' }) },
+  args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', state: 'Done' }) },
 };
 const dm: MockAction = {
   tool: 'http.request',
@@ -86,7 +87,7 @@ function deps(recorded: Recorded, mcpResult: (tool: string) => unknown = (): unk
     createMcpClient: (options: McpClientOptions): McpClientLike => ({
       listTools: async () =>
         Object.fromEntries(
-          ['create_comment', 'save_issue', 'list_issues'].map((tool) => [
+          ['save_comment', 'save_issue', 'list_issues'].map((tool) => [
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
@@ -107,19 +108,45 @@ function deps(recorded: Recorded, mcpResult: (tool: string) => unknown = (): unk
 }
 
 describe('surface adapter registry', (): void => {
-  it('keeps every legacy mock verb on the mock adapter in both modes', (): void => {
-    for (const mode of ['mock', 'real'] as const) {
-      const adapters = resolveAdapters(mode, []);
-      for (const tool of MOCK_TOOLS) expect(adapters.get(tool)).toBe(mockAdapter);
-      expect(adapters.has('mcp.call')).toBe(false);
-    }
+  it('maps the legacy mock verbs in mock mode only', (): void => {
+    const mock = resolveAdapters('mock', []);
+    for (const tool of MOCK_TOOLS) expect(mock.get(tool)).toBe(mockAdapter);
+    expect(mock.has('mcp.call')).toBe(false);
+    const real = resolveAdapters('real', [linear], deps({ mcp: [], http: [] }));
+    for (const tool of MOCK_TOOLS) expect(real.has(tool)).toBe(false);
+    expect(resolveAdapters('real', []).size).toBe(0);
+  });
+
+  it('refuses a mock verb in real mode with a plain reason and no write', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear],
+      run,
+      [
+        { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'Draft ready.' } },
+        { tool: 'ticket.update', args: { slug: 'REVOPS-5', status: 'done', comment: 'Done.' } },
+        comment,
+      ],
+      { deps: deps(recorded), grants: new Set(['linear:write']) },
+    );
+    expect(applied[0]).toEqual({
+      tool: 'slack.postMessage',
+      ok: false,
+      reason: `${MOCK_VERB_REFUSED} (slack.postMessage writes to the mock tables; target a connected surface with mcp.call or http.request)`,
+      idempotencyKey: 'wi_1:run_1:0',
+    });
+    expect(applied[1]).toMatchObject({ tool: 'ticket.update', ok: false, reason: expect.stringContaining(MOCK_VERB_REFUSED) });
+    expect(applied[2]).toMatchObject({ tool: 'mcp.call', ok: true });
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
   });
 
   it('adds the two surface verbs in real mode when the runtime supplies dependencies', (): void => {
     const adapters = resolveAdapters('real', [linear], deps({ mcp: [], http: [] }));
     expect(adapters.get('mcp.call')).toBeInstanceOf(McpAdapter);
     expect(adapters.get('http.request')).toBeInstanceOf(HttpAdapter);
-    expect(adapters.get('ticket.update')).toBe(mockAdapter);
+    expect(adapters.has('ticket.update')).toBe(false);
     expect(resolveAdapters('mock', [linear], deps({ mcp: [], http: [] })).has('mcp.call')).toBe(false);
   });
 
@@ -146,8 +173,8 @@ describe('applying surface actions', (): void => {
     expect(applied[0].providerId).toBe('prov-1');
     expect(applied[2].providerId).toBe('1.1');
     expect(recorded.mcp).toEqual([
-      { tool: 'create_comment', args: { issueId: 'iss-1', body: 'Audit note.\n\n-- Priya (Day0) · run wi_1/run_1' } },
-      { tool: 'save_issue', args: { id: 'iss-1', status: 'Done' } },
+      { tool: 'save_comment', args: { issueId: 'iss-1', body: 'Audit note.\n\n-- Priya (Day0) · run wi_1/run_1' } },
+      { tool: 'save_issue', args: { id: 'iss-1', state: 'Done' } },
     ]);
     expect(recorded.http).toEqual([
       {
@@ -201,16 +228,122 @@ describe('applying surface actions', (): void => {
     expect(recorded.mcp).toHaveLength(0);
 
     const failing = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
-      deps: deps(recorded, (tool): unknown => (tool === 'create_comment' ? { isError: true, content: [{ type: 'text', text: 'refused' }] } : {})),
+      deps: deps(recorded, (tool): unknown => (tool === 'save_comment' ? { isError: true, content: [{ type: 'text', text: 'refused' }] } : {})),
       grants,
       now,
     });
     expect(failing[0]).toMatchObject({ ok: false, reason: 'refused' });
     expect(failing[1]).toMatchObject({ ok: false, reason: STATUS_WITHOUT_COMMENT });
-    expect(recorded.mcp.map((call) => call.tool)).toEqual(['create_comment']);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
 
     const alone = await applySurfaceActions(ctx, 'real', [linear], run, [status], { deps: deps(recorded), grants, now });
     expect(alone[0]).toMatchObject({ ok: false, reason: STATUS_WITHOUT_COMMENT });
+  });
+
+  it('refuses an otherwise allowlisted shared-token write that has no attributable content', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const titleEdit: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'iss-1', title: 'Changed without an audit note' }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [linear], run, [titleEdit], {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+
+    expect(applied[0]).toMatchObject({
+      ok: false,
+      reason: 'shared credential write without attributable content',
+    });
+    expect(recorded.mcp).toHaveLength(0);
+
+    const attributed = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear],
+      run,
+      [comment, titleEdit],
+      { deps: deps(recorded), grants, now },
+    );
+    expect(attributed.map((row) => row.ok)).toEqual([true, true]);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
+
+    recorded.mcp = [];
+    const projectComment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ projectId: 'project-1', body: 'Project-level audit.' }),
+      },
+    };
+    const wrongTarget = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear],
+      run,
+      [projectComment, titleEdit],
+      { deps: deps(recorded), grants, now },
+    );
+    expect(wrongTarget[0].ok).toBe(true);
+    expect(wrongTarget[1]).toMatchObject({
+      ok: false,
+      reason: 'shared credential write without attributable content',
+    });
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+
+    recorded.mcp = [];
+    const dedicated = await applySurfaceActions(
+      ctx,
+      'real',
+      [{ ...linear, credentialKind: 'oauth' }],
+      run,
+      [titleEdit],
+      { deps: deps(recorded), grants, now },
+    );
+    expect(dedicated[0].ok).toBe(true);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_issue']);
+
+    const crm: SurfaceRecord = {
+      ...linear,
+      slug: 'northstar-crm',
+      displayName: 'Northstar CRM',
+      class: 'crm',
+      endpoint: 'https://crm.day0.local/api/',
+      path: 'documented-api',
+      toolAllowlist: ['records/1'],
+      credentialId: 'cred-crm',
+    };
+    const httpRecorded: Recorded = { mcp: [], http: [] };
+    const genericHttp = await applySurfaceActions(
+      ctx,
+      'real',
+      [crm],
+      run,
+      [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'northstar-crm',
+            method: 'PATCH',
+            path: '/records/1',
+            headersJson: '{}',
+            body: '{"stage":"closed"}',
+          },
+        },
+      ],
+      { deps: deps(httpRecorded), grants: new Set(['northstar-crm:write']), now },
+    );
+    expect(genericHttp[0]).toMatchObject({
+      ok: false,
+      reason: 'shared credential write without attributable content',
+    });
+    expect(httpRecorded.http).toHaveLength(0);
   });
 
   it('refuses an action without its grant before any adapter runs', async (): Promise<void> => {
@@ -259,10 +392,10 @@ describe('applying surface actions', (): void => {
       [linear, { ...slack, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }],
       run,
       [
-        { tool: 'mcp.call', args: { surface: 'linear', tool: 'create_comment', toolArgsJson: 'nope' } },
-        { tool: 'mcp.call', args: { surface: 'jira', tool: 'create_comment', toolArgsJson: '{}' } },
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: 'nope' } },
+        { tool: 'mcp.call', args: { surface: 'jira', tool: 'save_comment', toolArgsJson: '{}' } },
         dm,
-        { tool: 'mcp.call', args: { surface: 'linear', tool: 'create_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x\n\n-- Bob (Day0) · run a/b' }) } },
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x\n\n-- Bob (Day0) · run a/b' }) } },
         { tool: 'ticket.update', args: { slug: 'missing' } },
       ],
       { deps: deps(recorded), grants, now },

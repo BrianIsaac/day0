@@ -87,6 +87,9 @@ export function CredentialRow(props: CredentialRowProps): React.ReactNode {
       {props.presentation.governanceFinding ? (
         <p className="mt-1 text-[var(--color-warn)]">{props.presentation.governanceFinding}</p>
       ) : null}
+      {props.presentation.canLand && props.presentation.landingNote ? (
+        <p className="mt-1 text-[var(--color-muted)]">{props.presentation.landingNote}</p>
+      ) : null}
       {props.presentation.canLand ? (
         <form onSubmit={onSubmit} className="mt-2 flex flex-wrap gap-2">
           <label className="sr-only" htmlFor={`credential-${props.credentialLabel}`}>
@@ -106,7 +109,7 @@ export function CredentialRow(props: CredentialRowProps): React.ReactNode {
             disabled={props.landing}
             className="rounded border px-2 py-1 disabled:opacity-50"
           >
-            {props.landing ? 'Landing...' : 'Land credential'}
+            {props.landing ? 'Landing...' : (props.presentation.landingLabel ?? 'Land credential')}
           </button>
         </form>
       ) : null}

@@ -142,6 +142,7 @@ describe('HTTP adapter', (): void => {
     expect(result).toEqual({
       tool: 'http.request',
       ok: false,
+      outcomeUnknown: true,
       reason: 'HTTP 200 · response exceeded 65536 bytes',
       idempotencyKey: 'k',
     });
@@ -224,6 +225,7 @@ describe('HTTP adapter', (): void => {
     expect(fetchImpl.calls).toHaveLength(0);
     await expect(adapter(fetchImpl).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
       ok: false,
+      outcomeUnknown: true,
       reason: 'offline',
     });
   });

@@ -152,6 +152,12 @@ export default defineSchema({
     /** Phase 2 Lane B connection evidence. Credential contents remain in the
      * lane-A credentials table and are decrypted only inside Node actions. */
     credentialId: v.optional(v.id('credentials')),
+    /** How `credentialId` was landed, copied from the credentials row when it
+     * is attached: `value` and `location` are shared keys whose writes carry
+     * the employee's name, `oauth` a dedicated app that posts as itself. */
+    credentialKind: v.optional(
+      v.union(v.literal('value'), v.literal('location'), v.literal('oauth')),
+    ),
     credentialLocation: v.optional(v.string()),
     managerDmChannelId: v.optional(v.string()),
     toolAllowlist: v.optional(v.array(v.string())),
@@ -166,6 +172,8 @@ export default defineSchema({
     waterfallPosition: v.optional(v.number()),
     intakeSkipReason: v.optional(v.string()),
     lastPolledAt: v.optional(v.number()),
+    /** Transitional validator for rows written before credentialId. Every
+     * current state transition clears it; remove after deployed rows migrate. */
     credentialRef: v.optional(v.string()),
     credentialLanded: v.boolean(),
     lastVerifiedAt: v.optional(v.number()),

@@ -4,6 +4,7 @@ import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { decryptCredential, type DecryptCredential } from './credentials';
 import { clipEffect } from './mock';
 import {
+  actionIntent,
   parseSurfaceAction,
   surfaceRefusal,
   TOOL_NOT_ALLOWED,
@@ -233,6 +234,7 @@ export class HttpAdapter implements SurfaceAdapter {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
     }
     let secret = '';
+    let writeAttempted = false;
     try {
       secret = await this.deps.decrypt(ctx, surface.credentialId);
       const headers: Record<string, string> = {};
@@ -246,6 +248,7 @@ export class HttpAdapter implements SurfaceAdapter {
         request.body === undefined || request.method === 'GET' || request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
+      writeAttempted = actionIntent(request) === 'write';
       const response = await this.deps.fetch(url, {
         method: request.method,
         headers,
@@ -261,6 +264,7 @@ export class HttpAdapter implements SurfaceAdapter {
           tool: action.tool,
           ok: false,
           reason: `HTTP ${response.status} · response exceeded ${RESPONSE_READ_LIMIT} bytes`,
+          ...(response.ok && writeAttempted ? { outcomeUnknown: true } : {}),
           idempotencyKey,
         };
       }
@@ -306,6 +310,7 @@ export class HttpAdapter implements SurfaceAdapter {
         tool: action.tool,
         ok: false,
         reason: clipEffect(redactValue(message, secret), EFFECT_LENGTH),
+        ...(writeAttempted ? { outcomeUnknown: true } : {}),
         idempotencyKey,
       };
     }

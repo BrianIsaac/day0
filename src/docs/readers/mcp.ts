@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { MCPClient } from '@mastra/mcp';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
+import { createSecretMcpClient } from '../../surfaces/mcp-client';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
 const SERVER_NAME = 'docs';
@@ -93,7 +93,7 @@ export function sessionBoundFetch(
 /** Create the production Mastra client for one credential-bound session. */
 function productionClient(config: McpConnectionConfig): McpClientLike {
   const session = sessionBoundFetch(config);
-  const client = new MCPClient({
+  const client = createSecretMcpClient({
     id: config.id,
     servers: {
       [SERVER_NAME]: {
@@ -197,8 +197,16 @@ function innerFencesBalanced(lines: string[], marker: string, minimum: number): 
   return open.length === 0;
 }
 
+/** Provider markup for an empty block after the page's content, such as Notion's trailing paragraph. */
+const TRAILING_PROVIDER_TAG = /^\s*<[a-z][a-z0-9-]*\/>\s*$/i;
+
 /**
  * Remove one outer Markdown fence without parsing its nested content.
+ *
+ * A page pasted as one code block renders as the fence, optionally followed
+ * by empty provider blocks (`<empty-block/>` for Notion's trailing empty
+ * paragraph); those are ignored when locating the closing fence and kept
+ * after the unwrapped content.
  *
  * Args:
  *   markdown: Provider-rendered page body.
@@ -212,7 +220,9 @@ export function unwrapWholePageFence(markdown: string): string {
   const lines = markdown.split(/\r?\n/);
   const first = lines.findIndex((line: string): boolean => line.trim().length > 0);
   let last = lines.length - 1;
-  while (last >= 0 && lines[last].trim().length === 0) last -= 1;
+  while (last >= 0 && (lines[last].trim().length === 0 || TRAILING_PROVIDER_TAG.test(lines[last]))) {
+    last -= 1;
+  }
   if (first < 0 || last <= first) return markdown;
   const opener = /^\s*(`{3,}|~{3,})\s*(|md|markdown)\s*$/i.exec(lines[first]);
   if (!opener) return markdown;

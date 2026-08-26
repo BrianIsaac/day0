@@ -55,9 +55,16 @@ type CredentialId = GenericId<'credentials'>;
 
 type StoredCredentialSummary = {
   _id: CredentialId;
+  kind: 'value' | 'location' | 'oauth';
   label: string;
   revokedAt?: number;
 };
+
+/** The stored row an orientation run attaches to a surface. */
+interface ResolvedCredential {
+  credentialId: CredentialId;
+  kind: StoredCredentialSummary['kind'];
+}
 
 /**
  * Lane A's read for a page-derived row, keyed the way its sync stored it.
@@ -179,22 +186,72 @@ export function namesSystem(text: string, system: string): boolean {
   return systemNamePattern(system).test(text);
 }
 
+/** A quote chosen for a surface card, and whether it attributes anything to the system. */
+export interface EvidenceQuote {
+  quote: string;
+  /**
+   * True when the sentence documents the system rather than merely naming it:
+   * the heading of its dedicated page, a sentence attributing a URL to it, a
+   * sentence denying it a surface, or a sentence carrying its credential marker.
+   */
+  attributed: boolean;
+}
+
+const CREDENTIAL_MARK = /<credential:[^>]*>|<redacted>/i;
+
 /**
- * Select a concise evidence line that names a system.
+ * Select the sentence of a page that best evidences a system.
+ *
+ * The endpoint attribution rule applied to quotes: sentences are the unit,
+ * a sentence counts when its prose names the system as a whole word (URL
+ * text does not count) or when it carries a URL attributed to the system,
+ * and a sentence that attributes something to the system - a URL, a
+ * credential marker, the heading of its own page, or a line denying it a
+ * surface - is preferred over one that only mentions it.
+ * A Slack policy line
+ * that says to preserve the Linear identifier names Linear but attributes
+ * nothing to it, so it is evidence for Linear only when nothing better exists.
  *
  * Args:
  *   markdown: Documentation page content.
  *   system: Manager-named system to locate.
+ *   slug: The system's surface slug.
  *
  * Returns:
- *   The first matching line, or undefined when the page does not name it.
+ *   The attributing sentence when there is one, else the first naming
+ *   sentence, else undefined when the page does not name the system.
  */
-export function evidenceLine(markdown: string, system: string): string | undefined {
+export function evidenceQuote(
+  markdown: string,
+  system: string,
+  slug: string,
+): EvidenceQuote | undefined {
   const pattern = systemNamePattern(system);
-  return markdown
-    .split('\n')
-    .find((line: string): boolean => pattern.test(line))
-    ?.trim();
+  let mention: string | undefined;
+  for (const line of markdown.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const heading = /^#\s+(.+)$/.exec(trimmed)?.[1];
+    if (heading !== undefined) {
+      if (pattern.test(heading)) return { quote: trimmed, attributed: true };
+      continue;
+    }
+    // A denial is read per line, as `explicitlyDeniesSurface` reads it: in a
+    // table row the sentence that denies rarely repeats the system's name.
+    if (pattern.test(trimmed.replace(URL_PATTERN, ' ')) && NO_SURFACE_PATTERN.test(trimmed)) {
+      return { quote: trimmed, attributed: true };
+    }
+    for (const raw of trimmed.split(SENTENCE_BOUNDARY)) {
+      const sentence = raw.trim();
+      const urls = attributedUrls(sentence, system, slug);
+      const named = pattern.test(sentence.replace(URL_PATTERN, ' '));
+      if (!named && urls.length === 0) continue;
+      const attributed = urls.length > 0 || CREDENTIAL_MARK.test(redactTokenShapes(sentence));
+      if (attributed) return { quote: sentence, attributed: true };
+      mention ??= sentence;
+    }
+  }
+  return mention === undefined ? undefined : { quote: mention, attributed: false };
 }
 
 /**
@@ -203,13 +260,21 @@ export function evidenceLine(markdown: string, system: string): string | undefin
  * Args:
  *   markdown: Documentation page content.
  *   system: Manager-named system.
+ *   title: Provider page title when it is stored separately from Markdown.
  *
  * Returns:
- *   True when the first markdown heading names the system.
+ *   True when the first Markdown heading or the provider page title names the system.
  */
-export function isDedicatedSystemPage(markdown: string, system: string): boolean {
+export function isDedicatedSystemPage(
+  markdown: string,
+  system: string,
+  title?: string,
+): boolean {
   const heading = /^#\s+(.+)$/m.exec(markdown)?.[1];
-  return heading !== undefined && namesSystem(heading, system);
+  return (
+    (heading !== undefined && namesSystem(heading, system)) ||
+    (title !== undefined && namesSystem(title, system))
+  );
 }
 
 /**
@@ -218,12 +283,13 @@ export function isDedicatedSystemPage(markdown: string, system: string): boolean
  * Args:
  *   markdown: Documentation page content.
  *   system: Manager-named system.
+ *   title: Provider page title when it is stored separately from Markdown.
  *
  * Returns:
  *   The whole dedicated page, or only paragraphs that name the system.
  */
-export function relevantSystemText(markdown: string, system: string): string {
-  if (isDedicatedSystemPage(markdown, system)) return markdown;
+export function relevantSystemText(markdown: string, system: string, title?: string): string {
+  if (isDedicatedSystemPage(markdown, system, title)) return markdown;
   const pattern = systemNamePattern(system);
   return markdown
     .split(/\n\s*\n/)
@@ -293,7 +359,7 @@ function oauthProcedure(text: string): string {
  *   True when the marker is evidence for this system.
  */
 function markerBelongsToSystem(page: CredentialPage, label: string, system: string): boolean {
-  return isDedicatedSystemPage(page.markdown, system) || namesSystem(label, system);
+  return isDedicatedSystemPage(page.markdown, system, page.title) || namesSystem(label, system);
 }
 
 /**
@@ -315,7 +381,7 @@ export function extractCredentialFinding(
   system: string,
 ): CredentialFinding {
   for (const page of pages) {
-    const scoped = relevantSystemText(page.markdown, system);
+    const scoped = relevantSystemText(page.markdown, system, page.title);
     for (const match of scoped.matchAll(CREDENTIAL_MARKER)) {
       const label = match[1]?.trim();
       if (!label || !markerBelongsToSystem(page, label, system)) continue;
@@ -332,7 +398,7 @@ export function extractCredentialFinding(
   }
 
   for (const page of pages) {
-    const scoped = relevantSystemText(page.markdown, system);
+    const scoped = relevantSystemText(page.markdown, system, page.title);
     if (/\boauth\b|\bconfiguration token\b/i.test(scoped)) {
       const location = oauthProcedure(scoped);
       if (location) {
@@ -350,7 +416,7 @@ export function extractCredentialFinding(
   }
 
   for (const page of pages) {
-    const scoped = relevantSystemText(page.markdown, system);
+    const scoped = relevantSystemText(page.markdown, system, page.title);
     const location = scoped
       .split('\n')
       .map((line: string): string => line.trim())
@@ -384,12 +450,17 @@ export function extractCredentialFinding(
  * Args:
  *   markdown: Documentation page content.
  *   system: Manager-named system.
+ *   title: Provider page title when it is stored separately from Markdown.
  *
  * Returns:
  *   True only when relevant text explicitly denies an approved connection.
  */
-export function explicitlyDeniesSurface(markdown: string, system: string): boolean {
-  if (isDedicatedSystemPage(markdown, system)) return NO_SURFACE_PATTERN.test(markdown);
+export function explicitlyDeniesSurface(
+  markdown: string,
+  system: string,
+  title?: string,
+): boolean {
+  if (isDedicatedSystemPage(markdown, system, title)) return NO_SURFACE_PATTERN.test(markdown);
   const pattern = systemNamePattern(system);
   return markdown
     .split('\n')
@@ -843,7 +914,7 @@ async function resolveStoredCredential(
   sourceId: Id<'docSources'>,
   pageRef: string,
   label: string,
-): Promise<CredentialId | undefined> {
+): Promise<ResolvedCredential | undefined> {
   const wanted = label.trim().toLowerCase();
   for (const ref of candidateCredentialRefs(pageRef, label)) {
     let row: StoredCredentialSummary | null;
@@ -858,9 +929,52 @@ async function resolveStoredCredential(
     }
     if (!row) continue;
     if (row.revokedAt !== undefined) continue;
-    if (row.label.trim().toLowerCase() === wanted) return row._id;
+    if (row.label.trim().toLowerCase() === wanted) {
+      return { credentialId: row._id, kind: row.kind };
+    }
   }
   return undefined;
+}
+
+/**
+ * Choose the pages and quotes a surface card cites.
+ *
+ * Every page that attributes something to the system is cited with its
+ * attributing sentence. Pages that only mention the system are cited only
+ * when no page attributes anything, so a card never quotes a co-occurrence
+ * beside real evidence. At most eight pages are cited, in page order.
+ *
+ * Args:
+ *   pages: Pages whose text names the system.
+ *   system: Manager-named system.
+ *   slug: The system's surface slug.
+ *
+ * Returns:
+ *   Evidence entries with token shapes redacted.
+ */
+export function selectEvidence(
+  pages: readonly Doc<'docPages'>[],
+  system: string,
+  slug: string,
+): Evidence[] {
+  const quoted = pages.map(
+    (page: Doc<'docPages'>): { page: Doc<'docPages'>; quote: EvidenceQuote } => ({
+      page,
+      quote: evidenceQuote(page.markdown, system, slug) ?? {
+        quote: page.title,
+        attributed: namesSystem(page.title, system),
+      },
+    }),
+  );
+  const attributed = quoted.filter(({ quote }): boolean => quote.attributed);
+  return (attributed.length > 0 ? attributed : quoted).slice(0, 8).map(
+    ({ page, quote }): Evidence => ({
+      sourceId: String(page.sourceId),
+      ref: page.ref,
+      quote: redactTokenShapes(quote.quote),
+      url: page.url,
+    }),
+  );
 }
 
 /** Outcome of one isolated orientation job. */
@@ -911,20 +1025,13 @@ export async function orientSurface(
     agentId: surface.agentId,
   });
   const matches = pages.filter((page: Doc<'docPages'>): boolean =>
-    namesSystem(page.markdown, surface.displayName),
+    namesSystem(`${page.title}\n${page.markdown}`, surface.displayName),
   );
-  const evidence: Evidence[] = matches.slice(0, 8).map(
-    (page: Doc<'docPages'>): Evidence => ({
-      sourceId: String(page.sourceId),
-      ref: page.ref,
-      quote: redactTokenShapes(evidenceLine(page.markdown, surface.displayName) || page.title),
-      url: page.url,
-    }),
-  );
+  const evidence: Evidence[] = selectEvidence(matches, surface.displayName, surface.slug);
   const relevantText = redactTokenShapes(
     matches
       .map((page: Doc<'docPages'>): string =>
-        relevantSystemText(page.markdown, surface.displayName),
+        relevantSystemText(page.markdown, surface.displayName, page.title),
       )
       .join('\n\n'),
   );
@@ -932,7 +1039,7 @@ export async function orientSurface(
     attributedUrls(relevantText, surface.displayName, surface.slug),
   );
   const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
-    explicitlyDeniesSurface(page.markdown, surface.displayName),
+    explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
   );
   if (matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api)) {
     const recorded = await ctx.runMutation(internal.surfaces.markAbsent, {
@@ -979,9 +1086,9 @@ export async function orientSurface(
     openQuestions.push('Confirm the approved connection endpoint.');
   }
 
-  let credentialId: CredentialId | undefined;
+  let stored: ResolvedCredential | undefined;
   if (credential.found === 'value') {
-    credentialId =
+    stored =
       credential.label && credential.evidenceRef && credential.sourceId && context.agent.userId
         ? await resolveStoredCredential(
             ctx,
@@ -991,7 +1098,7 @@ export async function orientSurface(
             credential.label,
           )
         : undefined;
-    if (!credentialId) {
+    if (!stored) {
       openQuestions.push(
         'The stored credential marker could not be resolved to an encrypted row; re-sync the documentation source.',
       );
@@ -1034,7 +1141,8 @@ export async function orientSurface(
     path,
     fallbackPath: draft.fallbackPath,
     endpoint,
-    credentialId,
+    credentialId: stored?.credentialId,
+    credentialKind: stored?.kind,
     credentialLocation: credential.found === 'value' ? undefined : credential.summary,
     expiresInDays: draft.expiresInDays,
   });

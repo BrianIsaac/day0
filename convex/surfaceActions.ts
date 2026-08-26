@@ -1,7 +1,6 @@
 'use node';
 
 import { randomUUID } from 'node:crypto';
-import { MCPClient } from '@mastra/mcp';
 import { v } from 'convex/values';
 import type { GenericId } from 'convex/values';
 import type { FunctionReference } from 'convex/server';
@@ -10,10 +9,11 @@ import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
+import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { safeFailureMessage } from '../src/surfaces/redact';
 
 const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
-  kanban: ['list_issues', 'get_issue', 'list_comments', 'create_comment', 'save_issue'],
+  kanban: ['list_issues', 'get_issue', 'list_comments', 'save_comment', 'save_issue'],
   'browser-driven': ['browser_navigate', 'browser_snapshot'],
 };
 
@@ -213,7 +213,7 @@ export function linearMcpEndpoint(endpoint: string | undefined): URL {
  *   A client exposing only the discovery methods used by probing.
  */
 function createMcpClient(endpoint: URL, credential: string): McpProbeClient {
-  return new MCPClient({
+  return createSecretMcpClient({
     id: `day0-surface-probe-${randomUUID()}`,
     servers: {
       surface: {
@@ -558,19 +558,31 @@ export const landCredential = action({
     if (!context.agent.userId) throw new Error('Agent has no owner.');
     const plaintext = args.plaintext.trim();
     if (!plaintext) throw new Error('Credential value is required.');
+    // A value typed into the card is never the product of an OAuth install:
+    // on an `oauth` surface it is the shared bot token landed as the fallback,
+    // a shared credential like any other, so writes through it carry
+    // provenance. Only the install flow itself stores kind `oauth`.
     const method = (context.surface.request as { credential?: { method?: unknown } } | undefined)
       ?.credential?.method;
-    const kind = method === 'oauth' ? 'oauth' : 'location';
+    const kind = method === 'oauth' ? 'value' : 'location';
+    const documentedLabel = (
+      context.surface.request as { credential?: { label?: unknown } } | undefined
+    )?.credential?.label;
+    const label =
+      typeof documentedLabel === 'string' && documentedLabel.trim()
+        ? documentedLabel.trim().slice(0, 160)
+        : `${context.surface.displayName} credential`;
     const credentialId: CredentialId = await ctx.runAction(credentialInternal.credentials.store, {
       userId: context.agent.userId,
       kind,
-      label: args.label.trim() || `${context.surface.displayName} credential`,
+      label,
       plaintext,
       source: 'entered',
     });
     await ctx.runMutation(internal.surfaces.attachCredential, {
       surfaceId: context.surface._id,
       credentialId,
+      credentialKind: kind,
       credentialLocation: context.surface.credentialLocation,
     });
     const probeScheduled =

@@ -247,11 +247,19 @@ services:
 
   # The browser floor exposes read-only tools later through Day0's allowlist.
   # The MCP server itself is not a security boundary, so it remains internal.
+  #
+  # `--isolated` gives every MCP session its own browser context. Day0 opens
+  # one session per `mcp.call` and closes it afterwards; without the flag the
+  # server keeps a single shared browser and the second call in a run fails
+  # with "Browser is already in use", so a skill could navigate but never
+  # snapshot. Sessions share no page state, which is also what an audited
+  # per-action call should mean.
   playwright-mcp:
     profiles: ['real']
     image: mcr.microsoft.com/playwright/mcp:latest
     command:
       [
+        '--isolated',
         '--port',
         '8931',
         '--host',

@@ -8,6 +8,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   issueProject,
+  linearCandidate,
   linearListArguments,
   mcpIssuePage,
   runIntakeSweep,
@@ -162,7 +163,10 @@ function runtimeHarness(
       if (surface && record.polledAt !== undefined) surface.lastPolledAt = record.polledAt;
     },
     seed: async (candidate: SeededCandidate): Promise<void> => {
-      seeds.set(`${candidate.sourceSystem}:${candidate.externalId}`, candidate);
+      seeds.set(
+        `${String(candidate.agentId)}:${candidate.sourceSystem}:${candidate.externalId}`,
+        candidate,
+      );
     },
   };
   return { records, runtime, seeds };
@@ -322,7 +326,13 @@ describe('real surface intake', (): void => {
           response_metadata: { next_cursor: '' },
         });
       }
-      return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+      return slackResponse({
+        ok: true,
+        messages: [
+          { ts: '1770000000.000100', user: 'USECOND', text: '<@UBOT> second channel request' },
+        ],
+        response_metadata: { next_cursor: '' },
+      });
     });
 
     const result = await runIntakeSweep(harness.runtime, {
@@ -332,7 +342,7 @@ describe('real surface intake', (): void => {
       fetcher: slackFetch,
     });
 
-    expect(result).toEqual({ candidates: 2, mode: 'real', polled: 2, skipped: 2, surfaces: 4 });
+    expect(result).toEqual({ candidates: 3, mode: 'real', polled: 2, skipped: 2, surfaces: 4 });
     expect(
       harness.records.map((record): [string, number] => [
         String(record.surfaceId),
@@ -354,19 +364,19 @@ describe('real surface intake', (): void => {
       {
         project: 'Q3 close',
         team: 'REVOPS',
-        updatedAt: '2026-08-26T01:00:00.000Z',
+        updatedAt: '2026-08-26T00:59:59.999Z',
         limit: 100,
       },
       {
         project: 'Q3 close',
         team: 'REVOPS',
-        updatedAt: '2026-08-26T01:00:00.000Z',
+        updatedAt: '2026-08-26T00:59:59.999Z',
         limit: 100,
         cursor: 'next-page',
       },
     ]);
     expect(disconnect).toHaveBeenCalledOnce();
-    expect(harness.seeds.get('linear:issue-1')).toMatchObject({
+    expect(harness.seeds.get('agent-intake:linear:issue-1')).toMatchObject({
       sourceCategory: 'ticket-queue',
       sourceSystem: 'linear',
       externalId: 'issue-1',
@@ -374,13 +384,18 @@ describe('real surface intake', (): void => {
       priority: 'High',
       requesterLabel: 'Priya',
     });
-    expect(harness.seeds.get('slack:1770000000.000100')).toMatchObject({
+    expect(harness.seeds.get('agent-intake:slack:CASKS:1770000000.000100')).toMatchObject({
       sourceCategory: 'event-stream',
       sourceSystem: 'slack',
-      externalId: '1770000000.000100',
+      externalId: 'CASKS:1770000000.000100',
       contentSummary: '<@UBOT> please review REVOPS-1',
       contentRefs: ['https://app.slack.com/client/TTEAM/CASKS/thread/CASKS-1770000000000100'],
       requesterLabel: 'UUSER',
+    });
+    expect(harness.seeds.get('agent-intake:slack:CREVOPS:1770000000.000100')).toMatchObject({
+      externalId: 'CREVOPS:1770000000.000100',
+      contentSummary: '<@UBOT> second channel request',
+      requesterLabel: 'USECOND',
     });
     const historyUrls = slackFetch.mock.calls
       .map(([input]): URL => new URL(String(input)))
@@ -537,6 +552,23 @@ describe('real surface intake', (): void => {
       title: 'First observed title',
     });
   });
+
+  it('makes the intake runtime fake preserve the agent part of the deduplication tuple', async (): Promise<void> => {
+    const harness = runtimeHarness([], [], new Map());
+    const candidate: Omit<SeededCandidate, 'agentId'> = {
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: 'same-provider-id',
+      title: 'Same external issue',
+      contentSummary: 'Visible to two different agents.',
+      contentRefs: [],
+    };
+
+    await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-one') });
+    await harness.runtime.seed({ ...candidate, agentId: id<'agents'>('agent-two') });
+
+    expect(harness.seeds.size).toBe(2);
+  });
 });
 
 describe('intake provider contracts', (): void => {
@@ -560,7 +592,7 @@ describe('intake provider contracts', (): void => {
       args: {
         projectName: 'Q3 close',
         teamKey: 'REVOPS',
-        updated_since: '2026-08-26T01:00:00.000Z',
+        updated_since: '2026-08-26T00:59:59.999Z',
         page_size: 100,
         after: 'cursor-2',
       },
@@ -583,6 +615,24 @@ describe('intake provider contracts', (): void => {
           'c',
         ),
     ).toThrow('unsupported cursor');
+    expect(
+      linearListArguments(
+        {
+          properties: {
+            project: {},
+            limit: {},
+            fields: { type: 'array', items: { type: 'string', enum: ['id', 'title', 'project', 'updatedAt', 'triageIntel'] } },
+          },
+        },
+        { project: 'Q3 close' },
+      ).args,
+    ).toEqual({ project: 'Q3 close', limit: 100, fields: ['id', 'title', 'updatedAt', 'project'] });
+    expect(
+      linearListArguments(
+        { properties: { project: {}, fields: { type: 'array', items: { type: 'string' } } } },
+        { project: 'Q3 close' },
+      ).args,
+    ).toEqual({ project: 'Q3 close' });
     expect(issueProject({ project: { name: 'Q3 close', id: 'p1' } })).toBe('Q3 close');
     expect(issueProject({ project: 'Q3 close' })).toBe('Q3 close');
     expect(issueProject({ projectName: 'Q3 close' })).toBe('Q3 close');
@@ -645,7 +695,7 @@ describe('intake provider contracts', (): void => {
           ]),
       }),
     ).resolves.toMatchObject({ candidates: 1, polled: 1, skipped: 0 });
-    expect([...bounded.seeds.keys()]).toEqual(['linear:in-project']);
+    expect([...bounded.seeds.keys()]).toEqual(['agent-intake:linear:in-project']);
 
     const unbounded = harnessFor();
     await expect(
@@ -657,6 +707,388 @@ describe('intake provider contracts', (): void => {
     ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
     expect(unbounded.records[0].skipReason).toContain('cannot be bounded to project Q3 close');
     expect(unbounded.seeds.size).toBe(0);
+
+    const ignoredProviderFilter = runtimeHarness(
+      [
+        surfaceRow('linear', 'Linear', 'kanban', {
+          credentialId: linearCredential,
+          endpoint: 'https://mcp.linear.app/mcp',
+          toolAllowlist: ['list_issues'],
+          lastPolledAt: Date.parse('2026-08-26T01:00:00.000Z'),
+        }),
+      ],
+      [
+        pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+        pageRow('linear.md', 'Linear', LINEAR),
+      ],
+      new Map([[String(linearCredential), 'linear-test-value']]),
+    );
+    await expect(
+      runIntakeSweep(ignoredProviderFilter.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        makeMcpClient: () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: {
+                list_issues: { inputSchema: { properties: { project: {}, limit: {} } } },
+              },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async () => ({
+            execute: async (): Promise<unknown> => ({
+              issues: [
+                issue('provider-leak', { name: 'Q4 plan' }, '2026-08-26T02:00:00.000Z'),
+              ],
+            }),
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        }),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 1, skipped: 0 });
+    expect(ignoredProviderFilter.seeds.size).toBe(0);
+
+  });
+
+  it('does not checkpoint or seed a Linear poll whose pagination is incomplete', async (): Promise<void> => {
+    const checkpoint = Date.parse('2026-08-26T01:00:00.000Z');
+    const linearCredential = id<'credentials'>('credential-linear');
+    const makeHarness = (): ReturnType<typeof runtimeHarness> =>
+      runtimeHarness(
+        [
+          surfaceRow('linear', 'Linear', 'kanban', {
+            credentialId: linearCredential,
+            endpoint: 'https://mcp.linear.app/mcp',
+            toolAllowlist: ['list_issues'],
+            lastPolledAt: checkpoint,
+          }),
+        ],
+        [
+          pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+          pageRow('linear.md', 'Linear', LINEAR),
+        ],
+        new Map([[String(linearCredential), 'linear-test-value']]),
+      );
+    const client = (nextCursor: (cursor: string | undefined) => string | undefined) => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: {
+            list_issues: {
+              inputSchema: { properties: { project: {}, updatedAt: {}, cursor: {} } },
+            },
+          },
+        },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (args: Record<string, unknown>): Promise<unknown> => ({
+          issues: [
+            {
+              id: `issue-${String(args.cursor ?? 'first')}`,
+              title: 'Provider page row',
+              updatedAt: '2026-08-26T02:00:00.000Z',
+            },
+          ],
+          nextCursor: nextCursor(typeof args.cursor === 'string' ? args.cursor : undefined),
+        }),
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+
+    const overLimit = makeHarness();
+    await expect(
+      runIntakeSweep(overLimit.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        makeMcpClient: () =>
+          client((cursor) => `page-${cursor ? Number(cursor.replace('page-', '')) + 1 : 1}`),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(overLimit.records[0]).toMatchObject({
+      skipReason: expect.stringContaining('pagination did not complete'),
+    });
+    expect(overLimit.records[0].polledAt).toBeUndefined();
+    expect(overLimit.seeds.size).toBe(0);
+
+    const cycle = makeHarness();
+    await expect(
+      runIntakeSweep(cycle.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        makeMcpClient: () => client(() => 'same-page'),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(cycle.records[0]).toMatchObject({
+      skipReason: expect.stringContaining('repeated a cursor'),
+    });
+    expect(cycle.records[0].polledAt).toBeUndefined();
+    expect(cycle.seeds.size).toBe(0);
+  });
+
+  it('does not checkpoint or seed Slack history whose pagination is incomplete', async (): Promise<void> => {
+    const slackCredential = id<'credentials'>('credential-slack');
+    const makeHarness = (): ReturnType<typeof runtimeHarness> =>
+      runtimeHarness(
+        [
+          surfaceRow('slack', 'Slack', 'chat', {
+            credentialId: slackCredential,
+            endpoint: 'https://slack.com/api/',
+            toolAllowlist: ['conversations.list', 'conversations.history'],
+            providerIdentityId: 'UBOT',
+            providerWorkspaceId: 'TTEAM',
+          }),
+        ],
+        [pageRow('slack.md', 'Slack policy', SLACK)],
+        new Map([[String(slackCredential), 'slack-test-value']]),
+      );
+    const fetcher =
+      (nextCursor: (cursor: string | undefined) => string | undefined) =>
+      async (input: string | URL | Request): Promise<Response> => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith('/conversations.list')) {
+          return slackResponse({
+            ok: true,
+            channels: [
+              { id: 'CASKS', name: 'revops-asks' },
+              { id: 'CREVOPS', name: 'revops' },
+            ],
+            response_metadata: { next_cursor: '' },
+          });
+        }
+        const cursor = url.searchParams.get('cursor') ?? undefined;
+        const page = cursor ? Number(cursor.replace('page-', '')) + 1 : 1;
+        return slackResponse({
+          ok: true,
+          messages: [
+            { ts: `177000000${page}.000100`, user: 'UUSER', text: '<@UBOT> request' },
+          ],
+          response_metadata: { next_cursor: nextCursor(cursor) },
+        });
+      };
+
+    const overLimit = makeHarness();
+    await expect(
+      runIntakeSweep(overLimit.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher: fetcher(
+          (cursor): string =>
+            `page-${cursor ? Number(cursor.replace('page-', '')) + 1 : 1}`,
+        ),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(overLimit.records[0]).toMatchObject({
+      skipReason: expect.stringContaining('pagination did not complete'),
+    });
+    expect(overLimit.records[0].polledAt).toBeUndefined();
+    expect(overLimit.seeds.size).toBe(0);
+
+    const cycle = makeHarness();
+    await expect(
+      runIntakeSweep(cycle.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher: fetcher((): string => 'same-page'),
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
+    expect(cycle.records[0]).toMatchObject({
+      skipReason: expect.stringContaining('repeated a cursor'),
+    });
+    expect(cycle.records[0].polledAt).toBeUndefined();
+    expect(cycle.seeds.size).toBe(0);
+  });
+
+  it('includes the Slack checkpoint boundary when a message appears after the prior snapshot', async (): Promise<void> => {
+    const firstPollAt = Date.parse('2026-08-26T02:00:00.000Z');
+    const secondPollAt = Date.parse('2026-08-26T03:00:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: 'UBOT',
+          providerWorkspaceId: 'TTEAM',
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const historyUrls: URL[] = [];
+    let poll = 0;
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/conversations.list')) {
+        poll += 1;
+        return slackResponse({
+          ok: true,
+          channels: [
+            { id: 'CASKS', name: 'revops-asks' },
+            { id: 'CREVOPS', name: 'revops' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      historyUrls.push(url);
+      const onBoundary =
+        poll === 2 &&
+        url.searchParams.get('channel') === 'CASKS' &&
+        url.searchParams.get('oldest') === String(firstPollAt / 1_000) &&
+        url.searchParams.get('inclusive') === 'true';
+      return slackResponse({
+        ok: true,
+        messages: onBoundary
+          ? [
+              {
+                ts: `${String(firstPollAt / 1_000)}.000000`,
+                user: 'UUSER',
+                text: '<@UBOT> boundary request',
+              },
+            ]
+          : [],
+        response_metadata: { next_cursor: '' },
+      });
+    };
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => firstPollAt,
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 1 });
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => secondPollAt,
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 1 });
+    expect([...harness.seeds.keys()]).toEqual([
+      `agent-intake:slack:CASKS:${String(firstPollAt / 1_000)}.000000`,
+    ]);
+    expect(historyUrls.slice(-2).every((url) => url.searchParams.get('inclusive') === 'true')).toBe(
+      true,
+    );
+  });
+
+  it('overlaps a Linear checkpoint so an issue first visible on the timestamp boundary is not missed', async (): Promise<void> => {
+    const firstPollAt = Date.parse('2026-08-26T02:00:00.000Z');
+    const secondPollAt = Date.parse('2026-08-26T03:00:00.000Z');
+    const linearCredential = id<'credentials'>('credential-linear');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('linear', 'Linear', 'kanban', {
+          credentialId: linearCredential,
+          endpoint: 'https://mcp.linear.app/mcp',
+          toolAllowlist: ['list_issues'],
+        }),
+      ],
+      [
+        pageRow('onboarding.md', 'Onboarding', ONBOARDING),
+        pageRow('linear.md', 'Linear automation', LINEAR),
+      ],
+      new Map([[String(linearCredential), 'linear-test-value']]),
+    );
+    const requests: Record<string, unknown>[] = [];
+    let poll = 0;
+    const makeMcpClient = () => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: {
+            list_issues: {
+              inputSchema: { properties: { project: {}, updatedAt: {} } },
+            },
+          },
+        },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (args: Record<string, unknown>): Promise<unknown> => {
+          requests.push(args);
+          poll += 1;
+          return poll === 1
+            ? { issues: [] }
+            : {
+                issues: [
+                  {
+                    id: 'boundary-issue',
+                    title: 'Appeared after the prior snapshot',
+                    url: 'https://linear.app/day0/issue/REVOPS-boundary',
+                    updatedAt: new Date(firstPollAt).toISOString(),
+                  },
+                ],
+              };
+        },
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => firstPollAt,
+        makeMcpClient,
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 1 });
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => secondPollAt,
+        makeMcpClient,
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 1 });
+
+    expect(requests).toEqual([
+      { project: 'Q3 close' },
+      { project: 'Q3 close', updatedAt: '2026-08-26T01:59:59.999Z' },
+    ]);
+    expect([...harness.seeds.keys()]).toEqual(['agent-intake:linear:boundary-issue']);
+  });
+
+  it('maps the shapes Linear\'s live MCP server returns, not only GraphQL-style objects', (): void => {
+    const surface = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId: id<'credentials'>('credential-linear'),
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const observedAt = Date.parse('2026-08-26T02:00:00.000Z');
+    expect(
+      linearCandidate(
+        {
+          id: 'REVOPS-5',
+          title: 'Add the close-summary audit note',
+          description: 'Summarise the completed close checks as a comment.',
+          priority: { value: 1, name: 'Urgent' },
+          url: 'https://linear.app/day00/issue/REVOPS-5/add-the-close-summary-audit-note',
+          status: 'Backlog',
+          createdBy: 'Brian',
+          team: 'RevOps',
+        },
+        surface,
+        observedAt,
+      ),
+    ).toEqual({
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-5',
+      title: 'Add the close-summary audit note',
+      contentSummary: 'Summarise the completed close checks as a comment.',
+      contentRefs: ['https://linear.app/day00/issue/REVOPS-5/add-the-close-summary-audit-note'],
+      observedAt: new Date(observedAt),
+      priority: 'Urgent',
+      requesterLabel: 'Brian',
+    });
+    expect(
+      linearCandidate(
+        { id: 'REVOPS-6', title: 'Reconcile', url: 'https://linear.app/x', assignee: { email: 'a@day0.local' } },
+        surface,
+        observedAt,
+      ),
+    ).toMatchObject({ contentSummary: 'Reconcile', requesterLabel: 'a@day0.local', priority: undefined });
+    expect(linearCandidate({ id: 'REVOPS-7', title: '  ', url: 'https://linear.app/x' }, surface, observedAt)).toBeUndefined();
   });
 
   it('decodes structured and text MCP results and reads only policy channel rows', (): void => {

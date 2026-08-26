@@ -1,7 +1,6 @@
 'use node';
 
 import { randomUUID } from 'node:crypto';
-import { MCPClient } from '@mastra/mcp';
 import type { ToolExecutionContext } from '@mastra/core/tools';
 import type { FunctionReference } from 'convex/server';
 import type { GenericId } from 'convex/values';
@@ -10,6 +9,7 @@ import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
 
@@ -227,6 +227,41 @@ export interface LinearListRequest {
   checkpointEnforced: boolean;
 }
 
+/** Issue fields intake reads, requested by name when the schema lets a caller choose. */
+const LINEAR_ISSUE_FIELDS = [
+  'id',
+  'title',
+  'description',
+  'url',
+  'priority',
+  'status',
+  'statusType',
+  'createdAt',
+  'updatedAt',
+  'createdBy',
+  'assignee',
+  'project',
+  'projectId',
+  'team',
+] as const;
+
+/**
+ * Read the field names a schema's `fields` selector accepts.
+ *
+ * Args:
+ *   properties: Provider-discovered input properties.
+ *
+ * Returns:
+ *   The enumerated field names, or undefined when there is no such selector.
+ */
+function selectableFields(properties: Record<string, unknown>): Set<string> | undefined {
+  const selector = asRecord(properties.fields);
+  const items = asRecord(selector?.items);
+  const names = items?.enum;
+  if (!Array.isArray(names)) return undefined;
+  return new Set(names.filter((name): name is string => typeof name === 'string'));
+}
+
 /**
  * Build a bounded Linear list request only from discovered argument names.
  *
@@ -234,7 +269,10 @@ export interface LinearListRequest {
  * the schema offers no way to express the project or the checkpoint, the
  * request is still made and the poller applies that bound to the returned
  * issues itself, so an unknown schema degrades to more reading, not to no
- * intake.
+ * intake. When the schema lets the caller choose response fields, the
+ * fields intake reads are named explicitly: Linear's default response omits
+ * the project, so the client-side project bound and the checkpoint would
+ * otherwise have nothing to compare.
  *
  * Args:
  *   inputSchema: Live schema advertised for list_issues.
@@ -265,6 +303,12 @@ export function linearListArguments(
   const limitName = discoveredArgument(properties, ['limit', 'first', 'pageSize']);
   if (limitName) args[limitName] = PAGE_SIZE;
 
+  const selectable = selectableFields(properties);
+  if (selectable) {
+    const fields = LINEAR_ISSUE_FIELDS.filter((name: string): boolean => selectable.has(name));
+    if (fields.length > 0) args.fields = fields;
+  }
+
   let checkpointEnforced = false;
   if (lastPolledAt !== undefined) {
     const updatedName = discoveredArgument(properties, [
@@ -274,7 +318,7 @@ export function linearListArguments(
       'updated_at',
     ]);
     if (updatedName) {
-      args[updatedName] = new Date(lastPolledAt).toISOString();
+      args[updatedName] = new Date(Math.max(0, lastPolledAt - 1)).toISOString();
       checkpointEnforced = true;
     }
   }
@@ -365,6 +409,29 @@ export function mcpIssuePage(value: unknown): McpPage {
 }
 
 /**
+ * Read who asked for an issue, in the shapes providers use.
+ *
+ * Linear's MCP server returns `createdBy` and `assignee` as display names;
+ * GraphQL-shaped payloads nest a `creator` or `assignee` object.
+ *
+ * Args:
+ *   issue: Provider issue object.
+ *
+ * Returns:
+ *   The creator's or assignee's name or email, or undefined.
+ */
+function requesterOf(issue: Record<string, unknown>): string | undefined {
+  for (const key of ['creator', 'createdBy', 'assignee']) {
+    const value = issue[key];
+    if (typeof value === 'string' && value.trim()) return value;
+    const record = asRecord(value);
+    if (typeof record?.name === 'string') return record.name;
+    if (typeof record?.email === 'string') return record.email;
+  }
+  return undefined;
+}
+
+/**
  * Create one normalised work candidate from a Linear issue.
  *
  * Args:
@@ -396,14 +463,10 @@ export function linearCandidate(
       ? issue.priority
       : typeof priorityObject?.label === 'string'
         ? priorityObject.label
-        : undefined;
-  const requester = asRecord(issue.creator) ?? asRecord(issue.assignee);
-  const requesterLabel =
-    typeof requester?.name === 'string'
-      ? requester.name
-      : typeof requester?.email === 'string'
-        ? requester.email
-        : undefined;
+        : typeof priorityObject?.name === 'string'
+          ? priorityObject.name
+          : undefined;
+  const requesterLabel = requesterOf(issue);
   return {
     sourceCategory: 'ticket-queue',
     sourceSystem: surface.slug,
@@ -428,7 +491,7 @@ export function linearCandidate(
  *   The bounded client contract used by intake.
  */
 function createMcpClient(endpoint: URL, credential: string): McpIntakeClient {
-  return new MCPClient({
+  return createSecretMcpClient({
     id: `day0-intake-${randomUUID()}`,
     servers: {
       surface: {
@@ -518,12 +581,12 @@ async function pollLinear(
         seen += 1;
         const project = issueProject(issue);
         if (project !== undefined) withProject += 1;
-        if (!request.projectEnforced && project?.toLowerCase() !== wantedProject) continue;
+        if (project !== undefined && project.toLowerCase() !== wantedProject) continue;
         const updatedAt = typeof issue.updatedAt === 'string' ? Date.parse(issue.updatedAt) : NaN;
         if (
           surface.lastPolledAt !== undefined &&
           Number.isFinite(updatedAt) &&
-          updatedAt <= surface.lastPolledAt
+          updatedAt < surface.lastPolledAt
         ) {
           continue;
         }
@@ -535,7 +598,13 @@ async function pollLinear(
           `Linear list_issues has no project argument and its issues carry no project field, so intake cannot be bounded to project ${scope.project}.`,
         );
       }
-      if (!page.nextCursor || cursors.has(page.nextCursor)) break;
+      if (!page.nextCursor) break;
+      if (cursors.has(page.nextCursor)) {
+        throw new Error('Linear list_issues repeated a cursor before pagination completed.');
+      }
+      if (pageIndex === MAX_MCP_PAGES - 1) {
+        throw new Error('Linear list_issues pagination did not complete within the page limit.');
+      }
       cursors.add(page.nextCursor);
       cursor = page.nextCursor;
     }
@@ -663,11 +732,12 @@ async function slackHistory(
   lastPolledAt?: number,
 ): Promise<SlackMessage[]> {
   const messages: SlackMessage[] = [];
+  const cursors = new Set<string>();
   let cursor: string | undefined;
   for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
     const payload = await slackGet(fetcher, credential, 'conversations.history', {
       channel: channelId,
-      inclusive: 'false',
+      inclusive: 'true',
       limit: '200',
       ...(lastPolledAt !== undefined ? { oldest: String(lastPolledAt / 1_000) } : {}),
       ...(cursor ? { cursor } : {}),
@@ -682,8 +752,16 @@ async function slackHistory(
         user: typeof row.user === 'string' ? row.user : undefined,
       });
     }
-    cursor = slackCursor(payload);
-    if (!cursor) break;
+    const nextCursor = slackCursor(payload);
+    if (!nextCursor) break;
+    if (cursors.has(nextCursor)) {
+      throw new Error('Slack conversations.history repeated a cursor before pagination completed.');
+    }
+    if (pageIndex === MAX_SLACK_HISTORY_PAGES - 1) {
+      throw new Error('Slack conversations.history pagination did not complete within the page limit.');
+    }
+    cursors.add(nextCursor);
+    cursor = nextCursor;
   }
   return messages;
 }
@@ -711,7 +789,7 @@ export function slackCandidate(
   return {
     sourceCategory: 'event-stream',
     sourceSystem: surface.slug,
-    externalId: message.ts,
+    externalId: `${channel.id}:${message.ts}`,
     title: `Slack mention in #${channel.name}`,
     contentSummary: message.text.slice(0, 4_000),
     contentRefs: [`https://app.slack.com/client/${teamId}/${channel.id}/thread/${threadKey}`],

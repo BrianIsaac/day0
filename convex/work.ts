@@ -219,10 +219,14 @@ export const retryFailed = mutation({
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
     }
-    const landed = (
-      (row.output ?? {}) as { applied?: Array<{ ok?: boolean; held?: boolean }> }
-    ).applied?.some((entry) => entry.ok === true && entry.held !== true);
-    if (row.skipReason === INTERRUPTED_APPLY_REASON || landed) {
+    const applied = (
+      (row.output ?? {}) as {
+        applied?: Array<{ ok?: boolean; held?: boolean; outcomeUnknown?: boolean }>;
+      }
+    ).applied;
+    const landed = applied?.some((entry) => entry.ok === true && entry.held !== true);
+    const outcomeUnknown = applied?.some((entry) => entry.outcomeUnknown === true);
+    if (row.skipReason === INTERRUPTED_APPLY_REASON || landed || outcomeUnknown) {
       throw new Error(
         'retry refused because an external effect may already have landed; reconcile the provider first',
       );

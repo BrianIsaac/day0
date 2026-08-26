@@ -1,11 +1,11 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import type { GenericId } from 'convex/values';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { surfaceSlug } from '../../convex/surfaces';
-import { convexModules } from './modules';
+import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
@@ -133,8 +133,33 @@ describe('surface persistence', (): void => {
     expect(surfaceSlug(' Linear / REVOPS ')).toBe('linear-revops');
   });
 
+  it('accepts and clears a legacy credentialRef row when orientation touches it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'declared',
+          whereFound: [],
+          credentialRef: 'LINEAR_API_KEY',
+          credentialLanded: false,
+          createdAt: 1,
+        } as never),
+    );
+
+    await propose(harness, surfaceId);
+    expect((await readSurface(harness, surfaceId)) as Record<string, unknown>).not.toHaveProperty(
+      'credentialRef',
+    );
+  });
+
   it('seeds once and exposes rows only to the owner', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     await seedDeclared(harness, agentId);
     await seedDeclared(harness, agentId);
@@ -148,7 +173,7 @@ describe('surface persistence', (): void => {
   });
 
   it('never seeds a surface for a documentation location', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const ids = await harness.mutation(internal.surfaces.seedFromCharter, {
       agentId,
@@ -165,7 +190,7 @@ describe('surface persistence', (): void => {
   });
 
   it('records an explicit absence with its search terms', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId, 'Northstar CRM', 'crm');
     await harness.mutation(internal.surfaces.markAbsent, {
@@ -183,7 +208,7 @@ describe('surface persistence', (): void => {
   });
 
   it('uses compare-and-set writes so an orientation retry cannot overwrite a decision', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await expect(
@@ -229,7 +254,7 @@ describe('surface persistence', (): void => {
 describe('orientation scheduling', (): void => {
   it('claims one pending job per declared surface and refuses other verdicts', async (): Promise<void> => {
     vi.useFakeTimers();
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await expect(
@@ -255,7 +280,7 @@ describe('orientation scheduling', (): void => {
 
 describe('orientation failure', (): void => {
   it('records a failure reason on a declared surface only', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await expect(
@@ -283,7 +308,7 @@ describe('orientation failure', (): void => {
 
 describe('surface probe generations', (): void => {
   it('rejects ineligible rows and ignores results from an older probe', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await expect(
@@ -325,7 +350,7 @@ describe('surface probe generations', (): void => {
   });
 
   it('records the latest failure without retaining provider request material', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
@@ -359,7 +384,7 @@ describe('surface probe generations', (): void => {
   });
 
   it('persists only the latest successful generation and renews expiry only when asked', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
@@ -423,7 +448,7 @@ describe('surface probe generations', (): void => {
   });
 
   it('grants the read scope and requeues deferred work in the connecting write', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
@@ -517,7 +542,7 @@ describe('surface probe generations', (): void => {
 
 describe('surface connection lifecycle metadata', (): void => {
   it('returns an approved failed surface to probing when IT lands a credential', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
@@ -532,11 +557,13 @@ describe('surface connection lifecycle metadata', (): void => {
     await harness.mutation(internal.surfaces.attachCredential, {
       surfaceId,
       credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialKind: 'location',
       credentialLocation: 'entered by IT approver',
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'approved',
       credentialId: '10000credentials',
+      credentialKind: 'location',
       credentialLocation: 'entered by IT approver',
       credentialLanded: false,
     });
@@ -544,7 +571,7 @@ describe('surface connection lifecycle metadata', (): void => {
   });
 
   it('demotes an expired connection and records a safe lifecycle event', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await harness.run(async (ctx): Promise<void> => {
@@ -572,7 +599,7 @@ describe('surface connection lifecycle metadata', (): void => {
   });
 
   it('records waterfall skips and clears them after a successful poll', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await harness.mutation(internal.surfaces.recordIntake, {
@@ -602,8 +629,38 @@ describe('surface connection lifecycle metadata', (): void => {
 });
 
 describe('surface approval state machine', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+  });
+
+  it('refuses approval and rejection server-side in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    const owner = harness.withIdentity({ subject: 'owner' });
+
+    await expect(
+      owner.mutation(liveApi.surfaces.approve, { surfaceId, role: 'manager' }),
+    ).rejects.toThrow('local real-mode feature');
+    await expect(
+      owner.mutation(liveApi.surfaces.reject, { surfaceId, reason: 'No.' }),
+    ).rejects.toThrow('local real-mode feature');
+
+    const surface = await readSurface(harness, surfaceId);
+    expect(surface.verdict).toBe('proposed');
+    expect(surface.managerApprovedAt).toBeUndefined();
+    expect(surface.itApprovedAt).toBeUndefined();
+    expect(await eventTypes(harness)).not.toContain('surface.approved');
+    expect(
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect()),
+    ).toHaveLength(0);
+  });
+
   it('requires both approvals and emits surface.approved exactly once', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
@@ -638,7 +695,7 @@ describe('surface approval state machine', (): void => {
   });
 
   it('refuses to approve a surface that is not proposed', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const declared = await seedDeclared(harness, agentId, 'Slack', 'chat');
     const absent = await seedDeclared(harness, agentId, 'Northstar CRM', 'crm');
@@ -665,7 +722,7 @@ describe('surface approval state machine', (): void => {
   });
 
   it('refuses approval from a caller who does not own the agent', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
@@ -679,16 +736,24 @@ describe('surface approval state machine', (): void => {
   });
 
   it('clears stamps and connection details on rejection so a re-proposal starts clean', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     const owner = harness.withIdentity({ subject: 'owner' });
 
     await propose(harness, surfaceId);
     await owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' });
+    await harness.mutation(internal.surfaces.attachCredential, {
+      surfaceId,
+      credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialKind: 'value',
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({ credentialKind: 'value' });
     await owner.mutation(api.surfaces.reject, { surfaceId, reason: 'Wrong endpoint.' });
     const rejected = await readSurface(harness, surfaceId);
     expect(rejected).toMatchObject({ verdict: 'declared', reason: 'Wrong endpoint.' });
+    expect(rejected.credentialId).toBeUndefined();
+    expect(rejected.credentialKind).toBeUndefined();
     expect(rejected.managerApprovedAt).toBeUndefined();
     expect(rejected.itApprovedAt).toBeUndefined();
     expect(rejected.endpoint).toBeUndefined();
@@ -712,7 +777,7 @@ describe('surface approval state machine', (): void => {
   });
 
   it('allows rejection of an approved surface and refuses it elsewhere', async (): Promise<void> => {
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     const owner = harness.withIdentity({ subject: 'owner' });
@@ -751,7 +816,7 @@ describe('surface approval state machine', (): void => {
 describe('owner-triggered orientation', (): void => {
   it('refuses reorient from a caller who does not own the agent', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     await expect(
       harness.withIdentity({ subject: 'other-owner' }).action(api.surfaces.reorient, { agentId }),
@@ -760,7 +825,7 @@ describe('owner-triggered orientation', (): void => {
 
   it('refuses reorient outside real mode', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const harness = convexTest(schema, convexModules);
+    const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     await seedDeclared(harness, agentId);
     await expect(

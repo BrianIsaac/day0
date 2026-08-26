@@ -1,17 +1,17 @@
-import { MCPClient } from '@mastra/mcp';
-import { noopLogger } from '@mastra/core/logger';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { decryptCredential, type DecryptCredential } from './credentials';
 import { clipEffect } from './mock';
 import {
+  actionIntent,
   parseSurfaceAction,
   surfaceRefusal,
   TOOL_NOT_ALLOWED,
   type ParsedMcpCall,
 } from './policy';
 import { redactValue } from './secrets';
+import { createSecretMcpClient } from './mcp-client';
 import type { AdapterRun, AppliedAction, SurfaceAdapter, SurfaceRecord } from './types';
 
 export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['tool'][];
@@ -65,7 +65,7 @@ export interface InterpretedToolResult {
  *   A connected-on-demand Mastra MCP client.
  */
 export function createMastraMcpClient(options: McpClientOptions): McpClientLike {
-  const client = new MCPClient({
+  const client = createSecretMcpClient({
     id: `day0-${options.serverName}-${globalThis.crypto.randomUUID()}`,
     servers: {
       [options.serverName]: {
@@ -74,13 +74,10 @@ export function createMastraMcpClient(options: McpClientOptions): McpClientLike 
         ...(options.bearer
           ? { requestInit: { headers: { Authorization: `Bearer ${options.bearer}` } } }
           : {}),
-        enableServerLogs: false,
-        onToolError: 'throw',
       },
     },
     timeout: MCP_TIMEOUT_MS,
   });
-  client.__setLogger(noopLogger);
   return {
     listTools: async (): Promise<Record<string, McpToolLike>> => {
       const { tools, errors } = await client.listToolsWithErrors({
@@ -251,6 +248,7 @@ export class McpAdapter implements SurfaceAdapter {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
     }
     let bearer = '';
+    let writeAttempted = false;
     try {
       if (surface.credentialId) bearer = await this.deps.decrypt(ctx, surface.credentialId);
       const client = this.deps.createClient({
@@ -264,6 +262,7 @@ export class McpAdapter implements SurfaceAdapter {
         if (!tool?.execute) {
           return { tool: action.tool, ok: false, reason: `tool ${call.tool} is not exposed by the server`, idempotencyKey };
         }
+        writeAttempted = actionIntent(call) === 'write';
         const result = interpretToolResult(await tool.execute(call.toolArgs, {}));
         const text = redactValue(result.text, bearer);
         if (result.isError) {
@@ -294,6 +293,7 @@ export class McpAdapter implements SurfaceAdapter {
           redactValue(error instanceof Error ? error.message : String(error), bearer),
           EFFECT_LENGTH,
         ),
+        ...(writeAttempted ? { outcomeUnknown: true } : {}),
         idempotencyKey,
       };
     }

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
-import { convexTest } from 'convex-test';
+import { randomBytes } from 'node:crypto';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../convex/_generated/server';
@@ -16,6 +17,11 @@ import {
   slackMethodsFromPolicy,
 } from '../../convex/surfaceActions';
 import { allConvexModules } from './all-modules';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+
+afterEach((): void => {
+  restoreSurfaceMode();
+});
 
 const SLACK_POLICY = [
   '# Slack Day0 app',
@@ -45,15 +51,15 @@ describe('surface MCP probing', (): void => {
           delete_issue: {
             inputSchema: { type: 'object', properties: { issueId: { type: 'string' } } },
           },
-          create_comment: { inputSchema: { type: 'object', properties: {} } },
+          save_comment: { inputSchema: { type: 'object', properties: {} } },
         },
         'kanban',
       ),
     ).toEqual({
-      toolAllowlist: ['list_issues', 'create_comment'],
+      toolAllowlist: ['list_issues', 'save_comment'],
       toolArguments: [
         { tool: 'list_issues', arguments: ['project', 'updatedAfter'] },
-        { tool: 'create_comment', arguments: [] },
+        { tool: 'save_comment', arguments: [] },
       ],
     });
     expect(argumentNamesFromSchema({ properties: null })).toEqual([]);
@@ -490,5 +496,111 @@ describe('surface probe action state', (): void => {
     ).rejects.toThrow('forbidden');
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface?.probeGeneration).toBeUndefined();
+  });
+});
+
+describe('credential landing from the card', (): void => {
+  /**
+   * Seed an owned, half-approved surface whose connect request names a method.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *   method: Credential method the orientation run recorded.
+   *
+   * Returns:
+   *   The surface id.
+   */
+  async function seedLandingSurface(
+    harness: TestConvex<typeof schema>,
+    method: 'oauth' | 'api-key',
+  ): Promise<Id<'surfaces'>> {
+    return await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'landing test',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: method === 'oauth' ? 'slack' : 'linear',
+        displayName: method === 'oauth' ? 'Slack' : 'Linear',
+        class: method === 'oauth' ? 'chat' : 'kanban',
+        verdict: 'proposed',
+        whereFound: [],
+        request: {
+          credential: {
+            found: 'none',
+            label: method === 'oauth' ? 'Slack bot token' : 'Linear API key',
+            method,
+          },
+        },
+        credentialLocation:
+          method === 'oauth' ? 'OAuth install flow documented in the policy' : 'ask the admin',
+        credentialLanded: false,
+        createdAt: 1,
+      });
+    });
+  }
+
+  it('stores a token typed on an OAuth surface as a shared value, never as an OAuth credential', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await seedLandingSurface(harness, 'oauth');
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.action(liveApi.surfaceActions.landCredential, {
+        surfaceId,
+        label: 'xoxb-shared-token-value',
+        plaintext: 'xoxb-shared-token-value',
+      }),
+    ).resolves.toEqual({ landed: true, probeScheduled: false });
+    const stored = await harness.run(async (ctx) => {
+      const surface = await ctx.db.get(surfaceId);
+      const credentials = await ctx.db.query('credentials').collect();
+      return { surface, credentials };
+    });
+    expect(stored.credentials).toHaveLength(1);
+    expect(stored.credentials[0]).toMatchObject({
+      kind: 'value',
+      label: 'Slack bot token',
+      source: 'entered',
+      userId: 'owner',
+    });
+    expect(JSON.stringify(stored)).not.toContain('xoxb-shared-token-value');
+    expect(stored.surface).toMatchObject({
+      credentialId: stored.credentials[0]._id,
+      credentialKind: 'value',
+      credentialLanded: false,
+      credentialLocation: 'OAuth install flow documented in the policy',
+    });
+  });
+
+  it('stores a documented-location landing as kind location', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await seedLandingSurface(harness, 'api-key');
+    await harness.withIdentity({ subject: 'owner' }).action(liveApi.surfaceActions.landCredential, {
+      surfaceId,
+      label: '',
+      plaintext: ' lin_api_test_value ',
+    });
+    const credentials = await harness.run(async (ctx) => await ctx.db.query('credentials').collect());
+    expect(credentials).toHaveLength(1);
+    expect(credentials[0]).toMatchObject({
+      kind: 'location',
+      label: 'Linear API key',
+      source: 'entered',
+    });
+    await expect(
+      harness
+        .withIdentity({ subject: 'stranger' })
+        .action(liveApi.surfaceActions.landCredential, { surfaceId, label: 'x', plaintext: 'y' }),
+    ).rejects.toThrow('forbidden');
   });
 });

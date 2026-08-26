@@ -10,7 +10,7 @@ import {
   type MockSurfaceSnapshot,
   type WorkCandidate,
 } from './types';
-import type { SurfaceRecord } from '../surfaces/types';
+import type { SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
 
 /**
@@ -33,19 +33,27 @@ import { verdictFor } from '../surfaces/verdict';
  * into the system prompt below so the schema is documented in-context.
  */
 
-const SYSTEM_PROMPT_PREAMBLE = [
+const PREAMBLE_HEAD = [
   'You are an autonomous workplace agent named Day0.',
   'A skill body has been loaded as your behavioural prior for this turn. The boss has approved the plan; you are authorised to act.',
   'Apply the skill to the candidate. Produce three things:',
   '  1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.',
   '  2. Notes — short assumptions or open questions (single sentence).',
-  '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
+];
+
+const DRAFT_DISCIPLINE = [
   '',
   'The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:',
   '  - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three `spreadsheet.appendRow` actions, not one action and a sentence saying three.',
   '  - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a `slack.postMessage` in this response says it.',
   '  - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in `notes` rather than describing the work as finished.',
   '',
+];
+
+const MOCK_PREAMBLE = [
+  ...PREAMBLE_HEAD,
+  '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
+  ...DRAFT_DISCIPLINE,
   'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. Available tools:',
   "  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }",
   "  - slack.postMessage    — { channelSlug, threadKey?, body }",
@@ -65,6 +73,46 @@ const SYSTEM_PROMPT_PREAMBLE = [
   '  - If the original ask came from a public Slack channel (look for "in #channel-name" or "asked in #revops-asks" in the candidate body) AND you have drafted to manager DM, ALSO post a threaded `slack.postMessage` to the originating channel — `channelSlug` is that channel, `threadKey` matches the ask thread, body says something like "Drafting for {manager} — will post here when approved."',
   '  - These extra actions are NOT optional when the conditions hold; they are how the agent demonstrates trustworthy follow-through. NEVER replace the manager DM with a ticket update — both fire.',
 ].join('\n');
+
+/** The four verbs that exist only for the mock environment. */
+const MOCK_VERBS = 'spreadsheet.appendRow, slack.postMessage, twitter.reply, ticket.update';
+
+const REAL_PREAMBLE = [
+  ...PREAMBLE_HEAD,
+  '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment, and every one of them is held for the manager, who approves each literal action before it is sent.',
+  ...DRAFT_DISCIPLINE,
+  'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
+  `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
+  '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
+  '',
+  'Discipline:',
+  '  - Stay inside charter boundaries.',
+  '  - Never invent an issue id, channel id, state name or value you do not have; take identifiers from the candidate `Refs:` line or the runbook and say in `notes` what is unknown.',
+  '  - Cold-start posture: the manager DM through the connected chat surface is the only outbound message; a post to any other channel is held for the manager and never sent.',
+  '',
+  'Closing the loop:',
+  '  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook\'s comment tool, and only after it, if the work is complete, the state change with the runbook\'s state argument. A status change is never the only trace of who acted.',
+  '  - When a chat surface is connected, ALSO send the manager DM summarising the draft for review through `http.request` to `chat.postMessage` with the manager DM channel id. When none is connected, say so in `notes` instead of substituting another channel.',
+  '  - Each provider mutation is its own action so the manager can approve it on its own.',
+].join('\n');
+
+/**
+ * The executor preamble for one surface mode.
+ *
+ * The mock preamble is byte-for-byte the hosted demo's prompt. The real-mode
+ * preamble names only the two surface verbs: the four mock verbs are refused
+ * by the registry in real mode, so telling the model about them would only
+ * produce actions that fail the run.
+ *
+ * Args:
+ *   mode: Deployment surface mode.
+ *
+ * Returns:
+ *   The preamble text.
+ */
+export function executorPreamble(mode: SurfaceMode): string {
+  return mode === 'real' ? REAL_PREAMBLE : MOCK_PREAMBLE;
+}
 
 /**
  * The action-args schema is intentionally flat: every action lists its
@@ -136,6 +184,8 @@ export interface RunSkillArgs {
    * told about the two surface verbs; in mock mode the prompt is unchanged.
    */
   surfaces?: readonly SurfaceRecord[];
+  /** Deployment surface mode; the mock preamble is the default. */
+  mode?: SurfaceMode;
   /** Clock for the connection verdict; defaults to now. */
   now?: number;
 }
@@ -237,9 +287,10 @@ function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
 
 export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   const { skill, plan, candidate, charter, mockEnv } = args;
+  const mode: SurfaceMode = args.mode ?? 'mock';
   const surfaceGuidance = surfaceInstructions(args.surfaces ?? [], args.now ?? Date.now());
   const instructions = [
-    SYSTEM_PROMPT_PREAMBLE,
+    executorPreamble(mode),
     ...(surfaceGuidance ? ['', surfaceGuidance] : []),
     '',
     '--- How-to guides (action format reference) ---',
@@ -274,9 +325,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Body:`,
     candidate.contentSummary,
     '',
-    '--- Current mock work environment ---',
-    renderEnvSnapshot(mockEnv),
-    '',
+    ...(mode === 'mock' ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), ''] : []),
     '--- Team docs (read-only context) ---',
     renderTeamDocs(mockEnv.teamDocs),
     '',

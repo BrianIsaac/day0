@@ -396,6 +396,7 @@ async function holdRealActions(
       charter: args.charter,
       mockEnv,
       surfaces: await loadSurfaces(ctx, args.agentId),
+      mode: 'real',
     });
     const pending = await ctx.runMutation(internal.work.setActionsPending, {
       workItemId: args.workItemId,
@@ -463,10 +464,9 @@ export const applyApprovedActions = internalAction({
       return await finishRun(ctx, args.workItemId, claim.runId, output, applied);
     } catch (err) {
       const reason = (err as Error).message;
-      await ctx.runMutation(internal.work.setFailed, {
+      await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
-        reason,
-        runId: claim.runId,
+        pendingRunId: claim.runId,
       });
       return { ok: false, reason };
     }

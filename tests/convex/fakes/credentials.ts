@@ -43,11 +43,16 @@ export const bySourceForStore = internalQuery({
   handler: async (
     _ctx,
     args,
-  ): Promise<{ _id: GenericId<'credentials'>; label: string; revokedAt?: number } | null> => {
+  ): Promise<{
+    _id: GenericId<'credentials'>;
+    kind: 'value' | 'location' | 'oauth';
+    label: string;
+    revokedAt?: number;
+  } | null> => {
     const row = fakeCredentialState().rows.get(
       fakeCredentialKey(args.userId, String(args.sourceId), args.ref),
     );
-    return row ? { _id: row._id, label: row.label, revokedAt: row.revokedAt } : null;
+    return row ? { _id: row._id, kind: 'value', label: row.label, revokedAt: row.revokedAt } : null;
   },
 });
 
