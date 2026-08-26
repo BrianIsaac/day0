@@ -274,6 +274,30 @@ describe('applying surface actions', (): void => {
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
 
     recorded.mcp = [];
+    const projectComment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ projectId: 'project-1', body: 'Project-level audit.' }),
+      },
+    };
+    const wrongTarget = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear],
+      run,
+      [projectComment, titleEdit],
+      { deps: deps(recorded), grants, now },
+    );
+    expect(wrongTarget[0].ok).toBe(true);
+    expect(wrongTarget[1]).toMatchObject({
+      ok: false,
+      reason: 'shared credential write without attributable content',
+    });
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+
+    recorded.mcp = [];
     const dedicated = await applySurfaceActions(
       ctx,
       'real',

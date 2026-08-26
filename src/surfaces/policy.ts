@@ -407,13 +407,14 @@ function hasLandedAuditComment(
   ledger: ReadonlyArray<AppliedAction | undefined>,
 ): boolean {
   const issue = targetIssue(parsed);
+  if (issue === undefined) return false;
   for (let position = 0; position < index; position += 1) {
     const candidate = earlier[position];
     const row = ledger[position];
     if (!candidate || !row || !row.ok || row.held) continue;
     if (candidate.surface !== parsed.surface || !isAuditComment(candidate)) continue;
     const commentIssue = targetIssue(candidate);
-    if (issue !== undefined && commentIssue !== undefined && issue !== commentIssue) continue;
+    if (commentIssue !== issue) continue;
     return true;
   }
   return false;

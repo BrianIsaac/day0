@@ -276,6 +276,23 @@ describe('comment before status change', (): void => {
     const landed: AppliedAction = { tool: 'mcp.call', ok: true, idempotencyKey: 'k0' };
     expect(statusChangeWithoutComment(parsed(statusChange('iss-2')), 1, [parsed(comment('c', 'iss-1'))], [landed])).toBe(true);
     expect(statusChangeWithoutComment(parsed(statusChange('iss-1')), 1, [parsed(comment('c', 'iss-1'))], [landed])).toBe(false);
+    expect(
+      statusChangeWithoutComment(
+        parsed(statusChange('iss-1')),
+        1,
+        [
+          parsed({
+            tool: 'mcp.call',
+            args: {
+              surface: 'linear',
+              tool: 'save_comment',
+              toolArgsJson: JSON.stringify({ projectId: 'project-1', body: 'Project note.' }),
+            },
+          }),
+        ],
+        [landed],
+      ),
+    ).toBe(true);
     expect(statusChangeWithoutComment(parsed(comment()), 0, [], [])).toBe(false);
   });
 });
