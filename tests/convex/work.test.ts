@@ -593,6 +593,84 @@ describe('single-use manager decisions', (): void => {
     expect(await eventsOfType(harness, agentId, 'work.decision-ignored')).toHaveLength(1);
   });
 
+  it('cancels a plan or fails a run from a channel reject, with the bounded reason and nothing sent', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const longReason = `${'x'.repeat(230)}  <script>alert(1)</script>`;
+
+    const planHarness = convexTest(schema, allConvexModules());
+    const plan = await seed(planHarness, 'plan-pending', undefined, { withSlack: true });
+    await planHarness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId: plan.workItemId,
+      kind: 'plan',
+      decisionId: 'wx2yz3',
+    });
+    await expect(
+      planHarness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId: await chatSurfaceId(planHarness, plan.agentId),
+        userId: 'UMANAGER',
+        messageTs: '5.100',
+        reply: { verb: 'reject', id: 'wx2yz3', reason: longReason },
+      }),
+    ).resolves.toEqual({ status: 'decided', outcome: 'reject' });
+    const cancelled = await readItem(planHarness, plan.workItemId);
+    expect(cancelled).toMatchObject({
+      state: 'cancelled',
+      decision: { outcome: 'rejected', decidedVia: 'channel', decidedTs: '5.100' },
+    });
+    expect(cancelled.skipReason).toBe(`plan cancelled by the manager: ${longReason.slice(0, 200)}`);
+    expect(await scheduledFunctionNames(planHarness)).not.toContain(
+      'workActions:executeApprovedPlanInternal',
+    );
+    expect(
+      (await eventsOfType(planHarness, plan.agentId, 'work.cancelled')).map((event) => event.payload),
+    ).toEqual([
+      { workItemId: plan.workItemId, reason: cancelled.skipReason, decidedVia: 'channel' },
+    ]);
+
+    const actionsHarness = convexTest(schema, allConvexModules());
+    const actions = await seed(actionsHarness, 'executing', ['boss:message', 'linear:read'], {
+      withSlack: true,
+    });
+    await actionsHarness.mutation(internal.work.setActionsPending, {
+      workItemId: actions.workItemId,
+      runId: actions.runId,
+      output: pendingOutput,
+    });
+    await actionsHarness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId: actions.workItemId,
+      kind: 'actions',
+      decisionId: 'yz3ab4',
+    });
+    await expect(
+      actionsHarness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId: await chatSurfaceId(actionsHarness, actions.agentId),
+        userId: 'UMANAGER',
+        messageTs: '6.100',
+        reply: { verb: 'reject', id: 'yz3ab4', reason: 'not this week' },
+      }),
+    ).resolves.toEqual({ status: 'decided', outcome: 'reject' });
+    const failed = await readItem(actionsHarness, actions.workItemId);
+    expect(failed).toMatchObject({
+      state: 'failed',
+      skipReason: 'rejected by the manager: not this week',
+      decision: { outcome: 'rejected', decidedVia: 'channel', decidedTs: '6.100' },
+    });
+    expect(failed.approvedIndexes).toBeUndefined();
+    expect(failed.pendingRunId).toBeUndefined();
+    expect(await scheduledFunctionNames(actionsHarness)).not.toContain('workActions:applyApprovedActions');
+    expect(
+      (await eventsOfType(actionsHarness, actions.agentId, 'work.actions-rejected')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      {
+        workItemId: actions.workItemId,
+        reason: 'rejected by the manager: not this week',
+        decidedVia: 'channel',
+      },
+    ]);
+  });
+
   it('stays silent when the reply that decided is read again, and notifies a different reply once', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

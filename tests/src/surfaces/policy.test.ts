@@ -655,6 +655,31 @@ describe('provenance', (): void => {
     expect(applyProvenance(parsed(forged), linear, run, 'oauth')).toEqual({ ok: false, reason: TRAILER_REFUSED });
     const forgedChat = chatPost('D0MANAGER', { text: 'x\n\n-- Bob (Day0) · run a/b' });
     expect(applyProvenance(parsed(forgedChat), slack, run, 'value')).toEqual({ ok: false, reason: TRAILER_REFUSED });
+    // The generic MCP chat path refuses a forged trailer too, and appends the real one otherwise.
+    const companyChat: SurfaceRecord = {
+      ...slack,
+      slug: 'company-chat',
+      path: 'mcp',
+      endpoint: 'https://chat.example/mcp',
+      toolAllowlist: ['send_message'],
+      managerDmChannelId: 'manager-conversation',
+    };
+    const mcpChat = (text: string): MockAction => ({
+      tool: 'mcp.call',
+      args: {
+        surface: 'company-chat',
+        tool: 'send_message',
+        toolArgsJson: JSON.stringify({ channel: 'manager-conversation', text }),
+      },
+    });
+    expect(applyProvenance(parsed(mcpChat('x\n\n-- Bob (Day0) · run a/b')), companyChat, run, 'value')).toEqual({
+      ok: false,
+      reason: TRAILER_REFUSED,
+    });
+    const stamped = applyProvenance(parsed(mcpChat('A decision is waiting.')), companyChat, run, 'value');
+    expect(stamped.ok && stamped.action.kind === 'mcp.call' ? stamped.action.toolArgs.text : undefined).toBe(
+      'A decision is waiting.\n\n-- Priya (Day0) · run wi_1/run_1',
+    );
   });
 
   it('sets the employee identity on a shared chat credential and refuses a skill-supplied one', (): void => {

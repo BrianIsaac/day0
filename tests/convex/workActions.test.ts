@@ -27,6 +27,8 @@ const recorded = vi.hoisted(() => ({
   afterCredentialRead: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
   skillModes: [] as Array<string | undefined>,
+  skillSwitches: [] as Array<boolean | undefined>,
+  planSwitches: [] as boolean[],
   skillOutput: undefined as ExecutionOutput | undefined,
 }));
 
@@ -81,10 +83,29 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/work/execute-skill')>();
   return {
     ...original,
-    runSkill: async (args: { mode?: string }): Promise<ExecutionOutput> => {
+    runSkill: async (args: { mode?: string; autonomousActions?: boolean }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
       recorded.skillModes.push(args.mode);
+      recorded.skillSwitches.push(args.autonomousActions);
       return recorded.skillOutput ?? skillOutput;
+    },
+  };
+});
+
+vi.mock('../../src/work/plan', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/work/plan')>();
+  return {
+    ...original,
+    draftExecutionPlan: async (args: { autonomousActions: boolean }) => {
+      recorded.planSwitches.push(args.autonomousActions);
+      return {
+        summary: 'Comment then close.',
+        steps: ['comment', 'close'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 5,
+      };
     },
   };
 });
@@ -136,6 +157,8 @@ afterEach((): void => {
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
   recorded.afterCredentialRead = undefined;
+  recorded.skillSwitches.length = 0;
+  recorded.planSwitches.length = 0;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
   recorded.skillOutput = undefined;
@@ -320,6 +343,73 @@ describe('executing an approved plan through the gate', (): void => {
     ).resolves.toEqual({ ok: true, reason: 'automatic actions applying' });
     expect((await readItem(harness, workItemId)).state).toBe('executing');
     expect(recorded.skillRuns).toBe(1);
+    // The internal continuation tells the executor the live mode it read, like the browser path.
+    expect(recorded.skillModes).toEqual(['real']);
+    expect(recorded.skillSwitches).toEqual([false]);
+  });
+
+  it('refuses the internal continuation outside real mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'mock');
+    await expect(
+      harness.action(internal.workActions.executeApprovedPlanInternal, { workItemId }),
+    ).resolves.toEqual({ ok: false, reason: 'manager-channel execution is real-mode only' });
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+    expect(recorded.skillRuns).toBe(0);
+  });
+
+  it('drafts under the switch, then either continues without a click or asks the channel', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const scheduled = async (harness: Harness): Promise<string[]> =>
+      (await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect()))
+        .map((row) => row.name)
+        .sort();
+    const toClaimed = async (harness: Harness, workItemId: Id<'workItems'>): Promise<void> => {
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(workItemId, { state: 'claimed', plan: undefined });
+        const slack = await ctx.db
+          .query('surfaces')
+          .filter((q) => q.eq(q.field('slug'), 'slack'))
+          .unique();
+        if (slack) await ctx.db.patch(slack._id, { managerUserId: 'UMANAGER' });
+      });
+    };
+
+    // On: the plan is stored, approved with no click, and the same call runs the executor
+    // with the switch it read; nothing is asked in the channel.
+    const on = convexTest(contractSchema(), allConvexModules());
+    const seededOn = await seed(on, 'real', undefined, { autonomousActions: true });
+    await toClaimed(on, seededOn.workItemId);
+    await expect(
+      on.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId: seededOn.workItemId }),
+    ).resolves.toEqual({ ok: true, reason: 'automatic actions applying' });
+    expect(recorded.planSwitches).toEqual([true]);
+    expect(recorded.skillSwitches).toEqual([true]);
+    const approvals = (
+      await on.run(async (ctx) => await ctx.db.query('events').collect())
+    ).filter((event) => event.type === 'work.plan-approved');
+    expect(approvals.map((event) => event.payload)).toEqual([
+      { workItemId: seededOn.workItemId, by: 'autonomous' },
+    ]);
+    expect(await scheduled(on)).not.toContain('managerChannelActions:requestDecision');
+    expect((await readItem(on, seededOn.workItemId)).state).toBe('executing');
+
+    // Off: the plan parks, the executor does not run, and the one request is scheduled.
+    recorded.planSwitches.length = 0;
+    recorded.skillSwitches.length = 0;
+    const off = convexTest(contractSchema(), allConvexModules());
+    const seededOff = await seed(off, 'real');
+    await toClaimed(off, seededOff.workItemId);
+    await expect(
+      off.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId: seededOff.workItemId }),
+    ).resolves.toEqual({ ok: true });
+    expect(recorded.planSwitches).toEqual([false]);
+    expect(recorded.skillSwitches).toEqual([]);
+    const row = await readItem(off, seededOff.workItemId);
+    expect(row.state).toBe('plan-pending');
+    expect(row.plan).toMatchObject({ summary: 'Comment then close.' });
+    expect(await scheduled(off)).toContain('managerChannelActions:requestDecision');
   });
 
   it('pauses a real-mode run at actions-pending with nothing but the DM applied', async (): Promise<void> => {
