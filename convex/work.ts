@@ -270,6 +270,33 @@ export const setPlan = internalMutation({
   },
 });
 
+/**
+ * Decide whether a freshly drafted plan should continue without a click.
+ *
+ * This is deliberately separate from `setPlan`. The plan is always persisted
+ * in `plan-pending` first, then this transaction re-reads the agent's switch at
+ * the actual decision boundary. A switch change while the model was drafting
+ * therefore affects this run; a stale value captured before the draft does not.
+ */
+export const decidePlan = internalMutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ approved: boolean }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    if (row.state !== 'plan-pending') return { approved: false };
+    const agent = await ctx.db.get(row.agentId);
+    if (!agent || !autonomousActionsOn(agent)) return { approved: false };
+    await ctx.db.patch(args.workItemId, { state: 'plan-approved' });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.plan-approved',
+      payload: { workItemId: args.workItemId, by: 'autonomous' },
+      createdAt: Date.now(),
+    });
+    return { approved: true };
+  },
+});
+
 export const approvePlan = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {

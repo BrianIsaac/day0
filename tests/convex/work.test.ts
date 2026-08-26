@@ -205,6 +205,63 @@ async function pend(harness: Harness): Promise<{ agentId: Id<'agents'>; workItem
   return ids;
 }
 
+describe('plan decisions under the autonomous-actions switch', (): void => {
+  it('keeps a drafted plan pending while autonomous actions are off', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+    const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
+
+    await harness.mutation(internal.work.setPlan, { workItemId, plan });
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: false,
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-pending',
+      plan,
+    });
+    expect(await eventsOfType(harness, agentId, 'work.plan-approved')).toEqual([]);
+  });
+
+  it('approves the persisted plan autonomously when the switch is on', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed', undefined, {
+      autonomousActions: true,
+    });
+    const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
+
+    await harness.mutation(internal.work.setPlan, { workItemId, plan });
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: true,
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-approved',
+      plan,
+    });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.plan-approved')).map((event) => event.payload),
+    ).toEqual([{ workItemId, by: 'autonomous' }]);
+  });
+
+  it('re-reads a switch flipped after the plan was stored but before the decision', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+
+    await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: { summary: 'Use the current mode.', steps: ['decide'] },
+    });
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: true }));
+
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: true,
+    });
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+  });
+});
+
 describe('cancelling a pending plan', (): void => {
   it('records why the item is cancelled and refuses any other state', async (): Promise<void> => {
     useSurfaceMode('real');

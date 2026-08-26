@@ -244,13 +244,20 @@ export const draftPlan = action({
     if (!stored.stored) {
       return { ok: false, reason: 'another draft stored a plan for this work item first' };
     }
+    const decision = await ctx.runMutation(internal.work.decidePlan, {
+      workItemId: args.workItemId,
+    });
+    if (decision.approved) {
+      return await executeApprovedPlanHandler(ctx, args);
+    }
     return { ok: true };
   },
 });
 
-export const executeApprovedPlan = action({
-  args: { workItemId: v.id('workItems') },
-  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
+async function executeApprovedPlanHandler(
+  ctx: ActionCtx,
+  args: { workItemId: Id<'workItems'> },
+): Promise<{ ok: boolean; reason?: string }> {
     const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, {
       workItemId: args.workItemId,
     });
@@ -375,7 +382,11 @@ export const executeApprovedPlan = action({
       });
       return { ok: false, reason };
     }
-  },
+}
+
+export const executeApprovedPlan = action({
+  args: { workItemId: v.id('workItems') },
+  handler: executeApprovedPlanHandler,
 });
 
 /**
