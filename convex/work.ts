@@ -477,18 +477,29 @@ export const recordDecisionRequest = internalMutation({
   handler: async (ctx, args): Promise<boolean> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row?.decision || row.decision.id !== args.decisionId) return false;
+    const failure = args.failure?.slice(0, 240);
     await ctx.db.patch(row._id, {
       decision: {
         ...row.decision,
         ...(args.ts ? { ts: args.ts } : {}),
-        ...(args.failure
-          ? {
-              requestFailedAt: Date.now(),
-              requestFailure: args.failure.slice(0, 240),
-            }
-          : {}),
+        ...(failure ? { requestFailedAt: Date.now(), requestFailure: failure } : {}),
       },
     });
+    // The request is single-use whether or not it landed, so the feed must say why
+    // no channel reply is coming; the dashboard still decides the parked row.
+    if (failure) {
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.decision-request-failed',
+        payload: {
+          workItemId: row._id,
+          decisionId: row.decision.id,
+          kind: row.decision.kind,
+          reason: failure,
+        },
+        createdAt: Date.now(),
+      });
+    }
     return true;
   },
 });

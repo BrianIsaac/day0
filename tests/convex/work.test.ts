@@ -332,6 +332,43 @@ describe('manager channel request claims', (): void => {
     });
   });
 
+  it('leaves an audit event when the one request could not be delivered', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      failure: 'Slack returned HTTP 503.',
+    });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      requestFailure: 'Slack returned HTTP 503.',
+      requestFailedAt: expect.any(Number),
+    });
+    // The request is single-use even when it did not land: the dashboard decides,
+    // and the feed says why no channel reply is coming.
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-failed')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([{ workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: 'Slack returned HTTP 503.' }]);
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+      }),
+    ).toEqual({ prepared: false, reason: 'decision request already claimed' });
+  });
+
   it('lists the sent, undecided requests intake must read threads under', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
