@@ -9,3 +9,19 @@ describe('scheduled documentation sync', (): void => {
     });
   });
 });
+
+describe('scheduled surface maintenance', (): void => {
+  it('re-probes connected surfaces every hour', (): void => {
+    expect(crons.crons['re-probe connected surfaces']).toMatchObject({
+      name: 'surfaceActions:reprobeAll',
+      schedule: { type: 'interval', hours: 1 },
+    });
+  });
+
+  it('polls connected surfaces for work every five minutes', (): void => {
+    expect(crons.crons['poll connected surfaces for work']).toMatchObject({
+      name: 'intakeActions:pollAll',
+      schedule: { type: 'interval', minutes: 5 },
+    });
+  });
+});

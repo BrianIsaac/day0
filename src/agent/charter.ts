@@ -102,7 +102,9 @@ const SYSTEM_PROMPT = [
   'Provenance discipline: every evidence clause carries source "from manager 1:1 day-1" because v0.0 has no other source.',
   'Conservative defaults: in proposedBoundaries.willDo, prefer concrete narrow actions; in willNotDo, list adjacent roles you must NOT step on.',
   'If the manager left a topic vague (e.g. "figure it out"), capture it under openQuestions instead of inventing a goal.',
-  'List every tool or system the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
+  'List every product or service the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
+  'Return exactly one namedSystems row per product or service. Channels, DMs, pages, files, runbooks, queues, dashboards, tiles, views, sheets and tabs are locations inside a system, never separate systems.',
+  'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
 ].join('\n');
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
@@ -176,6 +178,158 @@ function ensureProvenance(items: EvidenceItem[]): EvidenceItem[] {
   }));
 }
 
+const DOCUMENT_LOCATION = /\b(?:page|runbook|folder|file|queue|documentation|handbook)\b/i;
+const CHANNEL_LOCATION = /(?:^|\s)(?:#[a-z0-9_-]+|dm\b|direct message\b|channel\b)/i;
+const UI_LOCATION = /\b(?:tile|dashboard|view)\b/i;
+
+/**
+ * Canonicalise a model-produced system name without maintaining a provider catalogue.
+ *
+ * Args:
+ *   system: Raw system row from charter synthesis.
+ *
+ * Returns:
+ *   The parent product name, or undefined when the row names only a document location.
+ */
+function canonicalSystemName(system: NamedSystem): string | undefined {
+  const name = system.name.trim().replace(/\s+/g, ' ');
+  if (!name) return undefined;
+  if (DOCUMENT_LOCATION.test(name)) return undefined;
+  const withoutChannel = name
+    .replace(/\s+#.*$/i, '')
+    .replace(/\s+(?:dm|direct message|channel)\b.*$/i, '')
+    .trim();
+  if (
+    withoutChannel &&
+    withoutChannel !== name &&
+    !/^(?:manager|boss|team|public|private)$/i.test(withoutChannel)
+  ) {
+    return withoutChannel;
+  }
+  if (CHANNEL_LOCATION.test(name)) return undefined;
+  if (UI_LOCATION.test(name)) {
+    const prefix = name
+      .split(/\s+/)
+      .slice(0, -1)
+      .filter((token: string, index: number): boolean => index === 0 || /^[A-Z0-9]/.test(token))
+      .join(' ')
+      .trim();
+    return prefix || undefined;
+  }
+  return name;
+}
+
+const DOMAIN_SUFFIX = /\.(?:app|com|io|dev|ai|co|net|org)$/i;
+
+/**
+ * Split a product name into comparable words, ignoring a domain suffix.
+ *
+ * Args:
+ *   name: Canonical product name.
+ *
+ * Returns:
+ *   Lowercase alphanumeric words, so "Linear.app" and "Linear" compare equal.
+ */
+function productWords(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(DOMAIN_SUFFIX, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Decide whether one name's words open the other's.
+ *
+ * "Northstar" opens "Northstar CRM" and "Slack" opens "Slack workspace";
+ * "Microsoft Teams" and "Microsoft Excel" open neither.
+ *
+ * Args:
+ *   left: Words of one name.
+ *   right: Words of the other.
+ *
+ * Returns:
+ *   True when the shorter list is a leading run of the longer one.
+ */
+function oneOpensTheOther(left: readonly string[], right: readonly string[]): boolean {
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+  return (
+    shorter.length > 0 &&
+    shorter.every((word: string, index: number): boolean => longer[index] === word)
+  );
+}
+
+interface ProductRow {
+  words: string[];
+  system: NamedSystem;
+}
+
+/**
+ * Collapse channels, DMs, documentation artefacts, UI objects and spellings to products.
+ *
+ * Two rows are the same product when their words match, when one name opens
+ * the other ("Northstar" and "Northstar CRM"), or when they differ only by a
+ * domain suffix ("Linear.app" and "Linear"). A prefix merge is limited to rows
+ * of the same class, or a row of class `other`, so "Google Sheets" does not
+ * swallow "Google Docs". The shorter name is kept, because every page that
+ * names the longer one also names it, and its whole-word match stays exact.
+ *
+ * Args:
+ *   systems: Raw rows returned by charter synthesis.
+ *
+ * Returns:
+ *   One row per product in first-mentioned order with distinct evidence merged.
+ */
+export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSystem[] {
+  const canonicalRows = systems.flatMap(
+    (system: NamedSystem): Array<{ system: NamedSystem; name: string }> => {
+      const name = canonicalSystemName(system);
+      return name ? [{ system, name }] : [];
+    },
+  );
+  const rows: ProductRow[] = [];
+  for (const system of systems) {
+    let name = canonicalSystemName(system);
+    if (!name && CHANNEL_LOCATION.test(system.name)) {
+      name = canonicalRows.find(
+        (row): boolean =>
+          row.system.class === system.class &&
+          new RegExp(`\\b${row.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(
+            system.whereMentioned,
+          ),
+      )?.name;
+    }
+    if (!name) continue;
+    const words = productWords(name);
+    const existing = rows.find((row: ProductRow): boolean => {
+      if (row.words.join(' ') === words.join(' ')) return true;
+      const compatible =
+        row.system.class === system.class ||
+        row.system.class === 'other' ||
+        system.class === 'other';
+      return compatible && oneOpensTheOther(row.words, words);
+    });
+    if (!existing) {
+      rows.push({ words, system: { ...system, name } });
+      continue;
+    }
+    const shorter =
+      words.length < existing.words.length ||
+      (words.length === existing.words.length && name.length < existing.system.name.length);
+    if (shorter) {
+      existing.words = words;
+      existing.system.name = name;
+    }
+    if (existing.system.class === 'other' && system.class !== 'other') {
+      existing.system.class = system.class;
+    }
+    if (!existing.system.whereMentioned.includes(system.whereMentioned)) {
+      existing.system.whereMentioned = `${existing.system.whereMentioned}\n${system.whereMentioned}`;
+    }
+  }
+  return rows.map((row: ProductRow): NamedSystem => row.system);
+}
+
 function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt: string): Charter {
   return {
     version: args.version,
@@ -186,7 +340,7 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
     shortTermGoals: raw.shortTermGoals,
     proposedBoundaries: raw.proposedBoundaries,
     namedCollaborators: raw.namedCollaborators,
-    namedSystems: raw.namedSystems,
+    namedSystems: normaliseNamedSystems(raw.namedSystems),
     priorityReading: raw.priorityReading,
     adjacentRoles: raw.adjacentRoles,
     approvalChain: {

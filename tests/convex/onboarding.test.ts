@@ -168,6 +168,7 @@ describe('charter approval by surface mode', (): void => {
   });
 
   it('in real mode declares and orients the named systems and generates no mock work', async (): Promise<void> => {
+    vi.useFakeTimers();
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId } = await seedApprovedCharter(harness);
@@ -175,6 +176,10 @@ describe('charter approval by surface mode', (): void => {
     await expect(
       owner.action(api.onboarding.postCharterApproval, { agentId, charterId }),
     ).resolves.toEqual({ norms: 0, workItemsGenerated: 0 });
+    const declared = await outcome(harness, agentId);
+    expect(declared.surfaces).toEqual(['linear:declared', 'slack:declared']);
+    expect(declared.events).not.toContain('surface.oriented');
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const result = await outcome(harness, agentId);
     expect(result.surfaces).toEqual(['linear:absent', 'slack:absent']);
     expect(result.workItems).toBe(0);

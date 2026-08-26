@@ -1,5 +1,6 @@
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it } from 'vitest';
+import type { GenericId } from 'convex/values';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -8,6 +9,7 @@ import { convexModules } from './modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
+  vi.useRealTimers();
   restoreSurfaceMode();
 });
 
@@ -85,7 +87,8 @@ async function propose(
     path: 'mcp',
     fallbackPath: 'escalate',
     endpoint: 'https://mcp.linear.app/mcp',
-    credentialRef: 'LINEAR_API_KEY',
+    credentialLocation: 'Linear automation / Access',
+    expiresInDays: 30,
   });
 }
 
@@ -144,6 +147,23 @@ describe('surface persistence', (): void => {
     ).rejects.toThrow('forbidden');
   });
 
+  it('never seeds a surface for a documentation location', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const ids = await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: [
+        { name: 'Notion', class: 'docs', whereMentioned: 'The handbook is in Notion.' },
+        { name: 'Linear', class: 'kanban', whereMentioned: 'Work is in Linear.' },
+      ],
+    });
+    expect(ids).toHaveLength(1);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(owner.query(api.surfaces.listForAgent, { agentId })).resolves.toMatchObject([
+      { slug: 'linear', verdict: 'declared' },
+    ]);
+  });
+
   it('records an explicit absence with its search terms', async (): Promise<void> => {
     const harness = convexTest(schema, convexModules);
     const agentId = await seedAgent(harness);
@@ -160,6 +180,424 @@ describe('surface persistence', (): void => {
         reason: 'No approved surface found after searching: Northstar CRM, crm',
       },
     ]);
+  });
+
+  it('uses compare-and-set writes so an orientation retry cannot overwrite a decision', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await expect(
+      harness.mutation(internal.surfaces.propose, {
+        surfaceId,
+        request: { target: { system: 'Linear' } },
+        whereFound: [{ ref: 'linear.md', quote: 'Use Linear MCP.' }],
+        path: 'mcp',
+        fallbackPath: 'escalate',
+        endpoint: 'https://mcp.linear.app/mcp',
+        expiresInDays: 30,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      harness.mutation(internal.surfaces.propose, {
+        surfaceId,
+        request: { target: { system: 'stale' } },
+        whereFound: [],
+        path: 'escalate',
+        fallbackPath: 'escalate',
+        expiresInDays: 1,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      harness.mutation(internal.surfaces.markAbsent, {
+        surfaceId,
+        searched: ['stale'],
+        whereFound: [],
+      }),
+    ).resolves.toBe(false);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'proposed',
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      request: { target: { system: 'Linear' } },
+    });
+    expect((await eventTypes(harness)).filter((type) => type === 'surface.proposed')).toHaveLength(
+      1,
+    );
+  });
+});
+
+describe('orientation scheduling', (): void => {
+  it('claims one pending job per declared surface and refuses other verdicts', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await expect(
+      harness.mutation(internal.surfaces.scheduleOrientation, { surfaceId }),
+    ).resolves.toBe(true);
+    await expect(
+      harness.mutation(internal.surfaces.scheduleOrientation, { surfaceId }),
+    ).resolves.toBe(false);
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(jobs).toMatchObject([
+      { name: 'orientationActions:orientOne', args: [{ surfaceId }], state: { kind: 'pending' } },
+    ]);
+    expect((await readSurface(harness, surfaceId)).orientationJobId).toBe(jobs[0]._id);
+
+    await propose(harness, surfaceId);
+    await expect(
+      harness.mutation(internal.surfaces.scheduleOrientation, { surfaceId }),
+    ).resolves.toBe(false);
+  });
+});
+
+describe('orientation failure', (): void => {
+  it('records a failure reason on a declared surface only', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await expect(
+      harness.mutation(internal.surfaces.recordOrientationFailure, {
+        surfaceId,
+        reason: 'pages could not be read',
+      }),
+    ).resolves.toBe(true);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'declared',
+      reason: 'orientation failed: pages could not be read',
+    });
+    expect(await eventTypes(harness)).toContain('surface.orientation-failed');
+
+    await propose(harness, surfaceId);
+    await expect(
+      harness.mutation(internal.surfaces.recordOrientationFailure, {
+        surfaceId,
+        reason: 'stale',
+      }),
+    ).resolves.toBe(false);
+    expect((await readSurface(harness, surfaceId)).reason).toBeUndefined();
+  });
+});
+
+describe('surface probe generations', (): void => {
+  it('rejects ineligible rows and ignores results from an older probe', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await expect(
+      harness.mutation(internal.surfaces.beginProbe, { surfaceId }),
+    ).resolves.toBeNull();
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, {
+      surfaceId,
+      verdict: 'approved',
+    });
+    const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    const second = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    expect(first).toMatchObject({ generation: 1, surface: { verdict: 'approved' } });
+    expect(second).toMatchObject({ generation: 2, surface: { probeGeneration: 2 } });
+    await expect(
+      harness.mutation(internal.surfaces.recordProbeFailure, {
+        surfaceId,
+        generation: 1,
+        verdict: 'listed-dead',
+        reason: 'stale provider failure',
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: 1,
+        toolAllowlist: ['list_issues'],
+        toolArguments: [{ tool: 'list_issues', arguments: ['project'] }],
+        verifiedAt: 100,
+      }),
+    ).resolves.toBe(false);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'approved',
+      credentialLanded: false,
+      probeGeneration: 2,
+    });
+    expect(await eventTypes(harness)).not.toContain('surface.probe-failed');
+    expect(await eventTypes(harness)).not.toContain('surface.connected');
+  });
+
+  it('records the latest failure without retaining provider request material', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await expect(
+      harness.mutation(internal.surfaces.recordProbeFailure, {
+        surfaceId,
+        generation: probe.generation,
+        verdict: 'listed-dead',
+        reason: 'provider returned 401',
+      }),
+    ).resolves.toBe(true);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'listed-dead',
+      credentialLanded: false,
+      reason: 'provider returned 401',
+    });
+    const failure = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').collect()).find(
+          (event): boolean => event.type === 'surface.probe-failed',
+        ),
+    );
+    expect(failure?.payload).toEqual({
+      surfaceId,
+      verdict: 'listed-dead',
+      reason: 'provider returned 401',
+    });
+  });
+
+  it('persists only the latest successful generation and renews expiry only when asked', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!first) throw new Error('probe was not reserved');
+    const renewedExpiry = 9_000_000_000_000;
+    await expect(
+      harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: first.generation,
+        toolAllowlist: ['list_issues'],
+        toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
+        verifiedAt: 100,
+        expiresAt: renewedExpiry,
+      }),
+    ).resolves.toBe(true);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: 100,
+      expiresAt: renewedExpiry,
+    });
+    const hourly = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!hourly) throw new Error('hourly probe was not reserved');
+    await expect(
+      harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: hourly.generation,
+        toolAllowlist: ['list_issues'],
+        toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
+        verifiedAt: 200,
+      }),
+    ).resolves.toBe(true);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      lastVerifiedAt: 200,
+      expiresAt: renewedExpiry,
+    });
+    const connectedEvents = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').collect()).filter(
+          (event): boolean => event.type === 'surface.connected',
+        ),
+    );
+    expect(connectedEvents).toHaveLength(2);
+    expect(connectedEvents.map((event) => event.payload)).toEqual([
+      { surfaceId },
+      { surfaceId },
+    ]);
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (index) =>
+            index.eq('agentId', agentId).eq('scope', 'linear:read'),
+          )
+          .collect(),
+    );
+    expect(grants).toHaveLength(1);
+  });
+
+  it('grants the read scope and requeues deferred work in the connecting write', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const item = (
+      state: Doc<'workItems'>['state'],
+      externalId: string,
+      verdict: unknown,
+    ): Omit<Doc<'workItems'>, '_id' | '_creationTime'> => ({
+      agentId,
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId,
+      title: `Item ${externalId}`,
+      contentSummary: 'Triage.',
+      contentRefs: [],
+      observedAt: 1,
+      state,
+      verdict,
+      createdAt: 1,
+    });
+    const [onSurface, onGrant, elsewhere, skipped] = await harness.run(
+      async (ctx): Promise<Id<'workItems'>[]> => [
+        await ctx.db.insert(
+          'workItems',
+          item('deferred', 'REVOPS-1', {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'linear',
+          }),
+        ),
+        await ctx.db.insert(
+          'workItems',
+          item('deferred', 'REVOPS-2', {
+            decision: 'defer',
+            reason: 'awaiting-permission',
+            missingPermissions: ['linear:read'],
+          }),
+        ),
+        await ctx.db.insert(
+          'workItems',
+          item('deferred', 'REVOPS-3', {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'northstar-crm',
+          }),
+        ),
+        await ctx.db.insert(
+          'workItems',
+          item('skipped', 'REVOPS-4', { decision: 'skip', reason: 'low-value: 10' }),
+        ),
+      ],
+    );
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['list_issues'],
+      toolArguments: [],
+      verifiedAt: 100,
+    });
+    const states = await harness.run(
+      async (ctx): Promise<Array<[string, unknown]>> =>
+        await Promise.all(
+          [onSurface, onGrant, elsewhere, skipped].map(
+            async (id): Promise<[string, unknown]> => {
+              const row = await ctx.db.get(id);
+              return [row?.state ?? 'missing', row?.verdict ?? null];
+            },
+          ),
+        ),
+    );
+    expect(states).toEqual([
+      ['discovered', null],
+      ['discovered', null],
+      ['deferred', { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar-crm' }],
+      ['skipped', { decision: 'skip', reason: 'low-value: 10' }],
+    ]);
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(grants.map((grant): string => grant.scope)).toEqual(['linear:read']);
+    expect((await eventTypes(harness)).filter((type) => type === 'work.requeued')).toHaveLength(2);
+  });
+});
+
+describe('surface connection lifecycle metadata', (): void => {
+  it('returns an approved failed surface to probing when IT lands a credential', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'ungranted',
+        managerApprovedAt: 10,
+        itApprovedAt: 20,
+        reason: 'credential missing',
+      });
+    });
+    await harness.mutation(internal.surfaces.attachCredential, {
+      surfaceId,
+      credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialLocation: 'entered by IT approver',
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'approved',
+      credentialId: '10000credentials',
+      credentialLocation: 'entered by IT approver',
+      credentialLanded: false,
+    });
+    expect((await readSurface(harness, surfaceId)).reason).toBeUndefined();
+  });
+
+  it('demotes an expired connection and records a safe lifecycle event', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'connected',
+        credentialLanded: true,
+        lastVerifiedAt: 90,
+        expiresAt: 100,
+      });
+    });
+    await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: 101 });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'approved',
+      credentialLanded: false,
+      reason: 'expired',
+    });
+    expect((await readSurface(harness, surfaceId)).lastVerifiedAt).toBeUndefined();
+    const expired = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').collect()).find(
+          (event): boolean => event.type === 'surface.expired',
+        ),
+    );
+    expect(expired?.payload).toEqual({ surfaceId });
+  });
+
+  it('records waterfall skips and clears them after a successful poll', async (): Promise<void> => {
+    const harness = convexTest(schema, convexModules);
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await harness.mutation(internal.surfaces.recordIntake, {
+      surfaceId,
+      waterfallPosition: 2,
+      skipReason: 'surface is ungranted',
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      waterfallPosition: 2,
+      intakeSkipReason: 'surface is ungranted',
+    });
+    await harness.mutation(internal.surfaces.recordIntake, {
+      surfaceId,
+      waterfallPosition: 1,
+      polledAt: 500,
+    });
+    const completed = await readSurface(harness, surfaceId);
+    expect(completed).toMatchObject({ waterfallPosition: 1, lastPolledAt: 500 });
+    expect(completed.intakeSkipReason).toBeUndefined();
+    await harness.mutation(internal.surfaces.recordIntake, {
+      surfaceId,
+      waterfallPosition: 1,
+      polledAt: 400,
+    });
+    expect((await readSurface(harness, surfaceId)).lastPolledAt).toBe(500);
   });
 });
 
@@ -184,6 +622,16 @@ describe('surface approval state machine', (): void => {
     expect((await eventTypes(harness)).filter((type) => type === 'surface.approved')).toHaveLength(
       1,
     );
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled).toMatchObject([
+      {
+        name: 'surfaceActions:probeInternal',
+        args: [{ surfaceId }],
+        state: { kind: 'pending' },
+      },
+    ]);
     await expect(owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' })).rejects.toThrow(
       'Only a proposed surface can be approved; this one is approved.',
     );
