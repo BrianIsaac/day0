@@ -11,6 +11,7 @@ vi.mock('../../app/agent/[agentId]/MockEnvironment', () => ({
 import {
   AutonomyConfirm,
   AutonomyControl,
+  cancelsAutonomyConfirm,
   cancelledReason,
   landedHeadline,
   PendingActions,
@@ -175,13 +176,16 @@ describe('dashboard exact-action gate', (): void => {
     const html = renderToStaticMarkup(
       createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
     );
-    expect(html).toMatch(/<div[^>]*role="alertdialog"[^>]*aria-label="Turn on autonomous actions"/);
+    expect(html).toMatch(/<div[^>]*role="alertdialog"[^>]*aria-modal="true"[^>]*aria-label="Turn on autonomous actions"/);
     expect(html).toContain('Turn on autonomous actions?');
     expect(html).toContain('The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.');
     expect(html).toContain('Turn this on only after its behaviour has been what you want.');
     expect(html).toContain('Skills and connections still need your approval either way.');
     expect(html).toMatch(/<button[^>]*>Turn on<\/button>/);
-    expect(html).toMatch(/<button[^>]*>Cancel<\/button>/);
+    expect(html).toMatch(/<button[^>]*autofocus=""[^>]*>Cancel<\/button>/);
+    expect(cancelsAutonomyConfirm('Escape', false)).toBe(true);
+    expect(cancelsAutonomyConfirm('Enter', false)).toBe(false);
+    expect(cancelsAutonomyConfirm('Escape', true)).toBe(false);
     expect(renderToStaticMarkup(createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn(), busy: true }))).toMatch(
       /<button[^>]*disabled=""[^>]*>Turn on<\/button>/,
     );

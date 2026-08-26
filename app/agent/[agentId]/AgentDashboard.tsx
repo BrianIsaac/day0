@@ -210,6 +210,11 @@ const AUTONOMY_TITLES: Record<'off' | 'on', string> = {
   on: 'Autonomous: the agent acts on connected systems without asking, within the connections and skills you have approved.',
 };
 
+/** Whether a key press should take the safe path out of the confirmation. */
+export function cancelsAutonomyConfirm(key: string, busy: boolean): boolean {
+  return key === 'Escape' && !busy;
+}
+
 /**
  * The confirmation shown before autonomous actions are turned on.
  *
@@ -233,7 +238,14 @@ export function AutonomyConfirm({
   return (
     <div
       role="alertdialog"
+      aria-modal="true"
       aria-label="Turn on autonomous actions"
+      onKeyDown={(event) => {
+        if (!cancelsAutonomyConfirm(event.key, busy)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+      }}
       className="absolute right-0 top-full mt-2 w-80 p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
     >
       <p className="font-medium text-[var(--color-warn)] mb-1">Turn on autonomous actions?</p>
@@ -249,6 +261,7 @@ export function AutonomyConfirm({
         </button>
         <button
           type="button"
+          autoFocus
           disabled={busy}
           onClick={onCancel}
           className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-60"
