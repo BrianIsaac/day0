@@ -158,16 +158,19 @@ describe('the plain-language action line', (): void => {
         surfaces,
       ),
     ).toBe('Move REVOPS-5 to Done on Linear; also update title, project');
-    expect(
-      summariseAction(
-        http('POST', '/chat.postMessage', {
-          channel: 'D0MANAGER',
-          text: 'Harmless fallback.',
-          blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Different visible message' } }],
-        }),
-        surfaces,
-      ),
-    ).toContain('also send blocks');
+    const richMessage = summariseAction(
+      http('POST', '/chat.postMessage', {
+        channel: 'D0MANAGER',
+        text: 'Harmless fallback.',
+        reply_broadcast: true,
+        blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'Different visible message' } }],
+        attachments: [{ fallback: 'Second attachment effect' }],
+      }),
+      surfaces,
+    );
+    expect(richMessage).toContain('reply_broadcast=true');
+    expect(richMessage).toContain('Different visible message');
+    expect(richMessage).toContain('Second attachment effect');
   });
 
   it('falls back to the tool and surface for anything it does not know', (): void => {

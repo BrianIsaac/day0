@@ -80,6 +80,19 @@ function fieldList(keys: readonly string[]): string {
   return `${shown.join(', ')}${keys.length > shown.length ? `, +${keys.length - shown.length} more` : ''}`;
 }
 
+/** Bounded values for payload fields that can change the effect of a chat post. */
+function fieldEffects(record: JsonObject, keys: readonly string[]): string {
+  const shown = keys.slice(0, 6).map((key) => {
+    const value = record[key];
+    const rendered =
+      typeof value === 'boolean' || typeof value === 'number' || value === null
+        ? String(value)
+        : quote(typeof value === 'string' ? value : JSON.stringify(value));
+    return `${label(key, 40)}=${rendered}`;
+  });
+  return `${shown.join(', ')}${keys.length > shown.length ? `, +${keys.length - shown.length} more` : ''}`;
+}
+
 function surfaceName(slug: string | undefined, surfaces: readonly SurfaceRecord[]): string {
   if (!slug) return '?';
   return label(surfaces.find((surface) => surface.slug === slug)?.displayName ?? slug);
@@ -170,7 +183,7 @@ function describeHttpRequest(
         !(CHANNEL_KEYS as readonly string[]).includes(key) &&
         !(THREAD_KEYS as readonly string[]).includes(key),
     );
-    const extras = extraFields.length ? `; also send ${fieldList(extraFields)}` : '';
+    const extras = extraFields.length && body ? `; also send ${fieldEffects(body, extraFields)}` : '';
     if (surface && isManagerDm(parsed, surface)) {
       return `Send ${surface.managerName ? label(surface.managerName) : 'the manager'} a ${name} DM${quoted}${extras}`;
     }
