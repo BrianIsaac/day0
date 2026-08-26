@@ -1,4 +1,4 @@
-import type { MockAction } from '../work/types';
+import type { MockAction, ReplyTarget } from '../work/types';
 import { MOCK_TOOLS } from './mock';
 import type { AppliedAction, CredentialKind, SurfaceRecord } from './types';
 import { verdictFor } from './verdict';
@@ -32,6 +32,7 @@ export const USERNAME_REFUSED = 'skill-supplied username refused';
 export const MOCK_VERB_REFUSED = 'mock verb refused in real mode';
 export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
   'shared credential write without attributable content';
+export const REPLY_TARGET_REFUSED = 'chat reply does not match the work item reply target';
 
 /** Emoji every message through a shared chat credential carries as its avatar. */
 export const SHARED_IDENTITY_ICON = ':briefcase:';
@@ -435,6 +436,34 @@ export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord)
   return posts && targetsOnlyChannel(parsed, surface.managerDmChannelId);
 }
 
+/** Why a public chat reply escapes the source channel or thread, if it does. */
+export function replyTargetRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  target: ReplyTarget | undefined,
+): string | undefined {
+  if (!target || surface.class !== 'chat' || isManagerDm(parsed, surface)) return undefined;
+  const isReply = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
+  if (!isReply) return undefined;
+  const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
+  if (!record || !targetsOnlyChannel(parsed, target.channel)) return REPLY_TARGET_REFUSED;
+  const broadcast = Object.entries(record).find(
+    ([key]) => semanticKey(key) === 'replybroadcast',
+  )?.[1];
+  if (broadcast !== undefined && broadcast !== null && broadcast !== false && broadcast !== '') {
+    return REPLY_TARGET_REFUSED;
+  }
+  const threadTargets = Object.entries(record).filter(
+    ([key]) => isThreadKey(key) && semanticKey(key) !== 'replybroadcast',
+  );
+  return threadTargets.length > 0 &&
+    threadTargets.every(([, value]) =>
+      typeof value === 'string' && value.trim() === target.threadTs,
+    )
+    ? undefined
+    : REPLY_TARGET_REFUSED;
+}
+
 /**
  * The scopes any one of which authorises an action.
  *
@@ -712,6 +741,8 @@ export function refusalFor(
 export interface ReviewScope {
   /** Whether the agent's autonomous-actions toggle is on. */
   autonomousActions: boolean;
+  /** Exact source channel and thread for event-stream replies. */
+  replyTarget?: ReplyTarget;
 }
 
 /**
@@ -743,6 +774,8 @@ export function reviewAction(
 ): ActionVerdict {
   const refusal = refusalFor(action, surfaces, grants, now);
   if (refusal.refused) return { disposition: 'refused', reason: refusal.reason };
+  const replyRefusal = replyTargetRefusal(refusal.parsed, refusal.surface, scope.replyTarget);
+  if (replyRefusal) return { disposition: 'refused', reason: replyRefusal };
   if (scope.autonomousActions) return { disposition: 'auto' };
   switch (actionClass(refusal.parsed, refusal.surface)) {
     case 'read':

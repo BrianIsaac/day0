@@ -782,6 +782,56 @@ describe('the autonomous-actions switch through the gate', (): void => {
     });
   });
 
+  it('on: refuses a reply outside the source channel before provider transport', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Covered.',
+      notes: '',
+      actions: [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'slack',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+            body: JSON.stringify({
+              channel: 'C0OTHER',
+              thread_ts: '1787746453.202809',
+              text: 'Covered.',
+            }),
+          },
+        },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', ['slack:read'], {
+      autonomousActions: true,
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        sourceCategory: 'event-stream',
+        sourceSystem: 'slack',
+        externalId: 'C0PUBLIC:1787746453.202809',
+        title: 'Slack mention in #revops-asks',
+        replyTarget: {
+          channel: 'C0OTHER',
+          channelName: 'revops-asks',
+          threadTs: '1787000000.000001',
+        },
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('actions-pending');
+    expect(row.actionVerdicts).toEqual([
+      { disposition: 'refused', reason: 'chat reply does not match the work item reply target' },
+    ]);
+    expect(recorded.http).toHaveLength(0);
+  });
+
   it('re-reads the switch after credential access and before an autonomous provider write', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0]] };

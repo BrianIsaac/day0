@@ -349,6 +349,40 @@ describe('applying surface actions', (): void => {
     expect(approved[1].authority).toBeUndefined();
   });
 
+  it('does not send an autonomous reply outside the work item source thread', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const misdirected: MockAction = {
+      ...publicPost,
+      args: {
+        ...publicPost.args,
+        body: JSON.stringify({
+          channel: 'C0OTHER',
+          thread_ts: '1787746453.202809',
+          text: 'Looks like a source-thread reply.',
+        }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [slack], run, [misdirected], {
+      deps: deps(recorded),
+      grants: new Set(['slack:read']),
+      approvedIndexes: new Set([0]),
+      autoPhase: true,
+      autonomousActions: true,
+      replyTarget: {
+        channel: 'C0PUBLIC',
+        channelName: 'revops-asks',
+        threadTs: '1787746453.202809',
+      },
+      now,
+    });
+    expect(applied[0]).toMatchObject({
+      ok: false,
+      reason: 'chat reply does not match the work item reply target',
+    });
+    expect(applied[0].authority).toBeUndefined();
+    expect(recorded.http).toHaveLength(0);
+  });
+
   it('does not stamp applied authority on a row the adapter refuses', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const runtime = deps(recorded);

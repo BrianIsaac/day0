@@ -19,6 +19,7 @@ import {
   NOT_AUTOMATIC,
   parseSurfaceAction,
   pathRefusal,
+  replyTargetRefusal,
   serialiseSurfaceAction,
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
   sharedWriteWithoutAttribution,
@@ -39,6 +40,7 @@ import type {
   SurfaceRecord,
   SurfaceMode,
 } from './types';
+import type { ReplyTarget } from '../work/types';
 
 /**
  * What the real-mode adapters need from the runtime that hosts them. Supplied
@@ -88,6 +90,8 @@ export interface ApplyOptions {
    * need their own grants.
    */
   autonomousActions?: boolean;
+  /** Exact source channel and thread when the work item is a chat reply. */
+  replyTarget?: ReplyTarget;
   /** Clock for the connection verdict. */
   now?: number;
 }
@@ -298,6 +302,11 @@ export async function applySurfaceActions(
     const unlisted = toolRefusal(parsed.action, surface);
     if (unlisted) {
       applied.push(refused(action.tool, unlisted, idempotencyKey));
+      continue;
+    }
+    const replyMismatch = replyTargetRefusal(parsed.action, surface, options.replyTarget);
+    if (replyMismatch) {
+      applied.push(refused(action.tool, replyMismatch, idempotencyKey));
       continue;
     }
     // A read and the manager DM always need their standing grant. A write

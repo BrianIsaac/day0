@@ -24,9 +24,15 @@ export function replyTargetFor(row: {
   externalId: string;
   title: string;
 }): ReplyTarget | undefined {
-  if (row.replyTarget) return row.replyTarget;
-  if (row.sourceCategory !== 'event-stream') return undefined;
-  const match = SLACK_EXTERNAL_ID.exec(row.externalId);
+  const match =
+    row.sourceCategory === 'event-stream'
+      ? SLACK_EXTERNAL_ID.exec(row.externalId)
+      : null;
+  if (row.replyTarget) {
+    return match
+      ? { ...row.replyTarget, channel: match[1], threadTs: match[2] }
+      : row.replyTarget;
+  }
   if (!match) return undefined;
   const channelName = MENTION_TITLE.exec(row.title)?.[1];
   return { channel: match[1], threadTs: match[2], ...(channelName ? { channelName } : {}) };

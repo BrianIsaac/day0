@@ -19,7 +19,8 @@ import {
 import { toSurfaceRecord } from '../src/surfaces/records';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import type { MockAction } from '../src/work/types';
+import { replyTargetFor } from '../src/work/reply-target';
+import type { MockAction, ReplyTarget } from '../src/work/types';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
@@ -561,7 +562,7 @@ async function reviewHeldActions(
       surfaceRows.map((surface) => toSurfaceRecord(surface)),
       grants,
       Date.now(),
-      { autonomousActions },
+      { autonomousActions, replyTarget: replyTargetFor(row) },
     ),
     autonomousActions,
   };
@@ -922,6 +923,7 @@ export const claimApprovedActions = internalMutation({
         heldIndexes: number[];
         heldReasons: Array<[number, string]>;
         autonomousActions: boolean;
+        replyTarget?: ReplyTarget;
         output: unknown;
       }
     | { claimed: false; reason: string }
@@ -964,6 +966,7 @@ export const claimApprovedActions = internalMutation({
       heldIndexes: indexesWith(verdictList(row.actionVerdicts, count), 'held'),
       heldReasons: refusedReasonEntries(row.actionVerdicts, count),
       autonomousActions: agent ? autonomousActionsOn(agent) : false,
+      replyTarget: replyTargetFor(row),
       output: row.output,
     };
   },

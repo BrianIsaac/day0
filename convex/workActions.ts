@@ -502,6 +502,7 @@ export const applyApprovedActions = internalAction({
           priorLedger,
           autoPhase: claim.phase === 'auto',
           autonomousActions: claim.autonomousActions,
+          replyTarget: claim.replyTarget,
         },
       );
       return await finishRun(ctx, args.workItemId, claim, output, applied);

@@ -9,6 +9,25 @@ describe('the reply target of a work item', (): void => {
     ).toBe(stored);
   });
 
+  it('pins a stored target to the source channel and thread carried by the external id', (): void => {
+    expect(
+      replyTargetFor({
+        replyTarget: {
+          channel: 'C0OTHER',
+          channelName: 'revops-asks',
+          threadTs: '1787000000.000001',
+        },
+        sourceCategory: 'event-stream',
+        externalId: 'C0SOURCE:1787746453.202809',
+        title: 'Slack mention in #revops-asks',
+      }),
+    ).toEqual({
+      channel: 'C0SOURCE',
+      channelName: 'revops-asks',
+      threadTs: '1787746453.202809',
+    });
+  });
+
   it('derives one for a Slack mention seeded before the field existed', (): void => {
     expect(
       replyTargetFor({

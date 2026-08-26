@@ -549,6 +549,26 @@ describe('the autonomous-actions switch', (): void => {
     expect(isAutomatic(parsed(stateChange), linearAll, true)).toBe(true);
   });
 
+  it('binds an autonomous public reply to the work item source channel and thread', (): void => {
+    const replyTarget = {
+      channel: 'C0PUBLIC',
+      channelName: 'revops-asks',
+      threadTs: '1787746453.202809',
+    };
+    const scope = { autonomousActions: true, replyTarget };
+    expect(reviewAction(publicReply, surfaces, grants, now, scope)).toEqual({ disposition: 'auto' });
+    for (const action of [
+      chatPost('C0OTHER', { thread_ts: replyTarget.threadTs }),
+      chatPost(replyTarget.channel, { thread_ts: '1787000000.000001' }),
+      chatPost(replyTarget.channel, { thread_ts: replyTarget.threadTs, reply_broadcast: true }),
+    ]) {
+      expect(reviewAction(action, surfaces, grants, now, scope)).toEqual({
+        disposition: 'refused',
+        reason: 'chat reply does not match the work item reply target',
+      });
+    }
+  });
+
   it('lets the switch stand in for the write grant and for nothing else', (): void => {
     const bossOnly = new Set(['boss:message', 'linear:read']);
     expect(needsStandingGrant(parsed(historyGet), slackReads)).toBe(true);
