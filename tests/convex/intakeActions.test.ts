@@ -888,6 +888,81 @@ describe('intake provider contracts', (): void => {
     expect(cycle.seeds.size).toBe(0);
   });
 
+  it('includes the Slack checkpoint boundary when a message appears after the prior snapshot', async (): Promise<void> => {
+    const firstPollAt = Date.parse('2026-08-26T02:00:00.000Z');
+    const secondPollAt = Date.parse('2026-08-26T03:00:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: 'UBOT',
+          providerWorkspaceId: 'TTEAM',
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const historyUrls: URL[] = [];
+    let poll = 0;
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/conversations.list')) {
+        poll += 1;
+        return slackResponse({
+          ok: true,
+          channels: [
+            { id: 'CASKS', name: 'revops-asks' },
+            { id: 'CREVOPS', name: 'revops' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      historyUrls.push(url);
+      const onBoundary =
+        poll === 2 &&
+        url.searchParams.get('channel') === 'CASKS' &&
+        url.searchParams.get('oldest') === String(firstPollAt / 1_000) &&
+        url.searchParams.get('inclusive') === 'true';
+      return slackResponse({
+        ok: true,
+        messages: onBoundary
+          ? [
+              {
+                ts: `${String(firstPollAt / 1_000)}.000000`,
+                user: 'UUSER',
+                text: '<@UBOT> boundary request',
+              },
+            ]
+          : [],
+        response_metadata: { next_cursor: '' },
+      });
+    };
+
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => firstPollAt,
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 1 });
+    await expect(
+      runIntakeSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => secondPollAt,
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 1, polled: 1 });
+    expect([...harness.seeds.keys()]).toEqual([
+      `agent-intake:slack:${String(firstPollAt / 1_000)}.000000`,
+    ]);
+    expect(historyUrls.slice(-2).every((url) => url.searchParams.get('inclusive') === 'true')).toBe(
+      true,
+    );
+  });
+
   it('overlaps a Linear checkpoint so an issue first visible on the timestamp boundary is not missed', async (): Promise<void> => {
     const firstPollAt = Date.parse('2026-08-26T02:00:00.000Z');
     const secondPollAt = Date.parse('2026-08-26T03:00:00.000Z');

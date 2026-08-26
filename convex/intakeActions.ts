@@ -737,7 +737,7 @@ async function slackHistory(
   for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
     const payload = await slackGet(fetcher, credential, 'conversations.history', {
       channel: channelId,
-      inclusive: 'false',
+      inclusive: 'true',
       limit: '200',
       ...(lastPolledAt !== undefined ? { oldest: String(lastPolledAt / 1_000) } : {}),
       ...(cursor ? { cursor } : {}),
