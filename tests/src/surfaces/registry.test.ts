@@ -203,9 +203,10 @@ describe('applying surface actions', (): void => {
         body: JSON.stringify({ channel: 'C0PUBLIC', thread_ts: '1787746453.202809', text: 'Checked: covered.' }),
       },
     };
+    // The manager's approval is the authority for a write: no slack:write is granted here.
     const unapproved = await applySurfaceActions(ctx, 'real', [linear, slack], run, [comment, threadedReply, dm], {
       deps: deps(recorded),
-      grants,
+      grants: new Set(['boss:message', 'linear:read', 'linear:write']),
       approvedIndexes: new Set([0, 2]),
       heldReasons: new Map(),
       now,
@@ -216,7 +217,7 @@ describe('applying surface actions', (): void => {
 
     const approved = await applySurfaceActions(ctx, 'real', [linear, slack], run, [comment, threadedReply, dm], {
       deps: deps(recorded),
-      grants,
+      grants: new Set(['boss:message', 'linear:read', 'linear:write']),
       approvedIndexes: new Set([0, 1, 2]),
       now,
     });
@@ -260,7 +261,8 @@ describe('applying surface actions', (): void => {
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['list_issues', 'save_comment']);
     expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
 
-    // A comment on an issue the run is not working on is not automatic either.
+    // A comment on an issue the run is not working on is not automatic either,
+    // and a working-target comment with no standing write grant is refused in the auto phase.
     const other = await applySurfaceActions(ctx, 'real', [linear], run, [comment], {
       deps: deps(recorded),
       grants,
@@ -269,6 +271,22 @@ describe('applying surface actions', (): void => {
       now,
     });
     expect(other[0]).toMatchObject({ ok: false, reason: NOT_AUTOMATIC });
+    const ungranted = await applySurfaceActions(ctx, 'real', [linear], run, [comment], {
+      deps: deps(recorded),
+      grants: new Set(['linear:read']),
+      approvedIndexes: new Set([0]),
+      autoTargets: ['iss-1'],
+      now,
+    });
+    expect(ungranted[0]).toMatchObject({ ok: false, reason: 'no grant (linear:write)' });
+    // The DM needs its standing grant even when the manager approved the index.
+    const noBoss = await applySurfaceActions(ctx, 'real', [slack], run, [dm], {
+      deps: deps(recorded),
+      grants: new Set(['slack:read']),
+      approvedIndexes: new Set([0]),
+      now,
+    });
+    expect(noBoss[0]).toMatchObject({ ok: false, reason: 'no grant (boss:message)' });
   });
 
   it('carries a prior phase\'s ledger forward so a status change sees the comment that landed', async (): Promise<void> => {

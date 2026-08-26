@@ -269,8 +269,8 @@ describe('the exact-action gate', (): void => {
     const row = await readItem(harness, workItemId);
     expect(row.actionVerdicts).toEqual([
       { disposition: 'held', reason: HELD_COLD_START },
-      { disposition: 'refused', reason: 'no grant (linear:write)' },
-      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
       { disposition: 'refused', reason: 'unknown surface' },
     ]);
     const pendingEvents = await eventsOfType(harness, agentId, 'work.actions-pending');
@@ -279,8 +279,8 @@ describe('the exact-action gate', (): void => {
       runId,
       actionCount: 4,
       autoIndexes: [],
-      heldIndexes: [0],
-      refusedIndexes: [1, 2, 3],
+      heldIndexes: [0, 1, 2],
+      refusedIndexes: [3],
     });
   });
 
@@ -292,13 +292,13 @@ describe('the exact-action gate', (): void => {
       ...pendingOutput,
       actions: [
         { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"i"}' } },
-        pendingOutput.actions[0],
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'delete_issue', toolArgsJson: '{"id":"i"}' } },
       ],
     };
     await harness.mutation(internal.work.setActionsPending, { workItemId, runId, output });
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1] }),
-    ).rejects.toThrow('action 2 is refused (no grant (linear:write)); approve the others by selection');
+    ).rejects.toThrow('action 2 is refused (tool not in the surface allowlist (delete_issue)); approve the others by selection');
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] }),
     ).rejects.toThrow('action 2 is refused');
@@ -313,7 +313,7 @@ describe('the exact-action gate', (): void => {
       phase: 'approved',
       approvedIndexes: [0],
       heldIndexes: [0],
-      heldReasons: [[1, 'no grant (linear:write)']],
+      heldReasons: [[1, 'tool not in the surface allowlist (delete_issue)']],
       targets: ['revops-1'],
     });
     const approved = await eventsOfType(harness, agentId, 'work.actions-approved');

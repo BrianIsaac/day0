@@ -659,11 +659,33 @@ export function actionClass(
 }
 
 /**
+ * Whether an action needs a standing grant to be applied at all.
+ *
+ * A read and the manager DM apply without the manager, so they need the
+ * scope that authorises them (`<surface>:read`, `boss:message`). Every other
+ * write is either applied on its own because a standing write grant and the
+ * ladder allow it, or held for the manager, whose approval of the literal
+ * payload is the authority; a missing write grant therefore keeps a write
+ * out of the auto phase rather than out of the run.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   True for a read or the manager DM.
+ */
+export function needsStandingGrant(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
+  return actionIntent(parsed) === 'read' || isManagerDm(parsed, surface);
+}
+
+/**
  * Why an action can never be applied, if it cannot.
  *
  * Every registry check that depends on nothing that happens during apply:
  * the verb, its shape, the surface's connection, the verb-to-path match,
- * the probed allowlist, the grant and the provenance fields.
+ * the probed allowlist, the standing grant of a read or the manager DM, and
+ * the provenance fields.
  *
  * Args:
  *   action: The action as the skill emitted it.
@@ -692,7 +714,9 @@ export function refusalFor(
   const reason =
     pathRefusal(parsed.action, surface) ??
     toolRefusal(parsed.action, surface) ??
-    grantRefusal(parsed.action, surface, grants) ??
+    (needsStandingGrant(parsed.action, surface)
+      ? grantRefusal(parsed.action, surface, grants)
+      : undefined) ??
     provenanceRefusal(parsed.action, surface);
   if (reason) return { refused: true, reason };
   return { refused: false, parsed: parsed.action, surface };
@@ -713,10 +737,11 @@ export interface ReviewScope {
  *
  * Refusals come first and are the same whatever the posture. An applicable
  * row is `auto` when it is a read, the manager DM or an audit comment on a
- * target the run is working on, and `held` for every other write - a public
- * post or thread reply, a system-of-record mutation, a create or a delete.
- * In cold start, and in supervised posture while the skill is still inside
- * its supervised window, every applicable row is held instead.
+ * target the run is working on through a standing write grant, and `held`
+ * for every other write - a public post or thread reply, a system-of-record
+ * mutation, a create or a delete, or a comment the agent has no standing
+ * grant for. In cold start, and in supervised posture while the skill is
+ * still inside its supervised window, every applicable row is held instead.
  *
  * Args:
  *   action: The action as the skill emitted it.
@@ -746,8 +771,11 @@ export function reviewAction(
   switch (actionClass(refusal.parsed, refusal.surface, scope.targets)) {
     case 'read':
     case 'manager-dm':
-    case 'working-comment':
       return { disposition: 'auto' };
+    case 'working-comment':
+      return grantRefusal(refusal.parsed, refusal.surface, grants)
+        ? { disposition: 'held', reason: HELD_WRITE }
+        : { disposition: 'auto' };
     case 'public-post':
       return { disposition: 'held', reason: HELD_PUBLIC_POST };
     case 'mutation':

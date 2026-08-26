@@ -421,7 +421,7 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.http).toHaveLength(1);
   });
 
-  it('carries the manager DM on boss:message alone and holds nothing that was granted', async (): Promise<void> => {
+  it('carries the manager DM on boss:message alone and lets the manager authorise a public post without slack:write', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real', ['boss:message', 'linear:read', 'linear:write', 'slack:read']);
@@ -433,12 +433,9 @@ describe('executing an approved plan through the gate', (): void => {
       { disposition: 'held', reason: HELD_COLD_START },
       { disposition: 'held', reason: HELD_COLD_START },
       { disposition: 'held', reason: HELD_COLD_START },
-      { disposition: 'refused', reason: 'no grant (slack:write)' },
+      { disposition: 'held', reason: HELD_COLD_START },
     ]);
-    await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] }),
-    ).rejects.toThrow('action 4 is refused (no grant (slack:write))');
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2] });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] });
     await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('completed');
@@ -446,41 +443,50 @@ describe('executing an approved plan through the gate', (): void => {
       [true, false, undefined],
       [true, false, undefined],
       [true, false, undefined],
-      [true, true, 'no grant (slack:write)'],
+      [true, false, undefined],
     ]);
     expect(ledger(row)[2].providerId).toBe('1787654400.000200');
-    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
+    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER', 'C0PUBLIC']);
   });
 
-  it('holds an ungranted write from the moment the run is held, so it never reaches apply', async (): Promise<void> => {
+  it('refuses an ungranted read and the DM without boss:message from the moment the run is held', async (): Promise<void> => {
     useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) } },
+        skillOutput.actions[0],
+        skillOutput.actions[2],
+        skillOutput.actions[3],
+      ],
+    };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(harness, 'real', ['boss:message', 'linear:read', 'slack:read']);
+    const { workItemId } = await seed(harness, 'real', ['linear:write', 'slack:read']);
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const pending = await readItem(harness, workItemId);
     const runId = pending.pendingRunId;
     if (!runId) throw new Error('pending run missing');
     expect(pending.actionVerdicts).toEqual([
-      { disposition: 'refused', reason: 'no grant (linear:write)' },
-      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'refused', reason: 'no grant (linear:read)' },
       { disposition: 'held', reason: HELD_COLD_START },
-      { disposition: 'refused', reason: 'no grant (slack:write)' },
+      { disposition: 'refused', reason: 'no grant (boss:message)' },
+      { disposition: 'held', reason: HELD_COLD_START },
     ]);
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] }),
-    ).rejects.toThrow('action 1 is refused (no grant (linear:write))');
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [2] });
+    ).rejects.toThrow('action 1 is refused (no grant (linear:read))');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] });
     await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('completed');
     expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
-      [true, true, 'no grant (linear:write)'],
-      [true, true, 'no grant (linear:write)'],
+      [true, true, 'no grant (linear:read)'],
       [true, false, undefined],
-      [true, true, 'no grant (slack:write)'],
+      [true, true, 'no grant (boss:message)'],
+      [true, true, HELD_NOT_APPROVED],
     ]);
-    expect(recorded.mcp).toHaveLength(0);
-    expect(recorded.http).toHaveLength(1);
+    expect(recorded.mcp).toHaveLength(1);
+    expect(recorded.http).toHaveLength(0);
   });
 
   it('refuses retry when a provider transport fails after an approved request was sent', async (): Promise<void> => {

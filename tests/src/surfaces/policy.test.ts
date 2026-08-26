@@ -333,11 +333,13 @@ describe('reviewing a held run', (): void => {
       now,
       trusted,
     );
+    // A write with no standing grant is held for the manager, never refused: the
+    // approval of the literal payload is its authority.
     expect(verdicts).toEqual([
       { disposition: 'auto' },
-      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'held', reason: 'write held for the manager' },
       { disposition: 'auto' },
-      { disposition: 'refused', reason: 'no grant (slack:write)' },
+      { disposition: 'held', reason: HELD_PUBLIC_POST },
       { disposition: 'refused', reason: 'unknown surface' },
       { disposition: 'refused', reason: 'http.request is not allowed on surface path mcp' },
       { disposition: 'refused', reason: expect.stringContaining(MALFORMED_ACTION) },
@@ -461,10 +463,24 @@ describe('the posture ladder', (): void => {
       { disposition: 'held', reason: HELD_MUTATION },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ]);
-    // H2 kept: an RPC mutation over GET is a write, so without slack:write it is refused rather than read.
+    // H2 kept: an RPC mutation over GET is a write, so with slack:read alone it is held rather than read on its own.
     expect(reviewAction(rpcGet, surfaces, new Set(['slack:read']), now, scope('trusted'))).toEqual({
+      disposition: 'held',
+      reason: HELD_PUBLIC_POST,
+    });
+    // A read without its standing grant, and the DM without boss:message, stay refused.
+    expect(reviewAction(historyGet, surfaces, new Set(['boss:message']), now, scope('trusted'))).toEqual({
       disposition: 'refused',
-      reason: 'no grant (slack:write)',
+      reason: 'no grant (slack:read)',
+    });
+    expect(reviewAction(chatPost('D0MANAGER'), surfaces, new Set(['slack:read']), now, scope('trusted'))).toEqual({
+      disposition: 'refused',
+      reason: 'no grant (boss:message)',
+    });
+    // A working-target comment without linear:write is held, not automatic.
+    expect(reviewAction(comment('x', 'REVOPS-10'), surfaces, new Set(['linear:read']), now, scope('trusted'))).toEqual({
+      disposition: 'held',
+      reason: 'write held for the manager',
     });
     expect(actionClass(parsed(rpcGet), slackReads, [])).toBe('public-post');
     expect(actionClass(parsed(historyGet), slackReads, [])).toBe('read');
@@ -480,9 +496,12 @@ describe('the posture ladder', (): void => {
     expect(coldStart).toEqual([
       { disposition: 'held', reason: HELD_COLD_START },
       { disposition: 'held', reason: HELD_COLD_START },
-      { disposition: 'refused', reason: 'no grant (linear:write)' },
-      { disposition: 'refused', reason: 'no grant (slack:write)' },
-      { disposition: 'refused', reason: 'no grant (linear:write)' },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+      { disposition: 'held', reason: HELD_COLD_START },
+    ]);
+    expect(reviewActions([demo[2]], surfaces, new Set(['boss:message']), now, scope('cold-start', 5))).toEqual([
+      { disposition: 'refused', reason: 'no grant (slack:read)' },
     ]);
     expect(reviewActions(rows, surfaces, grants, now, scope('supervised', 1)).map((v) => v.disposition)).toEqual([
       'held',

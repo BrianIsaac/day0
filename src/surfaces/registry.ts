@@ -15,6 +15,7 @@ import {
   isAutomatic,
   isSurfaceTool,
   mockVerbRefusal,
+  needsStandingGrant,
   NOT_AUTOMATIC,
   parseSurfaceAction,
   pathRefusal,
@@ -265,10 +266,17 @@ export async function applySurfaceActions(
       applied.push(refused(action.tool, unlisted, idempotencyKey));
       continue;
     }
-    const ungranted = grantRefusal(parsed.action, surface, options.grants ?? new Set());
-    if (ungranted) {
-      applied.push(refused(action.tool, ungranted, idempotencyKey));
-      continue;
+    // A read and the manager DM always need their standing grant. A write
+    // needs one to apply on its own (the auto phase, or an apply with no
+    // approval list at all); a write the manager approved by index is
+    // authorised by that approval.
+    const managerApproved = options.approvedIndexes !== undefined && options.autoTargets === undefined;
+    if (needsStandingGrant(parsed.action, surface) || !managerApproved) {
+      const ungranted = grantRefusal(parsed.action, surface, options.grants ?? new Set());
+      if (ungranted) {
+        applied.push(refused(action.tool, ungranted, idempotencyKey));
+        continue;
+      }
     }
     if (options.autoTargets && !isAutomatic(parsed.action, surface, options.autoTargets)) {
       applied.push(refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
