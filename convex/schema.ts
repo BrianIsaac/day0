@@ -312,6 +312,8 @@ export default defineSchema({
         decidedAt: v.optional(v.number()),
         outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
         decidedVia: v.optional(v.union(v.literal('dashboard'), v.literal('channel'))),
+        // Provider ts of the channel reply that decided; the same message read again is not a duplicate.
+        decidedTs: v.optional(v.string()),
         duplicateNotifiedAt: v.optional(v.number()),
         duplicateNoticeClaimedAt: v.optional(v.number()),
         duplicateNoticeTs: v.optional(v.string()),

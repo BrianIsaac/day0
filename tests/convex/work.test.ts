@@ -331,6 +331,7 @@ describe('manager channel request claims', (): void => {
       kind: 'actions',
     });
   });
+
 });
 
 describe('single-use manager decisions', (): void => {
@@ -484,6 +485,67 @@ describe('single-use manager decisions', (): void => {
       }),
     ).rejects.toThrow('actions have already been approved');
     expect(await eventsOfType(harness, agentId, 'work.decision-ignored')).toHaveLength(1);
+  });
+
+  it('stays silent when the reply that decided is read again, and notifies a different reply once', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await chatSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'tv9wxy',
+    });
+    const winner = {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787770800.000100',
+      reply: { verb: 'approve' as const, id: 'tv9wxy' },
+    };
+    await expect(harness.mutation(internal.work.resolveChannelDecision, winner)).resolves.toEqual({
+      status: 'decided',
+      outcome: 'approve',
+    });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      decidedVia: 'channel',
+      decidedTs: '1787770800.000100',
+    });
+
+    // The intake reads the checkpoint boundary inclusively and re-reads anything that
+    // arrived while a sweep was running, so the winning message comes back on the next
+    // poll. That is the manager's one reply, not a duplicate: no notice, no event.
+    await expect(harness.mutation(internal.work.resolveChannelDecision, winner)).resolves.toEqual({
+      status: 'already-decided',
+      notified: false,
+    });
+    expect((await readItem(harness, workItemId)).decision?.duplicateNotifiedAt).toBeUndefined();
+    expect(await eventsOfType(harness, agentId, 'work.decision-duplicate')).toEqual([]);
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:sendDecisionNotice',
+      ),
+    ).toEqual([]);
+
+    // A second, distinct reply is a duplicate and gets exactly one notice.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        ...winner,
+        messageTs: '1787770900.000100',
+        reply: { verb: 'reject', id: 'tv9wxy', reason: 'changed my mind' },
+      }),
+    ).resolves.toEqual({ status: 'already-decided', notified: true });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-approved',
+      decision: { outcome: 'approved', duplicateNotifiedAt: expect.any(Number) },
+    });
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:sendDecisionNotice',
+      ),
+    ).toHaveLength(1);
   });
 });
 

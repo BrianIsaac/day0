@@ -544,6 +544,7 @@ function decidedPatch(
   kind: DecisionKind,
   via: DecisionVia,
   outcome: 'approved' | 'rejected',
+  messageTs?: string,
 ): { decision?: NonNullable<Doc<'workItems'>['decision']> } {
   if (!row.decision || row.decision.kind !== kind || row.decision.decidedAt) return {};
   return {
@@ -552,6 +553,7 @@ function decidedPatch(
       decidedAt: Date.now(),
       outcome,
       decidedVia: via,
+      ...(via === 'channel' && messageTs ? { decidedTs: messageTs } : {}),
     },
   };
 }
@@ -560,11 +562,15 @@ async function approvePlanInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   via: DecisionVia,
+  messageTs?: string,
 ): Promise<void> {
   if (row.state !== 'plan-pending') {
     throw new Error(`workItem state is ${row.state}; expected plan-pending`);
   }
-  await ctx.db.patch(row._id, { state: 'plan-approved', ...decidedPatch(row, 'plan', via, 'approved') });
+  await ctx.db.patch(row._id, {
+    state: 'plan-approved',
+    ...decidedPatch(row, 'plan', via, 'approved', messageTs),
+  });
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.plan-approved',
@@ -643,6 +649,7 @@ async function cancelPlanInTransaction(
   row: Doc<'workItems'>,
   via: DecisionVia,
   reason: string,
+  messageTs?: string,
 ): Promise<void> {
   if (row.state !== 'plan-pending') {
     throw new Error(`workItem state is ${row.state}; expected plan-pending`);
@@ -651,7 +658,7 @@ async function cancelPlanInTransaction(
   await ctx.db.patch(row._id, {
     state: 'cancelled',
     skipReason,
-    ...decidedPatch(row, 'plan', via, 'rejected'),
+    ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
   });
   await ctx.db.insert('events', {
     agentId: row.agentId,
@@ -1127,6 +1134,7 @@ async function approveActionsInTransaction(
     approvedIndexes: number[];
   },
   via: DecisionVia,
+  messageTs?: string,
 ): Promise<{ ok: true; approvedIndexes: number[] }> {
     if (row.state !== 'actions-pending') {
       throw new Error(`workItem state is ${row.state}; expected actions-pending`);
@@ -1160,7 +1168,7 @@ async function approveActionsInTransaction(
     await ctx.db.patch(args.workItemId, {
       approvedIndexes,
       applyPhase: 'approved',
-      ...decidedPatch(row, 'actions', via, 'approved'),
+      ...decidedPatch(row, 'actions', via, 'approved', messageTs),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1199,6 +1207,7 @@ async function rejectActionsInTransaction(
   row: Doc<'workItems'>,
   args: { workItemId: Id<'workItems'>; pendingRunId: Id<'events'>; reason: string },
   via: DecisionVia,
+  messageTs?: string,
 ): Promise<{ ok: true }> {
     if (row.state !== 'actions-pending') {
       throw new Error(`workItem state is ${row.state}; expected actions-pending`);
@@ -1235,7 +1244,7 @@ async function rejectActionsInTransaction(
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
-      ...decidedPatch(row, 'actions', via, 'rejected'),
+      ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1297,6 +1306,12 @@ export const resolveChannelDecision = internalMutation({
 
     const expectedState = row.decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
     if (row.decision.decidedAt || row.state !== expectedState) {
+      // The intake reads its checkpoint boundary inclusively and re-reads anything that
+      // arrived during a sweep, so the very message that decided comes back on a later
+      // poll. That is the manager's one reply, not a duplicate: nothing to say.
+      if (row.decision.decidedTs === args.messageTs) {
+        return { status: 'already-decided' as const, notified: false };
+      }
       if (!row.decision.duplicateNotifiedAt) {
         await ctx.db.patch(row._id, {
           decision: { ...row.decision, duplicateNotifiedAt: Date.now() },
@@ -1322,9 +1337,9 @@ export const resolveChannelDecision = internalMutation({
 
     if (row.decision.kind === 'plan') {
       if (args.reply.verb === 'approve') {
-        await approvePlanInTransaction(ctx, row, 'channel');
+        await approvePlanInTransaction(ctx, row, 'channel', args.messageTs);
       } else {
-        await cancelPlanInTransaction(ctx, row, 'channel', args.reply.reason ?? '');
+        await cancelPlanInTransaction(ctx, row, 'channel', args.reply.reason ?? '', args.messageTs);
       }
     } else {
       if (!row.pendingRunId) return await ignored('actions decision has no pending run');
@@ -1340,6 +1355,7 @@ export const resolveChannelDecision = internalMutation({
             approvedIndexes: heldIndexes,
           },
           'channel',
+          args.messageTs,
         );
       } else {
         await rejectActionsInTransaction(
@@ -1353,6 +1369,7 @@ export const resolveChannelDecision = internalMutation({
             reason: args.reply.reason ?? '',
           },
           'channel',
+          args.messageTs,
         );
       }
     }
