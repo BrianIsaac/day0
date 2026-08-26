@@ -8,6 +8,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   issueProject,
+  linearCandidate,
   linearListArguments,
   mcpIssuePage,
   runIntakeSweep,
@@ -583,6 +584,24 @@ describe('intake provider contracts', (): void => {
           'c',
         ),
     ).toThrow('unsupported cursor');
+    expect(
+      linearListArguments(
+        {
+          properties: {
+            project: {},
+            limit: {},
+            fields: { type: 'array', items: { type: 'string', enum: ['id', 'title', 'project', 'updatedAt', 'triageIntel'] } },
+          },
+        },
+        { project: 'Q3 close' },
+      ).args,
+    ).toEqual({ project: 'Q3 close', limit: 100, fields: ['id', 'title', 'updatedAt', 'project'] });
+    expect(
+      linearListArguments(
+        { properties: { project: {}, fields: { type: 'array', items: { type: 'string' } } } },
+        { project: 'Q3 close' },
+      ).args,
+    ).toEqual({ project: 'Q3 close' });
     expect(issueProject({ project: { name: 'Q3 close', id: 'p1' } })).toBe('Q3 close');
     expect(issueProject({ project: 'Q3 close' })).toBe('Q3 close');
     expect(issueProject({ projectName: 'Q3 close' })).toBe('Q3 close');
@@ -657,6 +676,49 @@ describe('intake provider contracts', (): void => {
     ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
     expect(unbounded.records[0].skipReason).toContain('cannot be bounded to project Q3 close');
     expect(unbounded.seeds.size).toBe(0);
+  });
+
+  it('maps the shapes Linear\'s live MCP server returns, not only GraphQL-style objects', (): void => {
+    const surface = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId: id<'credentials'>('credential-linear'),
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const observedAt = Date.parse('2026-08-26T02:00:00.000Z');
+    expect(
+      linearCandidate(
+        {
+          id: 'REVOPS-5',
+          title: 'Add the close-summary audit note',
+          description: 'Summarise the completed close checks as a comment.',
+          priority: { value: 1, name: 'Urgent' },
+          url: 'https://linear.app/day00/issue/REVOPS-5/add-the-close-summary-audit-note',
+          status: 'Backlog',
+          createdBy: 'Brian',
+          team: 'RevOps',
+        },
+        surface,
+        observedAt,
+      ),
+    ).toEqual({
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-5',
+      title: 'Add the close-summary audit note',
+      contentSummary: 'Summarise the completed close checks as a comment.',
+      contentRefs: ['https://linear.app/day00/issue/REVOPS-5/add-the-close-summary-audit-note'],
+      observedAt: new Date(observedAt),
+      priority: 'Urgent',
+      requesterLabel: 'Brian',
+    });
+    expect(
+      linearCandidate(
+        { id: 'REVOPS-6', title: 'Reconcile', url: 'https://linear.app/x', assignee: { email: 'a@day0.local' } },
+        surface,
+        observedAt,
+      ),
+    ).toMatchObject({ contentSummary: 'Reconcile', requesterLabel: 'a@day0.local', priority: undefined });
+    expect(linearCandidate({ id: 'REVOPS-7', title: '  ', url: 'https://linear.app/x' }, surface, observedAt)).toBeUndefined();
   });
 
   it('decodes structured and text MCP results and reads only policy channel rows', (): void => {

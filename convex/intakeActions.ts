@@ -227,6 +227,41 @@ export interface LinearListRequest {
   checkpointEnforced: boolean;
 }
 
+/** Issue fields intake reads, requested by name when the schema lets a caller choose. */
+const LINEAR_ISSUE_FIELDS = [
+  'id',
+  'title',
+  'description',
+  'url',
+  'priority',
+  'status',
+  'statusType',
+  'createdAt',
+  'updatedAt',
+  'createdBy',
+  'assignee',
+  'project',
+  'projectId',
+  'team',
+] as const;
+
+/**
+ * Read the field names a schema's `fields` selector accepts.
+ *
+ * Args:
+ *   properties: Provider-discovered input properties.
+ *
+ * Returns:
+ *   The enumerated field names, or undefined when there is no such selector.
+ */
+function selectableFields(properties: Record<string, unknown>): Set<string> | undefined {
+  const selector = asRecord(properties.fields);
+  const items = asRecord(selector?.items);
+  const names = items?.enum;
+  if (!Array.isArray(names)) return undefined;
+  return new Set(names.filter((name): name is string => typeof name === 'string'));
+}
+
 /**
  * Build a bounded Linear list request only from discovered argument names.
  *
@@ -234,7 +269,10 @@ export interface LinearListRequest {
  * the schema offers no way to express the project or the checkpoint, the
  * request is still made and the poller applies that bound to the returned
  * issues itself, so an unknown schema degrades to more reading, not to no
- * intake.
+ * intake. When the schema lets the caller choose response fields, the
+ * fields intake reads are named explicitly: Linear's default response omits
+ * the project, so the client-side project bound and the checkpoint would
+ * otherwise have nothing to compare.
  *
  * Args:
  *   inputSchema: Live schema advertised for list_issues.
@@ -264,6 +302,12 @@ export function linearListArguments(
 
   const limitName = discoveredArgument(properties, ['limit', 'first', 'pageSize']);
   if (limitName) args[limitName] = PAGE_SIZE;
+
+  const selectable = selectableFields(properties);
+  if (selectable) {
+    const fields = LINEAR_ISSUE_FIELDS.filter((name: string): boolean => selectable.has(name));
+    if (fields.length > 0) args.fields = fields;
+  }
 
   let checkpointEnforced = false;
   if (lastPolledAt !== undefined) {
@@ -365,6 +409,29 @@ export function mcpIssuePage(value: unknown): McpPage {
 }
 
 /**
+ * Read who asked for an issue, in the shapes providers use.
+ *
+ * Linear's MCP server returns `createdBy` and `assignee` as display names;
+ * GraphQL-shaped payloads nest a `creator` or `assignee` object.
+ *
+ * Args:
+ *   issue: Provider issue object.
+ *
+ * Returns:
+ *   The creator's or assignee's name or email, or undefined.
+ */
+function requesterOf(issue: Record<string, unknown>): string | undefined {
+  for (const key of ['creator', 'createdBy', 'assignee']) {
+    const value = issue[key];
+    if (typeof value === 'string' && value.trim()) return value;
+    const record = asRecord(value);
+    if (typeof record?.name === 'string') return record.name;
+    if (typeof record?.email === 'string') return record.email;
+  }
+  return undefined;
+}
+
+/**
  * Create one normalised work candidate from a Linear issue.
  *
  * Args:
@@ -396,14 +463,10 @@ export function linearCandidate(
       ? issue.priority
       : typeof priorityObject?.label === 'string'
         ? priorityObject.label
-        : undefined;
-  const requester = asRecord(issue.creator) ?? asRecord(issue.assignee);
-  const requesterLabel =
-    typeof requester?.name === 'string'
-      ? requester.name
-      : typeof requester?.email === 'string'
-        ? requester.email
-        : undefined;
+        : typeof priorityObject?.name === 'string'
+          ? priorityObject.name
+          : undefined;
+  const requesterLabel = requesterOf(issue);
   return {
     sourceCategory: 'ticket-queue',
     sourceSystem: surface.slug,
