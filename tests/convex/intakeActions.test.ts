@@ -522,6 +522,78 @@ describe('real surface intake', (): void => {
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
+  it('overlaps the chat MCP checkpoint so a reply first visible on the boundary is not missed', async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-chat-mcp');
+    const firstPollAt = Date.parse('2026-08-27T02:00:00.000Z');
+    const secondPollAt = Date.parse('2026-08-27T02:05:00.000Z');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('company-chat', 'Company chat', 'chat', {
+          path: 'mcp',
+          credentialId,
+          endpoint: 'https://chat.example/mcp',
+          toolAllowlist: ['conversation_history'],
+          managerDmChannelId: 'manager-conversation',
+          managerUserId: 'manager-user',
+          providerIdentityId: 'agent-bot',
+        }),
+      ],
+      [],
+      new Map([[String(credentialId), 'chat-mcp-secret']]),
+    );
+    const calls: Record<string, unknown>[] = [];
+    const boundaryTs = `${String(firstPollAt / 1_000)}.000000`;
+    const makeMcpClient = () => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: {
+            conversation_history: {
+              inputSchema: {
+                type: 'object',
+                properties: { conversationId: {}, limit: {}, oldest: {} },
+              },
+            },
+          },
+        },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (args: Record<string, unknown>): Promise<unknown> => {
+          calls.push(args);
+          // The provider filters strictly after `oldest`; a reply stamped exactly on the
+          // first poll's start is only visible when the second poll overlaps it.
+          const visible = typeof args.oldest === 'string' && Number(boundaryTs) > Number(args.oldest);
+          return {
+            messages: visible
+              ? [{ ts: boundaryTs, user: 'manager-user', text: 'approve gh6npq' }]
+              : [],
+          };
+        },
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => firstPollAt, makeMcpClient }),
+    ).resolves.toMatchObject({ polled: 1 });
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => secondPollAt, makeMcpClient }),
+    ).resolves.toMatchObject({ polled: 1 });
+    expect(calls[1]).toEqual({
+      conversationId: 'manager-conversation',
+      limit: 100,
+      oldest: String((firstPollAt - 1) / 1_000),
+    });
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-company-chat'),
+        userId: 'manager-user',
+        messageTs: boundaryTs,
+        reply: { verb: 'approve', id: 'gh6npq' },
+      },
+    ]);
+  });
+
   it('contains one provider failure, redacts its credential, and continues to the next surface', async (): Promise<void> => {
     const linearCredential = id<'credentials'>('credential-linear');
     const slackCredential = id<'credentials'>('credential-slack');

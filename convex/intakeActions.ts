@@ -854,7 +854,10 @@ async function pollMcpManagerReplies(
       if (limitName) args[limitName] = PAGE_SIZE;
       const oldestName = discoveredArgument(properties, ['oldest', 'since', 'updatedAfter']);
       if (oldestName && surface.lastPolledAt !== undefined) {
-        args[oldestName] = String(surface.lastPolledAt / 1_000);
+        // One millisecond of overlap, as the Linear poll does: a generic history tool
+        // has no inclusive flag, and a reply stamped exactly on the checkpoint must not
+        // be excluded forever. Re-observing a reply is safe; the decision keys on its ts.
+        args[oldestName] = String((surface.lastPolledAt - 1) / 1_000);
       }
       if (cursor) {
         const cursorName = discoveredArgument(properties, ['cursor', 'after', 'pageToken']);
