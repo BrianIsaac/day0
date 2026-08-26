@@ -133,7 +133,7 @@ export const requestDecision = internalAction({
     kind: v.union(v.literal('plan'), v.literal('actions')),
   },
   handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
-    const decisionId = decisionIdFromBytes(randomBytes(12));
+    const decisionId = decisionIdFromBytes(randomBytes(32));
     const prepared = await ctx.runMutation(internal.work.prepareDecisionRequest, {
       workItemId: args.workItemId,
       kind: args.kind,

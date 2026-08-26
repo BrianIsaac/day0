@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
+  DECISION_ID_ALPHABET,
   decisionIdFromBytes,
   decisionRequestText,
   managerMessageAction,
@@ -23,6 +24,22 @@ const slack: SurfaceRecord = {
 };
 
 describe('manager channel decision requests', (): void => {
+  it('draws every symbol with the same probability from random bytes', (): void => {
+    // 256 is not a multiple of 31: a plain modulo makes the first eight symbols
+    // 12.5% likelier than the rest. Bytes at or above 248 must be skipped.
+    const alphabet = DECISION_ID_ALPHABET;
+    expect(alphabet).toHaveLength(31);
+    expect(decisionIdFromBytes(new Uint8Array([248, 255, 0, 1, 2, 3, 4, 5, 250]))).toBe(
+      alphabet.slice(0, 6),
+    );
+    expect(decisionIdFromBytes(new Uint8Array([247, 30, 31, 61, 62, 93, 200]))).toBe(
+      [alphabet[247 % 31], alphabet[30], alphabet[0], alphabet[30], alphabet[0], alphabet[0]].join(''),
+    );
+    expect(() => decisionIdFromBytes(new Uint8Array([248, 249, 250, 251, 252, 253, 1, 2, 3]))).toThrow(
+      /random bytes/,
+    );
+  });
+
   it('derives a six-character token from random bytes without ambiguous characters', (): void => {
     const id = decisionIdFromBytes(Uint8Array.from([0, 1, 2, 3, 4, 5]));
     expect(id).toBe('234567');

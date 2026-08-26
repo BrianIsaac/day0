@@ -34,12 +34,22 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
   return { verb, id, reason: (match[3] ?? '').slice(0, 200) };
 }
 
-/** Turn random bytes into the short, case-insensitive token used in manager replies. */
+/**
+ * Turn random bytes into the short, case-insensitive token used in manager replies.
+ *
+ * 256 is not a multiple of the 31-symbol alphabet, so a plain modulo would draw
+ * the first eight symbols more often. Bytes outside the largest multiple are
+ * skipped; the caller passes more bytes than characters to absorb the skips.
+ */
 export function decisionIdFromBytes(bytes: Uint8Array): string {
-  if (bytes.length < DECISION_ID_LENGTH) throw new Error('decision id needs six random bytes');
-  return Array.from(bytes.slice(0, DECISION_ID_LENGTH), (byte) =>
-    DECISION_ID_ALPHABET[byte % DECISION_ID_ALPHABET.length],
-  ).join('');
+  const unbiasedLimit = 256 - (256 % DECISION_ID_ALPHABET.length);
+  const symbols: string[] = [];
+  for (const byte of bytes) {
+    if (byte >= unbiasedLimit) continue;
+    symbols.push(DECISION_ID_ALPHABET[byte % DECISION_ID_ALPHABET.length]);
+    if (symbols.length === DECISION_ID_LENGTH) return symbols.join('');
+  }
+  throw new Error(`decision id needs ${DECISION_ID_LENGTH} usable random bytes`);
 }
 
 /** Find the semantic argument names a generic chat MCP tool advertised at probe time. */
