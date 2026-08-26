@@ -80,7 +80,7 @@ const MOCK_VERBS = 'spreadsheet.appendRow, slack.postMessage, twitter.reply, tic
 
 const REAL_PREAMBLE = [
   ...PREAMBLE_HEAD,
-  '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. The gate decides each one: reads, the manager DM and audit comments on the item you are working may apply on their own; every public post, thread reply and system-of-record change is held for the manager, who approves the literal payload before it is sent.',
+  '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. The gate decides each one: reads and the manager DM apply on their own; every public post, thread reply, comment and system-of-record change is held for the manager, who approves the literal payload before it is sent, unless the manager has turned autonomous actions on, in which case it is applied exactly as you emit it. Write every action as it should land.',
   ...DRAFT_DISCIPLINE,
   'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
@@ -89,8 +89,8 @@ const REAL_PREAMBLE = [
   'Discipline:',
   '  - Stay inside charter boundaries.',
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
-  '  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it and the manager approves the exact text, so write the reply as it should appear in the channel.',
-  '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate hold it.',
+  '  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager\'s approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.',
+  '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
   '',
   'Closing the loop:',
   '  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook\'s comment tool, and only after it, if the work is complete, the state change with the runbook\'s state argument. A status change is never the only trace of who acted.',
@@ -233,7 +233,7 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
     '  - http.request - { surface, method, path, headersJson, body }: `path` is relative to the surface endpoint; `headersJson` is a JSON object of headers; `body` is the request body.',
     '  - Write `{{secret}}` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.',
     '  - You may only target a surface listed above. A system without a connected surface gets no action; say so in `notes`.',
-    '  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager and never sent.',
+    '  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager\'s approval unless autonomous actions are on.',
     '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
     '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
   );

@@ -1,6 +1,6 @@
 # Slack automation policy
 
-Slack carries inbound requests and the manager conversation. A reply to a channel ask is posted into that ask's thread as its own action and is held until the manager approves the exact text; the manager DM is for questions and escalation.
+Slack carries inbound requests and the manager conversation. A reply to a channel ask is posted into that ask's thread as its own action; it is held until the manager approves the exact text, or sent as emitted once the manager has turned autonomous actions on; the manager DM is for questions and escalation.
 
 ## Where it is
 
@@ -36,6 +36,6 @@ Owner: the messaging administrator.
 ## Working rules
 
 - The manager DM is opened by looking up the manager's email; automations never guess a channel id.
-- A reply to a public channel or thread is emitted as its own `chat.postMessage` action into the source thread (`channel` plus `thread_ts`) and held for the manager, who approves the exact text before it is sent. The manager DM carries questions and escalation, never a draft that belongs in the channel.
+- A reply to a public channel or thread is emitted as its own `chat.postMessage` action into the source thread (`channel` plus `thread_ts`). While autonomous actions are off it is held for the manager, who approves the exact text before it is sent; once the manager has turned autonomous actions on it is sent as emitted. The manager DM carries questions and escalation, never a draft that belongs in the channel.
 - One logical message per action; preserve the originating Linear identifier or Slack thread timestamp in the text.
 - If a shared bot token is ever handed over instead of a dedicated app, messages must carry the employee's name and avatar (`chat:write.customize`) so they stay attributable.

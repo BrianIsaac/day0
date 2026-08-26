@@ -109,10 +109,12 @@ describe('executor preamble by mode', (): void => {
     const text = executorPreamble('real');
     expect(text).toContain('A reply to a channel or thread is its own action, never text inside another message');
     expect(text).toContain('`channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line');
-    expect(text).toContain('The gate holds it and the manager approves the exact text');
+    expect(text).toContain("The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on)");
     expect(text).toContain('The manager DM through the connected chat surface is for questions and escalation');
     expect(text).toContain('It never carries a draft that belongs in a channel or thread');
-    expect(text).toContain('reads, the manager DM and audit comments on the item you are working may apply on their own');
+    expect(text).toContain('reads and the manager DM apply on their own; every public post, thread reply, comment and system-of-record change is held for the manager');
+    expect(text).toContain('unless the manager has turned autonomous actions on, in which case it is applied exactly as you emit it');
+    expect(text).not.toContain('audit comments on the item you are working may apply on their own');
     expect(text).not.toContain('Cold-start posture');
     expect(executorPreamble('mock')).not.toContain('Reply target');
   });
