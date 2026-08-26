@@ -167,9 +167,12 @@ describe('intent, scope and connection', (): void => {
   it('classifies reads by tool prefix or HTTP method and defaults to write', (): void => {
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues' } }))).toBe('read');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue' } }))).toBe('read');
+    expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_and_delete_issues' } }))).toBe('write');
     expect(actionIntent(parsed(comment()))).toBe('write');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'frobnicate' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }))).toBe('read');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', method: 'HEAD', path: 'conversations.history', body: '{"mark":"read"}' } }))).toBe('write');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history?operation=delete' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: '/chat.postMessage?channel=D0MANAGER&text=smuggled' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', method: 'HEAD', path: '/conversations.open?users=U1' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'northstar', path: '/contacts/42' } }))).toBe('read');
@@ -490,6 +493,15 @@ describe('the autonomous-actions switch', (): void => {
     expect(isAutomatic(parsed(comment()), linearAll, false)).toBe(false);
     expect(isAutomatic(parsed(chatPost('D0MANAGER')), slackReads, false)).toBe(true);
     expect(isAutomatic(parsed(historyGet), slackReads, false)).toBe(true);
+
+    const readDressedMutation = mcp('list_and_delete_issues', { ids: ['REVOPS-10'] });
+    const linearWithDressedMutation = {
+      ...linearAll,
+      toolAllowlist: [...(linearAll.toolAllowlist ?? []), 'list_and_delete_issues'],
+    };
+    expect(
+      reviewAction(readDressedMutation, [linearWithDressedMutation], new Set(['linear:read']), now, supervised),
+    ).toEqual({ disposition: 'held', reason: HELD_MUTATION });
   });
 
   it('on: every non-refused row applies on its own, and the switch is the write authority', (): void => {

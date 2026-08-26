@@ -115,6 +115,24 @@ export type ParseResult =
   | { ok: true; action: ParsedSurfaceAction }
   | { ok: false; reason: string };
 
+function operationTokens(value: string): string[] {
+  let decoded = value;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded
+    .replace(/([a-z0-9])([A-Z])/g, '$1.$2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
 /**
  * Whether a verb targets a discovered real surface rather than the mock.
  *
@@ -266,16 +284,14 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
 export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
   if (parsed.kind === 'http.request') {
     if (parsed.method !== 'GET' && parsed.method !== 'HEAD') return 'write';
+    if (parsed.body !== undefined && parsed.body.trim() !== '') return 'write';
     // RPC APIs can accept mutations over GET. Treat an operation carrying an
     // explicit mutation verb as a write even when its transport method lies.
-    const tokens = parsed.path
-      .split(/[?#]/, 1)[0]
-      .replace(/([a-z0-9])([A-Z])/g, '$1.$2')
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean);
-    return tokens.some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
+    return operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token))
+      ? 'write'
+      : 'read';
   }
+  if (operationTokens(parsed.tool).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
   return READ_TOOL_PREFIX.test(parsed.tool) ? 'read' : 'write';
 }
 

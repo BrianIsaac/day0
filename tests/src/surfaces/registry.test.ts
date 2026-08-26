@@ -83,13 +83,17 @@ interface Recorded {
   http: Array<{ url: string; body: unknown }>;
 }
 
-function deps(recorded: Recorded, mcpResult: (tool: string) => unknown = (): unknown => ({ content: [{ type: 'text', text: '{"id":"prov-1"}' }] })): RealAdapterDeps {
+function deps(
+  recorded: Recorded,
+  mcpResult: (tool: string) => unknown = (): unknown => ({ content: [{ type: 'text', text: '{"id":"prov-1"}' }] }),
+  mcpTools: readonly string[] = ['save_comment', 'save_issue', 'list_issues'],
+): RealAdapterDeps {
   return {
     decrypt: vi.fn(async (_ctx: ActionCtx, id: string): Promise<string> => `secret-for-${id}`),
     createMcpClient: (options: McpClientOptions): McpClientLike => ({
       listTools: async () =>
         Object.fromEntries(
-          ['save_comment', 'save_issue', 'list_issues'].map((tool) => [
+          mcpTools.map((tool) => [
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
@@ -643,6 +647,75 @@ describe('applying surface actions', (): void => {
     });
     expect(auto[0]).toMatchObject({ ok: false, reason: NOT_AUTOMATIC });
     expect(recorded.http).toHaveLength(0);
+  });
+
+  it('does not auto-apply writes dressed as MCP reads or body-carrying HTTP reads', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const disguisedMcp: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'list_and_delete_issues',
+        toolArgsJson: JSON.stringify({ ids: ['REVOPS-10'] }),
+      },
+    };
+    const disguisedHead: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'HEAD',
+        path: '/conversations.history',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body: JSON.stringify({ mark: 'read' }),
+      },
+    };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [
+        { ...linear, toolAllowlist: [...(linear.toolAllowlist ?? []), 'list_and_delete_issues'] },
+        { ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.history'] },
+      ],
+      run,
+      [disguisedMcp, disguisedHead],
+      {
+        deps: deps(recorded, undefined, ['save_comment', 'save_issue', 'list_issues', 'list_and_delete_issues']),
+        grants: new Set(['linear:read', 'slack:read']),
+        approvedIndexes: new Set([0, 1]),
+        autoPhase: true,
+        autonomousActions: false,
+        now,
+      },
+    );
+    expect(applied.map((entry) => [entry.ok, entry.reason])).toEqual([
+      [false, 'no grant (linear:write)'],
+      [false, 'no grant (slack:write)'],
+    ]);
+    expect(recorded).toEqual({ mcp: [], http: [] });
+
+    const granted = await applySurfaceActions(
+      ctx,
+      'real',
+      [
+        { ...linear, toolAllowlist: [...(linear.toolAllowlist ?? []), 'list_and_delete_issues'] },
+        { ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.history'] },
+      ],
+      run,
+      [disguisedMcp, disguisedHead],
+      {
+        deps: deps(recorded, undefined, ['save_comment', 'save_issue', 'list_issues', 'list_and_delete_issues']),
+        grants: new Set(['linear:write', 'slack:write']),
+        approvedIndexes: new Set([0, 1]),
+        autoPhase: true,
+        autonomousActions: false,
+        now,
+      },
+    );
+    expect(granted.map((entry) => [entry.ok, entry.reason])).toEqual([
+      [false, NOT_AUTOMATIC],
+      [false, NOT_AUTOMATIC],
+    ]);
+    expect(recorded).toEqual({ mcp: [], http: [] });
   });
 
   it('records the hold-time reason on an unapproved row', async (): Promise<void> => {
