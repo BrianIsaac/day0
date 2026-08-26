@@ -979,6 +979,22 @@ async function pollSlack(
   return { candidates, decisionReplies };
 }
 
+/**
+ * Order two provider message timestamps without losing microsecond precision.
+ *
+ * Slack timestamps are `<seconds>.<fraction>` strings; a float comparison at
+ * 1.7e9 seconds rounds the last microsecond, so compare the parts as digits.
+ */
+export function compareProviderTs(left: string, right: string): number {
+  const [leftWhole = '', leftFraction = ''] = left.split('.', 2);
+  const [rightWhole = '', rightFraction = ''] = right.split('.', 2);
+  const width = Math.max(leftWhole.length, rightWhole.length);
+  const wholes = leftWhole.padStart(width, '0').localeCompare(rightWhole.padStart(width, '0'));
+  if (wholes !== 0) return wholes;
+  const scale = Math.max(leftFraction.length, rightFraction.length);
+  return leftFraction.padEnd(scale, '0').localeCompare(rightFraction.padEnd(scale, '0'));
+}
+
 /** Poll a connected chat surface by its approved path, independent of provider name. */
 async function pollChat(
   surface: Doc<'surfaces'>,
@@ -988,16 +1004,26 @@ async function pollChat(
   fetcher: IntakeFetcher,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
 ): Promise<ChatPollResult> {
-  if (surface.path === 'documented-api') {
-    return await pollSlack(surface, pages, credential, observedAt, fetcher);
-  }
-  if (surface.path === 'mcp') {
-    return {
-      candidates: [],
-      decisionReplies: await pollMcpManagerReplies(surface, credential, makeClient),
-    };
-  }
-  throw new Error(`Connected chat surface path ${surface.path ?? 'unknown'} has no intake reader.`);
+  const polled = await (async (): Promise<ChatPollResult> => {
+    if (surface.path === 'documented-api') {
+      return await pollSlack(surface, pages, credential, observedAt, fetcher);
+    }
+    if (surface.path === 'mcp') {
+      return {
+        candidates: [],
+        decisionReplies: await pollMcpManagerReplies(surface, credential, makeClient),
+      };
+    }
+    throw new Error(`Connected chat surface path ${surface.path ?? 'unknown'} has no intake reader.`);
+  })();
+  // Providers list newest first. Replies must resolve in the order the manager sent
+  // them, so the first answer decides and a later change of mind is the duplicate.
+  return {
+    ...polled,
+    decisionReplies: [...polled.decisionReplies].sort((left, right) =>
+      compareProviderTs(left.messageTs, right.messageTs),
+    ),
+  };
 }
 
 /**

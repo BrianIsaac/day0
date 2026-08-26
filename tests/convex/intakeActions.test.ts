@@ -7,6 +7,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  compareProviderTs,
   issueProject,
   linearCandidate,
   linearListArguments,
@@ -222,6 +223,21 @@ function slackResponse(payload: Record<string, unknown>): Response {
   });
 }
 
+describe('provider timestamp order', (): void => {
+  it('keeps microsecond order that a float comparison would round away', (): void => {
+    expect(compareProviderTs('1787770800.000001', '1787770800.000002')).toBeLessThan(0);
+    expect(compareProviderTs('1787770800.000002', '1787770800.000001')).toBeGreaterThan(0);
+    expect(compareProviderTs('1787770800.000100', '1787770800.0001')).toBe(0);
+    expect(compareProviderTs('1787770801', '1787770800.999999')).toBeGreaterThan(0);
+    expect(compareProviderTs('12.098', '12.100')).toBeLessThan(0);
+    expect([...['12.100', '12.098', '12.099']].sort(compareProviderTs)).toEqual([
+      '12.098',
+      '12.099',
+      '12.100',
+    ]);
+  });
+});
+
 describe('real surface intake', (): void => {
   it('walks the documented waterfall, checkpoints successes, and maps Linear and Slack work', async (): Promise<void> => {
     const checkpoint = Date.parse('2026-08-26T01:00:00.000Z');
@@ -346,6 +362,7 @@ describe('real surface intake', (): void => {
             { ts: '1770000001.000099', user: 'UBOT', text: 'approve ab3xyz' },
             { ts: '1770000001.000098', user: 'UOTHER', text: 'reject cd4uvw not now' },
             { ts: '1770000001.000097', user: 'UMANAGER', text: 'ordinary message' },
+            { ts: '1770000001.000096', user: 'UMANAGER', text: 'reject ab3xyz not yet' },
           ],
           response_metadata: { next_cursor: '' },
         });
@@ -439,18 +456,26 @@ describe('real surface intake', (): void => {
         (url: URL): boolean => url.searchParams.get('oldest') === String(checkpoint / 1_000),
       ),
     ).toBe(true);
+    // Slack lists newest first; replies resolve oldest first so the manager's first
+    // answer is the one that decides and a change of mind is the duplicate.
     expect(harness.decisions).toEqual([
       {
         surfaceId: id<'surfaces'>('surface-slack'),
         userId: 'UMANAGER',
-        messageTs: '1770000001.000100',
-        reply: { verb: 'approve', id: 'ab3xyz' },
+        messageTs: '1770000001.000096',
+        reply: { verb: 'reject', id: 'ab3xyz', reason: 'not yet' },
       },
       {
         surfaceId: id<'surfaces'>('surface-slack'),
         userId: 'UOTHER',
         messageTs: '1770000001.000098',
         reply: { verb: 'reject', id: 'cd4uvw', reason: 'not now' },
+      },
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000100',
+        reply: { verb: 'approve', id: 'ab3xyz' },
       },
     ]);
     expect(
@@ -501,6 +526,7 @@ describe('real surface intake', (): void => {
               messages: [
                 { ts: '12.100', user: 'manager-user', text: 'reject gh6npq revise it' },
                 { ts: '12.099', user: 'agent-bot', text: 'approve gh6npq' },
+                { ts: '12.098', user: 'manager-user', text: 'approve gh6npq' },
               ],
             };
           },
@@ -511,7 +537,15 @@ describe('real surface intake', (): void => {
 
     expect(result).toEqual({ candidates: 0, mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
     expect(calls).toEqual([{ conversationId: 'manager-conversation', limit: 100 }]);
+    // Providers list newest first; replies resolve in the order the manager sent them,
+    // so the first answer wins and the later one is the duplicate.
     expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-company-chat'),
+        userId: 'manager-user',
+        messageTs: '12.098',
+        reply: { verb: 'approve', id: 'gh6npq' },
+      },
       {
         surfaceId: id<'surfaces'>('surface-company-chat'),
         userId: 'manager-user',
