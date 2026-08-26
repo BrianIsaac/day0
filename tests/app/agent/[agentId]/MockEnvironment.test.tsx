@@ -30,6 +30,8 @@ describe('MockEnvironment caption and tabs', (): void => {
     expect(markup).toContain('Mock surfaces - when the agent runs a skill');
     expect(markup).not.toContain('Surfaces');
     expect(markup).not.toContain('real mode');
+    expect(markup).toContain('Q4 Revenue Tracker');
+    expect(markup).toContain('Linear-style queue');
   });
 
   it('says which tabs mirror real content and adds the Surfaces tab in real mode', (): void => {
@@ -40,6 +42,10 @@ describe('MockEnvironment caption and tabs', (): void => {
     expect(markup).toContain('mock-only and stay empty');
     expect(markup).toContain('Surfaces');
     expect(markup).toContain('no Slack channels are mirrored here in real mode');
+    expect(markup).not.toContain('Q4 Revenue Tracker');
+    expect(markup).not.toContain('Linear-style queue');
+    expect(markup).toContain('linked documentation');
+    expect(markup).toContain('mock-only');
   });
 });
 

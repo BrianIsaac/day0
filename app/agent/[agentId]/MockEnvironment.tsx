@@ -20,13 +20,14 @@ const CAPTIONS: Record<EnvironmentMode, string> = {
   real: 'Real surfaces - the Docs tab mirrors the linked documentation; Slack, Spreadsheet, Twitter and Tickets are mock-only and stay empty; the agent acts through the connections on the Surfaces tab',
 };
 
-const TABS: Array<{ key: TabKey; label: string; sublabel: string }> = [
-  { key: 'slack', label: 'Slack', sublabel: 'channels + DMs' },
-  { key: 'spreadsheet', label: 'Spreadsheet', sublabel: 'Q4 Revenue Tracker' },
-  { key: 'docs', label: 'Docs', sublabel: 'team wiki + how-tos' },
-  { key: 'tweet', label: 'Twitter', sublabel: 'mentions + drafts' },
-  { key: 'tickets', label: 'Tickets', sublabel: 'Linear-style queue' },
-  { key: 'surfaces', label: 'Surfaces', sublabel: 'connections + evidence' },
+/** Tab strip; the sublabel names the mock fixture in mock mode and what the tab mirrors in real mode. */
+const TABS: Array<{ key: TabKey; label: string; sublabel: Record<EnvironmentMode, string> }> = [
+  { key: 'slack', label: 'Slack', sublabel: { mock: 'channels + DMs', real: 'mock-only' } },
+  { key: 'spreadsheet', label: 'Spreadsheet', sublabel: { mock: 'Q4 Revenue Tracker', real: 'mock-only' } },
+  { key: 'docs', label: 'Docs', sublabel: { mock: 'team wiki + how-tos', real: 'linked documentation' } },
+  { key: 'tweet', label: 'Twitter', sublabel: { mock: 'mentions + drafts', real: 'mock-only' } },
+  { key: 'tickets', label: 'Tickets', sublabel: { mock: 'Linear-style queue', real: 'mock-only' } },
+  { key: 'surfaces', label: 'Surfaces', sublabel: { mock: 'connections + evidence', real: 'connections + evidence' } },
 ];
 
 const TAB_KEYS = new Set<string>(TABS.map((tab): TabKey => tab.key));
@@ -134,7 +135,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
                 </span>
               ) : null}
               <span className="hidden @3xl:inline text-[10px] text-[var(--color-muted)]">
-                {t.sublabel}
+                {t.sublabel[mode]}
               </span>
             </button>
           );
