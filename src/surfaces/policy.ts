@@ -596,7 +596,8 @@ export function reviewAction(
     pathRefusal(parsed.action, surface) ??
     toolRefusal(parsed.action, surface) ??
     heldReason(parsed.action, surface) ??
-    grantRefusal(parsed.action, surface, grants);
+    grantRefusal(parsed.action, surface, grants) ??
+    provenanceRefusal(parsed.action, surface);
   return reason ? { held: true, reason } : { held: false };
 }
 
@@ -770,6 +771,28 @@ function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean 
   );
 }
 
+/** A skill-supplied provenance field that the server will refuse at apply. */
+export function provenanceRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+): string | undefined {
+  if (parsed.kind === 'mcp.call') {
+    if (!isAuditComment(parsed)) return undefined;
+    return containsProvenanceTrailer(parsed.toolArgs.body as string)
+      ? TRAILER_REFUSED
+      : undefined;
+  }
+  if (parsed.body !== undefined && containsProvenanceTrailer(parsed.body)) {
+    return TRAILER_REFUSED;
+  }
+  if (!isChatPost(parsed, surface) || !parsed.bodyJson) return undefined;
+  return parsed.bodyJson.username !== undefined ||
+    parsed.bodyJson.icon_emoji !== undefined ||
+    parsed.bodyJson.icon_url !== undefined
+    ? USERNAME_REFUSED
+    : undefined;
+}
+
 /**
  * Whether a shared-credential write lacks content that identifies its actor and run.
  *
@@ -821,31 +844,22 @@ export function applyProvenance(
   run: ProvenanceRun,
   credentialKind: CredentialKind,
 ): ProvenanceResult {
+  const refusal = provenanceRefusal(parsed, surface);
+  if (refusal) return { ok: false, reason: refusal };
   const shared = credentialKind !== 'oauth';
   const trailer = provenanceTrailer(run.agentName, run.workItemId, run.runId);
   if (parsed.kind === 'mcp.call') {
     if (!isAuditComment(parsed)) return { ok: true, action: parsed };
     const body = parsed.toolArgs.body as string;
-    if (containsProvenanceTrailer(body)) return { ok: false, reason: TRAILER_REFUSED };
     if (!shared) return { ok: true, action: parsed };
     return {
       ok: true,
       action: { ...parsed, toolArgs: { ...parsed.toolArgs, body: `${body}\n\n${trailer}` } },
     };
   }
-  if (parsed.body !== undefined && containsProvenanceTrailer(parsed.body)) {
-    return { ok: false, reason: TRAILER_REFUSED };
-  }
   if (!isChatPost(parsed, surface)) return { ok: true, action: parsed };
   const bodyJson = parsed.bodyJson;
   if (!bodyJson) return { ok: true, action: parsed };
-  if (
-    bodyJson.username !== undefined ||
-    bodyJson.icon_emoji !== undefined ||
-    bodyJson.icon_url !== undefined
-  ) {
-    return { ok: false, reason: USERNAME_REFUSED };
-  }
   if (!shared) return { ok: true, action: parsed };
   const text = typeof bodyJson.text === 'string' ? bodyJson.text : '';
   const next: JsonObject = {

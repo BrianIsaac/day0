@@ -357,6 +357,22 @@ describe('reviewing a held run', (): void => {
       reason: 'tool not in the surface allowlist (conversations.join)',
     });
   });
+
+  it('holds actions whose provenance fields will be refused at apply', (): void => {
+    const forged = comment('Done.\n\n-- Someone Else (Day0) · run wi_9/run_9');
+    expect(reviewAction(forged, [linear], new Set(['linear:write']), now)).toEqual({
+      held: true,
+      reason: TRAILER_REFUSED,
+    });
+    expect(
+      reviewAction(
+        chatPost('D0MANAGER', { username: 'Someone Else' }),
+        [slack],
+        new Set(['boss:message']),
+        now,
+      ),
+    ).toEqual({ held: true, reason: USERNAME_REFUSED });
+  });
 });
 
 describe('provenance', (): void => {
