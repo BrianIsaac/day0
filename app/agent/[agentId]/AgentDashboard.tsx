@@ -24,6 +24,7 @@ import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
+import { replyTargetFor } from '../../../src/work/reply-target';
 import type { MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 
@@ -1331,7 +1332,7 @@ function WorkItemCard({
           actions={output.actions ?? []}
           verdicts={pendingVerdicts(item.actionVerdicts, output.actions?.length ?? 0)}
           surfaces={surfaces}
-          replyTarget={item.replyTarget}
+          replyTarget={replyTargetFor(item)}
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />
