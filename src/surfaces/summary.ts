@@ -148,8 +148,7 @@ function describeHttpRequest(
   const body = parsed.bodyJson;
   const text = body ? firstString(body, ['text']) : undefined;
   const isChatPost =
-    parsed.method !== 'GET' &&
-    parsed.method !== 'HEAD' &&
+    parsed.method === 'POST' &&
     /^\/*chat\.postMessage$/.test(parsed.path) &&
     surface?.class === 'chat' &&
     text !== undefined;

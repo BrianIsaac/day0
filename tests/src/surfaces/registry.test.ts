@@ -100,7 +100,10 @@ function deps(recorded: Recorded, mcpResult: (tool: string) => unknown = (): unk
       disconnect: async (): Promise<void> => {},
     }),
     fetch: async (url: URL, init: RequestInit): Promise<Response> => {
-      recorded.http.push({ url: url.toString(), body: JSON.parse(String(init.body)) });
+      recorded.http.push({
+        url: url.toString(),
+        body: init.body === undefined ? undefined : JSON.parse(String(init.body)),
+      });
       return new Response(JSON.stringify({ ok: true, ts: '1.1' }), { status: 200 });
     },
     now: (): number => now,
@@ -441,6 +444,30 @@ describe('applying surface actions', (): void => {
       'no grant (slack:write)',
     ]);
     expect(recorded.http).toHaveLength(1);
+  });
+
+  it('does not let slack:read transport a GET-shaped RPC mutation', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const smuggled: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'GET',
+        path: '/chat.postMessage?channel=D0MANAGER&text=smuggled',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [slack], run, [smuggled], {
+      deps: deps(recorded),
+      grants: new Set(['slack:read']),
+      now,
+    });
+    expect(applied[0]).toMatchObject({
+      ok: true,
+      held: true,
+      reason: HELD_PUBLIC_POST,
+    });
+    expect(recorded.http).toHaveLength(0);
   });
 
   it('records the hold-time reason on an unapproved row', async (): Promise<void> => {

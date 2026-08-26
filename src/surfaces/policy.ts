@@ -34,6 +34,36 @@ export const SHARED_IDENTITY_ICON = ':briefcase:';
 
 const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 const READ_TOOL_PREFIX = /^(?:list|get|search|read|fetch|retrieve|query|find|describe|show)(?:[_-]|$)/i;
+const HTTP_MUTATION_WORDS = new Set([
+  'add',
+  'approve',
+  'archive',
+  'cancel',
+  'close',
+  'create',
+  'delete',
+  'invite',
+  'join',
+  'kick',
+  'leave',
+  'mark',
+  'move',
+  'open',
+  'pin',
+  'post',
+  'publish',
+  'reject',
+  'remove',
+  'rename',
+  'reply',
+  'save',
+  'schedule',
+  'send',
+  'set',
+  'transition',
+  'unpin',
+  'update',
+]);
 const STATUS_TOOL = /^(?:save|update|set|change|transition|move)[_-]|status|state/i;
 const STATUS_KEYS = ['status', 'state', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'];
 const COMMENT_TOOL = /comment|message|post|reply|note/i;
@@ -233,7 +263,16 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
  */
 export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
   if (parsed.kind === 'http.request') {
-    return parsed.method === 'GET' || parsed.method === 'HEAD' ? 'read' : 'write';
+    if (parsed.method !== 'GET' && parsed.method !== 'HEAD') return 'write';
+    // RPC APIs can accept mutations over GET. Treat an operation carrying an
+    // explicit mutation verb as a write even when its transport method lies.
+    const tokens = parsed.path
+      .split(/[?#]/, 1)[0]
+      .replace(/([a-z0-9])([A-Z])/g, '$1.$2')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    return tokens.some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
   }
   return READ_TOOL_PREFIX.test(parsed.tool) ? 'read' : 'write';
 }
@@ -700,8 +739,8 @@ export type ProvenanceResult =
  *   True for a write to a chat surface that carries message text.
  */
 function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
-  if (actionIntent(parsed) !== 'write') return false;
   return (
+    parsed.method === 'POST' &&
     surface.class === 'chat' &&
     /^\/*chat\.postMessage$/.test(parsed.path) &&
     typeof parsed.bodyJson?.text === 'string'

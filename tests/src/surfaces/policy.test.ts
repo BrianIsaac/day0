@@ -164,6 +164,9 @@ describe('intent, scope and connection', (): void => {
     expect(actionIntent(parsed(comment()))).toBe('write');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'frobnicate' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }))).toBe('read');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: '/chat.postMessage?channel=D0MANAGER&text=smuggled' } }))).toBe('write');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', method: 'HEAD', path: '/conversations.open?users=U1' } }))).toBe('write');
+    expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'northstar', path: '/contacts/42' } }))).toBe('read');
     expect(actionIntent(parsed(chatPost('D0MANAGER')))).toBe('write');
   });
 
@@ -246,6 +249,7 @@ describe('the manager DM grant', (): void => {
       },
     };
     expect(isManagerDm(parsed(chatPost('D0MANAGER')), slack)).toBe(true);
+    expect(isManagerDm(parsed({ ...chatPost('D0MANAGER'), args: { ...chatPost('D0MANAGER').args, method: 'PUT' } }), slack)).toBe(false);
     expect(isManagerDm(parsed(chatPost('C0PUBLIC')), slack)).toBe(false);
     expect(isManagerDm(parsed(chatPost('D0MANAGER')), { ...slack, managerDmChannelId: undefined })).toBe(false);
     expect(isManagerDm(parsed(chatJoin('D0MANAGER')), slack)).toBe(false);
