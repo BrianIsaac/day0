@@ -13,6 +13,7 @@ import {
   AutonomyControl,
   cancelsAutonomyConfirm,
   cancelledReason,
+  decisionAttribution,
   landedHeadline,
   PendingActions,
   pendingHeadline,
@@ -214,6 +215,28 @@ describe('dashboard exact-action gate', (): void => {
     expect(cancelledReason({ verdict: { decision: 'needs-skill' } })).toBe('skill proposal rejected by the manager');
     expect(cancelledReason({ verdict: { decision: 'claim' }, plan: { summary: 'x' } })).toBe('plan cancelled by the manager');
     expect(cancelledReason({})).toBe('cancelled by the manager');
+  });
+
+  it('names whether the dashboard or company chat won the decision', (): void => {
+    expect(
+      decisionAttribution({
+        decidedAt: 1,
+        outcome: 'approved',
+        decidedVia: 'channel',
+        surfaceName: 'Slack',
+      }),
+    ).toBe('approved from Slack');
+    expect(
+      decisionAttribution({
+        decidedAt: 1,
+        outcome: 'rejected',
+        decidedVia: 'dashboard',
+        surfaceName: 'Company chat',
+      }),
+    ).toBe('rejected from the day0 dashboard');
+    expect(
+      decisionAttribution({ surfaceName: 'Slack' }),
+    ).toBeUndefined();
   });
 
   it('requires reconciliation for landed or interrupted provider effects', (): void => {

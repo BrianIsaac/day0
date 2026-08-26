@@ -6,6 +6,22 @@ export const DECISION_ID_LENGTH = 6;
 export const DECISION_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
 
 export type DecisionKind = 'plan' | 'actions';
+export type DecisionReply =
+  | { verb: 'approve'; id: string }
+  | { verb: 'reject'; id: string; reason: string };
+
+/** Parse only the bounded command prefix; trailing reject text is inert audit prose. */
+export function parseDecisionReply(text: string): DecisionReply | undefined {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const match = /^(approve|reject)\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:\s+(.*))?$/i.exec(
+    flat,
+  );
+  if (!match) return undefined;
+  const verb = match[1].toLowerCase() as 'approve' | 'reject';
+  const id = match[2].toLowerCase();
+  if (verb === 'approve') return { verb, id };
+  return { verb, id, reason: (match[3] ?? '').slice(0, 200) };
+}
 
 /** Turn random bytes into the short, case-insensitive token used in manager replies. */
 export function decisionIdFromBytes(bytes: Uint8Array): string {

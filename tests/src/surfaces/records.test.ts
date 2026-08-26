@@ -33,6 +33,7 @@ describe('surface row narrowing', (): void => {
       toolArguments: [{ tool: 'save_comment', arguments: ['issueId', 'body'] }],
       credentialId: 'cred-1',
       managerDmChannelId: 'D1',
+      managerUserId: 'U1',
       managerName: 'Brian',
       request: { target: { reasoning: 'secret-bearing prose' } },
     } as never);
@@ -45,6 +46,7 @@ describe('surface row narrowing', (): void => {
       credentialId: 'cred-1',
       credentialKind: 'value',
       managerDmChannelId: 'D1',
+      managerUserId: 'U1',
       managerName: 'Brian',
     });
     expect(toSurfaceRecord({ ...base, path: 'unknown' }).path).toBeUndefined();

@@ -1,5 +1,11 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
+import {
+  mutation,
+  query,
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { applyVerdict, skillRejectedReason } from './work';
@@ -155,6 +161,15 @@ export const registered = query({
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'registered'))
       .collect();
   },
+});
+
+export const registeredInternal = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<Doc<'skills'>[]> =>
+    await ctx.db
+      .query('skills')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'registered'))
+      .collect(),
 });
 
 /**

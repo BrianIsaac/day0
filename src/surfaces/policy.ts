@@ -996,10 +996,14 @@ export function provenanceRefusal(
   surface: SurfaceRecord,
 ): string | undefined {
   if (parsed.kind === 'mcp.call') {
+    if (isMcpChatPost(parsed)) {
+      const message = MESSAGE_KEYS.map((key) => parsed.toolArgs[key]).find(
+        (value): value is string => typeof value === 'string',
+      );
+      return message && containsProvenanceTrailer(message) ? TRAILER_REFUSED : undefined;
+    }
     if (!isAuditComment(parsed)) return undefined;
-    return containsProvenanceTrailer(parsed.toolArgs.body as string)
-      ? TRAILER_REFUSED
-      : undefined;
+    return containsProvenanceTrailer(parsed.toolArgs.body as string) ? TRAILER_REFUSED : undefined;
   }
   if (parsed.body !== undefined && containsProvenanceTrailer(parsed.body)) {
     return TRAILER_REFUSED;
@@ -1032,6 +1036,7 @@ export function sharedWriteWithoutAttribution(
 ): boolean {
   if (credentialKind === 'oauth' || actionIntent(parsed) === 'read') return false;
   if (isAuditComment(parsed)) return false;
+  if (parsed.kind === 'mcp.call' && isMcpChatPost(parsed)) return false;
   if (parsed.kind === 'http.request') return !isChatPost(parsed, surface);
   if (targetIssue(parsed) === undefined) return true;
   return !hasLandedAuditComment(parsed, index, earlier, ledger);
@@ -1068,6 +1073,21 @@ export function applyProvenance(
   const shared = credentialKind !== 'oauth';
   const trailer = provenanceTrailer(run.agentName, run.workItemId, run.runId);
   if (parsed.kind === 'mcp.call') {
+    if (isMcpChatPost(parsed)) {
+      if (!shared) return { ok: true, action: parsed };
+      const messageKey = MESSAGE_KEYS.find((key) => typeof parsed.toolArgs[key] === 'string');
+      if (!messageKey) return { ok: true, action: parsed };
+      return {
+        ok: true,
+        action: {
+          ...parsed,
+          toolArgs: {
+            ...parsed.toolArgs,
+            [messageKey]: `${String(parsed.toolArgs[messageKey])}\n\n${trailer}`,
+          },
+        },
+      };
+    }
     if (!isAuditComment(parsed)) return { ok: true, action: parsed };
     const body = parsed.toolArgs.body as string;
     if (!shared) return { ok: true, action: parsed };

@@ -40,6 +40,7 @@ function sameAuthority(left: SurfaceRecord, right: SurfaceRecord): boolean {
     toolArguments: left.toolArguments,
     credentialId: left.credentialId,
     managerDmChannelId: left.managerDmChannelId,
+    managerUserId: left.managerUserId,
   }) === JSON.stringify({
     slug: right.slug,
     verdict: right.verdict,
@@ -51,7 +52,52 @@ function sameAuthority(left: SurfaceRecord, right: SurfaceRecord): boolean {
     toolArguments: right.toolArguments,
     credentialId: right.credentialId,
     managerDmChannelId: right.managerDmChannelId,
+    managerUserId: right.managerUserId,
   });
+}
+
+interface ManagerDelivery {
+  agentId: Id<'agents'>;
+  agentName: string;
+  requestRunId: Id<'events'>;
+  surface: SurfaceRecord;
+  surfaces: SurfaceRecord[];
+  grants: string[];
+}
+
+async function deliverManagerMessage(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  delivery: ManagerDelivery,
+  text: string,
+) {
+  const applied = await applySurfaceActions(
+    ctx,
+    'real',
+    delivery.surfaces,
+    {
+      agentId: delivery.agentId,
+      agentName: delivery.agentName,
+      workItemId,
+      runId: delivery.requestRunId,
+    },
+    [managerMessageAction(delivery.surface, text)],
+    {
+      deps: {
+        decrypt: decryptCredential,
+        createMcpClient: createMastraMcpClient,
+        fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
+        beforeTransport: beforeManagerTransport(ctx, delivery.agentId),
+      },
+      grants: new Set(delivery.grants),
+      approvedIndexes: new Set([0]),
+      autoPhase: true,
+      autonomousActions: false,
+    },
+  );
+  const result = applied[0];
+  if (!result?.ok) throw new Error(result?.reason ?? 'manager message did not land');
+  return result;
 }
 
 /** Re-read boss:message authority at the last boundary before a decision DM. */
@@ -95,9 +141,7 @@ export const requestDecision = internalAction({
     });
     if (!prepared.prepared) return { sent: false, reason: prepared.reason };
 
-    const action = managerMessageAction(
-      prepared.surface,
-      decisionRequestText({
+    const text = decisionRequestText({
         agentName: prepared.agentName,
         title: prepared.title,
         id: prepared.decisionId,
@@ -106,35 +150,9 @@ export const requestDecision = internalAction({
         actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
         heldIndexes: prepared.heldIndexes,
         surfaces: prepared.surfaces,
-      }),
-    );
+      });
     try {
-      const applied = await applySurfaceActions(
-        ctx,
-        'real',
-        prepared.surfaces,
-        {
-          agentId: prepared.agentId,
-          agentName: prepared.agentName,
-          workItemId: args.workItemId,
-          runId: prepared.requestRunId,
-        },
-        [action],
-        {
-          deps: {
-            decrypt: decryptCredential,
-            createMcpClient: createMastraMcpClient,
-            fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
-            beforeTransport: beforeManagerTransport(ctx, prepared.agentId),
-          },
-          grants: new Set(prepared.grants),
-          approvedIndexes: new Set([0]),
-          autoPhase: true,
-          autonomousActions: false,
-        },
-      );
-      const result = applied[0];
-      if (!result?.ok) throw new Error(result?.reason ?? 'manager message did not land');
+      const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text);
       await ctx.runMutation(internal.work.recordDecisionRequest, {
         workItemId: args.workItemId,
         decisionId: prepared.decisionId,
@@ -148,6 +166,32 @@ export const requestDecision = internalAction({
         decisionId: prepared.decisionId,
         failure: reason,
       });
+      return { sent: false, reason };
+    }
+  },
+});
+
+/** Send the sole acknowledgement claimed for a late or duplicate reply. */
+export const sendDecisionNotice = internalAction({
+  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
+    const prepared = await ctx.runMutation(internal.work.prepareDecisionNotice, args);
+    if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
+    try {
+      const result = await deliverManagerMessage(
+        ctx,
+        args.workItemId,
+        prepared,
+        prepared.text,
+      );
+      await ctx.runMutation(internal.work.recordDecisionNotice, {
+        ...args,
+        ts: result.providerId,
+      });
+      return { sent: true };
+    } catch (error) {
+      const reason = safeFailureMessage(error, '', 'Decision notice failed.');
+      await ctx.runMutation(internal.work.recordDecisionNotice, { ...args, failure: reason });
       return { sent: false, reason };
     }
   },

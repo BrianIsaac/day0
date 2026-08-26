@@ -115,5 +115,36 @@ describe('the outbound manager-channel action', (): void => {
       }),
     ).resolves.toEqual({ sent: false, reason: 'decision request already claimed' });
     expect(sent).toHaveLength(1);
+
+    await harness.run(async (ctx) => {
+      const current = await ctx.db.get(workItemId);
+      if (!current?.decision) throw new Error('decision missing');
+      await ctx.db.patch(workItemId, {
+        decision: {
+          ...current.decision,
+          decidedAt: 2,
+          outcome: 'approved',
+          decidedVia: 'dashboard',
+          duplicateNotifiedAt: 3,
+        },
+      });
+    });
+    await expect(
+      harness.action(internal.managerChannelActions.sendDecisionNotice, {
+        workItemId,
+        decisionId: row?.decision?.id ?? '',
+      }),
+    ).resolves.toEqual({ sent: true });
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(sent[1].body).text).toContain(
+      'was already approved from the day0 dashboard.',
+    );
+    await expect(
+      harness.action(internal.managerChannelActions.sendDecisionNotice, {
+        workItemId,
+        decisionId: row?.decision?.id ?? '',
+      }),
+    ).resolves.toEqual({ sent: false, reason: 'notice already claimed' });
+    expect(sent).toHaveLength(2);
   });
 });

@@ -667,6 +667,46 @@ describe('applying surface actions', (): void => {
     expect(recorded.http).toHaveLength(1);
   });
 
+  it('appends provenance to a generic MCP manager message', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const chat: SurfaceRecord = {
+      ...slack,
+      slug: 'company-chat',
+      displayName: 'Company chat',
+      path: 'mcp',
+      endpoint: 'https://chat.example/mcp',
+      toolAllowlist: ['send_message'],
+      managerDmChannelId: 'manager-conversation',
+    };
+    const action: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'company-chat',
+        tool: 'send_message',
+        toolArgsJson: JSON.stringify({
+          conversationId: 'manager-conversation',
+          content: 'A decision is waiting.',
+        }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [chat], run, [action], {
+      deps: deps(recorded, undefined, ['send_message']),
+      grants: new Set(['boss:message']),
+      now,
+    });
+
+    expect(applied[0]).toMatchObject({ ok: true });
+    expect(recorded.mcp).toEqual([
+      {
+        tool: 'send_message',
+        args: {
+          conversationId: 'manager-conversation',
+          content: 'A decision is waiting.\n\n-- Priya (Day0) · run wi_1/run_1',
+        },
+      },
+    ]);
+  });
+
   it('does not let slack:read transport a GET-shaped RPC mutation', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const smuggled: MockAction = {

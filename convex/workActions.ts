@@ -260,10 +260,11 @@ export const draftPlan = action({
 async function executeApprovedPlanHandler(
   ctx: ActionCtx,
   args: { workItemId: Id<'workItems'> },
+  internalCaller = false,
 ): Promise<{ ok: boolean; reason?: string }> {
-    const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, {
-      workItemId: args.workItemId,
-    });
+    const item: Doc<'workItems'> | null = internalCaller
+      ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
+      : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
     if (!item) return { ok: false, reason: 'workItem not found' };
     const agentId = item.agentId;
     // Cheap early-out for the common case; `claimForExecution` below is what
@@ -272,17 +273,17 @@ async function executeApprovedPlanHandler(
     if (item.state !== 'plan-approved') {
       return { ok: false, reason: `state is ${item.state}; expected plan-approved` };
     }
-    const charterRow = await ctx.runQuery(api.charters.latest, {
-      agentId,
-    });
+    const charterRow = internalCaller
+      ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
+      : await ctx.runQuery(api.charters.latest, { agentId });
     if (!charterRow) return { ok: false, reason: 'no charter' };
     const charter = charterRow.body as Charter;
     const plan = item.plan as Awaited<ReturnType<typeof draftExecutionPlan>>;
     const candidate = rowToCandidate(item);
 
-    const skills: Doc<'skills'>[] = await ctx.runQuery(api.skills.registered, {
-      agentId,
-    });
+    const skills: Doc<'skills'>[] = internalCaller
+      ? await ctx.runQuery(internal.skills.registeredInternal, { agentId })
+      : await ctx.runQuery(api.skills.registered, { agentId });
     // Use the same token-scoring as the evaluator's findMatchingSkill so
     // the executor picks the matched skill rather than blindly falling
     // back to skills[0]. Source-system tokens count 4× content tokens.
@@ -332,6 +333,7 @@ async function executeApprovedPlanHandler(
         plan,
         candidate,
         charter,
+        internalCaller,
       });
     }
     try {
@@ -392,6 +394,17 @@ export const executeApprovedPlan = action({
   handler: executeApprovedPlanHandler,
 });
 
+/** Continue a plan approved through the manager channel, without a browser identity. */
+export const executeApprovedPlanInternal = internalAction({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
+    if (SURFACE_MODE !== 'real') {
+      return { ok: false, reason: 'manager-channel execution is real-mode only' };
+    }
+    return await executeApprovedPlanHandler(ctx, args, true);
+  },
+});
+
 /**
  * Run a real-surface skill and stop it at the exact-action gate.
  *
@@ -412,11 +425,15 @@ async function holdRealActions(
     plan: Awaited<ReturnType<typeof draftExecutionPlan>>;
     candidate: WorkCandidate;
     charter: Charter;
+    internalCaller: boolean;
   },
 ): Promise<{ ok: boolean; reason?: string }> {
   try {
-    const agent = await ctx.runQuery(api.agents.get, { agentId: args.agentId });
-    const mockEnv = await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
+    const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
+    if (!agent) throw new Error('agent not found');
+    const mockEnv = args.internalCaller
+      ? await ctx.runQuery(internal.mock.snapshotInternal, { agentId: args.agentId })
+      : await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
     const output = await runSkill({
       skill: {
         name: args.skill.name,
@@ -563,6 +580,7 @@ function surfaceAuthorityShape(surface: SurfaceRecord): string {
     credentialId: surface.credentialId,
     credentialKind: surface.credentialKind,
     managerDmChannelId: surface.managerDmChannelId,
+    managerUserId: surface.managerUserId,
   });
 }
 

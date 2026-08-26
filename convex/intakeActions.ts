@@ -12,6 +12,7 @@ import { safeFailureMessage } from '../src/surfaces/redact';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
+import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
 
 const PROVIDER_TIMEOUT_MS = 10_000;
 const MAX_MCP_PAGES = 5;
@@ -59,6 +60,13 @@ interface IntakeSeed extends Omit<WorkCandidate, 'observedAt'> {
   agentId: Id<'agents'>;
 }
 
+interface IntakeDecisionReply {
+  surfaceId: Id<'surfaces'>;
+  userId: string;
+  messageTs: string;
+  reply: DecisionReply;
+}
+
 export interface IntakeRuntime {
   listSurfaces(): Promise<Doc<'surfaces'>[]>;
   getAgent(agentId: Id<'agents'>): Promise<Doc<'agents'> | null>;
@@ -66,6 +74,7 @@ export interface IntakeRuntime {
   decrypt(credentialId: CredentialId): Promise<string>;
   recordIntake(record: IntakeRecord): Promise<void>;
   seed(candidate: IntakeSeed): Promise<void>;
+  resolveDecision(reply: IntakeDecisionReply): Promise<void>;
 }
 
 export interface IntakeDependencies {
@@ -104,6 +113,11 @@ interface SlackMessage {
   user?: string;
   /** The parent message when the mention itself sits inside a thread. */
   threadTs?: string;
+}
+
+interface ChatPollResult {
+  candidates: WorkCandidate[];
+  decisionReplies: Array<Omit<IntakeDecisionReply, 'surfaceId'>>;
 }
 
 type IntakeFetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -769,6 +783,108 @@ async function slackHistory(
   return messages;
 }
 
+function mcpMessagePage(value: unknown): { messages: SlackMessage[]; nextCursor?: string } {
+  const decoded = decodeMcpPayload(value);
+  const record = asRecord(decoded) ?? {};
+  const data = asRecord(record.data);
+  const container = data ?? record;
+  const rows = Array.isArray(container.messages)
+    ? container.messages
+    : Array.isArray(container.items)
+      ? container.items
+      : [];
+  const messages = rows.flatMap((item): SlackMessage[] => {
+    const row = asRecord(item);
+    if (typeof row?.ts !== 'string' || typeof row.text !== 'string') return [];
+    return [
+      {
+        ts: row.ts,
+        text: row.text,
+        user: typeof row.user === 'string' ? row.user : undefined,
+        threadTs: typeof row.thread_ts === 'string' ? row.thread_ts : undefined,
+      },
+    ];
+  });
+  const metadata = asRecord(container.response_metadata) ?? asRecord(record.response_metadata);
+  const cursor = container.nextCursor ?? container.next_cursor ?? metadata?.next_cursor;
+  return {
+    messages,
+    nextCursor: typeof cursor === 'string' && cursor.trim() ? cursor.trim() : undefined,
+  };
+}
+
+/** Read the manager DM through a generic chat MCP connection's discovered history tool. */
+async function pollMcpManagerReplies(
+  surface: Doc<'surfaces'>,
+  credential: string,
+  makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
+): Promise<ChatPollResult['decisionReplies']> {
+  if (!surface.managerDmChannelId || !surface.managerUserId) return [];
+  const historyTool = surface.toolAllowlist?.find((tool) =>
+    /(?:^|[._-])(?:conversations?[._-])?history$/i.test(tool),
+  );
+  if (!historyTool) throw new Error('Connected chat MCP surface exposes no history tool.');
+  if (!surface.endpoint) throw new Error('Connected chat MCP surface has no endpoint.');
+  const endpoint = new URL(surface.endpoint);
+  if (endpoint.protocol !== 'https:') throw new Error('Chat MCP endpoint must use HTTPS.');
+  const client = makeClient(endpoint, credential);
+  try {
+    const { definitions, errors } = await client.listToolDefinitionsWithErrors({
+      perServerTimeoutMs: PROVIDER_TIMEOUT_MS,
+    });
+    if (errors.surface) throw new Error(errors.surface);
+    const definition = definitions.surface?.[historyTool];
+    if (!definition) throw new Error(`Chat MCP server exposes no ${historyTool} tool.`);
+    const properties = schemaProperties(definition.inputSchema);
+    const channelName = discoveredArgument(properties, [
+      'channel',
+      'channelId',
+      'conversation',
+      'conversationId',
+    ]);
+    if (!channelName) throw new Error('Chat history tool has no channel argument.');
+    const tool = await client.toolFromDefinition({ serverName: 'surface', definition });
+    if (!tool.execute) throw new Error('Chat history tool is not executable.');
+    const replies: ChatPollResult['decisionReplies'] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
+      const args: Record<string, unknown> = { [channelName]: surface.managerDmChannelId };
+      const limitName = discoveredArgument(properties, ['limit', 'first', 'pageSize']);
+      if (limitName) args[limitName] = PAGE_SIZE;
+      const oldestName = discoveredArgument(properties, ['oldest', 'since', 'updatedAfter']);
+      if (oldestName && surface.lastPolledAt !== undefined) {
+        args[oldestName] = String(surface.lastPolledAt / 1_000);
+      }
+      if (cursor) {
+        const cursorName = discoveredArgument(properties, ['cursor', 'after', 'pageToken']);
+        if (!cursorName) throw new Error('Chat history returned an unsupported cursor.');
+        args[cursorName] = cursor;
+      }
+      const page = mcpMessagePage(
+        await tool.execute(args, { abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }),
+      );
+      for (const message of page.messages) {
+        if (!message.user || message.user === surface.providerIdentityId) continue;
+        const reply = parseDecisionReply(message.text);
+        if (reply) replies.push({ userId: message.user, messageTs: message.ts, reply });
+      }
+      if (!page.nextCursor) break;
+      if (seenCursors.has(page.nextCursor)) {
+        throw new Error('Chat history repeated a cursor before pagination completed.');
+      }
+      if (pageIndex === MAX_SLACK_HISTORY_PAGES - 1) {
+        throw new Error('Chat history pagination did not complete within the page limit.');
+      }
+      seenCursors.add(page.nextCursor);
+      cursor = page.nextCursor;
+    }
+    return replies;
+  } finally {
+    await client.disconnect();
+  }
+}
+
 /**
  * Create one normalised work candidate from a Slack mention.
  *
@@ -823,7 +939,7 @@ async function pollSlack(
   credential: string,
   observedAt: number,
   fetcher: IntakeFetcher,
-): Promise<WorkCandidate[]> {
+): Promise<ChatPollResult> {
   for (const method of ['conversations.list', 'conversations.history']) {
     if (!surface.toolAllowlist?.includes(method)) {
       throw new Error(`Connected Slack surface does not allow ${method}.`);
@@ -843,7 +959,42 @@ async function pollSlack(
       candidates.push(slackCandidate(message, channel, surface, observedAt));
     }
   }
-  return candidates;
+  const decisionReplies: ChatPollResult['decisionReplies'] = [];
+  if (surface.managerDmChannelId && surface.managerUserId) {
+    const messages = await slackHistory(
+      fetcher,
+      credential,
+      surface.managerDmChannelId,
+      surface.lastPolledAt,
+    );
+    for (const message of messages) {
+      if (!message.user || message.user === surface.providerIdentityId) continue;
+      const reply = parseDecisionReply(message.text);
+      if (reply) decisionReplies.push({ userId: message.user, messageTs: message.ts, reply });
+    }
+  }
+  return { candidates, decisionReplies };
+}
+
+/** Poll a connected chat surface by its approved path, independent of provider name. */
+async function pollChat(
+  surface: Doc<'surfaces'>,
+  pages: readonly Doc<'docPages'>[],
+  credential: string,
+  observedAt: number,
+  fetcher: IntakeFetcher,
+  makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
+): Promise<ChatPollResult> {
+  if (surface.path === 'documented-api') {
+    return await pollSlack(surface, pages, credential, observedAt, fetcher);
+  }
+  if (surface.path === 'mcp') {
+    return {
+      candidates: [],
+      decisionReplies: await pollMcpManagerReplies(surface, credential, makeClient),
+    };
+  }
+  throw new Error(`Connected chat surface path ${surface.path ?? 'unknown'} has no intake reader.`);
 }
 
 /**
@@ -965,10 +1116,23 @@ export async function runIntakeSweep(
       let credential = '';
       try {
         credential = await runtime.decrypt(surface.credentialId);
-        const mapped =
-          surface.class === 'kanban'
-            ? await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient)
-            : await pollSlack(surface, pages, credential, pollStartedAt, fetcher);
+        const chat =
+          surface.class === 'chat'
+            ? await pollChat(
+                surface,
+                pages,
+                credential,
+                pollStartedAt,
+                fetcher,
+                makeMcpClient,
+              )
+            : undefined;
+        const mapped = chat
+          ? chat.candidates
+          : await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient);
+        for (const reply of chat?.decisionReplies ?? []) {
+          await runtime.resolveDecision({ surfaceId: surface._id, ...reply });
+        }
         for (const candidate of mapped) await seedCandidate(runtime, agentId, candidate);
         await runtime.recordIntake({
           surfaceId: surface._id,
@@ -1008,6 +1172,9 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     },
     seed: async (candidate: IntakeSeed): Promise<void> => {
       await ctx.runMutation(internal.work.seedItem, candidate);
+    },
+    resolveDecision: async (reply: IntakeDecisionReply): Promise<void> => {
+      await ctx.runMutation(internal.work.resolveChannelDecision, reply);
     },
   };
 }

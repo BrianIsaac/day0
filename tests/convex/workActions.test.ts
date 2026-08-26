@@ -310,6 +310,18 @@ describe('work action completion evidence', (): void => {
 });
 
 describe('executing an approved plan through the gate', (): void => {
+  it('continues a channel-approved real plan without a browser identity', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+
+    await expect(
+      harness.action(internal.workActions.executeApprovedPlanInternal, { workItemId }),
+    ).resolves.toEqual({ ok: true, reason: 'automatic actions applying' });
+    expect((await readItem(harness, workItemId)).state).toBe('executing');
+    expect(recorded.skillRuns).toBe(1);
+  });
+
   it('pauses a real-mode run at actions-pending with nothing but the DM applied', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());

@@ -50,6 +50,8 @@ export interface SurfaceRecord {
   credentialId?: string;
   credentialKind?: CredentialKind;
   managerDmChannelId?: string;
+  /** The probed DM counterpart; only this provider user may resolve a decision. */
+  managerUserId?: string;
   /** The manager's Slack display name, read at probe time; names the DM on the card. */
   managerName?: string;
 }

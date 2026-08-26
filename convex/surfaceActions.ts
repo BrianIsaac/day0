@@ -49,6 +49,7 @@ interface McpDiscovery {
 interface SlackProbeResult {
   toolAllowlist: string[];
   managerDmChannelId: string;
+  managerUserId: string;
   managerName?: string;
   providerIdentityId: string;
   providerWorkspaceId?: string;
@@ -417,6 +418,7 @@ export async function probeSlackSurface(
   return {
     toolAllowlist,
     managerDmChannelId: channelId,
+    managerUserId: managerId,
     managerName: managerDisplayName(lookup.user),
     providerIdentityId: auth.user_id,
     providerWorkspaceId: typeof auth.team_id === 'string' ? auth.team_id : undefined,
@@ -476,6 +478,7 @@ export async function runSurfaceProbe(
     let toolAllowlist: string[];
     let toolArguments: Array<{ tool: string; arguments: string[] }> = [];
     let managerDmChannelId: string | undefined;
+    let managerUserId: string | undefined;
     let managerName: string | undefined;
     let providerIdentityId: string | undefined;
     let providerWorkspaceId: string | undefined;
@@ -497,6 +500,7 @@ export async function runSurfaceProbe(
       );
       toolAllowlist = slack.toolAllowlist;
       managerDmChannelId = slack.managerDmChannelId;
+      managerUserId = slack.managerUserId;
       managerName = slack.managerName;
       providerIdentityId = slack.providerIdentityId;
       providerWorkspaceId = slack.providerWorkspaceId;
@@ -517,6 +521,7 @@ export async function runSurfaceProbe(
       toolAllowlist,
       toolArguments,
       managerDmChannelId,
+      managerUserId,
       managerName,
       providerIdentityId,
       providerWorkspaceId,

@@ -1,5 +1,11 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
+import {
+  mutation,
+  query,
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsCharter } from './ownership';
 import { writeFileImpl } from './workspace';
@@ -69,6 +75,16 @@ export const latest = query({
       .order('desc')
       .first();
   },
+});
+
+export const latestInternal = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args) =>
+    await ctx.db
+      .query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+      .order('desc')
+      .first(),
 });
 
 export const listForAgent = query({

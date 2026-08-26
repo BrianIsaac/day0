@@ -41,5 +41,15 @@ describe('mock documentation mirrors', (): void => {
       sourceRef: 'onboarding.md',
       sourceUrl: 'https://example.com/onboarding',
     });
+    await expect(
+      harness.query(internal.mock.snapshotInternal, { agentId: ids.agentId }),
+    ).resolves.toMatchObject({
+      teamDocs: [{ slug: 'source-onboarding', title: 'Onboarding', body: '# Onboarding' }],
+      howToGuides: [],
+      spreadsheets: [],
+      slackChannels: [],
+      tweets: [],
+      tickets: [],
+    });
   });
 });

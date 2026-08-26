@@ -4,6 +4,7 @@ import {
   decisionIdFromBytes,
   decisionRequestText,
   managerMessageAction,
+  parseDecisionReply,
 } from '../../../src/work/manager-channel';
 import type { MockAction } from '../../../src/work/types';
 
@@ -98,5 +99,26 @@ describe('manager channel decision requests', (): void => {
         toolArgsJson: JSON.stringify({ conversationId: 'D0MANAGER', content: 'Decide this.' }),
       },
     });
+  });
+
+  it('parses only bounded approve and reject prefixes', (): void => {
+    expect(parseDecisionReply('  APPROVE   ab3xyz  ')).toEqual({
+      verb: 'approve',
+      id: 'ab3xyz',
+    });
+    expect(parseDecisionReply('reject ab3xyz   run the revised close checklist')).toEqual({
+      verb: 'reject',
+      id: 'ab3xyz',
+      reason: 'run the revised close checklist',
+    });
+    const longReason = 'x'.repeat(250);
+    expect(parseDecisionReply(`reject ab3xyz ${longReason}`)).toEqual({
+      verb: 'reject',
+      id: 'ab3xyz',
+      reason: 'x'.repeat(200),
+    });
+    expect(parseDecisionReply('please approve ab3xyz')).toBeUndefined();
+    expect(parseDecisionReply('approve sequential-123')).toBeUndefined();
+    expect(parseDecisionReply('approve ab')).toBeUndefined();
   });
 });

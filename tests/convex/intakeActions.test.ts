@@ -34,6 +34,7 @@ interface SeededCandidate extends Omit<WorkCandidate, 'observedAt'> {
 }
 
 interface RuntimeHarness {
+  decisions: unknown[];
   records: RecordedIntake[];
   runtime: IntakeRuntime;
   seeds: Map<string, SeededCandidate>;
@@ -121,6 +122,11 @@ function surfaceRow(
     verdict: 'connected',
     whereFound: [],
     credentialLanded: true,
+    ...(surfaceClass === 'chat'
+      ? { path: 'documented-api' as const }
+      : surfaceClass === 'kanban'
+        ? { path: 'mcp' as const }
+        : {}),
     createdAt: 1,
     ...patch,
   };
@@ -143,6 +149,7 @@ function runtimeHarness(
   credentials: Map<string, string>,
 ): RuntimeHarness {
   const records: RecordedIntake[] = [];
+  const decisions: unknown[] = [];
   const seeds = new Map<string, SeededCandidate>();
   const agent = agentRow();
   const runtime: IntakeRuntime = {
@@ -168,8 +175,11 @@ function runtimeHarness(
         candidate,
       );
     },
+    resolveDecision: async (reply): Promise<void> => {
+      decisions.push(reply);
+    },
   };
-  return { records, runtime, seeds };
+  return { decisions, records, runtime, seeds };
 }
 
 const ONBOARDING = [
@@ -228,6 +238,8 @@ describe('real surface intake', (): void => {
         toolAllowlist: ['conversations.list', 'conversations.history'],
         providerIdentityId: 'UBOT',
         providerWorkspaceId: 'TTEAM',
+        managerDmChannelId: 'DMANAGER',
+        managerUserId: 'UMANAGER',
         lastPolledAt: checkpoint,
       }),
       surfaceRow('northstar-crm', 'Northstar CRM', 'crm', {
@@ -326,6 +338,18 @@ describe('real surface intake', (): void => {
           response_metadata: { next_cursor: '' },
         });
       }
+      if (url.searchParams.get('channel') === 'DMANAGER') {
+        return slackResponse({
+          ok: true,
+          messages: [
+            { ts: '1770000001.000100', user: 'UMANAGER', text: 'approve ab3xyz' },
+            { ts: '1770000001.000099', user: 'UBOT', text: 'approve ab3xyz' },
+            { ts: '1770000001.000098', user: 'UOTHER', text: 'reject cd4uvw not now' },
+            { ts: '1770000001.000097', user: 'UMANAGER', text: 'ordinary message' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
       return slackResponse({
         ok: true,
         messages: [
@@ -409,15 +433,93 @@ describe('real surface intake', (): void => {
     const historyUrls = slackFetch.mock.calls
       .map(([input]): URL => new URL(String(input)))
       .filter((url: URL): boolean => url.pathname.endsWith('/conversations.history'));
-    expect(historyUrls).toHaveLength(2);
+    expect(historyUrls).toHaveLength(3);
     expect(
       historyUrls.every(
         (url: URL): boolean => url.searchParams.get('oldest') === String(checkpoint / 1_000),
       ),
     ).toBe(true);
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000100',
+        reply: { verb: 'approve', id: 'ab3xyz' },
+      },
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UOTHER',
+        messageTs: '1770000001.000098',
+        reply: { verb: 'reject', id: 'cd4uvw', reason: 'not now' },
+      },
+    ]);
     expect(
       JSON.stringify({ records: harness.records, seeds: [...harness.seeds.values()] }),
     ).not.toContain('test-value');
+  });
+
+  it('reads manager replies through a generic chat MCP history tool', async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-chat-mcp');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('company-chat', 'Company chat', 'chat', {
+          path: 'mcp',
+          credentialId,
+          endpoint: 'https://chat.example/mcp',
+          toolAllowlist: ['conversation_history'],
+          managerDmChannelId: 'manager-conversation',
+          managerUserId: 'manager-user',
+          providerIdentityId: 'agent-bot',
+        }),
+      ],
+      [],
+      new Map([[String(credentialId), 'chat-mcp-secret']]),
+    );
+    const calls: Record<string, unknown>[] = [];
+    const disconnect = vi.fn(async (): Promise<void> => undefined);
+    const result = await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => 12_000,
+      makeMcpClient: () => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: {
+            surface: {
+              conversation_history: {
+                inputSchema: {
+                  type: 'object',
+                  properties: { conversationId: {}, limit: {}, since: {} },
+                },
+              },
+            },
+          },
+          errors: {},
+        }),
+        toolFromDefinition: async () => ({
+          execute: async (args: Record<string, unknown>): Promise<unknown> => {
+            calls.push(args);
+            return {
+              messages: [
+                { ts: '12.100', user: 'manager-user', text: 'reject gh6npq revise it' },
+                { ts: '12.099', user: 'agent-bot', text: 'approve gh6npq' },
+              ],
+            };
+          },
+        }),
+        disconnect,
+      }),
+    });
+
+    expect(result).toEqual({ candidates: 0, mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(calls).toEqual([{ conversationId: 'manager-conversation', limit: 100 }]);
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-company-chat'),
+        userId: 'manager-user',
+        messageTs: '12.100',
+        reply: { verb: 'reject', id: 'gh6npq', reason: 'revise it' },
+      },
+    ]);
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 
   it('contains one provider failure, redacts its credential, and continues to the next surface', async (): Promise<void> => {
@@ -512,6 +614,7 @@ describe('real surface intake', (): void => {
       decrypt: vi.fn(),
       recordIntake: vi.fn(),
       seed: vi.fn(),
+      resolveDecision: vi.fn(),
     };
     await expect(runIntakeSweep(runtime, { mode: 'mock' })).resolves.toEqual({
       candidates: 0,

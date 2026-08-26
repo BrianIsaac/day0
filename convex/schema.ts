@@ -174,6 +174,8 @@ export default defineSchema({
     ),
     credentialLocation: v.optional(v.string()),
     managerDmChannelId: v.optional(v.string()),
+    // The DM counterpart allowed to resolve manager decisions.
+    managerUserId: v.optional(v.string()),
     // The manager's Slack display name from the probe's `users.lookupByEmail`.
     managerName: v.optional(v.string()),
     toolAllowlist: v.optional(v.array(v.string())),
@@ -311,6 +313,9 @@ export default defineSchema({
         outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
         decidedVia: v.optional(v.union(v.literal('dashboard'), v.literal('channel'))),
         duplicateNotifiedAt: v.optional(v.number()),
+        duplicateNoticeClaimedAt: v.optional(v.number()),
+        duplicateNoticeTs: v.optional(v.string()),
+        duplicateNoticeFailure: v.optional(v.string()),
       }),
     ),
     // ---- Lane C (executors and the gate) ----
