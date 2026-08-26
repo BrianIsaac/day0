@@ -172,6 +172,9 @@ export default defineSchema({
     waterfallPosition: v.optional(v.number()),
     intakeSkipReason: v.optional(v.string()),
     lastPolledAt: v.optional(v.number()),
+    /** Transitional validator for rows written before credentialId. Every
+     * current state transition clears it; remove after deployed rows migrate. */
+    credentialRef: v.optional(v.string()),
     credentialLanded: v.boolean(),
     lastVerifiedAt: v.optional(v.number()),
     expiresAt: v.optional(v.number()),

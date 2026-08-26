@@ -126,6 +126,7 @@ export const propose = internalMutation({
       credentialId: args.credentialId,
       credentialKind: args.credentialId ? args.credentialKind : undefined,
       credentialLocation: args.credentialLocation,
+      credentialRef: undefined,
       expiresAt: now + args.expiresInDays * 24 * 60 * 60 * 1_000,
       reason: undefined,
     });
@@ -259,6 +260,7 @@ export const attachCredential = internalMutation({
       credentialId: args.credentialId,
       credentialKind: args.credentialKind,
       credentialLocation: args.credentialLocation,
+      credentialRef: undefined,
       credentialLanded: false,
       verdict:
         approved && (surface.verdict === 'ungranted' || surface.verdict === 'listed-dead')
@@ -538,6 +540,7 @@ export const reject = mutation({
       endpoint: undefined,
       path: undefined,
       fallbackPath: undefined,
+      credentialRef: undefined,
       credentialId: undefined,
       credentialKind: undefined,
       credentialLocation: undefined,

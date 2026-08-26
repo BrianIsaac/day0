@@ -133,6 +133,31 @@ describe('surface persistence', (): void => {
     expect(surfaceSlug(' Linear / REVOPS ')).toBe('linear-revops');
   });
 
+  it('accepts and clears a legacy credentialRef row when orientation touches it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'declared',
+          whereFound: [],
+          credentialRef: 'LINEAR_API_KEY',
+          credentialLanded: false,
+          createdAt: 1,
+        } as never),
+    );
+
+    await propose(harness, surfaceId);
+    expect((await readSurface(harness, surfaceId)) as Record<string, unknown>).not.toHaveProperty(
+      'credentialRef',
+    );
+  });
+
   it('seeds once and exposes rows only to the owner', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
