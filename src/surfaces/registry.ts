@@ -358,7 +358,7 @@ export async function applySurfaceActions(
       index,
       idempotencyKey,
     );
-    applied.push(authority ? { ...outcome, authority } : outcome);
+    applied.push(authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome);
   }
   return applied;
 }

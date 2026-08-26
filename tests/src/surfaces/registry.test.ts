@@ -349,6 +349,23 @@ describe('applying surface actions', (): void => {
     expect(approved[1].authority).toBeUndefined();
   });
 
+  it('does not stamp applied authority on a row the adapter refuses', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const runtime = deps(recorded);
+    runtime.beforeTransport = async (): Promise<string> => 'not an automatic action';
+    const applied = await applySurfaceActions(ctx, 'real', [linear], run, [comment], {
+      deps: runtime,
+      grants: new Set(['linear:read']),
+      approvedIndexes: new Set([0]),
+      autoPhase: true,
+      autonomousActions: true,
+      now,
+    });
+    expect(applied[0]).toMatchObject({ ok: false, reason: 'not an automatic action' });
+    expect(applied[0].authority).toBeUndefined();
+    expect(recorded.mcp).toHaveLength(0);
+  });
+
   it('carries a prior phase\'s ledger forward so a status change sees the comment that landed', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const first = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {

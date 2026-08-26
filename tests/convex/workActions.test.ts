@@ -801,6 +801,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'not an automatic action' });
+    expect(ledger(row)[0].authority).toBeUndefined();
   });
 
   it('does not write after the agent row disappears between claim and transport', async (): Promise<void> => {
@@ -822,6 +823,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'agent not found' });
+    expect(ledger(row)[0].authority).toBeUndefined();
   });
 
   it('on: still refuses a read without its grant, a forged trailer and a mock verb', async (): Promise<void> => {
