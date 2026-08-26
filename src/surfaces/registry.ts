@@ -34,6 +34,7 @@ import type {
   ActionAuthority,
   AdapterRun,
   AppliedAction,
+  BeforeSurfaceTransport,
   SurfaceAdapter,
   SurfaceRecord,
   SurfaceMode,
@@ -47,6 +48,7 @@ export interface RealAdapterDeps {
   decrypt: DecryptCredential;
   createMcpClient: CreateMcpClient;
   fetch: FetchLike;
+  beforeTransport?: BeforeSurfaceTransport;
   now?: () => number;
 }
 
@@ -123,8 +125,14 @@ export function resolveAdapters(
       decrypt: deps.decrypt,
       createClient: deps.createMcpClient,
       now,
+      beforeTransport: deps.beforeTransport,
     });
-    const http = new HttpAdapter(surfaces, { decrypt: deps.decrypt, fetch: deps.fetch, now });
+    const http = new HttpAdapter(surfaces, {
+      decrypt: deps.decrypt,
+      fetch: deps.fetch,
+      now,
+      beforeTransport: deps.beforeTransport,
+    });
     for (const tool of mcp.tools) adapters.set(tool, mcp);
     for (const tool of http.tools) adapters.set(tool, http);
   }

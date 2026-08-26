@@ -20,12 +20,27 @@ import {
   readSurfaceSnapshot,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import type { AppliedAction, SurfaceRecord } from '../src/surfaces/types';
+import type {
+  AppliedAction,
+  BeforeSurfaceTransport,
+  SurfaceRecord,
+} from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import type { ExecutionOutput } from '../src/work/types';
+import {
+  grantRefusal,
+  isAutomatic,
+  needsStandingGrant,
+  NOT_AUTOMATIC,
+  parseSurfaceAction,
+  pathRefusal,
+  surfaceRefusal,
+  toolRefusal,
+  UNKNOWN_SURFACE,
+} from '../src/surfaces/policy';
 
 /**
  * Node actions for the work loop — Layer-2 evaluation, Layer-3 plan
@@ -477,7 +492,9 @@ export const applyApprovedActions = internalAction({
         },
         output.actions ?? [],
         {
-          deps: realAdapterDeps(),
+          deps: realAdapterDeps(
+            authorityBeforeTransport(ctx, claim.agentId, claim.phase),
+          ),
           grants: new Set(grantRows.map((grant) => grant.scope)),
           approvedIndexes: new Set(claim.approvedIndexes),
           heldReasons: new Map(claim.heldReasons),
@@ -506,11 +523,66 @@ export const applyApprovedActions = internalAction({
  * Returns:
  *   Adapter dependencies for this action runtime.
  */
-function realAdapterDeps(): RealAdapterDeps {
+function realAdapterDeps(beforeTransport?: BeforeSurfaceTransport): RealAdapterDeps {
   return {
     decrypt: decryptCredential,
     createMcpClient: createMastraMcpClient,
     fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
+    beforeTransport,
+  };
+}
+
+function surfaceAuthorityShape(surface: SurfaceRecord): string {
+  return JSON.stringify({
+    slug: surface.slug,
+    verdict: surface.verdict,
+    credentialLanded: surface.credentialLanded,
+    lastVerifiedAt: surface.lastVerifiedAt,
+    path: surface.path,
+    endpoint: surface.endpoint,
+    toolAllowlist: [...(surface.toolAllowlist ?? [])].sort(),
+    credentialId: surface.credentialId,
+    credentialKind: surface.credentialKind,
+    managerDmChannelId: surface.managerDmChannelId,
+  });
+}
+
+/** Re-read every mutable authority input immediately before provider transport. */
+function authorityBeforeTransport(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  phase: 'auto' | 'approved',
+): BeforeSurfaceTransport {
+  return async (action, claimedSurface): Promise<string | undefined> => {
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok) return parsed.reason;
+    const authority = await ctx.runQuery(internal.work.transportAuthority, {
+      agentId,
+      surfaceSlug: parsed.action.surface,
+    });
+    if (!authority.agentExists) return 'agent not found';
+    const surface = authority.surface;
+    if (!surface) return UNKNOWN_SURFACE;
+    if (surfaceAuthorityShape(surface) !== surfaceAuthorityShape(claimedSurface)) {
+      return 'surface authority changed before transport';
+    }
+    const refusal =
+      surfaceRefusal(surface, Date.now()) ??
+      pathRefusal(parsed.action, surface) ??
+      toolRefusal(parsed.action, surface);
+    if (refusal) return refusal;
+    if (phase === 'auto' && !isAutomatic(parsed.action, surface, authority.autonomousActions)) {
+      return NOT_AUTOMATIC;
+    }
+    if (needsStandingGrant(parsed.action, surface) || phase === 'auto') {
+      return grantRefusal(
+        parsed.action,
+        surface,
+        new Set(authority.grants),
+        phase === 'auto' && authority.autonomousActions,
+      );
+    }
+    return undefined;
   };
 }
 

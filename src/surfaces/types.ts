@@ -64,6 +64,12 @@ export interface AdapterRun {
   runId: Id<'events'>;
 }
 
+/** Revalidate persisted authority at the last boundary before a provider request. */
+export type BeforeSurfaceTransport = (
+  action: MockAction,
+  surface: SurfaceRecord,
+) => Promise<string | undefined>;
+
 export interface ActionOutcome {
   ok: boolean;
   effect?: string;

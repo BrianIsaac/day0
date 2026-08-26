@@ -1,5 +1,11 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+} from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
@@ -18,6 +24,50 @@ import type { MockAction } from '../src/work/types';
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
   'apply was interrupted after its claim; provider outcomes are unknown and must be reconciled before retry';
+
+/**
+ * Read the authority and connection state used at the provider boundary.
+ *
+ * The agent, grants and one surface are read in one transaction so an action
+ * cannot combine a switch value from one revision with grants or a connection
+ * from another.
+ */
+export const transportAuthority = internalQuery({
+  args: { agentId: v.id('agents'), surfaceSlug: v.string() },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    | { agentExists: false }
+    | {
+        agentExists: true;
+        autonomousActions: boolean;
+        grants: string[];
+        surface?: ReturnType<typeof toSurfaceRecord>;
+      }
+  > => {
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent) return { agentExists: false };
+    const [surface, grants] = await Promise.all([
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) =>
+          q.eq('agentId', args.agentId).eq('slug', args.surfaceSlug),
+        )
+        .first(),
+      ctx.db
+        .query('permissionGrants')
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+    ]);
+    return {
+      agentExists: true,
+      autonomousActions: autonomousActionsOn(agent),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      ...(surface ? { surface: toSurfaceRecord(surface) } : {}),
+    };
+  },
+});
 
 /**
  * Work items CRUD + state transitions. Public surfaces enforce

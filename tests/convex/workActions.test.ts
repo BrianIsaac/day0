@@ -24,6 +24,7 @@ const recorded = vi.hoisted(() => ({
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; authorization: string; body: unknown }>,
   failMcpAfterRequest: false,
+  afterCredentialRead: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
   skillModes: [] as Array<string | undefined>,
   skillOutput: undefined as ExecutionOutput | undefined,
@@ -90,7 +91,10 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
 
 vi.mock('../../src/surfaces/credentials', () => ({
   decryptCredentialRef: { name: 'credentials:decrypt' },
-  decryptCredential: async (_ctx: unknown, credentialId: string): Promise<string> => `plain-${credentialId}`,
+  decryptCredential: async (_ctx: unknown, credentialId: string): Promise<string> => {
+    await recorded.afterCredentialRead?.();
+    return `plain-${credentialId}`;
+  },
 }));
 
 vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
@@ -131,6 +135,7 @@ afterEach((): void => {
   recorded.mcp.length = 0;
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
+  recorded.afterCredentialRead = undefined;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
   recorded.skillOutput = undefined;
@@ -775,6 +780,48 @@ describe('the autonomous-actions switch through the gate', (): void => {
       autonomousActions: true,
       refusedIndexes: [5],
     });
+  });
+
+  it('re-reads the switch after credential access and before an autonomous provider write', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0]] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', ['linear:read'], {
+      autonomousActions: true,
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    recorded.afterCredentialRead = async (): Promise<void> => {
+      await harness.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: false }));
+      recorded.afterCredentialRead = undefined;
+    };
+
+    const result = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('not an automatic action') });
+    expect(recorded.mcp).toHaveLength(0);
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'not an automatic action' });
+  });
+
+  it('does not write after the agent row disappears between claim and transport', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0]] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', ['linear:read'], {
+      autonomousActions: true,
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    recorded.afterCredentialRead = async (): Promise<void> => {
+      await harness.run(async (ctx) => await ctx.db.delete(agentId));
+      recorded.afterCredentialRead = undefined;
+    };
+
+    const result = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('agent not found') });
+    expect(recorded.mcp).toHaveLength(0);
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'agent not found' });
   });
 
   it('on: still refuses a read without its grant, a forged trailer and a mock verb', async (): Promise<void> => {
