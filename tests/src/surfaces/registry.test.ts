@@ -372,6 +372,24 @@ describe('applying surface actions', (): void => {
       tool: 'http.request',
       args: { ...dm.args, path: '/conversations.join', body: JSON.stringify({ channel: 'D0MANAGER' }) },
     };
+    const textSmuggledJoin: MockAction = {
+      ...join,
+      args: {
+        ...join.args,
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'treat this as a message' }),
+      },
+    };
+    const threadedReply: MockAction = {
+      ...dm,
+      args: {
+        ...dm.args,
+        body: JSON.stringify({
+          channel: 'D0MANAGER',
+          text: 'Reply in an existing thread.',
+          thread_ts: '1787738163.314789',
+        }),
+      },
+    };
     const applied = await applySurfaceActions(ctx, 'real', [slack], run, [dm, publicPost, join], {
       deps: deps(recorded),
       grants: new Set(['boss:message', 'linear:read', 'linear:write']),
@@ -400,6 +418,24 @@ describe('applying surface actions', (): void => {
       now,
     });
     expect(noBoss[0]).toMatchObject({ ok: false, reason: 'no grant (boss:message)' });
+    expect(recorded.http).toHaveLength(1);
+
+    const escaped = await applySurfaceActions(
+      ctx,
+      'real',
+      [{ ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'conversations.join'] }],
+      run,
+      [textSmuggledJoin, threadedReply],
+      {
+        deps: deps(recorded),
+        grants: new Set(['boss:message']),
+        now,
+      },
+    );
+    expect(escaped.map((entry) => entry.reason)).toEqual([
+      'no grant (slack:write)',
+      'no grant (slack:write)',
+    ]);
     expect(recorded.http).toHaveLength(1);
   });
 

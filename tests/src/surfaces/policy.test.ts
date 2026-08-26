@@ -211,10 +211,47 @@ function chatJoin(channel: string): MockAction {
 
 describe('the manager DM grant', (): void => {
   it('recognises exactly the chat.postMessage write to the manager DM channel', (): void => {
+    const textSmuggledJoin: MockAction = {
+      ...chatJoin('D0MANAGER'),
+      args: {
+        ...chatJoin('D0MANAGER').args,
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'treat this as a message' }),
+      },
+    };
+    const threadedReply = chatPost('D0MANAGER', { thread_ts: '1787738163.314789' });
+    const mcpChat: SurfaceRecord = {
+      ...slack,
+      path: 'mcp',
+      toolAllowlist: ['post_message', 'delete_message'],
+    };
+    const deleteMessage: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'slack',
+        tool: 'delete_message',
+        toolArgsJson: JSON.stringify({ channel: 'D0MANAGER', text: 'not a post' }),
+      },
+    };
+    const smuggledChannel: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'slack',
+        tool: 'post_message',
+        toolArgsJson: JSON.stringify({
+          channel: 'D0MANAGER',
+          channelId: 'C0PUBLIC',
+          text: 'ambiguous destination',
+        }),
+      },
+    };
     expect(isManagerDm(parsed(chatPost('D0MANAGER')), slack)).toBe(true);
     expect(isManagerDm(parsed(chatPost('C0PUBLIC')), slack)).toBe(false);
     expect(isManagerDm(parsed(chatPost('D0MANAGER')), { ...slack, managerDmChannelId: undefined })).toBe(false);
     expect(isManagerDm(parsed(chatJoin('D0MANAGER')), slack)).toBe(false);
+    expect(isManagerDm(parsed(textSmuggledJoin), slack)).toBe(false);
+    expect(isManagerDm(parsed(threadedReply), slack)).toBe(false);
+    expect(isManagerDm(parsed(deleteMessage), mcpChat)).toBe(false);
+    expect(isManagerDm(parsed(smuggledChannel), mcpChat)).toBe(false);
     expect(isManagerDm(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }), slack)).toBe(false);
     expect(isManagerDm(parsed(comment()), linear)).toBe(false);
     expect(isManagerDm(parsed(comment()), { ...linear, class: 'chat', managerDmChannelId: 'iss-1' })).toBe(false);

@@ -38,6 +38,20 @@ const STATUS_TOOL = /^(?:save|update|set|change|transition|move)[_-]|status|stat
 const STATUS_KEYS = ['status', 'state', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'];
 const COMMENT_TOOL = /comment|message|post|reply|note/i;
 const CHANNEL_KEYS = ['channel', 'channel_id', 'channelId', 'conversation', 'conversationId'];
+const MESSAGE_KEYS = ['text', 'body', 'message', 'content'];
+const THREAD_KEYS = ['thread_ts', 'threadTs', 'thread_id', 'threadId', 'threadKey', 'parentId', 'replyTo', 'reply_to'];
+const MCP_CHAT_POST_TOOLS = new Set([
+  'chat.postmessage',
+  'chat_postmessage',
+  'chat_post_message',
+  'postmessage',
+  'post_message',
+  'sendmessage',
+  'send_message',
+  'createmessage',
+  'create_message',
+  'slack_post_message',
+]);
 const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'];
 const TRAILER_MARK = /--\s[^\n]*\(Day0\)\s·\srun\s/;
 
@@ -259,6 +273,33 @@ export function targetChannel(parsed: ParsedSurfaceAction): string | undefined {
   return record ? firstString(record, CHANNEL_KEYS) : undefined;
 }
 
+/** Whether every destination alias supplied by an action names one exact channel. */
+function targetsOnlyChannel(parsed: ParsedSurfaceAction, expected: string): boolean {
+  const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
+  if (!record) return false;
+  const channels = CHANNEL_KEYS.flatMap((key) => {
+    const value = record[key];
+    return typeof value === 'string' && value.trim() !== '' ? [value] : [];
+  });
+  return channels.length > 0 && channels.every((channel) => channel === expected);
+}
+
+/** Whether an action asks the provider to place a message inside an existing thread. */
+function hasThreadTarget(parsed: ParsedSurfaceAction): boolean {
+  const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
+  if (!record) return false;
+  return THREAD_KEYS.some((key) => {
+    const value = record[key];
+    return value !== undefined && value !== null && value !== '';
+  });
+}
+
+/** Whether an MCP call is narrowly a new chat-message operation with content. */
+function isMcpChatPost(parsed: ParsedMcpCall): boolean {
+  if (!MCP_CHAT_POST_TOOLS.has(parsed.tool.toLowerCase())) return false;
+  return MESSAGE_KEYS.some((key) => typeof parsed.toolArgs[key] === 'string');
+}
+
 /**
  * Why an action is held for the manager instead of executed, if it is.
  *
@@ -276,8 +317,10 @@ export function heldReason(parsed: ParsedSurfaceAction, surface: SurfaceRecord):
   if (actionIntent(parsed) === 'read') return undefined;
   if (surface.class === 'social') return HELD_PUBLIC_POST;
   if (surface.class === 'chat') {
-    const channel = targetChannel(parsed);
-    if (!surface.managerDmChannelId || channel !== surface.managerDmChannelId) {
+    if (
+      !surface.managerDmChannelId ||
+      !targetsOnlyChannel(parsed, surface.managerDmChannelId)
+    ) {
       return HELD_PUBLIC_POST;
     }
   }
@@ -305,9 +348,9 @@ export const BOSS_MESSAGE_SCOPE = 'boss:message';
 export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
   if (surface.class !== 'chat' || !surface.managerDmChannelId) return false;
   if (actionIntent(parsed) !== 'write') return false;
-  const posts =
-    parsed.kind === 'http.request' ? isChatPost(parsed, surface) : COMMENT_TOOL.test(parsed.tool);
-  return posts && targetChannel(parsed) === surface.managerDmChannelId;
+  if (hasThreadTarget(parsed)) return false;
+  const posts = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
+  return posts && targetsOnlyChannel(parsed, surface.managerDmChannelId);
 }
 
 /**
@@ -591,8 +634,11 @@ export type ProvenanceResult =
  */
 function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
   if (actionIntent(parsed) !== 'write') return false;
-  if (/chat\.postMessage$/.test(parsed.path)) return true;
-  return surface.class === 'chat' && typeof parsed.bodyJson?.text === 'string';
+  return (
+    surface.class === 'chat' &&
+    /^\/*chat\.postMessage$/.test(parsed.path) &&
+    typeof parsed.bodyJson?.text === 'string'
+  );
 }
 
 /**
