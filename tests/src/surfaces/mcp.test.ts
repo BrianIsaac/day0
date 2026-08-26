@@ -30,7 +30,7 @@ const linear: SurfaceRecord = {
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
   path: 'mcp',
-  toolAllowlist: ['create_comment', 'list_issues'],
+  toolAllowlist: ['save_comment', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
 };
@@ -39,7 +39,7 @@ const commentCall: MockAction = {
   tool: 'mcp.call',
   args: {
     surface: 'linear',
-    tool: 'create_comment',
+    tool: 'save_comment',
     toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note.' }),
   },
 };
@@ -100,7 +100,7 @@ function adapter(client: FakeClient, surfaces: SurfaceRecord[] = [linear], secre
 describe('MCP adapter', (): void => {
   it('calls the allowlisted tool with the bearer from decrypt and disconnects', async (): Promise<void> => {
     const client = fakeClient({
-      linear_create_comment: async (): Promise<unknown> => ({
+      linear_save_comment: async (): Promise<unknown> => ({
         content: [{ type: 'text', text: JSON.stringify({ id: 'cmt_42', body: 'Audit note.' }) }],
       }),
     });
@@ -108,7 +108,7 @@ describe('MCP adapter', (): void => {
     expect(result).toEqual({
       tool: 'mcp.call',
       ok: true,
-      effect: 'create_comment on linear · {"id":"cmt_42","body":"Audit note."}',
+      effect: 'save_comment on linear · {"id":"cmt_42","body":"Audit note."}',
       providerId: 'cmt_42',
       idempotencyKey: 'wi:run:0',
     });
@@ -116,14 +116,14 @@ describe('MCP adapter', (): void => {
       { serverName: 'linear', url: new URL('https://mcp.linear.app/mcp'), bearer: 'lin-secret' },
     ]);
     expect(client.executions).toEqual([
-      { tool: 'linear_create_comment', args: { issueId: 'iss-1', body: 'Audit note.' } },
+      { tool: 'linear_save_comment', args: { issueId: 'iss-1', body: 'Audit note.' } },
     ]);
     expect(client.disconnected).toBe(1);
   });
 
   it('reports the server error text and still disconnects', async (): Promise<void> => {
     const client = fakeClient({
-      linear_create_comment: async (): Promise<unknown> => ({
+      linear_save_comment: async (): Promise<unknown> => ({
         isError: true,
         content: [{ type: 'text', text: 'Issue not found: lin-secret was used' }],
       }),
@@ -135,7 +135,7 @@ describe('MCP adapter', (): void => {
 
   it('turns a thrown transport error into a redacted failed row', async (): Promise<void> => {
     const client = fakeClient({
-      linear_create_comment: async (): Promise<unknown> => {
+      linear_save_comment: async (): Promise<unknown> => {
         throw new Error('401 unauthorised for bearer lin-secret');
       },
     });
@@ -146,7 +146,7 @@ describe('MCP adapter', (): void => {
 
   it('redacts a credential echoed as the provider id', async (): Promise<void> => {
     const client = fakeClient({
-      linear_create_comment: async (): Promise<unknown> => ({
+      linear_save_comment: async (): Promise<unknown> => ({
         content: [{ type: 'text', text: '{"id":"lin-secret"}' }],
       }),
     });
@@ -157,7 +157,7 @@ describe('MCP adapter', (): void => {
 
   it('turns a non-Error rejection into an honest failed row', async (): Promise<void> => {
     const client = fakeClient({
-      linear_create_comment: async (): Promise<never> => await Promise.reject('transport offline'),
+      linear_save_comment: async (): Promise<never> => await Promise.reject('transport offline'),
     });
     await expect(adapter(client).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
       ok: false,
@@ -181,7 +181,7 @@ describe('MCP adapter', (): void => {
   it('refuses a tool the server does not expose', async (): Promise<void> => {
     const client = fakeClient({ linear_list_issues: async (): Promise<unknown> => ({ content: [] }) });
     const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
-    expect(result).toMatchObject({ ok: false, reason: 'tool create_comment is not exposed by the server' });
+    expect(result).toMatchObject({ ok: false, reason: 'tool save_comment is not exposed by the server' });
     expect(client.disconnected).toBe(1);
   });
 
@@ -209,7 +209,7 @@ describe('MCP adapter', (): void => {
 
   it('connects to a credentialless browser-driven MCP surface without an auth header', async (): Promise<void> => {
     const client = fakeClient({
-      playwright_create_comment: async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }),
+      playwright_save_comment: async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }),
     });
     const browser: SurfaceRecord = {
       ...linear,
@@ -218,11 +218,11 @@ describe('MCP adapter', (): void => {
       path: 'browser-driven',
       endpoint: 'http://playwright:8931/mcp',
       credentialId: undefined,
-      toolAllowlist: ['create_comment'],
+      toolAllowlist: ['save_comment'],
     };
     const call: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'playwright', tool: 'create_comment', toolArgsJson: '{}' },
+      args: { surface: 'playwright', tool: 'save_comment', toolArgsJson: '{}' },
     };
     const result = await adapter(client, [browser]).apply(ctx, run, call, 0, 'k');
     expect(result.ok).toBe(true);
@@ -236,7 +236,7 @@ describe('MCP adapter', (): void => {
     const result = await adapter(client).apply(
       ctx,
       run,
-      { tool: 'mcp.call', args: { surface: 'linear', tool: 'create_comment', toolArgsJson: '{' } },
+      { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{' } },
       0,
       'k',
     );

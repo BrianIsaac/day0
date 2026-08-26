@@ -27,8 +27,8 @@ const pendingOutput = {
   draft: 'Prepared the close summary.',
   notes: '',
   actions: [
-    { tool: 'mcp.call', args: { surface: 'linear', tool: 'create_comment', toolArgsJson: '{"issueId":"i","body":"b"}' } },
-    { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"i","status":"Done"}' } },
+    { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"i","body":"b"}' } },
+    { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"i","state":"Done"}' } },
   ],
 };
 

@@ -36,7 +36,7 @@ const linear: SurfaceRecord = {
   credentialLanded: true,
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
-  toolAllowlist: ['create_comment', 'save_issue', 'list_issues'],
+  toolAllowlist: ['save_comment', 'save_issue', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
 };
@@ -59,14 +59,14 @@ const run = { agentName: 'Priya', workItemId: 'wi_1', runId: 'run_1' };
 function comment(body = 'Prepared the close summary.', issueId = 'iss-1'): MockAction {
   return {
     tool: 'mcp.call',
-    args: { surface: 'linear', tool: 'create_comment', toolArgsJson: JSON.stringify({ issueId, body }) },
+    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId, body }) },
   };
 }
 
 function statusChange(id = 'iss-1'): MockAction {
   return {
     tool: 'mcp.call',
-    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id, status: 'Done' }) },
+    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id, state: 'Done' }) },
   };
 }
 
@@ -94,7 +94,7 @@ describe('surface action parsing', (): void => {
     expect(parsed(comment())).toEqual({
       kind: 'mcp.call',
       surface: 'linear',
-      tool: 'create_comment',
+      tool: 'save_comment',
       toolArgs: { issueId: 'iss-1', body: 'Prepared the close summary.' },
     });
   });
@@ -116,7 +116,7 @@ describe('surface action parsing', (): void => {
   });
 
   it.each<[string, MockAction]>([
-    ['missing surface', { tool: 'mcp.call', args: { tool: 'create_comment' } }],
+    ['missing surface', { tool: 'mcp.call', args: { tool: 'save_comment' } }],
     ['missing tool', { tool: 'mcp.call', args: { surface: 'linear' } }],
     ['invalid JSON', { tool: 'mcp.call', args: { surface: 'linear', tool: 'x', toolArgsJson: '{not json' } }],
     ['non-object JSON', { tool: 'mcp.call', args: { surface: 'linear', tool: 'x', toolArgsJson: '[1,2]' } }],
@@ -290,7 +290,7 @@ describe('skill approval and card rendering', (): void => {
   });
 
   it('describes every verb verbatim on one line', (): void => {
-    expect(describeAction(comment())).toBe('mcp.call linear · create_comment · {issueId: "iss-1", body: "Prepared the close summary."}');
+    expect(describeAction(comment())).toBe('mcp.call linear · save_comment · {issueId: "iss-1", body: "Prepared the close summary."}');
     expect(describeAction(chatPost('D0MANAGER'))).toBe(
       'http.request slack · POST /chat.postMessage · headers {Authorization: "Bearer {{secret}}"} · body "{"channel":"D0MANAGER","text":"Draft ready."}"',
     );

@@ -13,7 +13,7 @@ import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { safeFailureMessage } from '../src/surfaces/redact';
 
 const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
-  kanban: ['list_issues', 'get_issue', 'list_comments', 'create_comment', 'save_issue'],
+  kanban: ['list_issues', 'get_issue', 'list_comments', 'save_comment', 'save_issue'],
   'browser-driven': ['browser_navigate', 'browser_snapshot'],
 };
 

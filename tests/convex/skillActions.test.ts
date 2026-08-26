@@ -23,7 +23,7 @@ const linear: SurfaceRecord = {
   lastVerifiedAt: now,
   path: 'mcp',
   endpoint: 'https://mcp.linear.app/mcp',
-  toolAllowlist: ['create_comment', 'save_issue'],
+  toolAllowlist: ['save_comment', 'save_issue'],
 };
 
 const skill = {
@@ -65,7 +65,7 @@ describe('skill author prompts', (): void => {
     const prompt = buildAuthorPrompt({ ...skill, targetSurface: 'linear' }, [linear], now);
     expect(prompt).toContain('Target surface: linear');
     expect(prompt).toContain('Connected real surfaces');
-    expect(prompt).toContain('linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: create_comment, save_issue');
+    expect(prompt).toContain('linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: save_comment, save_issue');
     expect(prompt).toContain('{{secret}}');
     expect(prompt.endsWith('Author SKILL.md and smoke.py now.')).toBe(true);
   });

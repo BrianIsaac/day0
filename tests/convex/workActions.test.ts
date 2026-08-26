@@ -28,13 +28,13 @@ const skillOutput: ExecutionOutput = {
       tool: 'mcp.call',
       args: {
         surface: 'linear',
-        tool: 'create_comment',
+        tool: 'save_comment',
         toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Prepared the close summary.' }),
       },
     },
     {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', status: 'Done' }) },
+      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', state: 'Done' }) },
     },
     {
       tool: 'http.request',
@@ -90,7 +90,7 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
     createMastraMcpClient: (options: McpClientOptions): McpClientLike => ({
       listTools: async () =>
         Object.fromEntries(
-          ['create_comment', 'save_issue'].map((tool) => [
+          ['save_comment', 'save_issue'].map((tool) => [
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
@@ -185,7 +185,7 @@ async function seed(harness: Harness, mode: 'mock' | 'real'): Promise<Seeded> {
         verdict: 'connected',
         endpoint: 'https://mcp.linear.app/mcp',
         path: 'mcp',
-        toolAllowlist: ['create_comment', 'save_issue'],
+        toolAllowlist: ['save_comment', 'save_issue'],
         credentialId: 'cred-linear',
         ...live,
       } as never);
@@ -325,17 +325,17 @@ describe('executing an approved plan through the gate', (): void => {
       [true, false],
       [true, true],
     ]);
-    expect(ledger(row)[0].providerId).toBe('create_comment-id');
+    expect(ledger(row)[0].providerId).toBe('save_comment-id');
     expect(ledger(row)[2].providerId).toBe('1787654400.000200');
     expect(ledger(row)[3].reason).toBe(HELD_PUBLIC_POST);
     expect(recorded.mcp).toEqual([
       {
         server: 'linear',
-        tool: 'create_comment',
+        tool: 'save_comment',
         args: { issueId: 'iss-1', body: `Prepared the close summary.\n\n-- Priya (Day0) · run ${workItemId}/${runId}` },
         bearer: 'plain-cred-linear',
       },
-      { server: 'linear', tool: 'save_issue', args: { id: 'iss-1', status: 'Done' }, bearer: 'plain-cred-linear' },
+      { server: 'linear', tool: 'save_issue', args: { id: 'iss-1', state: 'Done' }, bearer: 'plain-cred-linear' },
     ]);
     expect(recorded.http).toEqual([
       {

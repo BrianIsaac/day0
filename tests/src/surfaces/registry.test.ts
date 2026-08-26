@@ -32,7 +32,7 @@ const linear: SurfaceRecord = {
   lastVerifiedAt: now,
   endpoint: 'https://mcp.linear.app/mcp',
   path: 'mcp',
-  toolAllowlist: ['create_comment', 'save_issue', 'list_issues'],
+  toolAllowlist: ['save_comment', 'save_issue', 'list_issues'],
   credentialId: 'cred-linear',
   credentialKind: 'value',
 };
@@ -54,11 +54,11 @@ const slack: SurfaceRecord = {
 
 const comment: MockAction = {
   tool: 'mcp.call',
-  args: { surface: 'linear', tool: 'create_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note.' }) },
+  args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Audit note.' }) },
 };
 const status: MockAction = {
   tool: 'mcp.call',
-  args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', status: 'Done' }) },
+  args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', state: 'Done' }) },
 };
 const dm: MockAction = {
   tool: 'http.request',
@@ -86,7 +86,7 @@ function deps(recorded: Recorded, mcpResult: (tool: string) => unknown = (): unk
     createMcpClient: (options: McpClientOptions): McpClientLike => ({
       listTools: async () =>
         Object.fromEntries(
-          ['create_comment', 'save_issue', 'list_issues'].map((tool) => [
+          ['save_comment', 'save_issue', 'list_issues'].map((tool) => [
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
@@ -146,8 +146,8 @@ describe('applying surface actions', (): void => {
     expect(applied[0].providerId).toBe('prov-1');
     expect(applied[2].providerId).toBe('1.1');
     expect(recorded.mcp).toEqual([
-      { tool: 'create_comment', args: { issueId: 'iss-1', body: 'Audit note.\n\n-- Priya (Day0) · run wi_1/run_1' } },
-      { tool: 'save_issue', args: { id: 'iss-1', status: 'Done' } },
+      { tool: 'save_comment', args: { issueId: 'iss-1', body: 'Audit note.\n\n-- Priya (Day0) · run wi_1/run_1' } },
+      { tool: 'save_issue', args: { id: 'iss-1', state: 'Done' } },
     ]);
     expect(recorded.http).toEqual([
       {
@@ -201,13 +201,13 @@ describe('applying surface actions', (): void => {
     expect(recorded.mcp).toHaveLength(0);
 
     const failing = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
-      deps: deps(recorded, (tool): unknown => (tool === 'create_comment' ? { isError: true, content: [{ type: 'text', text: 'refused' }] } : {})),
+      deps: deps(recorded, (tool): unknown => (tool === 'save_comment' ? { isError: true, content: [{ type: 'text', text: 'refused' }] } : {})),
       grants,
       now,
     });
     expect(failing[0]).toMatchObject({ ok: false, reason: 'refused' });
     expect(failing[1]).toMatchObject({ ok: false, reason: STATUS_WITHOUT_COMMENT });
-    expect(recorded.mcp.map((call) => call.tool)).toEqual(['create_comment']);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
 
     const alone = await applySurfaceActions(ctx, 'real', [linear], run, [status], { deps: deps(recorded), grants, now });
     expect(alone[0]).toMatchObject({ ok: false, reason: STATUS_WITHOUT_COMMENT });
@@ -259,10 +259,10 @@ describe('applying surface actions', (): void => {
       [linear, { ...slack, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }],
       run,
       [
-        { tool: 'mcp.call', args: { surface: 'linear', tool: 'create_comment', toolArgsJson: 'nope' } },
-        { tool: 'mcp.call', args: { surface: 'jira', tool: 'create_comment', toolArgsJson: '{}' } },
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: 'nope' } },
+        { tool: 'mcp.call', args: { surface: 'jira', tool: 'save_comment', toolArgsJson: '{}' } },
         dm,
-        { tool: 'mcp.call', args: { surface: 'linear', tool: 'create_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x\n\n-- Bob (Day0) · run a/b' }) } },
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x\n\n-- Bob (Day0) · run a/b' }) } },
         { tool: 'ticket.update', args: { slug: 'missing' } },
       ],
       { deps: deps(recorded), grants, now },

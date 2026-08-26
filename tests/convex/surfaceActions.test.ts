@@ -45,15 +45,15 @@ describe('surface MCP probing', (): void => {
           delete_issue: {
             inputSchema: { type: 'object', properties: { issueId: { type: 'string' } } },
           },
-          create_comment: { inputSchema: { type: 'object', properties: {} } },
+          save_comment: { inputSchema: { type: 'object', properties: {} } },
         },
         'kanban',
       ),
     ).toEqual({
-      toolAllowlist: ['list_issues', 'create_comment'],
+      toolAllowlist: ['list_issues', 'save_comment'],
       toolArguments: [
         { tool: 'list_issues', arguments: ['project', 'updatedAfter'] },
-        { tool: 'create_comment', arguments: [] },
+        { tool: 'save_comment', arguments: [] },
       ],
     });
     expect(argumentNamesFromSchema({ properties: null })).toEqual([]);

@@ -14,7 +14,7 @@ const linear: SurfaceRecord = {
   lastVerifiedAt: now,
   path: 'mcp',
   endpoint: 'https://mcp.linear.app/mcp',
-  toolAllowlist: ['create_comment', 'save_issue'],
+  toolAllowlist: ['save_comment', 'save_issue'],
 };
 
 const slack: SurfaceRecord = {
@@ -36,7 +36,7 @@ describe('executor output contract', (): void => {
     }
     const parsed = actionArgsSchema.safeParse({
       surface: 'linear',
-      tool: 'create_comment',
+      tool: 'save_comment',
       toolArgsJson: '{"issueId":"x","body":"y"}',
       method: 'POST',
       path: '/chat.postMessage',
@@ -62,7 +62,7 @@ describe('surface guidance in the executor prompt', (): void => {
 
   it('lists connected surfaces with allowlists, the manager DM id and the two verbs', (): void => {
     const text = surfaceInstructions([linear, slack, { ...linear, slug: 'jira', verdict: 'absent' }], now);
-    expect(text).toContain('  - linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: create_comment, save_issue');
+    expect(text).toContain('  - linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: save_comment, save_issue');
     expect(text).toContain(
       '  - slack (Slack) - class chat · path documented-api · endpoint https://slack.com/api/ · allowed tools: (none) · manager DM channel id: D0MANAGER',
     );

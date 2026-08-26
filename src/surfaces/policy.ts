@@ -568,7 +568,7 @@ function compact(value: unknown, max = 80): string {
  *   action: The action as the skill emitted it.
  *
  * Returns:
- *   One line such as `mcp.call linear · create_comment · {issueId: "…", body: "…"}`.
+ *   One line such as `mcp.call linear · save_comment · {issueId: "…", body: "…"}`.
  */
 export function describeAction(action: MockAction): string {
   const args = action.args ?? {};
