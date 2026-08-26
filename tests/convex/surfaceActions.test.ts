@@ -11,6 +11,7 @@ import {
   managerUserId,
   mcpAllowlist,
   probeMcpSurface,
+  managerDisplayName,
   probeSlackSurface,
   runSurfaceProbe,
   safeProviderError,
@@ -160,7 +161,10 @@ describe('Slack documented API probing', (): void => {
         return slackResponse({ ok: true, user_id: 'UBOT', team_id: 'TWORKSPACE' });
       }
       if (url.includes('/users.lookupByEmail')) {
-        return slackResponse({ ok: true, user: { id: 'UMANAGER' } });
+        return slackResponse({
+          ok: true,
+          user: { id: 'UMANAGER', real_name: 'Brian Isaac', profile: { display_name: 'brian' } },
+        });
       }
       return slackResponse({ ok: true, channel: { id: 'DMANAGER' } });
     });
@@ -183,12 +187,22 @@ describe('Slack documented API probing', (): void => {
         'chat.postMessage',
       ],
       managerDmChannelId: 'DMANAGER',
+      managerName: 'Brian Isaac',
       providerIdentityId: 'UBOT',
       providerWorkspaceId: 'TWORKSPACE',
     });
     expect(calls[1]?.url).toContain('email=boss%40day0.local');
     expect(JSON.parse(calls[2]?.body ?? '{}')).toEqual({ users: 'UMANAGER' });
     expect(JSON.stringify(result)).not.toContain('local-slack-contract-value');
+  });
+
+  it('reads the manager display name in the order Slack prefers', (): void => {
+    expect(managerDisplayName({ id: 'U1', real_name: ' Brian Isaac ' })).toBe('Brian Isaac');
+    expect(managerDisplayName({ id: 'U1', profile: { display_name: 'brian', real_name: 'Brian I' } })).toBe('brian');
+    expect(managerDisplayName({ id: 'U1', profile: { display_name: '', real_name: 'Brian I' } })).toBe('Brian I');
+    expect(managerDisplayName({ id: 'U1', name: 'brian.isaac' })).toBe('brian.isaac');
+    expect(managerDisplayName({ id: 'U1' })).toBeUndefined();
+    expect(managerDisplayName(undefined)).toBeUndefined();
   });
 
   it('treats HTTP 200 plus ok false as a failed probe', async (): Promise<void> => {

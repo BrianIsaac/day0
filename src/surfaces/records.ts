@@ -18,6 +18,7 @@ export interface SurfaceRowLike {
   credentialId?: string;
   credentialKind?: string;
   managerDmChannelId?: string;
+  managerName?: string;
 }
 
 /**
@@ -66,5 +67,6 @@ export function toSurfaceRecord(row: SurfaceRowLike): SurfaceRecord {
     credentialId: row.credentialId,
     credentialKind: credentialKindFor(row),
     managerDmChannelId: row.managerDmChannelId,
+    managerName: row.managerName,
   };
 }

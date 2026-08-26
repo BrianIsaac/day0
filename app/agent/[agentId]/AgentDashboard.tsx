@@ -10,11 +10,11 @@ import { MockEnvironment } from './MockEnvironment';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
 import {
   type ActionVerdict,
-  describeAction,
   reviewPayload,
   skillApprovalRefusal,
 } from '../../../src/surfaces/policy';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
+import { summariseAction } from '../../../src/surfaces/summary';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
 import type { MockAction } from '../../../src/work/types';
@@ -876,11 +876,13 @@ export function pendingVerdicts(
 export function PendingActions({
   actions,
   verdicts,
+  surfaces,
   onApprove,
   onReject,
 }: {
   actions: MockAction[];
   verdicts: ActionVerdict[];
+  surfaces: SurfaceRecord[];
   onApprove: (approvedIndexes: number[]) => Promise<unknown>;
   onReject: (reason: string) => Promise<unknown>;
 }) {
@@ -949,16 +951,20 @@ export function PendingActions({
                   aria-label={`approve action ${index + 1}`}
                 />
                 <div className="flex-1 min-w-0">
-                  <ActionPayload action={action} />
-                  <span className="block text-[10px] text-[var(--color-muted)]">
-                    {describeAction(action)}
-                  </span>
-                  <div className="flex items-center gap-2 mt-0.5">
+                  <p className="text-xs text-[var(--color-fg)] break-words">
+                    {summariseAction(action, surfaces)}
                     {heldByGate ? (
-                      <span className="text-[10px] text-[var(--color-warn)]">
-                        held · {verdict.reason}
-                      </span>
-                    ) : !on ? (
+                      <span className="text-[var(--color-warn)]"> · held · {verdict.reason}</span>
+                    ) : null}
+                  </p>
+                  <details className="mt-0.5">
+                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                      exact payload
+                    </summary>
+                    <ActionPayload action={action} />
+                  </details>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {!heldByGate && !on ? (
                       <span className="text-[10px] text-[var(--color-muted)]">held · will not be sent</span>
                     ) : null}
                     {heldByGate ? null : on ? (
@@ -1154,6 +1160,7 @@ function WorkItemCard({
           key={`${item._id}:${item.pendingRunId ?? ''}`}
           actions={output.actions ?? []}
           verdicts={pendingVerdicts(item.actionVerdicts, output.actions?.length ?? 0)}
+          surfaces={surfaces}
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />

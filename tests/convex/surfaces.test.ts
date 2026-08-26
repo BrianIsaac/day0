@@ -398,6 +398,8 @@ describe('surface probe generations', (): void => {
         generation: first.generation,
         toolAllowlist: ['list_issues'],
         toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
+        managerDmChannelId: 'DMANAGER',
+        managerName: 'Brian',
         verifiedAt: 100,
         expiresAt: renewedExpiry,
       }),
@@ -407,6 +409,8 @@ describe('surface probe generations', (): void => {
       credentialLanded: true,
       lastVerifiedAt: 100,
       expiresAt: renewedExpiry,
+      managerDmChannelId: 'DMANAGER',
+      managerName: 'Brian',
     });
     const hourly = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
     if (!hourly) throw new Error('hourly probe was not reserved');
@@ -419,11 +423,10 @@ describe('surface probe generations', (): void => {
         verifiedAt: 200,
       }),
     ).resolves.toBe(true);
-    expect(await readSurface(harness, surfaceId)).toMatchObject({
-      verdict: 'connected',
-      lastVerifiedAt: 200,
-      expiresAt: renewedExpiry,
-    });
+    const reprobed = await readSurface(harness, surfaceId);
+    expect(reprobed).toMatchObject({ verdict: 'connected', lastVerifiedAt: 200, expiresAt: renewedExpiry });
+    expect(reprobed.managerDmChannelId).toBeUndefined();
+    expect(reprobed.managerName).toBeUndefined();
     const connectedEvents = await harness.run(
       async (ctx) =>
         (await ctx.db.query('events').collect()).filter(
@@ -748,6 +751,9 @@ describe('surface approval state machine', (): void => {
       credentialId: '10000credentials' as GenericId<'credentials'>,
       credentialKind: 'value',
     });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(surfaceId, { managerDmChannelId: 'DMANAGER', managerName: 'Brian' });
+    });
     expect(await readSurface(harness, surfaceId)).toMatchObject({ credentialKind: 'value' });
     await owner.mutation(api.surfaces.reject, { surfaceId, reason: 'Wrong endpoint.' });
     const rejected = await readSurface(harness, surfaceId);
@@ -760,6 +766,8 @@ describe('surface approval state machine', (): void => {
     expect(rejected.path).toBeUndefined();
     expect(rejected.request).toBeUndefined();
     expect(rejected.credentialLanded).toBe(false);
+    expect(rejected.managerDmChannelId).toBeUndefined();
+    expect(rejected.managerName).toBeUndefined();
 
     await propose(harness, surfaceId);
     await owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' });

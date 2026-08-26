@@ -160,6 +160,8 @@ export default defineSchema({
     ),
     credentialLocation: v.optional(v.string()),
     managerDmChannelId: v.optional(v.string()),
+    // The manager's Slack display name from the probe's `users.lookupByEmail`.
+    managerName: v.optional(v.string()),
     toolAllowlist: v.optional(v.array(v.string())),
     toolArguments: v.optional(
       v.array(v.object({ tool: v.string(), arguments: v.array(v.string()) })),

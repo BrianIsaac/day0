@@ -49,6 +49,7 @@ interface McpDiscovery {
 interface SlackProbeResult {
   toolAllowlist: string[];
   managerDmChannelId: string;
+  managerName?: string;
   providerIdentityId: string;
   providerWorkspaceId?: string;
 }
@@ -341,6 +342,28 @@ export function managerUserId(user: unknown, botUserId: string, bossEmail: strin
 }
 
 /**
+ * The name Slack shows for the manager, for the approval card's DM line.
+ *
+ * Args:
+ *   user: The `user` object from `users.lookupByEmail`.
+ *
+ * Returns:
+ *   The real name, else the profile's display or real name, else the handle; undefined when none is set.
+ */
+export function managerDisplayName(user: unknown): string | undefined {
+  const record = user && typeof user === 'object' ? (user as Record<string, unknown>) : undefined;
+  if (!record) return undefined;
+  const profile =
+    record.profile && typeof record.profile === 'object'
+      ? (record.profile as Record<string, unknown>)
+      : {};
+  for (const value of [record.real_name, profile.display_name, profile.real_name, record.name]) {
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return undefined;
+}
+
+/**
  * Verify Slack identity and derive the manager's dedicated DM channel.
  *
  * Args:
@@ -394,6 +417,7 @@ export async function probeSlackSurface(
   return {
     toolAllowlist,
     managerDmChannelId: channelId,
+    managerName: managerDisplayName(lookup.user),
     providerIdentityId: auth.user_id,
     providerWorkspaceId: typeof auth.team_id === 'string' ? auth.team_id : undefined,
   };
@@ -452,6 +476,7 @@ export async function runSurfaceProbe(
     let toolAllowlist: string[];
     let toolArguments: Array<{ tool: string; arguments: string[] }> = [];
     let managerDmChannelId: string | undefined;
+    let managerName: string | undefined;
     let providerIdentityId: string | undefined;
     let providerWorkspaceId: string | undefined;
     if (surface.path === 'mcp') {
@@ -472,6 +497,7 @@ export async function runSurfaceProbe(
       );
       toolAllowlist = slack.toolAllowlist;
       managerDmChannelId = slack.managerDmChannelId;
+      managerName = slack.managerName;
       providerIdentityId = slack.providerIdentityId;
       providerWorkspaceId = slack.providerWorkspaceId;
     } else {
@@ -491,6 +517,7 @@ export async function runSurfaceProbe(
       toolAllowlist,
       toolArguments,
       managerDmChannelId,
+      managerName,
       providerIdentityId,
       providerWorkspaceId,
       verifiedAt,
