@@ -75,6 +75,8 @@ export interface IntakeRuntime {
   recordIntake(record: IntakeRecord): Promise<void>;
   seed(candidate: IntakeSeed): Promise<void>;
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
+  /** Decision requests that landed on this surface and are still undecided. */
+  listOpenDecisionRequests(surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>>;
 }
 
 export interface IntakeDependencies {
@@ -645,7 +647,7 @@ async function pollLinear(
 async function slackGet(
   fetcher: IntakeFetcher,
   credential: string,
-  method: 'conversations.list' | 'conversations.history',
+  method: 'conversations.list' | 'conversations.history' | 'conversations.replies',
   query: Record<string, string>,
 ): Promise<Record<string, unknown>> {
   const url = new URL(`https://slack.com/api/${method}`);
@@ -746,13 +748,16 @@ async function slackHistory(
   credential: string,
   channelId: string,
   lastPolledAt?: number,
+  thread?: { ts: string },
 ): Promise<SlackMessage[]> {
   const messages: SlackMessage[] = [];
   const cursors = new Set<string>();
   let cursor: string | undefined;
+  const method = thread ? 'conversations.replies' : 'conversations.history';
   for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
-    const payload = await slackGet(fetcher, credential, 'conversations.history', {
+    const payload = await slackGet(fetcher, credential, method, {
       channel: channelId,
+      ...(thread ? { ts: thread.ts } : {}),
       inclusive: 'true',
       limit: '200',
       ...(lastPolledAt !== undefined ? { oldest: String(lastPolledAt / 1_000) } : {}),
@@ -772,10 +777,10 @@ async function slackHistory(
     const nextCursor = slackCursor(payload);
     if (!nextCursor) break;
     if (cursors.has(nextCursor)) {
-      throw new Error('Slack conversations.history repeated a cursor before pagination completed.');
+      throw new Error(`Slack ${method} repeated a cursor before pagination completed.`);
     }
     if (pageIndex === MAX_SLACK_HISTORY_PAGES - 1) {
-      throw new Error('Slack conversations.history pagination did not complete within the page limit.');
+      throw new Error(`Slack ${method} pagination did not complete within the page limit.`);
     }
     cursors.add(nextCursor);
     cursor = nextCursor;
@@ -942,6 +947,7 @@ async function pollSlack(
   credential: string,
   observedAt: number,
   fetcher: IntakeFetcher,
+  listOpenRequests: () => Promise<Array<{ ts: string }>>,
 ): Promise<ChatPollResult> {
   for (const method of ['conversations.list', 'conversations.history']) {
     if (!surface.toolAllowlist?.includes(method)) {
@@ -962,21 +968,31 @@ async function pollSlack(
       candidates.push(slackCandidate(message, channel, surface, observedAt));
     }
   }
-  const decisionReplies: ChatPollResult['decisionReplies'] = [];
-  if (surface.managerDmChannelId && surface.managerUserId) {
-    const messages = await slackHistory(
-      fetcher,
-      credential,
-      surface.managerDmChannelId,
-      surface.lastPolledAt,
-    );
+  const decisionReplies = new Map<string, ChatPollResult['decisionReplies'][number]>();
+  const collect = (messages: SlackMessage[], skipTs?: string): void => {
     for (const message of messages) {
+      if (message.ts === skipTs) continue;
       if (!message.user || message.user === surface.providerIdentityId) continue;
       const reply = parseDecisionReply(message.text);
-      if (reply) decisionReplies.push({ userId: message.user, messageTs: message.ts, reply });
+      if (reply) decisionReplies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
+    }
+  };
+  if (surface.managerDmChannelId && surface.managerUserId) {
+    const dm = surface.managerDmChannelId;
+    collect(await slackHistory(fetcher, credential, dm, surface.lastPolledAt));
+    // `conversations.history` lists only top-level messages. A manager who answers in
+    // the thread under the request is answering all the same, so each open request's
+    // thread is read too, when the probe allowlisted the replies method.
+    if (surface.toolAllowlist?.includes('conversations.replies')) {
+      for (const request of await listOpenRequests()) {
+        collect(
+          await slackHistory(fetcher, credential, dm, surface.lastPolledAt, { ts: request.ts }),
+          request.ts,
+        );
+      }
     }
   }
-  return { candidates, decisionReplies };
+  return { candidates, decisionReplies: [...decisionReplies.values()] };
 }
 
 /**
@@ -1003,10 +1019,11 @@ async function pollChat(
   observedAt: number,
   fetcher: IntakeFetcher,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
+  listOpenRequests: () => Promise<Array<{ ts: string }>>,
 ): Promise<ChatPollResult> {
   const polled = await (async (): Promise<ChatPollResult> => {
     if (surface.path === 'documented-api') {
-      return await pollSlack(surface, pages, credential, observedAt, fetcher);
+      return await pollSlack(surface, pages, credential, observedAt, fetcher, listOpenRequests);
     }
     if (surface.path === 'mcp') {
       return {
@@ -1154,6 +1171,7 @@ export async function runIntakeSweep(
                 pollStartedAt,
                 fetcher,
                 makeMcpClient,
+                () => runtime.listOpenDecisionRequests(surface._id),
               )
             : undefined;
         const mapped = chat
@@ -1205,6 +1223,8 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     resolveDecision: async (reply: IntakeDecisionReply): Promise<void> => {
       await ctx.runMutation(internal.work.resolveChannelDecision, reply);
     },
+    listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
+      await ctx.runQuery(internal.work.openDecisionRequests, { surfaceId }),
   };
 }
 

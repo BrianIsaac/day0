@@ -332,6 +332,42 @@ describe('manager channel request claims', (): void => {
     });
   });
 
+  it('lists the sent, undecided requests intake must read threads under', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!row) throw new Error('chat surface missing');
+      return row._id;
+    });
+    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    // Claimed but not yet landed: there is no thread to read.
+    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      ts: '1787770700.000100',
+    });
+    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([
+      { workItemId, ts: '1787770700.000100' },
+    ]);
+
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+  });
+
   it('asks for no reply through a chat surface whose manager identity has not been probed', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

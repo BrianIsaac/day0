@@ -434,6 +434,38 @@ export const prepareDecisionRequest = internalMutation({
   },
 });
 
+/**
+ * The decision requests intake must still read replies under.
+ *
+ * A request is open once it landed (it has a provider ts, so there is a
+ * message to have a thread) and until the decision is made or the row
+ * leaves its parked state. Scoped to one chat surface so a reply in
+ * another manager channel is never read against it.
+ */
+export const openDecisionRequests = internalQuery({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<Array<{ workItemId: Id<'workItems'>; ts: string }>> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface || surface.class !== 'chat') return [];
+    const parked = await Promise.all(
+      (['plan-pending', 'actions-pending'] as const).map(
+        async (state) =>
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', surface.agentId).eq('state', state))
+            .collect(),
+      ),
+    );
+    return parked.flat().flatMap((row) => {
+      const decision = row.decision;
+      if (!decision?.ts || decision.decidedAt || decision.surfaceSlug !== surface.slug) return [];
+      const expectedState = decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+      if (row.state !== expectedState) return [];
+      return [{ workItemId: row._id, ts: decision.ts }];
+    });
+  },
+});
+
 /** Attach provider evidence, or a bounded failure, to the claimed request. */
 export const recordDecisionRequest = internalMutation({
   args: {
