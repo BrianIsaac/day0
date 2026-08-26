@@ -30,6 +30,7 @@ import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import type { ExecutionOutput } from '../src/work/types';
+import { autonomousActionsOn } from '../src/work/autonomy';
 import {
   grantRefusal,
   isAutomatic,
@@ -233,9 +234,11 @@ export const draftPlan = action({
       agentId,
     });
     if (!charterRow) return { ok: false, reason: 'no charter' };
+    const agent = await ctx.runQuery(api.agents.get, { agentId });
     const plan = await draftExecutionPlan({
       candidate: rowToCandidate(item),
       charter: charterRow.body as Charter,
+      autonomousActions: autonomousActionsOn(agent),
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -412,6 +415,7 @@ async function holdRealActions(
   },
 ): Promise<{ ok: boolean; reason?: string }> {
   try {
+    const agent = await ctx.runQuery(api.agents.get, { agentId: args.agentId });
     const mockEnv = await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
     const output = await runSkill({
       skill: {
@@ -425,6 +429,7 @@ async function holdRealActions(
       mockEnv,
       surfaces: await loadSurfaces(ctx, args.agentId),
       mode: 'real',
+      autonomousActions: autonomousActionsOn(agent),
     });
     const pending = await ctx.runMutation(internal.work.setActionsPending, {
       workItemId: args.workItemId,

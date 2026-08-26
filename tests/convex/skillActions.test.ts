@@ -50,6 +50,10 @@ describe('skill author prompts', (): void => {
     expect(AUTHOR_SYSTEM).toContain('never include a token or key');
     expect(AUTHOR_SYSTEM).toContain('you may only target a connected surface');
     expect(AUTHOR_SYSTEM).toContain('The first real call is the gated execution');
+    expect(AUTHOR_SYSTEM).toContain('A registered skill runs under either live action mode');
+    expect(AUTHOR_SYSTEM).toContain('Never hardcode approval-state language into the skill body or into comments and messages');
+    expect(AUTHOR_SYSTEM).toContain('read the current mode from the run context');
+    expect(AUTHOR_SYSTEM).toContain('do not say a write is queued, pending, awaiting approval or "for your approval"');
     for (const verb of ['spreadsheet.appendRow', 'slack.postMessage', 'twitter.reply', 'ticket.update']) {
       expect(AUTHOR_SYSTEM).toContain(verb);
     }
