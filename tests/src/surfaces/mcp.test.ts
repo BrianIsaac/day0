@@ -587,6 +587,25 @@ describe('the browser floor across one run', (): void => {
     expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot']);
   });
 
+  it('redacts a credential echoed by the page when element resolution fails', async (): Promise<void> => {
+    const { adapter } = driver(
+      [
+        '- textbox "Password pipeline-tile-local" [ref=e14]',
+        '- button "Sign in" [ref=e16]',
+      ].join('\n'),
+    );
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Save' }),
+      0,
+      'k',
+    );
+    expect(applied).toMatchObject({ ok: false });
+    expect(JSON.stringify(applied)).not.toContain('pipeline-tile-local');
+    expect(applied.reason).toContain('<redacted>');
+  });
+
   it('takes a fresh snapshot per element action, because the page moves', async (): Promise<void> => {
     const { adapter, calls } = driver();
     await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 0, 'k0');

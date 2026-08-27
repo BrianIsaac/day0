@@ -435,7 +435,12 @@ export class McpAdapter implements SurfaceAdapter {
             )?.arguments,
           );
           if ('reason' in resolved) {
-            return { tool: action.tool, ok: false, reason: resolved.reason, idempotencyKey };
+            return {
+              tool: action.tool,
+              ok: false,
+              reason: clipEffect(redactValue(resolved.reason, bearer), EFFECT_LENGTH),
+              idempotencyKey,
+            };
           }
           toolArgs = resolved.toolArgs;
         }
