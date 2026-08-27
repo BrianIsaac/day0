@@ -17,6 +17,7 @@ import {
   explicitlyDeniesSurface,
   hostCarriesSlug,
   isCredentialSafeEndpoint,
+  isBrowserLoginCredential,
   isPrivateHost,
   namesSystem,
   orientSurface,
@@ -630,12 +631,25 @@ describe('URL attribution', (): void => {
       path: 'documented-api',
       endpoint: 'https://slack.com/api/',
     });
-    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' })).toEqual({
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' }, true)).toEqual({
       path: 'browser-driven',
       endpoint: 'https://app.example.com',
     });
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' })).toEqual({
+      path: 'escalate',
+    });
     expect(choosePath('mcp', { webUi: 'https://app.example.com' })).toEqual({ path: 'escalate' });
     expect(choosePath('mcp', {})).toEqual({ path: 'escalate' });
+    expect(
+      isBrowserLoginCredential({
+        found: 'value',
+        method: 'unknown',
+        label: 'Dashboard login',
+      }),
+    ).toBe(true);
+    expect(
+      isBrowserLoginCredential({ found: 'value', method: 'api-key', label: 'Reporting API key' }),
+    ).toBe(false);
   });
 });
 
@@ -1222,6 +1236,27 @@ describe('the browser floor in orientation', (): void => {
     const tile = (await surfacesBySlug(harness, agentId))['looker-pipeline-tile'];
     expect(tile).toMatchObject({ verdict: 'proposed', path: 'escalate' });
     expect(tile.endpoint).toBeUndefined();
+  });
+
+  it('does not infer browser access from a web URL and the word browser without a login', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'reports.md':
+          '# Forecast reports\n\nForecast reports use the browser at https://reports.example.test/forecast. There is no API or MCP server.',
+      },
+      [{ name: 'Forecast reports', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+    expect(reports.endpoint).toBeUndefined();
+    expect(reports.request?.openQuestions).toContain(
+      'Document the web UI login credential before approving browser-driven access.',
+    );
   });
 
   it('still files absent when a denial comes with no address of any kind', async (): Promise<void> => {

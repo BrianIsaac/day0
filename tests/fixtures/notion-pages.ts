@@ -11,6 +11,7 @@ export type NotionPageName =
 
 /** The placeholder the Linear template carries where the operator pastes the service token. */
 export const LINEAR_TOKEN_PLACEHOLDER = 'PASTE_LINEAR_API_KEY_HERE';
+export const LOOKER_PASSWORD_PLACEHOLDER = 'pipeline-tile-local';
 
 /**
  * Read one page template exactly as it is pasted into Notion.
@@ -35,8 +36,10 @@ export function notionPageTemplate(name: NotionPageName): string {
  *   The Markdown a synced, redacted mirror of the page carries.
  */
 export function sanitisedNotionPage(name: NotionPageName): string {
-  return notionPageTemplate(name).replace(
-    LINEAR_TOKEN_PLACEHOLDER,
-    credentialMarker('linear service token'),
-  );
+  return notionPageTemplate(name)
+    .replace(LINEAR_TOKEN_PLACEHOLDER, credentialMarker('linear service token'))
+    .replace(
+      LOOKER_PASSWORD_PLACEHOLDER,
+      credentialMarker('looker pipeline tile dashboard login'),
+    );
 }
