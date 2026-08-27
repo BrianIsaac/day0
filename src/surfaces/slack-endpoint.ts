@@ -1,14 +1,10 @@
+import { SURFACE_MODE } from '../lib/surface-mode';
+
 /** Production Slack origin; local proof overrides never alter surface evidence. */
 const SLACK_ORIGIN = 'https://slack.com';
 
 function localProofMode(): boolean {
-  return (
-    process.env.DAY0_SURFACE_MODE === 'real' &&
-    process.env.NEXT_PUBLIC_DEV_NO_AUTH === 'true' &&
-    process.env.NODE_ENV === 'development' &&
-    !process.env.VERCEL &&
-    !process.env.NEXT_PUBLIC_VERCEL_ENV
-  );
+  return SURFACE_MODE === 'real';
 }
 
 function localOverride(name: string, expectedPath: string, hosts: readonly string[]): URL | undefined {
