@@ -38,6 +38,13 @@ describe('choosing components on the command line', (): void => {
     expect(() => parseComposeArguments(['--profile'])).toThrow('needs a profile name');
   });
 
+  it('drops the argument separator pnpm inserts, which compose reads as a service', (): void => {
+    expect(parseComposeArguments(['down', '--profile', 'browser', '--', '-v'])).toEqual({
+      profiles: ['real', 'browser'],
+      rest: ['down', '-v'],
+    });
+  });
+
   it('passes the environment file and every profile through to compose', (): void => {
     expect(composeArguments(['--profile', 'browser', 'up', '-d'], '.env.local')).toEqual([
       'compose',

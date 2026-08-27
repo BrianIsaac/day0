@@ -199,7 +199,7 @@ pnpm convex:down                 # the backend; the data volume stays
 
 In that order: `convex:down` removes the compose network on its way out, and cannot while the model container is still attached to it. The sandbox is on no network at all, so it is only in that list to be tidy - it is a few megabytes of idle Python.
 
-To throw the volumes away too, all together: `docker compose --env-file .env.local --profile real --profile model --profile sandbox down -v`.
+To throw the volumes away too, all together: `pnpm convex:down --profile model --profile sandbox -- -v`.
 
 Every service in `docker-compose.yml` sits behind a profile, and the profiles are the components: `real` is day0's backend and is added to every `pnpm convex:*` command for you, and each other profile adds one optional component. `pnpm convex:up --help` lists them; what each one is for, when you need it and what it never sees is in `docs/running/components.md`.
 

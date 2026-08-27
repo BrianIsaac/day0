@@ -80,6 +80,11 @@ export function parseComposeArguments(argv: readonly string[]): ComposeInvocatio
       if (value === undefined) throw new Error('--profile needs a profile name.');
     } else if (argument.startsWith('--profile=')) {
       value = argument.slice('--profile='.length);
+    } else if (argument === '--') {
+      // pnpm inserts this to stop reading its own flags. Compose has no use for
+      // it and reads it as a service name, so `pnpm convex:down -- -v` would
+      // report "Any of the services [-v] not running" and remove nothing.
+      continue;
     } else {
       rest.push(argument);
       continue;
