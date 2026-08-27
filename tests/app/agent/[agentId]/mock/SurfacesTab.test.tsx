@@ -3,9 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
   CredentialRow,
   EvidenceQuote,
+  ProvisioningRow,
   type CredentialRowProps,
+  type ProvisioningRowProps,
 } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
-import type { CredentialPresentation } from '../../../../../src/surfaces/credential-presentation';
+import {
+  presentProvisioning,
+  type CredentialPresentation,
+  type ProvisioningPresentation,
+} from '../../../../../src/surfaces/credential-presentation';
 
 /** Render one isolated credential row without running dashboard hooks. */
 function renderCredentialRow(
@@ -100,5 +106,121 @@ describe('SurfacesTab evidence quote', (): void => {
       '&lt;page url=&quot;ftp://x&quot;&gt;Linear&lt;/page&gt;',
     );
     expect(renderToStaticMarkup(<EvidenceQuote quote={undefined} />)).toBe('');
+  });
+});
+
+/** Render one isolated provisioning row without running dashboard hooks. */
+function renderProvisioningRow(
+  presentation: ProvisioningPresentation,
+  overrides: Partial<ProvisioningRowProps> = {},
+): string {
+  return renderToStaticMarkup(
+    <ProvisioningRow
+      onProvision={(): void => undefined}
+      presentation={presentation}
+      provisioning={false}
+      surfaceSlug="slack"
+      {...overrides}
+    />,
+  );
+}
+
+describe('SurfacesTab dedicated-app row', (): void => {
+  it('renders nothing for a system whose docs describe no install procedure', (): void => {
+    expect(
+      renderProvisioningRow(
+        presentProvisioning({ credential: { found: 'value', method: 'api-key' }, hasPublicUrl: true }),
+      ),
+    ).toBe('');
+  });
+
+  it('offers a write-only configuration-token field beside the shared-token fallback', (): void => {
+    const markup = renderProvisioningRow(
+      presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: true }),
+    );
+    expect(markup).toContain('Provision a dedicated app');
+    expect(markup).toContain('type="password"');
+    expect(markup).toContain('autoComplete="new-password"');
+    expect(markup).not.toContain('value=');
+    expect(markup).toContain('revoked');
+  });
+
+  it('says why it cannot offer one without a public address', (): void => {
+    const markup = renderProvisioningRow(
+      presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: false }),
+    );
+    expect(markup).toContain('DAY0_PUBLIC_URL');
+    expect(markup).not.toContain('type="password"');
+  });
+
+  it('shows the install link and hides the field once the app exists', (): void => {
+    const markup = renderProvisioningRow(
+      presentProvisioning({
+        credential: { found: 'none', method: 'oauth' },
+        hasPublicUrl: true,
+        provisioning: {
+          appId: 'A1',
+          appName: 'ops worker (Day0)',
+          installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1&state=abc',
+        },
+      }),
+    );
+    expect(markup).toContain('Awaiting the install click');
+    expect(markup).toContain('client_id=1&amp;state=abc');
+    expect(markup).toContain('Install link for the administrator');
+    expect(markup).not.toContain('type="password"');
+  });
+
+  it('reports the dedicated identity once the install has landed', (): void => {
+    const markup = renderProvisioningRow(
+      presentProvisioning({
+        credential: { found: 'none', method: 'oauth' },
+        hasPublicUrl: true,
+        provisioning: {
+          appId: 'A1',
+          appName: 'ops worker (Day0)',
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          installedAt: 5,
+        },
+      }),
+    );
+    expect(markup).toContain('Dedicated app installed');
+    expect(markup).toContain('acts as its own app');
+    expect(markup).not.toContain('Install link for the administrator');
+  });
+
+  it('names a failed install and offers a fresh link', (): void => {
+    const markup = renderProvisioningRow(
+      presentProvisioning({
+        credential: { found: 'none', method: 'oauth' },
+        hasPublicUrl: true,
+        provisioning: {
+          appId: 'A1',
+          appName: 'ops worker (Day0)',
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          lastError: 'Slack oauth.v2.access failed: invalid_code.',
+        },
+      }),
+    );
+    expect(markup).toContain('Install did not complete');
+    expect(markup).toContain('invalid_code');
+    expect(markup).toContain('type="password"');
+  });
+
+  it('shows an operation error under the row', (): void => {
+    const markup = renderProvisioningRow(
+      presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: true }),
+      { error: 'Slack apps.manifest.create failed: token_expired' },
+    );
+    expect(markup).toContain('token_expired');
+  });
+
+  it('disables the control while an app is being registered', (): void => {
+    const markup = renderProvisioningRow(
+      presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: true }),
+      { provisioning: true },
+    );
+    expect(markup).toContain('Registering the app...');
+    expect(markup).toContain('disabled=""');
   });
 });

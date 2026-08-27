@@ -6,10 +6,15 @@ import { makeFunctionReference } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import {
+  presentChannelsNotJoined,
+  presentProvisioning,
   presentSurfaceCredential,
+  PROVISION_LABEL,
   type CredentialOwnerSummary,
   type CredentialPresentation,
+  type ProvisioningPresentation,
   type SurfaceCredentialFinding,
+  type SurfaceProvisioning,
 } from '@/surfaces/credential-presentation';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '@/surfaces/waterfall';
@@ -36,9 +41,88 @@ type ConnectRequestBody = {
 
 type Operation = {
   error?: string;
-  kind: 'landing' | 'probe';
+  kind: 'landing' | 'probe' | 'provision';
   surfaceId: string;
 };
+
+export interface ProvisioningRowProps {
+  error?: string;
+  onProvision: (configurationToken: string) => void;
+  presentation: ProvisioningPresentation;
+  provisioning: boolean;
+  surfaceSlug: string;
+}
+
+/**
+ * Render the documented self-provisioning procedure and whichever step is next.
+ *
+ * The configuration-token field is uncontrolled for the same reason the
+ * credential field is: the value goes straight from the form to the action and
+ * never lands in React state, where a devtools snapshot or an error boundary
+ * could keep it.
+ *
+ * Args:
+ *   props: Stage copy, operation state and the provisioning callback.
+ *
+ * Returns:
+ *   The procedure's current step, or nothing when the docs describe none.
+ */
+export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
+  function onSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const value = new FormData(form).get('configurationToken');
+    form.reset();
+    if (typeof value === 'string' && value.trim()) props.onProvision(value);
+  }
+
+  // A system whose documentation describes no install procedure has no step to
+  // show, and an empty box beside every Linear card would only be noise.
+  if (props.presentation.stage === 'not-applicable') return null;
+
+  return (
+    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
+      <p className="font-medium">{props.presentation.title}</p>
+      <p className="mt-1 text-[var(--color-muted)]">{props.presentation.note}</p>
+      {props.presentation.installUrl ? (
+        <p className="mt-2 break-all">
+          <a
+            href={props.presentation.installUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[var(--color-accent)] underline"
+          >
+            Install link for the administrator
+          </a>
+        </p>
+      ) : null}
+      {props.presentation.offerProvisioning ? (
+        <form onSubmit={onSubmit} className="mt-2 flex flex-wrap gap-2">
+          <label className="sr-only" htmlFor={`configuration-token-${props.surfaceSlug}`}>
+            App configuration token for {props.surfaceSlug}
+          </label>
+          <input
+            id={`configuration-token-${props.surfaceSlug}`}
+            name="configurationToken"
+            type="password"
+            autoComplete="new-password"
+            required
+            placeholder="Paste the app configuration token"
+            className="min-w-48 flex-1 rounded border bg-transparent px-2 py-1"
+          />
+          <button
+            type="submit"
+            disabled={props.provisioning}
+            className="rounded border px-2 py-1 disabled:opacity-50"
+          >
+            {props.provisioning ? 'Registering the app...' : PROVISION_LABEL}
+          </button>
+        </form>
+      ) : null}
+      {props.error ? <p className="mt-1 text-[var(--color-danger)]">{props.error}</p> : null}
+    </div>
+  );
+}
 
 const credentialSummariesQuery = makeFunctionReference<
   'query',
@@ -193,6 +277,8 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   const reorient = useAction(api.surfaces.reorient);
   const probe = useAction(api.surfaceActions.probe);
   const landCredential = useAction(api.surfaceActions.landCredential);
+  const provisionApp = useAction(api.slackProvisionActions.provisionApp);
+  const installRedirectConfigured = useQuery(api.surfaces.installRedirectConfigured, {});
   const [reorienting, setReorienting] = useState(false);
   const [reorientError, setReorientError] = useState<string | null>(null);
   const [operation, setOperation] = useState<Operation | null>(null);
@@ -216,6 +302,19 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation(null);
     } catch (failure) {
       setOperation({ kind: 'probe', surfaceId, error: (failure as Error).message });
+    }
+  }
+
+  async function onProvision(
+    surfaceId: Id<'surfaces'>,
+    configurationToken: string,
+  ): Promise<void> {
+    setOperation({ kind: 'provision', surfaceId });
+    try {
+      await provisionApp({ surfaceId, configurationToken });
+      setOperation(null);
+    } catch (failure) {
+      setOperation({ kind: 'provision', surfaceId, error: (failure as Error).message });
     }
   }
 
@@ -272,13 +371,24 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             summary && typeof summary.source === 'object'
               ? sourceLabels.get(summary.source.sourceId)
               : undefined;
+          const provisioning = surface.provisioning as SurfaceProvisioning | undefined;
           const presentation = presentSurfaceCredential({
             credential: request?.credential,
             credentialId: surface.credentialId ? String(surface.credentialId) : undefined,
             credentialLocation: surface.credentialLocation,
+            provisioning,
             sourceLabel: summarySourceLabel,
             summary,
           });
+          const provisioningPresentation = presentProvisioning({
+            credential: request?.credential,
+            hasPublicUrl: installRedirectConfigured === true,
+            provisioning,
+          });
+          const channelsNotJoined = presentChannelsNotJoined(
+            surface.channelsNotJoined,
+            provisioning?.appName,
+          );
           const currentOperation = operation?.surfaceId === surface._id ? operation : undefined;
           const canProbe = ['approved', 'connected', 'ungranted', 'listed-dead'].includes(
             surface.verdict,
@@ -354,6 +464,19 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   <dd>{request.rollback || 'not stated'}</dd>
                 </dl>
               ) : null}
+              {surface.verdict !== 'declared' && surface.verdict !== 'absent' ? (
+                <ProvisioningRow
+                  error={
+                    currentOperation?.kind === 'provision' ? currentOperation.error : undefined
+                  }
+                  onProvision={(configurationToken: string): void => {
+                    void onProvision(surface._id, configurationToken);
+                  }}
+                  presentation={provisioningPresentation}
+                  provisioning={currentOperation?.kind === 'provision' && !currentOperation.error}
+                  surfaceSlug={surface.slug}
+                />
+              ) : null}
               {request || surface.credentialId || surface.credentialLocation ? (
                 <CredentialRow
                   credentialLabel={presentation.label ?? `${surface.displayName} credential`}
@@ -394,6 +517,9 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   </blockquote>
                 );
               })}
+              {channelsNotJoined ? (
+                <p className="mt-3 text-xs text-[var(--color-warn)]">{channelsNotJoined}</p>
+              ) : null}
               {request?.openQuestions?.length ? (
                 <p className="mt-3 text-[10px] text-[var(--color-muted)]">
                   Open: {request.openQuestions.join(' ')}

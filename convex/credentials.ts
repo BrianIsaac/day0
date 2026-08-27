@@ -15,9 +15,26 @@ const credentialKind = v.union(v.literal('value'), v.literal('location'), v.lite
 const credentialSource = v.union(
   v.object({ sourceId: v.id('docSources'), ref: v.string() }),
   v.literal('entered'),
+  v.literal('oauth'),
 );
 
 type CredentialKind = 'value' | 'location' | 'oauth';
+
+type CredentialSource = { ref: string; sourceId: Id<'docSources'> } | 'entered' | 'oauth';
+
+/**
+ * Whether a credential came from a documentation page rather than a person or
+ * a provider handshake.
+ *
+ * Only a page-derived credential is upserted by `(userId, sourceId, ref)`; a
+ * typed value and an OAuth grant each stand alone, so neither is deduplicated
+ * against a page that never held it.
+ */
+function pageSource(
+  source: CredentialSource,
+): { ref: string; sourceId: Id<'docSources'> } | undefined {
+  return typeof source === 'string' ? undefined : source;
+}
 
 /**
  * Validate credential material without normalising its bytes.
@@ -57,7 +74,7 @@ export const persistEncrypted = internalMutation({
     reactivate: v.boolean(),
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
-    const sourced = args.source === 'entered' ? undefined : args.source;
+    const sourced = pageSource(args.source);
     const existing =
       sourced === undefined
         ? null
@@ -174,22 +191,22 @@ export const store = internalAction({
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     const plaintext = credentialPlaintext(args.kind, args.plaintext);
-    if (args.source !== 'entered') {
+    const sourced = pageSource(args.source);
+    if (sourced) {
       const source = await ctx.runQuery(internal.docSources.getInternal, {
-        sourceId: args.source.sourceId,
+        sourceId: sourced.sourceId,
       });
       if (!source || source.userId !== args.userId) {
         throw new Error('Credential source does not belong to its owner.');
       }
     }
-    const existing =
-      args.source === 'entered'
-        ? null
-        : await ctx.runQuery(internal.credentials.bySourceForStore, {
-            userId: args.userId,
-            sourceId: args.source.sourceId,
-            ref: args.source.ref,
-          });
+    const existing = !sourced
+      ? null
+      : await ctx.runQuery(internal.credentials.bySourceForStore, {
+          userId: args.userId,
+          sourceId: sourced.sourceId,
+          ref: sourced.ref,
+        });
     if (existing) {
       let current: string | undefined;
       try {

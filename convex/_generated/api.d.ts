@@ -32,6 +32,7 @@ import type * as reset from "../reset.js";
 import type * as seed from "../seed.js";
 import type * as skillActions from "../skillActions.js";
 import type * as skills from "../skills.js";
+import type * as slackProvisionActions from "../slackProvisionActions.js";
 import type * as surfaceActions from "../surfaceActions.js";
 import type * as surfaces from "../surfaces.js";
 import type * as voice from "../voice.js";
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   skillActions: typeof skillActions;
   skills: typeof skills;
+  slackProvisionActions: typeof slackProvisionActions;
   surfaceActions: typeof surfaceActions;
   surfaces: typeof surfaces;
   voice: typeof voice;

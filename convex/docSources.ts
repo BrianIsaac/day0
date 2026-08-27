@@ -615,8 +615,11 @@ export const finishSync = internalMutation({
       )
       .collect();
     for (const credential of credentials) {
+      // Only a page-derived credential is retired when its page stops carrying
+      // it. A typed value and an OAuth grant were never on a page, so a sync
+      // has nothing to say about them.
       if (
-        credential.source !== 'entered' &&
+        typeof credential.source !== 'string' &&
         !currentCredentialRefs.has(credential.source.ref) &&
         !credential.revokedAt
       ) {

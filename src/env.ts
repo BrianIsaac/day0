@@ -58,6 +58,9 @@ const schema = z.object({
   DAY0_DOCS_ROOT: z.string().default('/docs'),
   DAY0_CREDENTIAL_KEY: z.string().optional(),
   DAY0_NOTION_MCP_AUTH_TOKEN: z.string().optional(),
+  // The public origin a provider redirects an OAuth install back to. Absent on
+  // the hosted mock and on any run that never provisions a dedicated app.
+  DAY0_PUBLIC_URL: z.string().optional(),
 });
 
 /**
@@ -99,6 +102,7 @@ const OPTIONAL_STRINGS = [
   'DAY0_DOCS_ROOT',
   'DAY0_CREDENTIAL_KEY',
   'DAY0_NOTION_MCP_AUTH_TOKEN',
+  'DAY0_PUBLIC_URL',
 ] as const;
 
 /**
@@ -153,5 +157,6 @@ export const env = schema.parse(
     DAY0_DOCS_ROOT: process.env.DAY0_DOCS_ROOT,
     DAY0_CREDENTIAL_KEY: process.env.DAY0_CREDENTIAL_KEY,
     DAY0_NOTION_MCP_AUTH_TOKEN: process.env.DAY0_NOTION_MCP_AUTH_TOKEN,
+    DAY0_PUBLIC_URL: process.env.DAY0_PUBLIC_URL,
   }),
 );

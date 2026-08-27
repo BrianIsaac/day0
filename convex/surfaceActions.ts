@@ -10,6 +10,11 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
+import {
+  channelsAwaitingInvite,
+  documentedChannelNames,
+  type ChannelMembership,
+} from '../src/surfaces/slack-policy';
 import { safeFailureMessage } from '../src/surfaces/redact';
 
 const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
@@ -48,12 +53,16 @@ interface McpDiscovery {
 
 interface SlackProbeResult {
   toolAllowlist: string[];
+  channelsNotJoined: string[];
   managerDmChannelId: string;
   managerUserId: string;
   managerName?: string;
   providerIdentityId: string;
   providerWorkspaceId?: string;
 }
+
+/** How many `conversations.list` pages the membership check will read. */
+const MAX_CHANNEL_PAGES = 5;
 
 interface ProbeDependencies {
   probeMcp: typeof probeMcpSurface;
@@ -65,6 +74,8 @@ export interface ProbeOutcome {
   verdict: 'connected' | 'ungranted' | 'listed-dead' | 'skipped';
   reason?: string;
   toolAllowlist?: string[];
+  /** Documented channels the app still has to be invited to, hash-prefixed. */
+  channelsNotJoined?: string[];
   managerDmReady?: boolean;
 }
 
@@ -376,11 +387,42 @@ export function managerDisplayName(user: unknown): string | undefined {
  * Returns:
  *   Constrained methods and safe provider identifiers.
  */
+export async function probeChannelMembership(
+  fetcher: Fetcher,
+  credential: string,
+  documented: readonly string[],
+): Promise<string[]> {
+  if (documented.length === 0) return [];
+  const visible: ChannelMembership[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_CHANNEL_PAGES; page += 1) {
+    const payload = await callSlack(fetcher, credential, 'conversations.list', {
+      exclude_archived: 'true',
+      limit: '200',
+      types: 'public_channel',
+      ...(cursor ? { cursor } : {}),
+    });
+    for (const item of Array.isArray(payload.channels) ? payload.channels : []) {
+      const channel = item && typeof item === 'object' ? (item as Record<string, unknown>) : undefined;
+      if (typeof channel?.name !== 'string') continue;
+      visible.push({ isMember: channel.is_member === true, name: channel.name });
+    }
+    const metadata = payload.response_metadata as { next_cursor?: unknown } | undefined;
+    cursor =
+      typeof metadata?.next_cursor === 'string' && metadata.next_cursor.trim()
+        ? metadata.next_cursor.trim()
+        : undefined;
+    if (!cursor) break;
+  }
+  return channelsAwaitingInvite(documented, visible);
+}
+
 export async function probeSlackSurface(
   credential: string,
   bossEmail: string,
   policyMarkdown: string,
   fetcher: Fetcher = fetch,
+  documentedChannels: readonly string[] = [],
 ): Promise<SlackProbeResult> {
   const toolAllowlist = slackMethodsFromPolicy(policyMarkdown);
   const missing = REQUIRED_SLACK_METHODS.filter(
@@ -415,8 +457,16 @@ export async function probeSlackSurface(
   if (typeof channelId !== 'string') {
     throw new Error('Slack conversations.open returned no DM channel.');
   }
+  // A dedicated app is a member of nothing until an administrator invites it,
+  // and only they can. That is a fact about the workspace rather than a probe
+  // failure - the DM works either way - so it is reported on the card and the
+  // connection stands.
+  const channelsNotJoined = toolAllowlist.includes('conversations.list')
+    ? await probeChannelMembership(fetcher, credential, documentedChannels)
+    : [];
   return {
     toolAllowlist,
+    channelsNotJoined,
     managerDmChannelId: channelId,
     managerUserId: managerId,
     managerName: managerDisplayName(lookup.user),
@@ -477,6 +527,7 @@ export async function runSurfaceProbe(
   try {
     let toolAllowlist: string[];
     let toolArguments: Array<{ tool: string; arguments: string[] }> = [];
+    let channelsNotJoined: string[] = [];
     let managerDmChannelId: string | undefined;
     let managerUserId: string | undefined;
     let managerName: string | undefined;
@@ -497,8 +548,11 @@ export async function runSurfaceProbe(
         credential,
         context.agent.bossEmail,
         pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+        undefined,
+        documentedChannelNames(pages),
       );
       toolAllowlist = slack.toolAllowlist;
+      channelsNotJoined = slack.channelsNotJoined;
       managerDmChannelId = slack.managerDmChannelId;
       managerUserId = slack.managerUserId;
       managerName = slack.managerName;
@@ -525,6 +579,7 @@ export async function runSurfaceProbe(
       managerName,
       providerIdentityId,
       providerWorkspaceId,
+      channelsNotJoined,
       verifiedAt,
       expiresAt,
     });
@@ -534,6 +589,7 @@ export async function runSurfaceProbe(
     return {
       verdict: 'connected',
       toolAllowlist,
+      channelsNotJoined,
       managerDmReady: managerDmChannelId !== undefined,
     };
   } catch (error) {

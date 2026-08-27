@@ -186,6 +186,7 @@ describe('Slack documented API probing', (): void => {
         'conversations.replies',
         'chat.postMessage',
       ],
+      channelsNotJoined: [],
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
       managerName: 'Brian Isaac',
@@ -370,14 +371,17 @@ describe('surface probe action state', (): void => {
       toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
       managerDmChannelId: undefined,
       managerUserId: undefined,
+      managerName: undefined,
       providerIdentityId: undefined,
       providerWorkspaceId: undefined,
+      channelsNotJoined: [],
       verifiedAt: 1_000,
       expiresAt: 2_592_001_000,
     });
     expect(result).toEqual({
       verdict: 'connected',
       toolAllowlist: ['list_issues'],
+      channelsNotJoined: [],
       managerDmReady: false,
     });
     expect(JSON.stringify({ mutationArguments, result })).not.toContain(credential);
@@ -618,5 +622,107 @@ describe('credential landing from the card', (): void => {
         .withIdentity({ subject: 'stranger' })
         .action(liveApi.surfaceActions.landCredential, { surfaceId, label: 'x', plaintext: 'y' }),
     ).rejects.toThrow('forbidden');
+  });
+});
+
+describe('a dedicated app that has not been invited to its channels', (): void => {
+  const CHANNEL_POLICY = [
+    '# Slack automation policy',
+    '- Channels: `#revops-asks` (inbound requests), `#revops` (team channel).',
+    'Methods automations use: `auth.test`, `users.lookupByEmail`, `conversations.open`,',
+    '`conversations.list`, `conversations.history`, `conversations.replies`, `chat.postMessage`.',
+  ].join('\n');
+
+  /** A Slack fake that answers the probe under one dedicated bot identity. */
+  function dedicatedFake(channels: Array<{ is_member: boolean; name: string }>) {
+    return vi.fn(async (input: string | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith('/auth.test')) {
+        return slackResponse({ ok: true, user_id: 'UNEWBOT', team_id: 'TWORKSPACE' });
+      }
+      if (url.includes('/users.lookupByEmail')) {
+        return slackResponse({ ok: true, user: { id: 'UMANAGER', real_name: 'Brian Isaac' } });
+      }
+      if (url.includes('/conversations.list')) {
+        return slackResponse({ ok: true, channels });
+      }
+      return slackResponse({ ok: true, channel: { id: 'DNEWDM' } });
+    });
+  }
+
+  it('connects under the new bot user and names the channels awaiting an invite', async (): Promise<void> => {
+    const result = await probeSlackSurface(
+      'xoxb-dedicated-token',
+      'boss@day0.local',
+      CHANNEL_POLICY,
+      dedicatedFake([
+        { is_member: false, name: 'revops-asks' },
+        { is_member: false, name: 'revops' },
+      ]),
+      ['revops-asks', 'revops'],
+    );
+    expect(result.providerIdentityId).toBe('UNEWBOT');
+    expect(result.managerDmChannelId).toBe('DNEWDM');
+    expect(result.channelsNotJoined).toEqual(['#revops-asks', '#revops']);
+  });
+
+  it('reports nothing once the administrator has invited it', async (): Promise<void> => {
+    const result = await probeSlackSurface(
+      'xoxb-dedicated-token',
+      'boss@day0.local',
+      CHANNEL_POLICY,
+      dedicatedFake([
+        { is_member: true, name: 'revops-asks' },
+        { is_member: true, name: 'revops' },
+      ]),
+      ['revops-asks', 'revops'],
+    );
+    expect(result.channelsNotJoined).toEqual([]);
+  });
+
+  it('does not list channels when the policy names none', async (): Promise<void> => {
+    const fetcher = dedicatedFake([]);
+    const result = await probeSlackSurface(
+      'xoxb-dedicated-token',
+      'boss@day0.local',
+      CHANNEL_POLICY,
+      fetcher,
+      [],
+    );
+    expect(result.channelsNotJoined).toEqual([]);
+    expect(
+      fetcher.mock.calls.filter((call): boolean => String(call[0]).includes('conversations.list')),
+    ).toHaveLength(0);
+  });
+
+  it('walks pagination before deciding a documented channel is missing', async (): Promise<void> => {
+    let page = 0;
+    const fetcher = vi.fn(async (input: string | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith('/auth.test')) return slackResponse({ ok: true, user_id: 'UNEWBOT' });
+      if (url.includes('/users.lookupByEmail')) {
+        return slackResponse({ ok: true, user: { id: 'UMANAGER' } });
+      }
+      if (url.includes('/conversations.list')) {
+        page += 1;
+        return page === 1
+          ? slackResponse({
+              ok: true,
+              channels: [{ is_member: true, name: 'random' }],
+              response_metadata: { next_cursor: 'page-2' },
+            })
+          : slackResponse({ ok: true, channels: [{ is_member: true, name: 'revops' }] });
+      }
+      return slackResponse({ ok: true, channel: { id: 'DNEWDM' } });
+    });
+    const result = await probeSlackSurface(
+      'xoxb-dedicated-token',
+      'boss@day0.local',
+      CHANNEL_POLICY,
+      fetcher,
+      ['revops'],
+    );
+    expect(page).toBe(2);
+    expect(result.channelsNotJoined).toEqual([]);
   });
 });
