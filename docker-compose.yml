@@ -12,6 +12,26 @@
 #
 # Backend http://127.0.0.1:3210 · HTTP actions http://127.0.0.1:3211 · dashboard http://localhost:6791
 #
+# Every service here is behind a profile, and the profiles are the components.
+# `real` is day0 itself - the backend and nothing else. Each remaining profile
+# adds one optional component, and an enterprise picks the ones its systems
+# need:
+#
+#   real          day0's backend. Always. Nothing runs without it.
+#   docs-notion   read documentation out of Notion (`docs-notion-mcp`).
+#   browser       reach a system that has a web UI and no API (`playwright-mcp`).
+#   demo          the synthetic Looker tile the browser floor is shown against.
+#   test          the fake Slack used by tests and review panes.
+#   dev           the Convex dashboard.
+#   model, sandbox  a bundled model server and the local skill sandbox.
+#
+#   pnpm convex:up                                            # folder docs only
+#   pnpm convex:up --profile docs-notion --profile browser    # Notion docs + web UIs
+#   pnpm convex:up --profile docs-notion --profile browser --profile demo
+#
+# `real` is added for you; every other profile is opt-in. What each component
+# is, what day0 uses it for, and what it never sees: docs/running/components.md.
+#
 # Two kinds of address live in this file, and they are not interchangeable.
 #
 # CONVEX_PORT, CONVEX_SITE_PROXY_PORT and CONVEX_DASHBOARD_PORT are *host* ports.
@@ -69,7 +89,13 @@
 # than a port, which is the whole of its network story: see the service.
 
 services:
+  # day0 itself. `real` is the profile an enterprise runs, and this is all it
+  # starts: the backend, its data volume, the read-only documentation mount and
+  # the sandbox socket it already carries. Every other service in this file is
+  # an optional component with its own profile - see docs/running/components.md
+  # for what each one is for and when you need it.
   backend:
+    profiles: ['real']
     image: ghcr.io/get-convex/convex-backend:latest
     stop_grace_period: 10s
     stop_signal: SIGINT
@@ -215,16 +241,27 @@ services:
       timeout: 10s
       start_period: 5s
 
-  # Reads an operator-owned Notion workspace through Streamable HTTP. The port
-  # is unpublished and each initialisation supplies its own Notion credential.
+  # day0's Notion documentation component: it reads an operator-owned Notion
+  # workspace through Streamable HTTP so `/documentation` can link a Notion
+  # source. It is Notion's own MCP server, which is why the service is named
+  # for the vendor. The port is unpublished and each initialisation supplies
+  # its own Notion credential. Needed only for a Notion source - folder, git
+  # and URL sources reach nothing in this file.
+  #
+  # `notion-mcp` stays as a network alias because a documentation source stores
+  # its locator, and rows linked before the rename hold
+  # `http://notion-mcp:3000/mcp`. New links use `http://docs-notion-mcp:3000/mcp`.
   #
   # The healthcheck is a real MCP initialise, and the server keeps every
   # session it initialises (with a per-token API proxy each) until a DELETE
   # arrives, so the check terminates its own session or six of them would
   # accumulate a minute for as long as the container runs.
-  notion-mcp:
-    profiles: ['real']
+  docs-notion-mcp:
+    profiles: ['docs-notion']
     image: node:22-alpine
+    networks:
+      default:
+        aliases: ['notion-mcp']
     command:
       [
         'sh',
@@ -250,9 +287,6 @@ services:
   # code reaches it only through the development-only DAY0_TEST_SLACK_* seam;
   # the surface row and its evidence still name Slack's real API. Its published
   # port exists solely so a host browser can follow the synthetic install link.
-  # Profiles: `real` is what an enterprise runs (backend + the notion-mcp and playwright-mcp adapters);
-  # `demo` adds the synthetic Looker tile that stands in for an enterprise's own web app;
-  # `test` adds the fake Slack used only by tests and reviews; `dev` adds the Convex dashboard.
   fake-slack:
     profiles: ['test']
     image: node:22-alpine
@@ -290,8 +324,12 @@ services:
       timeout: 5s
       start_period: 10s
 
-  # The browser floor drives that UI through Day0's per-surface tool allowlist.
-  # The MCP server itself is not a security boundary, so it remains internal.
+  # day0's browser component: the driver behind the browser floor, which reaches
+  # a system that has a web UI and no API and no MCP server. Day0 drives the
+  # same UI a person would, under the surface's own tool allowlist. The MCP
+  # server itself is not a security boundary, so it remains internal, and it
+  # never receives a system's credential as a bearer - a login is typed into
+  # the page's own field.
   #
   # `--isolated` gives every MCP session its own browser context. Day0 opens
   # one session per `mcp.call` and closes it afterwards; without the flag the
@@ -300,7 +338,7 @@ services:
   # snapshot. Sessions share no page state, which is also what an audited
   # per-action call should mean.
   playwright-mcp:
-    profiles: ['real']
+    profiles: ['browser']
     image: mcr.microsoft.com/playwright/mcp:latest
     command:
       [

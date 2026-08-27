@@ -342,6 +342,33 @@ export const pagesForAgent = query({
   },
 });
 
+/**
+ * Count linked documentation sources by kind, for `pnpm check:setup`.
+ *
+ * The setup report needs to say which documentation components this
+ * installation actually depends on, and only the linked sources know: a Notion
+ * source needs the `docs-notion` component, while folder, git and URL sources
+ * need no container at all. Counts only - no locator, label or credential
+ * leaves the deployment.
+ */
+export const linkedKinds = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Array<{ kind: string; serverKind?: string; count: number }>> => {
+    const sources = await ctx.db.query('docSources').take(1_001);
+    if (sources.length > 1_000) throw new Error('Documentation source count exceeds the setup limit.');
+    const counts = new Map<string, { kind: string; serverKind?: string; count: number }>();
+    for (const source of sources) {
+      const key = `${source.kind}:${source.serverKind ?? ''}`;
+      const row = counts.get(key) ?? { kind: source.kind, serverKind: source.serverKind, count: 0 };
+      row.count += 1;
+      counts.set(key, row);
+    }
+    return [...counts.values()].sort((left, right): number =>
+      `${left.kind}${left.serverKind ?? ''}`.localeCompare(`${right.kind}${right.serverKind ?? ''}`),
+    );
+  },
+});
+
 /** Insert source metadata after a public action has validated it. */
 export const createSource = internalMutation({
   args: {
