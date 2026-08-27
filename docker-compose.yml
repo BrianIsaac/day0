@@ -245,6 +245,26 @@ services:
       timeout: 5s
       start_period: 20s
 
+  # Provider double for the isolated Slack self-provisioning proof. Production
+  # code reaches it only through the development-only DAY0_TEST_SLACK_* seam;
+  # the surface row and its evidence still name Slack's real API. Its published
+  # port exists solely so a host browser can follow the synthetic install link.
+  fake-slack:
+    profiles: ['real']
+    image: node:22-alpine
+    command: ['node', '/app/server.js']
+    environment:
+      - FAKE_SLACK_PORT=8090
+    volumes:
+      - ./fake-slack/server.js:/app/server.js:ro
+    ports:
+      - '${CONVEX_BIND_ADDR:-127.0.0.1}:${FAKE_SLACK_HOST_PORT:-8090}:8090'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8090/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+
   # A synthetic system with a web UI and no API: the case Day0 claims to be
   # honest about. Nothing reaches it but a browser, so it is what the browser
   # floor is demonstrated against. Unpublished, like every other real-profile

@@ -1,3 +1,5 @@
+import { slackAuthorizeUrl } from './slack-endpoint';
+
 /**
  * The manifest a dedicated Slack app is created from, taken from the team's own
  * policy page rather than from this repository.
@@ -264,7 +266,7 @@ export function slackInstallUrl(input: {
   scopes: readonly string[];
   state: string;
 }): string {
-  const url = new URL('https://slack.com/oauth/v2/authorize');
+  const url = slackAuthorizeUrl();
   url.searchParams.set('client_id', input.clientId);
   url.searchParams.set('scope', input.scopes.join(','));
   url.searchParams.set('redirect_uri', input.redirectUrl);

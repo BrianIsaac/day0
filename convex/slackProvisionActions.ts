@@ -21,6 +21,7 @@ import {
   slackInstallUrl,
 } from '../src/surfaces/slack-manifest';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { slackApiUrl } from '../src/surfaces/slack-endpoint';
 
 type CredentialId = GenericId<'credentials'>;
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -115,7 +116,7 @@ async function callSlack(
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
     body = new URLSearchParams(init.form).toString();
   }
-  const response = await fetcher(`${SLACK_API}${method}`, {
+  const response = await fetcher(slackApiUrl(method), {
     method: 'POST',
     headers,
     body,

@@ -24,6 +24,7 @@ import {
   type ChannelMembership,
 } from '../src/surfaces/slack-policy';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { slackApiUrl } from '../src/surfaces/slack-endpoint';
 
 const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
   kanban: ['list_issues', 'get_issue', 'list_comments', 'save_comment', 'save_issue'],
@@ -410,7 +411,7 @@ async function callSlack(
   query?: Record<string, string>,
   body?: Record<string, string>,
 ): Promise<Record<string, unknown>> {
-  const url = new URL(`https://slack.com/api/${method}`);
+  const url = slackApiUrl(method);
   for (const [name, value] of Object.entries(query ?? {})) url.searchParams.set(name, value);
   const response = await fetcher(url, {
     method: body ? 'POST' : 'GET',
