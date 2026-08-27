@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
-import { assertDocsComponentReachable, type ReachFetch } from '../components';
+import {
+  assertDocsComponentReachable,
+  isBundledNotionLocator,
+  type ReachFetch,
+} from '../components';
 import { createSecretMcpClient } from '../../surfaces/mcp-client';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
@@ -125,7 +129,10 @@ function connectionConfig(source: DocSourceRecord, secret: string): McpConnectio
   let headers: Record<string, string>;
   if (source.serverKind === 'notion') {
     headers = { 'notion-token': secret };
-    if (url.hostname === 'notion-mcp') {
+    // The transport token authenticates the private hop to day0's own Notion
+    // component, under either the service name or the alias it kept. Somebody
+    // else's copy of the same server has its own authentication and gets none.
+    if (isBundledNotionLocator(url.href)) {
       const transportToken = process.env.DAY0_NOTION_MCP_AUTH_TOKEN;
       if (!transportToken) {
         throw new Error('Notion MCP transport authentication is unavailable.');
