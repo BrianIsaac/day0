@@ -95,4 +95,47 @@ describe('skill author prompts', (): void => {
     expect(prompt).toContain('empty (Empty)');
     expect(prompt).toContain('allowed tools: (none)');
   });
+
+  it('grounds a real-surface skill in the linked redacted runbook action contract', (): void => {
+    const prompt = buildAuthorPrompt(
+      {
+        ...skill,
+        name: 'refresh-looker-pipeline-tile',
+        targetSurface: 'looker',
+      },
+      [
+        {
+          ...linear,
+          slug: 'looker',
+          displayName: 'Looker',
+          path: 'browser-driven',
+          endpoint: 'http://looker-tile:8080/',
+          toolAllowlist: ['browser_fill_form', 'browser_click'],
+        },
+      ],
+      now,
+      [
+        {
+          ref: 'runbooks/how-to-refresh-the-tile.md',
+          title: 'How to refresh the Looker pipeline tile',
+          markdown:
+            'Use `browser_fill_form` with `{"fields":[{"name":"Password","value":"{{secret}}"}]}` then `browser_click` with `{"element":"Save"}`.',
+        },
+        {
+          ref: 'runbooks/how-to-post-slack.md',
+          title: 'How to post Slack',
+          markdown: 'Use chat.postMessage.',
+        },
+      ],
+    );
+
+    expect(prompt).toContain('Linked, already-redacted team documentation');
+    expect(prompt).toContain('runbooks/how-to-refresh-the-tile.md');
+    expect(prompt).toContain(
+      '`browser_fill_form` with `{"fields":[{"name":"Password","value":"{{secret}}"}]}`',
+    );
+    expect(prompt).toContain('preserve its tool name, argument names and literal values exactly');
+    expect(prompt).toContain('never invent a selector, driver reference or path');
+    expect(prompt).not.toContain('runbooks/how-to-post-slack.md');
+  });
 });
