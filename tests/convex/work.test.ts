@@ -88,6 +88,15 @@ async function seed(
       createdAt: 1,
     });
     if (options.withSlack) {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'team chat token',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
       await ctx.db.insert('surfaces', {
         agentId,
         slug: 'slack',
@@ -97,7 +106,10 @@ async function seed(
         endpoint: 'https://slack.com/api/',
         path: 'documented-api',
         toolAllowlist: ['chat.postMessage'],
+        toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
         managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        credentialId,
         credentialLanded: true,
         lastVerifiedAt: Date.now(),
         whereFound: [],
@@ -205,6 +217,522 @@ async function pend(harness: Harness): Promise<{ agentId: Id<'agents'>; workItem
   return ids;
 }
 
+describe('plan decisions under the autonomous-actions switch', (): void => {
+  it('keeps a drafted plan pending while autonomous actions are off', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+    const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
+
+    await harness.mutation(internal.work.setPlan, { workItemId, plan });
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: false,
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-pending',
+      plan,
+    });
+    expect(await eventsOfType(harness, agentId, 'work.plan-approved')).toEqual([]);
+  });
+
+  it('approves the persisted plan autonomously when the switch is on', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed', undefined, {
+      autonomousActions: true,
+    });
+    const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
+
+    await harness.mutation(internal.work.setPlan, { workItemId, plan });
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: true,
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-approved',
+      plan,
+    });
+    expect(
+      (await eventsOfType(harness, agentId, 'work.plan-approved')).map((event) => event.payload),
+    ).toEqual([{ workItemId, by: 'autonomous' }]);
+  });
+
+  it('re-reads a switch flipped after the plan was stored but before the decision', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+
+    await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: { summary: 'Use the current mode.', steps: ['decide'] },
+    });
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: true }));
+
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: true,
+    });
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+  });
+});
+
+describe('manager channel request claims', (): void => {
+  it('claims a plan decision once and stores the selected chat surface', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending', undefined, { withSlack: true });
+
+    const first = await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    expect(first).toMatchObject({
+      prepared: true,
+      decisionId: 'ab3xyz',
+      surface: { slug: 'slack', displayName: 'Slack', managerDmChannelId: 'D0MANAGER' },
+    });
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+      }),
+    ).toEqual({ prepared: false, reason: 'decision request already claimed' });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      kind: 'plan',
+      channel: 'D0MANAGER',
+      surfaceName: 'Slack',
+    });
+  });
+
+  it('claims an action decision only when the parked run has held rows', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(
+      harness,
+      'executing',
+      ['boss:message', 'linear:read'],
+      { withSlack: true },
+    );
+    await harness.mutation(internal.work.setActionsPending, {
+      workItemId,
+      runId,
+      output: pendingOutput,
+    });
+
+    const prepared = await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'ef5rst',
+    });
+    expect(prepared).toMatchObject({ prepared: true, heldIndexes: [0, 1] });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ef5rst',
+      kind: 'actions',
+    });
+  });
+
+  it('leaves an audit event when the one request could not be delivered', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      failure: 'Slack returned HTTP 503.',
+    });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      requestFailure: 'Slack returned HTTP 503.',
+      requestFailedAt: expect.any(Number),
+    });
+    // The request is single-use even when it did not land: the dashboard decides,
+    // and the feed says why no channel reply is coming.
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-failed')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([{ workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: 'Slack returned HTTP 503.' }]);
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+      }),
+    ).toEqual({ prepared: false, reason: 'decision request already claimed' });
+  });
+
+  it('lists the sent, undecided requests intake must read threads under', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!row) throw new Error('chat surface missing');
+      return row._id;
+    });
+    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    // Claimed but not yet landed: there is no thread to read.
+    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      ts: '1787770700.000100',
+    });
+    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([
+      { workItemId, ts: '1787770700.000100' },
+    ]);
+
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
+  });
+
+  it('asks for no reply through a chat surface whose manager identity has not been probed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    // A Slack surface connected before the branch carries the DM channel but no
+    // `managerUserId` until its next re-probe. Intake cannot read replies from it,
+    // so a request that says "reply approve <id>" would be answered into silence.
+    await harness.run(async (ctx) => {
+      const slack = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!slack) throw new Error('chat surface missing');
+      await ctx.db.patch(slack._id, { managerUserId: undefined });
+    });
+
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: false,
+    });
+    expect(await scheduledFunctionNames(harness)).not.toContain(
+      'managerChannelActions:requestDecision',
+    );
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'gh6npq',
+      }),
+    ).toEqual({ prepared: false, reason: 'no connected manager chat channel' });
+    expect((await readItem(harness, workItemId)).decision).toBeUndefined();
+  });
+});
+
+describe('single-use manager decisions', (): void => {
+  async function chatSurfaceId(harness: Harness, agentId: Id<'agents'>): Promise<Id<'surfaces'>> {
+    return await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!row) throw new Error('chat surface missing');
+      return row._id;
+    });
+  }
+
+  it('lets a channel plan approval win the race and records its source', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await chatSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'gh6npq',
+    });
+
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1.100',
+        reply: { verb: 'approve', id: 'gh6npq' },
+      }),
+    ).resolves.toEqual({ status: 'decided', outcome: 'approve' });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-approved',
+      decision: {
+        id: 'gh6npq',
+        outcome: 'approved',
+        decidedVia: 'channel',
+        decidedAt: expect.any(Number),
+      },
+    });
+    expect(await scheduledFunctionNames(harness)).toContain(
+      'workActions:executeApprovedPlanInternal',
+    );
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
+    ).rejects.toThrow('expected plan-pending');
+  });
+
+  it('lets a dashboard plan decision win and acknowledges duplicate channel replies once', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await chatSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'jk7mnr',
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.cancelPlan, {
+      workItemId,
+      reason: 'Use the revised runbook',
+    });
+
+    const reply = {
+      surfaceId,
+      userId: 'UMANAGER',
+      reply: { verb: 'approve' as const, id: 'jk7mnr' },
+    };
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        ...reply,
+        messageTs: '2.100',
+      }),
+    ).resolves.toEqual({ status: 'already-decided', notified: true });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        ...reply,
+        messageTs: '2.200',
+      }),
+    ).resolves.toEqual({ status: 'already-decided', notified: false });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'cancelled',
+      skipReason: 'plan cancelled by the manager: Use the revised runbook',
+      decision: {
+        outcome: 'rejected',
+        decidedVia: 'dashboard',
+        duplicateNotifiedAt: expect.any(Number),
+      },
+    });
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:sendDecisionNotice',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('approves every held action from the channel and ignores another user', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(
+      harness,
+      'executing',
+      ['boss:message', 'linear:read'],
+      { withSlack: true },
+    );
+    const surfaceId = await chatSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.setActionsPending, {
+      workItemId,
+      runId,
+      output: pendingOutput,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'actions',
+      decisionId: 'pq8rst',
+    });
+
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UOTHER',
+        messageTs: '3.100',
+        reply: { verb: 'approve', id: 'pq8rst' },
+      }),
+    ).resolves.toEqual({ status: 'ignored', reason: 'manager identity mismatch' });
+    expect((await readItem(harness, workItemId)).approvedIndexes).toBeUndefined();
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '3.200',
+        reply: { verb: 'approve', id: 'pq8rst' },
+      }),
+    ).resolves.toEqual({ status: 'decided', outcome: 'approve' });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      approvedIndexes: [0, 1],
+      applyPhase: 'approved',
+      decision: { outcome: 'approved', decidedVia: 'channel' },
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+        workItemId,
+        pendingRunId: runId,
+        reason: 'too late',
+      }),
+    ).rejects.toThrow('actions have already been approved');
+    expect(await eventsOfType(harness, agentId, 'work.decision-ignored')).toHaveLength(1);
+  });
+
+  it('cancels a plan or fails a run from a channel reject, with the bounded reason and nothing sent', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const longReason = `${'x'.repeat(230)}  <script>alert(1)</script>`;
+
+    const planHarness = convexTest(schema, allConvexModules());
+    const plan = await seed(planHarness, 'plan-pending', undefined, { withSlack: true });
+    await planHarness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId: plan.workItemId,
+      kind: 'plan',
+      decisionId: 'wx2yz3',
+    });
+    await expect(
+      planHarness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId: await chatSurfaceId(planHarness, plan.agentId),
+        userId: 'UMANAGER',
+        messageTs: '5.100',
+        reply: { verb: 'reject', id: 'wx2yz3', reason: longReason },
+      }),
+    ).resolves.toEqual({ status: 'decided', outcome: 'reject' });
+    const cancelled = await readItem(planHarness, plan.workItemId);
+    expect(cancelled).toMatchObject({
+      state: 'cancelled',
+      decision: { outcome: 'rejected', decidedVia: 'channel', decidedTs: '5.100' },
+    });
+    expect(cancelled.skipReason).toBe(`plan cancelled by the manager: ${longReason.slice(0, 200)}`);
+    expect(await scheduledFunctionNames(planHarness)).not.toContain(
+      'workActions:executeApprovedPlanInternal',
+    );
+    expect(
+      (await eventsOfType(planHarness, plan.agentId, 'work.cancelled')).map((event) => event.payload),
+    ).toEqual([
+      { workItemId: plan.workItemId, reason: cancelled.skipReason, decidedVia: 'channel' },
+    ]);
+
+    const actionsHarness = convexTest(schema, allConvexModules());
+    const actions = await seed(actionsHarness, 'executing', ['boss:message', 'linear:read'], {
+      withSlack: true,
+    });
+    await actionsHarness.mutation(internal.work.setActionsPending, {
+      workItemId: actions.workItemId,
+      runId: actions.runId,
+      output: pendingOutput,
+    });
+    await actionsHarness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId: actions.workItemId,
+      kind: 'actions',
+      decisionId: 'yz3ab4',
+    });
+    await expect(
+      actionsHarness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId: await chatSurfaceId(actionsHarness, actions.agentId),
+        userId: 'UMANAGER',
+        messageTs: '6.100',
+        reply: { verb: 'reject', id: 'yz3ab4', reason: 'not this week' },
+      }),
+    ).resolves.toEqual({ status: 'decided', outcome: 'reject' });
+    const failed = await readItem(actionsHarness, actions.workItemId);
+    expect(failed).toMatchObject({
+      state: 'failed',
+      skipReason: 'rejected by the manager: not this week',
+      decision: { outcome: 'rejected', decidedVia: 'channel', decidedTs: '6.100' },
+    });
+    expect(failed.approvedIndexes).toBeUndefined();
+    expect(failed.pendingRunId).toBeUndefined();
+    expect(await scheduledFunctionNames(actionsHarness)).not.toContain('workActions:applyApprovedActions');
+    expect(
+      (await eventsOfType(actionsHarness, actions.agentId, 'work.actions-rejected')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      {
+        workItemId: actions.workItemId,
+        reason: 'rejected by the manager: not this week',
+        decidedVia: 'channel',
+      },
+    ]);
+  });
+
+  it('stays silent when the reply that decided is read again, and notifies a different reply once', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await chatSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'tv9wxy',
+    });
+    const winner = {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787770800.000100',
+      reply: { verb: 'approve' as const, id: 'tv9wxy' },
+    };
+    await expect(harness.mutation(internal.work.resolveChannelDecision, winner)).resolves.toEqual({
+      status: 'decided',
+      outcome: 'approve',
+    });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      decidedVia: 'channel',
+      decidedTs: '1787770800.000100',
+    });
+
+    // The intake reads the checkpoint boundary inclusively and re-reads anything that
+    // arrived while a sweep was running, so the winning message comes back on the next
+    // poll. That is the manager's one reply, not a duplicate: no notice, no event.
+    await expect(harness.mutation(internal.work.resolveChannelDecision, winner)).resolves.toEqual({
+      status: 'already-decided',
+      notified: false,
+    });
+    expect((await readItem(harness, workItemId)).decision?.duplicateNotifiedAt).toBeUndefined();
+    expect(await eventsOfType(harness, agentId, 'work.decision-duplicate')).toEqual([]);
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:sendDecisionNotice',
+      ),
+    ).toEqual([]);
+
+    // A second, distinct reply is a duplicate and gets exactly one notice.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        ...winner,
+        messageTs: '1787770900.000100',
+        reply: { verb: 'reject', id: 'tv9wxy', reason: 'changed my mind' },
+      }),
+    ).resolves.toEqual({ status: 'already-decided', notified: true });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-approved',
+      decision: { outcome: 'approved', duplicateNotifiedAt: expect.any(Number) },
+    });
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:sendDecisionNotice',
+      ),
+    ).toHaveLength(1);
+  });
+});
+
 describe('cancelling a pending plan', (): void => {
   it('records why the item is cancelled and refuses any other state', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -220,7 +748,9 @@ describe('cancelling a pending plan', (): void => {
           (event) => event.type === 'work.cancelled',
         ),
     );
-    expect(cancelled.map((event) => event.payload)).toEqual([{ workItemId, reason: PLAN_CANCELLED_REASON }]);
+    expect(cancelled.map((event) => event.payload)).toEqual([
+      { workItemId, reason: PLAN_CANCELLED_REASON, decidedVia: 'dashboard' },
+    ]);
     await expect(harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId })).rejects.toThrow(
       'expected plan-pending',
     );
@@ -365,6 +895,7 @@ describe('the exact-action gate', (): void => {
       rejectedIndexes: [],
       refusedIndexes: [],
       autoIndexes: [],
+      decidedVia: 'dashboard',
     });
     expect(await scheduledFunctionNames(harness)).toEqual([
       'work:recoverInterruptedApply',

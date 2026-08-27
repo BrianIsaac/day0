@@ -1,7 +1,8 @@
 import { v } from 'convex/values';
-import { internalMutation, query } from './_generated/server';
+import { internalMutation, internalQuery, query } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
+import type { MockSurfaceSnapshot } from '../src/work/types';
 
 /**
  * Read + write API for the mock work environment.
@@ -26,6 +27,63 @@ export interface MockWriteResult {
   changed: boolean;
   reason?: string;
 }
+
+/** Internal snapshot used only by an already-authorised scheduler continuation. */
+export const snapshotInternal = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<MockSurfaceSnapshot> => {
+    const [docs, sheets, rows, channels, messages, tweets, tickets] = await Promise.all([
+      ctx.db.query('mockDocs').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockSpreadsheets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockSpreadsheetRows').withIndex('by_agent_sheet_tab', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockSlackChannels').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockSlackMessages').withIndex('by_agent_channel', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockTweets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockTickets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+    ]);
+    return {
+      howToGuides: docs
+        .filter((doc) => doc.category === 'how-to-guide')
+        .map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })),
+      teamDocs: docs
+        .filter((doc) => doc.category === 'team-doc')
+        .map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })),
+      spreadsheets: sheets.map((sheet) => ({
+        slug: sheet.slug,
+        title: sheet.title,
+        tabs: sheet.tabs,
+        rows: rows
+          .filter((row) => row.sheetSlug === sheet.slug)
+          .map((row) => ({ tabName: row.tabName, cells: row.cells as Record<string, string> })),
+      })),
+      slackChannels: channels.map((channel) => ({
+        slug: channel.slug,
+        displayName: channel.displayName,
+        kind: channel.kind,
+        recentMessages: messages
+          .filter((message) => message.channelSlug === channel.slug)
+          .slice(-12)
+          .map((message) => ({
+            sender: message.sender,
+            body: message.body,
+            threadKey: message.threadKey,
+          })),
+      })),
+      tweets: tweets.map((tweet) => ({
+        slug: tweet.slug,
+        author: tweet.author,
+        handle: tweet.handle,
+        body: tweet.body,
+      })),
+      tickets: tickets.map((ticket) => ({
+        slug: ticket.slug,
+        title: ticket.title,
+        status: ticket.status,
+        body: ticket.body,
+      })),
+    };
+  },
+});
 
 // ---------- Docs ----------
 

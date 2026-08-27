@@ -21,10 +21,48 @@ import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { MockAction, ReplyTarget } from '../src/work/types';
+import type { DecisionKind } from '../src/work/manager-channel';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
   'apply was interrupted after its claim; provider outcomes are unknown and must be reconciled before retry';
+
+/**
+ * A connected chat surface the manager can be asked through and answered from.
+ *
+ * The DM channel alone is not enough: intake reads replies only from a
+ * surface whose probe also recorded the manager's provider user id, so a
+ * request sent without it would ask for a reply nobody reads.
+ */
+function isManagerChannel(surface: Doc<'surfaces'>): boolean {
+  return (
+    surface.class === 'chat' &&
+    surface.verdict === 'connected' &&
+    surface.credentialLanded &&
+    !!surface.credentialId &&
+    !!surface.managerDmChannelId &&
+    !!surface.managerUserId
+  );
+}
+
+/** Avoid scheduling an outbound action when no connected manager channel can claim it. */
+async function scheduleDecisionRequest(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  kind: DecisionKind,
+): Promise<void> {
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .collect();
+  const available = surfaces.some(isManagerChannel);
+  if (available) {
+    await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
+      workItemId: row._id,
+      kind,
+    });
+  }
+}
 
 /**
  * Read the authority and connection state used at the provider boundary.
@@ -138,6 +176,12 @@ export const get = query({
   handler: async (ctx, args) => {
     return await assertOwnsWorkItem(ctx, args.workItemId);
   },
+});
+
+/** Internal owner-free read for scheduler continuations already fenced by the work state. */
+export const getInternal = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args) => await ctx.db.get(args.workItemId),
 });
 
 export const seedItem = internalMutation({
@@ -270,20 +314,328 @@ export const setPlan = internalMutation({
   },
 });
 
-export const approvePlan = mutation({
+/**
+ * Decide whether a freshly drafted plan should continue without a click.
+ *
+ * This is deliberately separate from `setPlan`. The plan is always persisted
+ * in `plan-pending` first, then this transaction re-reads the agent's switch at
+ * the actual decision boundary. A switch change while the model was drafting
+ * therefore affects this run; a stale value captured before the draft does not.
+ */
+export const decidePlan = internalMutation({
   args: { workItemId: v.id('workItems') },
-  handler: async (ctx, args) => {
-    const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (row.state !== 'plan-pending') {
-      throw new Error(`workItem state is ${row.state}; expected plan-pending`);
+  handler: async (ctx, args): Promise<{ approved: boolean }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    if (row.state !== 'plan-pending') return { approved: false };
+    const agent = await ctx.db.get(row.agentId);
+    if (!agent || !autonomousActionsOn(agent)) {
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
     }
     await ctx.db.patch(args.workItemId, { state: 'plan-approved' });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.plan-approved',
-      payload: { workItemId: args.workItemId },
+      payload: { workItemId: args.workItemId, by: 'autonomous' },
       createdAt: Date.now(),
     });
+    return { approved: true };
+  },
+});
+
+/** Claim the only outbound message for one parked decision state. */
+export const prepareDecisionRequest = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    kind: v.union(v.literal('plan'), v.literal('actions')),
+    decisionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    const expectedState = args.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+    if (row.state !== expectedState) {
+      return { prepared: false as const, reason: `work item is ${row.state}` };
+    }
+    if (row.decision?.kind === args.kind && !row.decision.decidedAt) {
+      return { prepared: false as const, reason: 'decision request already claimed' };
+    }
+    if (!/^[23456789abcdefghjkmnpqrstuvwxyz]{6}$/.test(args.decisionId)) {
+      throw new Error('decision id is not a six-character random token');
+    }
+    const collision = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', row.agentId).eq('decision.id', args.decisionId),
+      )
+      .first();
+    if (collision && collision._id !== row._id) {
+      return { prepared: false as const, reason: 'decision id collision' };
+    }
+    const agent = await ctx.db.get(row.agentId);
+    if (!agent) return { prepared: false as const, reason: 'agent not found' };
+    const surfaceRows = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+      .collect();
+    const chat = surfaceRows
+      .filter(isManagerChannel)
+      .sort(
+        (left, right) =>
+          (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
+            (right.waterfallPosition ?? Number.MAX_SAFE_INTEGER) ||
+          left.createdAt - right.createdAt,
+      )[0];
+    if (!chat?.managerDmChannelId) {
+      return { prepared: false as const, reason: 'no connected manager chat channel' };
+    }
+    const grants = await ctx.db
+      .query('permissionGrants')
+      .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId))
+      .collect();
+    const actions = actionsOf(row.output);
+    const heldIndexes =
+      args.kind === 'actions'
+        ? indexesWith(verdictList(row.actionVerdicts, actions.length), 'held')
+        : [];
+    if (args.kind === 'actions' && heldIndexes.length === 0) {
+      return { prepared: false as const, reason: 'no held actions need a decision' };
+    }
+    const requestRunId = await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.decision-requesting',
+      payload: { workItemId: row._id, decisionId: args.decisionId, kind: args.kind },
+      createdAt: Date.now(),
+    });
+    const decision = {
+      id: args.decisionId,
+      kind: args.kind as DecisionKind,
+      requestedAt: Date.now(),
+      channel: chat.managerDmChannelId,
+      surfaceSlug: chat.slug,
+      surfaceName: chat.displayName,
+    };
+    await ctx.db.patch(row._id, { decision });
+    return {
+      prepared: true as const,
+      agentId: row.agentId,
+      agentName: agent.name,
+      title: row.title,
+      plan: row.plan,
+      output: row.output,
+      heldIndexes,
+      decisionId: args.decisionId,
+      requestRunId,
+      surface: toSurfaceRecord(chat),
+      surfaces: surfaceRows.map(toSurfaceRecord),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+    };
+  },
+});
+
+/**
+ * The decision requests intake must still read replies under.
+ *
+ * A request is open once it landed (it has a provider ts, so there is a
+ * message to have a thread) and until the decision is made or the row
+ * leaves its parked state. Scoped to one chat surface so a reply in
+ * another manager channel is never read against it.
+ */
+export const openDecisionRequests = internalQuery({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<Array<{ workItemId: Id<'workItems'>; ts: string }>> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface || surface.class !== 'chat') return [];
+    const parked = await Promise.all(
+      (['plan-pending', 'actions-pending'] as const).map(
+        async (state) =>
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', surface.agentId).eq('state', state))
+            .collect(),
+      ),
+    );
+    return parked.flat().flatMap((row) => {
+      const decision = row.decision;
+      if (!decision?.ts || decision.decidedAt || decision.surfaceSlug !== surface.slug) return [];
+      const expectedState = decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+      if (row.state !== expectedState) return [];
+      return [{ workItemId: row._id, ts: decision.ts }];
+    });
+  },
+});
+
+/** Attach provider evidence, or a bounded failure, to the claimed request. */
+export const recordDecisionRequest = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    ts: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row?.decision || row.decision.id !== args.decisionId) return false;
+    const failure = args.failure?.slice(0, 240);
+    await ctx.db.patch(row._id, {
+      decision: {
+        ...row.decision,
+        ...(args.ts ? { ts: args.ts } : {}),
+        ...(failure ? { requestFailedAt: Date.now(), requestFailure: failure } : {}),
+      },
+    });
+    // The request is single-use whether or not it landed, so the feed must say why
+    // no channel reply is coming; the dashboard still decides the parked row.
+    if (failure) {
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.decision-request-failed',
+        payload: {
+          workItemId: row._id,
+          decisionId: row.decision.id,
+          kind: row.decision.kind,
+          reason: failure,
+        },
+        createdAt: Date.now(),
+      });
+    }
+    return true;
+  },
+});
+
+/** Claim the one acknowledgement for late or duplicate manager replies. */
+export const prepareDecisionNotice = internalMutation({
+  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.workItemId);
+    if (
+      !row?.decision ||
+      row.decision.id !== args.decisionId ||
+      !row.decision.duplicateNotifiedAt ||
+      row.decision.duplicateNoticeClaimedAt
+    ) {
+      return { prepared: false as const };
+    }
+    const [agent, surfaceRows, grants] = await Promise.all([
+      ctx.db.get(row.agentId),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect(),
+      ctx.db
+        .query('permissionGrants')
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId))
+        .collect(),
+    ]);
+    const surface = surfaceRows.find(
+      (candidate) =>
+        candidate.slug === row.decision?.surfaceSlug &&
+        candidate.class === 'chat' &&
+        candidate.verdict === 'connected' &&
+        candidate.managerDmChannelId === row.decision?.channel,
+    );
+    if (!agent || !surface) return { prepared: false as const };
+    const requestRunId = await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.decision-notifying',
+      payload: { workItemId: row._id, decisionId: row.decision.id },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(row._id, {
+      decision: { ...row.decision, duplicateNoticeClaimedAt: Date.now() },
+    });
+    const origin =
+      row.decision.decidedVia === 'channel'
+        ? row.decision.surfaceName
+        : 'the day0 dashboard';
+    return {
+      prepared: true as const,
+      agentId: row.agentId,
+      agentName: agent.name,
+      requestRunId,
+      surface: toSurfaceRecord(surface),
+      surfaces: surfaceRows.map(toSurfaceRecord),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${origin}.`,
+    };
+  },
+});
+
+/** Store delivery evidence for the single duplicate-reply acknowledgement. */
+export const recordDecisionNotice = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    ts: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row?.decision || row.decision.id !== args.decisionId) return false;
+    await ctx.db.patch(row._id, {
+      decision: {
+        ...row.decision,
+        ...(args.ts ? { duplicateNoticeTs: args.ts } : {}),
+        ...(args.failure ? { duplicateNoticeFailure: args.failure.slice(0, 240) } : {}),
+      },
+    });
+    return true;
+  },
+});
+
+type DecisionVia = 'dashboard' | 'channel';
+
+function decidedPatch(
+  row: Doc<'workItems'>,
+  kind: DecisionKind,
+  via: DecisionVia,
+  outcome: 'approved' | 'rejected',
+  messageTs?: string,
+): { decision?: NonNullable<Doc<'workItems'>['decision']> } {
+  if (!row.decision || row.decision.kind !== kind || row.decision.decidedAt) return {};
+  return {
+    decision: {
+      ...row.decision,
+      decidedAt: Date.now(),
+      outcome,
+      decidedVia: via,
+      ...(via === 'channel' && messageTs ? { decidedTs: messageTs } : {}),
+    },
+  };
+}
+
+async function approvePlanInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  via: DecisionVia,
+  messageTs?: string,
+): Promise<void> {
+  if (row.state !== 'plan-pending') {
+    throw new Error(`workItem state is ${row.state}; expected plan-pending`);
+  }
+  await ctx.db.patch(row._id, {
+    state: 'plan-approved',
+    ...decidedPatch(row, 'plan', via, 'approved', messageTs),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.plan-approved',
+    payload: { workItemId: row._id, decidedVia: via },
+    createdAt: Date.now(),
+  });
+  if (via === 'channel') {
+    await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
+      workItemId: row._id,
+    });
+  }
+}
+
+export const approvePlan = mutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args) => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    await approvePlanInTransaction(ctx, row, 'dashboard');
     return { ok: true };
   },
 });
@@ -334,6 +686,35 @@ export const retryFailed = mutation({
 /** Why a work item is `cancelled` after the manager turned its plan down. */
 export const PLAN_CANCELLED_REASON = 'plan cancelled by the manager';
 
+function planCancelledReason(reason: string): string {
+  const detail = reason.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return detail ? `${PLAN_CANCELLED_REASON}: ${detail}` : PLAN_CANCELLED_REASON;
+}
+
+async function cancelPlanInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  via: DecisionVia,
+  reason: string,
+  messageTs?: string,
+): Promise<void> {
+  if (row.state !== 'plan-pending') {
+    throw new Error(`workItem state is ${row.state}; expected plan-pending`);
+  }
+  const skipReason = planCancelledReason(reason);
+  await ctx.db.patch(row._id, {
+    state: 'cancelled',
+    skipReason,
+    ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.cancelled',
+    payload: { workItemId: row._id, reason: skipReason, decidedVia: via },
+    createdAt: Date.now(),
+  });
+}
+
 /**
  * Why a work item is `cancelled` after the skill proposed for it was rejected.
  *
@@ -348,19 +729,10 @@ export function skillRejectedReason(skillName: string): string {
 }
 
 export const cancelPlan = mutation({
-  args: { workItemId: v.id('workItems') },
+  args: { workItemId: v.id('workItems'), reason: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (row.state !== 'plan-pending') {
-      throw new Error(`workItem state is ${row.state}; expected plan-pending`);
-    }
-    await ctx.db.patch(args.workItemId, { state: 'cancelled', skipReason: PLAN_CANCELLED_REASON });
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.cancelled',
-      payload: { workItemId: args.workItemId, reason: PLAN_CANCELLED_REASON },
-      createdAt: Date.now(),
-    });
+    await cancelPlanInTransaction(ctx, row, 'dashboard', args.reason ?? '');
     return { ok: true };
   },
 });
@@ -716,6 +1088,7 @@ export const setActionsPending = internalMutation({
       payload,
       createdAt: Date.now(),
     });
+    await scheduleDecisionRequest(ctx, row, 'actions');
     return { pending: true, phase: 'manager' };
   },
 });
@@ -771,6 +1144,7 @@ export const setAwaitingApproval = internalMutation({
       },
       createdAt: Date.now(),
     });
+    await scheduleDecisionRequest(ctx, row, 'actions');
     return { parked: true };
   },
 });
@@ -794,6 +1168,21 @@ export const approveActions = mutation({
   },
   handler: async (ctx, args): Promise<{ ok: true; approvedIndexes: number[] }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    return await approveActionsInTransaction(ctx, row, args, 'dashboard');
+  },
+});
+
+async function approveActionsInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  args: {
+    workItemId: Id<'workItems'>;
+    pendingRunId: Id<'events'>;
+    approvedIndexes: number[];
+  },
+  via: DecisionVia,
+  messageTs?: string,
+): Promise<{ ok: true; approvedIndexes: number[] }> {
     if (row.state !== 'actions-pending') {
       throw new Error(`workItem state is ${row.state}; expected actions-pending`);
     }
@@ -823,7 +1212,11 @@ export const approveActions = mutation({
     }
     const heldIndexes = indexesWith(verdicts, 'held');
     const rejectedIndexes = heldIndexes.filter((index) => !approvedIndexes.includes(index));
-    await ctx.db.patch(args.workItemId, { approvedIndexes, applyPhase: 'approved' });
+    await ctx.db.patch(args.workItemId, {
+      approvedIndexes,
+      applyPhase: 'approved',
+      ...decidedPatch(row, 'actions', via, 'approved', messageTs),
+    });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.actions-approved',
@@ -834,13 +1227,13 @@ export const approveActions = mutation({
         rejectedIndexes,
         refusedIndexes: indexesWith(verdicts, 'refused'),
         autoIndexes: indexesWith(verdicts, 'auto'),
+        decidedVia: via,
       },
       createdAt: Date.now(),
     });
     await scheduleApply(ctx, args.workItemId, row.pendingRunId, 'approved');
     return { ok: true, approvedIndexes };
-  },
-});
+}
 
 /**
  * Refuse the held actions. The row fails with the manager's reason and the
@@ -852,6 +1245,17 @@ export const rejectActions = mutation({
   args: { workItemId: v.id('workItems'), pendingRunId: v.id('events'), reason: v.string() },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    return await rejectActionsInTransaction(ctx, row, args, 'dashboard');
+  },
+});
+
+async function rejectActionsInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  args: { workItemId: Id<'workItems'>; pendingRunId: Id<'events'>; reason: string },
+  via: DecisionVia,
+  messageTs?: string,
+): Promise<{ ok: true }> {
     if (row.state !== 'actions-pending') {
       throw new Error(`workItem state is ${row.state}; expected actions-pending`);
     }
@@ -862,7 +1266,7 @@ export const rejectActions = mutation({
     if (row.pendingRunId !== args.pendingRunId) {
       throw new Error('pending run changed; refresh the action list');
     }
-    const reason = args.reason.trim();
+    const reason = args.reason.replace(/\s+/g, ' ').trim().slice(0, 200);
     const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';
     const applied = ledgerOf(row.output);
     const output =
@@ -887,14 +1291,136 @@ export const rejectActions = mutation({
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
+      ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.actions-rejected',
-      payload: { workItemId: args.workItemId, reason: skipReason },
+      payload: { workItemId: args.workItemId, reason: skipReason, decidedVia: via },
       createdAt: Date.now(),
     });
     return { ok: true };
+}
+
+/** Resolve one parsed manager reply inside the same transaction as the dashboard controls. */
+export const resolveChannelDecision = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    userId: v.string(),
+    messageTs: v.string(),
+    reply: v.object({
+      verb: v.union(v.literal('approve'), v.literal('reject')),
+      id: v.string(),
+      reason: v.optional(v.string()),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface || surface.class !== 'chat') {
+      return { status: 'ignored' as const, reason: 'not a chat surface' };
+    }
+    const ignored = async (reason: string) => {
+      await ctx.db.insert('events', {
+        agentId: surface.agentId,
+        type: 'work.decision-ignored',
+        payload: {
+          surfaceId: surface._id,
+          messageTs: args.messageTs,
+          userId: args.userId,
+          reason,
+        },
+        createdAt: Date.now(),
+      });
+      return { status: 'ignored' as const, reason };
+    };
+    if (args.userId === surface.providerIdentityId) return await ignored('bot message');
+    if (!surface.managerUserId || args.userId !== surface.managerUserId) {
+      return await ignored('manager identity mismatch');
+    }
+    const row = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision', (q) =>
+        q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
+      )
+      .first();
+    if (!row?.decision) return await ignored('unknown decision id');
+    if (
+      row.decision.surfaceSlug !== surface.slug ||
+      row.decision.channel !== surface.managerDmChannelId
+    ) {
+      return await ignored('decision belongs to another manager channel');
+    }
+
+    const expectedState = row.decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+    if (row.decision.decidedAt || row.state !== expectedState) {
+      // The intake reads its checkpoint boundary inclusively and re-reads anything that
+      // arrived during a sweep, so the very message that decided comes back on a later
+      // poll. That is the manager's one reply, not a duplicate: nothing to say.
+      if (row.decision.decidedTs === args.messageTs) {
+        return { status: 'already-decided' as const, notified: false };
+      }
+      if (!row.decision.duplicateNotifiedAt) {
+        await ctx.db.patch(row._id, {
+          decision: { ...row.decision, duplicateNotifiedAt: Date.now() },
+        });
+        await ctx.db.insert('events', {
+          agentId: row.agentId,
+          type: 'work.decision-duplicate',
+          payload: {
+            workItemId: row._id,
+            decisionId: row.decision.id,
+            messageTs: args.messageTs,
+          },
+          createdAt: Date.now(),
+        });
+        await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendDecisionNotice, {
+          workItemId: row._id,
+          decisionId: row.decision.id,
+        });
+        return { status: 'already-decided' as const, notified: true };
+      }
+      return { status: 'already-decided' as const, notified: false };
+    }
+
+    if (row.decision.kind === 'plan') {
+      if (args.reply.verb === 'approve') {
+        await approvePlanInTransaction(ctx, row, 'channel', args.messageTs);
+      } else {
+        await cancelPlanInTransaction(ctx, row, 'channel', args.reply.reason ?? '', args.messageTs);
+      }
+    } else {
+      if (!row.pendingRunId) return await ignored('actions decision has no pending run');
+      if (args.reply.verb === 'approve') {
+        const actionCount = actionsOf(row.output).length;
+        const heldIndexes = indexesWith(verdictList(row.actionVerdicts, actionCount), 'held');
+        await approveActionsInTransaction(
+          ctx,
+          row,
+          {
+            workItemId: row._id,
+            pendingRunId: row.pendingRunId,
+            approvedIndexes: heldIndexes,
+          },
+          'channel',
+          args.messageTs,
+        );
+      } else {
+        await rejectActionsInTransaction(
+          ctx,
+          {
+            ...row,
+          },
+          {
+            workItemId: row._id,
+            pendingRunId: row.pendingRunId,
+            reason: args.reply.reason ?? '',
+          },
+          'channel',
+          args.messageTs,
+        );
+      }
+    }
+    return { status: 'decided' as const, outcome: args.reply.verb };
   },
 });
 

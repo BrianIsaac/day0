@@ -1047,6 +1047,23 @@ export function cancelledReason(item: {
   return 'cancelled by the manager';
 }
 
+/** Name the winning control for a completed manager decision. */
+export function decisionAttribution(
+  decision:
+    | {
+        decidedAt?: number;
+        outcome?: 'approved' | 'rejected';
+        decidedVia?: 'dashboard' | 'channel';
+        surfaceName: string;
+      }
+    | undefined,
+): string | undefined {
+  if (!decision?.decidedAt || !decision.outcome || !decision.decidedVia) return undefined;
+  const source =
+    decision.decidedVia === 'channel' ? decision.surfaceName : 'the day0 dashboard';
+  return `${decision.outcome} from ${source}`;
+}
+
 /** Whether replay could duplicate an external effect whose outcome is durable or unknown. */
 export function retryRequiresReconciliation(
   applied: readonly LedgerRow[],
@@ -1339,6 +1356,7 @@ function WorkItemCard({
     verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
       : undefined;
+  const decidedFrom = decisionAttribution(item.decision);
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -1360,6 +1378,10 @@ function WorkItemCard({
           <p className="text-xs text-[var(--color-muted)] mt-1 line-clamp-2">{item.contentSummary}</p>
         </div>
       </div>
+
+      {decidedFrom ? (
+        <p className="mt-1 text-[10px] text-[var(--color-muted)]">{decidedFrom}</p>
+      ) : null}
 
       {item.state === 'cancelled' ? (
         <div className="mt-2 text-xs">

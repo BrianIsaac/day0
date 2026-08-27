@@ -30,6 +30,7 @@ import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import type { ExecutionOutput } from '../src/work/types';
+import { autonomousActionsOn } from '../src/work/autonomy';
 import {
   grantRefusal,
   isAutomatic,
@@ -233,9 +234,11 @@ export const draftPlan = action({
       agentId,
     });
     if (!charterRow) return { ok: false, reason: 'no charter' };
+    const agent = await ctx.runQuery(api.agents.get, { agentId });
     const plan = await draftExecutionPlan({
       candidate: rowToCandidate(item),
       charter: charterRow.body as Charter,
+      autonomousActions: autonomousActionsOn(agent),
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -244,16 +247,24 @@ export const draftPlan = action({
     if (!stored.stored) {
       return { ok: false, reason: 'another draft stored a plan for this work item first' };
     }
+    const decision = await ctx.runMutation(internal.work.decidePlan, {
+      workItemId: args.workItemId,
+    });
+    if (decision.approved) {
+      return await executeApprovedPlanHandler(ctx, args);
+    }
     return { ok: true };
   },
 });
 
-export const executeApprovedPlan = action({
-  args: { workItemId: v.id('workItems') },
-  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
-    const item: Doc<'workItems'> | null = await ctx.runQuery(api.work.get, {
-      workItemId: args.workItemId,
-    });
+async function executeApprovedPlanHandler(
+  ctx: ActionCtx,
+  args: { workItemId: Id<'workItems'> },
+  internalCaller = false,
+): Promise<{ ok: boolean; reason?: string }> {
+    const item: Doc<'workItems'> | null = internalCaller
+      ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
+      : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
     if (!item) return { ok: false, reason: 'workItem not found' };
     const agentId = item.agentId;
     // Cheap early-out for the common case; `claimForExecution` below is what
@@ -262,17 +273,17 @@ export const executeApprovedPlan = action({
     if (item.state !== 'plan-approved') {
       return { ok: false, reason: `state is ${item.state}; expected plan-approved` };
     }
-    const charterRow = await ctx.runQuery(api.charters.latest, {
-      agentId,
-    });
+    const charterRow = internalCaller
+      ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
+      : await ctx.runQuery(api.charters.latest, { agentId });
     if (!charterRow) return { ok: false, reason: 'no charter' };
     const charter = charterRow.body as Charter;
     const plan = item.plan as Awaited<ReturnType<typeof draftExecutionPlan>>;
     const candidate = rowToCandidate(item);
 
-    const skills: Doc<'skills'>[] = await ctx.runQuery(api.skills.registered, {
-      agentId,
-    });
+    const skills: Doc<'skills'>[] = internalCaller
+      ? await ctx.runQuery(internal.skills.registeredInternal, { agentId })
+      : await ctx.runQuery(api.skills.registered, { agentId });
     // Use the same token-scoring as the evaluator's findMatchingSkill so
     // the executor picks the matched skill rather than blindly falling
     // back to skills[0]. Source-system tokens count 4× content tokens.
@@ -322,6 +333,7 @@ export const executeApprovedPlan = action({
         plan,
         candidate,
         charter,
+        internalCaller,
       });
     }
     try {
@@ -375,6 +387,21 @@ export const executeApprovedPlan = action({
       });
       return { ok: false, reason };
     }
+}
+
+export const executeApprovedPlan = action({
+  args: { workItemId: v.id('workItems') },
+  handler: executeApprovedPlanHandler,
+});
+
+/** Continue a plan approved through the manager channel, without a browser identity. */
+export const executeApprovedPlanInternal = internalAction({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
+    if (SURFACE_MODE !== 'real') {
+      return { ok: false, reason: 'manager-channel execution is real-mode only' };
+    }
+    return await executeApprovedPlanHandler(ctx, args, true);
   },
 });
 
@@ -398,10 +425,15 @@ async function holdRealActions(
     plan: Awaited<ReturnType<typeof draftExecutionPlan>>;
     candidate: WorkCandidate;
     charter: Charter;
+    internalCaller: boolean;
   },
 ): Promise<{ ok: boolean; reason?: string }> {
   try {
-    const mockEnv = await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
+    const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
+    if (!agent) throw new Error('agent not found');
+    const mockEnv = args.internalCaller
+      ? await ctx.runQuery(internal.mock.snapshotInternal, { agentId: args.agentId })
+      : await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
     const output = await runSkill({
       skill: {
         name: args.skill.name,
@@ -414,6 +446,7 @@ async function holdRealActions(
       mockEnv,
       surfaces: await loadSurfaces(ctx, args.agentId),
       mode: 'real',
+      autonomousActions: autonomousActionsOn(agent),
     });
     const pending = await ctx.runMutation(internal.work.setActionsPending, {
       workItemId: args.workItemId,
@@ -543,9 +576,11 @@ function surfaceAuthorityShape(surface: SurfaceRecord): string {
     path: surface.path,
     endpoint: surface.endpoint,
     toolAllowlist: [...(surface.toolAllowlist ?? [])].sort(),
+    toolArguments: surface.toolArguments,
     credentialId: surface.credentialId,
     credentialKind: surface.credentialKind,
     managerDmChannelId: surface.managerDmChannelId,
+    managerUserId: surface.managerUserId,
   });
 }
 

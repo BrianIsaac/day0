@@ -7,6 +7,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  compareProviderTs,
   issueProject,
   linearCandidate,
   linearListArguments,
@@ -34,9 +35,12 @@ interface SeededCandidate extends Omit<WorkCandidate, 'observedAt'> {
 }
 
 interface RuntimeHarness {
+  decisions: unknown[];
   records: RecordedIntake[];
   runtime: IntakeRuntime;
   seeds: Map<string, SeededCandidate>;
+  /** Open decision requests per surface id, as the sweep would read them from Convex. */
+  openRequests: Map<string, Array<{ ts: string }>>;
 }
 
 /**
@@ -121,6 +125,11 @@ function surfaceRow(
     verdict: 'connected',
     whereFound: [],
     credentialLanded: true,
+    ...(surfaceClass === 'chat'
+      ? { path: 'documented-api' as const }
+      : surfaceClass === 'kanban'
+        ? { path: 'mcp' as const }
+        : {}),
     createdAt: 1,
     ...patch,
   };
@@ -143,7 +152,9 @@ function runtimeHarness(
   credentials: Map<string, string>,
 ): RuntimeHarness {
   const records: RecordedIntake[] = [];
+  const decisions: unknown[] = [];
   const seeds = new Map<string, SeededCandidate>();
+  const openRequests = new Map<string, Array<{ ts: string }>>();
   const agent = agentRow();
   const runtime: IntakeRuntime = {
     listSurfaces: async (): Promise<Doc<'surfaces'>[]> => surfaces,
@@ -168,8 +179,13 @@ function runtimeHarness(
         candidate,
       );
     },
+    resolveDecision: async (reply): Promise<void> => {
+      decisions.push(reply);
+    },
+    listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
+      openRequests.get(String(surfaceId)) ?? [],
   };
-  return { records, runtime, seeds };
+  return { decisions, records, runtime, seeds, openRequests };
 }
 
 const ONBOARDING = [
@@ -212,6 +228,21 @@ function slackResponse(payload: Record<string, unknown>): Response {
   });
 }
 
+describe('provider timestamp order', (): void => {
+  it('keeps microsecond order that a float comparison would round away', (): void => {
+    expect(compareProviderTs('1787770800.000001', '1787770800.000002')).toBeLessThan(0);
+    expect(compareProviderTs('1787770800.000002', '1787770800.000001')).toBeGreaterThan(0);
+    expect(compareProviderTs('1787770800.000100', '1787770800.0001')).toBe(0);
+    expect(compareProviderTs('1787770801', '1787770800.999999')).toBeGreaterThan(0);
+    expect(compareProviderTs('12.098', '12.100')).toBeLessThan(0);
+    expect([...['12.100', '12.098', '12.099']].sort(compareProviderTs)).toEqual([
+      '12.098',
+      '12.099',
+      '12.100',
+    ]);
+  });
+});
+
 describe('real surface intake', (): void => {
   it('walks the documented waterfall, checkpoints successes, and maps Linear and Slack work', async (): Promise<void> => {
     const checkpoint = Date.parse('2026-08-26T01:00:00.000Z');
@@ -228,6 +259,8 @@ describe('real surface intake', (): void => {
         toolAllowlist: ['conversations.list', 'conversations.history'],
         providerIdentityId: 'UBOT',
         providerWorkspaceId: 'TTEAM',
+        managerDmChannelId: 'DMANAGER',
+        managerUserId: 'UMANAGER',
         lastPolledAt: checkpoint,
       }),
       surfaceRow('northstar-crm', 'Northstar CRM', 'crm', {
@@ -326,6 +359,19 @@ describe('real surface intake', (): void => {
           response_metadata: { next_cursor: '' },
         });
       }
+      if (url.searchParams.get('channel') === 'DMANAGER') {
+        return slackResponse({
+          ok: true,
+          messages: [
+            { ts: '1770000001.000100', user: 'UMANAGER', text: 'approve ab3xyz' },
+            { ts: '1770000001.000099', user: 'UBOT', text: 'approve ab3xyz' },
+            { ts: '1770000001.000098', user: 'UOTHER', text: 'reject cd4uvw not now' },
+            { ts: '1770000001.000097', user: 'UMANAGER', text: 'ordinary message' },
+            { ts: '1770000001.000096', user: 'UMANAGER', text: 'reject ab3xyz not yet' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
       return slackResponse({
         ok: true,
         messages: [
@@ -409,15 +455,298 @@ describe('real surface intake', (): void => {
     const historyUrls = slackFetch.mock.calls
       .map(([input]): URL => new URL(String(input)))
       .filter((url: URL): boolean => url.pathname.endsWith('/conversations.history'));
-    expect(historyUrls).toHaveLength(2);
+    expect(historyUrls).toHaveLength(3);
     expect(
       historyUrls.every(
         (url: URL): boolean => url.searchParams.get('oldest') === String(checkpoint / 1_000),
       ),
     ).toBe(true);
+    // Slack lists newest first; replies resolve oldest first so the manager's first
+    // answer is the one that decides and a change of mind is the duplicate.
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000096',
+        reply: { verb: 'reject', id: 'ab3xyz', reason: 'not yet' },
+      },
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UOTHER',
+        messageTs: '1770000001.000098',
+        reply: { verb: 'reject', id: 'cd4uvw', reason: 'not now' },
+      },
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000100',
+        reply: { verb: 'approve', id: 'ab3xyz' },
+      },
+    ]);
     expect(
       JSON.stringify({ records: harness.records, seeds: [...harness.seeds.values()] }),
     ).not.toContain('test-value');
+  });
+
+  it('reads manager replies through a generic chat MCP history tool', async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-chat-mcp');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('company-chat', 'Company chat', 'chat', {
+          path: 'mcp',
+          credentialId,
+          endpoint: 'https://chat.example/mcp',
+          toolAllowlist: ['conversation_history'],
+          managerDmChannelId: 'manager-conversation',
+          managerUserId: 'manager-user',
+          providerIdentityId: 'agent-bot',
+        }),
+      ],
+      [],
+      new Map([[String(credentialId), 'chat-mcp-secret']]),
+    );
+    const calls: Record<string, unknown>[] = [];
+    const disconnect = vi.fn(async (): Promise<void> => undefined);
+    const result = await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => 12_000,
+      makeMcpClient: () => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: {
+            surface: {
+              conversation_history: {
+                inputSchema: {
+                  type: 'object',
+                  properties: { conversationId: {}, limit: {}, since: {} },
+                },
+              },
+            },
+          },
+          errors: {},
+        }),
+        toolFromDefinition: async () => ({
+          execute: async (args: Record<string, unknown>): Promise<unknown> => {
+            calls.push(args);
+            return {
+              messages: [
+                { ts: '12.100', user: 'manager-user', text: 'reject gh6npq revise it' },
+                { ts: '12.099', user: 'agent-bot', text: 'approve gh6npq' },
+                { ts: '12.098', user: 'manager-user', text: 'approve gh6npq' },
+              ],
+            };
+          },
+        }),
+        disconnect,
+      }),
+    });
+
+    expect(result).toEqual({ candidates: 0, mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(calls).toEqual([{ conversationId: 'manager-conversation', limit: 100 }]);
+    // Providers list newest first; replies resolve in the order the manager sent them,
+    // so the first answer wins and the later one is the duplicate.
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-company-chat'),
+        userId: 'manager-user',
+        messageTs: '12.098',
+        reply: { verb: 'approve', id: 'gh6npq' },
+      },
+      {
+        surfaceId: id<'surfaces'>('surface-company-chat'),
+        userId: 'manager-user',
+        messageTs: '12.100',
+        reply: { verb: 'reject', id: 'gh6npq', reason: 'revise it' },
+      },
+    ]);
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('reads a reply the manager left in the thread under the request', async (): Promise<void> => {
+    const checkpoint = Date.parse('2026-08-27T02:00:00.000Z');
+    const pollAt = Date.parse('2026-08-27T02:05:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history', 'conversations.replies'],
+          providerIdentityId: 'UBOT',
+          providerWorkspaceId: 'TTEAM',
+          managerDmChannelId: 'DMANAGER',
+          managerUserId: 'UMANAGER',
+          lastPolledAt: checkpoint,
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const requestTs = '1787770700.000100';
+    harness.openRequests.set('surface-slack', [{ ts: requestTs }]);
+    const replyCalls: URL[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/conversations.list')) {
+        return slackResponse({
+          ok: true,
+          channels: [
+            { id: 'CASKS', name: 'revops-asks' },
+            { id: 'CREVOPS', name: 'revops' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      if (url.pathname.endsWith('/conversations.replies')) {
+        replyCalls.push(url);
+        // Slack returns the parent first, then the thread, oldest first.
+        return slackResponse({
+          ok: true,
+          messages: [
+            { ts: requestTs, user: 'UBOT', text: 'Priya needs your decision. Reply “approve ab3xyz”', reply_count: 1 },
+            { ts: '1787770801.000100', thread_ts: requestTs, user: 'UMANAGER', text: 'approve ab3xyz' },
+          ],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      // The top level of the DM shows nothing new: thread replies are not in history.
+      return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+    };
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher }),
+    ).resolves.toMatchObject({ polled: 1 });
+    expect(replyCalls).toHaveLength(1);
+    expect(Object.fromEntries(replyCalls[0].searchParams)).toMatchObject({
+      channel: 'DMANAGER',
+      ts: requestTs,
+      oldest: String(checkpoint / 1_000),
+      inclusive: 'true',
+    });
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1787770801.000100',
+        reply: { verb: 'approve', id: 'ab3xyz' },
+      },
+    ]);
+    expect(JSON.stringify(harness.records)).not.toContain('slack-test-value');
+  });
+
+  it('leaves threads alone when nothing is open or the surface cannot read them', async (): Promise<void> => {
+    const slackCredential = id<'credentials'>('credential-slack');
+    const surface = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId: slackCredential,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+    });
+    const harness = runtimeHarness(
+      [surface],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    harness.openRequests.set('surface-slack', [{ ts: '1787770700.000100' }]);
+    const methods: string[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      methods.push(url.pathname.split('/').pop() ?? '');
+      if (url.pathname.endsWith('/conversations.list')) {
+        return slackResponse({
+          ok: true,
+          channels: [{ id: 'CASKS', name: 'revops-asks' }, { id: 'CREVOPS', name: 'revops' }],
+          response_metadata: { next_cursor: '' },
+        });
+      }
+      return slackResponse({ ok: true, messages: [], response_metadata: { next_cursor: '' } });
+    };
+
+    // Not allowlisted: the top level is still read, the thread is not.
+    await runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 1_000, fetcher });
+    expect(methods).not.toContain('conversations.replies');
+
+    // Allowlisted but nothing open: no thread call either.
+    surface.toolAllowlist = ['conversations.list', 'conversations.history', 'conversations.replies'];
+    harness.openRequests.set('surface-slack', []);
+    methods.length = 0;
+    await runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 2_000, fetcher });
+    expect(methods).not.toContain('conversations.replies');
+    expect(harness.decisions).toEqual([]);
+  });
+
+  it('overlaps the chat MCP checkpoint so a reply first visible on the boundary is not missed', async (): Promise<void> => {
+    const credentialId = id<'credentials'>('credential-chat-mcp');
+    const firstPollAt = Date.parse('2026-08-27T02:00:00.000Z');
+    const secondPollAt = Date.parse('2026-08-27T02:05:00.000Z');
+    const harness = runtimeHarness(
+      [
+        surfaceRow('company-chat', 'Company chat', 'chat', {
+          path: 'mcp',
+          credentialId,
+          endpoint: 'https://chat.example/mcp',
+          toolAllowlist: ['conversation_history'],
+          managerDmChannelId: 'manager-conversation',
+          managerUserId: 'manager-user',
+          providerIdentityId: 'agent-bot',
+        }),
+      ],
+      [],
+      new Map([[String(credentialId), 'chat-mcp-secret']]),
+    );
+    const calls: Record<string, unknown>[] = [];
+    const boundaryTs = `${String(firstPollAt / 1_000)}.000000`;
+    const makeMcpClient = () => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: {
+            conversation_history: {
+              inputSchema: {
+                type: 'object',
+                properties: { conversationId: {}, limit: {}, oldest: {} },
+              },
+            },
+          },
+        },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (args: Record<string, unknown>): Promise<unknown> => {
+          calls.push(args);
+          // The provider filters strictly after `oldest`; a reply stamped exactly on the
+          // first poll's start is only visible when the second poll overlaps it.
+          const visible = typeof args.oldest === 'string' && Number(boundaryTs) > Number(args.oldest);
+          return {
+            messages: visible
+              ? [{ ts: boundaryTs, user: 'manager-user', text: 'approve gh6npq' }]
+              : [],
+          };
+        },
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => firstPollAt, makeMcpClient }),
+    ).resolves.toMatchObject({ polled: 1 });
+    await expect(
+      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => secondPollAt, makeMcpClient }),
+    ).resolves.toMatchObject({ polled: 1 });
+    expect(calls[1]).toEqual({
+      conversationId: 'manager-conversation',
+      limit: 100,
+      oldest: String((firstPollAt - 1) / 1_000),
+    });
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-company-chat'),
+        userId: 'manager-user',
+        messageTs: boundaryTs,
+        reply: { verb: 'approve', id: 'gh6npq' },
+      },
+    ]);
   });
 
   it('contains one provider failure, redacts its credential, and continues to the next surface', async (): Promise<void> => {
@@ -512,6 +841,8 @@ describe('real surface intake', (): void => {
       decrypt: vi.fn(),
       recordIntake: vi.fn(),
       seed: vi.fn(),
+      resolveDecision: vi.fn(),
+      listOpenDecisionRequests: vi.fn(async (): Promise<Array<{ ts: string }>> => []),
     };
     await expect(runIntakeSweep(runtime, { mode: 'mock' })).resolves.toEqual({
       candidates: 0,

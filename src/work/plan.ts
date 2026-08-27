@@ -13,19 +13,29 @@ import type { ExecutionPlan, WorkCandidate } from './types';
  *   - `expectedOutputType` constrains the executor format.
  */
 
-const SYSTEM_PROMPT = [
+const SYSTEM_PROMPT_HEAD = [
   'You are an autonomous workplace agent named Day0.',
   'You have a charter that defines your role + boundaries.',
   'A candidate piece of work has landed in front of you and Layer-2 evaluation said it is worth claiming.',
-  'Draft a short execution plan that the boss will approve before you act.',
+  'Draft a short execution plan. The live action mode below tells you whether later writes need another manager decision.',
   '',
   'Discipline:',
   '  - Stay inside the charter willDo / willNotDo boundaries. If borderline, narrow the plan to the safest interpretation.',
-  '  - Prefer drafts over actions. The boss surfaces the output for human review.',
+  '  - Describe review and approval according to the live action mode; never assume the supervised mode.',
   '  - 2-5 short concrete steps.',
-].join('\n');
+];
 
-const planAgent = makeAgent('day0-plan', SYSTEM_PROMPT);
+/** The run-context instruction shared by the planner and executor. */
+export function actionModeInstruction(autonomousActions: boolean): string {
+  return autonomousActions
+    ? 'Autonomous actions are ON: every allowed write lands as emitted; do not say an action is queued or awaiting approval.'
+    : 'Autonomous actions are OFF: reads and the manager DM land now; every other write is held for the manager\'s literal approval - say so.';
+}
+
+/** Build the plan drafter's system prompt for the switch value read for this run. */
+export function planSystemPrompt(autonomousActions: boolean): string {
+  return [...SYSTEM_PROMPT_HEAD, '', actionModeInstruction(autonomousActions)].join('\n');
+}
 
 const planSchema = z.object({
   summary: z.string(),
@@ -45,10 +55,12 @@ const planSchema = z.object({
 export interface DraftPlanArgs {
   candidate: WorkCandidate;
   charter: Charter;
+  autonomousActions: boolean;
 }
 
 export async function draftExecutionPlan(args: DraftPlanArgs): Promise<ExecutionPlan> {
-  const { candidate, charter } = args;
+  const { candidate, charter, autonomousActions } = args;
+  const planAgent = makeAgent('day0-plan', planSystemPrompt(autonomousActions));
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
     '',

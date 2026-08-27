@@ -15,9 +15,11 @@ export interface SurfaceRowLike {
   path?: string;
   endpoint?: string;
   toolAllowlist?: string[];
+  toolArguments?: Array<{ tool: string; arguments: string[] }>;
   credentialId?: string;
   credentialKind?: string;
   managerDmChannelId?: string;
+  managerUserId?: string;
   managerName?: string;
 }
 
@@ -64,9 +66,11 @@ export function toSurfaceRecord(row: SurfaceRowLike): SurfaceRecord {
     path: isSurfacePath(row.path) ? row.path : undefined,
     endpoint: row.endpoint,
     toolAllowlist: row.toolAllowlist,
+    toolArguments: row.toolArguments,
     credentialId: row.credentialId,
     credentialKind: credentialKindFor(row),
     managerDmChannelId: row.managerDmChannelId,
+    managerUserId: row.managerUserId,
     managerName: row.managerName,
   };
 }

@@ -399,6 +399,7 @@ describe('surface probe generations', (): void => {
         toolAllowlist: ['list_issues'],
         toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
         managerDmChannelId: 'DMANAGER',
+        managerUserId: 'UMANAGER',
         managerName: 'Brian',
         verifiedAt: 100,
         expiresAt: renewedExpiry,
@@ -410,6 +411,7 @@ describe('surface probe generations', (): void => {
       lastVerifiedAt: 100,
       expiresAt: renewedExpiry,
       managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
       managerName: 'Brian',
     });
     const hourly = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
@@ -426,6 +428,7 @@ describe('surface probe generations', (): void => {
     const reprobed = await readSurface(harness, surfaceId);
     expect(reprobed).toMatchObject({ verdict: 'connected', lastVerifiedAt: 200, expiresAt: renewedExpiry });
     expect(reprobed.managerDmChannelId).toBeUndefined();
+    expect(reprobed.managerUserId).toBeUndefined();
     expect(reprobed.managerName).toBeUndefined();
     const connectedEvents = await harness.run(
       async (ctx) =>
@@ -752,7 +755,11 @@ describe('surface approval state machine', (): void => {
       credentialKind: 'value',
     });
     await harness.run(async (ctx) => {
-      await ctx.db.patch(surfaceId, { managerDmChannelId: 'DMANAGER', managerName: 'Brian' });
+      await ctx.db.patch(surfaceId, {
+        managerDmChannelId: 'DMANAGER',
+        managerUserId: 'UMANAGER',
+        managerName: 'Brian',
+      });
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({ credentialKind: 'value' });
     await owner.mutation(api.surfaces.reject, { surfaceId, reason: 'Wrong endpoint.' });
@@ -767,6 +774,7 @@ describe('surface approval state machine', (): void => {
     expect(rejected.request).toBeUndefined();
     expect(rejected.credentialLanded).toBe(false);
     expect(rejected.managerDmChannelId).toBeUndefined();
+    expect(rejected.managerUserId).toBeUndefined();
     expect(rejected.managerName).toBeUndefined();
 
     await propose(harness, surfaceId);

@@ -13,6 +13,7 @@ import {
 } from './types';
 import type { SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
+import { actionModeInstruction } from './plan';
 
 /**
  * Skill executor. Lifted from Protean's `src/work/execute-skill.ts`
@@ -36,7 +37,7 @@ import { verdictFor } from '../surfaces/verdict';
 
 const PREAMBLE_HEAD = [
   'You are an autonomous workplace agent named Day0.',
-  'A skill body has been loaded as your behavioural prior for this turn. The boss has approved the plan; you are authorised to act.',
+  'A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.',
   'Apply the skill to the candidate. Produce three things:',
   '  1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.',
   '  2. Notes — short assumptions or open questions (single sentence).',
@@ -80,7 +81,7 @@ const MOCK_VERBS = 'spreadsheet.appendRow, slack.postMessage, twitter.reply, tic
 
 const REAL_PREAMBLE = [
   ...PREAMBLE_HEAD,
-  '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. The gate decides each one: reads and the manager DM apply on their own; every public post, thread reply, comment and system-of-record change is held for the manager, who approves the literal payload before it is sent, unless the manager has turned autonomous actions on, in which case it is applied exactly as you emit it. Write every action as it should land.',
+  '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. Write every action as it should land; the live action mode below says whether it lands immediately or waits.',
   ...DRAFT_DISCIPLINE,
   'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
@@ -96,7 +97,7 @@ const REAL_PREAMBLE = [
   '  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook\'s comment tool, and only after it, if the work is complete, the state change with the runbook\'s state argument. A status change is never the only trace of who acted.',
   '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
   '  - When a chat surface is connected, ALSO send the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id: a question or escalation when you have one, else a one-line note of what the actions in this response do. When none is connected, say so in `notes` instead of substituting another channel.',
-  '  - Each provider mutation is its own action so the manager can approve it on its own.',
+  '  - Each provider mutation is its own action so it can be decided and applied on its own.',
 ].join('\n');
 
 /**
@@ -109,12 +110,15 @@ const REAL_PREAMBLE = [
  *
  * Args:
  *   mode: Deployment surface mode.
+ *   autonomousActions: The switch value read for this execution run.
  *
  * Returns:
  *   The preamble text.
  */
-export function executorPreamble(mode: SurfaceMode): string {
-  return mode === 'real' ? REAL_PREAMBLE : MOCK_PREAMBLE;
+export function executorPreamble(mode: SurfaceMode, autonomousActions = false): string {
+  return mode === 'real'
+    ? `${REAL_PREAMBLE}\n\n${actionModeInstruction(autonomousActions)}`
+    : MOCK_PREAMBLE;
 }
 
 /**
@@ -189,6 +193,8 @@ export interface RunSkillArgs {
   surfaces?: readonly SurfaceRecord[];
   /** Deployment surface mode; the mock preamble is the default. */
   mode?: SurfaceMode;
+  /** Switch value read immediately before this execution prompt is built. */
+  autonomousActions?: boolean;
   /** Clock for the connection verdict; defaults to now. */
   now?: number;
 }
@@ -303,20 +309,46 @@ function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   return lines.join('\n');
 }
 
-export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
-  const { skill, plan, candidate, charter, mockEnv } = args;
-  const mode: SurfaceMode = args.mode ?? 'mock';
-  const surfaceGuidance = surfaceInstructions(args.surfaces ?? [], args.now ?? Date.now());
-  const instructions = [
-    executorPreamble(mode),
+/** Build the complete system prompt, including the final live-mode override. */
+export function executorInstructions(args: {
+  mode: SurfaceMode;
+  autonomousActions: boolean;
+  skillBody: string;
+  surfaces: readonly SurfaceRecord[];
+  mockEnv: MockSurfaceSnapshot;
+  now: number;
+}): string {
+  const surfaceGuidance = surfaceInstructions(args.surfaces, args.now);
+  return [
+    executorPreamble(args.mode, args.autonomousActions),
     ...(surfaceGuidance ? ['', surfaceGuidance] : []),
     '',
     '--- How-to guides (action format reference) ---',
-    renderHowTos(mockEnv.howToGuides),
+    renderHowTos(args.mockEnv.howToGuides),
     '',
     '--- Skill body (apply as your behavioural prior) ---',
-    skill.body,
+    args.skillBody,
+    ...(args.mode === 'real'
+      ? [
+          '',
+          '--- Live run context (takes precedence over approval wording in the skill body) ---',
+          actionModeInstruction(args.autonomousActions),
+        ]
+      : []),
   ].join('\n');
+}
+
+export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
+  const { skill, plan, candidate, charter, mockEnv } = args;
+  const mode: SurfaceMode = args.mode ?? 'mock';
+  const instructions = executorInstructions({
+    mode,
+    autonomousActions: args.autonomousActions ?? false,
+    skillBody: skill.body,
+    surfaces: args.surfaces ?? [],
+    mockEnv,
+    now: args.now ?? Date.now(),
+  });
 
   const skillAgent = new Agent({
     id: `day0-skill-${skill.name}`,

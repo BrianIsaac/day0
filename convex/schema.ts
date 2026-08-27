@@ -174,6 +174,8 @@ export default defineSchema({
     ),
     credentialLocation: v.optional(v.string()),
     managerDmChannelId: v.optional(v.string()),
+    // The DM counterpart allowed to resolve manager decisions.
+    managerUserId: v.optional(v.string()),
     // The manager's Slack display name from the probe's `users.lookupByEmail`.
     managerName: v.optional(v.string()),
     toolAllowlist: v.optional(v.array(v.string())),
@@ -295,6 +297,29 @@ export default defineSchema({
     proposedSkillId: v.optional(v.id('skills')),
     output: v.optional(v.any()),
     skipReason: v.optional(v.string()),
+    /** A single-use decision requested through the manager's main chat surface. */
+    decision: v.optional(
+      v.object({
+        id: v.string(),
+        kind: v.union(v.literal('plan'), v.literal('actions')),
+        requestedAt: v.number(),
+        channel: v.string(),
+        surfaceSlug: v.string(),
+        surfaceName: v.string(),
+        ts: v.optional(v.string()),
+        requestFailedAt: v.optional(v.number()),
+        requestFailure: v.optional(v.string()),
+        decidedAt: v.optional(v.number()),
+        outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
+        decidedVia: v.optional(v.union(v.literal('dashboard'), v.literal('channel'))),
+        // Provider ts of the channel reply that decided; the same message read again is not a duplicate.
+        decidedTs: v.optional(v.string()),
+        duplicateNotifiedAt: v.optional(v.number()),
+        duplicateNoticeClaimedAt: v.optional(v.number()),
+        duplicateNoticeTs: v.optional(v.string()),
+        duplicateNoticeFailure: v.optional(v.string()),
+      }),
+    ),
     // ---- Lane C (executors and the gate) ----
     /** The run whose actions are pending; preserved through approval so the
      * apply step keys its idempotency off the same claim as the skill run. */
@@ -341,6 +366,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_agent_state', ['agentId', 'state'])
+    .index('by_agent_decision', ['agentId', 'decision.id'])
     .index('by_extId', ['sourceSystem', 'externalId']),
 
   skills: defineTable({
