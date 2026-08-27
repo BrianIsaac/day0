@@ -12,6 +12,7 @@ import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import {
   browserComponent,
+  BROWSER_DRIVER_ABSENT,
   BROWSER_DRIVER_ABSENT_REASON,
   isDriverUnreachable,
   browserPageTitle,
@@ -776,13 +777,18 @@ export async function runSurfaceProbe(
     };
   } catch (error) {
     const reason = safeProviderError(error, credential);
+    // `listed-dead` is a claim about the enterprise's system. A missing browser
+    // component is a claim about this deployment, so it lands as `ungranted`
+    // whichever way it was found out - unset before the call, or unreachable
+    // during it - and the row keeps its address to re-probe from.
+    const verdict = reason.includes(BROWSER_DRIVER_ABSENT) ? 'ungranted' : 'listed-dead';
     await ctx.runMutation(internal.surfaces.recordProbeFailure, {
       surfaceId,
       generation,
-      verdict: 'listed-dead',
+      verdict,
       reason,
     });
-    return { verdict: 'listed-dead', reason };
+    return { verdict, reason };
   } finally {
     credential = '';
   }

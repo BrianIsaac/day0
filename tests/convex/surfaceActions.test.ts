@@ -20,6 +20,7 @@ import {
 } from '../../convex/surfaceActions';
 import {
   BROWSER_DRIVER_ABSENT,
+  BROWSER_DRIVER_ABSENT_REASON,
   DEFAULT_BROWSER_MCP_URL,
 } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
@@ -945,6 +946,31 @@ describe('probing the browser floor', (): void => {
     expect(probeBrowser).not.toHaveBeenCalled();
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({ verdict: 'ungranted', endpoint: TILE, path: 'browser-driven' });
+  });
+
+  it('records a configured driver that is not there as the same absence', async (): Promise<void> => {
+    const { harness, surfaceId } = await tileHarness();
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', DRIVER);
+    const probeBrowser = vi.fn(async (): Promise<never> => {
+      throw new Error(BROWSER_DRIVER_ABSENT_REASON);
+    });
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: harness.mutation.bind(harness),
+        runQuery: harness.query.bind(harness),
+        runAction: async (): Promise<string> => {
+          throw new Error('no credential to decrypt');
+        },
+      } as unknown as ActionCtx,
+      surfaceId,
+      false,
+      { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+    );
+    // Not `listed-dead`: the enterprise's system is not what is missing.
+    expect(outcome.verdict).toBe('ungranted');
+    expect(outcome.reason).toContain(BROWSER_DRIVER_ABSENT);
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({ verdict: 'ungranted', endpoint: TILE });
   });
 
   it('connects a browser-driven surface that documents no credential', async (): Promise<void> => {
