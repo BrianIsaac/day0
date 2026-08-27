@@ -204,13 +204,45 @@ export function elementDescriptions(tool: string, toolArgs: Record<string, unkno
   });
 }
 
+/** The field name a driver takes an element reference in. */
+export type RefField = 'target' | 'ref';
+
 /**
- * Put resolved refs into one action's arguments.
+ * The field the driver's own schema says a reference goes in.
+ *
+ * The bundled driver takes it as `target` and refuses unknown properties, so
+ * guessing is not survivable. The probe already stores each tool's argument
+ * names from the live schema, so the answer is read from there rather than
+ * assumed, and `target` is the fallback because it is what the pinned driver
+ * documents.
+ *
+ * Args:
+ *   argumentNames: The argument names the probe discovered for this tool.
+ *
+ * Returns:
+ *   The field to put the reference in.
+ */
+export function refFieldFor(argumentNames: readonly string[] | undefined): RefField {
+  if (argumentNames?.includes('target')) return 'target';
+  if (argumentNames?.includes('ref')) return 'ref';
+  return 'target';
+}
+
+/** Field types the driver's form tool accepts; anything else is a textbox. */
+const FIELD_TYPES = new Set(['textbox', 'checkbox', 'radio', 'combobox', 'slider']);
+
+/**
+ * Put resolved references into one action's arguments.
+ *
+ * Only known properties are written: the driver's schemas set
+ * `additionalProperties: false`, so an extra key is a validation failure
+ * rather than something it ignores.
  *
  * Args:
  *   tool: The browser tool being called.
  *   toolArgs: Its arguments as the skill supplied them.
- *   refs: A resolved ref per description, in the same order.
+ *   refs: A resolved element per description, in the same order.
+ *   refField: The field the driver takes a reference in.
  *
  * Returns:
  *   The arguments the driver will accept.
@@ -219,11 +251,16 @@ export function withResolvedRefs(
   tool: string,
   toolArgs: Record<string, unknown>,
   refs: readonly SnapshotElement[],
+  refField: RefField = 'target',
 ): Record<string, unknown> {
   if (ELEMENT_TOOLS.has(tool)) {
     const found = refs[0];
     if (!found) return toolArgs;
-    return { ...toolArgs, ref: found.ref, element: String(toolArgs.element ?? found.name) };
+    return {
+      ...toolArgs,
+      [refField]: found.ref,
+      element: String(toolArgs.element ?? found.name),
+    };
   }
   if (!FORM_TOOLS.has(tool)) return toolArgs;
   const fields = Array.isArray(toolArgs.fields) ? toolArgs.fields : [];
@@ -233,11 +270,18 @@ export function withResolvedRefs(
       const record = field && typeof field === 'object' ? (field as Record<string, unknown>) : {};
       const found = refs[index];
       if (!found) return record;
+      const declared = typeof record.type === 'string' ? record.type : undefined;
+      const type =
+        declared && FIELD_TYPES.has(declared)
+          ? declared
+          : FIELD_TYPES.has(found.role)
+            ? found.role
+            : 'textbox';
       return {
         ...record,
-        ref: found.ref,
+        [refField]: found.ref,
         name: String(record.name ?? found.name),
-        type: typeof record.type === 'string' ? record.type : found.role,
+        type,
       };
     }),
   };

@@ -545,7 +545,7 @@ describe('the browser floor across one run', (): void => {
     const applied = await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 0, 'k');
     expect(applied.ok).toBe(true);
     expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot', 'browser_click']);
-    expect(calls[1].args).toEqual({ element: 'Save', ref: 'e23' });
+    expect(calls[1].args).toEqual({ element: 'Save', target: 'e23' });
   });
 
   it('resolves one ref per form field and injects the credential into the value', async (): Promise<void> => {
@@ -566,8 +566,8 @@ describe('the browser floor across one run', (): void => {
     );
     expect(calls[1].args).toEqual({
       fields: [
-        { name: 'Username', ref: 'e11', type: 'textbox', value: 'revops' },
-        { name: 'Password', ref: 'e14', type: 'textbox', value: 'pipeline-tile-local' },
+        { name: 'Username', target: 'e11', type: 'textbox', value: 'revops' },
+        { name: 'Password', target: 'e14', type: 'textbox', value: 'pipeline-tile-local' },
       ],
     });
   });

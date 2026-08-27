@@ -8,6 +8,7 @@ import {
   navigationRefusal,
   needsElementRef,
   parseSnapshotRefs,
+  refFieldFor,
   resolveElementRef,
   withinDocumentedSurface,
   withResolvedRefs,
@@ -200,7 +201,7 @@ describe('putting resolved refs back into an action', (): void => {
       withResolvedRefs('browser_click', { element: 'Save' }, [
         { name: 'Save', ref: 'e23', role: 'button' },
       ]),
-    ).toEqual({ element: 'Save', ref: 'e23' });
+    ).toEqual({ element: 'Save', target: 'e23' });
   });
 
   it('reads one description per form field and keeps their order', (): void => {
@@ -218,8 +219,8 @@ describe('putting resolved refs back into an action', (): void => {
       ]),
     ).toEqual({
       fields: [
-        { name: 'Username', ref: 'e11', type: 'textbox', value: 'revops' },
-        { name: 'Password', ref: 'e14', type: 'textbox', value: 'secret' },
+        { name: 'Username', target: 'e11', type: 'textbox', value: 'revops' },
+        { name: 'Password', target: 'e14', type: 'textbox', value: 'secret' },
       ],
     });
   });
@@ -231,7 +232,39 @@ describe('putting resolved refs back into an action', (): void => {
         { fields: [{ name: 'Coverage', type: 'textbox', value: '74%' }] },
         [{ name: 'Coverage', ref: 'e21', role: 'generic' }],
       ),
-    ).toEqual({ fields: [{ name: 'Coverage', ref: 'e21', type: 'textbox', value: '74%' }] });
+    ).toEqual({ fields: [{ name: 'Coverage', target: 'e21', type: 'textbox', value: '74%' }] });
+  });
+
+  it('replaces a field type the driver would refuse', (): void => {
+    // The driver's enum is textbox/checkbox/radio/combobox/slider, and it sets
+    // additionalProperties:false - a `generic` role would fail validation.
+    expect(
+      withResolvedRefs('browser_fill_form', { fields: [{ name: 'Coverage', value: '74%' }] }, [
+        { name: 'Coverage', ref: 'e21', role: 'generic' },
+      ]),
+    ).toEqual({ fields: [{ name: 'Coverage', target: 'e21', type: 'textbox', value: '74%' }] });
+    expect(
+      withResolvedRefs(
+        'browser_fill_form',
+        { fields: [{ name: 'Agree', type: 'toggle', value: 'true' }] },
+        [{ name: 'Agree', ref: 'e9', role: 'checkbox' }],
+      ),
+    ).toEqual({ fields: [{ name: 'Agree', target: 'e9', type: 'checkbox', value: 'true' }] });
+  });
+
+  it('puts the reference in the field the discovered schema declares', (): void => {
+    expect(refFieldFor(['element', 'target', 'button'])).toBe('target');
+    expect(refFieldFor(['element', 'ref'])).toBe('ref');
+    expect(refFieldFor(undefined)).toBe('target');
+    expect(refFieldFor([])).toBe('target');
+    expect(
+      withResolvedRefs(
+        'browser_click',
+        { element: 'Save' },
+        [{ name: 'Save', ref: 'e23', role: 'button' }],
+        'ref',
+      ),
+    ).toEqual({ element: 'Save', ref: 'e23' });
   });
 
   it('leaves a tool that addresses no element alone', (): void => {

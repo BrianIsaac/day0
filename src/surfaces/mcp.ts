@@ -17,6 +17,7 @@ import {
   elementDescriptions,
   navigationRefusal,
   needsElementRef,
+  refFieldFor,
   resolveElementRef,
   withResolvedRefs,
   type SnapshotElement,
@@ -317,6 +318,7 @@ export class McpAdapter implements SurfaceAdapter {
     slug: string,
     toolName: string,
     toolArgs: Record<string, unknown>,
+    argumentNames: readonly string[] | undefined,
   ): Promise<{ toolArgs: Record<string, unknown> } | { reason: string }> {
     const descriptions = elementDescriptions(toolName, toolArgs);
     if (descriptions.length === 0) {
@@ -339,7 +341,9 @@ export class McpAdapter implements SurfaceAdapter {
       }
       refs.push(found);
     }
-    return { toolArgs: withResolvedRefs(toolName, toolArgs, refs) };
+    return {
+      toolArgs: withResolvedRefs(toolName, toolArgs, refs, refFieldFor(argumentNames)),
+    };
   }
 
   async apply(
@@ -421,7 +425,15 @@ export class McpAdapter implements SurfaceAdapter {
           ? (injectSecretsDeep(call.toolArgs, bearer, surface.slug) as Record<string, unknown>)
           : call.toolArgs;
         if (browserDriven && needsElementRef(call.tool)) {
-          const resolved = await this.resolveRefs(client, surface.slug, call.tool, toolArgs);
+          const resolved = await this.resolveRefs(
+            client,
+            surface.slug,
+            call.tool,
+            toolArgs,
+            surface.toolArguments?.find(
+              (entry: { arguments: string[]; tool: string }): boolean => entry.tool === call.tool,
+            )?.arguments,
+          );
           if ('reason' in resolved) {
             return { tool: action.tool, ok: false, reason: resolved.reason, idempotencyKey };
           }
