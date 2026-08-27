@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { browserTitleMarker } from '../../src/surfaces/browser';
 
 /**
  * The synthetic system is a real server, so it is tested by running it.
@@ -71,6 +73,16 @@ describe('the Looker pipeline tile', (): void => {
     expect(body).toContain('Sign in');
     expect(body).toContain('name="password"');
     expect(body).not.toContain('Pipeline coverage');
+  });
+
+  it('matches the documented probe marker before a login exists', async (): Promise<void> => {
+    const body = await (await fetch(BASE)).text();
+    const title = /<title>([^<]+)<\/title>/.exec(body)?.[1];
+    const runbook = readFileSync(
+      new URL('../fixtures/notion-pages/looker-pipeline-tile.md', import.meta.url),
+      'utf8',
+    );
+    expect(browserTitleMarker(runbook)).toBe(title);
   });
 
   it('says plainly on the page that it has no integration surface', async (): Promise<void> => {

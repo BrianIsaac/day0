@@ -732,7 +732,7 @@ describe('a dedicated app that has not been invited to its channels', (): void =
 
 describe('probing the browser floor', (): void => {
   const TILE = 'http://looker-tile:8080/';
-  const TITLE = 'Pipeline coverage - Looker';
+  const TITLE = 'Sign in - Looker';
 
   /** A driver whose catalogue and navigation result the test decides. */
   function fakeDriver(options: {

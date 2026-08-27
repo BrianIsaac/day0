@@ -8,7 +8,7 @@ standup and in the Q3 close summary. It is maintained by hand.
 - The Looker pipeline tile is reached through its web UI only, at `http://looker-tile:8080/`. That
   is the demo's internal address on the Day0 compose network; in a real deployment it is the
   dashboard's own URL.
-- Probe marker: page title `Pipeline coverage - Looker`.
+- Probe marker: page title `Sign in - Looker`.
 - Integration: none. There is no API, no MCP server and no export endpoint for this dashboard.
   Automations reach it the way a person does, through the browser.
 - Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`), held by the RevOps
