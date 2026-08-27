@@ -23,6 +23,7 @@ import {
   provenanceTrailer,
   requiredScope,
   reviewAction,
+  sharedWriteWithoutAttribution,
   reviewActions,
   reviewPayload,
   serialiseSurfaceAction,
@@ -820,5 +821,93 @@ describe('review payload for the approval card', (): void => {
       args: { sheetSlug: 's', tabName: 't', cells: [{ header: 'h', value: '' }] },
     });
     expect(reviewPayload({ tool: 'mcp.call' } as MockAction)).toEqual({ tool: 'mcp.call', args: {} });
+  });
+});
+
+describe('the browser floor under the gate', (): void => {
+  const tile: SurfaceRecord = {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: [
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_click',
+      'browser_type',
+      'browser_fill_form',
+    ],
+    credentialId: 'cred-tile',
+    credentialKind: 'value',
+  };
+
+  function parsedBrowser(tool: string, toolArgs: unknown = {}) {
+    const parsed = parseSurfaceAction({
+      tool: 'mcp.call',
+      args: {
+        surface: 'looker-pipeline-tile',
+        tool,
+        toolArgsJson: JSON.stringify(toolArgs),
+      },
+    } as MockAction);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    return parsed.action;
+  }
+
+  it('counts opening and reading a page as reads, not mutations', (): void => {
+    expect(actionIntent(parsedBrowser('browser_navigate', { url: 'http://looker-tile:8080/' }))).toBe(
+      'read',
+    );
+    expect(actionIntent(parsedBrowser('browser_snapshot'))).toBe('read');
+    expect(requiredScope(parsedBrowser('browser_snapshot'))).toBe('looker-pipeline-tile:read');
+  });
+
+  it('counts typing and clicking as writes', (): void => {
+    expect(actionIntent(parsedBrowser('browser_click', { element: 'Save' }))).toBe('write');
+    expect(actionIntent(parsedBrowser('browser_type', { element: 'Coverage', text: '74%' }))).toBe(
+      'write',
+    );
+    expect(requiredScope(parsedBrowser('browser_click', { element: 'Save' }))).toBe(
+      'looker-pipeline-tile:write',
+    );
+  });
+
+  it('does not demand attributable content of a click, which carries none', (): void => {
+    expect(
+      sharedWriteWithoutAttribution(
+        parsedBrowser('browser_click', { element: 'Save' }),
+        tile,
+        'value',
+        0,
+        [],
+        [],
+      ),
+    ).toBe(false);
+  });
+
+  it('still demands it of a shared-credential write on any other path', (): void => {
+    const linear: SurfaceRecord = { ...tile, slug: 'linear', path: 'mcp', class: 'kanban' };
+    const parsed = parseSurfaceAction({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"REVOPS-5"}' },
+    } as MockAction);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    expect(sharedWriteWithoutAttribution(parsed.action, linear, 'value', 0, [], [])).toBe(true);
+  });
+
+  it('appends no trailer to a browser action, which has no body', (): void => {
+    const provenance = applyProvenance(
+      parsedBrowser('browser_click', { element: 'Save' }),
+      tile,
+      { agentName: 'ops worker', workItemId: 'wi' as never, runId: 'run' as never },
+      'value',
+    );
+    expect(provenance.ok).toBe(true);
+    if (provenance.ok) {
+      expect(JSON.stringify(provenance.action)).not.toContain('Day0)');
+    }
   });
 });

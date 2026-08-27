@@ -39,6 +39,15 @@ export const SHARED_IDENTITY_ICON = ':briefcase:';
 
 const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 const READ_TOOL_PREFIX = /^(?:list|get|search|read|fetch|retrieve|query|find|describe|show)(?:[_-]|$)/i;
+/**
+ * Browser tools that observe the page without changing anything on it.
+ *
+ * The floor's tool names carry no read verb - opening a page is `navigate`,
+ * reading it is `snapshot` - so without naming them the generic rule counts
+ * both as writes, and a run that only looked at a dashboard would be held for
+ * the manager as though it had edited one.
+ */
+const BROWSER_READ_TOOLS = new Set(['browser_navigate', 'browser_snapshot', 'browser_hover']);
 const HTTP_MUTATION_WORDS = new Set([
   'add',
   'approve',
@@ -294,6 +303,7 @@ export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
       ? 'write'
       : 'read';
   }
+  if (BROWSER_READ_TOOLS.has(parsed.tool)) return 'read';
   if (operationTokens(parsed.tool).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
   return READ_TOOL_PREFIX.test(parsed.tool) ? 'read' : 'write';
 }
@@ -1025,6 +1035,13 @@ export function provenanceRefusal(
  * case). Other writes through shared credentials are refused because the
  * provider would otherwise record an action attributable only to the shared
  * account. Dedicated OAuth apps remain attributable through their own bot.
+ *
+ * The browser floor is the one write with no authored content to attribute:
+ * pressing Save carries no body a trailer could be appended to, and the shared
+ * dashboard login is what the documentation publishes rather than an accident.
+ * Attribution there is the system's own audit line, which the runbook requires
+ * the agent to read back as the evidence a change landed - so the rule does not
+ * apply, and refusing here would make the floor unusable rather than safer.
  */
 export function sharedWriteWithoutAttribution(
   parsed: ParsedSurfaceAction,
@@ -1035,6 +1052,7 @@ export function sharedWriteWithoutAttribution(
   ledger: ReadonlyArray<AppliedAction | undefined>,
 ): boolean {
   if (credentialKind === 'oauth' || actionIntent(parsed) === 'read') return false;
+  if (surface.path === 'browser-driven') return false;
   if (isAuditComment(parsed)) return false;
   if (parsed.kind === 'mcp.call' && isMcpChatPost(parsed)) return false;
   if (parsed.kind === 'http.request') return !isChatPost(parsed, surface);
