@@ -62,6 +62,15 @@ describe('a driver that is not listening', (): void => {
     expect(isDriverUnreachable('getaddrinfo ENOTFOUND playwright-mcp')).toBe(true);
   });
 
+  it('reads the MCP client\'s own wording, which hides the cause', (): void => {
+    // Verbatim from a live probe against a stopped component.
+    expect(
+      isDriverUnreachable(
+        'Failed to connect to MCP server surface: Error: Could not connect to server with any available HTTP transport',
+      ),
+    ).toBe(true);
+  });
+
   it('reads a wrapped transport failure through its cause', (): void => {
     const wrapped = new Error('MCP client failed', { cause: new Error('connect ECONNREFUSED') });
     expect(isDriverUnreachable(wrapped)).toBe(true);

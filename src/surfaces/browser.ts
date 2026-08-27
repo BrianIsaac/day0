@@ -394,7 +394,17 @@ export function presentBrowserComponent(input: {
   return absent ? { absent, message: BROWSER_COMPONENT_CARD_MESSAGE } : { absent: false };
 }
 
-/** Connection failures a driver that is not running produces, whatever the client. */
+/**
+ * Connection failures a driver that is not running produces.
+ *
+ * Two layers, because two layers report it. The operating system's codes reach
+ * us when `fetch` is what failed; the MCP client's own wording reaches us when
+ * it has already swallowed the cause and reports only that it could not open a
+ * transport. The second list was written from the live message a stopped
+ * component actually produced ("Failed to connect to MCP server surface: Error:
+ * Could not connect to server with any available HTTP transport"), which none
+ * of the first list matched.
+ */
 const UNREACHABLE_MARKERS = [
   'econnrefused',
   'enotfound',
@@ -409,6 +419,10 @@ const UNREACHABLE_MARKERS = [
   'socket hang up',
   'network error',
   'getaddrinfo',
+  'could not connect',
+  'failed to connect',
+  'unable to connect',
+  'connection closed',
 ];
 
 /**
