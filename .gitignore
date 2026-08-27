@@ -15,8 +15,12 @@ coverage
 # clerk configuration (can include secrets)
 /.clerk/
 
-# internal planning docs, fixture content, and AI agent meta - not part of the public repo
-/docs/
+# internal planning docs, fixture content, and AI agent meta - not part of the public repo.
+# `/docs/*` rather than `/docs/` because git will not look inside an excluded
+# directory, so a negation under one can never take effect: excluding the
+# entries lets `docs/running/` be re-included below.
+/docs/*
+!/docs/running/
 /docs-fixture/
 /docs-local/
 AGENTS.md
