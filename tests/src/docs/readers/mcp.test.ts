@@ -30,6 +30,14 @@ afterEach((): void => {
   vi.unstubAllEnvs();
 });
 
+/** The Notion component answering, which is all a reachability check asks of it. */
+const componentUp = async (): Promise<Response> => new Response('', { status: 406 });
+
+/** The Notion component not started, which is a transport failure and nothing else. */
+const componentDown = async (): Promise<Response> => {
+  throw new Error('fetch failed');
+};
+
 describe('whole-page Markdown fence handling', (): void => {
   it('unwraps the Slack policy while preserving its nested JSON fence', (): void => {
     const policy = notionPageTemplate('slack-day0-app').trim();
@@ -137,7 +145,7 @@ describe('MCP documentation reader', (): void => {
         },
         disconnect,
       };
-    });
+    }, componentUp);
     const secret = ['ntn', 'contract-value'].join('_');
     const batch = await reader.listPageBatch(notionSource(), secret, undefined, 25);
     expect(connection?.headers).toEqual({
@@ -170,11 +178,44 @@ describe('MCP documentation reader', (): void => {
       }),
       resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
       disconnect,
-    }));
+    }), componentUp);
     await expect(
       reader.listPageBatch(notionSource(), ['ntn', 'wrong'].join('_'), undefined, 25),
     ).rejects.toThrow('provider returned an error');
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('says which component is not running, before opening a session', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    const built = vi.fn();
+    const reader = new McpReader(() => {
+      built();
+      throw new Error('should not connect');
+    }, componentDown);
+    await expect(
+      reader.listPageBatch(notionSource(), ['ntn', 'value'].join('_'), undefined, 25),
+    ).rejects.toThrow('the Notion documentation component is not running - add `--profile docs-notion`');
+    expect(built).not.toHaveBeenCalled();
+  });
+
+  it('does not check a component for a server the enterprise runs itself', async (): Promise<void> => {
+    const disconnect = vi.fn().mockResolvedValue(undefined);
+    const reader = new McpReader(
+      () => ({
+        listTools: async () => ({}),
+        resources: { list: async () => ({ docs: [] }), read: async () => ({ contents: [] }) },
+        disconnect,
+      }),
+      componentDown,
+    );
+    await expect(
+      reader.listPageBatch(
+        { ...notionSource(), serverKind: 'generic', locator: 'https://mcp.internal.example/mcp' },
+        'contract-value',
+        undefined,
+        25,
+      ),
+    ).rejects.toThrow('escalate');
   });
 
   it('escalates a generic server with no resources', async (): Promise<void> => {

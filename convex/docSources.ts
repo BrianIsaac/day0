@@ -9,6 +9,7 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
+import { assertDocsComponentReachable } from '../src/docs/components';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 
@@ -204,6 +205,11 @@ export const link = action({
     if (input.kind !== 'mcp' && credential !== undefined) {
       throw new Error('Only MCP sources may include a connection secret.');
     }
+    // Checked before anything is written, so a component that is not running is
+    // answered in the form the operator is looking at rather than as a failed
+    // sync minutes later. The same check runs on every sync, which is where a
+    // component that stops after the link is reported.
+    await assertDocsComponentReachable(input);
     const sourceId = await ctx.runMutation(internal.docSources.createSource, {
       userId: identity.subject,
       ...input,

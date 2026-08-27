@@ -4,11 +4,13 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { STALE_SYNC_MS, agentReadsSource, validateLinkInput } from '../../convex/docSources';
+import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   restoreSurfaceMode();
 });
 
@@ -203,6 +205,76 @@ describe('documentation sources in mock mode', (): void => {
     const harness = convexTest(schema, allConvexModules());
     await seedSyncedSource(harness);
     await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toEqual([]);
+  });
+});
+
+describe('documentation components a source depends on', (): void => {
+  it('refuses a Notion link when day0 is not running the Notion component', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const reach = vi.fn(async (): Promise<Response> => {
+      throw new Error('fetch failed');
+    });
+    vi.stubGlobal('fetch', reach);
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.action(api.docSources.link, {
+        label: 'RevOps handbook',
+        kind: 'mcp',
+        locator: DOCS_NOTION_LOCATOR,
+        serverKind: 'notion',
+        credential: 'ntn_secret',
+      }),
+    ).rejects.toThrow('the Notion documentation component is not running');
+    expect(reach).toHaveBeenCalled();
+    // Nothing half-linked, and no credential stored for a source that does not exist.
+    await expect(owner.query(api.docSources.listMine, {})).resolves.toEqual([]);
+    const credentials = await harness.run(async (ctx) => await ctx.db.query('credentials').collect());
+    expect(credentials).toEqual([]);
+  });
+
+  it('links a folder source with no component running at all', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const reach = vi.fn(async (): Promise<Response> => {
+      throw new Error('fetch failed');
+    });
+    vi.stubGlobal('fetch', reach);
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.action(api.docSources.link, { label: 'Team folder', kind: 'folder', locator: '.' }),
+    ).resolves.toBeDefined();
+    expect(reach).not.toHaveBeenCalled();
+  });
+
+  it('reports the linked kinds without a locator, label or secret', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx): Promise<void> => {
+      for (const source of [
+        { label: 'Team folder', kind: 'folder' as const, locator: '.' },
+        { label: 'Runbooks', kind: 'folder' as const, locator: 'runbooks' },
+        {
+          label: 'RevOps handbook',
+          kind: 'mcp' as const,
+          locator: DOCS_NOTION_LOCATOR,
+          serverKind: 'notion' as const,
+        },
+      ]) {
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+          ...source,
+        });
+      }
+    });
+    const kinds = await harness.query(internal.docSources.linkedKinds, {});
+    expect(kinds).toEqual([
+      { kind: 'folder', serverKind: undefined, count: 2 },
+      { kind: 'mcp', serverKind: 'notion', count: 1 },
+    ]);
+    expect(JSON.stringify(kinds)).not.toContain('runbooks');
   });
 });
 
