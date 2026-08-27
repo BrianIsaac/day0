@@ -13,8 +13,10 @@ import {
 import { injectSecret, redactValue } from './secrets';
 import { createSecretMcpClient } from './mcp-client';
 import {
-  browserDriverUrl,
+  browserComponent,
+  BROWSER_DRIVER_ABSENT_REASON,
   elementDescriptions,
+  isDriverUnreachable,
   navigationRefusal,
   navigationResultRefusal,
   needsElementRef,
@@ -391,9 +393,18 @@ export class McpAdapter implements SurfaceAdapter {
     const browserDriven = surface.path === 'browser-driven';
     let url: URL;
     try {
-      url = browserDriven
-        ? browserDriverUrl(this.deps.browserMcpUrl)
-        : new URL(surface.endpoint ?? '');
+      if (browserDriven) {
+        // The driver is an optional component. A deployment that never started
+        // it refuses the row with the code, which is a complete answer rather
+        // than a failure to configure something.
+        const component = browserComponent(this.deps.browserMcpUrl);
+        if (!component.present) {
+          return { tool: action.tool, ok: false, reason: component.reason, idempotencyKey };
+        }
+        url = component.url;
+      } else {
+        url = new URL(surface.endpoint ?? '');
+      }
     } catch {
       return { tool: action.tool, ok: false, reason: 'surface has no valid endpoint', idempotencyKey };
     }
@@ -496,13 +507,20 @@ export class McpAdapter implements SurfaceAdapter {
         if (!browserDriven) await client.disconnect();
       }
     } catch (error) {
+      // A driver that was configured and has since stopped reads as the same
+      // absence as one that was never configured, and says so with the same
+      // code rather than with a transport error nobody can act on.
+      const reason =
+        browserDriven && isDriverUnreachable(error)
+          ? BROWSER_DRIVER_ABSENT_REASON
+          : clipEffect(
+              redactValue(error instanceof Error ? error.message : String(error), bearer),
+              EFFECT_LENGTH,
+            );
       return {
         tool: action.tool,
         ok: false,
-        reason: clipEffect(
-          redactValue(error instanceof Error ? error.message : String(error), bearer),
-          EFFECT_LENGTH,
-        ),
+        reason,
         ...(writeAttempted ? { outcomeUnknown: true } : {}),
         idempotencyKey,
       };

@@ -8,7 +8,11 @@ import {
   type McpClientLike,
   type McpClientOptions,
 } from '../../../src/surfaces/mcp';
-import { BROWSER_TOOLS } from '../../../src/surfaces/browser';
+import {
+  BROWSER_DRIVER_ABSENT,
+  BROWSER_TOOLS,
+  DEFAULT_BROWSER_MCP_URL,
+} from '../../../src/surfaces/browser';
 import { TOOL_NOT_ALLOWED } from '../../../src/surfaces/policy';
 import type {
   AdapterRun,
@@ -16,6 +20,9 @@ import type {
   SurfaceRecord,
 } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
+
+/** This deployment runs the browser component, at the address the profile starts it on. */
+const DRIVER = DEFAULT_BROWSER_MCP_URL;
 
 const now = Date.UTC(2026, 7, 29, 9);
 const ctx = {} as ActionCtx;
@@ -105,6 +112,7 @@ function adapter(
     createClient: client.create,
     now: (): number => now,
     beforeTransport,
+    browserMcpUrl: DRIVER,
   });
 }
 
@@ -377,7 +385,7 @@ describe('the browser floor', (): void => {
         };
       },
       now: (): number => now,
-      browserMcpUrl: 'http://playwright-mcp:8931/mcp',
+      browserMcpUrl: DRIVER,
     });
     return { adapter, built, execute };
   }
@@ -514,6 +522,7 @@ describe('the browser floor', (): void => {
         disconnect: async (): Promise<void> => undefined,
       }),
       now: (): number => now,
+      browserMcpUrl: DRIVER,
     });
     const applied = await adapter.apply(ctx, run, browserCall('browser_snapshot', {}), 0, 'key');
     expect(applied.ok).toBe(true);
@@ -585,9 +594,61 @@ describe('the browser floor across one run', (): void => {
         };
       },
       now: (): number => now,
+      browserMcpUrl: DRIVER,
     });
     return { adapter, calls, clientsBuilt, disconnects };
   }
+
+  it('refuses every browser row with one code when the component is not running', async (): Promise<void> => {
+    const built = { count: 0 };
+    const adapter = new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (): McpClientLike => {
+        built.count += 1;
+        return {
+          listTools: async () => ({}),
+          disconnect: async (): Promise<void> => undefined,
+        };
+      },
+      now: (): number => now,
+      browserMcpUrl: undefined,
+    });
+    for (const [index, action] of [
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      call('browser_click', { element: 'Save' }),
+    ].entries()) {
+      const applied = await adapter.apply(ctx, run, action, index, `k${index}`);
+      expect(applied.ok).toBe(false);
+      expect(applied.reason).toContain(BROWSER_DRIVER_ABSENT);
+      expect(applied.reason).toContain('--profile browser');
+    }
+    // Nothing was dialled: the refusal is a decision, not a failed connection.
+    expect(built.count).toBe(0);
+  });
+
+  it('refuses with the same code when a configured driver has stopped', async (): Promise<void> => {
+    const adapter = new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (): McpClientLike => ({
+        listTools: async (): Promise<Record<string, never>> => {
+          throw new Error('fetch failed', { cause: new Error('connect ECONNREFUSED 172.18.0.9:8931') });
+        },
+        disconnect: async (): Promise<void> => undefined,
+      }),
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'k0',
+    );
+    expect(applied.ok).toBe(false);
+    expect(applied.reason).toContain(BROWSER_DRIVER_ABSENT);
+    expect(applied.reason).not.toContain('ECONNREFUSED');
+  });
 
   it('keeps one browser for the whole run, so a sign-in survives to the save', async (): Promise<void> => {
     const { adapter, clientsBuilt, disconnects } = driver();

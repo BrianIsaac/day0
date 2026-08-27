@@ -1,9 +1,50 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { getFunctionName } from 'convex/server';
+import { describe, expect, it, vi } from 'vitest';
+
+/**
+ * One browser-driven surface and this deployment's component status, so the
+ * whole tab can be rendered without a backend.
+ */
+const state = vi.hoisted(() => ({
+  browserComponent: true,
+  reason: undefined as string | undefined,
+}));
+
+vi.mock('convex/react', () => ({
+  useAction: (): (() => void) => (): void => undefined,
+  useMutation: (): (() => void) => (): void => undefined,
+  useQuery: (reference: unknown): unknown => {
+    const name = getFunctionName(reference as never);
+    if (name === 'config:components') return { browser: state.browserComponent };
+    if (name === 'surfaces:installRedirectConfigured') return false;
+    if (name === 'surfaces:listForAgent') {
+      return [
+        {
+          _id: 'surface-tile',
+          agentId: 'agent-1',
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'proposed',
+          path: 'browser-driven',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [],
+          credentialLanded: false,
+          reason: state.reason,
+        },
+      ];
+    }
+    return [];
+  },
+}));
+
+import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
   CredentialRow,
   EvidenceQuote,
   ProvisioningRow,
+  SurfacesTab,
   type CredentialRowProps,
   type ProvisioningRowProps,
 } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
@@ -222,5 +263,40 @@ describe('SurfacesTab dedicated-app row', (): void => {
     );
     expect(markup).toContain('Registering the app...');
     expect(markup).toContain('disabled=""');
+  });
+});
+
+describe('SurfacesTab and the optional browser component', (): void => {
+  const agentId = 'agent-1' as Id<'agents'>;
+
+  it('proposes the path, says the component is not running, and holds approval', (): void => {
+    state.browserComponent = false;
+    state.reason = undefined;
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    // The evidence still stands: the path and the documented address are shown.
+    expect(markup).toContain('browser-driven');
+    expect(markup).toContain('http://looker-tile:8080/');
+    expect(markup).toContain('This system is reached through its web UI.');
+    expect(markup).toContain('--profile browser');
+    expect(markup).toContain('Approve as manager');
+    expect(markup.match(/<button[^>]*disabled=""[^>]*>Approve as (manager|IT)<\/button>/g)).toHaveLength(
+      2,
+    );
+  });
+
+  it('says the same when a configured driver turned out not to be listening', (): void => {
+    state.browserComponent = true;
+    state.reason = 'BROWSER_DRIVER_ABSENT: the component is not running';
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).toContain('This system is reached through its web UI.');
+  });
+
+  it('leaves approval alone once the component is running', (): void => {
+    state.browserComponent = true;
+    state.reason = undefined;
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).not.toContain('This system is reached through its web UI.');
+    expect(markup).toContain('Approve as manager');
+    expect(markup).not.toContain('disabled=""');
   });
 });

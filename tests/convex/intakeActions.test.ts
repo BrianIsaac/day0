@@ -833,6 +833,41 @@ describe('real surface intake', (): void => {
     expect(JSON.stringify(harness.records)).not.toContain('privatevalue');
   });
 
+  it('skips a browser-driven surface naming the component that is not running', async (): Promise<void> => {
+    const tile = surfaceRow('looker-pipeline-tile', 'Looker pipeline tile', 'analytics', {
+      path: 'browser-driven',
+      endpoint: 'http://looker-tile:8080/',
+      credentialId: id<'credentials'>('credential-tile'),
+      toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+    });
+    const harness = runtimeHarness([tile], [], new Map([['credential-tile', 'tile-value']]));
+    const result = await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => 10_000,
+      browserMcpUrl: undefined,
+    });
+    expect(result).toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(harness.records[0].skipReason).toContain('BROWSER_DRIVER_ABSENT');
+    expect(harness.records[0].skipReason).toContain('--profile browser');
+  });
+
+  it('polls a browser-driven surface by its class once the component is running', async (): Promise<void> => {
+    const tile = surfaceRow('looker-pipeline-tile', 'Looker pipeline tile', 'analytics', {
+      path: 'browser-driven',
+      endpoint: 'http://looker-tile:8080/',
+      credentialId: id<'credentials'>('credential-tile'),
+      toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+    });
+    const harness = runtimeHarness([tile], [], new Map([['credential-tile', 'tile-value']]));
+    const result = await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => 10_000,
+      browserMcpUrl: 'http://playwright-mcp:8931/mcp',
+    });
+    expect(result).toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(harness.records[0].skipReason).toBe('no intake reader for connected analytics surface');
+  });
+
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
     const runtime: IntakeRuntime = {
       listSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),

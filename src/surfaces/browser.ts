@@ -17,7 +17,13 @@
  * anywhere the container can reach.
  */
 
-/** The default address of the bundled browser driver on the compose network. */
+/**
+ * The bundled browser driver's address on the compose network.
+ *
+ * This is the value to put in `DAY0_BROWSER_MCP_URL` when running the `browser`
+ * profile, not a fallback applied when the variable is unset: an unset variable
+ * means this deployment has no browser component. See `browserComponent`.
+ */
 export const DEFAULT_BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
 
 /**
@@ -290,21 +296,65 @@ export function withResolvedRefs(
 export class BrowserBoundError extends Error {}
 
 /**
- * The browser driver this deployment uses.
+ * The one code every path uses when the browser component is not there.
+ *
+ * The floor is an optional component, and an enterprise whose systems all have
+ * APIs never starts it. That is a complete installation, not a broken one, so
+ * every path that meets its absence says the same short thing: a code the
+ * executor, the probe and intake can all record, and a sentence a human can
+ * act on. What it must never be is a stack trace out of a fetch that could not
+ * resolve a compose service name.
+ */
+export const BROWSER_DRIVER_ABSENT = 'BROWSER_DRIVER_ABSENT';
+
+/** What to do about it, in the words the running instructions use. */
+export const BROWSER_COMPONENT_ABSENT =
+  "day0's browser component is not running - add `--profile browser` (see running instructions)";
+
+/** The card's sentence: why this system needs the component, then what to do. */
+export const BROWSER_COMPONENT_CARD_MESSAGE =
+  `This system is reached through its web UI. ${BROWSER_COMPONENT_ABSENT}`;
+
+/** The refusal an action, a probe or an intake sweep records. */
+export const BROWSER_DRIVER_ABSENT_REASON = `${BROWSER_DRIVER_ABSENT}: ${BROWSER_COMPONENT_ABSENT}`;
+
+/** Either the driver this deployment drives, or why there is none. */
+export type BrowserComponent =
+  | { present: true; url: URL }
+  | { present: false; code: typeof BROWSER_DRIVER_ABSENT; reason: string };
+
+/**
+ * The browser driver this deployment uses, or the fact that it has none.
+ *
+ * `DAY0_BROWSER_MCP_URL` is both the switch and the address. Unset means this
+ * deployment has no browser component - not "use the bundled one and find out
+ * later", which is what an implicit default meant and why the component looked
+ * mandatory. The compose address is still the value to set (and what
+ * `.env.example` ships), so turning the component on is one line beside
+ * `--profile browser`.
+ *
+ * Reading the switch rather than the socket is also what lets the card answer
+ * before anything is probed: a Convex query can read an environment variable
+ * and cannot open a connection. Reachability is a separate question, answered
+ * where a connection is actually made - see `isDriverUnreachable`.
  *
  * Args:
  *   configured: The value of `DAY0_BROWSER_MCP_URL`, if set.
  *
  * Returns:
- *   The driver endpoint.
+ *   The driver endpoint, or the absence and its reason.
  *
  * Raises:
- *   BrowserBoundError: If a configured value is not an http(s) URL. The scheme
- *     is checked because `new URL` accepts `playwright-mcp:8931` as a URL with
- *     a scheme of its own, which would reach nothing and say nothing useful.
+ *   BrowserBoundError: If a configured value is not an http(s) URL. A typo is
+ *     not an absent component and must not be reported as one. The scheme is
+ *     checked because `new URL` accepts `playwright-mcp:8931` as a URL with a
+ *     scheme of its own, which would reach nothing and say nothing useful.
  */
-export function browserDriverUrl(configured: string | undefined): URL {
-  const raw = (configured ?? '').trim() || DEFAULT_BROWSER_MCP_URL;
+export function browserComponent(configured: string | undefined): BrowserComponent {
+  const raw = (configured ?? '').trim();
+  if (!raw) {
+    return { present: false, code: BROWSER_DRIVER_ABSENT, reason: BROWSER_DRIVER_ABSENT_REASON };
+  }
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -314,7 +364,85 @@ export function browserDriverUrl(configured: string | undefined): URL {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new BrowserBoundError('DAY0_BROWSER_MCP_URL must be an http or https URL.');
   }
-  return parsed;
+  return { present: true, url: parsed };
+}
+
+/**
+ * What the Surfaces card should say about this deployment's browser component.
+ *
+ * The card is the one place a human meets the absence before anything has been
+ * probed, so it answers from the switch (`componentPresent`, read by a query)
+ * and from the last thing a probe recorded (`reason`, which carries the code
+ * when a configured driver turned out not to be listening). Either is enough:
+ * approving a path day0 cannot drive is a decision the operator would have to
+ * take back.
+ *
+ * Args:
+ *   input: The surface's approved path, whether the component is configured,
+ *     and the reason its last probe recorded.
+ *
+ * Returns:
+ *   The sentence to show and whether approval should be withheld.
+ */
+export function presentBrowserComponent(input: {
+  componentPresent: boolean;
+  path?: string;
+  reason?: string;
+}): { absent: boolean; message?: string } {
+  if (input.path !== 'browser-driven') return { absent: false };
+  const absent = !input.componentPresent || (input.reason ?? '').includes(BROWSER_DRIVER_ABSENT);
+  return absent ? { absent, message: BROWSER_COMPONENT_CARD_MESSAGE } : { absent: false };
+}
+
+/** Connection failures a driver that is not running produces, whatever the client. */
+const UNREACHABLE_MARKERS = [
+  'econnrefused',
+  'enotfound',
+  'eai_again',
+  'ehostunreach',
+  'enetunreach',
+  'etimedout',
+  'econnreset',
+  'fetch failed',
+  'failed to fetch',
+  'connection refused',
+  'socket hang up',
+  'network error',
+  'getaddrinfo',
+];
+
+/**
+ * Decide whether a client failure means the driver is not there.
+ *
+ * The configured half of the question is answered by `browserComponent`; this
+ * is the other half, and it can only be asked of a failure that has already
+ * happened. A stopped container and an unresolvable compose name both arrive
+ * as a transport error rather than an MCP one, so the two are reported as the
+ * same absence. A driver that answers and refuses is a different failure and
+ * keeps its own message.
+ *
+ * Args:
+ *   error: The failure a driver call raised.
+ *
+ * Returns:
+ *   Whether it reads as "nothing is listening there".
+ */
+export function isDriverUnreachable(error: unknown): boolean {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    if (typeof current === 'string') {
+      parts.push(current);
+      break;
+    }
+    if (!(current instanceof Error)) break;
+    parts.push(current.message);
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string') parts.push(code);
+    current = current.cause;
+  }
+  const text = parts.join(' ').toLowerCase();
+  return UNREACHABLE_MARKERS.some((marker: string): boolean => text.includes(marker));
 }
 
 /**
