@@ -21,6 +21,20 @@ interface CredentialMatch extends RedactedCredential {
  */
 const SHAPED_VALUE = /(?:ntn_|lin_api_|xox[bpa]-|secret_)[A-Za-z0-9_-]{16,}/gi;
 const LABELLED_VALUE = /(?:^|\n)[^\n:]{0,48}\b(?:token|key)\b[^\n:]{0,32}:\s*`?([^\s`]+)`?/gi;
+/**
+ * A line that declares a sign-in credential and puts its value in code
+ * formatting.
+ *
+ * `token` and `key` appear in prose constantly ("key rotation: quarterly",
+ * "token lifetime: 12 hours"), so a value on one of those lines has to look
+ * like a secret before it is treated as one. The words here do not have that
+ * problem, and a team that writes the value in backticks has said plainly that
+ * it is a literal rather than a description - which is what lets a memorable
+ * dashboard password be stored instead of read past. Without the backticks
+ * nothing is taken, so "Password rotation: quarterly" stays prose.
+ */
+const DECLARED_VALUE =
+  /(?:^|\n)[^\n:]{0,48}\b(?:login|password|passphrase|credential)\b[^\n:]{0,32}:\s*`([^\s`]+)`/gi;
 const MARKER = /<credential:[^>]*>/g;
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}'"_-]+$/;
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -55,24 +69,34 @@ function systemFromTitle(title: string): string {
   return normalised || 'system';
 }
 
-/** Infer a safe metadata label for a generic `token` or `key` line. */
+/**
+ * The kinds of credential a labelled line can declare, most specific first.
+ *
+ * Order is the whole rule: "dashboard login" has to be tried before "login",
+ * and "service token" before "token", or the label would lose the part that
+ * distinguishes one stored credential from another on the same page.
+ */
+const CREDENTIAL_KINDS: readonly [RegExp, string][] = [
+  [/\bdashboard login\b/, 'dashboard login'],
+  [/\bservice token\b/, 'service token'],
+  [/\bconfiguration token\b/, 'configuration token'],
+  [/\bbot token\b/, 'bot token'],
+  [/\bapp token\b/, 'app token'],
+  [/\buser token\b/, 'user token'],
+  [/\bapi key\b/, 'api key'],
+  [/\blogin\b/, 'login'],
+  [/\bpassphrase\b/, 'passphrase'],
+  [/\bpassword\b/, 'password'],
+  [/\btoken\b/, 'token'],
+  [/\bcredential\b/, 'credential'],
+];
+
+/** Infer a safe metadata label for a labelled credential line. */
 function labelledLineLabel(line: string, title: string): string {
   const descriptor = words(line.split(':', 1)[0]);
-  const kind = /\bservice token\b/.test(descriptor)
-    ? 'service token'
-    : /\bconfiguration token\b/.test(descriptor)
-      ? 'configuration token'
-      : /\bbot token\b/.test(descriptor)
-        ? 'bot token'
-        : /\bapp token\b/.test(descriptor)
-          ? 'app token'
-          : /\buser token\b/.test(descriptor)
-            ? 'user token'
-            : /\bapi key\b/.test(descriptor)
-              ? 'api key'
-              : /\btoken\b/.test(descriptor)
-                ? 'token'
-                : 'key';
+  const kind =
+    CREDENTIAL_KINDS.find(([pattern]: [RegExp, string]): boolean => pattern.test(descriptor))?.[1] ??
+    'key';
   const namedSystem = ['linear', 'slack', 'notion'].find((system: string): boolean =>
     new RegExp(`\\b${system}\\b`).test(descriptor),
   );
@@ -127,15 +151,21 @@ function findCredentials(text: string, labelContext: string): CredentialMatch[] 
       end: match.index + plaintext.length,
     });
   }
-  for (const match of text.matchAll(LABELLED_VALUE)) {
-    if (match.index === undefined || !match[1] || match[1].startsWith('<credential')) continue;
-    const plaintext = match[1].replace(TRAILING_PUNCTUATION, '');
-    if (!looksLikeSecret(plaintext)) continue;
-    const start = match.index + match[0].lastIndexOf(match[1]);
-    const end = start + plaintext.length;
-    if (matches.some((known): boolean => start < known.end && end > known.start)) continue;
-    const line = match[0].replace(/^\n/, '');
-    matches.push({ plaintext, label: labelledLineLabel(line, labelContext), start, end });
+  for (const [pattern, requireSecretShape] of [
+    [LABELLED_VALUE, true],
+    [DECLARED_VALUE, false],
+  ] as const) {
+    for (const match of text.matchAll(pattern)) {
+      if (match.index === undefined || !match[1] || match[1].startsWith('<credential')) continue;
+      const plaintext = match[1].replace(TRAILING_PUNCTUATION, '');
+      if (requireSecretShape && !looksLikeSecret(plaintext)) continue;
+      if (URL_SCHEME.test(plaintext)) continue;
+      const start = match.index + match[0].lastIndexOf(match[1]);
+      const end = start + plaintext.length;
+      if (matches.some((known): boolean => start < known.end && end > known.start)) continue;
+      const line = match[0].replace(/^\n/, '');
+      matches.push({ plaintext, label: labelledLineLabel(line, labelContext), start, end });
+    }
   }
   return matches.sort((left, right): number => left.start - right.start);
 }
