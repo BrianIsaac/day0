@@ -5,6 +5,7 @@ import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
+import { plainErrorMessage } from '@/lib/plain-error';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -69,7 +70,7 @@ export function DocumentationPage(): React.ReactNode {
         credential: kind === 'mcp' ? credential : undefined,
       });
     } catch (failure) {
-      setError((failure as Error).message);
+      setError(plainErrorMessage((failure as Error).message));
     } finally {
       setBusy(false);
     }
@@ -93,7 +94,7 @@ export function DocumentationPage(): React.ReactNode {
       });
       setRotatingSourceId(null);
     } catch (failure) {
-      setError((failure as Error).message);
+      setError(plainErrorMessage((failure as Error).message));
     } finally {
       setBusySourceId(null);
     }

@@ -16,6 +16,7 @@ import {
   type SurfaceCredentialFinding,
   type SurfaceProvisioning,
 } from '@/surfaces/credential-presentation';
+import { plainErrorMessage } from '@/lib/plain-error';
 import { presentBrowserComponent } from '@/surfaces/browser';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '@/surfaces/waterfall';
@@ -291,7 +292,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     try {
       await reorient({ agentId });
     } catch (failure) {
-      setReorientError((failure as Error).message);
+      setReorientError(plainErrorMessage((failure as Error).message));
     } finally {
       setReorienting(false);
     }
@@ -303,7 +304,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       await probe({ surfaceId });
       setOperation(null);
     } catch (failure) {
-      setOperation({ kind: 'probe', surfaceId, error: (failure as Error).message });
+      setOperation({ kind: 'probe', surfaceId, error: plainErrorMessage((failure as Error).message) });
     }
   }
 
@@ -316,7 +317,11 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       await provisionApp({ surfaceId, configurationToken });
       setOperation(null);
     } catch (failure) {
-      setOperation({ kind: 'provision', surfaceId, error: (failure as Error).message });
+      setOperation({
+        kind: 'provision',
+        surfaceId,
+        error: plainErrorMessage((failure as Error).message),
+      });
     }
   }
 
@@ -330,7 +335,11 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       await landCredential({ surfaceId, label, plaintext });
       setOperation(null);
     } catch (failure) {
-      setOperation({ kind: 'landing', surfaceId, error: (failure as Error).message });
+      setOperation({
+        kind: 'landing',
+        surfaceId,
+        error: plainErrorMessage((failure as Error).message),
+      });
     }
   }
 
