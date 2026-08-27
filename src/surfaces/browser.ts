@@ -380,6 +380,18 @@ export function browserPageUrl(result: string): string | undefined {
   return match?.[1]?.trim() || undefined;
 }
 
+/** Read the final page title Playwright reports after a navigation. */
+export function browserPageTitle(result: string): string | undefined {
+  const match = /^\s*-\s*Page Title:\s*(.*?)\s*$/im.exec(result);
+  return match?.[1]?.trim() || undefined;
+}
+
+/** Read an explicit page-title liveness marker from the linked runbook. */
+export function browserTitleMarker(markdown: string): string | undefined {
+  const match = /\bProbe marker:\s*page title\s+`([^`\r\n]+)`/i.exec(markdown);
+  return match?.[1]?.trim() || undefined;
+}
+
 /**
  * Re-apply the origin bound to where a navigation actually landed.
  *

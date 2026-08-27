@@ -732,6 +732,7 @@ describe('a dedicated app that has not been invited to its channels', (): void =
 
 describe('probing the browser floor', (): void => {
   const TILE = 'http://looker-tile:8080/';
+  const TITLE = 'Pipeline coverage - Looker';
 
   /** A driver whose catalogue and navigation result the test decides. */
   function fakeDriver(options: {
@@ -758,7 +759,12 @@ describe('probing the browser floor', (): void => {
       }),
       callTool: async (name: string, args: Record<string, unknown>) => {
         navigated.push({ name, args });
-        return options.navigate ?? { isError: false, text: '- Page URL: ' + TILE };
+        return (
+          options.navigate ?? {
+            isError: false,
+            text: `- Page URL: ${TILE}\n- Page Title: ${TITLE}`,
+          }
+        );
       },
       disconnect,
     };
@@ -767,7 +773,7 @@ describe('probing the browser floor', (): void => {
 
   it('constrains the driver catalogue to the floor and opens the documented page', async (): Promise<void> => {
     const { client, disconnect, navigated } = fakeDriver({});
-    const discovery = await probeBrowserSurface(TILE, undefined, () => client);
+    const discovery = await probeBrowserSurface(TILE, undefined, () => client, TITLE);
     expect(discovery.toolAllowlist).toEqual([
       'browser_navigate',
       'browser_snapshot',
@@ -784,32 +790,57 @@ describe('probing the browser floor', (): void => {
     const { client, disconnect } = fakeDriver({
       navigate: { isError: true, text: 'net::ERR_CONNECTION_REFUSED at http://looker-tile:8080/' },
     });
-    await expect(probeBrowserSurface(TILE, undefined, () => client)).rejects.toThrow(
+    await expect(probeBrowserSurface(TILE, undefined, () => client, TITLE)).rejects.toThrow(
       'the documented page could not be opened',
     );
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
+  it('fails when the page title is not the marker documented for the surface', async (): Promise<void> => {
+    const { client, disconnect } = fakeDriver({
+      navigate: {
+        isError: false,
+        text: '- Page URL: http://looker-tile:8080/\n- Page Title: Generic reverse proxy',
+      },
+    });
+    await expect(
+      probeBrowserSurface(
+        TILE,
+        undefined,
+        () => client,
+        TITLE,
+      ),
+    ).rejects.toThrow('documented page title marker');
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a browser surface whose documentation gives no liveness marker', async (): Promise<void> => {
+    const { client } = fakeDriver({});
+    await expect(probeBrowserSurface(TILE, undefined, () => client)).rejects.toThrow(
+      'No page title marker is documented',
+    );
+  });
+
   it('fails when the driver reports an error rather than reading it as no tools', async (): Promise<void> => {
     const { client } = fakeDriver({ error: 'connection refused' });
-    await expect(probeBrowserSurface(TILE, undefined, () => client)).rejects.toThrow(
+    await expect(probeBrowserSurface(TILE, undefined, () => client, TITLE)).rejects.toThrow(
       'connection refused',
     );
   });
 
   it('fails when the driver exposes none of the floor tools', async (): Promise<void> => {
     const { client } = fakeDriver({ catalogue: { browser_evaluate: {} } });
-    await expect(probeBrowserSurface(TILE, undefined, () => client)).rejects.toThrow(
+    await expect(probeBrowserSurface(TILE, undefined, () => client, TITLE)).rejects.toThrow(
       'no tools allowed for this surface class',
     );
   });
 
   it('refuses a surface with no documented address', async (): Promise<void> => {
     const { client } = fakeDriver({});
-    await expect(probeBrowserSurface(undefined, undefined, () => client)).rejects.toThrow(
+    await expect(probeBrowserSurface(undefined, undefined, () => client, TITLE)).rejects.toThrow(
       'No web UI address is documented',
     );
-    await expect(probeBrowserSurface('not-a-url', undefined, () => client)).rejects.toThrow(
+    await expect(probeBrowserSurface('not-a-url', undefined, () => client, TITLE)).rejects.toThrow(
       'not a valid URL',
     );
   });
@@ -839,6 +870,22 @@ describe('probing the browser floor', (): void => {
           credentialLanded: false,
           createdAt: 1,
         });
+        const sourceId = await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Tile runbook',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: 'looker-pipeline-tile.md',
+          title: 'Looker pipeline tile',
+          markdown: `# Looker pipeline tile\n\n- Probe marker: page title \`${TITLE}\`.`,
+          updatedAt: 1,
+        });
         return { agentId, surfaceId };
       },
     );
@@ -865,7 +912,7 @@ describe('probing the browser floor', (): void => {
         },
       ),
     ).resolves.toMatchObject({ verdict: 'connected' });
-    expect(probeBrowser).toHaveBeenCalledWith(TILE, undefined);
+    expect(probeBrowser).toHaveBeenCalledWith(TILE, undefined, undefined, TITLE);
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({ verdict: 'connected', credentialLanded: true });
     const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());

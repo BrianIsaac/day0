@@ -4,6 +4,8 @@ import {
   BrowserBoundError,
   browserDriverUrl,
   browserPageUrl,
+  browserPageTitle,
+  browserTitleMarker,
   DEFAULT_BROWSER_MCP_URL,
   elementDescriptions,
   navigationRefusal,
@@ -129,7 +131,15 @@ describe('checking where a browser navigation landed', (): void => {
   it('reads the pinned driver Page URL and admits the approved surface', (): void => {
     const result = `### Page\n- Page URL: ${TILE}\n- Page Title: Pipeline coverage - Looker`;
     expect(browserPageUrl(result)).toBe(TILE);
+    expect(browserPageTitle(result)).toBe('Pipeline coverage - Looker');
     expect(navigationResultRefusal('browser_navigate', result, TILE)).toBeUndefined();
+  });
+
+  it('reads only an explicit backticked title marker from documentation', (): void => {
+    expect(
+      browserTitleMarker('- Probe marker: page title `Pipeline coverage - Looker`.'),
+    ).toBe('Pipeline coverage - Looker');
+    expect(browserTitleMarker('Open the browser and look for Pipeline coverage.')).toBeUndefined();
   });
 
   it('refuses a redirect to another origin', (): void => {

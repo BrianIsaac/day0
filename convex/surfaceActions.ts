@@ -10,7 +10,13 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
-import { browserDriverUrl, BROWSER_TOOLS } from '../src/surfaces/browser';
+import {
+  browserDriverUrl,
+  browserPageTitle,
+  browserTitleMarker,
+  BROWSER_TOOLS,
+  navigationResultRefusal,
+} from '../src/surfaces/browser';
 import { interpretToolResult } from '../src/surfaces/mcp';
 import {
   channelsAwaitingInvite,
@@ -305,8 +311,12 @@ export async function probeBrowserSurface(
   endpoint: string | undefined,
   driverUrl: string | undefined,
   makeClient: (url: URL) => BrowserProbeClient = createBrowserProbeClient,
+  titleMarker?: string,
 ): Promise<McpDiscovery> {
   if (!endpoint) throw new Error('No web UI address is documented for this surface.');
+  if (!titleMarker?.trim()) {
+    throw new Error('No page title marker is documented for this browser surface.');
+  }
   let target: URL;
   try {
     target = new URL(endpoint);
@@ -327,6 +337,11 @@ export async function probeBrowserSurface(
     const opened = await client.callTool('browser_navigate', { url: target.href });
     if (opened.isError) {
       throw new Error(`the documented page could not be opened: ${opened.text.slice(0, 160)}`);
+    }
+    const outside = navigationResultRefusal('browser_navigate', opened.text, endpoint);
+    if (outside) throw new Error(outside);
+    if (browserPageTitle(opened.text) !== titleMarker.trim()) {
+      throw new Error(`the documented page title marker was not present (${titleMarker.trim()})`);
     }
     return discovery;
   } finally {
@@ -638,9 +653,17 @@ export async function runSurfaceProbe(
       toolAllowlist = discovery.toolAllowlist;
       toolArguments = discovery.toolArguments;
     } else if (surface.path === 'browser-driven') {
+      const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
+        agentId: surface.agentId,
+      });
+      const titleMarker = browserTitleMarker(
+        pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+      );
       const discovery = await dependencies.probeBrowser(
         surface.endpoint,
         process.env.DAY0_BROWSER_MCP_URL,
+        undefined,
+        titleMarker,
       );
       toolAllowlist = discovery.toolAllowlist;
       toolArguments = discovery.toolArguments;
