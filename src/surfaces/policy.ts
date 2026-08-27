@@ -20,6 +20,10 @@ export const UNKNOWN_SURFACE = 'unknown surface';
 export const SURFACE_NOT_CONNECTED = 'surface not connected';
 export const TOOL_NOT_ALLOWED = 'tool not in the surface allowlist';
 export const HELD_PUBLIC_POST = 'public post held for the manager';
+/** Why a browser read waits with the writes it shares a session with. */
+export const HELD_BROWSER_SEQUENCE =
+  'held with the rest of this browser session, which runs in one browser';
+
 export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 export const HELD_WRITE = 'write held for the manager';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
@@ -39,6 +43,15 @@ export const SHARED_IDENTITY_ICON = ':briefcase:';
 
 const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 const READ_TOOL_PREFIX = /^(?:list|get|search|read|fetch|retrieve|query|find|describe|show)(?:[_-]|$)/i;
+/**
+ * Browser tools that observe the page without changing anything on it.
+ *
+ * The floor's tool names carry no read verb - opening a page is `navigate`,
+ * reading it is `snapshot` - so without naming them the generic rule counts
+ * both as writes, and a run that only looked at a dashboard would be held for
+ * the manager as though it had edited one.
+ */
+const BROWSER_READ_TOOLS = new Set(['browser_navigate', 'browser_snapshot', 'browser_hover']);
 const HTTP_MUTATION_WORDS = new Set([
   'add',
   'approve',
@@ -294,6 +307,7 @@ export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
       ? 'write'
       : 'read';
   }
+  if (BROWSER_READ_TOOLS.has(parsed.tool)) return 'read';
   if (operationTokens(parsed.tool).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
   return READ_TOOL_PREFIX.test(parsed.tool) ? 'read' : 'write';
 }
@@ -792,8 +806,25 @@ export function reviewAction(
   }
 }
 
+/** The surface a parsed action targets, when the action parsed at all. */
+function targetSurfaceSlug(action: MockAction): string | undefined {
+  if (!isSurfaceTool(action.tool)) return undefined;
+  const parsed = parseSurfaceAction(action);
+  return parsed.ok ? parsed.action.surface : undefined;
+}
+
 /**
  * Review every action of a held run.
+ *
+ * A browser sequence is reviewed as one unit rather than row by row. The auto
+ * phase and the approved phase are separate invocations with a human decision
+ * between them, and a browser session cannot survive that gap: the reads would
+ * sign in and navigate in one browser, the approved writes would look for the
+ * Save button in a second browser that is still on a blank page. A person does
+ * not half-do a browsing session either. So if any action on a browser-driven
+ * surface is held, every action on that surface is held with it, and the whole
+ * sequence runs in one browser once the manager has decided. Under the toggle
+ * nothing is held and the question does not arise.
  *
  * Args:
  *   actions: The actions as the skill emitted them.
@@ -812,7 +843,26 @@ export function reviewActions(
   now: number,
   scope: ReviewScope,
 ): ActionVerdict[] {
-  return actions.map((action) => reviewAction(action, surfaces, grants, now, scope));
+  const verdicts = actions.map((action) => reviewAction(action, surfaces, grants, now, scope));
+  const browserSlugs = new Set(
+    surfaces
+      .filter((surface: SurfaceRecord): boolean => surface.path === 'browser-driven')
+      .map((surface: SurfaceRecord): string => surface.slug),
+  );
+  if (browserSlugs.size === 0) return verdicts;
+  const parked = new Set<string>();
+  for (const [index, verdict] of verdicts.entries()) {
+    if (verdict.disposition !== 'held') continue;
+    const slug = targetSurfaceSlug(actions[index]);
+    if (slug && browserSlugs.has(slug)) parked.add(slug);
+  }
+  if (parked.size === 0) return verdicts;
+  return verdicts.map((verdict, index): ActionVerdict => {
+    if (verdict.disposition !== 'auto') return verdict;
+    const slug = targetSurfaceSlug(actions[index]);
+    if (!slug || !parked.has(slug)) return verdict;
+    return { disposition: 'held', reason: HELD_BROWSER_SEQUENCE };
+  });
 }
 
 /**
@@ -1025,6 +1075,13 @@ export function provenanceRefusal(
  * case). Other writes through shared credentials are refused because the
  * provider would otherwise record an action attributable only to the shared
  * account. Dedicated OAuth apps remain attributable through their own bot.
+ *
+ * The browser floor is the one write with no authored content to attribute:
+ * pressing Save carries no body a trailer could be appended to, and the shared
+ * dashboard login is what the documentation publishes rather than an accident.
+ * Attribution there is the system's own audit line, which the runbook requires
+ * the agent to read back as the evidence a change landed - so the rule does not
+ * apply, and refusing here would make the floor unusable rather than safer.
  */
 export function sharedWriteWithoutAttribution(
   parsed: ParsedSurfaceAction,
@@ -1035,6 +1092,7 @@ export function sharedWriteWithoutAttribution(
   ledger: ReadonlyArray<AppliedAction | undefined>,
 ): boolean {
   if (credentialKind === 'oauth' || actionIntent(parsed) === 'read') return false;
+  if (surface.path === 'browser-driven') return false;
   if (isAuditComment(parsed)) return false;
   if (parsed.kind === 'mcp.call' && isMcpChatPost(parsed)) return false;
   if (parsed.kind === 'http.request') return !isChatPost(parsed, surface);

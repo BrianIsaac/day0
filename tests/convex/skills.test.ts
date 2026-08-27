@@ -145,6 +145,83 @@ describe('rejecting a proposed skill', (): void => {
   });
 });
 
+describe('revising a registered authored skill', (): void => {
+  it('reopens only a never-executed authored skill and parks its source work', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    const skillId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('skills', {
+        agentId,
+        name: 'bad-browser-contract',
+        description: 'Refresh a browser tile.',
+        body: 'uses the wrong selector',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        proposedFor: workItemId,
+        registeredAt: 2,
+        sandboxId: 'sandbox-1',
+        verificationLog: 'shape passed',
+        createdAt: 1,
+      });
+      await ctx.db.patch(workItemId, { state: 'discovered', proposedSkillId: id });
+      return id;
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
+    ).resolves.toEqual({ ok: true });
+
+    const [skill, work, events] = await harness.run(async (ctx) => [
+      await ctx.db.get(skillId),
+      await ctx.db.get(workItemId),
+      await ctx.db.query('events').collect(),
+    ]);
+    expect(skill).toMatchObject({ state: 'approved', body: '' });
+    expect(skill?.registeredAt).toBeUndefined();
+    expect(skill?.sandboxId).toBeUndefined();
+    expect(skill?.verificationLog).toBeUndefined();
+    expect(work).toMatchObject({
+      state: 'needs-skill',
+      verdict: {
+        decision: 'needs-skill',
+        reason: 'registered skill sent back for revision before first execution',
+      },
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: 'skill.revision-requested',
+      payload: { skillId, name: 'bad-browser-contract' },
+    });
+  });
+
+  it('refuses to reopen a skill after any execution has claimed it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    const skillId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('skills', {
+        agentId,
+        name: 'already-used',
+        description: 'Already used.',
+        body: 'valid',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        proposedFor: workItemId,
+        createdAt: 1,
+      });
+      await ctx.db.patch(workItemId, { skillId: id, state: 'completed' });
+      return id;
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
+    ).rejects.toThrow('cannot revise a skill after an execution has claimed it');
+    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe(
+      'registered',
+    );
+  });
+});
+
 describe('skills that target a surface', (): void => {
   it('refuses to create a proposal against another agent\'s work', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -175,6 +252,42 @@ describe('skills that target a surface', (): void => {
     const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
     expect(skill?.targetSurface).toBe('linear');
     expect(skill?.requiredScopes).toEqual(['boss:message', 'linear:read', 'linear:write']);
+  });
+
+  it('targets a different system literally named by cross-surface work', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    await seedSurface(harness, agentId, 'connected', {
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { title: 'Refresh the Looker pipeline tile' });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        createdAt: 1,
+      });
+    });
+
+    const skillId = await propose(harness, agentId, workItemId);
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill?.targetSurface).toBe('looker');
+    expect(skill?.requiredScopes).toEqual([
+      'boss:message',
+      'linear:read',
+      'looker:read',
+      'looker:write',
+    ]);
   });
 
   it('adds the surface scopes even when the proposer only asked for the boss scope', async (): Promise<void> => {

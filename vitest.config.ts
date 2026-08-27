@@ -34,7 +34,11 @@ export default defineConfig({
         test: {
           name: 'node',
           include: [
+            'tests/*.test.ts',
+            'tests/fake-slack/**/*.test.ts',
+            'tests/looker-tile/**/*.test.ts',
             'tests/src/**/*.test.ts',
+            'tests/app/**/*.test.ts',
             'tests/app/**/*.test.tsx',
             'tests/scripts/**/*.test.ts',
           ],

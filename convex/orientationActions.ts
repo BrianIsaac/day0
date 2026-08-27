@@ -468,6 +468,42 @@ export function explicitlyDeniesSurface(
 }
 
 /**
+ * Drop URLs that address the documentation itself rather than a system.
+ *
+ * A handbook index links to each system's own page, and those links are
+ * attributed to the system they name - correctly, as evidence. They are not
+ * addresses of the system: they are addresses of the page about it. An MCP or
+ * API URL is unambiguous enough to survive this on its own, but a web UI is
+ * decided by elimination, so without this rule every system documented in a
+ * linked wiki would look as though it had one.
+ *
+ * Args:
+ *   urls: URLs the documentation attributes to a system.
+ *   pages: The agent's own documentation pages.
+ *
+ * Returns:
+ *   The URLs that are not the address of a linked documentation page.
+ */
+export function withoutDocumentationUrls(
+  urls: readonly string[],
+  pages: readonly { url?: string }[],
+): string[] {
+  const documentation = new Set<string>();
+  for (const page of pages) {
+    if (!page.url) continue;
+    documentation.add(page.url);
+    const host = hostOf(page.url);
+    if (host) documentation.add(host);
+  }
+  if (documentation.size === 0) return [...urls];
+  return urls.filter((url: string): boolean => {
+    if (documentation.has(url)) return false;
+    const host = hostOf(url);
+    return !(host && documentation.has(host));
+  });
+}
+
+/**
  * Read the host of a documented URL, tolerating malformed values.
  *
  * Args:
@@ -627,6 +663,7 @@ export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
  * Args:
  *   draftPath: Path the model proposed.
  *   endpoints: URLs the documentation attributes to the system.
+ *   hasLoginCredential: Whether the same linked evidence carries a stored web login.
  *
  * Returns:
  *   The admitted path and, for admitted paths, its documented endpoint.
@@ -634,13 +671,22 @@ export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
 export function choosePath(
   draftPath: OrientationPath,
   endpoints: DocumentedEndpoints,
+  hasLoginCredential = false,
 ): { path: OrientationPath; endpoint?: string } {
   if (endpoints.mcp) return { path: 'mcp', endpoint: endpoints.mcp };
   if (endpoints.api) return { path: 'documented-api', endpoint: endpoints.api };
-  if (endpoints.webUi && draftPath === 'browser-driven') {
+  if (endpoints.webUi && draftPath === 'browser-driven' && hasLoginCredential) {
     return { path: 'browser-driven', endpoint: endpoints.webUi };
   }
   return { path: 'escalate' };
+}
+
+/** Whether a page-derived stored value is explicitly a web login credential. */
+export function isBrowserLoginCredential(credential: CredentialFinding): boolean {
+  return (
+    credential.found === 'value' &&
+    /\b(?:login|password|passcode|passphrase)\b/i.test(credential.label ?? '')
+  );
 }
 
 /**
@@ -1036,12 +1082,23 @@ export async function orientSurface(
       .join('\n\n'),
   );
   const endpoints = documentedEndpoints(
-    attributedUrls(relevantText, surface.displayName, surface.slug),
+    withoutDocumentationUrls(
+      attributedUrls(relevantText, surface.displayName, surface.slug),
+      pages,
+    ),
   );
   const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
     explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
   );
-  if (matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api)) {
+  // A page that says "no API" while documenting the web UI staff use has
+  // recorded a surface, and it is the one the browser floor exists for.
+  // `absent` means no surface is recorded at all, never "no API" - reading it
+  // the other way would make the floor unreachable from exactly the pages that
+  // describe it. A denial with no attributed address of any kind is still absent.
+  if (
+    matches.length === 0 ||
+    (explicitNone && !endpoints.mcp && !endpoints.api && !endpoints.webUi)
+  ) {
     const recorded = await ctx.runMutation(internal.surfaces.markAbsent, {
       surfaceId: surface._id,
       searched: [surface.displayName, surface.class],
@@ -1052,12 +1109,6 @@ export async function orientSurface(
 
   const drafted = await dependencies.draft(surface, relevantText);
   const draft = sanitisedDraft(drafted.draft);
-  const { path, endpoint } = choosePath(draft.path, endpoints);
-  const mentionsMcp = /\bmcp\b/i.test(relevantText);
-  const registrySuggestion =
-    path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
-      ? await dependencies.registry(surface.displayName)
-      : undefined;
   const credentialPages: CredentialPage[] = matches.map(
     (page: Doc<'docPages'>): CredentialPage => ({
       sourceId: String(page.sourceId),
@@ -1071,8 +1122,26 @@ export async function orientSurface(
     extractedCredential.found === 'none' && extractedCredential.method === 'unknown'
       ? validatedDraftCredential(draft.credential, credentialPages)
       : extractedCredential;
+  const browserEvidenceIncomplete =
+    draft.path === 'browser-driven' && endpoints.webUi !== undefined &&
+    !isBrowserLoginCredential(credential);
+  const { path, endpoint } = choosePath(
+    draft.path,
+    endpoints,
+    isBrowserLoginCredential(credential),
+  );
+  const mentionsMcp = /\bmcp\b/i.test(relevantText);
+  const registrySuggestion =
+    path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
+      ? await dependencies.registry(surface.displayName)
+      : undefined;
   const openQuestions = [...draft.openQuestions];
   if (drafted.note) openQuestions.push(drafted.note);
+  if (browserEvidenceIncomplete) {
+    openQuestions.push(
+      'Document the web UI login credential before approving browser-driven access.',
+    );
+  }
   if (endpoints.insecure) {
     openQuestions.push(
       `The documented endpoint ${endpoints.insecure} is plaintext http on a public host and was not admitted; a credential is only sent over https.`,

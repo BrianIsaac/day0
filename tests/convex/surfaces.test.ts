@@ -853,3 +853,290 @@ describe('owner-triggered orientation', (): void => {
     ]);
   });
 });
+
+describe('the dedicated app on a surface row', (): void => {
+  /** Seed one approved chat surface carrying a registered app. */
+  async function seedProvisioned(
+    harness: TestConvex<typeof schema>,
+    options: { installed?: boolean; sharedCredential?: boolean } = {},
+  ): Promise<{
+    agentId: GenericId<'agents'>;
+    secretId: GenericId<'credentials'>;
+    sharedId?: GenericId<'credentials'>;
+    surfaceId: GenericId<'surfaces'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'ops worker',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const secretId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'ops worker (Day0) client secret',
+        ciphertext: 'c',
+        iv: 'i',
+        source: 'oauth',
+        appId: 'A123',
+        createdAt: 1,
+      });
+      const sharedId = options.sharedCredential
+        ? await ctx.db.insert('credentials', {
+            userId: 'owner',
+            kind: 'value',
+            label: 'Slack OAuth access',
+            ciphertext: 'c',
+            iv: 'i',
+            source: 'entered',
+            createdAt: 1,
+          })
+        : undefined;
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        ...(sharedId ? { credentialId: sharedId, credentialKind: 'value' as const } : {}),
+        provisioning: {
+          appId: 'A123',
+          appName: 'ops worker (Day0)',
+          clientId: '111.222',
+          clientSecretCredentialId: secretId,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'https://day0.example.test/api/oauth/slack',
+          scopes: ['chat:write'],
+          createdAt: 1,
+          ...(options.installed
+            ? { installedAt: 9 }
+            : { stateNonce: 'the-nonce', stateExpiresAt: 1_000 }),
+        },
+        credentialLanded: false,
+        createdAt: 1,
+      });
+      return { agentId, secretId, sharedId, surfaceId };
+    });
+  }
+
+  it('claims the install state exactly once', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedProvisioned(harness);
+    const first = await harness.mutation(internal.surfaces.claimInstallState, {
+      surfaceId,
+      nonce: 'the-nonce',
+      now: 500,
+    });
+    expect(first).toMatchObject({ ok: true, clientId: '111.222', slug: 'slack' });
+    await expect(
+      harness.mutation(internal.surfaces.claimInstallState, {
+        surfaceId,
+        nonce: 'the-nonce',
+        now: 500,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'used' });
+  });
+
+  it('refuses a nonce that is not the one on the row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedProvisioned(harness);
+    await expect(
+      harness.mutation(internal.surfaces.claimInstallState, {
+        surfaceId,
+        nonce: 'another-nonce',
+        now: 500,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'used' });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.provisioning?.stateNonce).toBe('the-nonce');
+  });
+
+  it('refuses a claim after the link has expired', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedProvisioned(harness);
+    await expect(
+      harness.mutation(internal.surfaces.claimInstallState, {
+        surfaceId,
+        nonce: 'the-nonce',
+        now: 1_000,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'expired' });
+  });
+
+  it('refuses a claim on a surface with no app awaiting an install', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedProvisioned(harness, { installed: true });
+    await expect(
+      harness.mutation(internal.surfaces.claimInstallState, {
+        surfaceId,
+        nonce: 'the-nonce',
+        now: 500,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'used' });
+  });
+
+  it('retires the shared token the dedicated identity replaces', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sharedId, surfaceId } = await seedProvisioned(harness, { sharedCredential: true });
+    const botId = await harness.run(
+      async (ctx): Promise<GenericId<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'oauth',
+          label: 'Slack bot token',
+          ciphertext: 'c',
+          iv: 'i',
+          source: 'oauth',
+          createdAt: 2,
+        }),
+    );
+    await expect(
+      harness.mutation(internal.surfaces.recordInstalledApp, {
+        surfaceId,
+        credentialId: botId,
+        now: 10,
+      }),
+    ).resolves.toEqual({ retiredCredentialId: sharedId });
+    const after = await harness.run(async (ctx) => ({
+      shared: sharedId ? await ctx.db.get(sharedId) : null,
+      surface: await ctx.db.get(surfaceId),
+    }));
+    expect(after.surface).toMatchObject({ credentialId: botId, credentialKind: 'oauth' });
+    expect(after.shared?.revokedAt).toBe(10);
+  });
+
+  it('retires nothing when the surface carried no credential', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedProvisioned(harness);
+    const botId = await harness.run(
+      async (ctx): Promise<GenericId<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'oauth',
+          label: 'Slack bot token',
+          ciphertext: 'c',
+          iv: 'i',
+          source: 'oauth',
+          createdAt: 2,
+        }),
+    );
+    await expect(
+      harness.mutation(internal.surfaces.recordInstalledApp, {
+        surfaceId,
+        credentialId: botId,
+        now: 10,
+      }),
+    ).resolves.toEqual({ retiredCredentialId: undefined });
+  });
+
+  it('refuses to replace a dedicated token with a second install', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedProvisioned(harness);
+    const first = await harness.run(
+      async (ctx): Promise<GenericId<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'oauth',
+          label: 'Slack bot token',
+          ciphertext: 'c',
+          iv: 'i',
+          source: 'oauth',
+          createdAt: 2,
+        }),
+    );
+    await harness.mutation(internal.surfaces.recordInstalledApp, {
+      surfaceId,
+      credentialId: first,
+      now: 10,
+    });
+    const second = await harness.run(
+      async (ctx): Promise<GenericId<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'oauth',
+          label: 'Slack bot token',
+          ciphertext: 'c',
+          iv: 'i',
+          source: 'oauth',
+          createdAt: 3,
+        }),
+    );
+    await expect(
+      harness.mutation(internal.surfaces.recordInstalledApp, {
+        surfaceId,
+        credentialId: second,
+        now: 11,
+      }),
+    ).rejects.toThrow('already has a dedicated identity');
+    const after = await harness.run(async (ctx) => ({
+      first: await ctx.db.get(first),
+      surface: await ctx.db.get(surfaceId),
+    }));
+    expect(after.first?.revokedAt).toBeUndefined();
+    expect(after.surface?.credentialId).toBe(first);
+  });
+
+  it('forgets the app when the connection is rejected', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedProvisioned(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { verdict: 'proposed', channelsNotJoined: ['#revops'] });
+    });
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.reject, { surfaceId, reason: 'Rejected by the operator.' });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.provisioning).toBeUndefined();
+    expect(surface?.channelsNotJoined).toBeUndefined();
+    expect(surface?.verdict).toBe('declared');
+  });
+});
+
+describe('a connected surface and its last skip reason', (): void => {
+  it('clears the reason the poll recorded while it was not yet connected', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx): Promise<GenericId<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'skip reason',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        intakeSkipReason: 'surface is proposed; awaiting connection',
+        credentialLanded: false,
+        probeGeneration: 1,
+        createdAt: 1,
+      });
+    });
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: 1,
+      toolAllowlist: ['browser_navigate'],
+      toolArguments: [],
+      verifiedAt: 10,
+    });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.verdict).toBe('connected');
+    expect(surface?.intakeSkipReason).toBeUndefined();
+  });
+});

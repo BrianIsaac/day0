@@ -12,6 +12,7 @@ import {
   type ParsedHttpRequest,
 } from './policy';
 import { hasPlaceholder, injectSecret, redactValue, SecretTemplateError } from './secrets';
+import { SLACK_API_ENDPOINT, slackApiBaseUrl } from './slack-endpoint';
 import type {
   AdapterRun,
   AppliedAction,
@@ -185,13 +186,17 @@ export class HttpAdapter implements SurfaceAdapter {
         idempotencyKey,
       };
     }
+    const transportEndpoint =
+      surface.slug === 'slack' && surface.endpoint === SLACK_API_ENDPOINT
+        ? slackApiBaseUrl().href
+        : (surface.endpoint ?? '');
     let url: URL;
     try {
-      url = resolveRequestUrl(surface.endpoint ?? '', request.path);
+      url = resolveRequestUrl(transportEndpoint, request.path);
     } catch (error) {
       return { tool: action.tool, ok: false, reason: (error as Error).message, idempotencyKey };
     }
-    const base = new URL(surface.endpoint ?? '');
+    const base = new URL(transportEndpoint);
     if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
     const operation = url.pathname.slice(base.pathname.length).replace(/^\/+/, '');
     if (!surface.toolAllowlist?.includes(operation)) {

@@ -271,6 +271,201 @@ export const attachCredential = internalMutation({
   },
 });
 
+/**
+ * Record the dedicated app this employee just registered for itself.
+ *
+ * The app and its install link are stored together with the single-use nonce
+ * that binds the link to this surface, so provisioning again simply replaces
+ * the link and invalidates the previous one.
+ */
+export const recordProvisionedApp = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    appId: v.string(),
+    appName: v.string(),
+    clientId: v.string(),
+    clientSecretCredentialId: v.id('credentials'),
+    installUrl: v.string(),
+    redirectUrl: v.string(),
+    scopes: v.array(v.string()),
+    stateNonce: v.string(),
+    stateExpiresAt: v.number(),
+    now: v.number(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    await ctx.db.patch(surface._id, {
+      provisioning: {
+        appId: args.appId,
+        appName: args.appName,
+        clientId: args.clientId,
+        clientSecretCredentialId: args.clientSecretCredentialId,
+        installUrl: args.installUrl,
+        redirectUrl: args.redirectUrl,
+        scopes: args.scopes,
+        createdAt: args.now,
+        stateNonce: args.stateNonce,
+        stateExpiresAt: args.stateExpiresAt,
+      },
+    });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.app-provisioned',
+      payload: { surfaceId: surface._id, appId: args.appId, appName: args.appName },
+      createdAt: args.now,
+    });
+  },
+});
+
+/**
+ * Consume the install link's single-use nonce.
+ *
+ * This runs before the code is exchanged, so a redirect replayed from a
+ * browser history finds no nonce to claim and is refused without a second
+ * call reaching the provider. The whole check and clear are one transaction,
+ * so two simultaneous redirects cannot both win.
+ *
+ * Args:
+ *   surfaceId: The surface the signed state named.
+ *   nonce: The nonce the signed state carried.
+ *   now: Current epoch milliseconds.
+ *
+ * Returns:
+ *   The claim needed to exchange the code, or why it was refused.
+ */
+export const claimInstallState = internalMutation({
+  args: { surfaceId: v.id('surfaces'), nonce: v.string(), now: v.number() },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    | {
+        ok: true;
+        agentId: Id<'agents'>;
+        clientId: string;
+        clientSecretCredentialId: Id<'credentials'>;
+        redirectUrl: string;
+        slug: string;
+      }
+    | { ok: false; reason: string }
+  > => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface?.provisioning) return { ok: false, reason: 'no-provisioning' };
+    const provisioning = surface.provisioning;
+    if (!provisioning.stateNonce || provisioning.stateNonce !== args.nonce) {
+      return { ok: false, reason: 'used' };
+    }
+    if (provisioning.stateExpiresAt !== undefined && provisioning.stateExpiresAt <= args.now) {
+      return { ok: false, reason: 'expired' };
+    }
+    await ctx.db.patch(surface._id, {
+      provisioning: {
+        ...provisioning,
+        stateNonce: undefined,
+        stateExpiresAt: undefined,
+        lastError: undefined,
+      },
+    });
+    return {
+      ok: true,
+      agentId: surface.agentId,
+      clientId: provisioning.clientId,
+      clientSecretCredentialId: provisioning.clientSecretCredentialId,
+      redirectUrl: provisioning.redirectUrl,
+      slug: surface.slug,
+    };
+  },
+});
+
+/** Record why an install could not be completed, for the card to explain. */
+export const recordInstallFailure = internalMutation({
+  args: { surfaceId: v.id('surfaces'), reason: v.string(), now: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface?.provisioning) return;
+    await ctx.db.patch(surface._id, {
+      provisioning: { ...surface.provisioning, lastError: args.reason },
+    });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.install-failed',
+      payload: { surfaceId: surface._id, reason: args.reason },
+      createdAt: args.now,
+    });
+  },
+});
+
+/**
+ * Attach the bot token an install delivered and retire a shared one.
+ *
+ * The two writes belong together: the moment the dedicated identity is the
+ * surface's credential, the shared token it replaces must stop being usable,
+ * or a run could still reach the provider as the workspace's shared app.
+ */
+export const recordInstalledApp = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    credentialId: v.id('credentials'),
+    now: v.number(),
+  },
+  handler: async (ctx, args): Promise<{ retiredCredentialId?: Id<'credentials'> }> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    const previous = surface.credentialId;
+    if (previous && previous !== args.credentialId && surface.credentialKind === 'oauth') {
+      throw new Error('This surface already has a dedicated identity.');
+    }
+    const retired =
+      previous && previous !== args.credentialId && surface.credentialKind !== 'oauth'
+        ? previous
+        : undefined;
+    await ctx.db.patch(surface._id, {
+      credentialId: args.credentialId,
+      credentialKind: 'oauth',
+      credentialRef: undefined,
+      credentialLanded: false,
+      reason: undefined,
+      verdict:
+        surface.verdict === 'ungranted' || surface.verdict === 'listed-dead'
+          ? 'approved'
+          : surface.verdict,
+      provisioning: surface.provisioning
+        ? {
+            ...surface.provisioning,
+            installedAt: args.now,
+            stateNonce: undefined,
+            stateExpiresAt: undefined,
+            lastError: undefined,
+          }
+        : undefined,
+    });
+    if (retired) {
+      const credential = await ctx.db.get(retired);
+      if (credential && !credential.revokedAt) {
+        await ctx.db.patch(retired, { revokedAt: args.now });
+      }
+      await ctx.db.insert('events', {
+        agentId: surface.agentId,
+        type: 'surface.shared-credential-retired',
+        payload: {
+          surfaceId: surface._id,
+          credentialId: retired,
+          reason: 'replaced by the dedicated app installed for this employee',
+        },
+        createdAt: args.now,
+      });
+    }
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.app-installed',
+      payload: { surfaceId: surface._id, appId: surface.provisioning?.appId },
+      createdAt: args.now,
+    });
+    return { retiredCredentialId: retired };
+  },
+});
+
 /** Reserve the next probe generation for an approved connection candidate. */
 export const beginProbe = internalMutation({
   args: { surfaceId: v.id('surfaces') },
@@ -388,6 +583,7 @@ export const recordConnected = internalMutation({
     managerName: v.optional(v.string()),
     providerIdentityId: v.optional(v.string()),
     providerWorkspaceId: v.optional(v.string()),
+    channelsNotJoined: v.optional(v.array(v.string())),
     verifiedAt: v.number(),
     expiresAt: v.optional(v.number()),
   },
@@ -411,6 +607,14 @@ export const recordConnected = internalMutation({
       managerName: args.managerName,
       providerIdentityId: args.providerIdentityId,
       providerWorkspaceId: args.providerWorkspaceId,
+      channelsNotJoined:
+        args.channelsNotJoined && args.channelsNotJoined.length > 0
+          ? args.channelsNotJoined
+          : undefined,
+      // The last poll's skip reason described a surface that was not connected
+      // yet. Leaving it would have a connected card say it was skipped awaiting
+      // connection; the next poll writes a fresh one if it skips for a new reason.
+      intakeSkipReason: undefined,
       expiresAt: args.expiresAt ?? surface.expiresAt,
     });
     await ctx.db.insert('events', {
@@ -555,6 +759,12 @@ export const reject = mutation({
       toolArguments: undefined,
       providerIdentityId: undefined,
       providerWorkspaceId: undefined,
+      // The dedicated app itself survives a rejection - it exists in the
+      // provider's workspace and only an administrator can delete it there -
+      // but this deployment forgets it, so a re-proposal provisions afresh
+      // rather than installing into an app nobody has re-approved.
+      provisioning: undefined,
+      channelsNotJoined: undefined,
       waterfallPosition: undefined,
       intakeSkipReason: undefined,
       lastPolledAt: undefined,
@@ -569,6 +779,20 @@ export const reject = mutation({
       createdAt: Date.now(),
     });
   },
+});
+
+/**
+ * Whether this deployment has a public address an OAuth install can return to.
+ *
+ * The card needs to know before it offers to register an app, and the answer
+ * belongs to the deployment that would call the provider rather than to the
+ * browser or the Next process. It is a boolean by design: the address itself
+ * says where this machine is reachable and is nobody's business but the
+ * operator's until an install link carries it.
+ */
+export const installRedirectConfigured = query({
+  args: {},
+  handler: async (): Promise<boolean> => (process.env.DAY0_PUBLIC_URL ?? '').trim() !== '',
 });
 
 /**

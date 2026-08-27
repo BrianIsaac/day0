@@ -167,3 +167,67 @@ describe('documentation credential redaction', (): void => {
     }
   });
 });
+
+describe('a sign-in credential the team declared on a page', (): void => {
+  it('stores a memorable dashboard password that does not look random', (): void => {
+    const result = redactCredentials(
+      [
+        '# Looker pipeline tile',
+        '',
+        '- Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`), held by the',
+        '  RevOps operations lead and rotated each quarter.',
+      ].join('\n'),
+      'Looker pipeline tile',
+    );
+    expect(result.credentials).toEqual([
+      { label: 'looker pipeline tile dashboard login', plaintext: 'pipeline-tile-local' },
+    ]);
+    expect(result.markdown).toContain(
+      '<credential: looker pipeline tile dashboard login, stored>',
+    );
+    expect(result.markdown).not.toContain('pipeline-tile-local');
+    // The username is not a secret and the runbook needs it in the clear.
+    expect(result.markdown).toContain('username `revops`');
+  });
+
+  it('leaves a declaring line whose value is prose rather than a literal', (): void => {
+    const result = redactCredentials(
+      '- Password rotation: quarterly, by the operations lead.\n- Login: ask the lead.',
+      'Looker pipeline tile',
+    );
+    expect(result.credentials).toEqual([]);
+    expect(result.markdown).toContain('quarterly');
+    expect(result.markdown).toContain('ask the lead');
+  });
+
+  it('still requires a token or key value to look like a secret', (): void => {
+    const result = redactCredentials(
+      '- Key rotation: `quarterly`\n- Token lifetime: `12h`',
+      'Linear automation',
+    );
+    expect(result.credentials).toEqual([]);
+  });
+
+  it('does not store a URL written after a login label', (): void => {
+    const result = redactCredentials(
+      '- Login page: `https://looker.example/login`',
+      'Looker pipeline tile',
+    );
+    expect(result.credentials).toEqual([]);
+    expect(result.markdown).toContain('https://looker.example/login');
+  });
+
+  it('takes each declared credential once when a page carries two', (): void => {
+    const result = redactCredentials(
+      [
+        '- Dashboard login (Looker tile): `pipeline-tile-local`',
+        '- Warehouse password: `warehouse-read-only`',
+      ].join('\n'),
+      'Systems',
+    );
+    expect(result.credentials.map((row) => row.plaintext)).toEqual([
+      'pipeline-tile-local',
+      'warehouse-read-only',
+    ]);
+  });
+});

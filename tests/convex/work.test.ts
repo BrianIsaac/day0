@@ -1172,6 +1172,28 @@ describe('the exact-action gate', (): void => {
     ).rejects.toThrow('reconcile the provider first');
   });
 
+  it('permits retry after only reads landed and every write failed or stayed held', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing');
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      runId,
+      reason: 'automatic manager note failed',
+      output: {
+        actions: [readIssue, workingComment],
+        applied: [
+          { tool: 'mcp.call', ok: true, idempotencyKey: 'read' },
+          { tool: 'mcp.call', ok: false, reason: 'provider refused', idempotencyKey: 'write' },
+        ],
+      },
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
+  });
+
   it('applies the auto rows straight from the hold and parks the held ones after they land', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

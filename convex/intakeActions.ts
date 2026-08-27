@@ -10,6 +10,7 @@ import { internalAction, type ActionCtx } from './_generated/server';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
+import { documentedChannelNames } from '../src/surfaces/slack-policy';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
 import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
@@ -189,17 +190,7 @@ export function linearScopeFromPages(pages: readonly Doc<'docPages'>[]): LinearS
  *   Unique channel names without the hash prefix.
  */
 export function slackChannelsFromPages(pages: readonly Doc<'docPages'>[]): string[] {
-  const names = new Set<string>();
-  for (const page of pages) {
-    if (!/slack/i.test(`${page.title}\n${page.markdown}`)) continue;
-    for (const line of page.markdown.split(/\r?\n/)) {
-      if (!/\bChannels?\s*:/i.test(line)) continue;
-      for (const match of line.matchAll(/#([a-z0-9][a-z0-9_-]*)/gi)) {
-        names.add(match[1].toLowerCase());
-      }
-    }
-  }
-  return [...names];
+  return documentedChannelNames(pages);
 }
 
 /**

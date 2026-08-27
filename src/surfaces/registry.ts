@@ -52,6 +52,8 @@ export interface RealAdapterDeps {
   fetch: FetchLike;
   beforeTransport?: BeforeSurfaceTransport;
   now?: () => number;
+  /** The browser driver's address; only a `browser-driven` surface uses it. */
+  browserMcpUrl?: string;
 }
 
 export interface ApplyOptions {
@@ -130,6 +132,7 @@ export function resolveAdapters(
       createClient: deps.createMcpClient,
       now,
       beforeTransport: deps.beforeTransport,
+      browserMcpUrl: deps.browserMcpUrl,
     });
     const http = new HttpAdapter(surfaces, {
       decrypt: deps.decrypt,
@@ -243,131 +246,143 @@ export async function applySurfaceActions(
       : undefined;
   const applied: AppliedAction[] = [];
   const parsedByIndex: Array<ParsedSurfaceAction | undefined> = [];
-  for (const [index, action] of actions.entries()) {
-    const idempotencyKey = actionIdempotencyKey({
-      workItemId: run.workItemId,
-      runId: run.runId,
-      actionIndex: index,
-    });
-    const prior = options.priorLedger?.[index];
-    if (prior) {
-      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
-      if (parsed?.ok) parsedByIndex[index] = parsed.action;
-      applied.push(prior);
-      continue;
-    }
-    if (options.approvedIndexes && !options.approvedIndexes.has(index)) {
-      const deferred = options.deferredIndexes?.has(index) === true;
-      applied.push({
-        tool: action.tool,
-        ok: true,
-        held: true,
-        reason: deferred ? AWAITING_APPROVAL : options.heldReasons?.get(index) ?? HELD_NOT_APPROVED,
-        ...(deferred ? { awaitingApproval: true } : {}),
-        effect: describeAction(action),
-        idempotencyKey,
-      });
-      continue;
-    }
-    const adapter = adapters.get(action.tool);
-    if (!adapter) {
-      const reason =
-        mode === 'real' && (MOCK_TOOLS as readonly string[]).includes(action.tool)
-          ? mockVerbRefusal(action.tool)
-          : UNKNOWN_TOOL;
-      applied.push(refused(action.tool, reason, idempotencyKey));
-      continue;
-    }
-    if (!isSurfaceTool(action.tool)) {
-      applied.push(await adapter.apply(ctx, run as AdapterRun, action, index, idempotencyKey));
-      continue;
-    }
-    const parsed = parseSurfaceAction(action);
-    if (!parsed.ok) {
-      applied.push(refused(action.tool, parsed.reason, idempotencyKey));
-      continue;
-    }
-    parsedByIndex[index] = parsed.action;
-    const surface = surfaces.find((row) => row.slug === parsed.action.surface);
-    const refusal = surfaceRefusal(surface, now);
-    if (!surface || refusal) {
-      applied.push(refused(action.tool, refusal ?? UNKNOWN_SURFACE, idempotencyKey));
-      continue;
-    }
-    const pathMismatch = pathRefusal(parsed.action, surface);
-    if (pathMismatch) {
-      applied.push(refused(action.tool, pathMismatch, idempotencyKey));
-      continue;
-    }
-    const unlisted = toolRefusal(parsed.action, surface);
-    if (unlisted) {
-      applied.push(refused(action.tool, unlisted, idempotencyKey));
-      continue;
-    }
-    const replyMismatch = replyTargetRefusal(parsed.action, surface, options.replyTarget);
-    if (replyMismatch) {
-      applied.push(refused(action.tool, replyMismatch, idempotencyKey));
-      continue;
-    }
-    // A read and the manager DM always need their standing grant. A write
-    // needs one, or the toggle, to apply on its own; a write the manager
-    // approved by index is authorised by that approval.
-    if (needsStandingGrant(parsed.action, surface) || !managerApproved) {
-      const ungranted = grantRefusal(
-        parsed.action,
-        surface,
-        options.grants ?? new Set(),
-        autonomousActions,
-      );
-      if (ungranted) {
-        applied.push(refused(action.tool, ungranted, idempotencyKey));
-        continue;
-      }
-    }
-    if (autoPhase && !isAutomatic(parsed.action, surface, autonomousActions)) {
-      applied.push(refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
-      continue;
-    }
-    if (statusChangeWithoutComment(parsed.action, index, parsedByIndex, applied)) {
-      applied.push(refused(action.tool, STATUS_WITHOUT_COMMENT, idempotencyKey));
-      continue;
-    }
-    const credentialKind = surface.credentialKind ?? 'value';
-    if (
-      sharedWriteWithoutAttribution(
-        parsed.action,
-        surface,
-        credentialKind,
-        index,
-        parsedByIndex,
-        applied,
-      )
-    ) {
-      applied.push(refused(action.tool, SHARED_WRITE_WITHOUT_ATTRIBUTION, idempotencyKey));
-      continue;
-    }
-    const provenance = applyProvenance(
-      parsed.action,
-      surface,
-      {
-        agentName: run.agentName ?? 'Day0',
+  try {
+    for (const [index, action] of actions.entries()) {
+      const idempotencyKey = actionIdempotencyKey({
         workItemId: run.workItemId,
         runId: run.runId,
-      },
-      credentialKind,
-    );
-    if (!provenance.ok) {
-      applied.push(refused(action.tool, provenance.reason, idempotencyKey));
-      continue;
+        actionIndex: index,
+      });
+      const prior = options.priorLedger?.[index];
+      if (prior) {
+        const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+        if (parsed?.ok) parsedByIndex[index] = parsed.action;
+        applied.push(prior);
+        continue;
+      }
+      if (options.approvedIndexes && !options.approvedIndexes.has(index)) {
+        const deferred = options.deferredIndexes?.has(index) === true;
+        applied.push({
+          tool: action.tool,
+          ok: true,
+          held: true,
+          reason: deferred
+            ? AWAITING_APPROVAL
+            : (options.heldReasons?.get(index) ?? HELD_NOT_APPROVED),
+          ...(deferred ? { awaitingApproval: true } : {}),
+          effect: describeAction(action),
+          idempotencyKey,
+        });
+        continue;
+      }
+      const adapter = adapters.get(action.tool);
+      if (!adapter) {
+        const reason =
+          mode === 'real' && (MOCK_TOOLS as readonly string[]).includes(action.tool)
+            ? mockVerbRefusal(action.tool)
+            : UNKNOWN_TOOL;
+        applied.push(refused(action.tool, reason, idempotencyKey));
+        continue;
+      }
+      if (!isSurfaceTool(action.tool)) {
+        applied.push(await adapter.apply(ctx, run as AdapterRun, action, index, idempotencyKey));
+        continue;
+      }
+      const parsed = parseSurfaceAction(action);
+      if (!parsed.ok) {
+        applied.push(refused(action.tool, parsed.reason, idempotencyKey));
+        continue;
+      }
+      parsedByIndex[index] = parsed.action;
+      const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+      const refusal = surfaceRefusal(surface, now);
+      if (!surface || refusal) {
+        applied.push(refused(action.tool, refusal ?? UNKNOWN_SURFACE, idempotencyKey));
+        continue;
+      }
+      const pathMismatch = pathRefusal(parsed.action, surface);
+      if (pathMismatch) {
+        applied.push(refused(action.tool, pathMismatch, idempotencyKey));
+        continue;
+      }
+      const unlisted = toolRefusal(parsed.action, surface);
+      if (unlisted) {
+        applied.push(refused(action.tool, unlisted, idempotencyKey));
+        continue;
+      }
+      const replyMismatch = replyTargetRefusal(parsed.action, surface, options.replyTarget);
+      if (replyMismatch) {
+        applied.push(refused(action.tool, replyMismatch, idempotencyKey));
+        continue;
+      }
+      // A read and the manager DM always need their standing grant. A write
+      // needs one, or the toggle, to apply on its own; a write the manager
+      // approved by index is authorised by that approval.
+      if (needsStandingGrant(parsed.action, surface) || !managerApproved) {
+        const ungranted = grantRefusal(
+          parsed.action,
+          surface,
+          options.grants ?? new Set(),
+          autonomousActions,
+        );
+        if (ungranted) {
+          applied.push(refused(action.tool, ungranted, idempotencyKey));
+          continue;
+        }
+      }
+      if (autoPhase && !isAutomatic(parsed.action, surface, autonomousActions)) {
+        applied.push(refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
+        continue;
+      }
+      if (statusChangeWithoutComment(parsed.action, index, parsedByIndex, applied)) {
+        applied.push(refused(action.tool, STATUS_WITHOUT_COMMENT, idempotencyKey));
+        continue;
+      }
+      const credentialKind = surface.credentialKind ?? 'value';
+      if (
+        sharedWriteWithoutAttribution(
+          parsed.action,
+          surface,
+          credentialKind,
+          index,
+          parsedByIndex,
+          applied,
+        )
+      ) {
+        applied.push(refused(action.tool, SHARED_WRITE_WITHOUT_ATTRIBUTION, idempotencyKey));
+        continue;
+      }
+      const provenance = applyProvenance(
+        parsed.action,
+        surface,
+        {
+          agentName: run.agentName ?? 'Day0',
+          workItemId: run.workItemId,
+          runId: run.runId,
+        },
+        credentialKind,
+      );
+      if (!provenance.ok) {
+        applied.push(refused(action.tool, provenance.reason, idempotencyKey));
+        continue;
+      }
+      const outcome = await adapter.apply(
+        ctx,
+        { ...run, agentName: run.agentName ?? 'Day0' },
+        serialiseSurfaceAction(provenance.action),
+        index,
+        idempotencyKey,
+      );
+      applied.push(authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome);
     }
-    const outcome = await adapter.apply(
-      ctx,
-      { ...run, agentName: run.agentName ?? 'Day0' },
-      serialiseSurfaceAction(provenance.action),
-      index,
-      idempotencyKey,
+  } finally {
+    // The browser floor holds one live browser per run; nothing else holds
+    // anything. Closing happens whatever the run did, including throwing.
+    await Promise.all(
+      [...new Set(adapters.values())].map(
+        async (adapter: SurfaceAdapter): Promise<void> => await adapter.close?.(),
+      ),
     );
-    applied.push(authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome);
   }
   return applied;
 }

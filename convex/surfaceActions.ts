@@ -10,11 +10,25 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
+import {
+  browserDriverUrl,
+  browserPageTitle,
+  browserTitleMarker,
+  BROWSER_TOOLS,
+  navigationResultRefusal,
+} from '../src/surfaces/browser';
+import { interpretToolResult } from '../src/surfaces/mcp';
+import {
+  channelsAwaitingInvite,
+  documentedChannelNames,
+  type ChannelMembership,
+} from '../src/surfaces/slack-policy';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { slackApiUrl } from '../src/surfaces/slack-endpoint';
 
 const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
   kanban: ['list_issues', 'get_issue', 'list_comments', 'save_comment', 'save_issue'],
-  'browser-driven': ['browser_navigate', 'browser_snapshot'],
+  'browser-driven': BROWSER_TOOLS,
 };
 
 const SLACK_METHOD_DEFAULTS = [
@@ -41,6 +55,11 @@ interface McpProbeClient {
   disconnect(): Promise<void>;
 }
 
+/** The browser driver additionally has to open a page for the liveness check. */
+interface BrowserProbeClient extends McpProbeClient {
+  callTool(name: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }>;
+}
+
 interface McpDiscovery {
   toolAllowlist: string[];
   toolArguments: Array<{ tool: string; arguments: string[] }>;
@@ -48,6 +67,7 @@ interface McpDiscovery {
 
 interface SlackProbeResult {
   toolAllowlist: string[];
+  channelsNotJoined: string[];
   managerDmChannelId: string;
   managerUserId: string;
   managerName?: string;
@@ -55,7 +75,11 @@ interface SlackProbeResult {
   providerWorkspaceId?: string;
 }
 
+/** How many `conversations.list` pages the membership check will read. */
+const MAX_CHANNEL_PAGES = 5;
+
 interface ProbeDependencies {
+  probeBrowser: typeof probeBrowserSurface;
   probeMcp: typeof probeMcpSurface;
   probeSlack: typeof probeSlackSurface;
   now(): number;
@@ -65,6 +89,8 @@ export interface ProbeOutcome {
   verdict: 'connected' | 'ungranted' | 'listed-dead' | 'skipped';
   reason?: string;
   toolAllowlist?: string[];
+  /** Documented channels the app still has to be invited to, hash-prefixed. */
+  channelsNotJoined?: string[];
   managerDmReady?: boolean;
 }
 
@@ -92,6 +118,7 @@ const credentialInternal = internal as unknown as {
 };
 
 const probeDependencies: ProbeDependencies = {
+  probeBrowser: probeBrowserSurface,
   probeMcp: probeMcpSurface,
   probeSlack: probeSlackSurface,
   now: (): number => Date.now(),
@@ -132,6 +159,10 @@ export function mcpAllowlist(
   definitions: Record<string, ToolDefinition>,
   surfaceClass: string,
 ): McpDiscovery {
+  // `browser-driven` is a path, not a class: the floor's capability set is
+  // decided by how the system is reached, because every class of system that
+  // falls to the browser is driven the same way. `probeMcpSurface` passes it
+  // in place of the class for that path.
   const defaults = MCP_CLASS_DEFAULTS[surfaceClass];
   if (!defaults) throw new Error(`MCP probing is not supported for class ${surfaceClass}.`);
   const toolAllowlist = defaults.filter((name: string): boolean => definitions[name] !== undefined);
@@ -229,6 +260,97 @@ function createMcpClient(endpoint: URL, credential: string): McpProbeClient {
 }
 
 /**
+ * Create the probe client for the browser driver, which takes no credential.
+ *
+ * The driver is Day0's own service on the compose network, not the system
+ * being reached, so it is never handed the system's credential.
+ */
+function createBrowserProbeClient(endpoint: URL): BrowserProbeClient {
+  const client = createSecretMcpClient({
+    id: `day0-browser-probe-${randomUUID()}`,
+    servers: { surface: { url: endpoint, allowedHosts: [endpoint.host] } },
+    timeout: 30_000,
+  });
+  return {
+    listToolDefinitionsWithErrors: async (options?: { perServerTimeoutMs?: number }) =>
+      await client.listToolDefinitionsWithErrors(options),
+    callTool: async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<{ isError: boolean; text: string }> => {
+      const tools = await client.listTools();
+      const tool = tools[`surface_${name}`];
+      if (!tool?.execute) throw new Error(`the browser driver does not expose ${name}.`);
+      return interpretToolResult(await tool.execute(args, {}));
+    },
+    disconnect: async (): Promise<void> => await client.disconnect(),
+  };
+}
+
+/**
+ * Verify the browser floor can reach one documented web UI.
+ *
+ * Two things have to be true before a `browser-driven` surface is connected,
+ * and they are separate: the driver must be up and expose the tools the floor
+ * needs, and the documented page must actually answer. Checking only the first
+ * would connect a surface whose system is gone - presence is not liveness, and
+ * on this path the driver's presence says nothing at all about the system's.
+ *
+ * Args:
+ *   endpoint: The documented web UI address from the surface row.
+ *   driverUrl: Configured browser driver address.
+ *   makeClient: Client factory, replaceable by behavioural tests.
+ *
+ * Returns:
+ *   Allowlisted browser tools and their provider-discovered argument names.
+ *
+ * Raises:
+ *   Error: If the driver is unreachable, exposes none of the floor's tools, or
+ *     cannot open the documented page.
+ */
+export async function probeBrowserSurface(
+  endpoint: string | undefined,
+  driverUrl: string | undefined,
+  makeClient: (url: URL) => BrowserProbeClient = createBrowserProbeClient,
+  titleMarker?: string,
+): Promise<McpDiscovery> {
+  if (!endpoint) throw new Error('No web UI address is documented for this surface.');
+  if (!titleMarker?.trim()) {
+    throw new Error('No page title marker is documented for this browser surface.');
+  }
+  let target: URL;
+  try {
+    target = new URL(endpoint);
+  } catch {
+    throw new Error('The documented web UI address is not a valid URL.');
+  }
+  const client = makeClient(browserDriverUrl(driverUrl));
+  try {
+    const { definitions, errors } = await client.listToolDefinitionsWithErrors({
+      perServerTimeoutMs: 30_000,
+    });
+    if (errors.surface) throw new Error(errors.surface);
+    const catalog = definitions.surface;
+    if (!catalog || Object.keys(catalog).length === 0) {
+      throw new Error('The browser driver returned no tools.');
+    }
+    const discovery = mcpAllowlist(catalog, 'browser-driven');
+    const opened = await client.callTool('browser_navigate', { url: target.href });
+    if (opened.isError) {
+      throw new Error(`the documented page could not be opened: ${opened.text.slice(0, 160)}`);
+    }
+    const outside = navigationResultRefusal('browser_navigate', opened.text, endpoint);
+    if (outside) throw new Error(outside);
+    if (browserPageTitle(opened.text) !== titleMarker.trim()) {
+      throw new Error(`the documented page title marker was not present (${titleMarker.trim()})`);
+    }
+    return discovery;
+  } finally {
+    await client.disconnect();
+  }
+}
+
+/**
  * Discover and constrain the tools exposed by one MCP surface.
  *
  * Args:
@@ -289,7 +411,7 @@ async function callSlack(
   query?: Record<string, string>,
   body?: Record<string, string>,
 ): Promise<Record<string, unknown>> {
-  const url = new URL(`https://slack.com/api/${method}`);
+  const url = slackApiUrl(method);
   for (const [name, value] of Object.entries(query ?? {})) url.searchParams.set(name, value);
   const response = await fetcher(url, {
     method: body ? 'POST' : 'GET',
@@ -376,11 +498,42 @@ export function managerDisplayName(user: unknown): string | undefined {
  * Returns:
  *   Constrained methods and safe provider identifiers.
  */
+export async function probeChannelMembership(
+  fetcher: Fetcher,
+  credential: string,
+  documented: readonly string[],
+): Promise<string[]> {
+  if (documented.length === 0) return [];
+  const visible: ChannelMembership[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_CHANNEL_PAGES; page += 1) {
+    const payload = await callSlack(fetcher, credential, 'conversations.list', {
+      exclude_archived: 'true',
+      limit: '200',
+      types: 'public_channel',
+      ...(cursor ? { cursor } : {}),
+    });
+    for (const item of Array.isArray(payload.channels) ? payload.channels : []) {
+      const channel = item && typeof item === 'object' ? (item as Record<string, unknown>) : undefined;
+      if (typeof channel?.name !== 'string') continue;
+      visible.push({ isMember: channel.is_member === true, name: channel.name });
+    }
+    const metadata = payload.response_metadata as { next_cursor?: unknown } | undefined;
+    cursor =
+      typeof metadata?.next_cursor === 'string' && metadata.next_cursor.trim()
+        ? metadata.next_cursor.trim()
+        : undefined;
+    if (!cursor) break;
+  }
+  return channelsAwaitingInvite(documented, visible);
+}
+
 export async function probeSlackSurface(
   credential: string,
   bossEmail: string,
   policyMarkdown: string,
   fetcher: Fetcher = fetch,
+  documentedChannels: readonly string[] = [],
 ): Promise<SlackProbeResult> {
   const toolAllowlist = slackMethodsFromPolicy(policyMarkdown);
   const missing = REQUIRED_SLACK_METHODS.filter(
@@ -415,8 +568,16 @@ export async function probeSlackSurface(
   if (typeof channelId !== 'string') {
     throw new Error('Slack conversations.open returned no DM channel.');
   }
+  // A dedicated app is a member of nothing until an administrator invites it,
+  // and only they can. That is a fact about the workspace rather than a probe
+  // failure - the DM works either way - so it is reported on the card and the
+  // connection stands.
+  const channelsNotJoined = toolAllowlist.includes('conversations.list')
+    ? await probeChannelMembership(fetcher, credential, documentedChannels)
+    : [];
   return {
     toolAllowlist,
+    channelsNotJoined,
     managerDmChannelId: channelId,
     managerUserId: managerId,
     managerName: managerDisplayName(lookup.user),
@@ -447,7 +608,10 @@ export async function runSurfaceProbe(
   const { surface, generation } = claimed;
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) return { verdict: 'skipped', reason: 'Surface no longer exists.' };
-  if (!surface.credentialId) {
+  // A system reached only through its web UI may document no credential at
+  // all - a public dashboard is still a system. Every other path needs one
+  // before there is anything to probe with.
+  if (!surface.credentialId && surface.path !== 'browser-driven') {
     const reason = `credential not in the docs; ${surface.credentialLocation ?? 'location not documented'}`;
     await ctx.runMutation(internal.surfaces.recordProbeFailure, {
       surfaceId,
@@ -458,11 +622,13 @@ export async function runSurfaceProbe(
     return { verdict: 'ungranted', reason };
   }
 
-  let credential: string;
+  let credential = '';
   try {
-    credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
-      credentialId: surface.credentialId,
-    });
+    if (surface.credentialId) {
+      credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
+        credentialId: surface.credentialId,
+      });
+    }
   } catch {
     const reason = 'credential is unavailable or revoked';
     await ctx.runMutation(internal.surfaces.recordProbeFailure, {
@@ -477,6 +643,7 @@ export async function runSurfaceProbe(
   try {
     let toolAllowlist: string[];
     let toolArguments: Array<{ tool: string; arguments: string[] }> = [];
+    let channelsNotJoined: string[] = [];
     let managerDmChannelId: string | undefined;
     let managerUserId: string | undefined;
     let managerName: string | undefined;
@@ -484,6 +651,21 @@ export async function runSurfaceProbe(
     let providerWorkspaceId: string | undefined;
     if (surface.path === 'mcp') {
       const discovery = await dependencies.probeMcp(surface.endpoint, credential, surface.class);
+      toolAllowlist = discovery.toolAllowlist;
+      toolArguments = discovery.toolArguments;
+    } else if (surface.path === 'browser-driven') {
+      const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
+        agentId: surface.agentId,
+      });
+      const titleMarker = browserTitleMarker(
+        pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+      );
+      const discovery = await dependencies.probeBrowser(
+        surface.endpoint,
+        process.env.DAY0_BROWSER_MCP_URL,
+        undefined,
+        titleMarker,
+      );
       toolAllowlist = discovery.toolAllowlist;
       toolArguments = discovery.toolArguments;
     } else if (surface.path === 'documented-api' && surface.class === 'chat') {
@@ -497,8 +679,11 @@ export async function runSurfaceProbe(
         credential,
         context.agent.bossEmail,
         pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+        undefined,
+        documentedChannelNames(pages),
       );
       toolAllowlist = slack.toolAllowlist;
+      channelsNotJoined = slack.channelsNotJoined;
       managerDmChannelId = slack.managerDmChannelId;
       managerUserId = slack.managerUserId;
       managerName = slack.managerName;
@@ -525,6 +710,7 @@ export async function runSurfaceProbe(
       managerName,
       providerIdentityId,
       providerWorkspaceId,
+      channelsNotJoined,
       verifiedAt,
       expiresAt,
     });
@@ -534,6 +720,7 @@ export async function runSurfaceProbe(
     return {
       verdict: 'connected',
       toolAllowlist,
+      channelsNotJoined,
       managerDmReady: managerDmChannelId !== undefined,
     };
   } catch (error) {

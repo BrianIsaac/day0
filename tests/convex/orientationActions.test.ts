@@ -17,6 +17,7 @@ import {
   explicitlyDeniesSurface,
   hostCarriesSlug,
   isCredentialSafeEndpoint,
+  isBrowserLoginCredential,
   isPrivateHost,
   namesSystem,
   orientSurface,
@@ -630,12 +631,25 @@ describe('URL attribution', (): void => {
       path: 'documented-api',
       endpoint: 'https://slack.com/api/',
     });
-    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' })).toEqual({
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' }, true)).toEqual({
       path: 'browser-driven',
       endpoint: 'https://app.example.com',
     });
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' })).toEqual({
+      path: 'escalate',
+    });
     expect(choosePath('mcp', { webUi: 'https://app.example.com' })).toEqual({ path: 'escalate' });
     expect(choosePath('mcp', {})).toEqual({ path: 'escalate' });
+    expect(
+      isBrowserLoginCredential({
+        found: 'value',
+        method: 'unknown',
+        label: 'Dashboard login',
+      }),
+    ).toBe(true);
+    expect(
+      isBrowserLoginCredential({ found: 'value', method: 'api-key', label: 'Reporting API key' }),
+    ).toBe(false);
   });
 });
 
@@ -1179,5 +1193,113 @@ describe('orientation run', (): void => {
     await expect(
       harness.withIdentity({ subject: 'other-owner' }).action(api.surfaces.reorient, { agentId }),
     ).rejects.toThrow('forbidden');
+  });
+});
+
+describe('the browser floor in orientation', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+  });
+
+  it('proposes browser-driven for a page that documents a web UI and denies an API', async (): Promise<void> => {
+    const fetchMock = stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      { 'looker-pipeline-tile.md': sanitisedNotionPage('looker-pipeline-tile') },
+      [{ name: 'Looker pipeline tile', class: 'analytics' }],
+    );
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
+    const tile = (await surfacesBySlug(harness, agentId))['looker-pipeline-tile'];
+    expect(tile).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+      endpoint: 'http://looker-tile:8080/',
+    });
+    // The driver is configuration; the row carries the system's own address.
+    expect(tile.endpoint).not.toContain('playwright');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not admit the browser path when the model asked for something else', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      { 'looker-pipeline-tile.md': sanitisedNotionPage('looker-pipeline-tile') },
+      [{ name: 'Looker pipeline tile', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const tile = (await surfacesBySlug(harness, agentId))['looker-pipeline-tile'];
+    expect(tile).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+    expect(tile.endpoint).toBeUndefined();
+  });
+
+  it('does not infer browser access from a web URL and the word browser without a login', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'reports.md':
+          '# Forecast reports\n\nForecast reports use the browser at https://reports.example.test/forecast. There is no API or MCP server.',
+      },
+      [{ name: 'Forecast reports', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+    expect(reports.endpoint).toBeUndefined();
+    expect(reports.request?.openQuestions).toContain(
+      'Document the web UI login credential before approving browser-driven access.',
+    );
+  });
+
+  it('still files absent when a denial comes with no address of any kind', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      { 'northstar-crm.md': sanitisedNotionPage('northstar-crm') },
+      [{ name: 'Northstar CRM', class: 'crm' }],
+    );
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 0, absent: 1 });
+    expect((await surfacesBySlug(harness, agentId))['northstar-crm']).toMatchObject({
+      verdict: 'absent',
+    });
+  });
+
+  it('does not read a documentation page URL as the system\'s own web UI', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      {
+        'index.md':
+          '# RevOps handbook\n\nNorthstar CRM is documented at https://www.notion.so/northstar-crm.',
+        'northstar.md':
+          '# Northstar CRM\n\nNo approved API, MCP server or integration surface is recorded for Northstar CRM.',
+      },
+      [{ name: 'Northstar CRM', class: 'crm' }],
+    );
+    await harness.run(async (ctx): Promise<void> => {
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (index) =>
+          index.eq('sourceId', sourceId).eq('ref', 'northstar.md'),
+        )
+        .unique();
+      if (page) await ctx.db.patch(page._id, { url: 'https://www.notion.so/northstar-crm' });
+    });
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 0, absent: 1 });
+    expect((await surfacesBySlug(harness, agentId))['northstar-crm']).toMatchObject({
+      verdict: 'absent',
+    });
   });
 });

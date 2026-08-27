@@ -32,7 +32,8 @@
  * configured while the running route answered 503 to every delivery.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const ENV_FILE = process.argv[2] ?? '.env.local';
 
@@ -154,6 +155,38 @@ function main(): void {
     process.exit(1);
   }
   console.log('Nothing here is half-done.');
+}
+
+/**
+ * Name the handbook pages whose committed fixture no longer matches the page.
+ *
+ * The pages under `docs/submission/notion-pages/` are what the operator pastes
+ * into Notion; the twins under `tests/fixtures/` are what the orientation tests
+ * read. They have to be byte-identical or the suite proves things about a page
+ * that is not the one published - which happened once while this check was
+ * being written. `docs/` is gitignored, so this cannot be a test; it is checked
+ * here, where the directory exists, and silently skipped where it does not.
+ *
+ * Returns:
+ *   The stems of pages that differ, or that exist on only one side.
+ */
+function driftedHandbookTwins(): string[] {
+  const pagesDir = 'docs/submission/notion-pages';
+  const fixtureDir = 'tests/fixtures/notion-pages';
+  if (!existsSync(pagesDir) || !existsSync(fixtureDir)) return [];
+  const drifted: string[] = [];
+  for (const file of readdirSync(fixtureDir)) {
+    if (!file.endsWith('.md')) continue;
+    const page = join(pagesDir, file);
+    if (!existsSync(page)) {
+      drifted.push(`${file.replace(/\.md$/, '')} (no published page)`);
+      continue;
+    }
+    if (readFileSync(page, 'utf8') !== readFileSync(join(fixtureDir, file), 'utf8')) {
+      drifted.push(file.replace(/\.md$/, ''));
+    }
+  }
+  return drifted;
 }
 
 /**
@@ -290,6 +323,7 @@ function surfacesSection(values: Values): Section {
   const services = composeRunningServices(projectName);
   const profileDetected =
     (services?.includes('notion-mcp') && services.includes('playwright-mcp')) ?? false;
+  const floorRunning = services?.includes('looker-tile') ?? false;
   const docsReadable = backendCanReadDocs(projectName, docsRoot);
   const count = storedCredentialCount(values);
   const keyPresent = Boolean(values.DAY0_CREDENTIAL_KEY);
@@ -297,8 +331,19 @@ function surfacesSection(values: Values): Section {
     `Compose project ${projectName}; real profile ${profileDetected ? 'detected' : 'not detected'}.`,
     `Backend documentation root ${docsRoot} is ${docsReadable ? 'readable' : 'not readable'}.`,
     `Credential key ${keyPresent ? 'present' : 'absent'}; stored credentials ${count ?? 'unavailable'}.`,
+    `Browser floor: driver ${values.DAY0_BROWSER_MCP_URL || 'http://playwright-mcp:8931/mcp (default)'}; ` +
+      `the looker-tile demonstration system is ${floorRunning ? 'running' : 'not running'}.`,
+    `Install redirect: ${values.DAY0_PUBLIC_URL ? `${values.DAY0_PUBLIC_URL}/api/oauth/slack` : 'DAY0_PUBLIC_URL is unset, so no dedicated app can be provisioned'}.`,
   ];
-  if (!profileDetected || !docsReadable || !keyPresent || count === undefined) {
+  const drifted = driftedHandbookTwins();
+  if (drifted.length > 0) {
+    lines.push(
+      `Handbook page twins differ from their fixtures: ${drifted.join(', ')}. ` +
+        'Copy docs/submission/notion-pages/<page>.md over tests/fixtures/notion-pages/<page>.md; ' +
+        'the tests read the fixture, so a stale twin tests a page nobody publishes.',
+    );
+  }
+  if (!profileDetected || !docsReadable || !keyPresent || count === undefined || drifted.length > 0) {
     return { title: 'Surfaces: real (local) - needs fixing', status: 'gap', lines };
   }
   return {

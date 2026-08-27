@@ -75,9 +75,12 @@ export default defineSchema({
     label: v.string(),
     ciphertext: v.string(),
     iv: v.string(),
+    /** Where the value came from: a documentation page, a field the approver
+     * typed into, or - Phase 3 - the provider's own OAuth install redirect. */
     source: v.union(
       v.object({ sourceId: v.id('docSources'), ref: v.string() }),
       v.literal('entered'),
+      v.literal('oauth'),
     ),
     createdAt: v.number(),
     lastUsedAt: v.optional(v.number()),
@@ -184,6 +187,34 @@ export default defineSchema({
     ),
     providerIdentityId: v.optional(v.string()),
     providerWorkspaceId: v.optional(v.string()),
+    /** Phase 3 - the dedicated provider app this employee registered for
+     * itself from the procedure its documentation describes. Present from the
+     * moment the app exists; `installedAt` is stamped when the administrator's
+     * install click delivers a token through the OAuth redirect. The client
+     * secret lives in the credentials table like every other secret; only its
+     * id is here. `stateNonce` is the single-use claim on the current install
+     * link and is cleared the first time a redirect consumes it. */
+    provisioning: v.optional(
+      v.object({
+        appId: v.string(),
+        appName: v.string(),
+        clientId: v.string(),
+        clientSecretCredentialId: v.id('credentials'),
+        installUrl: v.string(),
+        redirectUrl: v.string(),
+        scopes: v.array(v.string()),
+        createdAt: v.number(),
+        stateNonce: v.optional(v.string()),
+        stateExpiresAt: v.optional(v.number()),
+        installedAt: v.optional(v.number()),
+        lastError: v.optional(v.string()),
+      }),
+    ),
+    /** Channels the documentation names that the dedicated app has not been
+     * invited to yet, as the last probe found them. Slack answers
+     * `not_in_channel` until an administrator invites the app, and that is a
+     * step only a human can take, so it is reported rather than retried. */
+    channelsNotJoined: v.optional(v.array(v.string())),
     probeGeneration: v.optional(v.number()),
     /** The pending orientation job for a declared row, so a re-run cannot double-schedule. */
     orientationJobId: v.optional(v.id('_scheduled_functions')),
@@ -367,6 +398,7 @@ export default defineSchema({
   })
     .index('by_agent_state', ['agentId', 'state'])
     .index('by_agent_decision', ['agentId', 'decision.id'])
+    .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId']),
 
   skills: defineTable({
