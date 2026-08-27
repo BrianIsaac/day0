@@ -468,6 +468,40 @@ describe('the browser floor', (): void => {
     expect(JSON.stringify(applied)).not.toContain('pipeline-tile-local');
   });
 
+  it('keeps the visible figure and audit line from a long browser snapshot', async (): Promise<void> => {
+    const audit = 'Last updated by revops at 2026-08-27 15:58:31 UTC';
+    const { adapter } = harness({
+      content: [
+        {
+          type: 'text',
+          text: [
+            '### Page',
+            '- Page URL: http://looker-tile:8080/tile',
+            '- Page Title: Pipeline coverage - Looker',
+            '### Snapshot',
+            '```yaml',
+            `- generic: ${'padding '.repeat(40)}`,
+            '- generic: 74%',
+            `- paragraph: ${audit}`,
+            '```',
+          ].join('\n'),
+        },
+      ],
+    });
+
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      browserCall('browser_snapshot', {}),
+      0,
+      'key',
+    );
+    expect(applied.effect).toContain('visible figure 74%');
+    expect(applied.effect).toContain(audit);
+    expect(applied.effect).not.toContain('padding');
+    expect(applied.effect?.length).toBeLessThanOrEqual(180);
+  });
+
   it('runs without a credential when the docs record none', async (): Promise<void> => {
     const open: SurfaceRecord = { ...tile, credentialId: undefined, credentialKind: undefined };
     const execute = vi.fn(async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }));

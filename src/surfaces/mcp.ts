@@ -35,6 +35,16 @@ export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['to
 export const MCP_TIMEOUT_MS = 30_000;
 export const EFFECT_LENGTH = 180;
 
+/** Keep the two human-checkable results from a long accessibility snapshot. */
+export function browserSnapshotEvidence(text: string): string | undefined {
+  const figure = text.match(/\b\d{1,3}(?:\.\d+)?%/)?.[0];
+  const audit = text.match(/\bLast updated by[^\r\n`]{1,120}?\bUTC\b/i)?.[0];
+  if (!figure && !audit) return undefined;
+  return [figure ? `visible figure ${figure}` : undefined, audit]
+    .filter((part): part is string => Boolean(part))
+    .join(' · ');
+}
+
 /** The subset of an MCP tool handle the adapter calls. */
 export interface McpToolLike {
   execute?(args: unknown, context: unknown): Promise<unknown>;
@@ -465,10 +475,17 @@ export class McpAdapter implements SurfaceAdapter {
             return { tool: action.tool, ok: false, reason: landedOutside, idempotencyKey };
           }
         }
+        const evidence =
+          browserDriven && call.tool === 'browser_snapshot'
+            ? browserSnapshotEvidence(text)
+            : undefined;
         return {
           tool: action.tool,
           ok: true,
-          effect: clipEffect(`${call.tool} on ${surface.slug} · ${text || 'ok'}`, EFFECT_LENGTH),
+          effect: clipEffect(
+            `${call.tool} on ${surface.slug} · ${(evidence ?? text) || 'ok'}`,
+            EFFECT_LENGTH,
+          ),
           providerId: result.providerId
             ? clipEffect(redactValue(result.providerId, bearer), EFFECT_LENGTH)
             : undefined,
