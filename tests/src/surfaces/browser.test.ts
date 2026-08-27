@@ -3,9 +3,11 @@ import {
   BROWSER_TOOLS,
   BrowserBoundError,
   browserDriverUrl,
+  browserPageUrl,
   DEFAULT_BROWSER_MCP_URL,
   elementDescriptions,
   navigationRefusal,
+  navigationResultRefusal,
   needsElementRef,
   parseSnapshotRefs,
   refFieldFor,
@@ -119,6 +121,27 @@ describe('refusing a browser action that would leave the surface', (): void => {
   it('refuses when the surface documents no address at all', (): void => {
     expect(navigationRefusal('browser_navigate', { url: TILE }, undefined)).toBe(
       'the surface has no documented address to browse',
+    );
+  });
+});
+
+describe('checking where a browser navigation landed', (): void => {
+  it('reads the pinned driver Page URL and admits the approved surface', (): void => {
+    const result = `### Page\n- Page URL: ${TILE}\n- Page Title: Pipeline coverage - Looker`;
+    expect(browserPageUrl(result)).toBe(TILE);
+    expect(navigationResultRefusal('browser_navigate', result, TILE)).toBeUndefined();
+  });
+
+  it('refuses a redirect to another origin', (): void => {
+    const result = '### Page\n- Page URL: http://unexpected.internal/login';
+    expect(navigationResultRefusal('browser_navigate', result, TILE)).toContain(
+      'redirected outside the approved surface',
+    );
+  });
+
+  it('refuses a navigation result with no final location', (): void => {
+    expect(navigationResultRefusal('browser_navigate', 'opened', TILE)).toBe(
+      'the browser driver reported no final page URL',
     );
   });
 });

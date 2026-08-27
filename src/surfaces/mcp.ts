@@ -16,6 +16,7 @@ import {
   browserDriverUrl,
   elementDescriptions,
   navigationRefusal,
+  navigationResultRefusal,
   needsElementRef,
   refFieldFor,
   resolveElementRef,
@@ -453,6 +454,16 @@ export class McpAdapter implements SurfaceAdapter {
             reason: clipEffect(text || 'the server reported an error', EFFECT_LENGTH),
             idempotencyKey,
           };
+        }
+        if (browserDriven) {
+          const landedOutside = navigationResultRefusal(
+            call.tool,
+            result.text,
+            surface.endpoint,
+          );
+          if (landedOutside) {
+            return { tool: action.tool, ok: false, reason: landedOutside, idempotencyKey };
+          }
         }
         return {
           tool: action.tool,

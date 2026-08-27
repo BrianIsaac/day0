@@ -373,3 +373,31 @@ export function navigationRefusal(
   }
   return undefined;
 }
+
+/** Read the final page address Playwright reports after a navigation. */
+export function browserPageUrl(result: string): string | undefined {
+  const match = /^\s*-\s*Page URL:\s*(\S.*?)\s*$/im.exec(result);
+  return match?.[1]?.trim() || undefined;
+}
+
+/**
+ * Re-apply the origin bound to where a navigation actually landed.
+ *
+ * A permitted address can redirect to a different host. The requested URL is
+ * therefore only the first half of the check; the driver's final Page URL is
+ * authoritative for the second half.
+ */
+export function navigationResultRefusal(
+  tool: string,
+  result: string,
+  documented: string | undefined,
+): string | undefined {
+  if (!NAVIGATING_TOOLS.has(tool)) return undefined;
+  if (!documented) return 'the surface has no documented address to browse';
+  const landed = browserPageUrl(result);
+  if (!landed) return 'the browser driver reported no final page URL';
+  if (!withinDocumentedSurface(landed, documented)) {
+    return `the page redirected outside the approved surface (${documented})`;
+  }
+  return undefined;
+}

@@ -355,7 +355,11 @@ describe('the browser floor', (): void => {
   }
 
   /** One adapter whose client records how it was built and what it was called with. */
-  function harness(result: unknown = { content: [{ type: 'text', text: 'ok' }] }) {
+  function harness(
+    result: unknown = {
+      content: [{ type: 'text', text: '- Page URL: http://looker-tile:8080/' }],
+    },
+  ) {
     const built: McpClientOptions[] = [];
     const execute = vi.fn(async (args: unknown): Promise<unknown> => {
       void args;
@@ -424,6 +428,28 @@ describe('the browser floor', (): void => {
     expect(applied.ok).toBe(false);
     expect(applied.reason).toContain('navigation outside the approved surface');
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('reports a page that redirects outside the approved surface', async (): Promise<void> => {
+    const { adapter } = harness({
+      content: [
+        {
+          type: 'text',
+          text: '### Page\n- Page URL: http://unexpected.internal/login\n- Page Title: Sign in',
+        },
+      ],
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      browserCall('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'key',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('redirected outside the approved surface'),
+    });
   });
 
   it('refuses a tool outside the floor allowlist', async (): Promise<void> => {
@@ -495,7 +521,19 @@ describe('the browser floor across one run', (): void => {
     const make = (tool: string) => ({
       execute: async (args: unknown): Promise<unknown> => {
         calls.push({ tool, args });
-        return { content: [{ type: 'text', text: tool === 'browser_snapshot' ? snapshot : 'ok' }] };
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                tool === 'browser_snapshot'
+                  ? snapshot
+                  : tool === 'browser_navigate'
+                    ? '- Page URL: http://looker-tile:8080/'
+                    : 'ok',
+            },
+          ],
+        };
       },
     });
     const adapter = new McpAdapter([tile], {
