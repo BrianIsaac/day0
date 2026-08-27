@@ -8,6 +8,7 @@ import {
   type McpClientLike,
   type McpClientOptions,
 } from '../../../src/surfaces/mcp';
+import { BROWSER_TOOLS } from '../../../src/surfaces/browser';
 import { TOOL_NOT_ALLOWED } from '../../../src/surfaces/policy';
 import type {
   AdapterRun,
@@ -396,28 +397,6 @@ describe('the browser floor', (): void => {
     expect(built[0].bearer).toBeUndefined();
   });
 
-  it('types the credential into the page instead, through the placeholder', async (): Promise<void> => {
-    const { adapter, execute } = harness();
-    await adapter.apply(
-      ctx,
-      run,
-      browserCall('browser_fill_form', {
-        fields: [
-          { name: 'Username', ref: 'e3', value: 'revops' },
-          { name: 'Password', ref: 'e5', value: '{{secret}}' },
-        ],
-      }),
-      0,
-      'key',
-    );
-    expect(execute.mock.calls[0][0]).toEqual({
-      fields: [
-        { name: 'Username', ref: 'e3', value: 'revops' },
-        { name: 'Password', ref: 'e5', value: 'pipeline-tile-local' },
-      ],
-    });
-  });
-
   it('refuses a placeholder naming another surface', async (): Promise<void> => {
     const { adapter, execute } = harness();
     const applied = await adapter.apply(
@@ -478,5 +457,151 @@ describe('the browser floor', (): void => {
     });
     const applied = await adapter.apply(ctx, run, browserCall('browser_snapshot', {}), 0, 'key');
     expect(applied.ok).toBe(true);
+  });
+});
+
+describe('the browser floor across one run', (): void => {
+  const tile: SurfaceRecord = {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: [...BROWSER_TOOLS],
+    credentialId: 'cred-tile',
+    credentialKind: 'value',
+  };
+
+  const PAGE = [
+    '- textbox "Pipeline coverage" [ref=e21]',
+    '- button "Save" [ref=e23] [cursor=pointer]',
+  ].join('\n');
+
+  function call(tool: string, toolArgs: unknown): MockAction {
+    return {
+      tool: 'mcp.call',
+      args: { surface: 'looker-pipeline-tile', tool, toolArgsJson: JSON.stringify(toolArgs) },
+    } as MockAction;
+  }
+
+  /** One driver whose snapshot is fixed and whose calls are recorded. */
+  function driver(snapshot = PAGE) {
+    const calls: Array<{ args: unknown; tool: string }> = [];
+    const disconnects = { count: 0 };
+    const clientsBuilt = { count: 0 };
+    const make = (tool: string) => ({
+      execute: async (args: unknown): Promise<unknown> => {
+        calls.push({ tool, args });
+        return { content: [{ type: 'text', text: tool === 'browser_snapshot' ? snapshot : 'ok' }] };
+      },
+    });
+    const adapter = new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (): McpClientLike => {
+        clientsBuilt.count += 1;
+        return {
+          listTools: async () =>
+            Object.fromEntries(
+              BROWSER_TOOLS.map((tool: string) => [`looker-pipeline-tile_${tool}`, make(tool)]),
+            ),
+          disconnect: async (): Promise<void> => {
+            disconnects.count += 1;
+          },
+        };
+      },
+      now: (): number => now,
+    });
+    return { adapter, calls, clientsBuilt, disconnects };
+  }
+
+  it('keeps one browser for the whole run, so a sign-in survives to the save', async (): Promise<void> => {
+    const { adapter, clientsBuilt, disconnects } = driver();
+    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k0');
+    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1');
+    expect(clientsBuilt.count).toBe(1);
+    expect(disconnects.count).toBe(0);
+    await adapter.close();
+    expect(disconnects.count).toBe(1);
+  });
+
+  it('gives a different run its own browser', async (): Promise<void> => {
+    const { adapter, clientsBuilt } = driver();
+    await adapter.apply(ctx, run, call('browser_snapshot', {}), 0, 'k0');
+    await adapter.apply(
+      ctx,
+      { ...run, runId: 'other-run' as AdapterRun['runId'] },
+      call('browser_snapshot', {}),
+      0,
+      'k1',
+    );
+    expect(clientsBuilt.count).toBe(2);
+  });
+
+  it('resolves the element a skill named against a snapshot it takes itself', async (): Promise<void> => {
+    const { adapter, calls } = driver();
+    const applied = await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 0, 'k');
+    expect(applied.ok).toBe(true);
+    expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot', 'browser_click']);
+    expect(calls[1].args).toEqual({ element: 'Save', ref: 'e23' });
+  });
+
+  it('resolves one ref per form field and injects the credential into the value', async (): Promise<void> => {
+    const { adapter, calls } = driver(
+      ['- textbox "Username" [ref=e11]', '- textbox "Password" [ref=e14]'].join('\n'),
+    );
+    await adapter.apply(
+      ctx,
+      run,
+      call('browser_fill_form', {
+        fields: [
+          { name: 'Username', value: 'revops' },
+          { name: 'Password', value: '{{secret}}' },
+        ],
+      }),
+      0,
+      'k',
+    );
+    expect(calls[1].args).toEqual({
+      fields: [
+        { name: 'Username', ref: 'e11', type: 'textbox', value: 'revops' },
+        { name: 'Password', ref: 'e14', type: 'textbox', value: 'pipeline-tile-local' },
+      ],
+    });
+  });
+
+  it('refuses plainly when the page has no such element, naming what it did offer', async (): Promise<void> => {
+    const { adapter, calls } = driver();
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Delete dashboard' }),
+      0,
+      'k',
+    );
+    expect(applied.ok).toBe(false);
+    expect(applied.reason).toContain('no element called "Delete dashboard"');
+    expect(applied.reason).toContain('Save');
+    expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot']);
+  });
+
+  it('takes a fresh snapshot per element action, because the page moves', async (): Promise<void> => {
+    const { adapter, calls } = driver();
+    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 0, 'k0');
+    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1');
+    expect(calls.map((c) => c.tool)).toEqual([
+      'browser_snapshot',
+      'browser_click',
+      'browser_snapshot',
+      'browser_click',
+    ]);
+  });
+
+  it('does not snapshot for a tool that addresses no element', async (): Promise<void> => {
+    const { adapter, calls } = driver();
+    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k');
+    expect(calls.map((c) => c.tool)).toEqual(['browser_navigate']);
   });
 });

@@ -12,7 +12,15 @@ import {
 } from './policy';
 import { injectSecret, redactValue } from './secrets';
 import { createSecretMcpClient } from './mcp-client';
-import { browserDriverUrl, navigationRefusal } from './browser';
+import {
+  browserDriverUrl,
+  elementDescriptions,
+  navigationRefusal,
+  needsElementRef,
+  resolveElementRef,
+  withResolvedRefs,
+  type SnapshotElement,
+} from './browser';
 import type {
   AdapterRun,
   AppliedAction,
@@ -256,6 +264,84 @@ export class McpAdapter implements SurfaceAdapter {
    * Returns:
    *   The ledger row: `ok` iff the server did not flag an error.
    */
+  /**
+   * One live browser per run, keyed by run and surface.
+   *
+   * The driver runs `--isolated`, so every MCP session gets its own browser
+   * context - which is what an audited action set should mean, and also means a
+   * session per action would throw away the page after every step. A person
+   * signing in and then pressing Save does both in one tab; so does this. The
+   * session is closed when the run's actions are done.
+   */
+  private readonly browserSessions = new Map<string, McpClientLike>();
+
+  /**
+   * Close every browser this adapter opened for the run.
+   *
+   * Called by the registry once the run's actions have been applied, in a
+   * `finally`, so a browser is never left holding a signed-in page after the
+   * run that opened it has ended.
+   */
+  async close(): Promise<void> {
+    const open = [...this.browserSessions.values()];
+    this.browserSessions.clear();
+    await Promise.all(
+      open.map(async (client: McpClientLike): Promise<void> => {
+        try {
+          await client.disconnect();
+        } catch {
+          // A driver that has already dropped the session is closed enough.
+        }
+      }),
+    );
+  }
+
+  /**
+   * Turn the element descriptions in one action into refs the driver accepts.
+   *
+   * A fresh snapshot is taken for every such action rather than once per run,
+   * because the page changes underneath: the ref for "Save" after signing in is
+   * not the ref for anything on the sign-in form.
+   *
+   * Args:
+   *   client: The run's live browser session.
+   *   slug: The surface slug, for the namespaced tool name.
+   *   toolName: The browser tool being called.
+   *   toolArgs: Its arguments, secrets already injected.
+   *
+   * Returns:
+   *   The arguments with refs filled in, or why an element could not be found.
+   */
+  private async resolveRefs(
+    client: McpClientLike,
+    slug: string,
+    toolName: string,
+    toolArgs: Record<string, unknown>,
+  ): Promise<{ toolArgs: Record<string, unknown> } | { reason: string }> {
+    const descriptions = elementDescriptions(toolName, toolArgs);
+    if (descriptions.length === 0) {
+      return { reason: `${toolName} names no element to act on` };
+    }
+    const snapshotTool = (await client.listTools())[`${slug}_browser_snapshot`];
+    if (!snapshotTool?.execute) {
+      return { reason: 'the browser driver does not expose browser_snapshot' };
+    }
+    const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
+    const refs: SnapshotElement[] = [];
+    for (const description of descriptions) {
+      const found = resolveElementRef(snapshot.text, description);
+      if (!found) {
+        return {
+          reason: `the page has no element called "${description}" (${
+            snapshot.text.match(/"[^"]+"/g)?.slice(0, 8).join(', ') || 'nothing named on the page'
+          })`,
+        };
+      }
+      refs.push(found);
+    }
+    return { toolArgs: withResolvedRefs(toolName, toolArgs, refs) };
+  }
+
   async apply(
     ctx: ActionCtx,
     run: AdapterRun,
@@ -264,7 +350,6 @@ export class McpAdapter implements SurfaceAdapter {
     idempotencyKey: string,
   ): Promise<AppliedAction> {
     void index;
-    void run;
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok || parsed.action.kind !== 'mcp.call') {
       return { tool: action.tool, ok: false, reason: parsed.ok ? 'not an mcp.call' : parsed.reason, idempotencyKey };
@@ -315,11 +400,16 @@ export class McpAdapter implements SurfaceAdapter {
       // A browser driver is not the system, so it is never handed the system's
       // credential as a bearer. The credential reaches the page the way a
       // person's would, typed into its own form field.
-      const client = this.deps.createClient({
-        serverName: surface.slug,
-        url,
-        ...(bearer && !browserDriven ? { bearer } : {}),
-      });
+      const sessionKey = `${run.workItemId}:${run.runId}:${surface.slug}`;
+      const existing = browserDriven ? this.browserSessions.get(sessionKey) : undefined;
+      const client =
+        existing ??
+        this.deps.createClient({
+          serverName: surface.slug,
+          url,
+          ...(bearer && !browserDriven ? { bearer } : {}),
+        });
+      if (browserDriven && !existing) this.browserSessions.set(sessionKey, client);
       try {
         const tools = await client.listTools();
         const tool = tools[`${surface.slug}_${call.tool}`];
@@ -327,9 +417,16 @@ export class McpAdapter implements SurfaceAdapter {
           return { tool: action.tool, ok: false, reason: `tool ${call.tool} is not exposed by the server`, idempotencyKey };
         }
         writeAttempted = actionIntent(call) === 'write';
-        const toolArgs = bearer
-          ? injectSecretsDeep(call.toolArgs, bearer, surface.slug)
+        let toolArgs = bearer
+          ? (injectSecretsDeep(call.toolArgs, bearer, surface.slug) as Record<string, unknown>)
           : call.toolArgs;
+        if (browserDriven && needsElementRef(call.tool)) {
+          const resolved = await this.resolveRefs(client, surface.slug, call.tool, toolArgs);
+          if ('reason' in resolved) {
+            return { tool: action.tool, ok: false, reason: resolved.reason, idempotencyKey };
+          }
+          toolArgs = resolved.toolArgs;
+        }
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
         const text = redactValue(result.text, bearer);
         if (result.isError) {
@@ -350,7 +447,8 @@ export class McpAdapter implements SurfaceAdapter {
           idempotencyKey,
         };
       } finally {
-        await client.disconnect();
+        // A browser session belongs to the run, not to this one action.
+        if (!browserDriven) await client.disconnect();
       }
     } catch (error) {
       return {

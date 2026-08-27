@@ -1095,3 +1095,44 @@ describe('the dedicated app on a surface row', (): void => {
     expect(surface?.verdict).toBe('declared');
   });
 });
+
+describe('a connected surface and its last skip reason', (): void => {
+  it('clears the reason the poll recorded while it was not yet connected', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx): Promise<GenericId<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'skip reason',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        intakeSkipReason: 'surface is proposed; awaiting connection',
+        credentialLanded: false,
+        probeGeneration: 1,
+        createdAt: 1,
+      });
+    });
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: 1,
+      toolAllowlist: ['browser_navigate'],
+      toolArguments: [],
+      verifiedAt: 10,
+    });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.verdict).toBe('connected');
+    expect(surface?.intakeSkipReason).toBeUndefined();
+  });
+});

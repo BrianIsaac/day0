@@ -103,6 +103,15 @@ export interface AppliedAction extends ActionOutcome {
 export interface SurfaceAdapter {
   readonly tools: readonly MockAction['tool'][];
   /**
+   * Release anything the adapter held open for the run.
+   *
+   * Only the browser floor needs this: it keeps one live browser per run so a
+   * sign-in survives to the action that presses Save, and that browser has to
+   * be closed when the run's actions are done rather than left holding a
+   * signed-in page. Every other adapter is stateless between actions.
+   */
+  close?(): Promise<void>;
+  /**
    * Apply one action. The adapter receives the action after the registry has
    * parsed its arguments, checked the grant, and decided whether it is held.
    */

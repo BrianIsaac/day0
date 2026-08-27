@@ -608,6 +608,10 @@ export const recordConnected = internalMutation({
         args.channelsNotJoined && args.channelsNotJoined.length > 0
           ? args.channelsNotJoined
           : undefined,
+      // The last poll's skip reason described a surface that was not connected
+      // yet. Leaving it would have a connected card say it was skipped awaiting
+      // connection; the next poll writes a fresh one if it skips for a new reason.
+      intakeSkipReason: undefined,
       expiresAt: args.expiresAt ?? surface.expiresAt,
     });
     await ctx.db.insert('events', {
