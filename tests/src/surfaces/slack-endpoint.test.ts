@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ActionCtx } from '../../../convex/_generated/server';
+import type { Id } from '../../../convex/_generated/dataModel';
+import type { SurfaceRecord } from '../../../src/surfaces/types';
 
 afterEach((): void => {
   vi.unstubAllEnvs();
@@ -33,6 +36,61 @@ describe('the local Slack proof endpoint', (): void => {
     expect(slackAuthorizeUrl().href).toBe(
       'http://127.0.0.1:10092/oauth/v2/authorize',
     );
+  });
+
+  it('keeps a fake-installed bot on the isolated provider during later HTTP actions', async (): Promise<void> => {
+    vi.stubEnv('DAY0_SURFACE_MODE', 'real');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('VERCEL', '');
+    vi.stubEnv('DAY0_TEST_SLACK_API_URL', 'http://fake-slack:8090/api/');
+    const { HttpAdapter } = await import('../../../src/surfaces/http');
+    const calls: string[] = [];
+    const surface: SurfaceRecord = {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+      endpoint: 'https://slack.com/api/',
+      path: 'documented-api',
+      toolAllowlist: ['chat.postMessage'],
+      credentialId: 'fake-oauth',
+      credentialKind: 'oauth',
+    };
+    const adapter = new HttpAdapter([surface], {
+      decrypt: vi.fn(async (): Promise<string> => 'xoxb-fake-dedicated'),
+      fetch: vi.fn(async (url: URL): Promise<Response> => {
+        calls.push(url.href);
+        return new Response(JSON.stringify({ ok: true, ts: '1.1' }));
+      }),
+      now: (): number => Date.now(),
+    });
+
+    await adapter.apply(
+      {} as ActionCtx,
+      {
+        agentId: 'agent' as Id<'agents'>,
+        agentName: 'review closer',
+        workItemId: 'work' as Id<'workItems'>,
+        runId: 'run' as Id<'events'>,
+      },
+      {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'POST',
+          path: '/chat.postMessage',
+          headersJson: '{"Authorization":"Bearer {{secret}}"}',
+          body: '{"channel":"D_DAY0_MANAGER","text":"proof"}',
+        },
+      },
+      0,
+      'work:run:0',
+    );
+
+    expect(calls).toEqual(['http://fake-slack:8090/api/chat.postMessage']);
   });
 
   it('refuses the override outside the isolated local proof', async (): Promise<void> => {

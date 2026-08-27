@@ -2,6 +2,7 @@ import { SURFACE_MODE } from '../lib/surface-mode';
 
 /** Production Slack origin; local proof overrides never alter surface evidence. */
 const SLACK_ORIGIN = 'https://slack.com';
+export const SLACK_API_ENDPOINT = `${SLACK_ORIGIN}/api/`;
 
 function localProofMode(): boolean {
   return SURFACE_MODE === 'real';
@@ -33,13 +34,18 @@ function localOverride(name: string, expectedPath: string, hosts: readonly strin
   return parsed;
 }
 
+/** Resolve the Slack Web API base to production or the isolated fake. */
+export function slackApiBaseUrl(): URL {
+  return (
+    localOverride('DAY0_TEST_SLACK_API_URL', '/api/', ['fake-slack']) ??
+    new URL(SLACK_API_ENDPOINT)
+  );
+}
+
 /** Resolve one fixed Slack Web API method to production or the isolated fake. */
 export function slackApiUrl(method: string): URL {
   if (!/^[a-z][a-z0-9.]*$/i.test(method)) throw new Error('Invalid Slack API method.');
-  const base =
-    localOverride('DAY0_TEST_SLACK_API_URL', '/api/', ['fake-slack']) ??
-    new URL(`${SLACK_ORIGIN}/api/`);
-  return new URL(method, base);
+  return new URL(method, slackApiBaseUrl());
 }
 
 /** Resolve the administrator install page to production or the host-published fake. */
