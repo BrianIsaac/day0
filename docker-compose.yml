@@ -114,6 +114,7 @@ services:
       start_period: 10s
 
   dashboard:
+    profiles: ['dev']
     image: ghcr.io/get-convex/convex-dashboard:latest
     stop_grace_period: 10s
     stop_signal: SIGINT
@@ -249,8 +250,11 @@ services:
   # code reaches it only through the development-only DAY0_TEST_SLACK_* seam;
   # the surface row and its evidence still name Slack's real API. Its published
   # port exists solely so a host browser can follow the synthetic install link.
+  # Profiles: `real` is what an enterprise runs (backend + the notion-mcp and playwright-mcp adapters);
+  # `demo` adds the synthetic Looker tile that stands in for an enterprise's own web app;
+  # `test` adds the fake Slack used only by tests and reviews; `dev` adds the Convex dashboard.
   fake-slack:
-    profiles: ['real']
+    profiles: ['test']
     image: node:22-alpine
     command: ['node', '/app/server.js']
     environment:
@@ -270,7 +274,7 @@ services:
   # floor is demonstrated against. Unpublished, like every other real-profile
   # service; the agent reaches it by service name over the compose network.
   looker-tile:
-    profiles: ['real']
+    profiles: ['demo']
     image: node:22-alpine
     command: ['node', '/app/server.js']
     environment:
