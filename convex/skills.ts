@@ -121,7 +121,7 @@ async function requeueSourceWork(
 }
 
 /**
- * The surface a work item's source names in real-surface mode.
+ * The target surface named by the work, falling back to its intake source.
  *
  * Args:
  *   ctx: Mutation context.
@@ -129,27 +129,47 @@ async function requeueSourceWork(
  *   workItemId: The work item the skill is proposed for.
  *
  * Returns:
- *   The source slug in real mode, or undefined for a mock-mode skill.
+ *   The source plus the literal target slug in real mode.
  */
-async function surfaceSlugForWork(
+async function surfaceForWork(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   workItemId: Id<'workItems'>,
-): Promise<string | undefined> {
+): Promise<{ sourceSystem: string; targetSurface?: string }> {
   const item = await ctx.db.get(workItemId);
   if (!item) throw new Error('work item for skill proposal not found');
   if (item.agentId !== agentId) {
     throw new Error('skill and work item belong to different agents');
   }
-  if (SURFACE_MODE !== 'real') return undefined;
+  if (SURFACE_MODE !== 'real') return { sourceSystem: item.sourceSystem };
   const surfaces = await ctx.db
     .query('surfaces')
-    .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', item.sourceSystem))
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
     .collect();
-  if (surfaces.length > 1) {
-    throw new Error(`more than one surface is listed with slug ${item.sourceSystem}`);
+  const workTokens = new Set(
+    `${item.title}\n${item.contentSummary}`
+      .toLowerCase()
+      .match(/[a-z0-9]+/g) ?? [],
+  );
+  const named = surfaces.filter((surface: Doc<'surfaces'>): boolean => {
+    const nameTokens = surface.displayName.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+    return (
+      nameTokens.length > 0 &&
+      nameTokens.every((token: string): boolean => workTokens.has(token))
+    );
+  });
+  const namedSlugs = [...new Set(named.map((surface: Doc<'surfaces'>): string => surface.slug))];
+  if (namedSlugs.length > 1) {
+    throw new Error(`work evidence names more than one target surface: ${namedSlugs.join(', ')}`);
   }
-  return item.sourceSystem;
+  const targetSurface = namedSlugs[0] ?? item.sourceSystem;
+  if (
+    surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.slug === targetSurface).length >
+    1
+  ) {
+    throw new Error(`more than one surface is listed with slug ${targetSurface}`);
+  }
+  return { sourceSystem: item.sourceSystem, targetSurface };
 }
 
 export const registered = query({
@@ -287,10 +307,17 @@ export const propose = internalMutation({
     requiredScopes: v.array(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'skills'>> => {
-    const targetSurface = await surfaceSlugForWork(ctx, args.agentId, args.workItemId);
+    const target = await surfaceForWork(ctx, args.agentId, args.workItemId);
+    const targetSurface = target.targetSurface;
+    const requestedScopes =
+      targetSurface && targetSurface !== target.sourceSystem
+        ? args.requiredScopes.filter(
+            (scope: string): boolean => scope !== `${target.sourceSystem}:write`,
+          )
+        : args.requiredScopes;
     const proposedScopes = targetSurface
-      ? [...new Set([...args.requiredScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
-      : args.requiredScopes;
+      ? [...new Set([...requestedScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
+      : requestedScopes;
     const existing = await ctx.db
       .query('skills')
       .withIndex('by_agent_name', (q) =>
@@ -302,17 +329,21 @@ export const propose = internalMutation({
         if (
           existing.targetSurface &&
           targetSurface &&
-          existing.targetSurface !== targetSurface
+          existing.targetSurface !== targetSurface &&
+          existing.proposedFor !== args.workItemId
         ) {
           throw new Error(
             `skill ${args.name} is already proposed for surface ${existing.targetSurface}`,
           );
         }
+        const targetChanged =
+          existing.targetSurface !== undefined && existing.targetSurface !== targetSurface;
         await ctx.db.patch(existing._id, {
           targetSurface: existing.targetSurface ?? targetSurface,
-          requiredScopes: [
-            ...new Set([...(existing.requiredScopes ?? []), ...proposedScopes]),
-          ],
+          ...(targetChanged ? { targetSurface } : {}),
+          requiredScopes: targetChanged
+            ? proposedScopes
+            : [...new Set([...(existing.requiredScopes ?? []), ...proposedScopes])],
         });
       }
       return existing._id;

@@ -177,6 +177,42 @@ describe('skills that target a surface', (): void => {
     expect(skill?.requiredScopes).toEqual(['boss:message', 'linear:read', 'linear:write']);
   });
 
+  it('targets a different system literally named by cross-surface work', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    await seedSurface(harness, agentId, 'connected', {
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { title: 'Refresh the Looker pipeline tile' });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        createdAt: 1,
+      });
+    });
+
+    const skillId = await propose(harness, agentId, workItemId);
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill?.targetSurface).toBe('looker');
+    expect(skill?.requiredScopes).toEqual([
+      'boss:message',
+      'linear:read',
+      'looker:read',
+      'looker:write',
+    ]);
+  });
+
   it('adds the surface scopes even when the proposer only asked for the boss scope', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
