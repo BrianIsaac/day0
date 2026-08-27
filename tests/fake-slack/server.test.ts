@@ -94,6 +94,22 @@ describe('the isolated Slack provisioning proof', (): void => {
     });
   });
 
+  it('accepts a private manager note without retaining its body', async (): Promise<void> => {
+    const posted = await api(
+      'chat.postMessage',
+      'xoxb-day0-fake-dedicated-token',
+      JSON.stringify({ channel: 'D_DAY0_MANAGER', text: 'isolated proof note' }),
+    );
+    expect(posted).toMatchObject({
+      ok: true,
+      channel: 'D_DAY0_MANAGER',
+      message: { ts: expect.any(String) },
+    });
+    const proof = await (await fetch(`${BASE}/proof`)).text();
+    expect(proof).toContain('chat.postMessage');
+    expect(proof).not.toContain('isolated proof note');
+  });
+
   it('exposes counts for proof without exposing any credential', async (): Promise<void> => {
     const proof = await (await fetch(`${BASE}/proof`)).text();
     expect(proof).toContain('apps.manifest.create');

@@ -99,6 +99,27 @@ const server = createServer(async (request, response) => {
       response_metadata: { next_cursor: '' },
     });
   }
+  if (method === 'chat.postMessage') {
+    let payload;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return json(response, 200, { ok: false, error: 'invalid_json' });
+    }
+    if (payload.channel !== 'D_DAY0_MANAGER') {
+      return json(response, 200, { ok: false, error: 'not_in_channel' });
+    }
+    if (typeof payload.text !== 'string' || payload.text.trim() === '') {
+      return json(response, 200, { ok: false, error: 'invalid_arguments' });
+    }
+    const ts = `1787817600.${String(calls.get(method) || 1).padStart(6, '0')}`;
+    return json(response, 200, {
+      ok: true,
+      channel: payload.channel,
+      ts,
+      message: { ts },
+    });
+  }
   return json(response, 200, { ok: false, error: 'method_not_supported_by_fake' });
 });
 
