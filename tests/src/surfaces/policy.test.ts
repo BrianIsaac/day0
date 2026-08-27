@@ -8,6 +8,7 @@ import {
   describeAction,
   grantingScopes,
   grantRefusal,
+  HELD_BROWSER_SEQUENCE,
   HELD_MUTATION,
   HELD_PUBLIC_POST,
   heldReason,
@@ -909,5 +910,110 @@ describe('the browser floor under the gate', (): void => {
     if (provenance.ok) {
       expect(JSON.stringify(provenance.action)).not.toContain('Day0)');
     }
+  });
+});
+
+describe('a browser sequence is reviewed as one session', (): void => {
+  const reviewedAt = Date.UTC(2026, 7, 27, 9);
+  const tile: SurfaceRecord = {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: reviewedAt,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_fill_form'],
+    credentialId: 'cred-tile',
+    credentialKind: 'value',
+  };
+  const grants = new Set([
+    'looker-pipeline-tile:read',
+    'looker-pipeline-tile:write',
+    'boss:message',
+  ]);
+  const off = { autonomousActions: false };
+
+  function browser(tool: string, toolArgs: unknown = {}): MockAction {
+    return {
+      tool: 'mcp.call',
+      args: {
+        surface: 'looker-pipeline-tile',
+        tool,
+        toolArgsJson: JSON.stringify(toolArgs),
+      },
+    } as MockAction;
+  }
+
+  it('holds the reads with the writes they share a browser with', (): void => {
+    const verdicts = reviewActions(
+      [
+        browser('browser_navigate', { url: 'http://looker-tile:8080/' }),
+        browser('browser_snapshot'),
+        browser('browser_click', { element: 'Save' }),
+      ],
+      [tile],
+      grants,
+      reviewedAt,
+      off,
+    );
+    expect(verdicts.map((v) => v.disposition)).toEqual(['held', 'held', 'held']);
+    expect(verdicts.map((v) => ('reason' in v ? v.reason : undefined))).toEqual([
+      HELD_BROWSER_SEQUENCE,
+      HELD_BROWSER_SEQUENCE,
+      HELD_MUTATION,
+    ]);
+  });
+
+  it('leaves a read-only browser run automatic, because nothing parks it', (): void => {
+    const verdicts = reviewActions(
+      [browser('browser_navigate', { url: 'http://looker-tile:8080/' }), browser('browser_snapshot')],
+      [tile],
+      grants,
+      reviewedAt,
+      off,
+    );
+    expect(verdicts.map((v) => v.disposition)).toEqual(['auto', 'auto']);
+  });
+
+  it('does not hold another surface\'s reads because a browser run parked', (): void => {
+    const linear: SurfaceRecord = {
+      ...tile,
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    };
+    const verdicts = reviewActions(
+      [
+        browser('browser_click', { element: 'Save' }),
+        {
+          tool: 'mcp.call',
+          args: { surface: 'linear', tool: 'list_issues', toolArgsJson: '{}' },
+        } as MockAction,
+      ],
+      [tile, linear],
+      new Set([...grants, 'linear:read']),
+      reviewedAt,
+      off,
+    );
+    expect(verdicts.map((v) => v.disposition)).toEqual(['held', 'auto']);
+  });
+
+  it('holds nothing extra when the toggle is on', (): void => {
+    const verdicts = reviewActions(
+      [
+        browser('browser_navigate', { url: 'http://looker-tile:8080/' }),
+        browser('browser_click', { element: 'Save' }),
+      ],
+      [tile],
+      grants,
+      reviewedAt,
+      { autonomousActions: true },
+    );
+    expect(verdicts.map((v) => v.disposition)).toEqual(['auto', 'auto']);
   });
 });
