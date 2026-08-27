@@ -16,6 +16,11 @@ standup and in the Q3 close summary. It is maintained by hand.
 
 Owner: the RevOps operations lead.
 
+## Current approved figure
+
+For `REVOPS-7`, the Friday standup coverage summary states **74%**. That summary is the approved
+source for this refresh; enter `74%` exactly and preserve the tile's audit line as proof.
+
 ## Working rules
 
 - Sign in on the page, update the pipeline coverage figure, and press Save.
