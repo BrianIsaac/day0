@@ -472,6 +472,66 @@ export const reject = mutation({
 });
 
 /**
+ * Send an agent-authored skill back through authoring before its first use.
+ *
+ * Registration makes a skill callable, so revision is deliberately narrower
+ * than rejection: the manager may reopen only the proposal's own skill while
+ * its source work is still waiting and no execution has ever claimed it. Once
+ * a work row names the skill under `skillId`, its body is part of a durable run
+ * and this transition is permanently closed.
+ */
+export const requestRevision = mutation({
+  args: { skillId: v.id('skills') },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const row = await assertOwnsSkill(ctx, args.skillId);
+    if (row.sourceType !== 'agent-authored' || row.state !== 'registered') {
+      throw new Error('only a registered agent-authored skill can be revised');
+    }
+    const executed = await ctx.db
+      .query('workItems')
+      .withIndex('by_skill', (q) => q.eq('skillId', args.skillId))
+      .first();
+    if (executed) {
+      throw new Error('cannot revise a skill after an execution has claimed it');
+    }
+    if (!row.proposedFor) {
+      throw new Error('cannot revise an authored skill without its source work');
+    }
+    const sourceWork = await ctx.db.get(row.proposedFor);
+    if (
+      !sourceWork ||
+      sourceWork.agentId !== row.agentId ||
+      !(['discovered', 'needs-skill'] as const).includes(
+        sourceWork.state as 'discovered' | 'needs-skill',
+      )
+    ) {
+      throw new Error('cannot revise while the source work has moved on');
+    }
+
+    await ctx.db.patch(args.skillId, {
+      state: 'approved',
+      body: '',
+      sandboxId: undefined,
+      daytonaSandboxId: undefined,
+      verificationLog: undefined,
+      registeredAt: undefined,
+      ...RELEASED,
+    });
+    await requeueSourceWork(ctx, row, {
+      decision: 'needs-skill',
+      reason: 'registered skill sent back for revision before first execution',
+    });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'skill.revision-requested',
+      payload: { skillId: args.skillId, name: row.name },
+      createdAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+/**
  * One-off: move what `daytonaSandboxId` holds onto `sandboxId`.
  *
  * The field was named after the only sandbox there was. The local one writes

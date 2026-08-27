@@ -398,6 +398,7 @@ export default defineSchema({
   })
     .index('by_agent_state', ['agentId', 'state'])
     .index('by_agent_decision', ['agentId', 'decision.id'])
+    .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId']),
 
   skills: defineTable({

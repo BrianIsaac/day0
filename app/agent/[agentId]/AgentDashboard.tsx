@@ -721,6 +721,7 @@ function RegisteredSkillsPanel({
   onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
+  const requestRevision = useMutation(api.skills.requestRevision);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
   const now = useNow();
 
@@ -731,6 +732,26 @@ function RegisteredSkillsPanel({
       const result = await author({ skillId });
       if (!result.ok) {
         onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
+      }
+    } catch (err) {
+      onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
+    } finally {
+      setRetrying(null);
+    }
+  }
+
+  async function onRevise(skillId: Id<'skills'>, name: string) {
+    setRetrying(skillId);
+    onAuthoringAttempt(null);
+    try {
+      await requestRevision({ skillId });
+      const result = await author({ skillId });
+      if (!result.ok) {
+        onAuthoringAttempt({
+          skillId,
+          name,
+          reason: result.reason ?? 'revision did not succeed',
+        });
       }
     } catch (err) {
       onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
@@ -765,6 +786,16 @@ function RegisteredSkillsPanel({
                 <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
                 <div className="text-[var(--color-muted)] text-xs">{s.description}</div>
               </div>
+              {s.sourceType === 'agent-authored' ? (
+                <button
+                  onClick={() => onRevise(s._id, s.name)}
+                  disabled={retrying === s._id}
+                  title="Re-author and verify this skill before its first execution"
+                  className="px-2.5 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-warn)] text-xs disabled:opacity-50 shrink-0"
+                >
+                  {retrying === s._id ? 'Revising…' : 'Revise'}
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
