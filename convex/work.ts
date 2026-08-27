@@ -11,8 +11,10 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
+  actionIntent,
   HELD_NOT_APPROVED,
   normaliseActionVerdict,
+  parseSurfaceAction,
   reviewActions,
   type ActionVerdict,
 } from '../src/surfaces/policy';
@@ -648,12 +650,18 @@ export const retryFailed = mutation({
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
     }
-    const applied = (
-      (row.output ?? {}) as {
-        applied?: Array<{ ok?: boolean; held?: boolean; outcomeUnknown?: boolean }>;
-      }
-    ).applied;
-    const landed = applied?.some((entry) => entry.ok === true && entry.held !== true);
+    const output = (row.output ?? {}) as {
+      actions?: MockAction[];
+      applied?: Array<{ ok?: boolean; held?: boolean; outcomeUnknown?: boolean }>;
+    };
+    const applied = output.applied;
+    const landed = applied?.some((entry, index) => {
+      if (entry.ok !== true || entry.held === true) return false;
+      const action = output.actions?.[index];
+      if (!action) return true;
+      const parsed = parseSurfaceAction(action);
+      return !parsed.ok || actionIntent(parsed.action) === 'write';
+    });
     const outcomeUnknown = applied?.some((entry) => entry.outcomeUnknown === true);
     if (row.skipReason === INTERRUPTED_APPLY_REASON || landed || outcomeUnknown) {
       throw new Error(
