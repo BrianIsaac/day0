@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { credentialMarker } from '../../src/docs/redaction';
 
-/** The four handbook pages the operator pastes into Notion, committed as twins of `docs/submission/notion-pages/`. */
-export type NotionPageName = 'onboarding' | 'linear-automation' | 'slack-day0-app' | 'northstar-crm';
+/** The handbook pages the operator pastes into Notion, committed as twins of `docs/submission/notion-pages/`. */
+export type NotionPageName =
+  | 'onboarding'
+  | 'linear-automation'
+  | 'slack-day0-app'
+  | 'northstar-crm'
+  | 'looker-pipeline-tile';
 
 /** The placeholder the Linear template carries where the operator pastes the service token. */
 export const LINEAR_TOKEN_PLACEHOLDER = 'PASTE_LINEAR_API_KEY_HERE';

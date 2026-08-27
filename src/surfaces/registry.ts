@@ -52,6 +52,8 @@ export interface RealAdapterDeps {
   fetch: FetchLike;
   beforeTransport?: BeforeSurfaceTransport;
   now?: () => number;
+  /** The browser driver's address; only a `browser-driven` surface uses it. */
+  browserMcpUrl?: string;
 }
 
 export interface ApplyOptions {
@@ -130,6 +132,7 @@ export function resolveAdapters(
       createClient: deps.createMcpClient,
       now,
       beforeTransport: deps.beforeTransport,
+      browserMcpUrl: deps.browserMcpUrl,
     });
     const http = new HttpAdapter(surfaces, {
       decrypt: deps.decrypt,

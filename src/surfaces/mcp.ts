@@ -10,8 +10,9 @@ import {
   TOOL_NOT_ALLOWED,
   type ParsedMcpCall,
 } from './policy';
-import { redactValue } from './secrets';
+import { injectSecret, redactValue } from './secrets';
 import { createSecretMcpClient } from './mcp-client';
+import { browserDriverUrl, navigationRefusal } from './browser';
 import type {
   AdapterRun,
   AppliedAction,
@@ -49,6 +50,44 @@ export interface McpAdapterDeps {
   createClient: CreateMcpClient;
   now: () => number;
   beforeTransport?: BeforeSurfaceTransport;
+  /** The browser driver's address; only the browser floor uses it. */
+  browserMcpUrl?: string;
+}
+
+/**
+ * Replace `{{secret}}` placeholders anywhere in an MCP tool's arguments.
+ *
+ * `http.request` has always substituted the surface's credential into headers
+ * and bodies. An MCP tool needs the same rule for the same reason: on the
+ * browser floor the credential is typed into a form field, so it travels as a
+ * tool argument rather than a header, and a skill must be able to name it
+ * without ever holding it. `injectSecret` refuses a placeholder naming another
+ * surface, so an action cannot borrow a credential it is not the target of.
+ *
+ * Args:
+ *   value: A tool-argument tree as the skill supplied it.
+ *   secret: The decrypted credential for the action's target surface.
+ *   slug: That surface's slug, for the qualified placeholder form.
+ *
+ * Returns:
+ *   The same tree with every placeholder resolved.
+ */
+export function injectSecretsDeep(value: unknown, secret: string, slug: string): unknown {
+  if (typeof value === 'string') return injectSecret(value, secret, slug);
+  if (Array.isArray(value)) {
+    return value.map((entry: unknown): unknown => injectSecretsDeep(entry, secret, slug));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(
+        ([key, entry]: [string, unknown]): [string, unknown] => [
+          key,
+          injectSecretsDeep(entry, secret, slug),
+        ],
+      ),
+    );
+  }
+  return value;
 }
 
 /** What the adapter reads out of a tool result, whichever shape the server used. */
@@ -245,13 +284,24 @@ export class McpAdapter implements SurfaceAdapter {
     if (!surface.toolAllowlist?.includes(call.tool)) {
       return { tool: action.tool, ok: false, reason: `${TOOL_NOT_ALLOWED} (${call.tool})`, idempotencyKey };
     }
+    // On the browser floor the transport and the target are different
+    // addresses: the endpoint on the row is the system's own page, which is
+    // where the browser is allowed to go, while the driver is Day0's own
+    // service. Everywhere else the endpoint is both.
+    const browserDriven = surface.path === 'browser-driven';
     let url: URL;
     try {
-      url = new URL(surface.endpoint ?? '');
+      url = browserDriven
+        ? browserDriverUrl(this.deps.browserMcpUrl)
+        : new URL(surface.endpoint ?? '');
     } catch {
       return { tool: action.tool, ok: false, reason: 'surface has no valid endpoint', idempotencyKey };
     }
-    if (!surface.credentialId && surface.path !== 'browser-driven') {
+    if (browserDriven) {
+      const outside = navigationRefusal(call.tool, call.toolArgs, surface.endpoint);
+      if (outside) return { tool: action.tool, ok: false, reason: outside, idempotencyKey };
+    }
+    if (!surface.credentialId && !browserDriven) {
       return { tool: action.tool, ok: false, reason: 'surface has no credential', idempotencyKey };
     }
     let bearer = '';
@@ -262,10 +312,13 @@ export class McpAdapter implements SurfaceAdapter {
       if (authorityRefusal) {
         return { tool: action.tool, ok: false, reason: authorityRefusal, idempotencyKey };
       }
+      // A browser driver is not the system, so it is never handed the system's
+      // credential as a bearer. The credential reaches the page the way a
+      // person's would, typed into its own form field.
       const client = this.deps.createClient({
         serverName: surface.slug,
         url,
-        ...(bearer ? { bearer } : {}),
+        ...(bearer && !browserDriven ? { bearer } : {}),
       });
       try {
         const tools = await client.listTools();
@@ -274,7 +327,10 @@ export class McpAdapter implements SurfaceAdapter {
           return { tool: action.tool, ok: false, reason: `tool ${call.tool} is not exposed by the server`, idempotencyKey };
         }
         writeAttempted = actionIntent(call) === 'write';
-        const result = interpretToolResult(await tool.execute(call.toolArgs, {}));
+        const toolArgs = bearer
+          ? injectSecretsDeep(call.toolArgs, bearer, surface.slug)
+          : call.toolArgs;
+        const result = interpretToolResult(await tool.execute(toolArgs, {}));
         const text = redactValue(result.text, bearer);
         if (result.isError) {
           return {

@@ -10,6 +10,8 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
+import { browserDriverUrl, BROWSER_TOOLS } from '../src/surfaces/browser';
+import { interpretToolResult } from '../src/surfaces/mcp';
 import {
   channelsAwaitingInvite,
   documentedChannelNames,
@@ -19,7 +21,7 @@ import { safeFailureMessage } from '../src/surfaces/redact';
 
 const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
   kanban: ['list_issues', 'get_issue', 'list_comments', 'save_comment', 'save_issue'],
-  'browser-driven': ['browser_navigate', 'browser_snapshot'],
+  'browser-driven': BROWSER_TOOLS,
 };
 
 const SLACK_METHOD_DEFAULTS = [
@@ -46,6 +48,11 @@ interface McpProbeClient {
   disconnect(): Promise<void>;
 }
 
+/** The browser driver additionally has to open a page for the liveness check. */
+interface BrowserProbeClient extends McpProbeClient {
+  callTool(name: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }>;
+}
+
 interface McpDiscovery {
   toolAllowlist: string[];
   toolArguments: Array<{ tool: string; arguments: string[] }>;
@@ -65,6 +72,7 @@ interface SlackProbeResult {
 const MAX_CHANNEL_PAGES = 5;
 
 interface ProbeDependencies {
+  probeBrowser: typeof probeBrowserSurface;
   probeMcp: typeof probeMcpSurface;
   probeSlack: typeof probeSlackSurface;
   now(): number;
@@ -103,6 +111,7 @@ const credentialInternal = internal as unknown as {
 };
 
 const probeDependencies: ProbeDependencies = {
+  probeBrowser: probeBrowserSurface,
   probeMcp: probeMcpSurface,
   probeSlack: probeSlackSurface,
   now: (): number => Date.now(),
@@ -143,6 +152,10 @@ export function mcpAllowlist(
   definitions: Record<string, ToolDefinition>,
   surfaceClass: string,
 ): McpDiscovery {
+  // `browser-driven` is a path, not a class: the floor's capability set is
+  // decided by how the system is reached, because every class of system that
+  // falls to the browser is driven the same way. `probeMcpSurface` passes it
+  // in place of the class for that path.
   const defaults = MCP_CLASS_DEFAULTS[surfaceClass];
   if (!defaults) throw new Error(`MCP probing is not supported for class ${surfaceClass}.`);
   const toolAllowlist = defaults.filter((name: string): boolean => definitions[name] !== undefined);
@@ -237,6 +250,88 @@ function createMcpClient(endpoint: URL, credential: string): McpProbeClient {
     },
     timeout: 30_000,
   });
+}
+
+/**
+ * Create the probe client for the browser driver, which takes no credential.
+ *
+ * The driver is Day0's own service on the compose network, not the system
+ * being reached, so it is never handed the system's credential.
+ */
+function createBrowserProbeClient(endpoint: URL): BrowserProbeClient {
+  const client = createSecretMcpClient({
+    id: `day0-browser-probe-${randomUUID()}`,
+    servers: { surface: { url: endpoint, allowedHosts: [endpoint.host] } },
+    timeout: 30_000,
+  });
+  return {
+    listToolDefinitionsWithErrors: async (options?: { perServerTimeoutMs?: number }) =>
+      await client.listToolDefinitionsWithErrors(options),
+    callTool: async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<{ isError: boolean; text: string }> => {
+      const tools = await client.listTools();
+      const tool = tools[`surface_${name}`];
+      if (!tool?.execute) throw new Error(`the browser driver does not expose ${name}.`);
+      return interpretToolResult(await tool.execute(args, {}));
+    },
+    disconnect: async (): Promise<void> => await client.disconnect(),
+  };
+}
+
+/**
+ * Verify the browser floor can reach one documented web UI.
+ *
+ * Two things have to be true before a `browser-driven` surface is connected,
+ * and they are separate: the driver must be up and expose the tools the floor
+ * needs, and the documented page must actually answer. Checking only the first
+ * would connect a surface whose system is gone - presence is not liveness, and
+ * on this path the driver's presence says nothing at all about the system's.
+ *
+ * Args:
+ *   endpoint: The documented web UI address from the surface row.
+ *   driverUrl: Configured browser driver address.
+ *   makeClient: Client factory, replaceable by behavioural tests.
+ *
+ * Returns:
+ *   Allowlisted browser tools and their provider-discovered argument names.
+ *
+ * Raises:
+ *   Error: If the driver is unreachable, exposes none of the floor's tools, or
+ *     cannot open the documented page.
+ */
+export async function probeBrowserSurface(
+  endpoint: string | undefined,
+  driverUrl: string | undefined,
+  makeClient: (url: URL) => BrowserProbeClient = createBrowserProbeClient,
+): Promise<McpDiscovery> {
+  if (!endpoint) throw new Error('No web UI address is documented for this surface.');
+  let target: URL;
+  try {
+    target = new URL(endpoint);
+  } catch {
+    throw new Error('The documented web UI address is not a valid URL.');
+  }
+  const client = makeClient(browserDriverUrl(driverUrl));
+  try {
+    const { definitions, errors } = await client.listToolDefinitionsWithErrors({
+      perServerTimeoutMs: 30_000,
+    });
+    if (errors.surface) throw new Error(errors.surface);
+    const catalog = definitions.surface;
+    if (!catalog || Object.keys(catalog).length === 0) {
+      throw new Error('The browser driver returned no tools.');
+    }
+    const discovery = mcpAllowlist(catalog, 'browser-driven');
+    const opened = await client.callTool('browser_navigate', { url: target.href });
+    if (opened.isError) {
+      throw new Error(`the documented page could not be opened: ${opened.text.slice(0, 160)}`);
+    }
+    return discovery;
+  } finally {
+    await client.disconnect();
+  }
 }
 
 /**
@@ -497,7 +592,10 @@ export async function runSurfaceProbe(
   const { surface, generation } = claimed;
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) return { verdict: 'skipped', reason: 'Surface no longer exists.' };
-  if (!surface.credentialId) {
+  // A system reached only through its web UI may document no credential at
+  // all - a public dashboard is still a system. Every other path needs one
+  // before there is anything to probe with.
+  if (!surface.credentialId && surface.path !== 'browser-driven') {
     const reason = `credential not in the docs; ${surface.credentialLocation ?? 'location not documented'}`;
     await ctx.runMutation(internal.surfaces.recordProbeFailure, {
       surfaceId,
@@ -508,11 +606,13 @@ export async function runSurfaceProbe(
     return { verdict: 'ungranted', reason };
   }
 
-  let credential: string;
+  let credential = '';
   try {
-    credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
-      credentialId: surface.credentialId,
-    });
+    if (surface.credentialId) {
+      credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
+        credentialId: surface.credentialId,
+      });
+    }
   } catch {
     const reason = 'credential is unavailable or revoked';
     await ctx.runMutation(internal.surfaces.recordProbeFailure, {
@@ -535,6 +635,13 @@ export async function runSurfaceProbe(
     let providerWorkspaceId: string | undefined;
     if (surface.path === 'mcp') {
       const discovery = await dependencies.probeMcp(surface.endpoint, credential, surface.class);
+      toolAllowlist = discovery.toolAllowlist;
+      toolArguments = discovery.toolArguments;
+    } else if (surface.path === 'browser-driven') {
+      const discovery = await dependencies.probeBrowser(
+        surface.endpoint,
+        process.env.DAY0_BROWSER_MCP_URL,
+      );
       toolAllowlist = discovery.toolAllowlist;
       toolArguments = discovery.toolArguments;
     } else if (surface.path === 'documented-api' && surface.class === 'chat') {

@@ -245,27 +245,31 @@ describe('MCP adapter', (): void => {
     expect(client.options).toHaveLength(0);
   });
 
-  it('connects to a credentialless browser-driven MCP surface without an auth header', async (): Promise<void> => {
+  it('drives a credentialless browser-driven surface through the driver, with no auth header', async (): Promise<void> => {
+    // The surface's endpoint is the documented page, not the driver: the two
+    // are different addresses on this path, and the driver is configuration.
     const client = fakeClient({
-      playwright_save_comment: async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }),
+      dashboard_browser_snapshot: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
     });
     const browser: SurfaceRecord = {
       ...linear,
-      slug: 'playwright',
-      displayName: 'Playwright',
+      slug: 'dashboard',
+      displayName: 'Internal dashboard',
       path: 'browser-driven',
-      endpoint: 'http://playwright:8931/mcp',
+      endpoint: 'http://dashboard.internal/',
       credentialId: undefined,
-      toolAllowlist: ['save_comment'],
+      toolAllowlist: ['browser_snapshot'],
     };
     const call: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'playwright', tool: 'save_comment', toolArgsJson: '{}' },
+      args: { surface: 'dashboard', tool: 'browser_snapshot', toolArgsJson: '{}' },
     };
     const result = await adapter(client, [browser]).apply(ctx, run, call, 0, 'k');
     expect(result.ok).toBe(true);
     expect(client.options).toEqual([
-      { serverName: 'playwright', url: new URL('http://playwright:8931/mcp') },
+      { serverName: 'dashboard', url: new URL('http://playwright-mcp:8931/mcp') },
     ]);
   });
 
@@ -314,5 +318,165 @@ describe('Mastra client construction', (): void => {
     });
     expect(typeof client.listTools).toBe('function');
     expect(typeof client.disconnect).toBe('function');
+  });
+});
+
+describe('the browser floor', (): void => {
+  const tile: SurfaceRecord = {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: 'http://looker-tile:8080/',
+    path: 'browser-driven',
+    toolAllowlist: [
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_click',
+      'browser_type',
+      'browser_fill_form',
+    ],
+    credentialId: 'cred-tile',
+    credentialKind: 'value',
+  };
+
+  function browserCall(tool: string, toolArgs: unknown): MockAction {
+    return {
+      tool: 'mcp.call',
+      args: {
+        surface: 'looker-pipeline-tile',
+        tool,
+        toolArgsJson: JSON.stringify(toolArgs),
+      },
+    } as MockAction;
+  }
+
+  /** One adapter whose client records how it was built and what it was called with. */
+  function harness(result: unknown = { content: [{ type: 'text', text: 'ok' }] }) {
+    const built: McpClientOptions[] = [];
+    const execute = vi.fn(async (args: unknown): Promise<unknown> => {
+      void args;
+      return result;
+    });
+    const adapter = new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (options: McpClientOptions): McpClientLike => {
+        built.push(options);
+        return {
+          listTools: async () => ({ 'looker-pipeline-tile_browser_navigate': { execute },
+            'looker-pipeline-tile_browser_fill_form': { execute },
+            'looker-pipeline-tile_browser_snapshot': { execute } }),
+          disconnect: async (): Promise<void> => undefined,
+        };
+      },
+      now: (): number => now,
+      browserMcpUrl: 'http://playwright-mcp:8931/mcp',
+    });
+    return { adapter, built, execute };
+  }
+
+  it('drives the configured driver, not the documented page', async (): Promise<void> => {
+    const { adapter, built } = harness();
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      browserCall('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'key',
+    );
+    expect(applied.ok).toBe(true);
+    expect(built[0].url.href).toBe('http://playwright-mcp:8931/mcp');
+  });
+
+  it('never hands the system credential to the driver as a bearer', async (): Promise<void> => {
+    const { adapter, built } = harness();
+    await adapter.apply(ctx, run, browserCall('browser_snapshot', {}), 0, 'key');
+    expect(built[0].bearer).toBeUndefined();
+  });
+
+  it('types the credential into the page instead, through the placeholder', async (): Promise<void> => {
+    const { adapter, execute } = harness();
+    await adapter.apply(
+      ctx,
+      run,
+      browserCall('browser_fill_form', {
+        fields: [
+          { name: 'Username', ref: 'e3', value: 'revops' },
+          { name: 'Password', ref: 'e5', value: '{{secret}}' },
+        ],
+      }),
+      0,
+      'key',
+    );
+    expect(execute.mock.calls[0][0]).toEqual({
+      fields: [
+        { name: 'Username', ref: 'e3', value: 'revops' },
+        { name: 'Password', ref: 'e5', value: 'pipeline-tile-local' },
+      ],
+    });
+  });
+
+  it('refuses a placeholder naming another surface', async (): Promise<void> => {
+    const { adapter, execute } = harness();
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      browserCall('browser_fill_form', {
+        fields: [{ name: 'Password', ref: 'e5', value: '{{secret:linear}}' }],
+      }),
+      0,
+      'key',
+    );
+    expect(applied.ok).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a navigation outside the approved surface, before any call', async (): Promise<void> => {
+    const { adapter, execute } = harness();
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      browserCall('browser_navigate', { url: 'http://169.254.169.254/latest/meta-data/' }),
+      0,
+      'key',
+    );
+    expect(applied.ok).toBe(false);
+    expect(applied.reason).toContain('navigation outside the approved surface');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a tool outside the floor allowlist', async (): Promise<void> => {
+    const { adapter, execute } = harness();
+    const applied = await adapter.apply(ctx, run, browserCall('browser_evaluate', {}), 0, 'key');
+    expect(applied.ok).toBe(false);
+    expect(applied.reason).toBe(`${TOOL_NOT_ALLOWED} (browser_evaluate)`);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('keeps the credential out of the ledger when a page reflects it', async (): Promise<void> => {
+    const { adapter } = harness({
+      content: [{ type: 'text', text: 'value="pipeline-tile-local" saved' }],
+    });
+    const applied = await adapter.apply(ctx, run, browserCall('browser_snapshot', {}), 0, 'key');
+    expect(JSON.stringify(applied)).not.toContain('pipeline-tile-local');
+  });
+
+  it('runs without a credential when the docs record none', async (): Promise<void> => {
+    const open: SurfaceRecord = { ...tile, credentialId: undefined, credentialKind: undefined };
+    const execute = vi.fn(async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }));
+    const adapter = new McpAdapter([open], {
+      decrypt: async (): Promise<string> => {
+        throw new Error('should not decrypt');
+      },
+      createClient: (): McpClientLike => ({
+        listTools: async () => ({ 'looker-pipeline-tile_browser_snapshot': { execute } }),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+      now: (): number => now,
+    });
+    const applied = await adapter.apply(ctx, run, browserCall('browser_snapshot', {}), 0, 'key');
+    expect(applied.ok).toBe(true);
   });
 });

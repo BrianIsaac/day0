@@ -26,6 +26,7 @@ KEYS=(
   DAY0_CREDENTIAL_KEY
   DAY0_NOTION_MCP_AUTH_TOKEN
   DAY0_PUBLIC_URL
+  DAY0_BROWSER_MCP_URL
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
   CLERK_JWT_ISSUER_DOMAIN
 )
@@ -70,6 +71,7 @@ CLEAR_WHEN_EMPTY=(
   # would have an app manifest declaring a redirect that no longer resolves.
   # Clearing it makes provisioning refuse plainly instead.
   DAY0_PUBLIC_URL
+  DAY0_BROWSER_MCP_URL
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR

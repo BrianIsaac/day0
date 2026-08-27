@@ -86,6 +86,7 @@ async function deliverManagerMessage(
       deps: {
         decrypt: decryptCredential,
         createMcpClient: createMastraMcpClient,
+    browserMcpUrl: process.env.DAY0_BROWSER_MCP_URL,
         fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
         beforeTransport: beforeManagerTransport(ctx, delivery.agentId),
       },

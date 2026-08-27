@@ -10,6 +10,7 @@ import {
   linearMcpEndpoint,
   managerUserId,
   mcpAllowlist,
+  probeBrowserSurface,
   probeMcpSurface,
   managerDisplayName,
   probeSlackSurface,
@@ -356,6 +357,7 @@ describe('surface probe action state', (): void => {
 
     const result = await runSurfaceProbe(ctx, surfaceId, true, {
       probeMcp,
+      probeBrowser: vi.fn(),
       probeSlack: vi.fn(),
       now: (): number => 1_000,
     });
@@ -425,6 +427,7 @@ describe('surface probe action state', (): void => {
     await expect(
       runSurfaceProbe(ctx, surfaceId, false, {
         probeMcp: async () => ({ toolAllowlist: ['list_issues'], toolArguments: [] }),
+        probeBrowser: vi.fn(),
         probeSlack: vi.fn(),
         now: (): number => 1_000,
       }),
@@ -724,5 +727,149 @@ describe('a dedicated app that has not been invited to its channels', (): void =
     );
     expect(page).toBe(2);
     expect(result.channelsNotJoined).toEqual([]);
+  });
+});
+
+describe('probing the browser floor', (): void => {
+  const TILE = 'http://looker-tile:8080/';
+
+  /** A driver whose catalogue and navigation result the test decides. */
+  function fakeDriver(options: {
+    catalogue?: Record<string, { inputSchema?: unknown }>;
+    navigate?: { isError: boolean; text: string };
+    error?: string;
+  }) {
+    const navigated: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const disconnect = vi.fn(async (): Promise<void> => undefined);
+    const client = {
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: options.catalogue ?? {
+            browser_navigate: { inputSchema: { properties: { url: {} } } },
+            browser_snapshot: { inputSchema: { properties: {} } },
+            browser_click: { inputSchema: { properties: { ref: {} } } },
+            browser_type: { inputSchema: { properties: { ref: {}, text: {} } } },
+            browser_fill_form: { inputSchema: { properties: { fields: {} } } },
+            browser_evaluate: { inputSchema: { properties: {} } },
+            browser_run_code_unsafe: { inputSchema: { properties: {} } },
+          },
+        },
+        errors: (options.error ? { surface: options.error } : {}) as Record<string, string>,
+      }),
+      callTool: async (name: string, args: Record<string, unknown>) => {
+        navigated.push({ name, args });
+        return options.navigate ?? { isError: false, text: '- Page URL: ' + TILE };
+      },
+      disconnect,
+    };
+    return { client, disconnect, navigated };
+  }
+
+  it('constrains the driver catalogue to the floor and opens the documented page', async (): Promise<void> => {
+    const { client, disconnect, navigated } = fakeDriver({});
+    const discovery = await probeBrowserSurface(TILE, undefined, () => client);
+    expect(discovery.toolAllowlist).toEqual([
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_click',
+      'browser_type',
+      'browser_fill_form',
+    ]);
+    expect(discovery.toolArguments).toContainEqual({ tool: 'browser_type', arguments: ['ref', 'text'] });
+    expect(navigated).toEqual([{ name: 'browser_navigate', args: { url: TILE } }]);
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('fails when the documented page cannot be opened, not merely when the driver is down', async (): Promise<void> => {
+    const { client, disconnect } = fakeDriver({
+      navigate: { isError: true, text: 'net::ERR_CONNECTION_REFUSED at http://looker-tile:8080/' },
+    });
+    await expect(probeBrowserSurface(TILE, undefined, () => client)).rejects.toThrow(
+      'the documented page could not be opened',
+    );
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('fails when the driver reports an error rather than reading it as no tools', async (): Promise<void> => {
+    const { client } = fakeDriver({ error: 'connection refused' });
+    await expect(probeBrowserSurface(TILE, undefined, () => client)).rejects.toThrow(
+      'connection refused',
+    );
+  });
+
+  it('fails when the driver exposes none of the floor tools', async (): Promise<void> => {
+    const { client } = fakeDriver({ catalogue: { browser_evaluate: {} } });
+    await expect(probeBrowserSurface(TILE, undefined, () => client)).rejects.toThrow(
+      'no tools allowed for this surface class',
+    );
+  });
+
+  it('refuses a surface with no documented address', async (): Promise<void> => {
+    const { client } = fakeDriver({});
+    await expect(probeBrowserSurface(undefined, undefined, () => client)).rejects.toThrow(
+      'No web UI address is documented',
+    );
+    await expect(probeBrowserSurface('not-a-url', undefined, () => client)).rejects.toThrow(
+      'not a valid URL',
+    );
+  });
+
+  it('connects a browser-driven surface that documents no credential', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId } = await harness.run(
+      async (ctx): Promise<{ agentId: Id<'agents'>; surfaceId: Id<'surfaces'> }> => {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'floor probe',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'approved',
+          whereFound: [],
+          path: 'browser-driven',
+          endpoint: TILE,
+          managerApprovedAt: 2,
+          itApprovedAt: 3,
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        return { agentId, surfaceId };
+      },
+    );
+    const probeBrowser = vi.fn(async () => ({
+      toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+      toolArguments: [],
+    }));
+    await expect(
+      runSurfaceProbe(
+        {
+          runMutation: harness.mutation.bind(harness),
+          runQuery: harness.query.bind(harness),
+          runAction: async (): Promise<string> => {
+            throw new Error('no credential to decrypt');
+          },
+        } as unknown as ActionCtx,
+        surfaceId,
+        false,
+        {
+          probeBrowser,
+          probeMcp: vi.fn(),
+          probeSlack: vi.fn(),
+          now: (): number => 1_000,
+        },
+      ),
+    ).resolves.toMatchObject({ verdict: 'connected' });
+    expect(probeBrowser).toHaveBeenCalledWith(TILE, undefined);
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({ verdict: 'connected', credentialLanded: true });
+    const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());
+    expect(grants.map((grant) => grant.scope)).toContain('looker-pipeline-tile:read');
+    expect(grants.every((grant) => grant.agentId === agentId)).toBe(true);
   });
 });

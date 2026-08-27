@@ -245,7 +245,28 @@ services:
       timeout: 5s
       start_period: 20s
 
-  # The browser floor exposes read-only tools later through Day0's allowlist.
+  # A synthetic system with a web UI and no API: the case Day0 claims to be
+  # honest about. Nothing reaches it but a browser, so it is what the browser
+  # floor is demonstrated against. Unpublished, like every other real-profile
+  # service; the agent reaches it by service name over the compose network.
+  looker-tile:
+    profiles: ['real']
+    image: node:22-alpine
+    command: ['node', '/app/server.js']
+    environment:
+      - LOOKER_TILE_PORT=8080
+      - LOOKER_TILE_USER=${LOOKER_TILE_USER:-revops}
+      - LOOKER_TILE_PASSWORD=${LOOKER_TILE_PASSWORD:-pipeline-tile-local}
+    volumes:
+      - ./looker-tile/server.js:/app/server.js:ro
+    expose: ['8080']
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+
+  # The browser floor drives that UI through Day0's per-surface tool allowlist.
   # The MCP server itself is not a security boundary, so it remains internal.
   #
   # `--isolated` gives every MCP session its own browser context. Day0 opens
@@ -267,7 +288,7 @@ services:
         '--allowed-hosts',
         'playwright-mcp:8931,localhost:8931,127.0.0.1:8931',
         '--allowed-origins',
-        '${PLAYWRIGHT_ALLOWED_ORIGINS:-http://host.docker.internal:3000}',
+        '${PLAYWRIGHT_ALLOWED_ORIGINS:-http://looker-tile:8080;http://host.docker.internal:3000}',
       ]
     expose: ['8931']
     extra_hosts:
