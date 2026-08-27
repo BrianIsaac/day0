@@ -220,6 +220,15 @@ export async function runProvisionApp(
   if (surface.managerApprovedAt === undefined || surface.itApprovedAt === undefined) {
     throw new Error('The connection needs both approvals before an app is registered for it.');
   }
+  if (
+    surface.verdict === 'connected' &&
+    surface.credentialKind === 'oauth' &&
+    surface.credentialId
+  ) {
+    throw new Error(
+      'This surface already has a connected dedicated identity. Revoke it before installing a replacement.',
+    );
+  }
   if (!surface.endpoint?.startsWith(SLACK_API)) {
     throw new Error('The documented endpoint is not the approved Slack host.');
   }

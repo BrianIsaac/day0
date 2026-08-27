@@ -413,6 +413,9 @@ export const recordInstalledApp = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     const previous = surface.credentialId;
+    if (previous && previous !== args.credentialId && surface.credentialKind === 'oauth') {
+      throw new Error('This surface already has a dedicated identity.');
+    }
     const retired =
       previous && previous !== args.credentialId && surface.credentialKind !== 'oauth'
         ? previous

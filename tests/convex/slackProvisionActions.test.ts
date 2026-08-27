@@ -263,6 +263,38 @@ describe('registering a dedicated app', (): void => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('refuses to replace an already-connected dedicated identity', async (): Promise<void> => {
+    vi.stubGlobal('fetch', vi.fn());
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await seedSlackSurface(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Slack dedicated bot token',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        source: 'oauth',
+        createdAt: 4,
+      });
+      await ctx.db.patch(surfaceId, {
+        credentialId,
+        credentialKind: 'oauth',
+        credentialLanded: true,
+        verdict: 'connected',
+      });
+    });
+
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).action(liveApi.slackProvisionActions.provisionApp, {
+        surfaceId,
+        configurationToken: CONFIG_TOKEN,
+      }),
+    ).rejects.toThrow('already has a connected dedicated identity');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('refuses a caller who does not own the agent', async (): Promise<void> => {
     vi.stubGlobal('fetch', vi.fn());
     const { api: liveApi } = await import('../../convex/_generated/api');

@@ -1036,7 +1036,7 @@ describe('the dedicated app on a surface row', (): void => {
     ).resolves.toEqual({ retiredCredentialId: undefined });
   });
 
-  it('does not retire a dedicated token when a second install replaces it', async (): Promise<void> => {
+  it('refuses to replace a dedicated token with a second install', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedProvisioned(harness);
     const first = await harness.run(
@@ -1074,9 +1074,13 @@ describe('the dedicated app on a surface row', (): void => {
         credentialId: second,
         now: 11,
       }),
-    ).resolves.toEqual({ retiredCredentialId: undefined });
-    const first_row = await harness.run(async (ctx) => await ctx.db.get(first));
-    expect(first_row?.revokedAt).toBeUndefined();
+    ).rejects.toThrow('already has a dedicated identity');
+    const after = await harness.run(async (ctx) => ({
+      first: await ctx.db.get(first),
+      surface: await ctx.db.get(surfaceId),
+    }));
+    expect(after.first?.revokedAt).toBeUndefined();
+    expect(after.surface?.credentialId).toBe(first);
   });
 
   it('forgets the app when the connection is rejected', async (): Promise<void> => {
