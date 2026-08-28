@@ -104,6 +104,13 @@ export default defineSchema({
     ),
     credentialId: v.optional(v.id('credentials')),
     activeSyncId: v.optional(v.id('docSyncRuns')),
+    /** The completed generation whose pages are currently authoritative. */
+    lastCompletedSyncId: v.optional(v.id('docSyncRuns')),
+    /** The completed generation whose system candidates were reconciled. */
+    lastDiscoverySyncId: v.optional(v.id('docSyncRuns')),
+    discoveryFingerprint: v.optional(v.string()),
+    lastDiscoveryAt: v.optional(v.number()),
+    lastDiscoveryError: v.optional(v.string()),
     status: v.union(
       v.literal('linking'),
       v.literal('synced'),
@@ -145,6 +152,21 @@ export default defineSchema({
     .index('by_source', ['sourceId'])
     .index('by_source_ref', ['sourceId', 'ref']),
 
+  docSystemDiscoveries: defineTable({
+    sourceId: v.id('docSources'),
+    slug: v.string(),
+    displayName: v.string(),
+    class: v.string(),
+    ref: v.string(),
+    quote: v.string(),
+    url: v.optional(v.string()),
+    current: v.boolean(),
+    firstSeenAt: v.number(),
+    lastSeenAt: v.number(),
+  })
+    .index('by_source', ['sourceId'])
+    .index('by_source_slug', ['sourceId', 'slug']),
+
   surfaces: defineTable({
     agentId: v.id('agents'),
     slug: v.string(),
@@ -158,6 +180,23 @@ export default defineSchema({
       v.literal('ungranted'),
       v.literal('absent'),
       v.literal('listed-dead'),
+    ),
+    /** Evidence for why this system is in the employee's known-system set.
+     * It is deliberately separate from `whereFound`, which freezes the route
+     * evidence placed in front of the approvers. */
+    discoveryEvidence: v.optional(
+      v.array(
+        v.object({
+          kind: v.union(v.literal('charter'), v.literal('documentation')),
+          sourceId: v.optional(v.id('docSources')),
+          ref: v.string(),
+          quote: v.string(),
+          url: v.optional(v.string()),
+          current: v.boolean(),
+          firstSeenAt: v.number(),
+          lastSeenAt: v.number(),
+        }),
+      ),
     ),
     whereFound: v.array(v.any()),
     path: v.optional(v.string()),

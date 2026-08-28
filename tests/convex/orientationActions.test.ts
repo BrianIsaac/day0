@@ -51,9 +51,8 @@ function notionFixture(name: NotionPageName): string {
 function orientationModules(): Record<string, () => Promise<unknown>> {
   return {
     ...allConvexModules(),
-    '../../convex/credentials.ts': async (): Promise<
-      typeof import('./fakes/credentials')
-    > => await import('./fakes/credentials'),
+    '../../convex/credentials.ts': async (): Promise<typeof import('./fakes/credentials')> =>
+      await import('./fakes/credentials'),
   };
 }
 
@@ -83,7 +82,13 @@ vi.mock('../../src/lib/mastra', () => ({
       reasoning: echo(`Model draft for ${system}.`),
       scopeRequested: [echo(`${system.toLowerCase()}:read`)],
       credential: model.echoInput
-        ? { found: 'location', method: 'api-key', location: user, label: user, evidenceRef: 'access.md' }
+        ? {
+            found: 'location',
+            method: 'api-key',
+            location: user,
+            label: user,
+            evidenceRef: 'access.md',
+          }
         : { found: 'none', method: 'unknown' },
       blastRadius: echo('One system.'),
       costBand: 'none',
@@ -322,7 +327,11 @@ describe('orientation evidence selection', (): void => {
     });
     expect(evidenceQuote('# Systems\nNo match.\n', 'Slack', 'slack')).toBeUndefined();
     expect(
-      evidenceQuote('Slackbot posts reminders. Use Slack for asks. Then file it.', 'Slack', 'slack'),
+      evidenceQuote(
+        'Slackbot posts reminders. Use Slack for asks. Then file it.',
+        'Slack',
+        'slack',
+      ),
     ).toEqual({ quote: 'Use Slack for asks.', attributed: false });
   });
 
@@ -352,14 +361,23 @@ describe('orientation evidence selection', (): void => {
         'northstar-crm',
       ),
     ).toEqual({
-      quote: '| Northstar CRM | Records used during close. No approved connection surface is recorded. |',
+      quote:
+        '| Northstar CRM | Records used during close. No approved connection surface is recorded. |',
       attributed: true,
     });
     expect(
-      evidenceQuote('# Access\n\nLinear key: <redacted> (the owner provides it)', 'Linear', 'linear'),
+      evidenceQuote(
+        '# Access\n\nLinear key: <redacted> (the owner provides it)',
+        'Linear',
+        'linear',
+      ),
     ).toEqual({ quote: 'Linear key: <redacted> (the owner provides it)', attributed: true });
     expect(
-      evidenceQuote('<page url="https://app.notion.com/p/abc">Linear Automation</page>', 'Linear', 'linear'),
+      evidenceQuote(
+        '<page url="https://app.notion.com/p/abc">Linear Automation</page>',
+        'Linear',
+        'linear',
+      ),
     ).toEqual({
       quote: '<page url="https://app.notion.com/p/abc">Linear Automation</page>',
       attributed: true,
@@ -372,7 +390,15 @@ describe('orientation evidence selection', (): void => {
 
   it('cites only attributing pages when any page attributes, else the mentions', (): void => {
     const page = (ref: string, markdown: string): Doc<'docPages'> =>
-      ({ _id: ref, _creationTime: 1, sourceId: 'source-1', ref, title: ref, markdown, updatedAt: 1 }) as unknown as Doc<'docPages'>;
+      ({
+        _id: ref,
+        _creationTime: 1,
+        sourceId: 'source-1',
+        ref,
+        title: ref,
+        markdown,
+        updatedAt: 1,
+      }) as unknown as Doc<'docPages'>;
     const slackPolicy = page(
       'slack.md',
       '# Slack automation policy\n\n- One logical message per action; preserve the originating Linear identifier or Slack thread timestamp in the text.',
@@ -387,7 +413,8 @@ describe('orientation evidence selection', (): void => {
       {
         sourceId: 'source-1',
         ref: 'slack.md',
-        quote: '- One logical message per action; preserve the originating Linear identifier or Slack thread timestamp in the text.',
+        quote:
+          '- One logical message per action; preserve the originating Linear identifier or Slack thread timestamp in the text.',
         url: undefined,
       },
       {
@@ -487,7 +514,10 @@ describe('credential extraction', (): void => {
       markdown:
         '# Systems\n\nLinear service token: <credential: linear service token, stored>. Ask in Slack if it fails.',
     };
-    expect(extractCredentialFinding([shared], 'Slack')).toEqual({ found: 'none', method: 'unknown' });
+    expect(extractCredentialFinding([shared], 'Slack')).toEqual({
+      found: 'none',
+      method: 'unknown',
+    });
     expect(extractCredentialFinding([shared], 'Linear')).toMatchObject({
       found: 'value',
       label: 'linear service token',
@@ -554,9 +584,9 @@ describe('URL attribution', (): void => {
       '# Slackbot\n\nSlackbot is reached over MCP at https://mcp.slackbot.example/mcp. No approved API for Slackbot.';
     expect(attributedUrls(slackbot, 'Slack', 'slack')).toEqual([]);
     expect(explicitlyDeniesSurface(slackbot, 'Slack')).toBe(false);
-    expect(relevantSystemText('# Tools\n\nSlackbot answers questions.\n\nSlack is chat.', 'Slack')).toBe(
-      'Slack is chat.',
-    );
+    expect(
+      relevantSystemText('# Tools\n\nSlackbot answers questions.\n\nSlack is chat.', 'Slack'),
+    ).toBe('Slack is chat.');
     expect(evidenceQuote(slackbot, 'Slack', 'slack')).toBeUndefined();
   });
 
@@ -589,14 +619,14 @@ describe('URL attribution', (): void => {
       webUi: 'http://api.example.com/v1',
       insecure: 'http://api.example.com/v1',
     });
-    expect(documentedEndpoints(['http://mcp.evil.example/mcp', 'https://api.example.com/v1'])).toEqual(
-      {
-        mcp: undefined,
-        api: 'https://api.example.com/v1',
-        webUi: 'http://mcp.evil.example/mcp',
-        insecure: 'http://mcp.evil.example/mcp',
-      },
-    );
+    expect(
+      documentedEndpoints(['http://mcp.evil.example/mcp', 'https://api.example.com/v1']),
+    ).toEqual({
+      mcp: undefined,
+      api: 'https://api.example.com/v1',
+      webUi: 'http://mcp.evil.example/mcp',
+      insecure: 'http://mcp.evil.example/mcp',
+    });
     expect(documentedEndpoints(['http://playwright-mcp:8931/mcp'])).toEqual({
       mcp: 'http://playwright-mcp:8931/mcp',
       api: undefined,
@@ -635,18 +665,16 @@ describe('URL attribution', (): void => {
       path: 'documented-api',
       endpoint: 'https://slack.com/api/',
     });
-    expect(
-      choosePath('browser-driven', { webUi: 'https://app.example.com' }, true, true),
-    ).toEqual({
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' }, true, true)).toEqual({
       path: 'browser-driven',
       endpoint: 'https://app.example.com',
     });
-    expect(
-      choosePath('browser-driven', { webUi: 'https://app.example.com' }, false, true),
-    ).toEqual({
-      path: 'browser-driven',
-      endpoint: 'https://app.example.com',
-    });
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' }, false, true)).toEqual(
+      {
+        path: 'browser-driven',
+        endpoint: 'https://app.example.com',
+      },
+    );
     // Without the documented page-title marker the browser probe refuses the
     // rung, so admitting it would ask both approvers to ratify a route the code
     // already knows cannot run.
@@ -1087,7 +1115,10 @@ describe('orientation run', (): void => {
       plaintext: 'linear',
     });
     await orientDeclared(harness, agentId);
-    expect((await surfacesBySlug(harness, agentId)).linear).toMatchObject({ credentialId: wanted._id, credentialKind: 'value' });
+    expect((await surfacesBySlug(harness, agentId)).linear).toMatchObject({
+      credentialId: wanted._id,
+      credentialKind: 'value',
+    });
   });
 
   it('leaves the credential unresolved, and says so, when no stored row matches the marker', async (): Promise<void> => {
@@ -1239,9 +1270,11 @@ describe('orientation run', (): void => {
     const completed = await surfacesBySlug(harness, agentId);
     expect(completed.linear.verdict).toBe('proposed');
     expect(completed.slack.verdict).toBe('absent');
-    expect((await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
-      (event): boolean => event.type === 'surface.proposed',
-    )).toHaveLength(1);
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+        (event): boolean => event.type === 'surface.proposed',
+      ),
+    ).toHaveLength(1);
   });
 
   it('schedules at most one pending job per surface across repeated runs', async (): Promise<void> => {
@@ -1296,11 +1329,15 @@ describe('orientation run', (): void => {
       { name: 'Linear', class: 'kanban' },
     ]);
     const owner = harness.withIdentity({ subject: 'owner' });
-    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({ scheduled: 1 });
+    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({
+      scheduled: 1,
+    });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const surfaceId = (await surfacesBySlug(harness, agentId)).linear._id;
     await owner.mutation(api.surfaces.reject, { surfaceId, reason: 'Wrong endpoint.' });
-    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({ scheduled: 1 });
+    await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({
+      scheduled: 1,
+    });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect((await surfacesBySlug(harness, agentId)).linear).toMatchObject({
       verdict: 'proposed',
@@ -1423,7 +1460,7 @@ describe('the browser floor in orientation', (): void => {
     });
   });
 
-  it('does not read a documentation page URL as the system\'s own web UI', async (): Promise<void> => {
+  it("does not read a documentation page URL as the system's own web UI", async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'browser-driven';
     const harness = convexTest(schema, orientationModules());
