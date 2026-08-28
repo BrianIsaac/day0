@@ -402,6 +402,38 @@ describe('skills that target a surface', (): void => {
     await expect(harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId })).rejects.toThrow('surface linear is listed-dead');
   });
 
+  it('refuses approval when a connected browser surface has lost its component', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'looker');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        toolAllowlist: ['browser_navigate'],
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        createdAt: 1,
+      });
+    });
+    const skillId = await propose(harness, agentId, workItemId);
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).rejects.toThrow('surface looker is ungranted');
+    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('proposed');
+    expect(await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect())).toEqual(
+      [],
+    );
+  });
+
   it('approves and grants the surface scopes once the surface is connected', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

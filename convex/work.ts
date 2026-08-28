@@ -24,6 +24,10 @@ import { autonomousActionsOn } from '../src/work/autonomy';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { MockAction, ReplyTarget } from '../src/work/types';
 import type { DecisionKind } from '../src/work/manager-channel';
+import {
+  browserComponentRefusal,
+  withBrowserComponentState,
+} from '../src/surfaces/browser';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
@@ -936,10 +940,13 @@ async function reviewHeldActions(
   if (!agent) throw new Error('agent not found');
   const grants = new Set(grantRows.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
   const autonomousActions = autonomousActionsOn(agent);
+  const browserRefusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
   return {
     verdicts: reviewActions(
       actions,
-      surfaceRows.map((surface) => toSurfaceRecord(surface)),
+      surfaceRows.map((surface) =>
+        toSurfaceRecord(withBrowserComponentState(surface, browserRefusal)),
+      ),
       grants,
       Date.now(),
       { autonomousActions, replyTarget: replyTargetFor(row) },
