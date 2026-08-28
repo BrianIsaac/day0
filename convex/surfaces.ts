@@ -106,6 +106,9 @@ export const propose = internalMutation({
     whereFound: v.array(v.any()),
     path: v.string(),
     fallbackPath: v.string(),
+    pathCandidates: v.optional(
+      v.array(v.object({ path: v.string(), endpoint: v.string() })),
+    ),
     endpoint: v.optional(v.string()),
     credentialId: v.optional(v.id('credentials')),
     credentialKind: v.optional(credentialKind),
@@ -123,6 +126,12 @@ export const propose = internalMutation({
       whereFound: args.whereFound,
       path: args.path,
       fallbackPath: args.fallbackPath,
+      pathCandidates:
+        args.pathCandidates && args.pathCandidates.length > 0
+          ? args.pathCandidates.slice(0, 3)
+          : args.endpoint
+            ? [{ path: args.path, endpoint: args.endpoint }]
+            : undefined,
       endpoint: args.endpoint,
       credentialId: args.credentialId,
       credentialKind: args.credentialId ? args.credentialKind : undefined,

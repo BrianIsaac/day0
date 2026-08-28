@@ -10,6 +10,7 @@ import schema from '../../convex/schema';
 import {
   attributedUrls,
   choosePath,
+  connectionLadder,
   documentedEndpoints,
   draftOrientation,
   evidenceQuote,
@@ -636,10 +637,26 @@ describe('URL attribution', (): void => {
       endpoint: 'https://app.example.com',
     });
     expect(choosePath('browser-driven', { webUi: 'https://app.example.com' })).toEqual({
-      path: 'escalate',
+      path: 'browser-driven',
+      endpoint: 'https://app.example.com',
     });
     expect(choosePath('mcp', { webUi: 'https://app.example.com' })).toEqual({ path: 'escalate' });
     expect(choosePath('mcp', {})).toEqual({ path: 'escalate' });
+    expect(
+      connectionLadder(
+        'browser-driven',
+        {
+          mcp: 'https://mcp.example.com/mcp',
+          api: 'https://api.example.com/v1',
+          webUi: 'https://app.example.com',
+        },
+        false,
+      ),
+    ).toEqual([
+      { path: 'mcp', endpoint: 'https://mcp.example.com/mcp' },
+      { path: 'documented-api', endpoint: 'https://api.example.com/v1' },
+      { path: 'browser-driven', endpoint: 'https://app.example.com' },
+    ]);
     expect(
       isBrowserLoginCredential({
         found: 'value',
@@ -1223,7 +1240,7 @@ describe('the browser floor in orientation', (): void => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('does not admit the browser path when the model asked for something else', async (): Promise<void> => {
+  it('admits a documented login UI even when the model asks for an unsupported API', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'documented-api';
     const harness = convexTest(schema, orientationModules());
@@ -1234,11 +1251,14 @@ describe('the browser floor in orientation', (): void => {
     );
     await orientDeclared(harness, agentId);
     const tile = (await surfacesBySlug(harness, agentId))['looker-pipeline-tile'];
-    expect(tile).toMatchObject({ verdict: 'proposed', path: 'escalate' });
-    expect(tile.endpoint).toBeUndefined();
+    expect(tile).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+      endpoint: 'http://looker-tile:8080/',
+    });
   });
 
-  it('does not infer browser access from a web URL and the word browser without a login', async (): Promise<void> => {
+  it('admits a documented public web UI without inventing a login requirement', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'browser-driven';
     const harness = convexTest(schema, orientationModules());
@@ -1252,10 +1272,17 @@ describe('the browser floor in orientation', (): void => {
     );
     await orientDeclared(harness, agentId);
     const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
-    expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
-    expect(reports.endpoint).toBeUndefined();
+    expect(reports).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+      endpoint: 'https://reports.example.test/forecast',
+      fallbackPath: 'escalate',
+      pathCandidates: [
+        { path: 'browser-driven', endpoint: 'https://reports.example.test/forecast' },
+      ],
+    });
     expect(reports.request?.openQuestions).toContain(
-      'Document the web UI login credential before approving browser-driven access.',
+      'No web login credential was found; browser access is limited to content the documented UI exposes without sign-in.',
     );
   });
 

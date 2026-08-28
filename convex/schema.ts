@@ -162,6 +162,9 @@ export default defineSchema({
     whereFound: v.array(v.any()),
     path: v.optional(v.string()),
     fallbackPath: v.optional(v.string()),
+    pathCandidates: v.optional(
+      v.array(v.object({ path: v.string(), endpoint: v.string() })),
+    ),
     endpoint: v.optional(v.string()),
     request: v.optional(v.any()),
     managerApprovedAt: v.optional(v.number()),

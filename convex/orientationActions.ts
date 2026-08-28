@@ -127,6 +127,11 @@ export interface DocumentedEndpoints {
   /** A plaintext `http:` endpoint on a public host that was refused as an API or MCP base. */
   insecure?: string;
 }
+
+export interface SurfacePathCandidate {
+  path: Exclude<OrientationPath, 'escalate'>;
+  endpoint: string;
+}
 type RegistryRemote = { type?: unknown; url?: unknown };
 type RegistryServer = {
   description?: unknown;
@@ -652,7 +657,7 @@ export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
 }
 
 /**
- * Admit a connection path from literal evidence.
+ * Build the descending set of connection paths admitted by literal evidence.
  *
  * The model drafts the artefact; the code decides the path. An attributed
  * MCP endpoint wins, then a documented API base regardless of whether the
@@ -666,19 +671,29 @@ export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
  *   hasLoginCredential: Whether the same linked evidence carries a stored web login.
  *
  * Returns:
- *   The admitted path and, for admitted paths, its documented endpoint.
+ *   Evidence-backed, probeable paths in strongest-to-weakest order.
  */
+export function connectionLadder(
+  draftPath: OrientationPath,
+  endpoints: DocumentedEndpoints,
+  hasLoginCredential = false,
+): SurfacePathCandidate[] {
+  const candidates: SurfacePathCandidate[] = [];
+  if (endpoints.mcp) candidates.push({ path: 'mcp', endpoint: endpoints.mcp });
+  if (endpoints.api) candidates.push({ path: 'documented-api', endpoint: endpoints.api });
+  if (endpoints.webUi && (draftPath === 'browser-driven' || hasLoginCredential)) {
+    candidates.push({ path: 'browser-driven', endpoint: endpoints.webUi });
+  }
+  return candidates;
+}
+
+/** Admit the strongest evidence-backed path, or escalate when none is probeable. */
 export function choosePath(
   draftPath: OrientationPath,
   endpoints: DocumentedEndpoints,
   hasLoginCredential = false,
 ): { path: OrientationPath; endpoint?: string } {
-  if (endpoints.mcp) return { path: 'mcp', endpoint: endpoints.mcp };
-  if (endpoints.api) return { path: 'documented-api', endpoint: endpoints.api };
-  if (endpoints.webUi && draftPath === 'browser-driven' && hasLoginCredential) {
-    return { path: 'browser-driven', endpoint: endpoints.webUi };
-  }
-  return { path: 'escalate' };
+  return connectionLadder(draftPath, endpoints, hasLoginCredential)[0] ?? { path: 'escalate' };
 }
 
 /** Whether a page-derived stored value is explicitly a web login credential. */
@@ -1122,14 +1137,16 @@ export async function orientSurface(
     extractedCredential.found === 'none' && extractedCredential.method === 'unknown'
       ? validatedDraftCredential(draft.credential, credentialPages)
       : extractedCredential;
-  const browserEvidenceIncomplete =
-    draft.path === 'browser-driven' && endpoints.webUi !== undefined &&
-    !isBrowserLoginCredential(credential);
-  const { path, endpoint } = choosePath(
-    draft.path,
-    endpoints,
-    isBrowserLoginCredential(credential),
-  );
+  const hasBrowserLogin = isBrowserLoginCredential(credential);
+  const pathCandidates = connectionLadder(draft.path, endpoints, hasBrowserLogin);
+  const selected: { path: OrientationPath; endpoint?: string } = pathCandidates[0] ?? {
+    path: 'escalate',
+  };
+  const { path, endpoint } = selected;
+  const fallbackPath = pathCandidates[1]?.path ?? 'escalate';
+  const credentiallessBrowser =
+    pathCandidates.some((candidate): boolean => candidate.path === 'browser-driven') &&
+    !hasBrowserLogin;
   const mentionsMcp = /\bmcp\b/i.test(relevantText);
   const registrySuggestion =
     path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
@@ -1137,9 +1154,9 @@ export async function orientSurface(
       : undefined;
   const openQuestions = [...draft.openQuestions];
   if (drafted.note) openQuestions.push(drafted.note);
-  if (browserEvidenceIncomplete) {
+  if (credentiallessBrowser) {
     openQuestions.push(
-      'Document the web UI login credential before approving browser-driven access.',
+      'No web login credential was found; browser access is limited to content the documented UI exposes without sign-in.',
     );
   }
   if (endpoints.insecure) {
@@ -1181,7 +1198,8 @@ export async function orientSurface(
       system: surface.displayName,
       class: surface.class,
       chosenPath: path,
-      fallbackPath: draft.fallbackPath,
+      fallbackPath,
+      ladder: pathCandidates,
       confidence: endpoint ? draft.confidence : Math.min(draft.confidence, 0.65),
       reasoning: draft.reasoning,
     },
@@ -1208,7 +1226,8 @@ export async function orientSurface(
     request,
     whereFound: evidence,
     path,
-    fallbackPath: draft.fallbackPath,
+    fallbackPath,
+    pathCandidates,
     endpoint,
     credentialId: stored?.credentialId,
     credentialKind: stored?.kind,
