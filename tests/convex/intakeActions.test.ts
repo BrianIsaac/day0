@@ -165,6 +165,8 @@ function runtimeHarness(
   const agent = agentRow();
   const runtime: IntakeRuntime = {
     listSurfaces: async (): Promise<Doc<'surfaces'>[]> => surfaces,
+    listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
+      surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.class === 'chat'),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       agentId === agent._id ? agent : null,
     listPages: async (): Promise<Doc<'docPages'>[]> => pages,
@@ -286,7 +288,8 @@ describe('real surface intake', (): void => {
       lastDecisionPolledAt: decisionCheckpoint,
     });
     const harness = runtimeHarness(
-      [surface],
+      // The kanban row is never read: the sweep asks for chat rows only.
+      [surface, surfaceRow('linear', 'Linear', 'kanban')],
       [pageRow('slack.md', 'Slack policy', SLACK)],
       new Map([[String(slackCredential), 'slack-test-value']]),
     );
@@ -1029,6 +1032,7 @@ describe('real surface intake', (): void => {
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
     const runtime: IntakeRuntime = {
       listSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
+      listChatSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
       getAgent: vi.fn(),
       listPages: vi.fn(),
       decrypt: vi.fn(),
@@ -1046,6 +1050,14 @@ describe('real surface intake', (): void => {
       surfaces: 0,
     });
     expect(runtime.listSurfaces).not.toHaveBeenCalled();
+
+    await expect(runDecisionSweep(runtime, { mode: 'mock' })).resolves.toEqual({
+      mode: 'mock',
+      polled: 0,
+      skipped: 0,
+      surfaces: 0,
+    });
+    expect(runtime.listChatSurfaces).not.toHaveBeenCalled();
   });
 
   it('relies on seedItem to deduplicate repeated provider identities', async (): Promise<void> => {

@@ -71,6 +71,8 @@ interface IntakeDecisionReply {
 
 export interface IntakeRuntime {
   listSurfaces(): Promise<Doc<'surfaces'>[]>;
+  /** The chat rows alone, for the poll that runs once a minute. */
+  listChatSurfaces(): Promise<Doc<'surfaces'>[]>;
   getAgent(agentId: Id<'agents'>): Promise<Doc<'agents'> | null>;
   listPages(agentId: Id<'agents'>): Promise<Doc<'docPages'>[]>;
   decrypt(credentialId: CredentialId): Promise<string>;
@@ -1283,9 +1285,7 @@ export async function runDecisionSweep(
   const fetcher: IntakeFetcher = dependencies.fetcher ?? fetch;
   const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const now = dependencies.now ?? Date.now;
-  const surfaces = (await runtime.listSurfaces()).filter(
-    (surface): boolean => surface.class === 'chat',
-  );
+  const surfaces = await runtime.listChatSurfaces();
   let polled = 0;
   let skipped = 0;
   for (const surface of surfaces) {
@@ -1346,6 +1346,8 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
   return {
     listSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
       await ctx.runQuery(internal.orientationData.surfacesForIntake, {}),
+    listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
+      await ctx.runQuery(internal.orientationData.chatSurfacesForIntake, {}),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       await ctx.runQuery(internal.agents.getInternal, { agentId }),
     listPages: async (agentId: Id<'agents'>): Promise<Doc<'docPages'>[]> =>
