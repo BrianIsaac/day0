@@ -89,16 +89,24 @@ export function DiscoveryProvenance({
             key={`${item.kind}-${item.sourceId ?? 'manager'}-${index}`}
             className="mt-2 border-l border-[var(--color-border)] pl-2"
           >
-            <span className="text-[var(--color-muted)]">
-              {item.url ? (
-                <a href={item.url} target="_blank" rel="noreferrer" className="underline">
-                  {label}
-                </a>
-              ) : (
-                label
-              )}
-              {!item.current ? ' · no longer named in the current page' : ''}
-            </span>
+            {item.url ? (
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[var(--color-accent)] underline"
+              >
+                {label}
+              </a>
+            ) : (
+              <span className="text-[var(--color-muted)]">{label}</span>
+            )}
+            {!item.current ? (
+              <span className="text-[var(--color-muted)]">
+                {' '}
+                · no longer named in the current page
+              </span>
+            ) : null}
             <br />
             <EvidenceQuote quote={item.quote} />
           </blockquote>

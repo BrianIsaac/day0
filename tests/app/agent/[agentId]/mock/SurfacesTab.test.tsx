@@ -205,6 +205,12 @@ describe('SurfacesTab system discovery provenance', (): void => {
     expect(markup).toContain('href="https://notion.example/linear"');
     expect(markup).toContain('We use Linear.');
     expect(markup).toContain('# Linear');
+    // A page link here is the same affordance as a route-evidence page link a
+    // few lines down the same card, so it carries the same accent treatment
+    // rather than reading as muted and disabled.
+    expect(markup).toContain(
+      '<a href="https://notion.example/linear" target="_blank" rel="noreferrer" class="text-[var(--color-accent)] underline">',
+    );
   });
 
   it('keeps edited-away documentation provenance visible as historical', (): void => {
