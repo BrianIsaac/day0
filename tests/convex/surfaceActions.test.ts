@@ -344,6 +344,65 @@ describe('probe error hygiene', (): void => {
 });
 
 describe('surface probe action state', (): void => {
+  it('refuses a route that no longer matches the ladder frozen at approval', async (): Promise<void> => {
+    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+    const agentId = 'test-agent-id' as Id<'agents'>;
+    const probeMcp = vi.fn();
+    const surface = {
+      _id: surfaceId,
+      agentId,
+      slug: 'jira',
+      displayName: 'Jira',
+      class: 'kanban',
+      verdict: 'approved',
+      path: 'mcp',
+      endpoint: 'https://changed-after-approval.example/mcp',
+      pathCandidates: [{ path: 'mcp', endpoint: 'https://approved.example/mcp' }],
+      credentialId: 'test-credential-id',
+      credentialLanded: false,
+      managerApprovedAt: 2,
+      itApprovedAt: 3,
+      whereFound: [],
+      createdAt: 1,
+    };
+    const failures: Array<Record<string, unknown>> = [];
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: async (
+          _reference: unknown,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => {
+          if (Object.keys(args).length === 1) return { surface, generation: 1 };
+          if ('verdict' in args) {
+            failures.push(args);
+            return true;
+          }
+          return null;
+        },
+        runQuery: async (): Promise<unknown> => ({
+          surface,
+          agent: { _id: agentId, bossEmail: 'boss@day0.local' },
+        }),
+        runAction: vi.fn(),
+      } as unknown as ActionCtx,
+      surfaceId,
+      false,
+      {
+        probeMcp,
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+      },
+    );
+
+    expect(outcome).toEqual({
+      verdict: 'ungranted',
+      reason: 'Current surface route does not match the evidence-backed ladder frozen at approval.',
+    });
+    expect(probeMcp).not.toHaveBeenCalled();
+    expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
+  });
+
   it.each([
     {
       label: 'an unsupported documented API',

@@ -728,6 +728,19 @@ export async function runSurfaceProbe(
   // it. This loop is capped independently so a malformed legacy row can never
   // turn a provider failure into an unbounded action.
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (
+      surface.pathCandidates?.length &&
+      !surface.pathCandidates.some(
+        (candidate): boolean =>
+          candidate.path === surface.path && candidate.endpoint === surface.endpoint,
+      )
+    ) {
+      const outcome = await failOrDemote(
+        'Current surface route does not match the evidence-backed ladder frozen at approval.',
+        'ungranted',
+      );
+      return outcome ?? { verdict: 'skipped', reason: 'The approved surface route changed.' };
+    }
     if (surface.path === 'browser-driven') {
       const component = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
       if (component) {
