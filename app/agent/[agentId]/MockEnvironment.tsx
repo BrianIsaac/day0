@@ -178,12 +178,12 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
 
       <div className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
         {displayedActive === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
-        {displayedActive === 'spreadsheet' ? (
-          <SpreadsheetTab agentId={agentId} mode={mode} />
-        ) : null}
-        {displayedActive === 'slack' ? <SlackTab agentId={agentId} mode={mode} /> : null}
-        {displayedActive === 'tweet' ? <TwitterTab agentId={agentId} mode={mode} /> : null}
-        {displayedActive === 'tickets' ? <TicketsTab agentId={agentId} mode={mode} /> : null}
+        {/* The four below are mock-only, so they are never reached with a real
+            deployment mode and take none. */}
+        {displayedActive === 'spreadsheet' ? <SpreadsheetTab agentId={agentId} /> : null}
+        {displayedActive === 'slack' ? <SlackTab agentId={agentId} /> : null}
+        {displayedActive === 'tweet' ? <TwitterTab agentId={agentId} /> : null}
+        {displayedActive === 'tickets' ? <TicketsTab agentId={agentId} /> : null}
         {displayedActive === 'surfaces' && isReal ? <SurfacesTab agentId={agentId} /> : null}
       </div>
     </section>

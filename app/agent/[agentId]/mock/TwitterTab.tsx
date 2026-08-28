@@ -4,24 +4,20 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 
-/** What an empty timeline means in each surface mode. */
-export const EMPTY_TWEETS: Record<'mock' | 'real', string> = {
-  mock: 'no tweets seeded',
-  real: 'no tweets are mirrored here in real mode - social posts are held for the manager on the work item',
-};
+/** What an empty timeline means. The tab is mock-only: real mode does not
+ * render it, so it has no real-mode copy to show. */
+export const EMPTY_TWEETS = 'no tweets seeded';
 
 export function TwitterTab({
   agentId,
-  mode = 'mock',
 }: {
   agentId: Id<'agents'>;
-  mode?: 'mock' | 'real';
 }) {
   const tweets = useQuery(api.mock.listTweets, { agentId });
 
   if (!tweets) return <div className="text-xs text-[var(--color-muted)]">loading…</div>;
   if (tweets.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_TWEETS[mode]}</div>;
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_TWEETS}</div>;
 
   return (
     <div className="space-y-4">

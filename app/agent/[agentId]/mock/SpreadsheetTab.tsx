@@ -5,18 +5,14 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
 
-/** What an empty sheet list means in each surface mode. */
-export const EMPTY_SPREADSHEETS: Record<'mock' | 'real', string> = {
-  mock: 'no spreadsheets seeded',
-  real: 'no spreadsheet is mirrored here in real mode - no sheets surface has been discovered from the documentation',
-};
+/** What an empty sheet list means. The tab is mock-only: real mode does not
+ * render it, so it has no real-mode copy to show. */
+export const EMPTY_SPREADSHEETS = 'no spreadsheets seeded';
 
 export function SpreadsheetTab({
   agentId,
-  mode = 'mock',
 }: {
   agentId: Id<'agents'>;
-  mode?: 'mock' | 'real';
 }) {
   const sheets = useQuery(api.mock.listSpreadsheets, { agentId });
   // Nothing picked yet falls through to the first sheet and its first tab, so
@@ -45,7 +41,7 @@ export function SpreadsheetTab({
 
   if (!sheets) return <div className="text-xs text-[var(--color-muted)]">loading spreadsheets…</div>;
   if (sheets.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_SPREADSHEETS[mode]}</div>;
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_SPREADSHEETS}</div>;
 
   return (
     <div className="space-y-3 h-full flex flex-col">
