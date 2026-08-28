@@ -6,18 +6,14 @@ import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
 import { clockTime, clockTimeWithSeconds } from '../time';
 
-/** What an empty channel list means in each surface mode. */
-export const EMPTY_CHANNELS: Record<'mock' | 'real', string> = {
-  mock: 'no channels seeded',
-  real: 'no Slack channels are mirrored here in real mode - the agent reaches Slack through the connected chat surface on the Surfaces tab',
-};
+/** What an empty channel list means. The tab is mock-only: real mode does not
+ * render it, so it has no real-mode copy to show. */
+export const EMPTY_CHANNELS = 'no channels seeded';
 
 export function SlackTab({
   agentId,
-  mode = 'mock',
 }: {
   agentId: Id<'agents'>;
-  mode?: 'mock' | 'real';
 }) {
   const channels = useQuery(api.mock.listChannels, { agentId });
   const [pickedSlug, setPickedSlug] = useState<string | null>(null);
@@ -40,7 +36,7 @@ export function SlackTab({
 
   if (!channels) return <div className="text-xs text-[var(--color-muted)]">loading slack…</div>;
   if (channels.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_CHANNELS[mode]}</div>;
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_CHANNELS}</div>;
 
   const channelList = channels.filter((c) => c.kind === 'channel');
   const dmList = channels.filter((c) => c.kind === 'dm');

@@ -197,3 +197,29 @@ export const sendDecisionNotice = internalAction({
     }
   },
 });
+
+/** Send the sole acknowledgement claimed for one parsed manager reply. */
+export const sendManagerReplyNotice = internalAction({
+  args: { noticeId: v.id('managerDecisionNotices') },
+  handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
+    const prepared = await ctx.runMutation(internal.work.prepareManagerReplyNotice, args);
+    if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
+    try {
+      const result = await deliverManagerMessage(
+        ctx,
+        prepared.workItemId,
+        prepared,
+        prepared.text,
+      );
+      await ctx.runMutation(internal.work.recordManagerReplyNotice, {
+        ...args,
+        providerTs: result.providerId,
+      });
+      return { sent: true };
+    } catch (error) {
+      const reason = safeFailureMessage(error, '', 'Decision acknowledgement failed.');
+      await ctx.runMutation(internal.work.recordManagerReplyNotice, { ...args, failure: reason });
+      return { sent: false, reason };
+    }
+  },
+});

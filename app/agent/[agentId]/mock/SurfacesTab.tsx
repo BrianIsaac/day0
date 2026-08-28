@@ -20,6 +20,7 @@ import { plainErrorMessage } from '@/lib/plain-error';
 import { presentBrowserComponent } from '@/surfaces/browser';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '@/surfaces/waterfall';
+import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 
 type SurfaceEvidence = {
   sourceId?: string;
@@ -27,6 +28,10 @@ type SurfaceEvidence = {
   quote?: string;
   url?: string;
 };
+
+export const LOADING_SURFACES = 'Loading discovered systems, connection status and evidence…';
+export const EMPTY_SURFACES =
+  'No systems have been discovered yet. After charter approval, orientation maps systems from the linked documentation and shows their connection status here.';
 
 type ConnectRequestBody = {
   target?: {
@@ -58,6 +63,57 @@ export interface ProvisioningRowProps {
   presentation: ProvisioningPresentation;
   provisioning: boolean;
   surfaceSlug: string;
+}
+
+export function DiscoveryProvenance({
+  evidence,
+  sourceLabels,
+}: {
+  evidence: readonly SurfaceDiscoveryEvidence[];
+  sourceLabels: ReadonlyMap<string, string>;
+}): React.ReactNode {
+  if (evidence.length === 0) return null;
+  return (
+    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
+      <p className="font-medium">System discovered from</p>
+      {evidence.map((item, index): React.ReactNode => {
+        const source =
+          item.kind === 'charter'
+            ? 'manager 1:1'
+            : (item.sourceId && sourceLabels.get(item.sourceId)) || 'documentation';
+        const label = [source, item.ref === source ? undefined : item.ref]
+          .filter(Boolean)
+          .join(' / ');
+        return (
+          <blockquote
+            key={`${item.kind}-${item.sourceId ?? 'manager'}-${index}`}
+            className="mt-2 border-l border-[var(--color-border)] pl-2"
+          >
+            {item.url ? (
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[var(--color-accent)] underline"
+              >
+                {label}
+              </a>
+            ) : (
+              <span className="text-[var(--color-muted)]">{label}</span>
+            )}
+            {!item.current ? (
+              <span className="text-[var(--color-muted)]">
+                {' '}
+                · no longer named in the current page
+              </span>
+            ) : null}
+            <br />
+            <EvidenceQuote quote={item.quote} />
+          </blockquote>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -290,7 +346,14 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       (summary: CredentialOwnerSummary): string[] =>
         typeof summary.source === 'object' ? [summary.source.sourceId] : [],
     );
-    return [...new Set([...evidenceSourceIds, ...credentialSourceIds])] as Id<'docSources'>[];
+    const discoverySourceIds = (surfaces ?? []).flatMap((surface) =>
+      (surface.discoveryEvidence ?? []).flatMap((item): string[] =>
+        item.sourceId ? [item.sourceId] : [],
+      ),
+    );
+    return [
+      ...new Set([...evidenceSourceIds, ...discoverySourceIds, ...credentialSourceIds]),
+    ] as Id<'docSources'>[];
   }, [credentialSummaries, surfaces]);
   const sources = useQuery(api.docSources.byIds, { sourceIds });
   const sourceLabels = useMemo(
@@ -395,11 +458,9 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   }
 
   if (!surfaces || !pages || !credentialRows)
-    return <p className="text-xs text-[var(--color-muted)]">loading surfaces...</p>;
+    return <p className="text-xs text-[var(--color-muted)]">{LOADING_SURFACES}</p>;
   if (surfaces.length === 0)
-    return (
-      <p className="text-xs text-[var(--color-muted)]">Surfaces appear after charter approval.</p>
-    );
+    return <p className="text-xs text-[var(--color-muted)]">{EMPTY_SURFACES}</p>;
   const declared = surfaces.filter((surface): boolean => surface.verdict === 'declared');
 
   return (
@@ -427,6 +488,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
           const request = surface.request as ConnectRequestBody | undefined;
           const ladder = request?.target?.ladder ?? surface.pathCandidates;
           const evidence = request?.evidence ?? (surface.whereFound as SurfaceEvidence[]);
+          const discoveryEvidence = (surface.discoveryEvidence ?? []) as SurfaceDiscoveryEvidence[];
           const summary = surface.credentialId
             ? credentialById.get(String(surface.credentialId))
             : undefined;
@@ -485,8 +547,14 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                 {surface.path || 'no approved path'}
               </p>
               <SurfaceLadder candidates={ladder} attempts={surface.probeAttempts} />
+              <DiscoveryProvenance evidence={discoveryEvidence} sourceLabels={sourceLabels} />
               {skipReason ? (
                 <p className="mt-1 text-xs text-[var(--color-warn)]">Skipped: {skipReason}</p>
+              ) : null}
+              {surface.lastDecisionError ? (
+                <p className="mt-1 text-xs text-[var(--color-warn)]">
+                  Manager decisions: {surface.lastDecisionError}
+                </p>
               ) : null}
               {surface.endpoint ? (
                 <p className="mt-1 break-all font-mono text-[10px] text-[var(--color-muted)]">

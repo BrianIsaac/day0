@@ -5,6 +5,7 @@ import { internal } from './_generated/api';
 const intakeInternal = internal as unknown as {
   intakeActions: {
     pollAll: FunctionReference<'action', 'internal', Record<string, never>, unknown>;
+    pollDecisions: FunctionReference<'action', 'internal', Record<string, never>, unknown>;
   };
 };
 
@@ -36,6 +37,13 @@ crons.interval(
   'poll connected surfaces for work',
   { minutes: 5 },
   intakeInternal.intakeActions.pollAll,
+  {},
+);
+
+crons.interval(
+  'poll manager decision replies',
+  { seconds: 60 },
+  intakeInternal.intakeActions.pollDecisions,
   {},
 );
 

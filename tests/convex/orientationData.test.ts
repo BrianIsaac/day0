@@ -210,5 +210,11 @@ describe('orientation data boundary', (): void => {
     expect(new Set(surfaces.map((surface): Id<'agents'> => surface.agentId))).toEqual(
       new Set(agentIds),
     );
+
+    // The manager decision poll runs every minute against a surface set that
+    // now grows with the documented estate, so it reads the chat rows by
+    // index rather than scanning every surface in the deployment.
+    const chat = await harness.query(internal.orientationData.chatSurfacesForIntake, {});
+    expect(chat.map((surface): string => surface.slug)).toEqual(['slack']);
   });
 });

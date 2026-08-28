@@ -23,8 +23,25 @@ const surfaceVerdict = v.union(
 
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
+const MAX_DISCOVERY_EVIDENCE = 64;
 
 type ProbeAttempt = NonNullable<Doc<'surfaces'>['probeAttempts']>[number];
+type DiscoveryEvidence = NonNullable<Doc<'surfaces'>['discoveryEvidence']>[number];
+
+export interface DocumentedSystemSeed {
+  slug: string;
+  displayName: string;
+  class: string;
+  ref: string;
+  quote: string;
+  url?: string;
+}
+
+export interface CharterSystemSeed {
+  name: string;
+  class: string;
+  whereMentioned: string;
+}
 
 function withProbeAttempt(
   surface: Doc<'surfaces'>,
@@ -49,6 +66,47 @@ export function surfaceSlug(name: string): string {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '') || 'system'
   );
+}
+
+/** Add manager provenance to legacy rows without replaying charter seeding. */
+export async function backfillCharterProvenance(
+  ctx: MutationCtx,
+  args: {
+    agentId: Id<'agents'>;
+    namedSystems: readonly CharterSystemSeed[];
+    now: number;
+  },
+): Promise<number> {
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
+    .collect();
+  const bySlug = new Map(surfaces.map((surface) => [surface.slug, surface]));
+  let updated = 0;
+  for (const system of args.namedSystems) {
+    if (system.class === 'docs') continue;
+    const surface = bySlug.get(surfaceSlug(system.name));
+    if (!surface) continue;
+    const prior = surface.discoveryEvidence ?? [];
+    if (prior.some((item): boolean => item.kind === 'charter')) continue;
+    const discoveryEvidence: DiscoveryEvidence[] = [
+      ...prior,
+      {
+        kind: 'charter',
+        ref: 'manager 1:1',
+        quote: system.whereMentioned,
+        current: true,
+        firstSeenAt: surface.createdAt,
+        lastSeenAt: args.now,
+      },
+    ];
+    if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
+      throw new Error('Surface discovery provenance exceeds 64 sources.');
+    }
+    await ctx.db.patch(surface._id, { discoveryEvidence });
+    updated += 1;
+  }
+  return updated;
 }
 
 /** List connection verdicts for one owned agent. */
@@ -81,14 +139,37 @@ export const seedFromCharter = internalMutation({
   },
   handler: async (ctx, args): Promise<Id<'surfaces'>[]> => {
     const surfaceIds: Id<'surfaces'>[] = [];
+    const now = Date.now();
     for (const system of args.namedSystems) {
       if (system.class === 'docs') continue;
       const slug = surfaceSlug(system.name);
+      const evidence: DiscoveryEvidence = {
+        kind: 'charter',
+        ref: 'manager 1:1',
+        quote: system.whereMentioned,
+        current: true,
+        firstSeenAt: now,
+        lastSeenAt: now,
+      };
       const existing = await ctx.db
         .query('surfaces')
         .withIndex('by_agent_slug', (index) => index.eq('agentId', args.agentId).eq('slug', slug))
         .unique();
       if (existing) {
+        const prior = existing.discoveryEvidence ?? [];
+        const charterEvidence = prior.find((item): boolean => item.kind === 'charter');
+        const discoveryEvidence = charterEvidence
+          ? prior.map(
+              (item): DiscoveryEvidence =>
+                item.kind === 'charter'
+                  ? { ...item, quote: system.whereMentioned, current: true, lastSeenAt: now }
+                  : item,
+            )
+          : [...prior, evidence];
+        if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
+          throw new Error('Surface discovery provenance exceeds 64 sources.');
+        }
+        await ctx.db.patch(existing._id, { discoveryEvidence });
         surfaceIds.push(existing._id);
         continue;
       }
@@ -99,14 +180,120 @@ export const seedFromCharter = internalMutation({
         class: system.class,
         verdict: 'declared',
         whereFound: [{ ref: 'manager 1:1', quote: system.whereMentioned }],
+        discoveryEvidence: [evidence],
         credentialLanded: false,
-        createdAt: Date.now(),
+        createdAt: now,
       });
       surfaceIds.push(surfaceId);
     }
     return surfaceIds;
   },
 });
+
+/** Reconcile one source's current system names into an agent's surface set. */
+export async function reconcileDocumentedSystems(
+  ctx: MutationCtx,
+  args: {
+    agentId: Id<'agents'>;
+    sourceId: Id<'docSources'>;
+    systems: readonly DocumentedSystemSeed[];
+    now: number;
+  },
+): Promise<{ created: number; updated: number; retired: number; scheduled: number }> {
+  const agent = await ctx.db.get(args.agentId);
+  if (!agent) return { created: 0, updated: 0, retired: 0, scheduled: 0 };
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
+    .collect();
+  const bySlug = new Map(
+    surfaces.map((surface): [string, Doc<'surfaces'>] => [surface.slug, surface]),
+  );
+  const currentSlugs = new Set(args.systems.map((system): string => system.slug));
+  let created = 0;
+  let updated = 0;
+  let retired = 0;
+  let scheduled = 0;
+
+  for (const surface of surfaces) {
+    if (currentSlugs.has(surface.slug)) continue;
+    const evidence = surface.discoveryEvidence ?? [];
+    let changed = false;
+    const discoveryEvidence = evidence.map((item): DiscoveryEvidence => {
+      if (item.kind !== 'documentation' || item.sourceId !== args.sourceId || !item.current) {
+        return item;
+      }
+      changed = true;
+      return { ...item, current: false, lastSeenAt: args.now };
+    });
+    if (changed) {
+      await ctx.db.patch(surface._id, { discoveryEvidence });
+      retired += 1;
+    }
+  }
+
+  for (const system of args.systems) {
+    if (system.class === 'docs') continue;
+    const existing = bySlug.get(system.slug);
+    const prior = existing?.discoveryEvidence ?? [];
+    const previous = prior.find(
+      (item): boolean => item.kind === 'documentation' && item.sourceId === args.sourceId,
+    );
+    const evidence: DiscoveryEvidence = {
+      kind: 'documentation',
+      sourceId: args.sourceId,
+      ref: system.ref,
+      quote: system.quote,
+      url: system.url,
+      current: true,
+      firstSeenAt: previous?.firstSeenAt ?? args.now,
+      lastSeenAt: args.now,
+    };
+    const discoveryEvidence = [
+      ...prior.filter(
+        (item): boolean => item.kind !== 'documentation' || item.sourceId !== args.sourceId,
+      ),
+      evidence,
+    ];
+    if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
+      throw new Error('Surface discovery provenance exceeds 64 sources.');
+    }
+    if (existing) {
+      await ctx.db.patch(existing._id, { discoveryEvidence });
+      updated += 1;
+      continue;
+    }
+    const surfaceId = await ctx.db.insert('surfaces', {
+      agentId: args.agentId,
+      slug: system.slug,
+      displayName: system.displayName,
+      class: system.class,
+      verdict: 'declared',
+      whereFound: [
+        {
+          sourceId: args.sourceId,
+          ref: system.ref,
+          quote: system.quote,
+          url: system.url,
+        },
+      ],
+      discoveryEvidence,
+      credentialLanded: false,
+      createdAt: args.now,
+    });
+    created += 1;
+    if (agent.state === 'active') {
+      const orientationJobId = await ctx.scheduler.runAfter(
+        0,
+        internal.orientationActions.orientOne,
+        { surfaceId },
+      );
+      await ctx.db.patch(surfaceId, { orientationJobId });
+      scheduled += 1;
+    }
+  }
+  return { created, updated, retired, scheduled };
+}
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
@@ -492,7 +679,10 @@ export const recordInstalledApp = internalMutation({
 /** Reserve the next probe generation for an approved connection candidate. */
 export const beginProbe = internalMutation({
   args: { surfaceId: v.id('surfaces') },
-  handler: async (ctx, args): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (
       !surface ||
@@ -571,10 +761,7 @@ export const demoteAfterProbeFailure = internalMutation({
     reason: v.string(),
     attemptedAt: v.number(),
   },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+  handler: async (ctx, args): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (
       !surface ||

@@ -10,7 +10,7 @@
  */
 
 const TOKEN_SHAPE =
-  /(?<![A-Za-z0-9])(?:lin_api_|xox[baprs]-|ntn_|secret_)[A-Za-z0-9._-]{5,}[A-Za-z0-9_-]/gi;
+  /(?<![A-Za-z0-9])(?:lin_api_|xox[baprs]-|ntn_|secret_|sk-(?:proj-|svcacct-)?)[A-Za-z0-9._-]{5,}[A-Za-z0-9_-]/gi;
 // A bearer value is at least twelve characters: "Bearer header." in prose is
 // not a credential, "Bearer opaque-value-here" is.
 const BEARER = /\bBearer\s+(?=[^\s,;"'`<>]{12,})[^\s,;"'`<>]+/gi;

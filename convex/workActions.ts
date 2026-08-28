@@ -147,7 +147,8 @@ export const evaluateWorkItem = action({
       throw new Error('cannot evaluate: charter not approved');
     }
     const charter = charterRow.body as Charter;
-    const [agentsMd, skillRows, grantRows, surfaceConfig, surfaces] = await Promise.all([
+    const [agent, agentsMd, skillRows, grantRows, surfaceConfig, surfaces] = await Promise.all([
+      ctx.runQuery(api.agents.get, { agentId }),
       ctx.runQuery(api.workspace.readFile, {
         agentId,
         fileName: 'AGENTS.md',
@@ -179,18 +180,19 @@ export const evaluateWorkItem = action({
         charter,
         agentsMd: agentsMd ?? '',
         bossLabel: charter.approvalChain.boss,
+        autonomousActions: autonomousActionsOn(agent),
         surfaceMode: surfaceConfig.mode,
         surfaces,
       },
       lookups,
     );
-    await ctx.runMutation(internal.work.setVerdict, {
+    const storedVerdict: { decision: string } = await ctx.runMutation(internal.work.setVerdict, {
       workItemId: args.workItemId,
       verdict,
     });
 
     // For needs-skill, propose a new skill row immediately.
-    if (verdict.decision === 'needs-skill') {
+    if (storedVerdict.decision === 'needs-skill' && verdict.decision === 'needs-skill') {
       const required = inferRequiredPermissions(candidate);
       const writeScope = `${candidate.sourceSystem}:write`;
       const requiredScopes = [...new Set([...required, writeScope])];
@@ -208,7 +210,7 @@ export const evaluateWorkItem = action({
       });
     }
 
-    return { decision: verdict.decision };
+    return { decision: storedVerdict.decision };
   },
 });
 

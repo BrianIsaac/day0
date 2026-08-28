@@ -241,6 +241,12 @@ export const syncBatch = internalAction({
         pageCount: persisted.pages,
         redactionCount: persisted.redactions,
       });
+      if (completed.completed) {
+        await ctx.scheduler.runAfter(0, internal.documentationDiscoveryActions.discoverSource, {
+          sourceId: source._id,
+          runId: args.runId,
+        });
+      }
       return {
         ok: completed.completed,
         pages: completed.pages,
@@ -283,6 +289,10 @@ export const mirrorForAgent = internalAction({
         }),
       );
       await mirrorPages(ctx, args.agentId, source, normalised);
+      await ctx.runMutation(internal.documentationDiscovery.seedForAgent, {
+        agentId: args.agentId,
+        sourceId: source._id,
+      });
       count += pages.length;
     }
     return { pages: count };

@@ -17,6 +17,7 @@ export function contractSchema(): typeof schema {
     credentialId: v.optional(v.string()),
   })
     .index('by_agent', ['agentId'])
-    .index('by_agent_slug', ['agentId', 'slug']);
+    .index('by_agent_slug', ['agentId', 'slug'])
+    .index('by_class', ['class']);
   return defineSchema({ ...schema.tables, surfaces }) as unknown as typeof schema;
 }

@@ -12,6 +12,7 @@ import { internal } from './_generated/api';
 import { assertDocsComponentReachable, componentFor } from '../src/docs/components';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
+import { reconcileDocumentedSystems } from './surfaces';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -117,6 +118,21 @@ export function agentReadsSource(agent: Doc<'agents'>, sourceId: Id<'docSources'
  *   source: Documentation source being removed.
  */
 async function retireSourceState(ctx: MutationCtx, source: Doc<'docSources'>): Promise<void> {
+  const now = Date.now();
+  const agents = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (index) => index.eq('userId', source.userId))
+    .take(101);
+  if (agents.length > 100) throw new Error('Documentation source exceeds 100 agents.');
+  for (const agent of agents) {
+    if (!agentReadsSource(agent, source._id)) continue;
+    await reconcileDocumentedSystems(ctx, {
+      agentId: agent._id,
+      sourceId: source._id,
+      systems: [],
+      now,
+    });
+  }
   const discovered = await ctx.db
     .query('credentials')
     .withIndex('by_user_source_ref', (index) =>
@@ -128,7 +144,7 @@ async function retireSourceState(ctx: MutationCtx, source: Doc<'docSources'>): P
   for (const credentialId of credentialIds) {
     const credential = await ctx.db.get(credentialId);
     if (credential && !credential.revokedAt) {
-      await ctx.db.patch(credential._id, { revokedAt: Date.now() });
+      await ctx.db.patch(credential._id, { revokedAt: now });
     }
   }
   const runs = await ctx.db
@@ -136,6 +152,14 @@ async function retireSourceState(ctx: MutationCtx, source: Doc<'docSources'>): P
     .withIndex('by_source', (index) => index.eq('sourceId', source._id))
     .collect();
   for (const run of runs) await ctx.db.delete(run._id);
+  const systemDiscoveries = await ctx.db
+    .query('docSystemDiscoveries')
+    .withIndex('by_source', (index) => index.eq('sourceId', source._id))
+    .take(1_001);
+  if (systemDiscoveries.length > 1_000) {
+    throw new Error('Documentation source exceeds 1,000 discovered systems.');
+  }
+  for (const discovery of systemDiscoveries) await ctx.db.delete(discovery._id);
 }
 
 /** List documentation sources owned by the signed-in caller. */
@@ -689,6 +713,7 @@ export const finishSync = internalMutation({
     });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
+      lastCompletedSyncId: run._id,
       status: 'synced',
       lastError: undefined,
       lastSyncAt: now,

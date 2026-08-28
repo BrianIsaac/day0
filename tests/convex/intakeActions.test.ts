@@ -12,6 +12,7 @@ import {
   linearCandidate,
   linearListArguments,
   mcpIssuePage,
+  runDecisionSweep,
   runIntakeSweep,
   safeIntakeError,
   slackChannelsFromPages,
@@ -35,6 +36,7 @@ interface SeededCandidate extends Omit<WorkCandidate, 'observedAt'> {
 }
 
 interface RuntimeHarness {
+  decisionPolls: Array<{ surfaceId: Id<'surfaces'>; polledAt?: number; failure?: string }>;
   decisions: unknown[];
   records: RecordedIntake[];
   runtime: IntakeRuntime;
@@ -152,12 +154,19 @@ function runtimeHarness(
   credentials: Map<string, string>,
 ): RuntimeHarness {
   const records: RecordedIntake[] = [];
+  const decisionPolls: Array<{
+    surfaceId: Id<'surfaces'>;
+    polledAt?: number;
+    failure?: string;
+  }> = [];
   const decisions: unknown[] = [];
   const seeds = new Map<string, SeededCandidate>();
   const openRequests = new Map<string, Array<{ ts: string }>>();
   const agent = agentRow();
   const runtime: IntakeRuntime = {
     listSurfaces: async (): Promise<Doc<'surfaces'>[]> => surfaces,
+    listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
+      surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.class === 'chat'),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       agentId === agent._id ? agent : null,
     listPages: async (): Promise<Doc<'docPages'>[]> => pages,
@@ -182,10 +191,28 @@ function runtimeHarness(
     resolveDecision: async (reply): Promise<void> => {
       decisions.push(reply);
     },
+    recordDecisionPoll: async (record): Promise<void> => {
+      decisionPolls.push(record);
+      const surface = surfaces.find(
+        (candidate: Doc<'surfaces'>): boolean => candidate._id === record.surfaceId,
+      );
+      if (!surface) return;
+      if (record.failure !== undefined) {
+        surface.lastDecisionError = record.failure;
+        return;
+      }
+      surface.lastDecisionError = undefined;
+      if (record.polledAt !== undefined) {
+        surface.lastDecisionPolledAt = Math.max(
+          surface.lastDecisionPolledAt ?? 0,
+          record.polledAt,
+        );
+      }
+    },
     listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
       openRequests.get(String(surfaceId)) ?? [],
   };
-  return { decisions, records, runtime, seeds, openRequests };
+  return { decisionPolls, decisions, records, runtime, seeds, openRequests };
 }
 
 const ONBOARDING = [
@@ -244,6 +271,136 @@ describe('provider timestamp order', (): void => {
 });
 
 describe('real surface intake', (): void => {
+  it('polls manager decisions without scanning work channels or advancing discovery', async (): Promise<void> => {
+    const discoveryCheckpoint = Date.parse('2026-08-26T01:00:00.000Z');
+    const decisionCheckpoint = Date.parse('2026-08-26T01:04:00.000Z');
+    const pollTime = Date.parse('2026-08-26T01:05:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const surface = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId: slackCredential,
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastPolledAt: discoveryCheckpoint,
+      lastDecisionPolledAt: decisionCheckpoint,
+    });
+    const harness = runtimeHarness(
+      // The kanban row is never read: the sweep asks for chat rows only.
+      [surface, surfaceRow('linear', 'Linear', 'kanban')],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const calls: URL[] = [];
+    const fetcher = async (input: string | URL | Request): Promise<Response> => {
+      const url = new URL(String(input));
+      calls.push(url);
+      return slackResponse({
+        ok: true,
+        messages: [
+          { ts: '1770000001.000100', user: 'UMANAGER', text: 'approve ab3xyz' },
+          { ts: '1770000001.000099', user: 'UMANAGER', text: 'reject cd4uvw not now' },
+        ],
+        response_metadata: { next_cursor: '' },
+      });
+    };
+
+    await expect(
+      runDecisionSweep(harness.runtime, {
+        mode: 'real',
+        now: (): number => pollTime,
+        fetcher,
+      }),
+    ).resolves.toEqual({ mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].pathname).toBe('/api/conversations.history');
+    expect(Object.fromEntries(calls[0].searchParams)).toMatchObject({
+      channel: 'DMANAGER',
+      oldest: String(decisionCheckpoint / 1_000),
+      inclusive: 'true',
+    });
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000099',
+        reply: { verb: 'reject', id: 'cd4uvw', reason: 'not now' },
+      },
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000100',
+        reply: { verb: 'approve', id: 'ab3xyz' },
+      },
+    ]);
+    expect(harness.decisionPolls).toEqual([
+      { surfaceId: id<'surfaces'>('surface-slack'), polledAt: pollTime },
+    ]);
+    expect(surface.lastPolledAt).toBe(discoveryCheckpoint);
+    expect(surface.lastDecisionPolledAt).toBe(pollTime);
+    expect(harness.records).toEqual([]);
+    expect(harness.seeds.size).toBe(0);
+  });
+
+  it('keeps a failed decision poll visible and its checkpoint unmoved', async (): Promise<void> => {
+    const decisionCheckpoint = Date.parse('2026-08-26T01:04:00.000Z');
+    const pollTime = Date.parse('2026-08-26T01:05:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const surface = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId: slackCredential,
+      endpoint: 'https://slack.com/api/',
+      // The probe's allowlist lost the one method the decision sweep needs.
+      toolAllowlist: ['conversations.list'],
+      providerIdentityId: 'UBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionPolledAt: decisionCheckpoint,
+    });
+    const harness = runtimeHarness(
+      [surface],
+      [],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const fetcher = async (): Promise<Response> => slackResponse({ ok: true, messages: [] });
+
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollTime, fetcher }),
+    ).resolves.toEqual({ mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(surface.lastDecisionError).toContain(
+      'decision poll failed: Connected Slack surface does not allow conversations.history.',
+    );
+    expect(surface.lastDecisionPolledAt).toBe(decisionCheckpoint);
+    expect(harness.records).toEqual([]);
+
+    surface.toolAllowlist = ['conversations.list', 'conversations.history'];
+    const laterPoll = pollTime + 60_000;
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => laterPoll, fetcher }),
+    ).resolves.toEqual({ mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(surface.lastDecisionError).toBeUndefined();
+    expect(surface.lastDecisionPolledAt).toBe(laterPoll);
+  });
+
+  it('clears a stale decision failure once the surface stops being polled', async (): Promise<void> => {
+    const surface = surfaceRow('slack', 'Slack', 'chat', {
+      verdict: 'listed-dead',
+      credentialId: id<'credentials'>('credential-slack'),
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionError: 'decision poll failed: transport error',
+    });
+    const harness = runtimeHarness([surface], [], new Map());
+
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real' }),
+    ).resolves.toMatchObject({ polled: 0, skipped: 1 });
+    expect(harness.decisionPolls).toEqual([{ surfaceId: id<'surfaces'>('surface-slack') }]);
+    expect(surface.lastDecisionError).toBeUndefined();
+  });
+
   it('walks the documented waterfall, checkpoints successes, and maps Linear and Slack work', async (): Promise<void> => {
     const checkpoint = Date.parse('2026-08-26T01:00:00.000Z');
     const pollTime = Date.parse('2026-08-26T02:00:00.000Z');
@@ -455,34 +612,13 @@ describe('real surface intake', (): void => {
     const historyUrls = slackFetch.mock.calls
       .map(([input]): URL => new URL(String(input)))
       .filter((url: URL): boolean => url.pathname.endsWith('/conversations.history'));
-    expect(historyUrls).toHaveLength(3);
+    expect(historyUrls).toHaveLength(2);
     expect(
       historyUrls.every(
         (url: URL): boolean => url.searchParams.get('oldest') === String(checkpoint / 1_000),
       ),
     ).toBe(true);
-    // Slack lists newest first; replies resolve oldest first so the manager's first
-    // answer is the one that decides and a change of mind is the duplicate.
-    expect(harness.decisions).toEqual([
-      {
-        surfaceId: id<'surfaces'>('surface-slack'),
-        userId: 'UMANAGER',
-        messageTs: '1770000001.000096',
-        reply: { verb: 'reject', id: 'ab3xyz', reason: 'not yet' },
-      },
-      {
-        surfaceId: id<'surfaces'>('surface-slack'),
-        userId: 'UOTHER',
-        messageTs: '1770000001.000098',
-        reply: { verb: 'reject', id: 'cd4uvw', reason: 'not now' },
-      },
-      {
-        surfaceId: id<'surfaces'>('surface-slack'),
-        userId: 'UMANAGER',
-        messageTs: '1770000001.000100',
-        reply: { verb: 'approve', id: 'ab3xyz' },
-      },
-    ]);
+    expect(harness.decisions).toEqual([]);
     expect(
       JSON.stringify({ records: harness.records, seeds: [...harness.seeds.values()] }),
     ).not.toContain('test-value');
@@ -507,7 +643,7 @@ describe('real surface intake', (): void => {
     );
     const calls: Record<string, unknown>[] = [];
     const disconnect = vi.fn(async (): Promise<void> => undefined);
-    const result = await runIntakeSweep(harness.runtime, {
+    const result = await runDecisionSweep(harness.runtime, {
       mode: 'real',
       now: (): number => 12_000,
       makeMcpClient: () => ({
@@ -540,7 +676,7 @@ describe('real surface intake', (): void => {
       }),
     });
 
-    expect(result).toEqual({ candidates: 0, mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(result).toEqual({ mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
     expect(calls).toEqual([{ conversationId: 'manager-conversation', limit: 100 }]);
     // Providers list newest first; replies resolve in the order the manager sent them,
     // so the first answer wins and the later one is the duplicate.
@@ -613,7 +749,7 @@ describe('real surface intake', (): void => {
     };
 
     await expect(
-      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher }),
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollAt, fetcher }),
     ).resolves.toMatchObject({ polled: 1 });
     expect(replyCalls).toHaveLength(1);
     expect(Object.fromEntries(replyCalls[0].searchParams)).toMatchObject({
@@ -665,14 +801,14 @@ describe('real surface intake', (): void => {
     };
 
     // Not allowlisted: the top level is still read, the thread is not.
-    await runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 1_000, fetcher });
+    await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => 1_000, fetcher });
     expect(methods).not.toContain('conversations.replies');
 
     // Allowlisted but nothing open: no thread call either.
     surface.toolAllowlist = ['conversations.list', 'conversations.history', 'conversations.replies'];
     harness.openRequests.set('surface-slack', []);
     methods.length = 0;
-    await runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => 2_000, fetcher });
+    await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => 2_000, fetcher });
     expect(methods).not.toContain('conversations.replies');
     expect(harness.decisions).toEqual([]);
   });
@@ -729,10 +865,10 @@ describe('real surface intake', (): void => {
     });
 
     await expect(
-      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => firstPollAt, makeMcpClient }),
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => firstPollAt, makeMcpClient }),
     ).resolves.toMatchObject({ polled: 1 });
     await expect(
-      runIntakeSweep(harness.runtime, { mode: 'real', now: (): number => secondPollAt, makeMcpClient }),
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => secondPollAt, makeMcpClient }),
     ).resolves.toMatchObject({ polled: 1 });
     expect(calls[1]).toEqual({
       conversationId: 'manager-conversation',
@@ -896,10 +1032,12 @@ describe('real surface intake', (): void => {
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
     const runtime: IntakeRuntime = {
       listSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
+      listChatSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
       getAgent: vi.fn(),
       listPages: vi.fn(),
       decrypt: vi.fn(),
       recordIntake: vi.fn(),
+      recordDecisionPoll: vi.fn(),
       seed: vi.fn(),
       resolveDecision: vi.fn(),
       listOpenDecisionRequests: vi.fn(async (): Promise<Array<{ ts: string }>> => []),
@@ -912,6 +1050,14 @@ describe('real surface intake', (): void => {
       surfaces: 0,
     });
     expect(runtime.listSurfaces).not.toHaveBeenCalled();
+
+    await expect(runDecisionSweep(runtime, { mode: 'mock' })).resolves.toEqual({
+      mode: 'mock',
+      polled: 0,
+      skipped: 0,
+      surfaces: 0,
+    });
+    expect(runtime.listChatSurfaces).not.toHaveBeenCalled();
   });
 
   it('relies on seedItem to deduplicate repeated provider identities', async (): Promise<void> => {

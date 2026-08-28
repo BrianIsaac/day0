@@ -146,6 +146,15 @@ export function DocumentationPage(): React.ReactNode {
                   <p className="text-xs text-[var(--color-muted)] mt-1">
                     {source.pageCount} pages{source.lastError ? ` - ${source.lastError}` : ''}
                   </p>
+                  {/* Discovery runs after every completed sync and decides which
+                      systems this source evidences. A failure leaves the last
+                      accepted set standing, so nothing else on the page would
+                      change to say the newest pages were never read. */}
+                  {source.lastDiscoveryError ? (
+                    <p className="text-xs text-[var(--color-warn)] mt-1">
+                      System discovery: {source.lastDiscoveryError}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap justify-end gap-2">
                   {source.kind === 'mcp' && rotatingSourceId === source._id ? (

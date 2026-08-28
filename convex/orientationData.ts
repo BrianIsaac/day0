@@ -23,6 +23,16 @@ export const surfacesForIntake = internalQuery({
   handler: async (ctx): Promise<Doc<'surfaces'>[]> => await ctx.db.query('surfaces').collect(),
 });
 
+/** Return the deployment's chat surfaces for the minute-by-minute decision poll. */
+export const chatSurfacesForIntake = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Doc<'surfaces'>[]> =>
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_class', (index) => index.eq('class', 'chat'))
+      .collect(),
+});
+
 /** Return one surface and its owning agent for an isolated orientation job. */
 export const surfaceForOrientation = internalQuery({
   args: { surfaceId: v.id('surfaces') },

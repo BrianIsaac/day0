@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * One browser-driven surface and this deployment's component status, so the
@@ -9,6 +9,8 @@ import { describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   browserComponent: true as boolean | undefined,
   reason: undefined as string | undefined,
+  surfaceResult: 'loaded' as 'loaded' | 'empty' | 'loading',
+  lastDecisionError: undefined as string | undefined,
 }));
 
 vi.mock('convex/react', () => ({
@@ -21,6 +23,8 @@ vi.mock('convex/react', () => ({
     }
     if (name === 'surfaces:installRedirectConfigured') return false;
     if (name === 'surfaces:listForAgent') {
+      if (state.surfaceResult === 'loading') return undefined;
+      if (state.surfaceResult === 'empty') return [];
       return [
         {
           _id: 'surface-tile',
@@ -34,6 +38,7 @@ vi.mock('convex/react', () => ({
           whereFound: [],
           credentialLanded: false,
           reason: state.reason,
+          lastDecisionError: state.lastDecisionError,
         },
       ];
     }
@@ -44,7 +49,10 @@ vi.mock('convex/react', () => ({
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
   CredentialRow,
+  EMPTY_SURFACES,
+  DiscoveryProvenance,
   EvidenceQuote,
+  LOADING_SURFACES,
   ProvisioningRow,
   SurfaceLadder,
   SurfacesTab,
@@ -56,6 +64,13 @@ import {
   type CredentialPresentation,
   type ProvisioningPresentation,
 } from '../../../../../src/surfaces/credential-presentation';
+
+beforeEach((): void => {
+  state.browserComponent = true;
+  state.reason = undefined;
+  state.surfaceResult = 'loaded';
+  state.lastDecisionError = undefined;
+});
 
 /** Render one isolated credential row without running dashboard hooks. */
 function renderCredentialRow(
@@ -154,6 +169,69 @@ describe('SurfacesTab evidence quote', (): void => {
       '&lt;page url=&quot;ftp://x&quot;&gt;Linear&lt;/page&gt;',
     );
     expect(renderToStaticMarkup(<EvidenceQuote quote={undefined} />)).toBe('');
+  });
+});
+
+describe('SurfacesTab system discovery provenance', (): void => {
+  it('shows the manager and documentation page when both named the system', (): void => {
+    const markup = renderToStaticMarkup(
+      <DiscoveryProvenance
+        evidence={[
+          {
+            kind: 'charter',
+            ref: 'manager 1:1',
+            quote: 'We use Linear.',
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+          {
+            kind: 'documentation',
+            sourceId: 'source-1',
+            ref: 'systems/linear.md',
+            quote: '# Linear',
+            url: 'https://notion.example/linear',
+            current: true,
+            firstSeenAt: 2,
+            lastSeenAt: 2,
+          },
+        ]}
+        sourceLabels={new Map([['source-1', 'RevOps handbook']])}
+      />,
+    );
+    expect(markup).toContain('System discovered from');
+    expect(markup).toContain('manager 1:1');
+    expect(markup).toContain('RevOps handbook / systems/linear.md');
+    expect(markup).toContain('href="https://notion.example/linear"');
+    expect(markup).toContain('We use Linear.');
+    expect(markup).toContain('# Linear');
+    // A page link here is the same affordance as a route-evidence page link a
+    // few lines down the same card, so it carries the same accent treatment
+    // rather than reading as muted and disabled.
+    expect(markup).toContain(
+      '<a href="https://notion.example/linear" target="_blank" rel="noreferrer" class="text-[var(--color-accent)] underline">',
+    );
+  });
+
+  it('keeps edited-away documentation provenance visible as historical', (): void => {
+    const markup = renderToStaticMarkup(
+      <DiscoveryProvenance
+        evidence={[
+          {
+            kind: 'documentation',
+            sourceId: 'source-1',
+            ref: 'systems/northstar-crm.md',
+            quote: '# Northstar CRM',
+            current: false,
+            firstSeenAt: 1,
+            lastSeenAt: 2,
+          },
+        ]}
+        sourceLabels={new Map([['source-1', 'Team folder']])}
+      />,
+    );
+    expect(markup).toContain('Team folder / systems/northstar-crm.md');
+    expect(markup).toContain('no longer named in the current page');
   });
 });
 
@@ -307,6 +385,20 @@ describe('SurfacesTab dedicated-app row', (): void => {
 describe('SurfacesTab and the optional browser component', (): void => {
   const agentId = 'agent-1' as Id<'agents'>;
 
+  it('says which connection context is loading', (): void => {
+    state.surfaceResult = 'loading';
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).toContain(LOADING_SURFACES);
+    expect(markup).not.toContain('Looker pipeline tile');
+  });
+
+  it('explains how an empty environment becomes populated', (): void => {
+    state.surfaceResult = 'empty';
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).toContain(EMPTY_SURFACES);
+    expect(markup).not.toContain('Looker pipeline tile');
+  });
+
   it('proposes the path, says the component is not running, and holds approval', (): void => {
     state.browserComponent = false;
     state.reason = undefined;
@@ -336,6 +428,20 @@ describe('SurfacesTab and the optional browser component', (): void => {
     expect(
       markup.match(/<button[^>]*disabled=""[^>]*>Approve as (manager|IT)<\/button>/g),
     ).toHaveLength(2);
+  });
+
+  it('names a failing manager decision poll on the card that stopped answering', (): void => {
+    state.lastDecisionError =
+      'decision poll failed: Connected Slack surface does not allow conversations.history.';
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).toContain('Manager decisions: decision poll failed:');
+    expect(markup).toContain('does not allow conversations.history.');
+  });
+
+  it('says nothing about manager decisions while the poll is healthy', (): void => {
+    expect(renderToStaticMarkup(<SurfacesTab agentId={agentId} />)).not.toContain(
+      'Manager decisions:',
+    );
   });
 
   it('leaves approval alone once the component is running', (): void => {

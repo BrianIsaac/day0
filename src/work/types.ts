@@ -156,4 +156,5 @@ export interface MockSurfaceSnapshot {
 }
 
 export const COLD_START_WIP_LIMIT = 1;
+export const AUTONOMOUS_WIP_LIMIT = 3;
 export const VALUE_THRESHOLD = 30;

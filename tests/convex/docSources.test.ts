@@ -359,6 +359,66 @@ describe('documentation sources in real mode', (): void => {
     });
   });
 
+  it('retires a discovered system as history and keeps its approved surface', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      await ctx.db.insert('docSystemDiscoveries', {
+        sourceId,
+        slug: 'northstar-crm',
+        displayName: 'Northstar CRM',
+        class: 'crm',
+        ref: 'systems/northstar-crm.md',
+        quote: '# Northstar CRM',
+        current: true,
+        firstSeenAt: 1,
+        lastSeenAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'northstar-crm',
+        displayName: 'Northstar CRM',
+        class: 'crm',
+        verdict: 'approved',
+        path: 'documented-api',
+        endpoint: 'https://northstar.example/api',
+        whereFound: [{ ref: 'systems/northstar-crm.md', quote: '# Northstar CRM' }],
+        discoveryEvidence: [
+          {
+            kind: 'documentation',
+            sourceId,
+            ref: 'systems/northstar-crm.md',
+            quote: '# Northstar CRM',
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+        ],
+        credentialLanded: true,
+        createdAt: 1,
+      });
+    });
+
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await owner.mutation(api.docSources.unlink, { sourceId });
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    // The row survives as an audit row with its authority intact; only the
+    // provenance that justified it becomes history.
+    expect(surface).toMatchObject({
+      verdict: 'approved',
+      path: 'documented-api',
+      endpoint: 'https://northstar.example/api',
+    });
+    expect(surface?.discoveryEvidence).toMatchObject([
+      { kind: 'documentation', sourceId, current: false },
+    ]);
+    await expect(
+      harness.run(async (ctx) => await ctx.db.query('docSystemDiscoveries').collect()),
+    ).resolves.toEqual([]);
+  });
+
   it('refuses resync and unlink of a source owned by another caller', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
