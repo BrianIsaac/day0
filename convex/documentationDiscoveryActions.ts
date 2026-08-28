@@ -71,7 +71,18 @@ export const discoverSource = internalAction({
     ctx,
     args,
   ): Promise<{ applied: boolean; systems: number; unchanged?: boolean; reason?: string }> => {
-    const context = await ctx.runQuery(internal.documentationDiscovery.context, args);
+    // The read is capped, and a source past the cap would otherwise throw out
+    // of a scheduled function that nothing is watching: record why instead.
+    let context: Awaited<
+      ReturnType<typeof ctx.runQuery<typeof internal.documentationDiscovery.context>>
+    >;
+    try {
+      context = await ctx.runQuery(internal.documentationDiscovery.context, args);
+    } catch (error) {
+      const reason = safeDiscoveryError(error);
+      await ctx.runMutation(internal.documentationDiscovery.recordFailure, { ...args, reason });
+      return { applied: false, systems: 0, reason };
+    }
     if (!context) return { applied: false, systems: 0 };
     const pages: DiscoveryPage[] = context.pages.map((page) => ({
       ref: page.ref,
@@ -105,23 +116,31 @@ export const discoverSource = internalAction({
       inferred = [];
     }
     const systems = mergeCandidates([...structural, ...inferred]);
-    const result = await ctx.runMutation(internal.documentationDiscovery.apply, {
-      ...args,
-      fingerprint: nextFingerprint,
-      warning,
-      candidates: systems.map((system) => ({
-        slug:
-          system.name
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-|-$/g, '') || 'system',
-        displayName: system.name,
-        class: system.class,
-        ref: system.ref,
-        quote: system.quote,
-        url: system.url,
-      })),
-    });
-    return { applied: result.applied, systems: systems.length };
+    try {
+      const result = await ctx.runMutation(internal.documentationDiscovery.apply, {
+        ...args,
+        fingerprint: nextFingerprint,
+        warning,
+        candidates: systems.map((system) => ({
+          slug:
+            system.name
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-|-$/g, '') || 'system',
+          displayName: system.name,
+          class: system.class,
+          ref: system.ref,
+          quote: system.quote,
+          url: system.url,
+        })),
+      });
+      return { applied: result.applied, systems: systems.length };
+    } catch (error) {
+      // Reconciliation refuses rather than half-applies, so the last accepted
+      // state stands; the operator still has to be told it did.
+      const reason = safeDiscoveryError(error);
+      await ctx.runMutation(internal.documentationDiscovery.recordFailure, { ...args, reason });
+      return { applied: false, systems: 0, reason };
+    }
   },
 });
