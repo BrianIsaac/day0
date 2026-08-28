@@ -129,6 +129,80 @@ describe('documentation discovery lifecycle', (): void => {
     ]);
   });
 
+  it('backfills manager provenance on a legacy surface without seeding or orienting again', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId, runId } = await seedDiscovery(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: 'v1',
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+        body: {
+          namedSystems: [
+            { name: 'Linear', class: 'kanban', whereMentioned: 'The manager named Linear.' },
+          ],
+        },
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        whereFound: [{ ref: 'legacy.md', quote: 'Linear MCP endpoint' }],
+        credentialLanded: true,
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        lastVerifiedAt: 4,
+        createdAt: 1,
+      });
+    });
+
+    await expect(
+      harness.mutation(internal.documentationDiscovery.apply, {
+        sourceId,
+        runId,
+        fingerprint: 'first',
+        candidates: [linear],
+      }),
+    ).resolves.toMatchObject({ applied: true, created: 0, updated: 1, scheduled: 0 });
+    const row = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent_slug', (index) =>
+            index.eq('agentId', agentId).eq('slug', 'linear'),
+          )
+          .unique(),
+    );
+    expect(row).toMatchObject({
+      verdict: 'connected',
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      managerApprovedAt: 2,
+      itApprovedAt: 3,
+      lastVerifiedAt: 4,
+      discoveryEvidence: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'charter',
+          quote: 'The manager named Linear.',
+          current: true,
+        }),
+        expect.objectContaining({
+          kind: 'documentation',
+          sourceId,
+          ref: 'systems/linear.md',
+          current: true,
+        }),
+      ]),
+    });
+  });
+
   it('converges without duplicating or re-orienting an existing rejected row', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());

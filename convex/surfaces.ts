@@ -37,6 +37,12 @@ export interface DocumentedSystemSeed {
   url?: string;
 }
 
+export interface CharterSystemSeed {
+  name: string;
+  class: string;
+  whereMentioned: string;
+}
+
 function withProbeAttempt(
   surface: Doc<'surfaces'>,
   attempt: ProbeAttempt,
@@ -60,6 +66,47 @@ export function surfaceSlug(name: string): string {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '') || 'system'
   );
+}
+
+/** Add manager provenance to legacy rows without replaying charter seeding. */
+export async function backfillCharterProvenance(
+  ctx: MutationCtx,
+  args: {
+    agentId: Id<'agents'>;
+    namedSystems: readonly CharterSystemSeed[];
+    now: number;
+  },
+): Promise<number> {
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
+    .collect();
+  const bySlug = new Map(surfaces.map((surface) => [surface.slug, surface]));
+  let updated = 0;
+  for (const system of args.namedSystems) {
+    if (system.class === 'docs') continue;
+    const surface = bySlug.get(surfaceSlug(system.name));
+    if (!surface) continue;
+    const prior = surface.discoveryEvidence ?? [];
+    if (prior.some((item): boolean => item.kind === 'charter')) continue;
+    const discoveryEvidence: DiscoveryEvidence[] = [
+      ...prior,
+      {
+        kind: 'charter',
+        ref: 'manager 1:1',
+        quote: system.whereMentioned,
+        current: true,
+        firstSeenAt: surface.createdAt,
+        lastSeenAt: args.now,
+      },
+    ];
+    if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
+      throw new Error('Surface discovery provenance exceeds 64 sources.');
+    }
+    await ctx.db.patch(surface._id, { discoveryEvidence });
+    updated += 1;
+  }
+  return updated;
 }
 
 /** List connection verdicts for one owned agent. */

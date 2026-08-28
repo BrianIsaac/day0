@@ -2,7 +2,13 @@ import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { agentReadsSource } from './docSources';
-import { reconcileDocumentedSystems, type DocumentedSystemSeed } from './surfaces';
+import {
+  backfillCharterProvenance,
+  reconcileDocumentedSystems,
+  type CharterSystemSeed,
+  type DocumentedSystemSeed,
+} from './surfaces';
+import type { Charter } from '../src/agent/charter';
 
 const candidateValidator = v.object({
   slug: v.string(),
@@ -150,6 +156,18 @@ export const apply = internalMutation({
     const totals = { created: 0, updated: 0, retired: 0, scheduled: 0 };
     for (const agent of agents) {
       if (!agentReadsSource(agent, source._id)) continue;
+      const charter = await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
+        .order('desc')
+        .first();
+      if (charter?.approved) {
+        await backfillCharterProvenance(ctx, {
+          agentId: agent._id,
+          namedSystems: ((charter.body as Charter).namedSystems ?? []) as CharterSystemSeed[],
+          now,
+        });
+      }
       const result = await reconcileDocumentedSystems(ctx, {
         agentId: agent._id,
         sourceId: source._id,
