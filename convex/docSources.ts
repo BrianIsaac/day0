@@ -9,7 +9,7 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { assertDocsComponentReachable } from '../src/docs/components';
+import { assertDocsComponentReachable, componentFor } from '../src/docs/components';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 
@@ -357,20 +357,36 @@ export const pagesForAgent = query({
  * need no container at all. Counts only - no locator, label or credential
  * leaves the deployment.
  */
+interface LinkedSourceKind {
+  kind: string;
+  serverKind?: string;
+  component?: string;
+  count: number;
+}
+
 export const linkedKinds = internalQuery({
   args: {},
-  handler: async (ctx): Promise<Array<{ kind: string; serverKind?: string; count: number }>> => {
+  handler: async (ctx): Promise<LinkedSourceKind[]> => {
     const sources = await ctx.db.query('docSources').take(1_001);
-    if (sources.length > 1_000) throw new Error('Documentation source count exceeds the setup limit.');
-    const counts = new Map<string, { kind: string; serverKind?: string; count: number }>();
+    if (sources.length > 1_000)
+      throw new Error('Documentation source count exceeds the setup limit.');
+    const counts = new Map<string, LinkedSourceKind>();
     for (const source of sources) {
-      const key = `${source.kind}:${source.serverKind ?? ''}`;
-      const row = counts.get(key) ?? { kind: source.kind, serverKind: source.serverKind, count: 0 };
+      const component = componentFor(source);
+      const key = `${source.kind}:${source.serverKind ?? ''}:${component ?? ''}`;
+      const row = counts.get(key) ?? {
+        kind: source.kind,
+        serverKind: source.serverKind,
+        component,
+        count: 0,
+      };
       row.count += 1;
       counts.set(key, row);
     }
     return [...counts.values()].sort((left, right): number =>
-      `${left.kind}${left.serverKind ?? ''}`.localeCompare(`${right.kind}${right.serverKind ?? ''}`),
+      `${left.kind}${left.serverKind ?? ''}${left.component ?? ''}`.localeCompare(
+        `${right.kind}${right.serverKind ?? ''}${right.component ?? ''}`,
+      ),
     );
   },
 });

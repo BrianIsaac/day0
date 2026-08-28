@@ -34,30 +34,12 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const ENV_FILE = process.argv[2] ?? '.env.local';
 
 /** The compose service that verifies authored skills without an account. */
 const SANDBOX_SERVICE = 'sandbox';
-
-/**
- * Every profile `docker-compose.yml` defines.
- *
- * `docker compose ps` only lists services whose profile is enabled, so asking
- * about one profile answers about one component. The question here is which
- * components are running, so every profile is enabled and the answer is read
- * off the service names.
- */
-const COMPOSE_PROFILES = [
-  'real',
-  'docs-notion',
-  'browser',
-  'demo',
-  'test',
-  'dev',
-  'model',
-  'sandbox',
-] as const;
 
 /**
  * The optional components, in the order the running instructions introduce
@@ -162,7 +144,7 @@ function main(): void {
   const selfHosted = !!v.CONVEX_SELF_HOSTED_URL;
   const projectName = v.COMPOSE_PROJECT_NAME || 'day0';
   // Asked once and shared: every section that cares about a container reads the
-  // same answer, and `docker compose ps` is the slowest thing here.
+  // same answer, and asking Docker is the slowest thing here.
   const services = composeRunningServices(projectName);
 
   const sections: Section[] = [
@@ -236,7 +218,12 @@ function driftedHandbookTwins(): string[] {
 }
 
 /**
- * Ask Compose which services are running in the shared Day0 project.
+ * Ask Docker which Compose services are running in the shared Day0 project.
+ *
+ * Reading container labels avoids parsing every optional profile. Enabling the
+ * Notion profile merely to run `compose ps` would require its transport token,
+ * so a valid folder-only installation could otherwise make service discovery
+ * fail before Docker was asked anything.
  *
  * Args:
  *   projectName: Explicit Compose project name.
@@ -244,20 +231,29 @@ function driftedHandbookTwins(): string[] {
  * Returns:
  *   Running service names, or undefined when Docker cannot be queried.
  */
-function composeRunningServices(projectName: string): string[] | undefined {
-  const probe = spawnSync(
+export type DockerServiceProbe = (
+  command: string,
+  args: string[],
+  options: { encoding: 'utf8'; timeout: number },
+) => { status: number | null; stdout?: string | null };
+
+const systemDockerServiceProbe: DockerServiceProbe = (command, args, options) => {
+  const result = spawnSync(command, args, options);
+  return { status: result.status, stdout: result.stdout };
+};
+
+export function composeRunningServices(
+  projectName: string,
+  run: DockerServiceProbe = systemDockerServiceProbe,
+): string[] | undefined {
+  const probe = run(
     'docker',
     [
-      'compose',
-      '-p',
-      projectName,
-      '--env-file',
-      ENV_FILE,
-      ...COMPOSE_PROFILES.flatMap((profile: string): string[] => ['--profile', profile]),
       'ps',
-      '--status',
-      'running',
-      '--services',
+      '--filter',
+      `label=com.docker.compose.project=${projectName}`,
+      '--format',
+      '{{.Label "com.docker.compose.service"}}',
     ],
     { encoding: 'utf8', timeout: 15_000 },
   );
@@ -386,7 +382,13 @@ function surfacesSection(values: Values, services: string[] | undefined): Sectio
         'the tests read the fixture, so a stale twin tests a page nobody publishes.',
     );
   }
-  if (!backendRunning || !docsReadable || !keyPresent || count === undefined || drifted.length > 0) {
+  if (
+    !backendRunning ||
+    !docsReadable ||
+    !keyPresent ||
+    count === undefined ||
+    drifted.length > 0
+  ) {
     return { title: 'Surfaces: real (local) - needs fixing', status: 'gap', lines };
   }
   return {
@@ -407,18 +409,32 @@ function surfacesSection(values: Values, services: string[] | undefined): Sectio
  */
 function linkedDocSourceKinds(
   values: Values,
-): Array<{ kind: string; serverKind?: string; count: number }> | undefined {
+): Array<{ kind: string; serverKind?: string; component?: string; count: number }> | undefined {
   if (!values.CONVEX_SELF_HOSTED_URL || !values.CONVEX_SELF_HOSTED_ADMIN_KEY) return undefined;
   const probe = spawnSync(
     'npx',
-    ['convex', 'run', '--typecheck', 'disable', '--codegen', 'disable', 'docSources:linkedKinds', '{}'],
+    [
+      'convex',
+      'run',
+      '--typecheck',
+      'disable',
+      '--codegen',
+      'disable',
+      'docSources:linkedKinds',
+      '{}',
+    ],
     { encoding: 'utf8', timeout: 30_000, env: { ...process.env, ...values } },
   );
   if (probe.status !== 0) return undefined;
   try {
     const parsed: unknown = JSON.parse((probe.stdout || '').trim());
     return Array.isArray(parsed)
-      ? (parsed as Array<{ kind: string; serverKind?: string; count: number }>)
+      ? (parsed as Array<{
+          kind: string;
+          serverKind?: string;
+          component?: string;
+          count: number;
+        }>)
       : undefined;
   } catch {
     return undefined;
@@ -437,6 +453,7 @@ function linkedDocSourceKinds(
 export function docSourceDependency(row: {
   kind: string;
   serverKind?: string;
+  component?: string;
   count: number;
 }): string {
   const label = row.serverKind ? `${row.kind}/${row.serverKind}` : row.kind;
@@ -444,7 +461,7 @@ export function docSourceDependency(row: {
   if (row.kind !== 'mcp') {
     return `${row.count} ${label} ${plural} - read by the backend itself; no component needed.`;
   }
-  if (row.serverKind === 'notion') {
+  if (row.component === 'docs-notion-mcp') {
     return `${row.count} ${label} ${plural} - needs day0's Notion component (--profile docs-notion).`;
   }
   return `${row.count} ${label} ${plural} - points at an MCP server you already run; no day0 component needed.`;
@@ -480,7 +497,7 @@ function componentsSection(
       title: 'Components: Docker could not be asked',
       status: 'warn',
       lines: [
-        `\`docker compose -p ${projectName} ps\` could not be run, so which optional`,
+        `\`docker ps\` could not inspect Compose project ${projectName}, so which optional`,
         'components are running is unknown. Everything else above still applies.',
       ],
     };
@@ -523,7 +540,7 @@ function componentsSection(
   } else {
     lines.push('Linked documentation sources:');
     for (const row of kinds) lines.push(`  ${docSourceDependency(row)}`);
-    const needsNotion = kinds.some((row): boolean => row.kind === 'mcp' && row.serverKind === 'notion');
+    const needsNotion = kinds.some((row): boolean => row.component === 'docs-notion-mcp');
     if (needsNotion && !services.includes('docs-notion-mcp')) {
       status = 'warn';
       lines.push(
@@ -909,4 +926,4 @@ function marker(status: Status): string {
   return status === 'ok' ? 'ok  ' : status === 'warn' ? 'note' : 'GAP ';
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

@@ -229,7 +229,9 @@ describe('documentation components a source depends on', (): void => {
     expect(reach).toHaveBeenCalled();
     // Nothing half-linked, and no credential stored for a source that does not exist.
     await expect(owner.query(api.docSources.listMine, {})).resolves.toEqual([]);
-    const credentials = await harness.run(async (ctx) => await ctx.db.query('credentials').collect());
+    const credentials = await harness.run(
+      async (ctx) => await ctx.db.query('credentials').collect(),
+    );
     expect(credentials).toEqual([]);
   });
 
@@ -259,6 +261,12 @@ describe('documentation components a source depends on', (): void => {
           locator: DOCS_NOTION_LOCATOR,
           serverKind: 'notion' as const,
         },
+        {
+          label: 'Enterprise Notion proxy',
+          kind: 'mcp' as const,
+          locator: 'https://notion.internal.example/mcp',
+          serverKind: 'notion' as const,
+        },
       ]) {
         await ctx.db.insert('docSources', {
           userId: 'owner',
@@ -271,8 +279,14 @@ describe('documentation components a source depends on', (): void => {
     });
     const kinds = await harness.query(internal.docSources.linkedKinds, {});
     expect(kinds).toEqual([
-      { kind: 'folder', serverKind: undefined, count: 2 },
-      { kind: 'mcp', serverKind: 'notion', count: 1 },
+      { kind: 'folder', serverKind: undefined, component: undefined, count: 2 },
+      { kind: 'mcp', serverKind: 'notion', component: undefined, count: 1 },
+      {
+        kind: 'mcp',
+        serverKind: 'notion',
+        component: 'docs-notion-mcp',
+        count: 1,
+      },
     ]);
     expect(JSON.stringify(kinds)).not.toContain('runbooks');
   });
