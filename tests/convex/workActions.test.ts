@@ -1486,11 +1486,12 @@ describe('work action surface enablement', (): void => {
     'reads the $label switch when applying the production WIP cap',
     async ({ autonomousActions, openClaims, expectedDecision, expectedReason }): Promise<void> => {
       useSurfaceMode('mock');
-      const harness = convexTest(contractSchema(), allConvexModules()).withIdentity(OWNER);
-      const { agentId, workItemId } = await seed(harness, 'mock', undefined, {
+      const rootHarness = convexTest(contractSchema(), allConvexModules());
+      const harness = rootHarness.withIdentity(OWNER);
+      const { agentId, workItemId } = await seed(rootHarness, 'mock', undefined, {
         autonomousActions,
       });
-      await harness.run(async (ctx): Promise<void> => {
+      await rootHarness.run(async (ctx): Promise<void> => {
         await ctx.db.patch(workItemId, {
           state: 'discovered',
           title: 'Prepare close summaries',
@@ -1516,7 +1517,7 @@ describe('work action surface enablement', (): void => {
       await expect(
         harness.action(api.workActions.evaluateWorkItem, { workItemId }),
       ).resolves.toEqual({ decision: expectedDecision });
-      const row = await readItem(harness, workItemId);
+      const row = await readItem(rootHarness, workItemId);
       expect(row.verdict).toMatchObject({
         decision: expectedDecision,
         ...(expectedReason ? { reason: expectedReason } : {}),
