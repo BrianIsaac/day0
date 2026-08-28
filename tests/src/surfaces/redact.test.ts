@@ -8,11 +8,12 @@ import {
 
 const LINEAR = ['lin', 'api', 'ReviewValue0123456789'].join('_');
 const SLACK = ['xoxb', '1234567890', 'ReviewValue'].join('-');
+const OPENAI = ['sk', 'proj', 'ReviewValue0123456789'].join('-');
 
 describe('surface credential redaction', (): void => {
   it('replaces provider-prefixed values wherever they occur', (): void => {
-    expect(redactTokenShapes(`key ${LINEAR} and token ${SLACK}.`)).toBe(
-      'key <redacted> and token <redacted>.',
+    expect(redactTokenShapes(`key ${LINEAR}, token ${SLACK}, provider ${OPENAI}.`)).toBe(
+      'key <redacted>, token <redacted>, provider <redacted>.',
     );
     expect(redactTokenShapes(`(${LINEAR})`)).toBe('(<redacted>)');
     expect(containsTokenShape('nothing to see')).toBe(false);

@@ -1,22 +1,28 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
-/** The discovery classifier, never reached by the paths under test here. */
-const model = vi.hoisted(() => ({ calls: 0 }));
+/** Controllable discovery classifier boundary. */
+const model = vi.hoisted(() => ({ calls: 0, error: undefined as Error | undefined }));
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: async (): Promise<{ systems: [] }> => {
     model.calls += 1;
+    if (model.error) throw model.error;
     return { systems: [] };
   },
 }));
+
+beforeEach((): void => {
+  model.calls = 0;
+  model.error = undefined;
+});
 
 interface Seeded {
   sourceId: Id<'docSources'>;
@@ -101,5 +107,22 @@ describe('the documentation discovery action', (): void => {
     const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
     expect(source?.lastDiscoverySyncId).toEqual(runId);
     expect(source?.lastDiscoveryError).toBeUndefined();
+  });
+
+  it('redacts provider credentials before making a discovery failure visible', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness, 1);
+    const bearer = 'opaque-provider-secret-12345';
+    const providerKey = 'sk-proj-ReviewValue0123456789';
+    model.error = new Error(`Provider rejected Authorization: Bearer ${bearer} for ${providerKey}`);
+
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+    ).resolves.toMatchObject({ applied: false, systems: 0 });
+
+    const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+    expect(source?.lastDiscoveryError).toContain('<redacted>');
+    expect(source?.lastDiscoveryError).not.toContain(bearer);
+    expect(source?.lastDiscoveryError).not.toContain(providerKey);
   });
 });

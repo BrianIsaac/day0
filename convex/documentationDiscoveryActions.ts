@@ -15,6 +15,7 @@ import {
   type DiscoveryModelResult,
   type DiscoveryPage,
 } from '../src/docs/system-discovery';
+import { safeFailureMessage } from '../src/surfaces/redact';
 
 const DISCOVERY_BATCH_SIZE = 25;
 
@@ -43,9 +44,7 @@ function fingerprint(pages: readonly DiscoveryPage[]): string {
 }
 
 function safeDiscoveryError(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
-    .replace(/(?:ntn_|lin_api_|xox[bpa]-|secret_)[A-Za-z0-9._-]+/gi, '<redacted>')
-    .slice(0, 500);
+  return safeFailureMessage(error, '', 'Documentation discovery failed.', 500);
 }
 
 async function modelCandidates(
