@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * One browser-driven surface and this deployment's component status, so the
@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   browserComponent: true as boolean | undefined,
   reason: undefined as string | undefined,
+  surfaceResult: 'loaded' as 'loaded' | 'empty' | 'loading',
 }));
 
 vi.mock('convex/react', () => ({
@@ -21,6 +22,8 @@ vi.mock('convex/react', () => ({
     }
     if (name === 'surfaces:installRedirectConfigured') return false;
     if (name === 'surfaces:listForAgent') {
+      if (state.surfaceResult === 'loading') return undefined;
+      if (state.surfaceResult === 'empty') return [];
       return [
         {
           _id: 'surface-tile',
@@ -44,7 +47,9 @@ vi.mock('convex/react', () => ({
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
   CredentialRow,
+  EMPTY_SURFACES,
   EvidenceQuote,
+  LOADING_SURFACES,
   ProvisioningRow,
   SurfaceLadder,
   SurfacesTab,
@@ -56,6 +61,12 @@ import {
   type CredentialPresentation,
   type ProvisioningPresentation,
 } from '../../../../../src/surfaces/credential-presentation';
+
+beforeEach((): void => {
+  state.browserComponent = true;
+  state.reason = undefined;
+  state.surfaceResult = 'loaded';
+});
 
 /** Render one isolated credential row without running dashboard hooks. */
 function renderCredentialRow(
@@ -306,6 +317,20 @@ describe('SurfacesTab dedicated-app row', (): void => {
 
 describe('SurfacesTab and the optional browser component', (): void => {
   const agentId = 'agent-1' as Id<'agents'>;
+
+  it('says which connection context is loading', (): void => {
+    state.surfaceResult = 'loading';
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).toContain(LOADING_SURFACES);
+    expect(markup).not.toContain('Looker pipeline tile');
+  });
+
+  it('explains how an empty environment becomes populated', (): void => {
+    state.surfaceResult = 'empty';
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).toContain(EMPTY_SURFACES);
+    expect(markup).not.toContain('Looker pipeline tile');
+  });
 
   it('proposes the path, says the component is not running, and holds approval', (): void => {
     state.browserComponent = false;

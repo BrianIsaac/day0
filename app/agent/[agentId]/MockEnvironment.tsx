@@ -17,20 +17,36 @@ export type EnvironmentMode = 'mock' | 'real';
 
 const CAPTIONS: Record<EnvironmentMode, string> = {
   mock: 'Mock surfaces - when the agent runs a skill, edits land here in real time',
-  real: 'Real surfaces - the Docs tab mirrors the linked documentation; Slack, Spreadsheet, Twitter and Tickets are mock-only and stay empty; the agent acts through the connections on the Surfaces tab',
+  real: 'Documentation day0 can read, and the connection status of every system it has discovered',
 };
 
-/** Tab strip; the sublabel names the mock fixture in mock mode and what the tab mirrors in real mode. */
-const TABS: Array<{ key: TabKey; label: string; sublabel: Record<EnvironmentMode, string> }> = [
-  { key: 'slack', label: 'Slack', sublabel: { mock: 'channels + DMs', real: 'mock-only' } },
-  { key: 'spreadsheet', label: 'Spreadsheet', sublabel: { mock: 'Q4 Revenue Tracker', real: 'mock-only' } },
-  { key: 'docs', label: 'Docs', sublabel: { mock: 'team wiki + how-tos', real: 'linked documentation' } },
-  { key: 'tweet', label: 'Twitter', sublabel: { mock: 'mentions + drafts', real: 'mock-only' } },
-  { key: 'tickets', label: 'Tickets', sublabel: { mock: 'Linear-style queue', real: 'mock-only' } },
-  { key: 'surfaces', label: 'Surfaces', sublabel: { mock: 'connections + evidence', real: 'connections + evidence' } },
+/** Tab strip; each sublabel names the content available in that mode. */
+const TABS: Array<{
+  key: TabKey;
+  label: string;
+  sublabel: Partial<Record<EnvironmentMode, string>>;
+}> = [
+  { key: 'slack', label: 'Slack', sublabel: { mock: 'channels + DMs' } },
+  { key: 'spreadsheet', label: 'Spreadsheet', sublabel: { mock: 'Q4 Revenue Tracker' } },
+  {
+    key: 'docs',
+    label: 'Docs',
+    sublabel: { mock: 'team wiki + how-tos', real: 'linked documentation' },
+  },
+  { key: 'tweet', label: 'Twitter', sublabel: { mock: 'mentions + drafts' } },
+  { key: 'tickets', label: 'Tickets', sublabel: { mock: 'Linear-style queue' } },
+  { key: 'surfaces', label: 'Surfaces', sublabel: { real: 'connections + evidence' } },
 ];
 
 const TAB_KEYS = new Set<string>(TABS.map((tab): TabKey => tab.key));
+const AVAILABLE_TAB_KEYS: Record<EnvironmentMode, ReadonlySet<TabKey>> = {
+  mock: new Set<TabKey>(['slack', 'spreadsheet', 'docs', 'tweet', 'tickets']),
+  real: new Set<TabKey>(['docs', 'surfaces']),
+};
+
+function tabIsAvailable(key: TabKey, isReal: boolean): boolean {
+  return AVAILABLE_TAB_KEYS[isReal ? 'real' : 'mock'].has(key);
+}
 
 /**
  * Read the tab a location hash names.
@@ -55,19 +71,16 @@ export function tabFromHash(hash: string, isReal: boolean): TabKey | undefined {
     return undefined;
   }
   if (!TAB_KEYS.has(key)) return undefined;
-  if (key === 'surfaces' && !isReal) return undefined;
-  return key as TabKey;
+  const tabKey = key as TabKey;
+  return tabIsAvailable(tabKey, isReal) ? tabKey : undefined;
 }
 
 /** Keep the selected tab valid as hashes and the resolved deployment mode change. */
-export function activeTabForEnvironment(
-  active: TabKey,
-  hash: string,
-  isReal: boolean,
-): TabKey {
+export function activeTabForEnvironment(active: TabKey, hash: string, isReal: boolean): TabKey {
   const named = tabFromHash(hash, isReal);
   if (named) return named;
-  return !isReal && active === 'surfaces' ? 'slack' : active;
+  if (tabIsAvailable(active, isReal)) return active;
+  return isReal ? 'docs' : 'slack';
 }
 
 export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
@@ -85,12 +98,13 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const isReal = config?.mode === 'real';
   const mode: EnvironmentMode = isReal ? 'real' : 'mock';
   const surfaces = useQuery(api.surfaces.listForAgent, isReal ? { agentId } : 'skip');
-  const tabs = isReal ? TABS : TABS.filter((tab) => tab.key !== 'surfaces');
+  const tabs = TABS.filter((tab) => tabIsAvailable(tab.key, isReal));
+  const displayedActive = activeTabForEnvironment(active, '', isReal);
 
   useEffect(() => {
     const follow = (): void => {
-      setActive((current): TabKey =>
-        activeTabForEnvironment(current, window.location.hash, isReal),
+      setActive(
+        (current): TabKey => activeTabForEnvironment(current, window.location.hash, isReal),
       );
     };
     follow();
@@ -115,7 +129,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
         <div>
           <h2 className="text-sm font-semibold tracking-tight">
-            {isReal ? 'Work environment' : 'Mock work environment'}
+            {isReal ? 'Enterprise context' : 'Mock work environment'}
           </h2>
           <p className="text-[10px] text-[var(--color-muted)]">{CAPTIONS[mode]}</p>
         </div>
@@ -127,8 +141,9 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
           the agent works in. */}
       <nav className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]">
         {tabs.map((t) => {
-          const isActive = active === t.key;
+          const isActive = displayedActive === t.key;
           const count = counts[t.key];
+          const sublabel = t.sublabel[mode];
           return (
             <button
               key={t.key}
@@ -151,21 +166,25 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
                   {count}
                 </span>
               ) : null}
-              <span className="hidden @3xl:inline text-[10px] text-[var(--color-muted)]">
-                {t.sublabel[mode]}
-              </span>
+              {sublabel ? (
+                <span className="hidden @3xl:inline text-[10px] text-[var(--color-muted)]">
+                  {sublabel}
+                </span>
+              ) : null}
             </button>
           );
         })}
       </nav>
 
       <div className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
-        {active === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
-        {active === 'spreadsheet' ? <SpreadsheetTab agentId={agentId} mode={mode} /> : null}
-        {active === 'slack' ? <SlackTab agentId={agentId} mode={mode} /> : null}
-        {active === 'tweet' ? <TwitterTab agentId={agentId} mode={mode} /> : null}
-        {active === 'tickets' ? <TicketsTab agentId={agentId} mode={mode} /> : null}
-        {active === 'surfaces' && isReal ? <SurfacesTab agentId={agentId} /> : null}
+        {displayedActive === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
+        {displayedActive === 'spreadsheet' ? (
+          <SpreadsheetTab agentId={agentId} mode={mode} />
+        ) : null}
+        {displayedActive === 'slack' ? <SlackTab agentId={agentId} mode={mode} /> : null}
+        {displayedActive === 'tweet' ? <TwitterTab agentId={agentId} mode={mode} /> : null}
+        {displayedActive === 'tickets' ? <TicketsTab agentId={agentId} mode={mode} /> : null}
+        {displayedActive === 'surfaces' && isReal ? <SurfacesTab agentId={agentId} /> : null}
       </div>
     </section>
   );

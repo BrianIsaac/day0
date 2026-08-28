@@ -1,12 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const state = vi.hoisted(() => ({ loading: false }));
 
 vi.mock('convex/react', () => ({
-  useQuery: (): unknown[] => [],
+  useQuery: (): unknown[] | undefined => (state.loading ? undefined : []),
 }));
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
-import { DocsTab, EMPTY_DOCS } from '../../../../../app/agent/[agentId]/mock/DocsTab';
+import { DocsTab, EMPTY_DOCS, LOADING_DOCS } from '../../../../../app/agent/[agentId]/mock/DocsTab';
 import { EMPTY_CHANNELS, SlackTab } from '../../../../../app/agent/[agentId]/mock/SlackTab';
 import {
   EMPTY_SPREADSHEETS,
@@ -26,13 +28,26 @@ const TABS = [
 ] as const;
 
 describe('mock tab empty states', (): void => {
+  beforeEach((): void => {
+    state.loading = false;
+  });
+
   for (const { name, Tab, copy } of TABS) {
     it(`${name}: says what an empty tab means in each mode and defaults to mock`, (): void => {
       expect(renderToStaticMarkup(<Tab agentId={agentId} mode="real" />)).toContain(copy.real);
       expect(renderToStaticMarkup(<Tab agentId={agentId} mode="mock" />)).toContain(copy.mock);
       expect(renderToStaticMarkup(<Tab agentId={agentId} />)).toContain(copy.mock);
-      expect(copy.real).toContain('real mode');
       expect(copy.real).not.toContain('seed');
     });
   }
+
+  it('Docs says what is loading in each mode', (): void => {
+    state.loading = true;
+    expect(renderToStaticMarkup(<DocsTab agentId={agentId} mode="real" />)).toContain(
+      LOADING_DOCS.real,
+    );
+    expect(renderToStaticMarkup(<DocsTab agentId={agentId} mode="mock" />)).toContain(
+      LOADING_DOCS.mock,
+    );
+  });
 });

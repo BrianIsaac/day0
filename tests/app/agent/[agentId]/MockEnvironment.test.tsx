@@ -12,7 +12,24 @@ vi.mock('convex/react', () => ({
     }
     if (args === 'skip') return undefined;
     if (name === 'surfaces:listForAgent') return [{ slug: 'linear' }];
-    if (name === 'mock:listDocs') return [{ slug: 'doc' }, { slug: 'doc-2' }];
+    if (name === 'mock:listDocs') {
+      return [
+        {
+          _id: 'doc-1',
+          slug: 'doc',
+          title: 'Operating handbook',
+          body: 'How the team works.',
+          category: 'team-doc',
+        },
+        {
+          _id: 'doc-2',
+          slug: 'doc-2',
+          title: 'Linear automation',
+          body: 'How work enters the queue.',
+          category: 'how-to-guide',
+        },
+      ];
+    }
     return [];
   },
 }));
@@ -38,18 +55,23 @@ describe('MockEnvironment caption and tabs', (): void => {
     expect(markup).toContain('Linear-style queue');
   });
 
-  it('says which tabs mirror real content and adds the Surfaces tab in real mode', (): void => {
+  it('shows only readable documentation and discovered surfaces in real mode', (): void => {
     queries.mode = 'real';
     const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} />);
-    expect(markup).toContain('>Work environment<');
-    expect(markup).toContain('Real surfaces - the Docs tab mirrors the linked documentation');
-    expect(markup).toContain('mock-only and stay empty');
-    expect(markup).toContain('Surfaces');
-    expect(markup).toContain('no Slack channels are mirrored here in real mode');
-    expect(markup).not.toContain('Q4 Revenue Tracker');
-    expect(markup).not.toContain('Linear-style queue');
+    expect(markup).toContain('>Enterprise context<');
+    expect(markup).toContain(
+      'Documentation day0 can read, and the connection status of every system it has discovered',
+    );
+    expect(markup).toContain('>Docs<');
+    expect(markup).toContain('>Surfaces<');
     expect(markup).toContain('linked documentation');
-    expect(markup).toContain('mock-only');
+    expect(markup).toContain('connections + evidence');
+    expect(markup).toContain('Operating handbook');
+    expect(markup).not.toContain('>Slack<');
+    expect(markup).not.toContain('>Spreadsheet<');
+    expect(markup).not.toContain('>Twitter<');
+    expect(markup).not.toContain('>Tickets<');
+    expect(markup).not.toContain('mock-only');
   });
 });
 
@@ -66,11 +88,17 @@ describe('tab selection from the location hash', (): void => {
     expect(tabFromHash('#work-item-1', true)).toBeUndefined();
     expect(tabFromHash('#%E0%A4%A', true)).toBeUndefined();
     expect(tabFromHash('#surfaces', false)).toBeUndefined();
+    expect(tabFromHash('#slack', true)).toBeUndefined();
+    expect(tabFromHash('#spreadsheet', true)).toBeUndefined();
+    expect(tabFromHash('#tweet', true)).toBeUndefined();
+    expect(tabFromHash('#tickets', true)).toBeUndefined();
   });
 
-  it('moves off Surfaces if the resolved mode no longer exposes that tab', (): void => {
+  it('keeps the active tab valid when the resolved mode changes', (): void => {
     expect(activeTabForEnvironment('surfaces', '#surfaces', false)).toBe('slack');
     expect(activeTabForEnvironment('docs', '#unknown', false)).toBe('docs');
     expect(activeTabForEnvironment('slack', '#surfaces', true)).toBe('surfaces');
+    expect(activeTabForEnvironment('slack', '#unknown', true)).toBe('docs');
+    expect(activeTabForEnvironment('tickets', '', true)).toBe('docs');
   });
 });
