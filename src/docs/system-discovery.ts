@@ -113,7 +113,7 @@ export function structuralSystemCandidates(
     candidates.push(...tableCandidates(page));
     if (!SYSTEM_DIRECTORY.test(page.ref)) continue;
     const name = plain(firstHeading(page) ?? page.title);
-    if (!name || isDocumentationArtefact(name, page.markdown)) continue;
+    if (!name || isDocumentationArtefact(name, groundedQuote(page, name) ?? '')) continue;
     candidates.push({
       name,
       class: classFor(name, page.markdown),

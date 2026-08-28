@@ -117,7 +117,13 @@ describe('documentation system discovery', (): void => {
         {
           ref: 'systems/queue.md',
           title: 'Synthetic revenue operations queue',
-          markdown: '# Synthetic revenue operations queue\n\nEvery item below is invented.',
+          markdown: [
+            '# Synthetic revenue operations queue',
+            '',
+            'Every item below is invented.',
+            'If no approved surface exists, cite what was searched and ask the manager.',
+            'Do not claim that no API exists for another system.',
+          ].join('\n'),
         },
         {
           ref: 'onboarding.md',
