@@ -1,5 +1,6 @@
 import { qualityFit } from './quality-fit';
 import {
+  AUTONOMOUS_WIP_LIMIT,
   COLD_START_WIP_LIMIT,
   VALUE_THRESHOLD,
   type AgentContext,
@@ -8,6 +9,7 @@ import {
 } from './types';
 import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
 import type { SurfaceMode } from '../surfaces/types';
+import type { SurfaceDiscoveryEvidence } from '../docs/system-discovery';
 
 /**
  * Layer-2 evaluator. Lifted from Protean's `src/work/evaluate.ts`.
@@ -25,8 +27,6 @@ import type { SurfaceMode } from '../surfaces/types';
  *      hard-skipping. Capability is meant to grow in place, so an
  *      unmatched candidate is a gap to fill rather than a dead end.
  */
-
-const WIP_REASON_AT_CAP = 'WIP cap reached for cold-start posture';
 
 export interface EvaluateLookups {
   /** Returns true if the agent has a live grant for this scope. */
@@ -52,9 +52,11 @@ export interface EvaluateOptions {
 export interface EvaluationSurface extends SurfaceLiveness {
   displayName: string;
   slug: string;
+  discoveryEvidence?: readonly SurfaceDiscoveryEvidence[];
 }
 
 export interface EvalContext extends AgentContext {
+  autonomousActions: boolean;
   surfaceMode: SurfaceMode;
   surfaces: readonly EvaluationSurface[];
   now?: number;
@@ -85,11 +87,11 @@ function tokenise(text: string): Set<string> {
   return out;
 }
 
-function isEligible(candidate: WorkCandidate, charter: AgentContext['charter']): boolean {
+function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
   const bodyTokens = tokenise(`${candidate.title}\n${candidate.contentSummary}`);
   const charterTokens = new Set<string>();
-  for (const w of tokenise(charter.proposedFunction)) charterTokens.add(w);
-  for (const clause of charter.proposedBoundaries.willDo) {
+  for (const w of tokenise(ctx.charter.proposedFunction)) charterTokens.add(w);
+  for (const clause of ctx.charter.proposedBoundaries.willDo) {
     for (const w of tokenise(clause)) charterTokens.add(w);
   }
   for (const stop of ['will', 'their', 'them', 'with', 'from', 'this', 'that', 'when', 'where']) {
@@ -98,7 +100,12 @@ function isEligible(candidate: WorkCandidate, charter: AgentContext['charter']):
   for (const t of charterTokens) {
     if (bodyTokens.has(t)) return true;
   }
-  return false;
+  const candidateText = `${candidate.title}\n${candidate.contentSummary}`;
+  return ctx.surfaces.some((surface): boolean => {
+    const currentlyNamed = surface.discoveryEvidence?.some((evidence): boolean => evidence.current);
+    if (!currentlyNamed) return false;
+    return candidateNamesSurface(candidateText, surface);
+  });
 }
 
 /**
@@ -248,7 +255,7 @@ export async function evaluateCandidate(
   lookups: EvaluateLookups,
   opts: EvaluateOptions = {},
 ): Promise<EvaluationVerdict> {
-  if (!isEligible(candidate, ctx.charter)) {
+  if (!isEligible(candidate, ctx)) {
     return { decision: 'skip', reason: 'out-of-scope: no charter overlap' };
   }
 
@@ -288,10 +295,16 @@ export async function evaluateCandidate(
 
   const risk = scoreRisk(candidate);
 
-  const wipCap = opts.wipLimit ?? COLD_START_WIP_LIMIT;
+  const wipCap =
+    opts.wipLimit ?? (ctx.autonomousActions ? AUTONOMOUS_WIP_LIMIT : COLD_START_WIP_LIMIT);
   const open = await lookups.countOpenClaims();
   if (open >= wipCap) {
-    return { decision: 'queue', reason: WIP_REASON_AT_CAP, openClaims: open };
+    const posture = ctx.autonomousActions ? 'autonomous concurrency' : 'supervised cold-start';
+    return {
+      decision: 'queue',
+      reason: `WIP cap reached: ${posture} limit is ${wipCap}`,
+      openClaims: open,
+    };
   }
 
   const matchingSkill = await lookups.findMatchingSkill(candidate, ctx.charter);

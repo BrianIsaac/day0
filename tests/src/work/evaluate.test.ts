@@ -60,6 +60,17 @@ function surface(
     slug,
     displayName: slug === 'northstar-crm' ? 'Northstar CRM' : 'Linear',
     verdict,
+    discoveryEvidence: [
+      {
+        kind: 'documentation',
+        sourceId: 'source-1',
+        ref: `systems/${slug}.md`,
+        quote: `# ${slug}`,
+        current: true,
+        firstSeenAt: 1,
+        lastSeenAt: 1,
+      },
+    ],
     credentialLanded: true,
     lastVerifiedAt: NOW,
     ...overrides,
@@ -70,6 +81,7 @@ function surface(
 function context(
   surfaceMode: EvalContext['surfaceMode'],
   surfaces: readonly EvaluationSurface[],
+  autonomousActions = false,
 ): EvalContext {
   const base: AgentContext = {
     agentId: 'agent-test' as AgentContext['agentId'],
@@ -77,17 +89,18 @@ function context(
     agentsMd: '',
     bossLabel: 'Manager',
   };
-  return { ...base, surfaceMode, surfaces, now: NOW };
+  return { ...base, autonomousActions, surfaceMode, surfaces, now: NOW };
 }
 
 /** Build successful non-surface evaluator lookups. */
 function lookups(
   hasGrantForScope: EvaluateLookups['hasGrantForScope'] = async (): Promise<boolean> => true,
+  openClaims = 0,
 ): EvaluateLookups {
   return {
     hasGrantForScope,
     findExistingClaim: async (): Promise<null> => null,
-    countOpenClaims: async (): Promise<number> => 0,
+    countOpenClaims: async (): Promise<number> => openClaims,
     findMatchingSkill: async (): Promise<{ name: string; description: string }> => ({
       name: 'linear-triage',
       description: 'Triage Linear work.',
@@ -148,6 +161,28 @@ describe('work surface enablement', (): void => {
     ).resolves.toMatchObject({ decision: 'claim' });
   });
 
+  it('does not use retired documentation evidence to widen charter scope', async (): Promise<void> => {
+    const work = candidate('linear', 'Inspect Northstar CRM ownership.');
+    work.title = 'Reconcile Northstar CRM ownership';
+    const retired = surface('northstar-crm', 'absent', {
+      discoveryEvidence: [
+        {
+          kind: 'documentation',
+          sourceId: 'source-1',
+          ref: 'systems/northstar-crm.md',
+          quote: '# Northstar CRM',
+          current: false,
+          firstSeenAt: 1,
+          lastSeenAt: 2,
+        },
+      ],
+    });
+
+    await expect(
+      evaluateCandidate(work, context('real', [surface('linear'), retired]), lookups()),
+    ).resolves.toEqual({ decision: 'skip', reason: 'out-of-scope: no charter overlap' });
+  });
+
   it.each([
     ['absent', surface('linear', 'absent')],
     [
@@ -201,5 +236,30 @@ describe('work surface enablement', (): void => {
       ),
     ).resolves.toMatchObject({ decision: 'defer', reason: 'awaiting-connection' });
     expect(hasGrant).not.toHaveBeenCalled();
+  });
+});
+
+describe('work concurrency posture', (): void => {
+  it('queues the second open item while autonomous actions are off', async (): Promise<void> => {
+    await expect(
+      evaluateCandidate(candidate(), context('mock', [], false), lookups(undefined, 1)),
+    ).resolves.toEqual({
+      decision: 'queue',
+      reason: 'WIP cap reached: supervised cold-start limit is 1',
+      openClaims: 1,
+    });
+  });
+
+  it('allows three open items while autonomous actions are on, then queues the fourth', async (): Promise<void> => {
+    await expect(
+      evaluateCandidate(candidate(), context('mock', [], true), lookups(undefined, 2)),
+    ).resolves.toMatchObject({ decision: 'claim' });
+    await expect(
+      evaluateCandidate(candidate(), context('mock', [], true), lookups(undefined, 3)),
+    ).resolves.toEqual({
+      decision: 'queue',
+      reason: 'WIP cap reached: autonomous concurrency limit is 3',
+      openClaims: 3,
+    });
   });
 });
