@@ -24,4 +24,11 @@ describe('scheduled surface maintenance', (): void => {
       schedule: { type: 'interval', minutes: 5 },
     });
   });
+
+  it('polls manager decision replies every minute', (): void => {
+    expect(crons.crons['poll manager decision replies']).toMatchObject({
+      name: 'intakeActions:pollDecisions',
+      schedule: { type: 'interval', seconds: 60 },
+    });
+  });
 });

@@ -250,4 +250,72 @@ describe('the outbound manager-channel action', (): void => {
     ).resolves.toEqual({ sent: false, reason: 'notice already claimed' });
     expect(sent).toHaveLength(2);
   });
+
+  it('delivers a receipt acknowledgement once and records its provider timestamp', async (): Promise<void> => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({
+          url: input.href,
+          authorization: new Headers(init.headers).get('authorization') ?? '',
+          body: String(init.body),
+        });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const { decision, surfaceId } = await harness.run(async (ctx) => {
+      const workItem = await ctx.db.get(workItemId);
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique();
+      if (!workItem?.decision || !surface) throw new Error('decision fixture missing');
+      return { decision: workItem.decision, surfaceId: surface._id };
+    });
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1787768407.000100',
+      reply: { verb: 'approve', id: decision.id },
+    });
+    const notice = await harness.run(async (ctx) =>
+      await ctx.db
+        .query('managerDecisionNotices')
+        .withIndex('by_surface_message', (q) =>
+          q.eq('surfaceId', surfaceId).eq('messageTs', '1787768407.000100'),
+        )
+        .unique(),
+    );
+    if (!notice) throw new Error('receipt notice missing');
+
+    await expect(
+      harness.action(internal.managerChannelActions.sendManagerReplyNotice, {
+        noticeId: notice._id,
+      }),
+    ).resolves.toEqual({ sent: true });
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(sent[1].body).text).toContain(
+      `Approval ${decision.id} received. I’m starting the approved plan now.`,
+    );
+    expect(JSON.parse(sent[1].body).text).toContain('-- ops worker (Day0) · run ');
+    expect(await harness.run(async (ctx) => await ctx.db.get(notice._id))).toMatchObject({
+      claimedAt: expect.any(Number),
+      providerTs: 'provider-2',
+    });
+    await expect(
+      harness.action(internal.managerChannelActions.sendManagerReplyNotice, {
+        noticeId: notice._id,
+      }),
+    ).resolves.toEqual({ sent: false, reason: 'notice already claimed' });
+    expect(sent).toHaveLength(2);
+  });
 });

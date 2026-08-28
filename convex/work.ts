@@ -472,6 +472,18 @@ export const openDecisionRequests = internalQuery({
   },
 });
 
+/** Advance the manager-reply checkpoint without changing discovery's cursor. */
+export const recordDecisionPoll = internalMutation({
+  args: { surfaceId: v.id('surfaces'), polledAt: v.number() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface || surface.class !== 'chat') return false;
+    if ((surface.lastDecisionPolledAt ?? 0) >= args.polledAt) return true;
+    await ctx.db.patch(surface._id, { lastDecisionPolledAt: args.polledAt });
+    return true;
+  },
+});
+
 /** Attach provider evidence, or a bounded failure, to the claimed request. */
 export const recordDecisionRequest = internalMutation({
   args: {
@@ -589,6 +601,126 @@ export const recordDecisionNotice = internalMutation({
     return true;
   },
 });
+
+/** Claim one manager-reply acknowledgement before its provider call. */
+export const prepareManagerReplyNotice = internalMutation({
+  args: { noticeId: v.id('managerDecisionNotices') },
+  handler: async (ctx, args) => {
+    const notice = await ctx.db.get(args.noticeId);
+    if (!notice || notice.claimedAt) return { prepared: false as const };
+    const [workItem, agent, surfaceRows, grants] = await Promise.all([
+      ctx.db.get(notice.workItemId),
+      ctx.db.get(notice.agentId),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', notice.agentId))
+        .collect(),
+      ctx.db
+        .query('permissionGrants')
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', notice.agentId))
+        .collect(),
+    ]);
+    const surface = surfaceRows.find(
+      (candidate) =>
+        candidate._id === notice.surfaceId &&
+        candidate.class === 'chat' &&
+        candidate.verdict === 'connected' &&
+        !!candidate.managerDmChannelId,
+    );
+    if (!workItem || !agent || !surface) return { prepared: false as const };
+    const requestRunId = await ctx.db.insert('events', {
+      agentId: notice.agentId,
+      type: 'work.decision-acknowledging',
+      payload: {
+        workItemId: notice.workItemId,
+        decisionId: notice.decisionId,
+        messageTs: notice.messageTs,
+        kind: notice.kind,
+      },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(notice._id, { claimedAt: Date.now() });
+    return {
+      prepared: true as const,
+      workItemId: notice.workItemId,
+      agentId: notice.agentId,
+      agentName: agent.name,
+      requestRunId,
+      surface: toSurfaceRecord(surface),
+      surfaces: surfaceRows.map(toSurfaceRecord),
+      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      text: notice.text,
+    };
+  },
+});
+
+/** Store provider evidence for one manager-reply acknowledgement. */
+export const recordManagerReplyNotice = internalMutation({
+  args: {
+    noticeId: v.id('managerDecisionNotices'),
+    providerTs: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const notice = await ctx.db.get(args.noticeId);
+    if (!notice) return false;
+    await ctx.db.patch(notice._id, {
+      ...(args.providerTs ? { providerTs: args.providerTs } : {}),
+      ...(args.failure ? { failure: args.failure.slice(0, 240) } : {}),
+    });
+    return true;
+  },
+});
+
+async function queueManagerReplyNotice(
+  ctx: MutationCtx,
+  args: {
+    surfaceId: Id<'surfaces'>;
+    workItemId: Id<'workItems'>;
+    decisionId: string;
+    messageTs: string;
+    kind: 'received' | 'unknown';
+    text: string;
+  },
+): Promise<boolean> {
+  const existing = await ctx.db
+    .query('managerDecisionNotices')
+    .withIndex('by_surface_message', (q) =>
+      q.eq('surfaceId', args.surfaceId).eq('messageTs', args.messageTs),
+    )
+    .unique();
+  if (existing) return false;
+  const workItem = await ctx.db.get(args.workItemId);
+  if (!workItem) return false;
+  const noticeId = await ctx.db.insert('managerDecisionNotices', {
+    agentId: workItem.agentId,
+    ...args,
+    createdAt: Date.now(),
+  });
+  await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerReplyNotice, {
+    noticeId,
+  });
+  return true;
+}
+
+/** Find a decision on this DM to anchor an unknown-token notice safely. */
+async function managerReplyNoticeAnchor(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<Doc<'workItems'> | undefined> {
+  return (
+    (await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision_surface_channel', (q) =>
+        q
+          .eq('agentId', surface.agentId)
+          .eq('decision.surfaceSlug', surface.slug)
+          .eq('decision.channel', surface.managerDmChannelId),
+      )
+      .order('desc')
+      .first()) ?? undefined
+  );
+}
 
 type DecisionVia = 'dashboard' | 'channel';
 
@@ -1352,18 +1484,32 @@ export const resolveChannelDecision = internalMutation({
     if (!surface.managerUserId || args.userId !== surface.managerUserId) {
       return await ignored('manager identity mismatch');
     }
+    const unknown = async (reason: string) => {
+      const anchor = await managerReplyNoticeAnchor(ctx, surface);
+      const notified = anchor
+        ? await queueManagerReplyNotice(ctx, {
+            surfaceId: surface._id,
+            workItemId: anchor._id,
+            decisionId: args.reply.id,
+            messageTs: args.messageTs,
+            kind: 'unknown',
+            text: `I couldn’t find decision ${args.reply.id}. Check the six-character token and try again.`,
+          })
+        : false;
+      return { ...(await ignored(reason)), notified };
+    };
     const row = await ctx.db
       .query('workItems')
       .withIndex('by_agent_decision', (q) =>
         q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
       )
       .first();
-    if (!row?.decision) return await ignored('unknown decision id');
+    if (!row?.decision) return await unknown('unknown decision id');
     if (
       row.decision.surfaceSlug !== surface.slug ||
       row.decision.channel !== surface.managerDmChannelId
     ) {
-      return await ignored('decision belongs to another manager channel');
+      return await unknown('decision belongs to another manager channel');
     }
 
     const expectedState = row.decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
@@ -1435,6 +1581,21 @@ export const resolveChannelDecision = internalMutation({
         );
       }
     }
+    const noun = args.reply.verb === 'approve' ? 'Approval' : 'Rejection';
+    const text =
+      args.reply.verb === 'approve'
+        ? row.decision.kind === 'plan'
+          ? `${noun} ${row.decision.id} received. I’m starting the approved plan now.`
+          : `${noun} ${row.decision.id} received. I’m applying the approved actions now.`
+        : `${noun} ${row.decision.id} received. I won’t apply it.`;
+    await queueManagerReplyNotice(ctx, {
+      surfaceId: surface._id,
+      workItemId: row._id,
+      decisionId: row.decision.id,
+      messageTs: args.messageTs,
+      kind: 'received',
+      text,
+    });
     return { status: 'decided' as const, outcome: args.reply.verb };
   },
 });
