@@ -20,6 +20,11 @@ import {
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
 
+vi.mock('../../src/lib/mastra', () => ({
+  makeAgent: (name: string): { name: string } => ({ name }),
+  agentJson: async (): Promise<{ systems: never[] }> => ({ systems: [] }),
+}));
+
 /** Build a token-shaped value at runtime so no fixture stores one verbatim. */
 function token(parts: string[], separator: string, suffix: string): string {
   return `${parts.join(separator)}${separator}${suffix}`;

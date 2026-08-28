@@ -147,7 +147,8 @@ export const evaluateWorkItem = action({
       throw new Error('cannot evaluate: charter not approved');
     }
     const charter = charterRow.body as Charter;
-    const [agentsMd, skillRows, grantRows, surfaceConfig, surfaces] = await Promise.all([
+    const [agent, agentsMd, skillRows, grantRows, surfaceConfig, surfaces] = await Promise.all([
+      ctx.runQuery(api.agents.get, { agentId }),
       ctx.runQuery(api.workspace.readFile, {
         agentId,
         fileName: 'AGENTS.md',
@@ -179,6 +180,7 @@ export const evaluateWorkItem = action({
         charter,
         agentsMd: agentsMd ?? '',
         bossLabel: charter.approvalChain.boss,
+        autonomousActions: autonomousActionsOn(agent),
         surfaceMode: surfaceConfig.mode,
         surfaces,
       },

@@ -48,6 +48,7 @@ import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
   CredentialRow,
   EMPTY_SURFACES,
+  DiscoveryProvenance,
   EvidenceQuote,
   LOADING_SURFACES,
   ProvisioningRow,
@@ -165,6 +166,63 @@ describe('SurfacesTab evidence quote', (): void => {
       '&lt;page url=&quot;ftp://x&quot;&gt;Linear&lt;/page&gt;',
     );
     expect(renderToStaticMarkup(<EvidenceQuote quote={undefined} />)).toBe('');
+  });
+});
+
+describe('SurfacesTab system discovery provenance', (): void => {
+  it('shows the manager and documentation page when both named the system', (): void => {
+    const markup = renderToStaticMarkup(
+      <DiscoveryProvenance
+        evidence={[
+          {
+            kind: 'charter',
+            ref: 'manager 1:1',
+            quote: 'We use Linear.',
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+          {
+            kind: 'documentation',
+            sourceId: 'source-1',
+            ref: 'systems/linear.md',
+            quote: '# Linear',
+            url: 'https://notion.example/linear',
+            current: true,
+            firstSeenAt: 2,
+            lastSeenAt: 2,
+          },
+        ]}
+        sourceLabels={new Map([['source-1', 'RevOps handbook']])}
+      />,
+    );
+    expect(markup).toContain('System discovered from');
+    expect(markup).toContain('manager 1:1');
+    expect(markup).toContain('RevOps handbook / systems/linear.md');
+    expect(markup).toContain('href="https://notion.example/linear"');
+    expect(markup).toContain('We use Linear.');
+    expect(markup).toContain('# Linear');
+  });
+
+  it('keeps edited-away documentation provenance visible as historical', (): void => {
+    const markup = renderToStaticMarkup(
+      <DiscoveryProvenance
+        evidence={[
+          {
+            kind: 'documentation',
+            sourceId: 'source-1',
+            ref: 'systems/northstar-crm.md',
+            quote: '# Northstar CRM',
+            current: false,
+            firstSeenAt: 1,
+            lastSeenAt: 2,
+          },
+        ]}
+        sourceLabels={new Map([['source-1', 'Team folder']])}
+      />,
+    );
+    expect(markup).toContain('Team folder / systems/northstar-crm.md');
+    expect(markup).toContain('no longer named in the current page');
   });
 });
 

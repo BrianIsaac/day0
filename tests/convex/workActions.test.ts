@@ -1466,4 +1466,62 @@ describe('work action surface enablement', (): void => {
       },
     });
   });
+
+  it.each([
+    {
+      label: 'supervised',
+      autonomousActions: false,
+      openClaims: 1,
+      expectedDecision: 'queue',
+      expectedReason: 'WIP cap reached: supervised cold-start limit is 1',
+    },
+    {
+      label: 'autonomous',
+      autonomousActions: true,
+      openClaims: 2,
+      expectedDecision: 'claim',
+      expectedReason: undefined,
+    },
+  ])(
+    'reads the $label switch when applying the production WIP cap',
+    async ({ autonomousActions, openClaims, expectedDecision, expectedReason }): Promise<void> => {
+      useSurfaceMode('mock');
+      const rootHarness = convexTest(contractSchema(), allConvexModules());
+      const harness = rootHarness.withIdentity(OWNER);
+      const { agentId, workItemId } = await seed(rootHarness, 'mock', undefined, {
+        autonomousActions,
+      });
+      await rootHarness.run(async (ctx): Promise<void> => {
+        await ctx.db.patch(workItemId, {
+          state: 'discovered',
+          title: 'Prepare close summaries',
+          contentSummary: 'Prepare close summaries for this Linear ticket.',
+          plan: undefined,
+        });
+        for (let index = 0; index < openClaims; index += 1) {
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: `open-${index}`,
+            title: `Existing item ${index}`,
+            contentSummary: 'Already in progress.',
+            contentRefs: [],
+            state: 'claimed',
+            observedAt: 1,
+            createdAt: 1,
+          });
+        }
+      });
+
+      await expect(
+        harness.action(api.workActions.evaluateWorkItem, { workItemId }),
+      ).resolves.toEqual({ decision: expectedDecision });
+      const row = await readItem(rootHarness, workItemId);
+      expect(row.verdict).toMatchObject({
+        decision: expectedDecision,
+        ...(expectedReason ? { reason: expectedReason } : {}),
+      });
+    },
+  );
 });
