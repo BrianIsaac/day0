@@ -35,6 +35,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { browserComponent } from '../src/surfaces/browser';
 
 const ENV_FILE = process.argv[2] ?? '.env.local';
 
@@ -467,6 +468,21 @@ export function docSourceDependency(row: {
   return `${row.count} ${label} ${plural} - points at an MCP server you already run; no day0 component needed.`;
 }
 
+/** Interpret the browser switch with the same parser used at provider boundaries. */
+export function browserSetupConfiguration(configured: string | undefined): {
+  present: boolean;
+  invalidReason?: string;
+} {
+  try {
+    return { present: browserComponent(configured).present };
+  } catch (error) {
+    return {
+      present: false,
+      invalidReason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /**
  * Report which optional components are running and which are merely configured.
  *
@@ -509,8 +525,16 @@ function componentsSection(
     );
   }
   const browserRunning = services.includes('playwright-mcp');
-  const browserConfigured = Boolean(values.DAY0_BROWSER_MCP_URL);
-  if (browserConfigured && !browserRunning) {
+  const browserConfiguration = browserSetupConfiguration(values.DAY0_BROWSER_MCP_URL);
+  const browserConfigured = browserConfiguration.present;
+  if (browserConfiguration.invalidReason) {
+    status = 'warn';
+    lines.push(
+      `DAY0_BROWSER_MCP_URL is unusable: ${browserConfiguration.invalidReason}`,
+      'Every browser-driven surface will refuse. Correct the address and re-run `pnpm sync:env`,',
+      'or clear the variable to run without the component.',
+    );
+  } else if (browserConfigured && !browserRunning) {
     status = 'warn';
     lines.push(
       `DAY0_BROWSER_MCP_URL names ${values.DAY0_BROWSER_MCP_URL} and nothing is running there.`,

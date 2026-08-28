@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { composeRunningServices, docSourceDependency } from '../../scripts/check-setup';
+import {
+  browserSetupConfiguration,
+  composeRunningServices,
+  docSourceDependency,
+} from '../../scripts/check-setup';
 
 describe('documentation component setup reporting', (): void => {
   it('uses the resolved component dependency rather than the vendor kind', (): void => {
@@ -38,5 +42,16 @@ describe('optional component discovery', (): void => {
         ],
       },
     ]);
+  });
+
+  it('uses the runtime URL parser instead of treating every non-empty switch as configured', (): void => {
+    expect(browserSetupConfiguration('http://playwright-mcp:8931/mcp')).toEqual({
+      present: true,
+    });
+    expect(browserSetupConfiguration('   ')).toEqual({ present: false });
+    expect(browserSetupConfiguration('playwright-mcp:8931')).toEqual({
+      present: false,
+      invalidReason: 'DAY0_BROWSER_MCP_URL must be an http or https URL.',
+    });
   });
 });
