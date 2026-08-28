@@ -93,9 +93,9 @@ describe('documentation system discovery', (): void => {
       markdown: [
         '# RevOps handbook',
         '',
-        'Escalations land in the Escalation Queue, an internal service the on-call drains nightly.',
-        'New Hire Onboarding is the platform every joiner walks through.',
-        'The Refund How-to Guide is the system of record for refunds.',
+        'Escalations land in the Escalation Queue; its access owner drains it nightly.',
+        'New Hire Onboarding is the workspace every joiner walks through.',
+        'The Refund How-to Guide includes the credential rotation steps.',
         'Owner runbooks live in the Close Runbooks workspace.',
       ].join('\n'),
     };
@@ -132,6 +132,43 @@ describe('documentation system discovery', (): void => {
         },
       ]),
     ).toEqual([expect.objectContaining({ name: 'Northstar CRM', ref: 'onboarding.md' })]);
+  });
+
+  it('retains explicitly evidenced systems whose product names contain artefact words', (): void => {
+    const systemPage: DiscoveryPage = {
+      ref: 'systems/amazon-simple-queue-service.md',
+      title: 'Amazon Simple Queue Service',
+      markdown: [
+        '# Amazon Simple Queue Service',
+        '',
+        'Amazon Simple Queue Service is the managed API service for asynchronous workloads.',
+      ].join('\n'),
+    };
+    expect(structuralSystemCandidates([systemPage])).toEqual([
+      expect.objectContaining({
+        name: 'Amazon Simple Queue Service',
+        ref: 'systems/amazon-simple-queue-service.md',
+      }),
+    ]);
+    expect(
+      validateModelCandidates(
+        [{ ...systemPage, ref: 'infrastructure/aws.md' }],
+        {
+          systems: [
+            {
+              name: 'Amazon Simple Queue Service',
+              class: 'other',
+              pageRef: 'infrastructure/aws.md',
+            },
+          ],
+        },
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'Amazon Simple Queue Service',
+        quote: '# Amazon Simple Queue Service',
+      }),
+    ]);
   });
 
   it('refuses a name grounded only in a page title that never calls it a system', (): void => {

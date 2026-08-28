@@ -40,20 +40,15 @@ export const discoveryModelSchema = z.object({
 export type DiscoveryModelResult = z.infer<typeof discoveryModelSchema>;
 
 const SYSTEM_DIRECTORY = /(?:^|\/)systems\/[^/]+(?:\.md)?$/i;
-/**
- * Names that describe where something is written down rather than a system.
- *
- * The artefact word is matched wherever it falls in the name, not only at the
- * front: "Escalation Queue" and "New Hire Onboarding" are as much artefacts as
- * "Queue" and "Onboarding", and the operator's own `queue.md` is headed
- * "Synthetic revenue operations queue".
- */
-const DOCUMENT_LOCATION =
+/** Vocabulary that needs explicit system identity evidence rather than a name-only decision. */
+const DOCUMENT_ARTEFACT =
   /\b(?:how[\s-]*to|onboarding|queues?|documentation|docs|handbooks?|runbooks?|playbooks?|pages?|files?|folders?|wikis?)\b/i;
 const SYSTEM_HEADER = /^(?:system|product|service|tool)$/i;
 const TABLE_SEPARATOR = /^:?-{3,}:?$/;
 const SYSTEM_EVIDENCE =
   /\b(?:system|service|platform|workspace|source of record|api|mcp|integration|browser|web ui|dashboard|credential|login|access owner|automation)\b/i;
+const SYSTEM_IDENTITY_EVIDENCE =
+  /\b(?:system|service|platform|source of record|api|mcp|integration|browser|web ui|dashboard|automation)\b/i;
 
 function plain(value: string): string {
   return value
@@ -66,6 +61,10 @@ function firstHeading(page: DiscoveryPage): string | undefined {
   return /^#\s+(.+)$/m.exec(page.markdown)?.[1]?.trim();
 }
 
+function isDocumentationArtefact(name: string, evidence: string): boolean {
+  return DOCUMENT_ARTEFACT.test(name) && !SYSTEM_IDENTITY_EVIDENCE.test(`${name}\n${evidence}`);
+}
+
 function classFor(name: string, evidence: string): (typeof SYSTEM_CLASSES)[number] {
   const text = `${name}\n${evidence}`.toLowerCase();
   if (/\b(?:crm|customer relationship|opportunit(?:y|ies))\b/.test(text)) return 'crm';
@@ -74,7 +73,7 @@ function classFor(name: string, evidence: string): (typeof SYSTEM_CLASSES)[numbe
   if (/\b(?:linear|jira|kanban|ticket|issue tracker|work queue)\b/.test(text)) return 'kanban';
   if (/\b(?:spreadsheet|sheet|workbook)\b/.test(text)) return 'spreadsheet';
   if (/\b(?:social|twitter|mastodon)\b/.test(text)) return 'social';
-  if (DOCUMENT_LOCATION.test(name)) return 'docs';
+  if (isDocumentationArtefact(name, evidence)) return 'docs';
   return 'other';
 }
 
@@ -92,7 +91,7 @@ function tableCandidates(page: DiscoveryPage): DiscoveredSystemCandidate[] {
       const row = raw.trim();
       if (!row.startsWith('|') || !row.endsWith('|')) break;
       const name = plain(row.slice(1, -1).split('|')[0] ?? '');
-      if (!name || DOCUMENT_LOCATION.test(name)) continue;
+      if (!name || isDocumentationArtefact(name, row)) continue;
       candidates.push({
         name,
         class: classFor(name, row),
@@ -114,7 +113,7 @@ export function structuralSystemCandidates(
     candidates.push(...tableCandidates(page));
     if (!SYSTEM_DIRECTORY.test(page.ref)) continue;
     const name = plain(firstHeading(page) ?? page.title);
-    if (!name || DOCUMENT_LOCATION.test(name)) continue;
+    if (!name || isDocumentationArtefact(name, page.markdown)) continue;
     candidates.push({
       name,
       class: classFor(name, page.markdown),
@@ -173,13 +172,13 @@ export function validateModelCandidates(
   for (const raw of result.systems) {
     const page = byRef.get(raw.pageRef);
     const name = plain(raw.name).slice(0, 120);
-    if (!page || !name || raw.class === 'docs' || DOCUMENT_LOCATION.test(name)) continue;
+    if (!page || !name || raw.class === 'docs') continue;
     const heading = plain(firstHeading(page) ?? page.title);
     if (SYSTEM_DIRECTORY.test(page.ref) && plain(name).toLowerCase() !== heading.toLowerCase()) {
       continue;
     }
     const quote = groundedQuote(page, name);
-    if (!quote) continue;
+    if (!quote || isDocumentationArtefact(name, quote)) continue;
     candidates.push({ name, class: raw.class, ref: page.ref, quote, url: page.url });
   }
   return mergeCandidates(candidates);
