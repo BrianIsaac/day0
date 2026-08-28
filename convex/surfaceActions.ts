@@ -30,7 +30,7 @@ import {
   type ChannelMembership,
 } from '../src/surfaces/slack-policy';
 import { safeFailureMessage } from '../src/surfaces/redact';
-import { SLACK_API_ENDPOINT, slackApiUrl } from '../src/surfaces/slack-endpoint';
+import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
 import { actionIntent } from '../src/surfaces/policy';
 
 const SLACK_METHOD_DEFAULTS = [
@@ -946,9 +946,9 @@ export async function runSurfaceProbe(
         toolAllowlist = discovery.toolAllowlist;
         toolArguments = discovery.toolArguments;
       } else if (surface.path === 'documented-api') {
-        if (surface.class !== 'chat' || surface.endpoint !== SLACK_API_ENDPOINT) {
+        if (surface.class !== 'chat' || !isSlackApiEndpoint(surface.endpoint)) {
           throw new Day0ProbeLimitation(
-            `Day0 does not yet have a documented-API probe for ${surface.displayName}. ` +
+            `Day0 has no documented-API probe for ${surface.displayName} at ${surface.endpoint ?? 'an undocumented address'}. ` +
               `This is a limitation of this Day0 deployment, not evidence that ${surface.displayName} is unavailable. ` +
               'The approved endpoint remains on the card.',
           );

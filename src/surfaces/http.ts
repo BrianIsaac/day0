@@ -12,7 +12,7 @@ import {
   type ParsedHttpRequest,
 } from './policy';
 import { hasPlaceholder, injectSecret, redactValue, SecretTemplateError } from './secrets';
-import { SLACK_API_ENDPOINT, slackApiBaseUrl } from './slack-endpoint';
+import { isSlackApiEndpoint, slackApiBaseUrl } from './slack-endpoint';
 import type {
   AdapterRun,
   AppliedAction,
@@ -186,8 +186,11 @@ export class HttpAdapter implements SurfaceAdapter {
         idempotencyKey,
       };
     }
+    // The same predicate decides Slack's probe and Slack's transport. Matching
+    // one exact spelling here would send a row documented as `.../api` past the
+    // isolated local proof service and out to slack.com.
     const transportEndpoint =
-      surface.slug === 'slack' && surface.endpoint === SLACK_API_ENDPOINT
+      surface.slug === 'slack' && isSlackApiEndpoint(surface.endpoint)
         ? slackApiBaseUrl().href
         : (surface.endpoint ?? '');
     let url: URL;

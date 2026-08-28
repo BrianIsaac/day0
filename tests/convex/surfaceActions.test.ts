@@ -616,6 +616,66 @@ describe('surface probe action state', (): void => {
     );
   });
 
+  it.each(['https://slack.com/api/', 'https://slack.com/api'])(
+    'reaches the Slack probe for a documented base written as %s',
+    async (endpoint: string): Promise<void> => {
+      const agentId = 'test-agent-id' as Id<'agents'>;
+      const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+      // The endpoint is evidence, copied out of the enterprise's page. An exact
+      // string match turned the trailing-slash-less spelling into "Day0 has no
+      // probe for this", and then descended the ladder past a system it probes.
+      const surface = {
+        _id: surfaceId,
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'approved',
+        path: 'documented-api',
+        endpoint,
+        pathCandidates: [{ path: 'documented-api', endpoint }],
+        credentialId: 'test-credential-id',
+        credentialLanded: false,
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        whereFound: [],
+        createdAt: 1,
+      };
+      const probeSlack = vi.fn(async () => ({
+        toolAllowlist: ['auth.test'],
+        channelsNotJoined: [],
+        managerDmChannelId: 'DMANAGER',
+        managerUserId: 'UMANAGER',
+        providerIdentityId: 'UBOT',
+      }));
+      const outcome = await runSurfaceProbe(
+        {
+          runMutation: async (
+            _reference: unknown,
+            args: Record<string, unknown>,
+          ): Promise<unknown> => {
+            if (Object.keys(args).length === 1) return { surface, generation: 1 };
+            if ('verifiedAt' in args) return true;
+            return null;
+          },
+          runQuery: async (
+            _reference: unknown,
+            args: Record<string, unknown>,
+          ): Promise<unknown> =>
+            'surfaceId' in args
+              ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
+              : [],
+          runAction: async (): Promise<string> => 'slack-contract-value',
+        } as unknown as ActionCtx,
+        surfaceId,
+        false,
+        { probeBrowser: vi.fn(), probeMcp: vi.fn(), probeSlack, now: (): number => 1_000 },
+      );
+      expect(outcome).toMatchObject({ verdict: 'connected' });
+      expect(probeSlack).toHaveBeenCalledOnce();
+    },
+  );
+
   it('uses mocked decrypt and provider contracts without leaking the value', async (): Promise<void> => {
     const credential = 'local-test-value-held-only-by-action';
     const agentId = 'test-agent-id' as Id<'agents'>;
