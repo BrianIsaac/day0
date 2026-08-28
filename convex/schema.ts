@@ -416,9 +416,13 @@ export default defineSchema({
     observedAt: v.number(),
     createdAt: v.number(),
   })
-    .index('by_agent', ['agentId'])
     .index('by_agent_state', ['agentId', 'state'])
     .index('by_agent_decision', ['agentId', 'decision.id'])
+    .index('by_agent_decision_surface_channel', [
+      'agentId',
+      'decision.surfaceSlug',
+      'decision.channel',
+    ])
     .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId']),
 

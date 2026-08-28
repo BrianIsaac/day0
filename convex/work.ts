@@ -703,20 +703,22 @@ async function queueManagerReplyNotice(
   return true;
 }
 
-/** Find a recent decision on this DM to anchor an unknown-token notice safely. */
+/** Find a decision on this DM to anchor an unknown-token notice safely. */
 async function managerReplyNoticeAnchor(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
 ): Promise<Doc<'workItems'> | undefined> {
-  const recent = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent', (q) => q.eq('agentId', surface.agentId))
-    .order('desc')
-    .take(100);
-  return recent.find(
-    (row) =>
-      row.decision?.surfaceSlug === surface.slug &&
-      row.decision.channel === surface.managerDmChannelId,
+  return (
+    (await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision_surface_channel', (q) =>
+        q
+          .eq('agentId', surface.agentId)
+          .eq('decision.surfaceSlug', surface.slug)
+          .eq('decision.channel', surface.managerDmChannelId),
+      )
+      .order('desc')
+      .first()) ?? undefined
   );
 }
 
