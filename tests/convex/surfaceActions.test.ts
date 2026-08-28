@@ -344,6 +344,100 @@ describe('probe error hygiene', (): void => {
 });
 
 describe('surface probe action state', (): void => {
+  it.each([
+    {
+      label: 'an unsupported documented API',
+      surface: {
+        class: 'chat',
+        path: 'documented-api',
+        endpoint: 'https://graph.microsoft.com/v1.0/',
+        displayName: 'Microsoft Teams',
+      },
+      probeMcp: vi.fn(),
+      expectedVerdict: 'ungranted',
+      expectedReason: 'limitation of this Day0 deployment, not evidence that Microsoft Teams is unavailable',
+    },
+    {
+      label: 'a live MCP server refusing its credential',
+      surface: {
+        class: 'kanban',
+        path: 'mcp',
+        endpoint: 'https://mcp.jira.example/mcp',
+        displayName: 'Jira',
+      },
+      probeMcp: vi.fn(async (): Promise<never> => {
+        throw new Error('HTTP 401 invalid_token');
+      }),
+      expectedVerdict: 'ungranted',
+      expectedReason: 'HTTP 401 invalid_token',
+    },
+    {
+      label: 'a provider that does not answer',
+      surface: {
+        class: 'kanban',
+        path: 'mcp',
+        endpoint: 'https://mcp.jira.example/mcp',
+        displayName: 'Jira',
+      },
+      probeMcp: vi.fn(async (): Promise<never> => {
+        throw new Error('connect ETIMEDOUT');
+      }),
+      expectedVerdict: 'listed-dead',
+      expectedReason: 'connect ETIMEDOUT',
+    },
+  ])('keeps the verdict honest for $label', async ({
+    surface: partialSurface,
+    probeMcp,
+    expectedVerdict,
+    expectedReason,
+  }): Promise<void> => {
+    const agentId = 'test-agent-id' as Id<'agents'>;
+    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+    const failures: Array<Record<string, unknown>> = [];
+    const surface = {
+      _id: surfaceId,
+      agentId,
+      slug: 'work-system',
+      verdict: 'approved',
+      credentialId: 'test-credential-id',
+      credentialLanded: false,
+      managerApprovedAt: 2,
+      itApprovedAt: 3,
+      pathCandidates: [{ path: partialSurface.path, endpoint: partialSurface.endpoint }],
+      whereFound: [],
+      createdAt: 1,
+      ...partialSurface,
+    };
+    const ctx = {
+      runMutation: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
+        if (Object.keys(args).length === 1) return { surface, generation: 1 };
+        if ('verdict' in args) {
+          failures.push(args);
+          return true;
+        }
+        return null;
+      },
+      runQuery: async (): Promise<unknown> => ({
+        surface,
+        agent: { _id: agentId, bossEmail: 'boss@day0.local' },
+      }),
+      runAction: async (): Promise<string> => 'provider-contract-value',
+    } as unknown as ActionCtx;
+
+    const outcome = await runSurfaceProbe(ctx, surfaceId, false, {
+      probeMcp,
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+    });
+
+    expect(outcome).toMatchObject({ verdict: expectedVerdict });
+    expect(outcome.reason).toContain(expectedReason);
+    expect(failures).toContainEqual(
+      expect.objectContaining({ verdict: expectedVerdict, attemptedAt: 1_000 }),
+    );
+  });
+
   it('uses mocked decrypt and provider contracts without leaking the value', async (): Promise<void> => {
     const credential = 'local-test-value-held-only-by-action';
     const agentId = 'test-agent-id' as Id<'agents'>;
@@ -854,7 +948,7 @@ describe('probing the browser floor', (): void => {
       },
     });
     await expect(probeBrowserSurface(TILE, DRIVER, () => client, TITLE)).rejects.toThrow(
-      'documented page title marker',
+      'title did not match the approved marker',
     );
     expect(disconnect).toHaveBeenCalledOnce();
   });
@@ -1044,5 +1138,112 @@ describe('probing the browser floor', (): void => {
     );
     expect(grants.map((grant) => grant.scope)).toContain('looker-pipeline-tile:read');
     expect(grants.every((grant) => grant.agentId === agentId)).toBe(true);
+  });
+
+  it('falls from a failed generic MCP route to the approved browser floor', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await harness.run(
+      async (ctx): Promise<{ surfaceId: Id<'surfaces'> }> => {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Jira employee',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        const credentialId = await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'location',
+          label: 'Jira automation credential',
+          ciphertext: 'not-read-by-this-contract',
+          iv: 'not-read-by-this-contract',
+          source: 'entered',
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'jira',
+          displayName: 'Jira',
+          class: 'kanban',
+          verdict: 'approved',
+          whereFound: [],
+          path: 'mcp',
+          fallbackPath: 'browser-driven',
+          pathCandidates: [
+            { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
+            { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
+          ],
+          endpoint: 'https://mcp.jira.example/mcp',
+          credentialId,
+          credentialKind: 'location',
+          credentialLanded: false,
+          managerApprovedAt: 2,
+          itApprovedAt: 3,
+          request: { expiresInDays: 30 },
+          createdAt: 1,
+        });
+        const sourceId = await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Jira runbook',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: 'jira.md',
+          title: 'Jira',
+          markdown: '# Jira\n\n- Probe marker: page title `Jira - Issues`.',
+          updatedAt: 1,
+        });
+        return { surfaceId };
+      },
+    );
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', DEFAULT_BROWSER_MCP_URL);
+    const probeMcp = vi.fn(async (): Promise<never> => {
+      throw new Error('MCP server returned HTTP 503');
+    });
+    const probeBrowser = vi.fn(async () => ({
+      toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+      toolArguments: [],
+    }));
+
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: harness.mutation.bind(harness),
+        runQuery: harness.query.bind(harness),
+        runAction: async (): Promise<string> => 'jira-contract-credential',
+      } as unknown as ActionCtx,
+      surfaceId,
+      false,
+      { probeBrowser, probeMcp, probeSlack: vi.fn(), now: (): number => 1_000 },
+    );
+
+    expect(outcome).toMatchObject({ verdict: 'connected' });
+    expect(probeMcp).toHaveBeenCalledOnce();
+    expect(probeBrowser).toHaveBeenCalledWith(
+      'https://jira.example/issues',
+      DEFAULT_BROWSER_MCP_URL,
+      undefined,
+      'Jira - Issues',
+    );
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({
+      verdict: 'connected',
+      path: 'browser-driven',
+      endpoint: 'https://jira.example/issues',
+      fallbackPath: 'escalate',
+      toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+      probeAttempts: [
+        {
+          path: 'mcp',
+          endpoint: 'https://mcp.jira.example/mcp',
+          outcome: 'demoted',
+          reason: 'MCP server returned HTTP 503',
+        },
+      ],
+    });
   });
 });

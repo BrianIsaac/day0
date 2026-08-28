@@ -165,6 +165,21 @@ export default defineSchema({
     pathCandidates: v.optional(
       v.array(v.object({ path: v.string(), endpoint: v.string() })),
     ),
+    probeAttempts: v.optional(
+      v.array(
+        v.object({
+          path: v.string(),
+          endpoint: v.optional(v.string()),
+          outcome: v.union(
+            v.literal('demoted'),
+            v.literal('ungranted'),
+            v.literal('listed-dead'),
+          ),
+          reason: v.string(),
+          attemptedAt: v.number(),
+        }),
+      ),
+    ),
     endpoint: v.optional(v.string()),
     request: v.optional(v.any()),
     managerApprovedAt: v.optional(v.number()),

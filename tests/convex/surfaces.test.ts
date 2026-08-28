@@ -350,6 +350,106 @@ describe('orientation failure', (): void => {
 });
 
 describe('surface probe generations', (): void => {
+  it('demotes only through the approved ladder and records each bounded attempt', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Jira', 'kanban');
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId,
+      request: { target: { system: 'Jira' } },
+      whereFound: [{ ref: 'jira.md', quote: 'Use MCP, then the documented web UI.' }],
+      path: 'mcp',
+      fallbackPath: 'browser-driven',
+      pathCandidates: [
+        { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
+        { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
+      ],
+      endpoint: 'https://mcp.jira.example/mcp',
+      credentialLocation: 'Jira automation credential',
+      expiresInDays: 30,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'approved',
+        managerApprovedAt: 10,
+        itApprovedAt: 11,
+        toolAllowlist: ['stale_tool'],
+        toolArguments: [{ tool: 'stale_tool', arguments: [] }],
+        providerIdentityId: 'stale-provider-user',
+      });
+    });
+    const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!first) throw new Error('probe was not reserved');
+
+    const demoted = await harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+      surfaceId,
+      generation: first.generation,
+      reason: 'MCP server returned HTTP 503',
+      attemptedAt: 100,
+    });
+
+    expect(demoted).toMatchObject({
+      generation: 2,
+      surface: {
+        verdict: 'approved',
+        path: 'browser-driven',
+        endpoint: 'https://jira.example/issues',
+        fallbackPath: 'escalate',
+      },
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      managerApprovedAt: 10,
+      itApprovedAt: 11,
+      path: 'browser-driven',
+      endpoint: 'https://jira.example/issues',
+      fallbackPath: 'escalate',
+      probeGeneration: 2,
+      probeAttempts: [
+        {
+          path: 'mcp',
+          endpoint: 'https://mcp.jira.example/mcp',
+          outcome: 'demoted',
+          reason: 'MCP server returned HTTP 503',
+          attemptedAt: 100,
+        },
+      ],
+    });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('toolAllowlist');
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('providerIdentityId');
+    expect(await eventTypes(harness)).toContain('surface.probe-demoted');
+    await expect(
+      harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+        surfaceId,
+        generation: 2,
+        reason: 'documented page did not answer',
+        attemptedAt: 101,
+      }),
+    ).resolves.toBeNull();
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: 2,
+      verdict: 'listed-dead',
+      reason: 'documented page did not answer',
+      attemptedAt: 101,
+    });
+    expect((await readSurface(harness, surfaceId)).probeAttempts).toEqual([
+      {
+        path: 'mcp',
+        endpoint: 'https://mcp.jira.example/mcp',
+        outcome: 'demoted',
+        reason: 'MCP server returned HTTP 503',
+        attemptedAt: 100,
+      },
+      {
+        path: 'browser-driven',
+        endpoint: 'https://jira.example/issues',
+        outcome: 'listed-dead',
+        reason: 'documented page did not answer',
+        attemptedAt: 101,
+      },
+    ]);
+  });
+
   it('rejects ineligible rows and ignores results from an older probe', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);

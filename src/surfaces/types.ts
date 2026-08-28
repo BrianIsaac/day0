@@ -45,6 +45,13 @@ export interface SurfaceRecord {
   lastVerifiedAt?: number;
   path?: SurfacePath;
   pathCandidates?: Array<{ path: SurfacePath; endpoint: string }>;
+  probeAttempts?: Array<{
+    path: string;
+    endpoint?: string;
+    outcome: 'demoted' | 'ungranted' | 'listed-dead';
+    reason: string;
+    attemptedAt: number;
+  }>;
   endpoint?: string;
   toolAllowlist?: string[];
   toolArguments?: Array<{ tool: string; arguments: string[] }>;

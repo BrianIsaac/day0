@@ -46,6 +46,7 @@ import {
   CredentialRow,
   EvidenceQuote,
   ProvisioningRow,
+  SurfaceLadder,
   SurfacesTab,
   type CredentialRowProps,
   type ProvisioningRowProps,
@@ -153,6 +154,34 @@ describe('SurfacesTab evidence quote', (): void => {
       '&lt;page url=&quot;ftp://x&quot;&gt;Linear&lt;/page&gt;',
     );
     expect(renderToStaticMarkup(<EvidenceQuote quote={undefined} />)).toBe('');
+  });
+});
+
+describe('SurfacesTab approved ladder', (): void => {
+  it('shows the ratified route and every failed rung after a successful demotion', (): void => {
+    const markup = renderToStaticMarkup(
+      <SurfaceLadder
+        candidates={[
+          { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
+          { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
+        ]}
+        attempts={[
+          {
+            path: 'mcp',
+            endpoint: 'https://mcp.jira.example/mcp',
+            outcome: 'demoted',
+            reason: 'MCP server returned HTTP 503',
+            attemptedAt: 100,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('Approved ladder:');
+    expect(markup).toContain('mcp → browser-driven');
+    expect(markup).toContain('mcp attempt failed');
+    expect(markup).toContain('MCP server returned HTTP 503');
+    expect(markup).toContain('Fell to the next approved rung.');
   });
 });
 

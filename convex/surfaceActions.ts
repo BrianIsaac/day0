@@ -29,7 +29,7 @@ import {
   type ChannelMembership,
 } from '../src/surfaces/slack-policy';
 import { safeFailureMessage } from '../src/surfaces/redact';
-import { slackApiUrl } from '../src/surfaces/slack-endpoint';
+import { SLACK_API_ENDPOINT, slackApiUrl } from '../src/surfaces/slack-endpoint';
 import { actionIntent } from '../src/surfaces/policy';
 
 const SLACK_METHOD_DEFAULTS = [
@@ -102,6 +102,26 @@ type McpClientFactory = (endpoint: URL, credential: string) => McpProbeClient;
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 type CredentialId = GenericId<'credentials'>;
 
+/** A refusal caused by Day0's deployment or protocol support, not provider liveness. */
+class Day0ProbeLimitation extends Error {}
+
+function probeFailureVerdict(
+  error: unknown,
+  safeReason: string,
+): 'ungranted' | 'listed-dead' {
+  if (error instanceof Day0ProbeLimitation || safeReason.includes(BROWSER_DRIVER_ABSENT)) {
+    return 'ungranted';
+  }
+  if (
+    /\b(?:HTTP\s+)?(?:401|403)\b|\bunauthori[sz]ed\b|\bforbidden\b|invalid[_ -]?(?:auth|token|credential)|token[_ -]?expired|missing[_ -]?scope|not[_ -]?authed|not a member|no manager email|deactivated|own bot user/i.test(
+      safeReason,
+    )
+  ) {
+    return 'ungranted';
+  }
+  return 'listed-dead';
+}
+
 const credentialInternal = internal as unknown as {
   credentials: {
     decrypt: FunctionReference<'action', 'internal', { credentialId: CredentialId }, string>;
@@ -170,7 +190,9 @@ export function mcpAllowlist(definitions: Record<string, ToolDefinition>): McpDi
     });
   const toolAllowlist = classified.map(({ tool }): string => tool);
   if (toolAllowlist.length === 0) {
-    throw new Error('MCP server returned no named tools.');
+    throw new Day0ProbeLimitation(
+      'The MCP server answered but exposed no named tools Day0 can call. This is a protocol capability gap, not evidence that the system is unavailable.',
+    );
   }
   return {
     toolAllowlist,
@@ -189,7 +211,9 @@ function browserAllowlist(definitions: Record<string, ToolDefinition>): McpDisco
     ),
   );
   if (Object.keys(admitted).length === 0) {
-    throw new Error('The browser driver returned no tools allowed for the browser floor.');
+    throw new Day0ProbeLimitation(
+      'Day0 browser component returned no tools allowed for the browser floor.',
+    );
   }
   return {
     toolAllowlist: Object.keys(admitted),
@@ -247,7 +271,9 @@ export function safeProviderError(error: unknown, credential: string): string {
  */
 export function approvedMcpEndpoint(endpoint: string | undefined): URL {
   const refusal = (): never => {
-    throw new Error('The approved MCP endpoint must use a public HTTPS hostname.');
+    throw new Day0ProbeLimitation(
+      'The approved MCP endpoint must use a public HTTPS hostname. Day0 refused the address before creating a credential-bearing client.',
+    );
   };
   if (!endpoint) return refusal();
   let parsed: URL;
@@ -362,15 +388,19 @@ export async function probeBrowserSurface(
   makeClient: (url: URL) => BrowserProbeClient = createBrowserProbeClient,
   titleMarker?: string,
 ): Promise<McpDiscovery> {
-  if (!endpoint) throw new Error('No web UI address is documented for this surface.');
+  if (!endpoint) {
+    throw new Day0ProbeLimitation('No web UI address is documented for this surface.');
+  }
   if (!titleMarker?.trim()) {
-    throw new Error('No page title marker is documented for this browser surface.');
+    throw new Day0ProbeLimitation(
+      'No page title marker is documented for this browser surface, so Day0 cannot verify the page safely.',
+    );
   }
   let target: URL;
   try {
     target = new URL(endpoint);
   } catch {
-    throw new Error('The documented web UI address is not a valid URL.');
+    throw new Day0ProbeLimitation('The documented web UI address is not a valid URL.');
   }
   const component = browserComponent(driverUrl);
   if (!component.present) throw new Error(component.reason);
@@ -382,13 +412,12 @@ export async function probeBrowserSurface(
     if (errors.surface) {
       // A driver that is not listening is the component being absent, and the
       // probe says so with the code rather than with the transport's own words.
-      throw new Error(
-        isDriverUnreachable(errors.surface) ? BROWSER_DRIVER_ABSENT_REASON : errors.surface,
-      );
+      if (isDriverUnreachable(errors.surface)) throw new Error(BROWSER_DRIVER_ABSENT_REASON);
+      throw new Day0ProbeLimitation(`Day0 browser component failed: ${errors.surface}`);
     }
     const catalog = definitions.surface;
     if (!catalog || Object.keys(catalog).length === 0) {
-      throw new Error('The browser driver returned no tools.');
+      throw new Day0ProbeLimitation('Day0 browser component returned no tools.');
     }
     const discovery = browserAllowlist(catalog);
     const opened = await client.callTool('browser_navigate', { url: target.href });
@@ -396,9 +425,11 @@ export async function probeBrowserSurface(
       throw new Error(`the documented page could not be opened: ${opened.text.slice(0, 160)}`);
     }
     const outside = navigationResultRefusal('browser_navigate', opened.text, endpoint);
-    if (outside) throw new Error(outside);
+    if (outside) throw new Day0ProbeLimitation(outside);
     if (browserPageTitle(opened.text) !== titleMarker.trim()) {
-      throw new Error(`the documented page title marker was not present (${titleMarker.trim()})`);
+      throw new Day0ProbeLimitation(
+        `The documented page answered, but its title did not match the approved marker (${titleMarker.trim()}).`,
+      );
     }
     return discovery;
   } catch (error) {
@@ -661,160 +692,169 @@ export async function runSurfaceProbe(
   renewExpiry: boolean,
   dependencies: ProbeDependencies = probeDependencies,
 ): Promise<ProbeOutcome> {
-  const claimed = await ctx.runMutation(internal.surfaces.beginProbe, { surfaceId });
+  const claimed: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
+    internal.surfaces.beginProbe,
+    { surfaceId },
+  );
   if (!claimed) return { verdict: 'skipped', reason: 'Surface is not ready to probe.' };
-  const { surface, generation } = claimed;
+  let { surface, generation } = claimed;
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) return { verdict: 'skipped', reason: 'Surface no longer exists.' };
-  // The browser floor is an optional component. Without it there is nothing to
-  // probe the web UI with, and that is information rather than a failure of the
-  // system: the row keeps its documented address and re-probes once the
-  // component is started. Checked before the client is built so the answer is
-  // the code rather than a name-resolution error out of the transport.
-  if (surface.path === 'browser-driven') {
-    const component = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
-    if (component) {
-      await ctx.runMutation(internal.surfaces.recordProbeFailure, {
+
+  const failOrDemote = async (
+    reason: string,
+    verdict: 'ungranted' | 'listed-dead',
+  ): Promise<ProbeOutcome | undefined> => {
+    const attemptedAt = dependencies.now();
+    const demoted: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
+      internal.surfaces.demoteAfterProbeFailure,
+      { surfaceId, generation, reason, attemptedAt },
+    );
+    if (demoted) {
+      surface = demoted.surface;
+      generation = demoted.generation;
+      return undefined;
+    }
+    const recorded: boolean | undefined = await ctx.runMutation(
+      internal.surfaces.recordProbeFailure,
+      { surfaceId, generation, verdict, reason, attemptedAt },
+    );
+    return recorded === false
+      ? { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' }
+      : { verdict, reason };
+  };
+
+  // The route list is capped to the three actual rungs when orientation stores
+  // it. This loop is capped independently so a malformed legacy row can never
+  // turn a provider failure into an unbounded action.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (surface.path === 'browser-driven') {
+      const component = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
+      if (component) {
+        const outcome = await failOrDemote(component, 'ungranted');
+        if (outcome) return outcome;
+        continue;
+      }
+    }
+    if (!surface.credentialId && surface.path !== 'browser-driven') {
+      const reason = `credential not in the docs; ${surface.credentialLocation ?? 'location not documented'}`;
+      const outcome = await failOrDemote(reason, 'ungranted');
+      if (outcome) return outcome;
+      continue;
+    }
+
+    let credential = '';
+    try {
+      if (surface.credentialId) {
+        try {
+          credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
+            credentialId: surface.credentialId,
+          });
+        } catch {
+          const outcome = await failOrDemote('credential is unavailable or revoked', 'ungranted');
+          if (outcome) return outcome;
+          continue;
+        }
+      }
+
+      let toolAllowlist: string[];
+      let toolArguments: Array<{ tool: string; arguments: string[] }> = [];
+      let channelsNotJoined: string[] = [];
+      let managerDmChannelId: string | undefined;
+      let managerUserId: string | undefined;
+      let managerName: string | undefined;
+      let providerIdentityId: string | undefined;
+      let providerWorkspaceId: string | undefined;
+      if (surface.path === 'mcp') {
+        const discovery = await dependencies.probeMcp(surface.endpoint, credential);
+        toolAllowlist = discovery.toolAllowlist;
+        toolArguments = discovery.toolArguments;
+      } else if (surface.path === 'browser-driven') {
+        const pages: Doc<'docPages'>[] = await ctx.runQuery(
+          internal.orientationData.pagesForAgent,
+          { agentId: surface.agentId },
+        );
+        const titleMarker = browserTitleMarker(
+          pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+        );
+        const discovery = await dependencies.probeBrowser(
+          surface.endpoint,
+          process.env.DAY0_BROWSER_MCP_URL,
+          undefined,
+          titleMarker,
+        );
+        toolAllowlist = discovery.toolAllowlist;
+        toolArguments = discovery.toolArguments;
+      } else if (surface.path === 'documented-api') {
+        if (surface.class !== 'chat' || surface.endpoint !== SLACK_API_ENDPOINT) {
+          throw new Day0ProbeLimitation(
+            `Day0 does not yet have a documented-API probe for ${surface.displayName}. ` +
+              `This is a limitation of this Day0 deployment, not evidence that ${surface.displayName} is unavailable. ` +
+              'The approved endpoint remains on the card.',
+          );
+        }
+        const pages: Doc<'docPages'>[] = await ctx.runQuery(
+          internal.orientationData.pagesForAgent,
+          { agentId: surface.agentId },
+        );
+        const slack = await dependencies.probeSlack(
+          credential,
+          context.agent.bossEmail,
+          pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+          undefined,
+          documentedChannelNames(pages),
+        );
+        toolAllowlist = slack.toolAllowlist;
+        channelsNotJoined = slack.channelsNotJoined;
+        managerDmChannelId = slack.managerDmChannelId;
+        managerUserId = slack.managerUserId;
+        managerName = slack.managerName;
+        providerIdentityId = slack.providerIdentityId;
+        providerWorkspaceId = slack.providerWorkspaceId;
+      } else {
+        throw new Error(`Surface path ${surface.path ?? 'unknown'} cannot be probed.`);
+      }
+      const verifiedAt = dependencies.now();
+      const expiresInDays = Number(
+        (surface.request as { expiresInDays?: unknown } | undefined)?.expiresInDays,
+      );
+      const expiresAt =
+        renewExpiry && Number.isFinite(expiresInDays) && expiresInDays > 0
+          ? verifiedAt + expiresInDays * 24 * 60 * 60 * 1_000
+          : undefined;
+      const recorded = await ctx.runMutation(internal.surfaces.recordConnected, {
         surfaceId,
         generation,
-        verdict: 'ungranted',
-        reason: component,
+        toolAllowlist,
+        toolArguments,
+        managerDmChannelId,
+        managerUserId,
+        managerName,
+        providerIdentityId,
+        providerWorkspaceId,
+        channelsNotJoined,
+        verifiedAt,
+        expiresAt,
       });
-      return { verdict: 'ungranted', reason: component };
-    }
-  }
-  // A system reached only through its web UI may document no credential at
-  // all - a public dashboard is still a system. Every other path needs one
-  // before there is anything to probe with.
-  if (!surface.credentialId && surface.path !== 'browser-driven') {
-    const reason = `credential not in the docs; ${surface.credentialLocation ?? 'location not documented'}`;
-    await ctx.runMutation(internal.surfaces.recordProbeFailure, {
-      surfaceId,
-      generation,
-      verdict: 'ungranted',
-      reason,
-    });
-    return { verdict: 'ungranted', reason };
-  }
-
-  let credential = '';
-  try {
-    if (surface.credentialId) {
-      credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
-        credentialId: surface.credentialId,
-      });
-    }
-  } catch {
-    const reason = 'credential is unavailable or revoked';
-    await ctx.runMutation(internal.surfaces.recordProbeFailure, {
-      surfaceId,
-      generation,
-      verdict: 'ungranted',
-      reason,
-    });
-    return { verdict: 'ungranted', reason };
-  }
-
-  try {
-    let toolAllowlist: string[];
-    let toolArguments: Array<{ tool: string; arguments: string[] }> = [];
-    let channelsNotJoined: string[] = [];
-    let managerDmChannelId: string | undefined;
-    let managerUserId: string | undefined;
-    let managerName: string | undefined;
-    let providerIdentityId: string | undefined;
-    let providerWorkspaceId: string | undefined;
-    if (surface.path === 'mcp') {
-      const discovery = await dependencies.probeMcp(surface.endpoint, credential);
-      toolAllowlist = discovery.toolAllowlist;
-      toolArguments = discovery.toolArguments;
-    } else if (surface.path === 'browser-driven') {
-      const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-        agentId: surface.agentId,
-      });
-      const titleMarker = browserTitleMarker(
-        pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
-      );
-      const discovery = await dependencies.probeBrowser(
-        surface.endpoint,
-        process.env.DAY0_BROWSER_MCP_URL,
-        undefined,
-        titleMarker,
-      );
-      toolAllowlist = discovery.toolAllowlist;
-      toolArguments = discovery.toolArguments;
-    } else if (surface.path === 'documented-api' && surface.class === 'chat') {
-      if (!surface.endpoint?.startsWith('https://slack.com/api/')) {
-        throw new Error('The documented Slack API endpoint is not the approved Slack host.');
+      if (!recorded) {
+        return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
-      const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-        agentId: surface.agentId,
-      });
-      const slack = await dependencies.probeSlack(
-        credential,
-        context.agent.bossEmail,
-        pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
-        undefined,
-        documentedChannelNames(pages),
-      );
-      toolAllowlist = slack.toolAllowlist;
-      channelsNotJoined = slack.channelsNotJoined;
-      managerDmChannelId = slack.managerDmChannelId;
-      managerUserId = slack.managerUserId;
-      managerName = slack.managerName;
-      providerIdentityId = slack.providerIdentityId;
-      providerWorkspaceId = slack.providerWorkspaceId;
-    } else {
-      throw new Error(`Surface path ${surface.path ?? 'unknown'} cannot be probed.`);
+      return {
+        verdict: 'connected',
+        toolAllowlist,
+        channelsNotJoined,
+        managerDmReady: managerDmChannelId !== undefined,
+      };
+    } catch (error) {
+      const reason = safeProviderError(error, credential);
+      const verdict = probeFailureVerdict(error, reason);
+      const outcome = await failOrDemote(reason, verdict);
+      if (outcome) return outcome;
+    } finally {
+      credential = '';
     }
-    const verifiedAt = dependencies.now();
-    const expiresInDays = Number(
-      (surface.request as { expiresInDays?: unknown } | undefined)?.expiresInDays,
-    );
-    const expiresAt =
-      renewExpiry && Number.isFinite(expiresInDays) && expiresInDays > 0
-        ? verifiedAt + expiresInDays * 24 * 60 * 60 * 1_000
-        : undefined;
-    const recorded = await ctx.runMutation(internal.surfaces.recordConnected, {
-      surfaceId,
-      generation,
-      toolAllowlist,
-      toolArguments,
-      managerDmChannelId,
-      managerUserId,
-      managerName,
-      providerIdentityId,
-      providerWorkspaceId,
-      channelsNotJoined,
-      verifiedAt,
-      expiresAt,
-    });
-    if (!recorded) {
-      return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
-    }
-    return {
-      verdict: 'connected',
-      toolAllowlist,
-      channelsNotJoined,
-      managerDmReady: managerDmChannelId !== undefined,
-    };
-  } catch (error) {
-    const reason = safeProviderError(error, credential);
-    // `listed-dead` is a claim about the enterprise's system. A missing browser
-    // component is a claim about this deployment, so it lands as `ungranted`
-    // whichever way it was found out - unset before the call, or unreachable
-    // during it - and the row keeps its address to re-probe from.
-    const verdict = reason.includes(BROWSER_DRIVER_ABSENT) ? 'ungranted' : 'listed-dead';
-    await ctx.runMutation(internal.surfaces.recordProbeFailure, {
-      surfaceId,
-      generation,
-      verdict,
-      reason,
-    });
-    return { verdict, reason };
-  } finally {
-    credential = '';
   }
+  return { verdict: 'skipped', reason: 'The approved surface ladder was exhausted.' };
 }
 
 /** Owner-checked shell and UI entry point for a deliberate probe. */

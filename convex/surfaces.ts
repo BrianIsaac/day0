@@ -21,6 +21,18 @@ const surfaceVerdict = v.union(
   v.literal('listed-dead'),
 );
 
+const MAX_LADDER_PATHS = 3;
+const MAX_PROBE_ATTEMPTS = 12;
+
+type ProbeAttempt = NonNullable<Doc<'surfaces'>['probeAttempts']>[number];
+
+function withProbeAttempt(
+  surface: Doc<'surfaces'>,
+  attempt: ProbeAttempt,
+): ProbeAttempt[] {
+  return [...(surface.probeAttempts ?? []), attempt].slice(-MAX_PROBE_ATTEMPTS);
+}
+
 /**
  * Convert a declared system name to its stable per-agent key.
  *
@@ -128,11 +140,12 @@ export const propose = internalMutation({
       fallbackPath: args.fallbackPath,
       pathCandidates:
         args.pathCandidates && args.pathCandidates.length > 0
-          ? args.pathCandidates.slice(0, 3)
+          ? args.pathCandidates.slice(0, MAX_LADDER_PATHS)
           : args.endpoint
             ? [{ path: args.path, endpoint: args.endpoint }]
             : undefined,
       endpoint: args.endpoint,
+      probeAttempts: undefined,
       credentialId: args.credentialId,
       credentialKind: args.credentialId ? args.credentialKind : undefined,
       credentialLocation: args.credentialLocation,
@@ -500,6 +513,7 @@ export const recordProbeFailure = internalMutation({
     generation: v.number(),
     verdict: v.union(v.literal('ungranted'), v.literal('listed-dead')),
     reason: v.string(),
+    attemptedAt: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
@@ -512,6 +526,22 @@ export const recordProbeFailure = internalMutation({
       verdict: args.verdict,
       reason: args.reason,
       credentialLanded: false,
+      toolAllowlist: undefined,
+      toolArguments: undefined,
+      managerDmChannelId: undefined,
+      managerUserId: undefined,
+      managerName: undefined,
+      providerIdentityId: undefined,
+      providerWorkspaceId: undefined,
+      channelsNotJoined: undefined,
+      lastVerifiedAt: undefined,
+      probeAttempts: withProbeAttempt(surface, {
+        path: surface.path ?? 'unknown',
+        endpoint: surface.endpoint,
+        outcome: args.verdict,
+        reason: args.reason,
+        attemptedAt: args.attemptedAt ?? Date.now(),
+      }),
     });
     await ctx.db.insert('events', {
       agentId: surface.agentId,
@@ -520,6 +550,80 @@ export const recordProbeFailure = internalMutation({
       createdAt: Date.now(),
     });
     return true;
+  },
+});
+
+/** Move one failed probe to the next route both approvers already saw. */
+export const demoteAfterProbeFailure = internalMutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    generation: v.number(),
+    reason: v.string(),
+    attemptedAt: v.number(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (
+      !surface ||
+      surface.probeGeneration !== args.generation ||
+      !['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict) ||
+      surface.managerApprovedAt === undefined ||
+      surface.itApprovedAt === undefined
+    ) {
+      return null;
+    }
+    const candidates = (surface.pathCandidates ?? []).slice(0, MAX_LADDER_PATHS);
+    const currentIndex = candidates.findIndex(
+      (candidate): boolean =>
+        candidate.path === surface.path && candidate.endpoint === surface.endpoint,
+    );
+    const next = currentIndex >= 0 ? candidates[currentIndex + 1] : undefined;
+    if (!next) return null;
+    const generation = args.generation + 1;
+    const reason =
+      `${surface.path ?? 'Current'} probe failed: ${args.reason}. ` +
+      `Day0 is falling back to ${next.path}; that route must pass its own probe before this surface can connect.`;
+    const patch = {
+      verdict: 'approved' as const,
+      path: next.path,
+      endpoint: next.endpoint,
+      fallbackPath: candidates[currentIndex + 2]?.path ?? 'escalate',
+      reason: reason.slice(0, 500),
+      credentialLanded: false,
+      probeGeneration: generation,
+      toolAllowlist: undefined,
+      toolArguments: undefined,
+      managerDmChannelId: undefined,
+      managerUserId: undefined,
+      managerName: undefined,
+      providerIdentityId: undefined,
+      providerWorkspaceId: undefined,
+      channelsNotJoined: undefined,
+      lastVerifiedAt: undefined,
+      probeAttempts: withProbeAttempt(surface, {
+        path: surface.path ?? 'unknown',
+        endpoint: surface.endpoint,
+        outcome: 'demoted',
+        reason: args.reason,
+        attemptedAt: args.attemptedAt,
+      }),
+    };
+    await ctx.db.patch(surface._id, patch);
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.probe-demoted',
+      payload: {
+        surfaceId: surface._id,
+        from: surface.path,
+        to: next.path,
+        reason: args.reason,
+      },
+      createdAt: args.attemptedAt,
+    });
+    return { surface: { ...surface, ...patch }, generation };
   },
 });
 
@@ -757,6 +861,8 @@ export const reject = mutation({
       endpoint: undefined,
       path: undefined,
       fallbackPath: undefined,
+      pathCandidates: undefined,
+      probeAttempts: undefined,
       credentialRef: undefined,
       credentialId: undefined,
       credentialKind: undefined,
