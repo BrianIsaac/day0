@@ -73,6 +73,7 @@ describe('documentation system discovery', (): void => {
           { name: 'Linear', class: 'kanban', pageRef: 'missing.md' },
           { name: 'Team handbook', class: 'docs', pageRef: 'linear.md' },
           { name: 'Looker', class: 'analytics', pageRef: 'systems/looker-pipeline-tile.md' },
+          { name: 'How to update Linear', class: 'kanban', pageRef: 'linear.md' },
           { name: 'Linear', class: 'kanban', pageRef: 'linear.md' },
         ],
       }),

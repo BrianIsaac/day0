@@ -40,7 +40,8 @@ export const discoveryModelSchema = z.object({
 export type DiscoveryModelResult = z.infer<typeof discoveryModelSchema>;
 
 const SYSTEM_DIRECTORY = /(?:^|\/)systems\/[^/]+(?:\.md)?$/i;
-const DOCUMENT_LOCATION = /\b(?:documentation|docs|handbook|runbook|playbook|page|file|folder)\b/i;
+const DOCUMENT_LOCATION =
+  /(?:^\s*(?:how to|onboarding|queue)\b)|\b(?:documentation|docs|handbook|runbook|playbook|page|file|folder)\b/i;
 const SYSTEM_HEADER = /^(?:system|product|service|tool)$/i;
 const TABLE_SEPARATOR = /^:?-{3,}:?$/;
 const SYSTEM_EVIDENCE =
