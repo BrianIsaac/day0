@@ -45,7 +45,7 @@ const SLACK_METHOD_DEFAULTS = [
 
 const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
 
-interface ToolDefinition {
+export interface ToolDefinition {
   inputSchema?: unknown;
 }
 
@@ -65,7 +65,7 @@ interface BrowserProbeClient extends McpProbeClient {
   ): Promise<{ isError: boolean; text: string }>;
 }
 
-interface McpDiscovery {
+export interface McpDiscovery {
   toolAllowlist: string[];
   toolArguments: Array<{ tool: string; arguments: string[] }>;
 }
@@ -137,6 +137,35 @@ for (const [network, prefix] of [
 /** A refusal caused by Day0's deployment or protocol support, not provider liveness. */
 class Day0ProbeLimitation extends Error {}
 
+/**
+ * Run one Day0-side step so its failure is never read as provider liveness.
+ *
+ * Reading the agent's pages and writing the connected row are Day0's own
+ * database, not the enterprise's endpoint. They sit inside the same `try` as
+ * the provider call, so without this an oversized catalogue or a failed write
+ * would be recorded as `listed-dead` - a claim about the enterprise's system
+ * that a Day0 failure does not support.
+ *
+ * Args:
+ *   what: What Day0 was doing, for the card.
+ *   step: The Day0-side operation.
+ *
+ * Returns:
+ *   Whatever the step resolved with.
+ *
+ * Raises:
+ *   Day0ProbeLimitation: If the step failed.
+ */
+async function day0Step<T>(what: string, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (error) {
+    throw new Day0ProbeLimitation(
+      `Day0 could not ${what}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 function probeFailureVerdict(
   error: unknown,
   safeReason: string,
@@ -198,6 +227,20 @@ export function argumentNamesFromSchema(schema: unknown): string[] {
   );
 }
 
+/** How many discovered tools one surface row may carry. */
+export const MAX_MCP_TOOLS = 250;
+
+/**
+ * Names reserved for Day0's own browser floor.
+ *
+ * The floor's tools are exempt from the write default - `browser_navigate` and
+ * `browser_snapshot` carry no read verb but only look at a page - and that
+ * exemption is keyed on the name alone. A discovered catalogue must not be able
+ * to claim it: a third party's `browser_navigate` means whatever that server
+ * wants, and it would run unattended and without the floor's origin bound.
+ */
+const BROWSER_FLOOR_NAME = /^browser[_-]/i;
+
 /**
  * Admit the catalogue exposed by an approved MCP endpoint.
  *
@@ -207,11 +250,20 @@ export function argumentNamesFromSchema(schema: unknown): string[] {
  *   Persistable tool and argument metadata.
  *
  * Raises:
- *   Error: If the provider exposes no named tools.
+ *   Day0ProbeLimitation: If the provider exposes no tool Day0 can name, or more
+ *     than one surface row can carry.
  */
 export function mcpAllowlist(definitions: Record<string, ToolDefinition>): McpDiscovery {
-  const classified = Object.keys(definitions)
-    .filter((tool: string): boolean => tool.trim().length > 0)
+  const named = Object.keys(definitions).filter(
+    (tool: string): boolean => tool.trim().length > 0 && !BROWSER_FLOOR_NAME.test(tool.trim()),
+  );
+  if (named.length > MAX_MCP_TOOLS) {
+    throw new Day0ProbeLimitation(
+      `The MCP server exposed ${named.length} tools; Day0 records at most ${MAX_MCP_TOOLS} on one surface. ` +
+        'This is a Day0 capacity limit, not evidence that the system is unavailable.',
+    );
+  }
+  const classified = named
     .map((tool: string) => ({
       tool,
       intent: actionIntent({ kind: 'mcp.call', surface: 'probe', tool, toolArgs: {} }),
@@ -530,8 +582,13 @@ export async function probeMcpSurface(
     });
     if (errors.surface) throw new Error(errors.surface);
     const catalog = definitions.surface;
+    // A server that answers with an empty catalogue has answered: it is alive
+    // and Day0 has nothing to call on it. `mcpAllowlist` says so as a Day0
+    // capability gap, and this branch has to agree - a plain error here would
+    // be recorded as `listed-dead`, which is a claim about the enterprise's
+    // system that an empty tool list does not support.
     if (!catalog || Object.keys(catalog).length === 0) {
-      throw new Error('MCP server returned no tools.');
+      return mcpAllowlist({});
     }
     return mcpAllowlist(catalog);
   } finally {
@@ -846,9 +903,10 @@ export async function runSurfaceProbe(
         toolAllowlist = discovery.toolAllowlist;
         toolArguments = discovery.toolArguments;
       } else if (surface.path === 'browser-driven') {
-        const pages: Doc<'docPages'>[] = await ctx.runQuery(
-          internal.orientationData.pagesForAgent,
-          { agentId: surface.agentId },
+        const pages: Doc<'docPages'>[] = await day0Step(
+          'read the linked documentation',
+          (): Promise<Doc<'docPages'>[]> =>
+            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
         );
         const titleMarker = browserTitleMarker(
           pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
@@ -869,9 +927,10 @@ export async function runSurfaceProbe(
               'The approved endpoint remains on the card.',
           );
         }
-        const pages: Doc<'docPages'>[] = await ctx.runQuery(
-          internal.orientationData.pagesForAgent,
-          { agentId: surface.agentId },
+        const pages: Doc<'docPages'>[] = await day0Step(
+          'read the linked documentation',
+          (): Promise<Doc<'docPages'>[]> =>
+            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
         );
         const slack = await dependencies.probeSlack(
           credential,
@@ -888,7 +947,10 @@ export async function runSurfaceProbe(
         providerIdentityId = slack.providerIdentityId;
         providerWorkspaceId = slack.providerWorkspaceId;
       } else {
-        throw new Error(`Surface path ${surface.path ?? 'unknown'} cannot be probed.`);
+        throw new Day0ProbeLimitation(
+          `Day0 has no probe for surface path ${surface.path ?? 'unknown'}. ` +
+            `This is a limitation of this Day0 deployment, not evidence that ${surface.displayName} is unavailable.`,
+        );
       }
       const verifiedAt = dependencies.now();
       const expiresInDays = Number(
@@ -898,20 +960,24 @@ export async function runSurfaceProbe(
         renewExpiry && Number.isFinite(expiresInDays) && expiresInDays > 0
           ? verifiedAt + expiresInDays * 24 * 60 * 60 * 1_000
           : undefined;
-      const recorded = await ctx.runMutation(internal.surfaces.recordConnected, {
-        surfaceId,
-        generation,
-        toolAllowlist,
-        toolArguments,
-        managerDmChannelId,
-        managerUserId,
-        managerName,
-        providerIdentityId,
-        providerWorkspaceId,
-        channelsNotJoined,
-        verifiedAt,
-        expiresAt,
-      });
+      const recorded = await day0Step(
+        'record the connected surface',
+        (): Promise<boolean> =>
+          ctx.runMutation(internal.surfaces.recordConnected, {
+            surfaceId,
+            generation,
+            toolAllowlist,
+            toolArguments,
+            managerDmChannelId,
+            managerUserId,
+            managerName,
+            providerIdentityId,
+            providerWorkspaceId,
+            channelsNotJoined,
+            verifiedAt,
+            expiresAt,
+          }),
+      );
       if (!recorded) {
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }

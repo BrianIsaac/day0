@@ -9,6 +9,7 @@ import {
   approvedMcpEndpoint,
   argumentNamesFromSchema,
   managerUserId,
+  MAX_MCP_TOOLS,
   mcpAllowlist,
   probeBrowserSurface,
   probeMcpSurface,
@@ -17,6 +18,8 @@ import {
   runSurfaceProbe,
   safeProviderError,
   slackMethodsFromPolicy,
+  type McpDiscovery,
+  type ToolDefinition,
 } from '../../convex/surfaceActions';
 import { actionIntent } from '../../src/surfaces/policy';
 import {
@@ -46,8 +49,10 @@ function slackResponse(payload: Record<string, unknown>, status = 200): Response
   });
 }
 
+/** One public DNS answer, so address checks pass without touching a resolver. */
+const publicDns = async (): Promise<string[]> => ['93.184.216.34'];
+
 describe('surface MCP probing', (): void => {
-  const publicDns = async (): Promise<string[]> => ['93.184.216.34'];
 
   it('admits the server catalogue for any class and leaves writes to the action gate', (): void => {
     expect(
@@ -205,7 +210,30 @@ describe('surface MCP probing', (): void => {
         }),
         publicDns,
       ),
-    ).rejects.toThrow('MCP server returned no tools.');
+    ).rejects.toThrow('exposed no named tools Day0 can call');
+  });
+
+  it('keeps Day0 browser-floor names and oversized catalogues out of discovery', (): void => {
+    // `browser_navigate` and `browser_snapshot` are exempt from the write
+    // default by name alone. A discovered server must not be able to claim that
+    // exemption: its `browser_navigate` means whatever it wants, and it would
+    // run unattended and outside the floor's origin bound.
+    const discovered = mcpAllowlist({
+      browser_navigate: { inputSchema: { properties: { url: {} } } },
+      browser_snapshot: { inputSchema: {} },
+      list_issues: { inputSchema: { properties: { project: {} } } },
+    });
+    expect(discovered.toolAllowlist).toEqual(['list_issues']);
+    expect((): McpDiscovery => mcpAllowlist({ browser_navigate: { inputSchema: {} } })).toThrow(
+      'exposed no named tools Day0 can call',
+    );
+    const oversized = Object.fromEntries(
+      Array.from({ length: MAX_MCP_TOOLS + 1 }, (_unused, index): [string, ToolDefinition] => [
+        `list_thing_${index}`,
+        { inputSchema: {} },
+      ]),
+    );
+    expect((): McpDiscovery => mcpAllowlist(oversized)).toThrow('Day0 capacity limit');
   });
 
   it('refuses private DNS answers before constructing a bearer client', async (): Promise<void> => {
@@ -1237,6 +1265,81 @@ describe('probing the browser floor', (): void => {
     );
     expect(grants.map((grant) => grant.scope)).toContain('looker-pipeline-tile:read');
     expect(grants.every((grant) => grant.agentId === agentId)).toBe(true);
+  });
+
+  it('calls a server that answers with no tools ungranted, not listed-dead', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Jira employee',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'location',
+        label: 'Jira automation credential',
+        ciphertext: 'not-read-by-this-contract',
+        iv: 'not-read-by-this-contract',
+        source: 'entered',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'jira',
+        displayName: 'Jira',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'mcp',
+        fallbackPath: 'escalate',
+        pathCandidates: [{ path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' }],
+        endpoint: 'https://mcp.jira.example/mcp',
+        credentialId,
+        credentialKind: 'location',
+        credentialLanded: false,
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        createdAt: 1,
+      });
+    });
+    // The real probe decides, so the verdict is the code's and not the test's.
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: harness.mutation.bind(harness),
+        runQuery: harness.query.bind(harness),
+        runAction: async (): Promise<string> => 'jira-contract-credential',
+      } as unknown as ActionCtx,
+      surfaceId,
+      false,
+      {
+        probeBrowser: vi.fn(),
+        probeMcp: (endpoint: string | undefined, credential: string): Promise<McpDiscovery> =>
+          probeMcpSurface(
+            endpoint,
+            credential,
+            () => ({
+              listToolDefinitionsWithErrors: async () => ({
+                definitions: { surface: {} },
+                errors: {},
+              }),
+              disconnect: async (): Promise<void> => undefined,
+            }),
+            publicDns,
+          ),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+      },
+    );
+    expect(outcome.verdict).toBe('ungranted');
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({
+      verdict: 'ungranted',
+      endpoint: 'https://mcp.jira.example/mcp',
+      probeAttempts: [{ path: 'mcp', outcome: 'ungranted' }],
+    });
   });
 
   it('falls from a failed generic MCP route to the approved browser floor', async (): Promise<void> => {
