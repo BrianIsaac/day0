@@ -632,30 +632,42 @@ describe('URL attribution', (): void => {
       path: 'documented-api',
       endpoint: 'https://slack.com/api/',
     });
-    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' }, true)).toEqual({
+    expect(
+      choosePath('browser-driven', { webUi: 'https://app.example.com' }, true, true),
+    ).toEqual({
       path: 'browser-driven',
       endpoint: 'https://app.example.com',
     });
-    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' })).toEqual({
+    expect(
+      choosePath('browser-driven', { webUi: 'https://app.example.com' }, false, true),
+    ).toEqual({
       path: 'browser-driven',
       endpoint: 'https://app.example.com',
+    });
+    // Without the documented page-title marker the browser probe refuses the
+    // rung, so admitting it would ask both approvers to ratify a route the code
+    // already knows cannot run.
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' }, true)).toEqual({
+      path: 'escalate',
+    });
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' })).toEqual({
+      path: 'escalate',
     });
     expect(choosePath('mcp', { webUi: 'https://app.example.com' })).toEqual({ path: 'escalate' });
     expect(choosePath('mcp', {})).toEqual({ path: 'escalate' });
-    expect(
-      connectionLadder(
-        'browser-driven',
-        {
-          mcp: 'https://mcp.example.com/mcp',
-          api: 'https://api.example.com/v1',
-          webUi: 'https://app.example.com',
-        },
-        false,
-      ),
-    ).toEqual([
+    const threeRung = {
+      mcp: 'https://mcp.example.com/mcp',
+      api: 'https://api.example.com/v1',
+      webUi: 'https://app.example.com',
+    };
+    expect(connectionLadder('browser-driven', threeRung, false, true)).toEqual([
       { path: 'mcp', endpoint: 'https://mcp.example.com/mcp' },
       { path: 'documented-api', endpoint: 'https://api.example.com/v1' },
       { path: 'browser-driven', endpoint: 'https://app.example.com' },
+    ]);
+    expect(connectionLadder('browser-driven', threeRung, false, false)).toEqual([
+      { path: 'mcp', endpoint: 'https://mcp.example.com/mcp' },
+      { path: 'documented-api', endpoint: 'https://api.example.com/v1' },
     ]);
     expect(
       isBrowserLoginCredential({
@@ -1266,7 +1278,7 @@ describe('the browser floor in orientation', (): void => {
       harness,
       {
         'reports.md':
-          '# Forecast reports\n\nForecast reports use the browser at https://reports.example.test/forecast. There is no API or MCP server.',
+          '# Forecast reports\n\nForecast reports use the browser at https://reports.example.test/forecast. There is no API or MCP server.\n\n- Probe marker: page title `Forecast reports`.',
       },
       [{ name: 'Forecast reports', class: 'analytics' }],
     );
@@ -1283,6 +1295,29 @@ describe('the browser floor in orientation', (): void => {
     });
     expect(reports.request?.openQuestions).toContain(
       'No web login credential was found; browser access is limited to content the documented UI exposes without sign-in.',
+    );
+  });
+
+  it('escalates a web UI whose page title marker is not documented', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'reports.md':
+          '# Forecast reports\n\nForecast reports use the browser at https://reports.example.test/forecast. There is no API or MCP server.',
+      },
+      [{ name: 'Forecast reports', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    // The probe refuses a browser rung with no documented marker, so the rung
+    // is not put in front of two approvers as though it could connect.
+    expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+    expect(reports).not.toHaveProperty('pathCandidates');
+    expect(reports.request?.openQuestions).toContainEqual(
+      expect.stringContaining('Document the page title Day0 should see at'),
     );
   });
 

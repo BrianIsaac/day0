@@ -1453,6 +1453,68 @@ describe('probing the browser floor', (): void => {
     });
   });
 
+  it('reads the probe marker from the surface\'s own documentation', async (): Promise<void> => {
+    const { harness } = await tileHarness();
+    // A second browser-driven system on the same agent. Read across every page,
+    // one marker would serve both: this system would be checked against the
+    // tile's page title, which is what a shared marker means now that a public
+    // web UI reaches the browser rung without a login.
+    const reportsId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const source = await ctx.db.query('docSources').first();
+      const agent = await ctx.db.query('agents').first();
+      if (!source || !agent) throw new Error('no documentation source');
+      await ctx.db.insert('docPages', {
+        sourceId: source._id,
+        ref: 'forecast-reports.md',
+        title: 'Forecast reports',
+        markdown: '# Forecast reports\n\n- Probe marker: page title `Forecast - Home`.',
+        updatedAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId: agent._id,
+        slug: 'forecast-reports',
+        displayName: 'Forecast reports',
+        class: 'analytics',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'browser-driven',
+        endpoint: 'https://reports.example.test/forecast',
+        pathCandidates: [
+          { path: 'browser-driven', endpoint: 'https://reports.example.test/forecast' },
+        ],
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        credentialLanded: false,
+        createdAt: 2,
+      });
+    });
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', DRIVER);
+    const probeBrowser = vi.fn(async () => ({
+      toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+      toolArguments: [],
+    }));
+    await expect(
+      runSurfaceProbe(
+        {
+          runMutation: harness.mutation.bind(harness),
+          runQuery: harness.query.bind(harness),
+          runAction: async (): Promise<string> => {
+            throw new Error('no credential to decrypt');
+          },
+        } as unknown as ActionCtx,
+        reportsId,
+        false,
+        { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+      ),
+    ).resolves.toMatchObject({ verdict: 'connected' });
+    expect(probeBrowser).toHaveBeenCalledWith(
+      'https://reports.example.test/forecast',
+      DRIVER,
+      undefined,
+      'Forecast - Home',
+    );
+  });
+
   it('keeps a withdrawn credential from descending to a credentialless rung', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {

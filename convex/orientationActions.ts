@@ -9,6 +9,7 @@ import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
+import { browserTitleMarker } from '../src/surfaces/browser';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -677,11 +678,18 @@ export function connectionLadder(
   draftPath: OrientationPath,
   endpoints: DocumentedEndpoints,
   hasLoginCredential = false,
+  hasProbeMarker = false,
 ): SurfacePathCandidate[] {
   const candidates: SurfacePathCandidate[] = [];
   if (endpoints.mcp) candidates.push({ path: 'mcp', endpoint: endpoints.mcp });
   if (endpoints.api) candidates.push({ path: 'documented-api', endpoint: endpoints.api });
-  if (endpoints.webUi && (draftPath === 'browser-driven' || hasLoginCredential)) {
+  // The browser rung used to need a stored web login, which was literal
+  // evidence. Dropping it for the public floor left the model's own draft path
+  // deciding whether a rung is admitted, which is the one thing the model does
+  // not decide here. The documented page-title marker restores an evidence
+  // condition, and it is the condition the browser probe already refuses
+  // without - so both approvers now ratify only rungs that can actually run.
+  if (endpoints.webUi && hasProbeMarker && (draftPath === 'browser-driven' || hasLoginCredential)) {
     candidates.push({ path: 'browser-driven', endpoint: endpoints.webUi });
   }
   return candidates;
@@ -692,8 +700,13 @@ export function choosePath(
   draftPath: OrientationPath,
   endpoints: DocumentedEndpoints,
   hasLoginCredential = false,
+  hasProbeMarker = false,
 ): { path: OrientationPath; endpoint?: string } {
-  return connectionLadder(draftPath, endpoints, hasLoginCredential)[0] ?? { path: 'escalate' };
+  return (
+    connectionLadder(draftPath, endpoints, hasLoginCredential, hasProbeMarker)[0] ?? {
+      path: 'escalate',
+    }
+  );
 }
 
 /** Whether a page-derived stored value is explicitly a web login credential. */
@@ -1138,7 +1151,13 @@ export async function orientSurface(
       ? validatedDraftCredential(draft.credential, credentialPages)
       : extractedCredential;
   const hasBrowserLogin = isBrowserLoginCredential(credential);
-  const pathCandidates = connectionLadder(draft.path, endpoints, hasBrowserLogin);
+  const hasProbeMarker = browserTitleMarker(relevantText) !== undefined;
+  const pathCandidates = connectionLadder(
+    draft.path,
+    endpoints,
+    hasBrowserLogin,
+    hasProbeMarker,
+  );
   const selected: { path: OrientationPath; endpoint?: string } = pathCandidates[0] ?? {
     path: 'escalate',
   };
@@ -1157,6 +1176,11 @@ export async function orientSurface(
   if (credentiallessBrowser) {
     openQuestions.push(
       'No web login credential was found; browser access is limited to content the documented UI exposes without sign-in.',
+    );
+  }
+  if (endpoints.webUi && !hasProbeMarker && draft.path === 'browser-driven') {
+    openQuestions.push(
+      `Document the page title Day0 should see at ${endpoints.webUi}, as "Probe marker: page title" followed by the title in backticks, before approving browser-driven access.`,
     );
   }
   if (endpoints.insecure) {

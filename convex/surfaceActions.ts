@@ -10,6 +10,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
+import { relevantSystemText } from './orientationActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import {
@@ -957,8 +958,17 @@ export async function runSurfaceProbe(
           (): Promise<Doc<'docPages'>[]> =>
             ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
         );
+        // Scoped to this surface's own documentation. Read across every page,
+        // one marker would serve every browser-driven surface the agent has,
+        // and the second such surface would be checked against the first's page
+        // title - which matters now that a public web UI reaches this rung
+        // without a login.
         const titleMarker = browserTitleMarker(
-          pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+          pages
+            .map((page: Doc<'docPages'>): string =>
+              relevantSystemText(page.markdown, surface.displayName, page.title),
+            )
+            .join('\n\n'),
         );
         const discovery = await dependencies.probeBrowser(
           surface.endpoint,
