@@ -553,7 +553,17 @@ export const recordProbeFailure = internalMutation({
   },
 });
 
-/** Move one failed probe to the next route both approvers already saw. */
+/**
+ * Move one failed probe to the next route both approvers already saw.
+ *
+ * A `connected` row is deliberately not demotable. The descent is one-way -
+ * nothing climbs back - so demoting on the first failure would let a single
+ * provider blip on a route that demonstrably works permanently abandon it for
+ * a weaker rung. A connected route's failure is recorded instead, which already
+ * closes the gate; the next probe, finding the row no longer connected,
+ * descends. Establishing a connection still walks the whole ladder at once,
+ * because a freshly approved row is never `connected`.
+ */
 export const demoteAfterProbeFailure = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -569,7 +579,7 @@ export const demoteAfterProbeFailure = internalMutation({
     if (
       !surface ||
       surface.probeGeneration !== args.generation ||
-      !['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict) ||
+      !['approved', 'ungranted', 'listed-dead'].includes(surface.verdict) ||
       surface.managerApprovedAt === undefined ||
       surface.itApprovedAt === undefined
     ) {

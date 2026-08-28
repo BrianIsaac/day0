@@ -464,6 +464,69 @@ describe('surface probe generations', (): void => {
     ]);
   });
 
+  it('keeps one blip on a working route from abandoning it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Jira', 'kanban');
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId,
+      request: { target: { system: 'Jira' } },
+      whereFound: [],
+      path: 'mcp',
+      fallbackPath: 'browser-driven',
+      pathCandidates: [
+        { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
+        { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
+      ],
+      endpoint: 'https://mcp.jira.example/mcp',
+      expiresInDays: 30,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'connected',
+        managerApprovedAt: 10,
+        itApprovedAt: 11,
+        credentialLanded: true,
+        lastVerifiedAt: 50,
+      });
+    });
+    const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!first) throw new Error('probe was not reserved');
+    // The descent is one-way, so a route that demonstrably works is not given
+    // up on its first bad minute.
+    await expect(
+      harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+        surfaceId,
+        generation: first.generation,
+        reason: 'connect ETIMEDOUT',
+        attemptedAt: 100,
+      }),
+    ).resolves.toBeNull();
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: first.generation,
+      verdict: 'listed-dead',
+      reason: 'connect ETIMEDOUT',
+      attemptedAt: 100,
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'listed-dead',
+      path: 'mcp',
+      endpoint: 'https://mcp.jira.example/mcp',
+    });
+    // The next probe finds a row that is no longer connected, and descends.
+    const second = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!second) throw new Error('re-probe was not reserved');
+    await expect(
+      harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+        surfaceId,
+        generation: second.generation,
+        reason: 'connect ETIMEDOUT',
+        attemptedAt: 200,
+      }),
+    ).resolves.toMatchObject({ surface: { path: 'browser-driven' } });
+  });
+
   it('rejects ineligible rows and ignores results from an older probe', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);

@@ -847,20 +847,11 @@ export async function runSurfaceProbe(
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) return { verdict: 'skipped', reason: 'Surface no longer exists.' };
 
-  const failOrDemote = async (
+  const recordFailure = async (
     reason: string,
     verdict: 'ungranted' | 'listed-dead',
-  ): Promise<ProbeOutcome | undefined> => {
-    const attemptedAt = dependencies.now();
-    const demoted: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
-      internal.surfaces.demoteAfterProbeFailure,
-      { surfaceId, generation, reason, attemptedAt },
-    );
-    if (demoted) {
-      surface = demoted.surface;
-      generation = demoted.generation;
-      return undefined;
-    }
+    attemptedAt: number,
+  ): Promise<ProbeOutcome> => {
     const recorded: boolean | undefined = await ctx.runMutation(
       internal.surfaces.recordProbeFailure,
       { surfaceId, generation, verdict, reason, attemptedAt },
@@ -868,6 +859,35 @@ export async function runSurfaceProbe(
     return recorded === false
       ? { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' }
       : { verdict, reason };
+  };
+
+  /**
+   * Record one failed route, descending the approved ladder when it is a route
+   * that failed. A credential that was stored and can no longer be used is not
+   * a route failure: it is the manager or IT withdrawing the authority this
+   * surface was approved on, and the rollback the request itself offers. Moving
+   * to a rung that needs no credential would leave the connection standing
+   * after the credential that carried it was taken away, so an authority
+   * withdrawal stops here and says so.
+   */
+  const failOrDemote = async (
+    reason: string,
+    verdict: 'ungranted' | 'listed-dead',
+    descend = true,
+  ): Promise<ProbeOutcome | undefined> => {
+    const attemptedAt = dependencies.now();
+    if (descend) {
+      const demoted: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
+        internal.surfaces.demoteAfterProbeFailure,
+        { surfaceId, generation, reason, attemptedAt },
+      );
+      if (demoted) {
+        surface = demoted.surface;
+        generation = demoted.generation;
+        return undefined;
+      }
+    }
+    return await recordFailure(reason, verdict, attemptedAt);
   };
 
   // The route list is capped to the three actual rungs when orientation stores
@@ -910,9 +930,12 @@ export async function runSurfaceProbe(
             credentialId: surface.credentialId,
           });
         } catch {
-          const outcome = await failOrDemote('credential is unavailable or revoked', 'ungranted');
-          if (outcome) return outcome;
-          continue;
+          return (
+            (await failOrDemote('credential is unavailable or revoked', 'ungranted', false)) ?? {
+              verdict: 'ungranted',
+              reason: 'credential is unavailable or revoked',
+            }
+          );
         }
       }
 

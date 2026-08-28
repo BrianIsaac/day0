@@ -1453,6 +1453,75 @@ describe('probing the browser floor', (): void => {
     });
   });
 
+  it('keeps a withdrawn credential from descending to a credentialless rung', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Jira employee',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'location',
+        label: 'Jira automation credential',
+        ciphertext: 'not-read-by-this-contract',
+        iv: 'not-read-by-this-contract',
+        source: 'entered',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'jira',
+        displayName: 'Jira',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'mcp',
+        fallbackPath: 'browser-driven',
+        pathCandidates: [
+          { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
+          { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
+        ],
+        endpoint: 'https://mcp.jira.example/mcp',
+        credentialId,
+        credentialKind: 'location',
+        credentialLanded: false,
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        createdAt: 1,
+      });
+    });
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', DEFAULT_BROWSER_MCP_URL);
+    const probeBrowser = vi.fn();
+    // Revoking the credential is the rollback the surface request itself
+    // offers. Descending to a rung that needs none would leave the connection
+    // standing after the authority it was approved on was taken away.
+    const outcome = await runSurfaceProbe(
+      {
+        runMutation: harness.mutation.bind(harness),
+        runQuery: harness.query.bind(harness),
+        runAction: async (): Promise<never> => {
+          throw new Error('credential row is gone');
+        },
+      } as unknown as ActionCtx,
+      surfaceId,
+      false,
+      { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+    );
+    expect(outcome).toMatchObject({ verdict: 'ungranted', reason: 'credential is unavailable or revoked' });
+    expect(probeBrowser).not.toHaveBeenCalled();
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({
+      verdict: 'ungranted',
+      path: 'mcp',
+      endpoint: 'https://mcp.jira.example/mcp',
+      probeAttempts: [{ path: 'mcp', outcome: 'ungranted' }],
+    });
+  });
+
   it('falls from a failed generic MCP route to the approved browser floor', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await harness.run(
