@@ -1720,4 +1720,56 @@ describe('the exact-action gate', (): void => {
       harness.withIdentity(OWNER).query(api.work.findExistingClaim, { agentId, sourceSystem: 'linear', externalId: 'REVOPS-1' }),
     ).resolves.toEqual({ state: 'actions-pending' });
   });
+
+  it('enforces the autonomous WIP cap when stale claim verdicts arrive together', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'discovered', [], {
+      autonomousActions: true,
+    });
+    const workItemIds = await harness.run(async (ctx): Promise<Id<'workItems'>[]> => {
+      const ids = [workItemId];
+      for (let index = 1; index < 4; index += 1) {
+        ids.push(
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: `concurrent-${index}`,
+            title: `Concurrent item ${index}`,
+            contentSummary: 'Evaluated against the same stale open-work count.',
+            contentRefs: [],
+            state: 'discovered',
+            observedAt: 1,
+            createdAt: 1,
+          }),
+        );
+      }
+      return ids;
+    });
+    const claim = {
+      decision: 'claim',
+      value: 80,
+      risk: 30,
+      requiredPermissions: ['boss:message', 'linear:read'],
+    };
+
+    const stored = await Promise.all(
+      workItemIds.map(
+        async (id) =>
+          await harness.mutation(internal.work.setVerdict, { workItemId: id, verdict: claim }),
+      ),
+    );
+
+    const rows = await harness.run(
+      async (ctx): Promise<Doc<'workItems'>[]> =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(rows.filter((row): boolean => row.state === 'claimed')).toHaveLength(3);
+    expect(rows.filter((row): boolean => row.verdict?.decision === 'queue')).toHaveLength(1);
+    expect(stored.filter((verdict): boolean => verdict.decision === 'claim')).toHaveLength(3);
+    expect(stored.filter((verdict): boolean => verdict.decision === 'queue')).toHaveLength(1);
+  });
 });

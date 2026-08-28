@@ -22,7 +22,12 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { replyTargetFor } from '../src/work/reply-target';
-import type { MockAction, ReplyTarget } from '../src/work/types';
+import {
+  AUTONOMOUS_WIP_LIMIT,
+  COLD_START_WIP_LIMIT,
+  type MockAction,
+  type ReplyTarget,
+} from '../src/work/types';
 import type { DecisionKind } from '../src/work/manager-channel';
 import {
   browserComponentRefusal,
@@ -247,9 +252,10 @@ export async function applyVerdict(
   ctx: MutationCtx,
   workItemId: Id<'workItems'>,
   verdict: unknown,
-): Promise<void> {
+): Promise<{ decision: string; [key: string]: unknown }> {
   const row = await ctx.db.get(workItemId);
   if (!row) throw new Error('workItem not found');
+  const proposed = verdict as { decision: string; [key: string]: unknown };
 
   // Late-arriving verdict guard: a verdict is the entry transition from
   // `discovered` (initial evaluation) or `needs-skill` (pending-reevaluation
@@ -258,30 +264,65 @@ export async function applyVerdict(
   // verdict must NOT stomp the row's state, which would wipe a drafted plan or
   // running execution. Ignore silently.
   if (row.state !== 'discovered' && row.state !== 'needs-skill') {
-    return;
+    return proposed;
   }
 
-  const decision = (verdict as { decision: string }).decision;
+  let effective = proposed;
+  if (proposed.decision === 'claim') {
+    const agent = await ctx.db.get(row.agentId);
+    if (!agent) throw new Error('agent not found');
+    const autonomous = autonomousActionsOn(agent);
+    const wipCap = autonomous ? AUTONOMOUS_WIP_LIMIT : COLD_START_WIP_LIMIT;
+    const openStates = [
+      'claimed',
+      'plan-pending',
+      'plan-approved',
+      'executing',
+      'actions-pending',
+    ] as const;
+    let openClaims = 0;
+    for (const state of openStates) {
+      const remaining = wipCap - openClaims;
+      if (remaining <= 0) break;
+      openClaims += (
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', row.agentId).eq('state', state))
+          .take(remaining)
+      ).length;
+    }
+    if (openClaims >= wipCap) {
+      const posture = autonomous ? 'autonomous concurrency' : 'supervised cold-start';
+      effective = {
+        decision: 'queue',
+        reason: `WIP cap reached: ${posture} limit is ${wipCap}`,
+        openClaims,
+      };
+    }
+  }
+
+  const decision = effective.decision;
   let nextState: Doc<'workItems'>['state'] = 'discovered';
   let skipReason: string | undefined;
   if (decision === 'claim') nextState = 'claimed';
   else if (decision === 'skip') {
     nextState = 'skipped';
-    skipReason = (verdict as { reason?: string }).reason;
+    skipReason = effective.reason as string | undefined;
   } else if (decision === 'queue') nextState = 'discovered';
   else if (decision === 'defer') nextState = 'deferred';
   else if (decision === 'needs-skill') nextState = 'needs-skill';
   await ctx.db.patch(workItemId, {
-    verdict,
+    verdict: effective,
     state: nextState,
     ...(skipReason ? { skipReason } : {}),
   });
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.evaluated',
-    payload: { workItemId, decision, verdict },
+    payload: { workItemId, decision, verdict: effective },
     createdAt: Date.now(),
   });
+  return effective;
 }
 
 export const setVerdict = internalMutation({
@@ -290,7 +331,7 @@ export const setVerdict = internalMutation({
     verdict: v.any(),
   },
   handler: async (ctx, args) => {
-    await applyVerdict(ctx, args.workItemId, args.verdict);
+    return await applyVerdict(ctx, args.workItemId, args.verdict);
   },
 });
 
