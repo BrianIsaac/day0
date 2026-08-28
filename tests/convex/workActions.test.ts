@@ -1238,6 +1238,62 @@ describe('the autonomous-actions switch through the gate', (): void => {
     expect(ledger(row)[0].authority).toBeUndefined();
   });
 
+  it('re-reads the browser component switch after credential access and before transport', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    recorded.skillOutput = {
+      draft: 'Read the browser-only tile.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'looker',
+            tool: 'browser_navigate',
+            toolArgsJson: '{"url":"http://looker-tile:8080/"}',
+          },
+        },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', ['looker:read'], {
+      autonomousActions: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_navigate'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    recorded.afterCredentialRead = async (): Promise<void> => {
+      vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
+      recorded.afterCredentialRead = undefined;
+    };
+
+    const result = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(BROWSER_DRIVER_ABSENT),
+    });
+    expect(recorded.mcp).toHaveLength(0);
+    expect(ledger(await readItem(harness, workItemId))[0]).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(BROWSER_DRIVER_ABSENT),
+    });
+  });
+
   it('does not write after the agent row disappears between claim and transport', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0]] };
