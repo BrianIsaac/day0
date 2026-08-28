@@ -677,6 +677,37 @@ export function resolveRequestUrl(endpoint: string, path: string): URL {
   return target;
 }
 
+/**
+ * Why a surface's stored MCP endpoint may not carry a credential, if it may not.
+ *
+ * The probe validates the endpoint before it builds a bearer client, and only a
+ * validated route ever becomes `connected`. Transport re-derives the rule
+ * rather than inheriting that history, so a row written by any other path
+ * cannot put the surface's credential on a plaintext or userinfo-bearing URL.
+ * The public-address rule stays with the probe, which is the only place that
+ * can resolve a name.
+ *
+ * Args:
+ *   surface: The surface the action targets.
+ *
+ * Returns:
+ *   A refusal reason, or undefined when the endpoint may carry the credential.
+ */
+export function mcpEndpointRefusal(surface: SurfaceRecord): string | undefined {
+  // The browser floor's transport is Day0's own driver, not this address; the
+  // endpoint is the page the driver is bounded to and `navigationRefusal` owns it.
+  if (surface.path !== 'mcp') return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(surface.endpoint ?? '');
+  } catch {
+    return 'surface has no valid endpoint';
+  }
+  return parsed.protocol === 'https:' && !parsed.username && !parsed.password
+    ? undefined
+    : 'surface endpoint must be an HTTPS URL without userinfo';
+}
+
 /** Why an operation is outside the surface's probed allowlist, if it is. */
 export function toolRefusal(
   parsed: ParsedSurfaceAction,
