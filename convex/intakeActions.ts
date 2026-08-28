@@ -10,6 +10,7 @@ import { internalAction, type ActionCtx } from './_generated/server';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
+import { browserComponent } from '../src/surfaces/browser';
 import { documentedChannelNames } from '../src/surfaces/slack-policy';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
@@ -85,6 +86,8 @@ export interface IntakeDependencies {
   makeMcpClient?: (endpoint: URL, credential: string) => McpIntakeClient;
   mode?: SurfaceMode;
   now?: () => number;
+  /** This deployment's browser driver address; absent means no browser component. */
+  browserMcpUrl?: string;
 }
 
 export interface IntakeSweepResult {
@@ -1079,6 +1082,24 @@ function disconnectedReason(surface: Doc<'surfaces'>): string {
 }
 
 /**
+ * Why a browser-driven surface cannot be polled here, or nothing when it can.
+ *
+ * Args:
+ *   configured: The value of `DAY0_BROWSER_MCP_URL`, if set.
+ *
+ * Returns:
+ *   The recordable skip reason, or undefined when the component is configured.
+ */
+function browserAbsentReason(configured: string | undefined): string | undefined {
+  try {
+    const component = browserComponent(configured);
+    return component.present ? undefined : component.reason;
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+/**
  * Run one deployment-wide waterfall sweep.
  *
  * Args:
@@ -1097,6 +1118,9 @@ export async function runIntakeSweep(
   const fetcher: IntakeFetcher = dependencies.fetcher ?? fetch;
   const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const now = dependencies.now ?? Date.now;
+  const browserAbsent = browserAbsentReason(
+    dependencies.browserMcpUrl ?? process.env.DAY0_BROWSER_MCP_URL,
+  );
   const surfaces = await runtime.listSurfaces();
   const byAgent = new Map<Id<'agents'>, Doc<'surfaces'>[]>();
   for (const surface of surfaces) {
@@ -1135,6 +1159,18 @@ export async function runIntakeSweep(
           surfaceId: surface._id,
           waterfallPosition,
           skipReason: 'connected surface has no stored credential; re-probe required',
+        });
+        skipped += 1;
+        continue;
+      }
+      // A surface driven through the browser needs the browser component, and a
+      // deployment that does not run it skips the row with that as the reason
+      // rather than with a reader complaint that hides which part is missing.
+      if (surface.path === 'browser-driven' && browserAbsent) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: browserAbsent,
         });
         skipped += 1;
         continue;

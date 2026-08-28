@@ -40,6 +40,45 @@ const ENV_FILE = process.argv[2] ?? '.env.local';
 /** The compose service that verifies authored skills without an account. */
 const SANDBOX_SERVICE = 'sandbox';
 
+/**
+ * Every profile `docker-compose.yml` defines.
+ *
+ * `docker compose ps` only lists services whose profile is enabled, so asking
+ * about one profile answers about one component. The question here is which
+ * components are running, so every profile is enabled and the answer is read
+ * off the service names.
+ */
+const COMPOSE_PROFILES = [
+  'real',
+  'docs-notion',
+  'browser',
+  'demo',
+  'test',
+  'dev',
+  'model',
+  'sandbox',
+] as const;
+
+/**
+ * The optional components, in the order the running instructions introduce
+ * them: the compose service, the profile that starts it, and what it is for.
+ */
+const COMPONENTS = [
+  {
+    service: 'docs-notion-mcp',
+    profile: 'docs-notion',
+    purpose: 'read documentation out of Notion',
+  },
+  {
+    service: 'playwright-mcp',
+    profile: 'browser',
+    purpose: 'reach a system that has a web UI and no API',
+  },
+  { service: 'looker-tile', profile: 'demo', purpose: 'the synthetic web-UI system' },
+  { service: 'fake-slack', profile: 'test', purpose: 'the Slack provider double' },
+  { service: 'dashboard', profile: 'dev', purpose: 'the Convex dashboard' },
+] as const;
+
 const WEBHOOK_PATH = '/api/voice/elevenlabs/webhook';
 
 /** Sent by `startSession({ dynamicVariables })` and read back off the webhook payload. */
@@ -74,6 +113,8 @@ const WATCHED = [
   'DAY0_SURFACE_MODE',
   'DAY0_DOCS_ROOT',
   'DAY0_CREDENTIAL_KEY',
+  'DAY0_BROWSER_MCP_URL',
+  'DAY0_PUBLIC_URL',
   'COMPOSE_PROJECT_NAME',
 ] as const;
 
@@ -119,13 +160,18 @@ function main(): void {
 
   const v = resolve(ENV_FILE);
   const selfHosted = !!v.CONVEX_SELF_HOSTED_URL;
+  const projectName = v.COMPOSE_PROJECT_NAME || 'day0';
+  // Asked once and shared: every section that cares about a container reads the
+  // same answer, and `docker compose ps` is the slowest thing here.
+  const services = composeRunningServices(projectName);
 
   const sections: Section[] = [
     backendSection(v),
     authSection(v),
-    surfacesSection(v),
+    surfacesSection(v, services),
+    componentsSection(v, projectName, services),
     modelSection(v, selfHosted),
-    sandboxSection(v, v.COMPOSE_PROJECT_NAME || 'day0'),
+    sandboxSection(v, projectName),
     voiceSection(v),
     finalisationSection(v),
   ];
@@ -207,8 +253,7 @@ function composeRunningServices(projectName: string): string[] | undefined {
       projectName,
       '--env-file',
       ENV_FILE,
-      '--profile',
-      'real',
+      ...COMPOSE_PROFILES.flatMap((profile: string): string[] => ['--profile', profile]),
       'ps',
       '--status',
       'running',
@@ -293,11 +338,12 @@ function storedCredentialCount(values: Values): number | undefined {
  *
  * Args:
  *   values: Resolved environment contract.
+ *   services: Running service names, or undefined when Docker could not be asked.
  *
  * Returns:
  *   One setup section without exposing any provider value.
  */
-function surfacesSection(values: Values): Section {
+function surfacesSection(values: Values, services: string[] | undefined): Section {
   const mode = values.DAY0_SURFACE_MODE || 'mock';
   if (mode !== 'mock' && mode !== 'real') {
     return {
@@ -320,19 +366,16 @@ function surfacesSection(values: Values): Section {
 
   const projectName = values.COMPOSE_PROJECT_NAME || 'day0';
   const docsRoot = values.DAY0_DOCS_ROOT || '/docs';
-  const services = composeRunningServices(projectName);
-  const profileDetected =
-    (services?.includes('notion-mcp') && services.includes('playwright-mcp')) ?? false;
-  const floorRunning = services?.includes('looker-tile') ?? false;
+  // `real` is day0 itself, so the question is whether the backend is up. Every
+  // other service is an optional component and gets its own section.
+  const backendRunning = services?.includes('backend') ?? false;
   const docsReadable = backendCanReadDocs(projectName, docsRoot);
   const count = storedCredentialCount(values);
   const keyPresent = Boolean(values.DAY0_CREDENTIAL_KEY);
   const lines = [
-    `Compose project ${projectName}; real profile ${profileDetected ? 'detected' : 'not detected'}.`,
+    `Compose project ${projectName}; the real profile (day0's backend) is ${backendRunning ? 'running' : 'not running'}.`,
     `Backend documentation root ${docsRoot} is ${docsReadable ? 'readable' : 'not readable'}.`,
     `Credential key ${keyPresent ? 'present' : 'absent'}; stored credentials ${count ?? 'unavailable'}.`,
-    `Browser floor: driver ${values.DAY0_BROWSER_MCP_URL || 'http://playwright-mcp:8931/mcp (default)'}; ` +
-      `the looker-tile demonstration system is ${floorRunning ? 'running' : 'not running'}.`,
     `Install redirect: ${values.DAY0_PUBLIC_URL ? `${values.DAY0_PUBLIC_URL}/api/oauth/slack` : 'DAY0_PUBLIC_URL is unset, so no dedicated app can be provisioned'}.`,
   ];
   const drifted = driftedHandbookTwins();
@@ -343,7 +386,7 @@ function surfacesSection(values: Values): Section {
         'the tests read the fixture, so a stale twin tests a page nobody publishes.',
     );
   }
-  if (!profileDetected || !docsReadable || !keyPresent || count === undefined || drifted.length > 0) {
+  if (!backendRunning || !docsReadable || !keyPresent || count === undefined || drifted.length > 0) {
     return { title: 'Surfaces: real (local) - needs fixing', status: 'gap', lines };
   }
   return {
@@ -351,6 +394,145 @@ function surfacesSection(values: Values): Section {
     status: 'ok',
     lines,
   };
+}
+
+/**
+ * Read the linked documentation sources by kind through an owner-free query.
+ *
+ * Args:
+ *   values: Resolved deployment environment.
+ *
+ * Returns:
+ *   Counts by source kind, or undefined when the backend cannot answer.
+ */
+function linkedDocSourceKinds(
+  values: Values,
+): Array<{ kind: string; serverKind?: string; count: number }> | undefined {
+  if (!values.CONVEX_SELF_HOSTED_URL || !values.CONVEX_SELF_HOSTED_ADMIN_KEY) return undefined;
+  const probe = spawnSync(
+    'npx',
+    ['convex', 'run', '--typecheck', 'disable', '--codegen', 'disable', 'docSources:linkedKinds', '{}'],
+    { encoding: 'utf8', timeout: 30_000, env: { ...process.env, ...values } },
+  );
+  if (probe.status !== 0) return undefined;
+  try {
+    const parsed: unknown = JSON.parse((probe.stdout || '').trim());
+    return Array.isArray(parsed)
+      ? (parsed as Array<{ kind: string; serverKind?: string; count: number }>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Describe one documentation source kind in terms of what it needs running.
+ *
+ * Args:
+ *   row: One kind, its MCP server kind, and how many are linked.
+ *
+ * Returns:
+ *   A line naming the component the kind depends on, or that it needs none.
+ */
+export function docSourceDependency(row: {
+  kind: string;
+  serverKind?: string;
+  count: number;
+}): string {
+  const label = row.serverKind ? `${row.kind}/${row.serverKind}` : row.kind;
+  const plural = row.count === 1 ? 'source' : 'sources';
+  if (row.kind !== 'mcp') {
+    return `${row.count} ${label} ${plural} - read by the backend itself; no component needed.`;
+  }
+  if (row.serverKind === 'notion') {
+    return `${row.count} ${label} ${plural} - needs day0's Notion component (--profile docs-notion).`;
+  }
+  return `${row.count} ${label} ${plural} - points at an MCP server you already run; no day0 component needed.`;
+}
+
+/**
+ * Report which optional components are running and which are merely configured.
+ *
+ * None of this can fail the command. An enterprise whose systems all have APIs
+ * never starts the browser component, and an enterprise that keeps its
+ * documentation in a folder never starts the Notion one; both are complete
+ * installations. What is worth saying out loud is a half-state - a component
+ * running that day0 was never told about, or one day0 was told about that is
+ * not there - because that is the shape that looks finished and is not.
+ *
+ * Args:
+ *   values: Resolved deployment environment.
+ *   projectName: Explicit Compose project name.
+ *   services: Running service names, or undefined when Docker could not be asked.
+ *
+ * Returns:
+ *   One informational section.
+ */
+function componentsSection(
+  values: Values,
+  projectName: string,
+  services: string[] | undefined,
+): Section {
+  const lines: string[] = [];
+  let status: Status = 'ok';
+  if (services === undefined) {
+    return {
+      title: 'Components: Docker could not be asked',
+      status: 'warn',
+      lines: [
+        `\`docker compose -p ${projectName} ps\` could not be run, so which optional`,
+        'components are running is unknown. Everything else above still applies.',
+      ],
+    };
+  }
+  for (const component of COMPONENTS) {
+    const running = services.includes(component.service);
+    lines.push(
+      `${component.service} (--profile ${component.profile}): ${running ? 'running' : 'not running'} - ${component.purpose}.`,
+    );
+  }
+  const browserRunning = services.includes('playwright-mcp');
+  const browserConfigured = Boolean(values.DAY0_BROWSER_MCP_URL);
+  if (browserConfigured && !browserRunning) {
+    status = 'warn';
+    lines.push(
+      `DAY0_BROWSER_MCP_URL names ${values.DAY0_BROWSER_MCP_URL} and nothing is running there.`,
+      'Every browser-driven surface will refuse with BROWSER_DRIVER_ABSENT. Start it with',
+      '`pnpm convex:up --profile browser`, or clear the variable to run without the component.',
+    );
+  } else if (!browserConfigured && browserRunning) {
+    status = 'warn';
+    lines.push(
+      'playwright-mcp is running and DAY0_BROWSER_MCP_URL is unset, so day0 will not use it.',
+      `Set DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp in ${ENV_FILE} and re-run`,
+      '`pnpm sync:env`, or stop the component.',
+    );
+  } else if (!browserConfigured) {
+    lines.push(
+      'No browser component. A system whose documentation records a web UI and no API is',
+      'still proposed and still shows its evidence; its card says the component is not',
+      'running and holds approval. That is a complete installation if none of your systems',
+      'need a browser.',
+    );
+  }
+  const kinds = linkedDocSourceKinds(values);
+  if (kinds === undefined) {
+    lines.push('Linked documentation sources: unavailable (the backend could not be asked).');
+  } else if (kinds.length === 0) {
+    lines.push('Linked documentation sources: none yet. Link one on /documentation.');
+  } else {
+    lines.push('Linked documentation sources:');
+    for (const row of kinds) lines.push(`  ${docSourceDependency(row)}`);
+    const needsNotion = kinds.some((row): boolean => row.kind === 'mcp' && row.serverKind === 'notion');
+    if (needsNotion && !services.includes('docs-notion-mcp')) {
+      status = 'warn';
+      lines.push(
+        'A Notion source is linked and docs-notion-mcp is not running, so its next sync will',
+        'fail. Start it with `pnpm convex:up --profile docs-notion`.',
+      );
+    }
+  }
+  return { title: titleFor(status, 'Components'), status, lines };
 }
 
 /** Which backend the app and the Convex CLI will talk to, and whether they agree. */

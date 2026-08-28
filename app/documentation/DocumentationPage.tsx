@@ -4,8 +4,35 @@ import { useState, type FormEvent } from 'react';
 import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
+import { plainErrorMessage } from '@/lib/plain-error';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
+type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
+
+/**
+ * Say what this source kind will actually reach, and what has to be running.
+ *
+ * Three of the four kinds are read by the backend itself and depend on nothing
+ * else; the fourth reaches an MCP server, and only one of those servers is one
+ * day0 bundles a component for. Saying so in the form is what keeps a reader
+ * from assuming every documentation source needs a container started.
+ *
+ * Args:
+ *   props: The selected source kind, and the MCP server kind when it applies.
+ *
+ * Returns:
+ *   The help line under the form fields.
+ */
+export function SourceKindHelp(props: { kind: SourceKind; serverKind: ServerKind }): React.ReactNode {
+  return (
+    <p className="text-xs text-[var(--color-muted)]">
+      {props.kind === 'mcp'
+        ? `${serverKindHelp(props.serverKind)} The secret is encrypted when submitted and is never displayed again.`
+        : 'The backend reads this location itself. No day0 component has to be running.'}
+    </p>
+  );
+}
 
 /** Owner-level documentation source management. */
 export function DocumentationPage(): React.ReactNode {
@@ -19,9 +46,7 @@ export function DocumentationPage(): React.ReactNode {
   const [kind, setKind] = useState<SourceKind>('folder');
   const [label, setLabel] = useState('Team folder');
   const [locator, setLocator] = useState('.');
-  const [serverKind, setServerKind] = useState<'notion' | 'confluence' | 'drive' | 'generic'>(
-    'notion',
-  );
+  const [serverKind, setServerKind] = useState<ServerKind>('notion');
   const [busy, setBusy] = useState(false);
   const [rotatingSourceId, setRotatingSourceId] = useState<string | null>(null);
   const [busySourceId, setBusySourceId] = useState<string | null>(null);
@@ -45,7 +70,7 @@ export function DocumentationPage(): React.ReactNode {
         credential: kind === 'mcp' ? credential : undefined,
       });
     } catch (failure) {
-      setError((failure as Error).message);
+      setError(plainErrorMessage((failure as Error).message));
     } finally {
       setBusy(false);
     }
@@ -69,7 +94,7 @@ export function DocumentationPage(): React.ReactNode {
       });
       setRotatingSourceId(null);
     } catch (failure) {
-      setError((failure as Error).message);
+      setError(plainErrorMessage((failure as Error).message));
     } finally {
       setBusySourceId(null);
     }
@@ -215,7 +240,9 @@ export function DocumentationPage(): React.ReactNode {
                 placeholder={
                   kind === 'folder'
                     ? 'Relative to /docs, for example .'
-                    : 'Location URL, or one URL per line'
+                    : kind === 'mcp' && serverKind === 'notion'
+                      ? DOCS_NOTION_LOCATOR
+                      : 'Location URL, or one URL per line'
                 }
                 className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded min-h-20"
               />
@@ -241,11 +268,7 @@ export function DocumentationPage(): React.ReactNode {
                   />
                 </div>
               ) : null}
-              {kind === 'mcp' ? (
-                <p className="text-xs text-[var(--color-muted)]">
-                  The secret is encrypted when submitted and is never displayed again.
-                </p>
-              ) : null}
+              <SourceKindHelp kind={kind} serverKind={serverKind} />
               {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}
               <button
                 disabled={busy}

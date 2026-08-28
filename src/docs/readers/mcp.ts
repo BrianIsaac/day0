@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
+import {
+  assertDocsComponentReachable,
+  isBundledNotionLocator,
+  type ReachFetch,
+} from '../components';
 import { createSecretMcpClient } from '../../surfaces/mcp-client';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
@@ -124,7 +129,10 @@ function connectionConfig(source: DocSourceRecord, secret: string): McpConnectio
   let headers: Record<string, string>;
   if (source.serverKind === 'notion') {
     headers = { 'notion-token': secret };
-    if (url.hostname === 'notion-mcp') {
+    // The transport token authenticates the private hop to day0's own Notion
+    // component, under either the service name or the alias it kept. Somebody
+    // else's copy of the same server has its own authentication and gets none.
+    if (isBundledNotionLocator(url.href)) {
       const transportToken = process.env.DAY0_NOTION_MCP_AUTH_TOKEN;
       if (!transportToken) {
         throw new Error('Notion MCP transport authentication is unavailable.');
@@ -382,8 +390,17 @@ function atlassianCursor(payload: Record<string, unknown>): string | undefined {
 
 /** Reader for credential-bound MCP documentation locations. */
 export class McpReader implements DocSourceReader {
-  /** Create an MCP reader with an injectable client boundary for tests. */
-  constructor(private readonly clientFactory: McpClientFactory = productionClient) {}
+  /**
+   * Create an MCP reader with injectable client and reachability boundaries.
+   *
+   * Args:
+   *   clientFactory: Builds one credential-bound session.
+   *   reach: How a bundled component's presence is checked before a sync.
+   */
+  constructor(
+    private readonly clientFactory: McpClientFactory = productionClient,
+    private readonly reach?: ReachFetch,
+  ) {}
 
   /**
    * Read every page, following provider cursors with isolated sessions.
@@ -428,6 +445,10 @@ export class McpReader implements DocSourceReader {
     limit: number,
   ): Promise<DocPageBatch> {
     if (!secret) throw new Error('Documentation credential is unavailable.');
+    // A source that day0 bundles a component for says so plainly when the
+    // component is not running, rather than letting a transport error reach
+    // `lastError` where the reader can only guess what a human should do.
+    await assertDocsComponentReachable(source, this.reach);
     const client = this.clientFactory(connectionConfig(source, secret));
     try {
       if (source.serverKind === 'notion') {

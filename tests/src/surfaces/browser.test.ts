@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BROWSER_COMPONENT_CARD_MESSAGE,
+  BROWSER_DRIVER_ABSENT,
+  BROWSER_DRIVER_ABSENT_REASON,
   BROWSER_TOOLS,
   BrowserBoundError,
-  browserDriverUrl,
+  browserComponent,
   browserPageUrl,
   browserPageTitle,
   browserTitleMarker,
@@ -10,8 +13,10 @@ import {
   elementDescriptions,
   navigationRefusal,
   navigationResultRefusal,
+  isDriverUnreachable,
   needsElementRef,
   parseSnapshotRefs,
+  presentBrowserComponent,
   refFieldFor,
   resolveElementRef,
   withinDocumentedSurface,
@@ -20,18 +25,100 @@ import {
 
 const TILE = 'http://looker-tile:8080/';
 
-describe('the browser driver address', (): void => {
-  it('falls back to the bundled service when nothing is configured', (): void => {
-    expect(browserDriverUrl(undefined).href).toBe(DEFAULT_BROWSER_MCP_URL);
-    expect(browserDriverUrl('   ').href).toBe(DEFAULT_BROWSER_MCP_URL);
+describe('the browser component', (): void => {
+  it('is absent when no driver address is configured', (): void => {
+    for (const configured of [undefined, '', '   ']) {
+      const component = browserComponent(configured);
+      expect(component.present).toBe(false);
+      if (component.present) throw new Error('unreachable');
+      expect(component.code).toBe(BROWSER_DRIVER_ABSENT);
+      expect(component.reason).toBe(BROWSER_DRIVER_ABSENT_REASON);
+      expect(component.reason).toContain('--profile browser');
+    }
   });
 
-  it('takes a configured address', (): void => {
-    expect(browserDriverUrl('http://browser:9000/mcp').href).toBe('http://browser:9000/mcp');
+  it('is present at the address configured for it', (): void => {
+    const component = browserComponent('http://browser:9000/mcp');
+    expect(component.present).toBe(true);
+    if (!component.present) throw new Error('unreachable');
+    expect(component.url.href).toBe('http://browser:9000/mcp');
   });
 
-  it('refuses a configured value that is not a URL', (): void => {
-    expect(() => browserDriverUrl('playwright-mcp:8931')).toThrow(BrowserBoundError);
+  it('is present at the bundled address the browser profile starts', (): void => {
+    const component = browserComponent(DEFAULT_BROWSER_MCP_URL);
+    expect(component.present).toBe(true);
+  });
+
+  it('reports a malformed address as a typo rather than an absent component', (): void => {
+    expect(() => browserComponent('playwright-mcp:8931')).toThrow(BrowserBoundError);
+    expect(() => browserComponent('not a url')).toThrow(BrowserBoundError);
+  });
+});
+
+describe('a driver that is not listening', (): void => {
+  it('reads a connection failure as the component being absent', (): void => {
+    expect(isDriverUnreachable(new Error('fetch failed'))).toBe(true);
+    expect(isDriverUnreachable(new Error('connect ECONNREFUSED 172.18.0.5:8931'))).toBe(true);
+    expect(isDriverUnreachable('getaddrinfo ENOTFOUND playwright-mcp')).toBe(true);
+  });
+
+  it('reads the MCP client\'s own wording, which hides the cause', (): void => {
+    // Verbatim from a live probe against a stopped component.
+    expect(
+      isDriverUnreachable(
+        'Failed to connect to MCP server surface: Error: Could not connect to server with any available HTTP transport',
+      ),
+    ).toBe(true);
+  });
+
+  it('reads a wrapped transport failure through its cause', (): void => {
+    const wrapped = new Error('MCP client failed', { cause: new Error('connect ECONNREFUSED') });
+    expect(isDriverUnreachable(wrapped)).toBe(true);
+  });
+
+  it('leaves a driver that answered and refused with its own words', (): void => {
+    expect(isDriverUnreachable(new Error('Browser is already in use'))).toBe(false);
+    expect(isDriverUnreachable(new Error('the documented page could not be opened'))).toBe(false);
+    expect(isDriverUnreachable(undefined)).toBe(false);
+  });
+});
+
+describe('what the card says about the browser component', (): void => {
+  it('says nothing on a path that does not use a browser', (): void => {
+    expect(presentBrowserComponent({ componentPresent: false, path: 'mcp' })).toEqual({
+      absent: false,
+    });
+    expect(presentBrowserComponent({ componentPresent: false, path: undefined })).toEqual({
+      absent: false,
+    });
+  });
+
+  it('names the system, the component and the profile when nothing is configured', (): void => {
+    const shown = presentBrowserComponent({ componentPresent: false, path: 'browser-driven' });
+    expect(shown.absent).toBe(true);
+    expect(shown.message).toBe(BROWSER_COMPONENT_CARD_MESSAGE);
+    expect(shown.message).toContain('reached through its web UI');
+    expect(shown.message).toContain('--profile browser');
+  });
+
+  it('says the same thing when a configured driver turned out not to be there', (): void => {
+    const shown = presentBrowserComponent({
+      componentPresent: true,
+      path: 'browser-driven',
+      reason: BROWSER_DRIVER_ABSENT_REASON,
+    });
+    expect(shown.absent).toBe(true);
+    expect(shown.message).toBe(BROWSER_COMPONENT_CARD_MESSAGE);
+  });
+
+  it('stays out of the way once the component is there', (): void => {
+    expect(
+      presentBrowserComponent({
+        componentPresent: true,
+        path: 'browser-driven',
+        reason: 'the documented page title marker was not present (Sign in - Looker)',
+      }),
+    ).toEqual({ absent: false });
   });
 });
 

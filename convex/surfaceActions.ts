@@ -11,7 +11,10 @@ import { assertOwnsAgentAction } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import {
-  browserDriverUrl,
+  browserComponent,
+  BROWSER_DRIVER_ABSENT,
+  BROWSER_DRIVER_ABSENT_REASON,
+  isDriverUnreachable,
   browserPageTitle,
   browserTitleMarker,
   BROWSER_TOOLS,
@@ -324,12 +327,20 @@ export async function probeBrowserSurface(
   } catch {
     throw new Error('The documented web UI address is not a valid URL.');
   }
-  const client = makeClient(browserDriverUrl(driverUrl));
+  const component = browserComponent(driverUrl);
+  if (!component.present) throw new Error(component.reason);
+  const client = makeClient(component.url);
   try {
     const { definitions, errors } = await client.listToolDefinitionsWithErrors({
       perServerTimeoutMs: 30_000,
     });
-    if (errors.surface) throw new Error(errors.surface);
+    if (errors.surface) {
+      // A driver that is not listening is the component being absent, and the
+      // probe says so with the code rather than with the transport's own words.
+      throw new Error(
+        isDriverUnreachable(errors.surface) ? BROWSER_DRIVER_ABSENT_REASON : errors.surface,
+      );
+    }
     const catalog = definitions.surface;
     if (!catalog || Object.keys(catalog).length === 0) {
       throw new Error('The browser driver returned no tools.');
@@ -345,6 +356,9 @@ export async function probeBrowserSurface(
       throw new Error(`the documented page title marker was not present (${titleMarker.trim()})`);
     }
     return discovery;
+  } catch (error) {
+    if (isDriverUnreachable(error)) throw new Error(BROWSER_DRIVER_ABSENT_REASON);
+    throw error;
   } finally {
     await client.disconnect();
   }
@@ -597,6 +611,27 @@ export async function probeSlackSurface(
  * Returns:
  *   Safe connection outcome containing no credential or provider response body.
  */
+/**
+ * Why this deployment cannot drive a browser, or nothing when it can.
+ *
+ * Args:
+ *   configured: The value of `DAY0_BROWSER_MCP_URL`, if set.
+ *
+ * Returns:
+ *   A recordable reason, or undefined when the component is configured.
+ */
+function browserComponentOrReason(configured: string | undefined): string | undefined {
+  try {
+    const component = browserComponent(configured);
+    return component.present ? undefined : component.reason;
+  } catch (error) {
+    // A malformed address is a typo, not an absent component, and keeps its
+    // own words so the reader fixes the value rather than starting a service
+    // that is already running.
+    return (error as Error).message;
+  }
+}
+
 export async function runSurfaceProbe(
   ctx: ActionCtx,
   surfaceId: Id<'surfaces'>,
@@ -608,6 +643,23 @@ export async function runSurfaceProbe(
   const { surface, generation } = claimed;
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) return { verdict: 'skipped', reason: 'Surface no longer exists.' };
+  // The browser floor is an optional component. Without it there is nothing to
+  // probe the web UI with, and that is information rather than a failure of the
+  // system: the row keeps its documented address and re-probes once the
+  // component is started. Checked before the client is built so the answer is
+  // the code rather than a name-resolution error out of the transport.
+  if (surface.path === 'browser-driven') {
+    const component = browserComponentOrReason(process.env.DAY0_BROWSER_MCP_URL);
+    if (component) {
+      await ctx.runMutation(internal.surfaces.recordProbeFailure, {
+        surfaceId,
+        generation,
+        verdict: 'ungranted',
+        reason: component,
+      });
+      return { verdict: 'ungranted', reason: component };
+    }
+  }
   // A system reached only through its web UI may document no credential at
   // all - a public dashboard is still a system. Every other path needs one
   // before there is anything to probe with.
@@ -725,13 +777,18 @@ export async function runSurfaceProbe(
     };
   } catch (error) {
     const reason = safeProviderError(error, credential);
+    // `listed-dead` is a claim about the enterprise's system. A missing browser
+    // component is a claim about this deployment, so it lands as `ungranted`
+    // whichever way it was found out - unset before the call, or unreachable
+    // during it - and the row keeps its address to re-probe from.
+    const verdict = reason.includes(BROWSER_DRIVER_ABSENT) ? 'ungranted' : 'listed-dead';
     await ctx.runMutation(internal.surfaces.recordProbeFailure, {
       surfaceId,
       generation,
-      verdict: 'listed-dead',
+      verdict,
       reason,
     });
-    return { verdict: 'listed-dead', reason };
+    return { verdict, reason };
   } finally {
     credential = '';
   }

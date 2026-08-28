@@ -9,6 +9,7 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
+import { assertDocsComponentReachable } from '../src/docs/components';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 
@@ -204,6 +205,11 @@ export const link = action({
     if (input.kind !== 'mcp' && credential !== undefined) {
       throw new Error('Only MCP sources may include a connection secret.');
     }
+    // Checked before anything is written, so a component that is not running is
+    // answered in the form the operator is looking at rather than as a failed
+    // sync minutes later. The same check runs on every sync, which is where a
+    // component that stops after the link is reported.
+    await assertDocsComponentReachable(input);
     const sourceId = await ctx.runMutation(internal.docSources.createSource, {
       userId: identity.subject,
       ...input,
@@ -339,6 +345,33 @@ export const pagesForAgent = query({
       }),
     );
     return groups.flat();
+  },
+});
+
+/**
+ * Count linked documentation sources by kind, for `pnpm check:setup`.
+ *
+ * The setup report needs to say which documentation components this
+ * installation actually depends on, and only the linked sources know: a Notion
+ * source needs the `docs-notion` component, while folder, git and URL sources
+ * need no container at all. Counts only - no locator, label or credential
+ * leaves the deployment.
+ */
+export const linkedKinds = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Array<{ kind: string; serverKind?: string; count: number }>> => {
+    const sources = await ctx.db.query('docSources').take(1_001);
+    if (sources.length > 1_000) throw new Error('Documentation source count exceeds the setup limit.');
+    const counts = new Map<string, { kind: string; serverKind?: string; count: number }>();
+    for (const source of sources) {
+      const key = `${source.kind}:${source.serverKind ?? ''}`;
+      const row = counts.get(key) ?? { kind: source.kind, serverKind: source.serverKind, count: 0 };
+      row.count += 1;
+      counts.set(key, row);
+    }
+    return [...counts.values()].sort((left, right): number =>
+      `${left.kind}${left.serverKind ?? ''}`.localeCompare(`${right.kind}${right.serverKind ?? ''}`),
+    );
   },
 });
 

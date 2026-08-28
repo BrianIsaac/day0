@@ -16,6 +16,8 @@ import {
   type SurfaceCredentialFinding,
   type SurfaceProvisioning,
 } from '@/surfaces/credential-presentation';
+import { plainErrorMessage } from '@/lib/plain-error';
+import { presentBrowserComponent } from '@/surfaces/browser';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '@/surfaces/waterfall';
 
@@ -279,6 +281,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   const landCredential = useAction(api.surfaceActions.landCredential);
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
   const installRedirectConfigured = useQuery(api.surfaces.installRedirectConfigured, {});
+  const componentStatus = useQuery(api.config.components, {});
   const [reorienting, setReorienting] = useState(false);
   const [reorientError, setReorientError] = useState<string | null>(null);
   const [operation, setOperation] = useState<Operation | null>(null);
@@ -289,7 +292,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     try {
       await reorient({ agentId });
     } catch (failure) {
-      setReorientError((failure as Error).message);
+      setReorientError(plainErrorMessage((failure as Error).message));
     } finally {
       setReorienting(false);
     }
@@ -301,7 +304,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       await probe({ surfaceId });
       setOperation(null);
     } catch (failure) {
-      setOperation({ kind: 'probe', surfaceId, error: (failure as Error).message });
+      setOperation({ kind: 'probe', surfaceId, error: plainErrorMessage((failure as Error).message) });
     }
   }
 
@@ -314,7 +317,11 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       await provisionApp({ surfaceId, configurationToken });
       setOperation(null);
     } catch (failure) {
-      setOperation({ kind: 'provision', surfaceId, error: (failure as Error).message });
+      setOperation({
+        kind: 'provision',
+        surfaceId,
+        error: plainErrorMessage((failure as Error).message),
+      });
     }
   }
 
@@ -328,7 +335,11 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       await landCredential({ surfaceId, label, plaintext });
       setOperation(null);
     } catch (failure) {
-      setOperation({ kind: 'landing', surfaceId, error: (failure as Error).message });
+      setOperation({
+        kind: 'landing',
+        surfaceId,
+        error: plainErrorMessage((failure as Error).message),
+      });
     }
   }
 
@@ -397,6 +408,14 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             ? (surface.reason ?? `Surface is ${surface.verdict}.`)
             : undefined;
           const skipReason = surface.intakeSkipReason ?? derivedSkipReason;
+          // Orientation proposes the path from the evidence whether or not this
+          // deployment runs the component that drives it. The card is where the
+          // two meet: the path stands, and approving it waits.
+          const browserFloor = presentBrowserComponent({
+            componentPresent: componentStatus?.browser !== false,
+            path: surface.path,
+            reason: surface.reason,
+          });
           return (
             <article
               id={`surface-${surface.slug}`}
@@ -530,16 +549,20 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   Ask the manager for an approved access path.
                 </p>
               ) : null}
+              {browserFloor.absent ? (
+                <p className="mt-3 text-xs text-[var(--color-warn)]">{browserFloor.message}</p>
+              ) : null}
               {surface.verdict === 'proposed' ? (
                 <div className="mt-4 flex flex-wrap gap-2">
                   {surface.managerApprovedAt ? (
                     <span className="rounded border px-2 py-1 text-xs">Manager approved</span>
                   ) : (
                     <button
+                      disabled={browserFloor.absent}
                       onClick={(): void =>
                         void approve({ surfaceId: surface._id, role: 'manager' })
                       }
-                      className="rounded border px-2 py-1 text-xs"
+                      className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                     >
                       Approve as manager
                     </button>
@@ -548,8 +571,9 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                     <span className="rounded border px-2 py-1 text-xs">IT approved</span>
                   ) : (
                     <button
+                      disabled={browserFloor.absent}
                       onClick={(): void => void approve({ surfaceId: surface._id, role: 'it' })}
-                      className="rounded border px-2 py-1 text-xs"
+                      className="rounded border px-2 py-1 text-xs disabled:opacity-50"
                     >
                       Approve as IT
                     </button>
