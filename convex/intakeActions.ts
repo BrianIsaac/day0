@@ -10,7 +10,7 @@ import { internalAction, type ActionCtx } from './_generated/server';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
-import { browserComponent } from '../src/surfaces/browser';
+import { browserComponentRefusal } from '../src/surfaces/browser';
 import { documentedChannelNames } from '../src/surfaces/slack-policy';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
@@ -918,7 +918,11 @@ export function slackCandidate(
     requesterLabel: message.user,
     // A reply belongs in the ask's thread: under the mention itself, or under
     // the parent when the mention was already a threaded message.
-    replyTarget: { channel: channel.id, channelName: channel.name, threadTs: message.threadTs ?? message.ts },
+    replyTarget: {
+      channel: channel.id,
+      channelName: channel.name,
+      threadTs: message.threadTs ?? message.ts,
+    },
   };
 }
 
@@ -968,7 +972,8 @@ async function pollSlack(
       if (message.ts === skipTs) continue;
       if (!message.user || message.user === surface.providerIdentityId) continue;
       const reply = parseDecisionReply(message.text);
-      if (reply) decisionReplies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
+      if (reply)
+        decisionReplies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
     }
   };
   if (surface.managerDmChannelId && surface.managerUserId) {
@@ -1025,7 +1030,9 @@ async function pollChat(
         decisionReplies: await pollMcpManagerReplies(surface, credential, makeClient),
       };
     }
-    throw new Error(`Connected chat surface path ${surface.path ?? 'unknown'} has no intake reader.`);
+    throw new Error(
+      `Connected chat surface path ${surface.path ?? 'unknown'} has no intake reader.`,
+    );
   })();
   // Providers list newest first. Replies must resolve in the order the manager sent
   // them, so the first answer decides and a later change of mind is the duplicate.
@@ -1082,24 +1089,6 @@ function disconnectedReason(surface: Doc<'surfaces'>): string {
 }
 
 /**
- * Why a browser-driven surface cannot be polled here, or nothing when it can.
- *
- * Args:
- *   configured: The value of `DAY0_BROWSER_MCP_URL`, if set.
- *
- * Returns:
- *   The recordable skip reason, or undefined when the component is configured.
- */
-function browserAbsentReason(configured: string | undefined): string | undefined {
-  try {
-    const component = browserComponent(configured);
-    return component.present ? undefined : component.reason;
-  } catch (error) {
-    return (error as Error).message;
-  }
-}
-
-/**
  * Run one deployment-wide waterfall sweep.
  *
  * Args:
@@ -1118,7 +1107,7 @@ export async function runIntakeSweep(
   const fetcher: IntakeFetcher = dependencies.fetcher ?? fetch;
   const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const now = dependencies.now ?? Date.now;
-  const browserAbsent = browserAbsentReason(
+  const browserAbsent = browserComponentRefusal(
     dependencies.browserMcpUrl ?? process.env.DAY0_BROWSER_MCP_URL,
   );
   const surfaces = await runtime.listSurfaces();

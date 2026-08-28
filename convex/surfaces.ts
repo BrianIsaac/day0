@@ -1,16 +1,15 @@
 import { v } from 'convex/values';
-import {
-  action,
-  internalMutation,
-  mutation,
-  query,
-  type MutationCtx,
-} from './_generated/server';
+import { action, internalMutation, mutation, query, type MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
 import { grantScopeInTransaction } from './agents';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { Doc, Id } from './_generated/dataModel';
+import {
+  browserComponent,
+  browserComponentRefusal,
+  withBrowserComponentState,
+} from '../src/surfaces/browser';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -45,10 +44,12 @@ export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'surfaces'>[]> => {
     await assertOwnsAgent(ctx, args.agentId);
-    return await ctx.db
+    const surfaces = await ctx.db
       .query('surfaces')
       .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
       .collect();
+    const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
+    return surfaces.map((surface) => withBrowserComponentState(surface, refusal));
   },
 });
 
@@ -469,10 +470,7 @@ export const recordInstalledApp = internalMutation({
 /** Reserve the next probe generation for an approved connection candidate. */
 export const beginProbe = internalMutation({
   args: { surfaceId: v.id('surfaces') },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+  handler: async (ctx, args): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (
       !surface ||
@@ -696,9 +694,11 @@ export const approve = mutation({
     if (!surface) throw new Error('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
     if (surface.verdict !== 'proposed') {
-      throw new Error(
-        `Only a proposed surface can be approved; this one is ${surface.verdict}.`,
-      );
+      throw new Error(`Only a proposed surface can be approved; this one is ${surface.verdict}.`);
+    }
+    if (surface.path === 'browser-driven') {
+      const component = browserComponent(process.env.DAY0_BROWSER_MCP_URL);
+      if (!component.present) throw new Error(component.reason);
     }
     const now = Date.now();
     const patch = args.role === 'manager' ? { managerApprovedAt: now } : { itApprovedAt: now };

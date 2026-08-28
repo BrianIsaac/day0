@@ -20,15 +20,12 @@ import {
   readSurfaceSnapshot,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import type {
-  AppliedAction,
-  BeforeSurfaceTransport,
-  SurfaceRecord,
-} from '../src/surfaces/types';
+import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { browserComponent } from '../src/surfaces/browser';
 import type { ExecutionOutput } from '../src/work/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import {
@@ -262,131 +259,131 @@ async function executeApprovedPlanHandler(
   args: { workItemId: Id<'workItems'> },
   internalCaller = false,
 ): Promise<{ ok: boolean; reason?: string }> {
-    const item: Doc<'workItems'> | null = internalCaller
-      ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
-      : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
-    if (!item) return { ok: false, reason: 'workItem not found' };
-    const agentId = item.agentId;
-    // Cheap early-out for the common case; `claimForExecution` below is what
-    // actually decides, because only a mutation can read and move the state
-    // without another caller slipping between the two.
-    if (item.state !== 'plan-approved') {
-      return { ok: false, reason: `state is ${item.state}; expected plan-approved` };
-    }
-    const charterRow = internalCaller
-      ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
-      : await ctx.runQuery(api.charters.latest, { agentId });
-    if (!charterRow) return { ok: false, reason: 'no charter' };
-    const charter = charterRow.body as Charter;
-    const plan = item.plan as Awaited<ReturnType<typeof draftExecutionPlan>>;
-    const candidate = rowToCandidate(item);
+  const item: Doc<'workItems'> | null = internalCaller
+    ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
+    : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
+  if (!item) return { ok: false, reason: 'workItem not found' };
+  const agentId = item.agentId;
+  // Cheap early-out for the common case; `claimForExecution` below is what
+  // actually decides, because only a mutation can read and move the state
+  // without another caller slipping between the two.
+  if (item.state !== 'plan-approved') {
+    return { ok: false, reason: `state is ${item.state}; expected plan-approved` };
+  }
+  const charterRow = internalCaller
+    ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
+    : await ctx.runQuery(api.charters.latest, { agentId });
+  if (!charterRow) return { ok: false, reason: 'no charter' };
+  const charter = charterRow.body as Charter;
+  const plan = item.plan as Awaited<ReturnType<typeof draftExecutionPlan>>;
+  const candidate = rowToCandidate(item);
 
-    const skills: Doc<'skills'>[] = internalCaller
-      ? await ctx.runQuery(internal.skills.registeredInternal, { agentId })
-      : await ctx.runQuery(api.skills.registered, { agentId });
-    // Use the same token-scoring as the evaluator's findMatchingSkill so
-    // the executor picks the matched skill rather than blindly falling
-    // back to skills[0]. Source-system tokens count 4× content tokens.
-    const tokenise = (s: string): Set<string> =>
-      new Set(
-        s
-          .toLowerCase()
-          .split(/\W+/)
-          .filter((t) => t.length >= 4),
-      );
-    const candidateTokens = tokenise(`${candidate.title} ${candidate.contentSummary}`);
-    const sourceTokens = candidate.sourceSystem.toLowerCase().split(/\W+/).filter(Boolean);
-    let pickedSkill: Doc<'skills'> | undefined;
-    let pickedScore = 0;
-    for (const skill of skills) {
-      const skillTokens = tokenise(`${skill.name} ${skill.description}`);
-      let score = 0;
-      for (const t of candidateTokens) if (skillTokens.has(t)) score += 1;
-      for (const t of sourceTokens) if (skillTokens.has(t)) score += 4;
-      if (score > pickedScore) {
-        pickedSkill = skill;
-        pickedScore = score;
-      }
+  const skills: Doc<'skills'>[] = internalCaller
+    ? await ctx.runQuery(internal.skills.registeredInternal, { agentId })
+    : await ctx.runQuery(api.skills.registered, { agentId });
+  // Use the same token-scoring as the evaluator's findMatchingSkill so
+  // the executor picks the matched skill rather than blindly falling
+  // back to skills[0]. Source-system tokens count 4× content tokens.
+  const tokenise = (s: string): Set<string> =>
+    new Set(
+      s
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((t) => t.length >= 4),
+    );
+  const candidateTokens = tokenise(`${candidate.title} ${candidate.contentSummary}`);
+  const sourceTokens = candidate.sourceSystem.toLowerCase().split(/\W+/).filter(Boolean);
+  let pickedSkill: Doc<'skills'> | undefined;
+  let pickedScore = 0;
+  for (const skill of skills) {
+    const skillTokens = tokenise(`${skill.name} ${skill.description}`);
+    let score = 0;
+    for (const t of candidateTokens) if (skillTokens.has(t)) score += 1;
+    for (const t of sourceTokens) if (skillTokens.has(t)) score += 4;
+    if (score > pickedScore) {
+      pickedSkill = skill;
+      pickedScore = score;
     }
-    // Last-resort fallback only if nothing scored at all.
-    if (!pickedSkill) pickedSkill = skills[0];
-    if (!pickedSkill) {
-      await ctx.runMutation(internal.work.setFailed, {
-        workItemId: args.workItemId,
-        reason: 'no registered skill available',
-      });
-      return { ok: false, reason: 'no registered skill available' };
-    }
-    // Nothing above this line touches a model or an adapter, so a caller that
-    // loses the claim costs a handful of reads and stops here.
-    const claim = await ctx.runMutation(internal.work.claimForExecution, {
+  }
+  // Last-resort fallback only if nothing scored at all.
+  if (!pickedSkill) pickedSkill = skills[0];
+  if (!pickedSkill) {
+    await ctx.runMutation(internal.work.setFailed, {
       workItemId: args.workItemId,
-      skillId: pickedSkill._id,
+      reason: 'no registered skill available',
     });
-    if (!claim.claimed) return { ok: false, reason: claim.reason };
-    if (SURFACE_MODE === 'real') {
-      return await holdRealActions(ctx, {
-        workItemId: args.workItemId,
+    return { ok: false, reason: 'no registered skill available' };
+  }
+  // Nothing above this line touches a model or an adapter, so a caller that
+  // loses the claim costs a handful of reads and stops here.
+  const claim = await ctx.runMutation(internal.work.claimForExecution, {
+    workItemId: args.workItemId,
+    skillId: pickedSkill._id,
+  });
+  if (!claim.claimed) return { ok: false, reason: claim.reason };
+  if (SURFACE_MODE === 'real') {
+    return await holdRealActions(ctx, {
+      workItemId: args.workItemId,
+      agentId,
+      runId: claim.runId,
+      skill: pickedSkill,
+      plan,
+      candidate,
+      charter,
+      internalCaller,
+    });
+  }
+  try {
+    const mockEnv = await readSurfaceSnapshot(ctx, agentId, 'mock', []);
+    const output = await runSkill({
+      skill: {
+        name: pickedSkill.name,
+        description: pickedSkill.description,
+        body: pickedSkill.body,
+      },
+      plan,
+      candidate,
+      charter,
+      mockEnv,
+    });
+    const applied = await applySurfaceActions(
+      ctx,
+      'mock',
+      [],
+      {
         agentId,
-        runId: claim.runId,
-        skill: pickedSkill,
-        plan,
-        candidate,
-        charter,
-        internalCaller,
-      });
-    }
-    try {
-      const mockEnv = await readSurfaceSnapshot(ctx, agentId, 'mock', []);
-      const output = await runSkill({
-        skill: {
-          name: pickedSkill.name,
-          description: pickedSkill.description,
-          body: pickedSkill.body,
-        },
-        plan,
-        candidate,
-        charter,
-        mockEnv,
-      });
-      const applied = await applySurfaceActions(
-        ctx,
-        'mock',
-        [],
-        {
-          agentId,
-          workItemId: args.workItemId,
-          runId: claim.runId,
-        },
-        output.actions ?? [],
-      );
-      // A run completes only when every action it emitted changed the work
-      // environment. "At least one applied" is not enough: the skills are told
-      // to DM the manager alongside the primary mutation, so a failed primary
-      // action plus a delivered "I did it" DM would report the work as done
-      // when only the claim about it landed.
-      const reason = completionFailure(applied);
-      if (reason) {
-        await ctx.runMutation(internal.work.setFailed, {
-          workItemId: args.workItemId,
-          reason,
-          output: { ...output, applied },
-        });
-        return { ok: false, reason };
-      }
-      await ctx.runMutation(internal.work.setCompleted, {
         workItemId: args.workItemId,
-        output: { ...output, applied },
-      });
-      return { ok: true };
-    } catch (err) {
-      const reason = (err as Error).message;
+        runId: claim.runId,
+      },
+      output.actions ?? [],
+    );
+    // A run completes only when every action it emitted changed the work
+    // environment. "At least one applied" is not enough: the skills are told
+    // to DM the manager alongside the primary mutation, so a failed primary
+    // action plus a delivered "I did it" DM would report the work as done
+    // when only the claim about it landed.
+    const reason = completionFailure(applied);
+    if (reason) {
       await ctx.runMutation(internal.work.setFailed, {
         workItemId: args.workItemId,
         reason,
+        output: { ...output, applied },
       });
       return { ok: false, reason };
     }
+    await ctx.runMutation(internal.work.setCompleted, {
+      workItemId: args.workItemId,
+      output: { ...output, applied },
+    });
+    return { ok: true };
+  } catch (err) {
+    const reason = (err as Error).message;
+    await ctx.runMutation(internal.work.setFailed, {
+      workItemId: args.workItemId,
+      reason,
+    });
+    return { ok: false, reason };
+  }
 }
 
 export const executeApprovedPlan = action({
@@ -509,9 +506,12 @@ export const applyApprovedActions = internalAction({
         { agentId: claim.agentId },
       );
       const output = claim.output as LedgerOutput;
+      const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
       const priorLedger =
         claim.phase === 'approved'
-          ? (output.applied ?? []).map((entry) => (entry && !entry.awaitingApproval ? entry : undefined))
+          ? (output.applied ?? []).map((entry) =>
+              entry && !entry.awaitingApproval ? entry : undefined,
+            )
           : undefined;
       const applied = await applySurfaceActions(
         ctx,
@@ -526,7 +526,8 @@ export const applyApprovedActions = internalAction({
         output.actions ?? [],
         {
           deps: realAdapterDeps(
-            authorityBeforeTransport(ctx, claim.agentId, claim.phase),
+            authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl),
+            browserMcpUrl,
           ),
           grants: new Set(grantRows.map((grant) => grant.scope)),
           approvedIndexes: new Set(claim.approvedIndexes),
@@ -558,14 +559,37 @@ export const applyApprovedActions = internalAction({
  * Returns:
  *   Adapter dependencies for this action runtime.
  */
-function realAdapterDeps(beforeTransport?: BeforeSurfaceTransport): RealAdapterDeps {
+function realAdapterDeps(
+  beforeTransport?: BeforeSurfaceTransport,
+  browserMcpUrl: string | undefined = process.env.DAY0_BROWSER_MCP_URL,
+): RealAdapterDeps {
   return {
     decrypt: decryptCredential,
     createMcpClient: createMastraMcpClient,
-    browserMcpUrl: process.env.DAY0_BROWSER_MCP_URL,
+    browserMcpUrl,
     fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
     beforeTransport,
   };
+}
+
+/** Refuse a browser switch that changed after the apply action claimed it. */
+export function browserTransportRefusal(
+  path: string | undefined,
+  claimedUrl: string | undefined,
+  currentUrl: string | undefined,
+): string | undefined {
+  if (path !== 'browser-driven') return undefined;
+  try {
+    const claimed = browserComponent(claimedUrl);
+    if (!claimed.present) return claimed.reason;
+    const current = browserComponent(currentUrl);
+    if (!current.present) return current.reason;
+    return claimed.url.href === current.url.href
+      ? undefined
+      : 'browser component changed before transport';
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function surfaceAuthorityShape(surface: SurfaceRecord): string {
@@ -590,6 +614,7 @@ function authorityBeforeTransport(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
   phase: 'auto' | 'approved',
+  browserMcpUrl: string | undefined,
 ): BeforeSurfaceTransport {
   return async (action, claimedSurface): Promise<string | undefined> => {
     const parsed = parseSurfaceAction(action);
@@ -613,14 +638,15 @@ function authorityBeforeTransport(
       return NOT_AUTOMATIC;
     }
     if (needsStandingGrant(parsed.action, surface) || phase === 'auto') {
-      return grantRefusal(
+      const grant = grantRefusal(
         parsed.action,
         surface,
         new Set(authority.grants),
         phase === 'auto' && authority.autonomousActions,
       );
+      if (grant) return grant;
     }
-    return undefined;
+    return browserTransportRefusal(surface.path, browserMcpUrl, process.env.DAY0_BROWSER_MCP_URL);
   };
 }
 

@@ -5,12 +5,14 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { surfaceSlug } from '../../convex/surfaces';
+import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 afterEach((): void => {
   vi.useRealTimers();
   restoreSurfaceMode();
+  vi.unstubAllEnvs();
 });
 
 /**
@@ -207,6 +209,47 @@ describe('surface persistence', (): void => {
     ]);
   });
 
+  it('does not expose a stale connected browser row when the component is absent', async (): Promise<void> => {
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Looker', 'analytics');
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId,
+      request: { target: { system: 'Looker' } },
+      whereFound: [{ ref: 'looker.md', quote: 'Open the pipeline tile.' }],
+      path: 'browser-driven',
+      fallbackPath: 'escalate',
+      endpoint: 'http://looker-tile:8080/',
+      credentialLocation: 'No sign-in required',
+      expiresInDays: 30,
+    });
+    await harness.mutation(internal.surfaces.setStatus, {
+      surfaceId,
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+    });
+
+    const owner = harness.withIdentity({ subject: 'owner' });
+    for (const rows of [
+      await owner.query(api.surfaces.listForAgent, { agentId }),
+      await harness.query(internal.orientationData.surfacesForAgent, { agentId }),
+    ]) {
+      expect(rows).toMatchObject([
+        {
+          verdict: 'ungranted',
+          credentialLanded: false,
+          reason: expect.stringContaining(BROWSER_DRIVER_ABSENT),
+        },
+      ]);
+    }
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'connected',
+      credentialLanded: true,
+    });
+  });
+
   it('uses compare-and-set writes so an orientation retry cannot overwrite a decision', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
@@ -311,9 +354,7 @@ describe('surface probe generations', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
-    await expect(
-      harness.mutation(internal.surfaces.beginProbe, { surfaceId }),
-    ).resolves.toBeNull();
+    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toBeNull();
     await propose(harness, surfaceId);
     await harness.mutation(internal.surfaces.setStatus, {
       surfaceId,
@@ -370,11 +411,10 @@ describe('surface probe generations', (): void => {
       credentialLanded: false,
       reason: 'provider returned 401',
     });
-    const failure = await harness.run(
-      async (ctx) =>
-        (await ctx.db.query('events').collect()).find(
-          (event): boolean => event.type === 'surface.probe-failed',
-        ),
+    const failure = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).find(
+        (event): boolean => event.type === 'surface.probe-failed',
+      ),
     );
     expect(failure?.payload).toEqual({
       surfaceId,
@@ -426,21 +466,21 @@ describe('surface probe generations', (): void => {
       }),
     ).resolves.toBe(true);
     const reprobed = await readSurface(harness, surfaceId);
-    expect(reprobed).toMatchObject({ verdict: 'connected', lastVerifiedAt: 200, expiresAt: renewedExpiry });
+    expect(reprobed).toMatchObject({
+      verdict: 'connected',
+      lastVerifiedAt: 200,
+      expiresAt: renewedExpiry,
+    });
     expect(reprobed.managerDmChannelId).toBeUndefined();
     expect(reprobed.managerUserId).toBeUndefined();
     expect(reprobed.managerName).toBeUndefined();
-    const connectedEvents = await harness.run(
-      async (ctx) =>
-        (await ctx.db.query('events').collect()).filter(
-          (event): boolean => event.type === 'surface.connected',
-        ),
+    const connectedEvents = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event): boolean => event.type === 'surface.connected',
+      ),
     );
     expect(connectedEvents).toHaveLength(2);
-    expect(connectedEvents.map((event) => event.payload)).toEqual([
-      { surfaceId },
-      { surfaceId },
-    ]);
+    expect(connectedEvents.map((event) => event.payload)).toEqual([{ surfaceId }, { surfaceId }]);
     const grants = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -520,18 +560,19 @@ describe('surface probe generations', (): void => {
     const states = await harness.run(
       async (ctx): Promise<Array<[string, unknown]>> =>
         await Promise.all(
-          [onSurface, onGrant, elsewhere, skipped].map(
-            async (id): Promise<[string, unknown]> => {
-              const row = await ctx.db.get(id);
-              return [row?.state ?? 'missing', row?.verdict ?? null];
-            },
-          ),
+          [onSurface, onGrant, elsewhere, skipped].map(async (id): Promise<[string, unknown]> => {
+            const row = await ctx.db.get(id);
+            return [row?.state ?? 'missing', row?.verdict ?? null];
+          }),
         ),
     );
     expect(states).toEqual([
       ['discovered', null],
       ['discovered', null],
-      ['deferred', { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar-crm' }],
+      [
+        'deferred',
+        { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar-crm' },
+      ],
       ['skipped', { decision: 'skip', reason: 'low-value: 10' }],
     ]);
     const grants = await harness.run(
@@ -595,11 +636,10 @@ describe('surface connection lifecycle metadata', (): void => {
       reason: 'expired',
     });
     expect((await readSurface(harness, surfaceId)).lastVerifiedAt).toBeUndefined();
-    const expired = await harness.run(
-      async (ctx) =>
-        (await ctx.db.query('events').collect()).find(
-          (event): boolean => event.type === 'surface.expired',
-        ),
+    const expired = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).find(
+        (event): boolean => event.type === 'surface.expired',
+      ),
     );
     expect(expired?.payload).toEqual({ surfaceId });
   });
@@ -698,6 +738,30 @@ describe('surface approval state machine', (): void => {
     await expect(owner.mutation(api.surfaces.approve, { surfaceId, role: 'it' })).rejects.toThrow(
       'Only a proposed surface can be approved; this one is approved.',
     );
+  });
+
+  it('refuses a browser-driven approval server-side when the component is absent', async (): Promise<void> => {
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Looker', 'analytics');
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId,
+      request: { target: { system: 'Looker' } },
+      whereFound: [{ ref: 'looker.md', quote: 'Open the pipeline tile.' }],
+      path: 'browser-driven',
+      fallbackPath: 'escalate',
+      endpoint: 'http://looker-tile:8080/',
+      credentialLocation: 'No sign-in required',
+      expiresInDays: 30,
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+
+    await expect(
+      owner.mutation(api.surfaces.approve, { surfaceId, role: 'manager' }),
+    ).rejects.toThrow(BROWSER_DRIVER_ABSENT);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({ verdict: 'proposed' });
+    expect((await readSurface(harness, surfaceId)).managerApprovedAt).toBeUndefined();
   });
 
   it('refuses to approve a surface that is not proposed', async (): Promise<void> => {

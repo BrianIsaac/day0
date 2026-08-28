@@ -2,15 +2,19 @@ import { internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { agentReadsSource } from './docSources';
 import type { Doc } from './_generated/dataModel';
+import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 
 /** Return declared surface rows for one server-authorised orientation run. */
 export const surfacesForAgent = internalQuery({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<Doc<'surfaces'>[]> =>
-    await ctx.db
+  handler: async (ctx, args): Promise<Doc<'surfaces'>[]> => {
+    const surfaces = await ctx.db
       .query('surfaces')
       .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
-      .collect(),
+      .collect();
+    const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
+    return surfaces.map((surface) => withBrowserComponentState(surface, refusal));
+  },
 });
 
 /** Return every declared surface for the deployment-local intake sweep. */

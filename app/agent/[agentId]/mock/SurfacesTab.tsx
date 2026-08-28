@@ -304,14 +304,15 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       await probe({ surfaceId });
       setOperation(null);
     } catch (failure) {
-      setOperation({ kind: 'probe', surfaceId, error: plainErrorMessage((failure as Error).message) });
+      setOperation({
+        kind: 'probe',
+        surfaceId,
+        error: plainErrorMessage((failure as Error).message),
+      });
     }
   }
 
-  async function onProvision(
-    surfaceId: Id<'surfaces'>,
-    configurationToken: string,
-  ): Promise<void> {
+  async function onProvision(surfaceId: Id<'surfaces'>, configurationToken: string): Promise<void> {
     setOperation({ kind: 'provision', surfaceId });
     try {
       await provisionApp({ surfaceId, configurationToken });
@@ -412,7 +413,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
           // deployment runs the component that drives it. The card is where the
           // two meet: the path stands, and approving it waits.
           const browserFloor = presentBrowserComponent({
-            componentPresent: componentStatus?.browser !== false,
+            componentPresent: componentStatus?.browser === true,
             path: surface.path,
             reason: surface.reason,
           });

@@ -12,6 +12,7 @@ import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
 import {
   browserComponent,
+  browserComponentRefusal,
   BROWSER_DRIVER_ABSENT,
   BROWSER_DRIVER_ABSENT_REASON,
   isDriverUnreachable,
@@ -60,7 +61,10 @@ interface McpProbeClient {
 
 /** The browser driver additionally has to open a page for the liveness check. */
 interface BrowserProbeClient extends McpProbeClient {
-  callTool(name: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }>;
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ isError: boolean; text: string }>;
 }
 
 interface McpDiscovery {
@@ -528,7 +532,8 @@ export async function probeChannelMembership(
       ...(cursor ? { cursor } : {}),
     });
     for (const item of Array.isArray(payload.channels) ? payload.channels : []) {
-      const channel = item && typeof item === 'object' ? (item as Record<string, unknown>) : undefined;
+      const channel =
+        item && typeof item === 'object' ? (item as Record<string, unknown>) : undefined;
       if (typeof channel?.name !== 'string') continue;
       visible.push({ isMember: channel.is_member === true, name: channel.name });
     }
@@ -611,27 +616,6 @@ export async function probeSlackSurface(
  * Returns:
  *   Safe connection outcome containing no credential or provider response body.
  */
-/**
- * Why this deployment cannot drive a browser, or nothing when it can.
- *
- * Args:
- *   configured: The value of `DAY0_BROWSER_MCP_URL`, if set.
- *
- * Returns:
- *   A recordable reason, or undefined when the component is configured.
- */
-function browserComponentOrReason(configured: string | undefined): string | undefined {
-  try {
-    const component = browserComponent(configured);
-    return component.present ? undefined : component.reason;
-  } catch (error) {
-    // A malformed address is a typo, not an absent component, and keeps its
-    // own words so the reader fixes the value rather than starting a service
-    // that is already running.
-    return (error as Error).message;
-  }
-}
-
 export async function runSurfaceProbe(
   ctx: ActionCtx,
   surfaceId: Id<'surfaces'>,
@@ -649,7 +633,7 @@ export async function runSurfaceProbe(
   // component is started. Checked before the client is built so the answer is
   // the code rather than a name-resolution error out of the transport.
   if (surface.path === 'browser-driven') {
-    const component = browserComponentOrReason(process.env.DAY0_BROWSER_MCP_URL);
+    const component = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
     if (component) {
       await ctx.runMutation(internal.surfaces.recordProbeFailure, {
         surfaceId,
