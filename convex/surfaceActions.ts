@@ -114,6 +114,7 @@ for (const [network, prefix] of [
   ['172.16.0.0', 12],
   ['192.0.0.0', 24],
   ['192.0.2.0', 24],
+  ['192.88.99.0', 24],
   ['192.168.0.0', 16],
   ['198.18.0.0', 15],
   ['198.51.100.0', 24],
@@ -124,15 +125,25 @@ for (const [network, prefix] of [
   NON_PUBLIC_MCP_ADDRESSES.addSubnet(network, prefix, 'ipv4');
 }
 for (const [network, prefix] of [
-  ['::', 128],
-  ['::1', 128],
+  ['2001::', 32],
   ['2001:db8::', 32],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['ff00::', 8],
+  ['2002::', 16],
 ] as const) {
   NON_PUBLIC_MCP_ADDRESSES.addSubnet(network, prefix, 'ipv6');
 }
+
+/**
+ * The one IPv6 range that is globally routable unicast.
+ *
+ * A denylist of IPv6 ranges cannot be finished: loopback, link-local and
+ * unique-local were listed, but `fec0::1` (site-local), `::7f00:1`
+ * (IPv4-compatible) and `64:ff9b::7f00:1` (NAT64) were not, and
+ * `2002:7f00:1::1` reaches 127.0.0.1 through a 6to4 relay. An address is
+ * admitted only if it is inside global unicast and outside the transition and
+ * documentation ranges carved out of it above.
+ */
+const GLOBAL_UNICAST_V6 = new BlockList();
+GLOBAL_UNICAST_V6.addSubnet('2000::', 3, 'ipv6');
 
 /** A refusal caused by Day0's deployment or protocol support, not provider liveness. */
 class Day0ProbeLimitation extends Error {}
@@ -403,14 +414,29 @@ async function assertPublicMcpAddresses(
   hostname: string,
   resolveHostname: HostResolver,
 ): Promise<void> {
-  const addresses = await resolveHostname(hostname);
+  let addresses: string[];
+  try {
+    addresses = await resolveHostname(hostname);
+  } catch (error) {
+    // A name that does not exist is a fact about the enterprise's endpoint; a
+    // resolver that would not answer is a fact about this deployment.
+    const code = (error as { code?: unknown }).code;
+    if (code === 'ENOTFOUND' || code === 'EAI_NONAME' || code === 'EAI_NODATA') {
+      throw new Error('The approved MCP endpoint hostname does not resolve.');
+    }
+    throw new Day0ProbeLimitation(
+      'Day0 could not resolve the approved MCP hostname; its own resolver did not answer.',
+    );
+  }
   if (addresses.length === 0) throw new Error('The approved MCP endpoint hostname did not resolve.');
   const hasNonPublicAddress = addresses.some((address: string): boolean => {
     const family = isIP(address);
     if (family === 4) return NON_PUBLIC_MCP_ADDRESSES.check(address, 'ipv4');
     if (family === 6) {
-      if (address.toLowerCase().startsWith('::ffff:')) return true;
-      return NON_PUBLIC_MCP_ADDRESSES.check(address, 'ipv6');
+      return (
+        !GLOBAL_UNICAST_V6.check(address, 'ipv6') ||
+        NON_PUBLIC_MCP_ADDRESSES.check(address, 'ipv6')
+      );
     }
     return true;
   });

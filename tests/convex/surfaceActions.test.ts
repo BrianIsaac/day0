@@ -255,6 +255,57 @@ describe('surface MCP probing', (): void => {
         async (): Promise<string[]> => ['fd00::1'],
       ),
     ).rejects.toThrow('resolved to a private, loopback, link-local, reserved');
+    // A denylist of IPv6 ranges cannot be finished. 6to4 reaches 127.0.0.1
+    // through a relay, NAT64 reaches it through a gateway, and site-local and
+    // IPv4-compatible addresses were simply never listed.
+    for (const address of [
+      '2002:7f00:1::1',
+      '64:ff9b::7f00:1',
+      'fec0::1',
+      '::7f00:1',
+      '::ffff:127.0.0.1',
+      '2001:0:5ef5:79fd::1',
+    ]) {
+      await expect(
+        probeMcpSurface(
+          'https://mcp.example.com/mcp',
+          'contract-value',
+          makeClient,
+          async (): Promise<string[]> => [address],
+        ),
+        address,
+      ).rejects.toThrow('resolved to a private, loopback, link-local, reserved');
+    }
+    expect(makeClient).not.toHaveBeenCalled();
+    // A globally routable answer still reaches the client.
+    const reached = vi.fn(() => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: { surface: { list_issues: {} } },
+        errors: {},
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    }));
+    await expect(
+      probeMcpSurface(
+        'https://mcp.example.com/mcp',
+        'contract-value',
+        reached,
+        async (): Promise<string[]> => ['2606:4700:4700::1111'],
+      ),
+    ).resolves.toMatchObject({ toolAllowlist: ['list_issues'] });
+  });
+
+  it('separates a resolver that would not answer from a name that does not exist', async (): Promise<void> => {
+    const makeClient = vi.fn();
+    const failing = (code: string) => async (): Promise<string[]> => {
+      throw Object.assign(new Error(`getaddrinfo ${code} mcp.example.com`), { code });
+    };
+    await expect(
+      probeMcpSurface('https://mcp.example.com/mcp', 'value', makeClient, failing('ENOTFOUND')),
+    ).rejects.toThrow('does not resolve');
+    await expect(
+      probeMcpSurface('https://mcp.example.com/mcp', 'value', makeClient, failing('EAI_AGAIN')),
+    ).rejects.toThrow('its own resolver did not answer');
     expect(makeClient).not.toHaveBeenCalled();
   });
 });
