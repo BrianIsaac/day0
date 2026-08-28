@@ -110,6 +110,44 @@ describe('work surface enablement', (): void => {
     ).resolves.toMatchObject({ decision: 'claim' });
   });
 
+  it('defers the documented Northstar queue item at its absent surface instead of charter scope', async (): Promise<void> => {
+    const work = candidate(
+      'linear',
+      'Inspect Northstar CRM for the owner of the synthetic Aster Works opportunity and add the owner to the issue.',
+    );
+    work.externalId = 'REVOPS-2';
+    work.title = 'Reconcile Northstar CRM ownership';
+
+    await expect(
+      evaluateCandidate(
+        work,
+        context('real', [surface('linear'), surface('northstar-crm', 'absent')]),
+        lookups(),
+      ),
+    ).resolves.toEqual({
+      decision: 'defer',
+      reason: 'awaiting-connection',
+      missingSurface: 'northstar-crm',
+    });
+  });
+
+  it('claims the documented Looker queue item when its browser surface is connected', async (): Promise<void> => {
+    const work = candidate(
+      'linear',
+      'Inspect the synthetic Friday standup deals and refresh the Looker pipeline tile with the current coverage summary.',
+    );
+    work.externalId = 'REVOPS-3';
+    work.title = 'Refresh the Looker pipeline tile';
+
+    await expect(
+      evaluateCandidate(
+        work,
+        context('real', [surface('linear'), surface('looker-pipeline-tile')]),
+        lookups(),
+      ),
+    ).resolves.toMatchObject({ decision: 'claim' });
+  });
+
   it.each([
     ['absent', surface('linear', 'absent')],
     [

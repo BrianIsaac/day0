@@ -1,5 +1,8 @@
 /** @vitest-environment node */
 
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
 import { getFunctionName } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
@@ -686,6 +689,90 @@ describe('orientation run', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+  });
+
+  it('discovers systems from the linked real documentation before orientation', async (): Promise<void> => {
+    const root = mkdtempSync(join(tmpdir(), 'day0-documentation-discovery-'));
+    const systems = join(root, 'docs-local', 'systems');
+    mkdirSync(systems, { recursive: true });
+    for (const name of ['northstar-crm', 'looker-pipeline-tile']) {
+      copyFileSync(
+        resolve('tests', 'fixtures', 'notion-pages', `${name}.md`),
+        join(systems, `${name}.md`),
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    stubRegistry();
+    model.pathFor = (system: string): DraftPath =>
+      system === 'Looker pipeline tile' ? 'browser-driven' : 'escalate';
+
+    try {
+      const harness = convexTest(schema, orientationModules());
+      const { agentId, sourceId } = await harness.run(
+        async (ctx): Promise<{ agentId: Id<'agents'>; sourceId: Id<'docSources'> }> => {
+          const agentId = await ctx.db.insert('agents', {
+            bossEmail: 'boss@day0.local',
+            name: 'documentation discovery test',
+            userId: 'owner',
+            state: 'active',
+            createdAt: 1,
+          });
+          const sourceId = await ctx.db.insert('docSources', {
+            userId: 'owner',
+            label: 'Actual docs-local pages',
+            kind: 'folder',
+            locator: 'docs-local',
+            status: 'linking',
+            createdAt: 1,
+            updatedAt: 1,
+          });
+          return { agentId, sourceId };
+        },
+      );
+      await harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          { name: 'Linear', class: 'kanban', whereMentioned: 'We use Linear.' },
+          { name: 'Slack', class: 'chat', whereMentioned: 'We use Slack.' },
+        ],
+      });
+
+      await expect(
+        harness.action(internal.docSyncActions.syncSource, { sourceId }),
+      ).resolves.toMatchObject({ ok: true, pages: 2, complete: true });
+      await harness.action(internal.orientationActions.run, { agentId });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const surfaces = await surfacesBySlug(harness, agentId);
+      expect(Object.keys(surfaces).sort()).toEqual([
+        'linear',
+        'looker-pipeline-tile',
+        'northstar-crm',
+        'slack',
+      ]);
+      expect(surfaces['northstar-crm']).toMatchObject({
+        verdict: 'absent',
+        whereFound: [
+          expect.objectContaining({
+            ref: 'systems/northstar-crm.md',
+            quote: '# Northstar CRM',
+          }),
+        ],
+      });
+      expect(surfaces['looker-pipeline-tile']).toMatchObject({
+        verdict: 'proposed',
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        whereFound: [
+          expect.objectContaining({
+            ref: 'systems/looker-pipeline-tile.md',
+            quote: '# Looker pipeline tile',
+          }),
+        ],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("does not lend one system's MCP endpoint to another named in the same paragraph", async (): Promise<void> => {
