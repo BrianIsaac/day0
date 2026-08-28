@@ -239,6 +239,8 @@ export default defineSchema({
     waterfallPosition: v.optional(v.number()),
     intakeSkipReason: v.optional(v.string()),
     lastPolledAt: v.optional(v.number()),
+    /** Independent checkpoint for the latency-sensitive manager decision poll. */
+    lastDecisionPolledAt: v.optional(v.number()),
     /** Transitional validator for rows written before credentialId. Every
      * current state transition clears it; remove after deployed rows migrate. */
     credentialRef: v.optional(v.string()),
@@ -414,10 +416,26 @@ export default defineSchema({
     observedAt: v.number(),
     createdAt: v.number(),
   })
+    .index('by_agent', ['agentId'])
     .index('by_agent_state', ['agentId', 'state'])
     .index('by_agent_decision', ['agentId', 'decision.id'])
     .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId']),
+
+  /** One idempotent manager-DM acknowledgement per parsed provider reply. */
+  managerDecisionNotices: defineTable({
+    agentId: v.id('agents'),
+    surfaceId: v.id('surfaces'),
+    workItemId: v.id('workItems'),
+    decisionId: v.string(),
+    messageTs: v.string(),
+    kind: v.union(v.literal('received'), v.literal('unknown')),
+    text: v.string(),
+    createdAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    providerTs: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  }).index('by_surface_message', ['surfaceId', 'messageTs']),
 
   skills: defineTable({
     agentId: v.id('agents'),

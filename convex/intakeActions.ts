@@ -75,6 +75,7 @@ export interface IntakeRuntime {
   listPages(agentId: Id<'agents'>): Promise<Doc<'docPages'>[]>;
   decrypt(credentialId: CredentialId): Promise<string>;
   recordIntake(record: IntakeRecord): Promise<void>;
+  recordDecisionPoll(record: { surfaceId: Id<'surfaces'>; polledAt: number }): Promise<void>;
   seed(candidate: IntakeSeed): Promise<void>;
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
   /** Decision requests that landed on this surface and are still undecided. */
@@ -97,6 +98,8 @@ export interface IntakeSweepResult {
   skipped: number;
   surfaces: number;
 }
+
+export type DecisionSweepResult = Omit<IntakeSweepResult, 'candidates'>;
 
 interface LinearScope {
   project: string;
@@ -968,24 +971,30 @@ async function pollSlack(
   observedAt: number,
   fetcher: IntakeFetcher,
   listOpenRequests: () => Promise<Array<{ ts: string }>>,
+  include: { decisions: boolean; work: boolean },
 ): Promise<ChatPollResult> {
-  for (const method of ['conversations.list', 'conversations.history']) {
+  const requiredMethods = include.work
+    ? ['conversations.list', 'conversations.history']
+    : ['conversations.history'];
+  for (const method of requiredMethods) {
     if (!surface.toolAllowlist?.includes(method)) {
       throw new Error(`Connected Slack surface does not allow ${method}.`);
     }
   }
-  if (!surface.providerIdentityId) throw new Error('Slack probe stored no bot identity.');
-  if (!surface.providerWorkspaceId) throw new Error('Slack probe stored no workspace identity.');
-  const names = slackChannelsFromPages(pages);
-  if (names.length === 0) throw new Error('Slack policy names no intake channels.');
-  const channels = await resolveSlackChannels(fetcher, credential, names);
-  const mention = `<@${surface.providerIdentityId}>`;
   const candidates: WorkCandidate[] = [];
-  for (const channel of channels) {
-    const messages = await slackHistory(fetcher, credential, channel.id, surface.lastPolledAt);
-    for (const message of messages) {
-      if (!message.text.includes(mention) || message.user === surface.providerIdentityId) continue;
-      candidates.push(slackCandidate(message, channel, surface, observedAt));
+  if (include.work) {
+    if (!surface.providerIdentityId) throw new Error('Slack probe stored no bot identity.');
+    if (!surface.providerWorkspaceId) throw new Error('Slack probe stored no workspace identity.');
+    const names = slackChannelsFromPages(pages);
+    if (names.length === 0) throw new Error('Slack policy names no intake channels.');
+    const channels = await resolveSlackChannels(fetcher, credential, names);
+    const mention = `<@${surface.providerIdentityId}>`;
+    for (const channel of channels) {
+      const messages = await slackHistory(fetcher, credential, channel.id, surface.lastPolledAt);
+      for (const message of messages) {
+        if (!message.text.includes(mention) || message.user === surface.providerIdentityId) continue;
+        candidates.push(slackCandidate(message, channel, surface, observedAt));
+      }
     }
   }
   const decisionReplies = new Map<string, ChatPollResult['decisionReplies'][number]>();
@@ -998,7 +1007,7 @@ async function pollSlack(
         decisionReplies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
     }
   };
-  if (surface.managerDmChannelId && surface.managerUserId) {
+  if (include.decisions && surface.managerDmChannelId && surface.managerUserId) {
     const dm = surface.managerDmChannelId;
     collect(await slackHistory(fetcher, credential, dm, surface.lastPolledAt));
     // `conversations.history` lists only top-level messages. A manager who answers in
@@ -1041,15 +1050,26 @@ async function pollChat(
   fetcher: IntakeFetcher,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
   listOpenRequests: () => Promise<Array<{ ts: string }>>,
+  include: { decisions: boolean; work: boolean },
 ): Promise<ChatPollResult> {
   const polled = await (async (): Promise<ChatPollResult> => {
     if (surface.path === 'documented-api') {
-      return await pollSlack(surface, pages, credential, observedAt, fetcher, listOpenRequests);
+      return await pollSlack(
+        surface,
+        pages,
+        credential,
+        observedAt,
+        fetcher,
+        listOpenRequests,
+        include,
+      );
     }
     if (surface.path === 'mcp') {
       return {
         candidates: [],
-        decisionReplies: await pollMcpManagerReplies(surface, credential, makeClient),
+        decisionReplies: include.decisions
+          ? await pollMcpManagerReplies(surface, credential, makeClient)
+          : [],
       };
     }
     throw new Error(
@@ -1220,14 +1240,12 @@ export async function runIntakeSweep(
                 fetcher,
                 makeMcpClient,
                 () => runtime.listOpenDecisionRequests(surface._id),
+                { decisions: false, work: true },
               )
             : undefined;
         const mapped = chat
           ? chat.candidates
           : await pollLinear(surface, pages, credential, pollStartedAt, makeMcpClient);
-        for (const reply of chat?.decisionReplies ?? []) {
-          await runtime.resolveDecision({ surfaceId: surface._id, ...reply });
-        }
         for (const candidate of mapped) await seedCandidate(runtime, agentId, candidate);
         await runtime.recordIntake({
           surfaceId: surface._id,
@@ -1251,6 +1269,66 @@ export async function runIntakeSweep(
   return { candidates, mode, polled, skipped, surfaces: surfaces.length };
 }
 
+/** Poll only manager decision replies, without touching discovery checkpoints. */
+export async function runDecisionSweep(
+  runtime: IntakeRuntime,
+  dependencies: IntakeDependencies = {},
+): Promise<DecisionSweepResult> {
+  const mode = dependencies.mode ?? SURFACE_MODE;
+  if (mode !== 'real') return { mode, polled: 0, skipped: 0, surfaces: 0 };
+  const fetcher: IntakeFetcher = dependencies.fetcher ?? fetch;
+  const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
+  const now = dependencies.now ?? Date.now;
+  const surfaces = (await runtime.listSurfaces()).filter(
+    (surface): boolean => surface.class === 'chat',
+  );
+  let polled = 0;
+  let skipped = 0;
+  for (const surface of surfaces) {
+    if (
+      surface.verdict !== 'connected' ||
+      !surface.credentialId ||
+      !surface.managerDmChannelId ||
+      !surface.managerUserId
+    ) {
+      skipped += 1;
+      continue;
+    }
+    const pollStartedAt = now();
+    let credential = '';
+    try {
+      credential = await runtime.decrypt(surface.credentialId);
+      const checkpointed = {
+        ...surface,
+        lastPolledAt: surface.lastDecisionPolledAt ?? surface.lastPolledAt,
+      };
+      const chat = await pollChat(
+        checkpointed,
+        [],
+        credential,
+        pollStartedAt,
+        fetcher,
+        makeMcpClient,
+        () => runtime.listOpenDecisionRequests(surface._id),
+        { decisions: true, work: false },
+      );
+      for (const reply of chat.decisionReplies) {
+        await runtime.resolveDecision({ surfaceId: surface._id, ...reply });
+      }
+      await runtime.recordDecisionPoll({ surfaceId: surface._id, polledAt: pollStartedAt });
+      polled += 1;
+    } catch (error) {
+      console.warn(
+        `Manager decision poll failed for ${surface.slug}: ${safeIntakeError(error, credential)}`,
+      );
+      skipped += 1;
+    } finally {
+      credential = '';
+    }
+  }
+  return { mode, polled, skipped, surfaces: surfaces.length };
+}
+
 /** Create the Convex runtime boundary used by the scheduled action. */
 function convexRuntime(ctx: ActionCtx): IntakeRuntime {
   return {
@@ -1264,6 +1342,9 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       await ctx.runAction(credentialInternal.credentials.decrypt, { credentialId }),
     recordIntake: async (record: IntakeRecord): Promise<void> => {
       await ctx.runMutation(internal.surfaces.recordIntake, record);
+    },
+    recordDecisionPoll: async (record): Promise<void> => {
+      await ctx.runMutation(internal.work.recordDecisionPoll, record);
     },
     seed: async (candidate: IntakeSeed): Promise<void> => {
       await ctx.runMutation(internal.work.seedItem, candidate);
@@ -1281,4 +1362,11 @@ export const pollAll = internalAction({
   args: {},
   handler: async (ctx): Promise<IntakeSweepResult> =>
     await runIntakeSweep(convexRuntime(ctx), { mode: SURFACE_MODE }),
+});
+
+/** Poll manager decisions on the latency-sensitive schedule. */
+export const pollDecisions = internalAction({
+  args: {},
+  handler: async (ctx): Promise<DecisionSweepResult> =>
+    await runDecisionSweep(convexRuntime(ctx), { mode: SURFACE_MODE }),
 });

@@ -405,6 +405,29 @@ describe('manager channel request claims', (): void => {
     expect(await harness.query(internal.work.openDecisionRequests, { surfaceId })).toEqual([]);
   });
 
+  it('keeps the decision poll checkpoint independent and monotonic', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seed(harness, 'plan-pending', undefined, { withSlack: true });
+    const surfaceId = await harness.run(async (ctx) => {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+        .unique();
+      if (!surface) throw new Error('chat surface missing');
+      await ctx.db.patch(surface._id, { lastPolledAt: 100 });
+      return surface._id;
+    });
+
+    await harness.mutation(internal.work.recordDecisionPoll, { surfaceId, polledAt: 300 });
+    await harness.mutation(internal.work.recordDecisionPoll, { surfaceId, polledAt: 200 });
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toMatchObject({
+      lastPolledAt: 100,
+      lastDecisionPolledAt: 300,
+    });
+  });
+
   it('asks for no reply through a chat surface whose manager identity has not been probed', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -485,6 +508,26 @@ describe('single-use manager decisions', (): void => {
     expect(await scheduledFunctionNames(harness)).toContain(
       'workActions:executeApprovedPlanInternal',
     );
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:sendManagerReplyNotice',
+      ),
+    ).toHaveLength(1);
+    expect(
+      await harness.run(async (ctx) =>
+        await ctx.db
+          .query('managerDecisionNotices')
+          .withIndex('by_surface_message', (q) =>
+            q.eq('surfaceId', surfaceId).eq('messageTs', '1.100'),
+          )
+          .unique(),
+      ),
+    ).toMatchObject({
+      workItemId,
+      decisionId: 'gh6npq',
+      kind: 'received',
+      text: 'Approval gh6npq received. I’m starting the approved plan now.',
+    });
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
     ).rejects.toThrow('expected plan-pending');
@@ -570,6 +613,9 @@ describe('single-use manager decisions', (): void => {
       }),
     ).resolves.toEqual({ status: 'ignored', reason: 'manager identity mismatch' });
     expect((await readItem(harness, workItemId)).approvedIndexes).toBeUndefined();
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toEqual([]);
     await expect(
       harness.mutation(internal.work.resolveChannelDecision, {
         surfaceId,
@@ -583,6 +629,14 @@ describe('single-use manager decisions', (): void => {
       applyPhase: 'approved',
       decision: { outcome: 'approved', decidedVia: 'channel' },
     });
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toEqual([
+      expect.objectContaining({
+        kind: 'received',
+        text: 'Approval pq8rst received. I’m applying the approved actions now.',
+      }),
+    ]);
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
         workItemId,
@@ -593,7 +647,66 @@ describe('single-use manager decisions', (): void => {
     expect(await eventsOfType(harness, agentId, 'work.decision-ignored')).toHaveLength(1);
   });
 
-  it('cancels a plan or fails a run from a channel reject, with the bounded reason and nothing sent', async (): Promise<void> => {
+  it('notifies the manager once for an unknown token without giving another user an oracle', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await chatSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    const unknown = {
+      surfaceId,
+      messageTs: '4.100',
+      reply: { verb: 'approve' as const, id: 'cd4uvw' },
+    };
+
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        ...unknown,
+        userId: 'UOTHER',
+      }),
+    ).resolves.toEqual({ status: 'ignored', reason: 'manager identity mismatch' });
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toEqual([]);
+
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        ...unknown,
+        userId: 'UMANAGER',
+      }),
+    ).resolves.toEqual({ status: 'ignored', reason: 'unknown decision id', notified: true });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        ...unknown,
+        userId: 'UMANAGER',
+      }),
+    ).resolves.toEqual({ status: 'ignored', reason: 'unknown decision id', notified: false });
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toEqual([
+      expect.objectContaining({
+        surfaceId,
+        workItemId,
+        decisionId: 'cd4uvw',
+        messageTs: '4.100',
+        kind: 'unknown',
+        text: 'I couldn’t find decision cd4uvw. Check the six-character token and try again.',
+      }),
+    ]);
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:sendManagerReplyNotice',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('cancels a plan or fails a run from a channel reject, with the bounded reason and no apply', async (): Promise<void> => {
     useSurfaceMode('real');
     const longReason = `${'x'.repeat(230)}  <script>alert(1)</script>`;
 
@@ -625,6 +738,14 @@ describe('single-use manager decisions', (): void => {
       (await eventsOfType(planHarness, plan.agentId, 'work.cancelled')).map((event) => event.payload),
     ).toEqual([
       { workItemId: plan.workItemId, reason: cancelled.skipReason, decidedVia: 'channel' },
+    ]);
+    expect(
+      await planHarness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toEqual([
+      expect.objectContaining({
+        kind: 'received',
+        text: 'Rejection wx2yz3 received. I won’t apply it.',
+      }),
     ]);
 
     const actionsHarness = convexTest(schema, allConvexModules());
@@ -669,6 +790,16 @@ describe('single-use manager decisions', (): void => {
         decidedVia: 'channel',
       },
     ]);
+    expect(
+      await actionsHarness.run(async (ctx) =>
+        await ctx.db.query('managerDecisionNotices').collect(),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        kind: 'received',
+        text: 'Rejection yz3ab4 received. I won’t apply it.',
+      }),
+    ]);
   });
 
   it('stays silent when the reply that decided is read again, and notifies a different reply once', async (): Promise<void> => {
@@ -712,6 +843,14 @@ describe('single-use manager decisions', (): void => {
         (name) => name === 'managerChannelActions:sendDecisionNotice',
       ),
     ).toEqual([]);
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:sendManagerReplyNotice',
+      ),
+    ).toHaveLength(1);
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toHaveLength(1);
 
     // A second, distinct reply is a duplicate and gets exactly one notice.
     await expect(
