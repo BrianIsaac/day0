@@ -9,6 +9,7 @@ import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
+import { browserTitleMarker } from '../src/surfaces/browser';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -126,6 +127,11 @@ export interface DocumentedEndpoints {
   webUi?: string;
   /** A plaintext `http:` endpoint on a public host that was refused as an API or MCP base. */
   insecure?: string;
+}
+
+export interface SurfacePathCandidate {
+  path: Exclude<OrientationPath, 'escalate'>;
+  endpoint: string;
 }
 type RegistryRemote = { type?: unknown; url?: unknown };
 type RegistryServer = {
@@ -652,7 +658,7 @@ export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
 }
 
 /**
- * Admit a connection path from literal evidence.
+ * Build the descending set of connection paths admitted by literal evidence.
  *
  * The model drafts the artefact; the code decides the path. An attributed
  * MCP endpoint wins, then a documented API base regardless of whether the
@@ -666,19 +672,41 @@ export function documentedEndpoints(urls: string[]): DocumentedEndpoints {
  *   hasLoginCredential: Whether the same linked evidence carries a stored web login.
  *
  * Returns:
- *   The admitted path and, for admitted paths, its documented endpoint.
+ *   Evidence-backed, probeable paths in strongest-to-weakest order.
  */
+export function connectionLadder(
+  draftPath: OrientationPath,
+  endpoints: DocumentedEndpoints,
+  hasLoginCredential = false,
+  hasProbeMarker = false,
+): SurfacePathCandidate[] {
+  const candidates: SurfacePathCandidate[] = [];
+  if (endpoints.mcp) candidates.push({ path: 'mcp', endpoint: endpoints.mcp });
+  if (endpoints.api) candidates.push({ path: 'documented-api', endpoint: endpoints.api });
+  // The browser rung used to need a stored web login, which was literal
+  // evidence. Dropping it for the public floor left the model's own draft path
+  // deciding whether a rung is admitted, which is the one thing the model does
+  // not decide here. The documented page-title marker restores an evidence
+  // condition, and it is the condition the browser probe already refuses
+  // without - so both approvers now ratify only rungs that can actually run.
+  if (endpoints.webUi && hasProbeMarker && (draftPath === 'browser-driven' || hasLoginCredential)) {
+    candidates.push({ path: 'browser-driven', endpoint: endpoints.webUi });
+  }
+  return candidates;
+}
+
+/** Admit the strongest evidence-backed path, or escalate when none is probeable. */
 export function choosePath(
   draftPath: OrientationPath,
   endpoints: DocumentedEndpoints,
   hasLoginCredential = false,
+  hasProbeMarker = false,
 ): { path: OrientationPath; endpoint?: string } {
-  if (endpoints.mcp) return { path: 'mcp', endpoint: endpoints.mcp };
-  if (endpoints.api) return { path: 'documented-api', endpoint: endpoints.api };
-  if (endpoints.webUi && draftPath === 'browser-driven' && hasLoginCredential) {
-    return { path: 'browser-driven', endpoint: endpoints.webUi };
-  }
-  return { path: 'escalate' };
+  return (
+    connectionLadder(draftPath, endpoints, hasLoginCredential, hasProbeMarker)[0] ?? {
+      path: 'escalate',
+    }
+  );
 }
 
 /** Whether a page-derived stored value is explicitly a web login credential. */
@@ -1122,14 +1150,22 @@ export async function orientSurface(
     extractedCredential.found === 'none' && extractedCredential.method === 'unknown'
       ? validatedDraftCredential(draft.credential, credentialPages)
       : extractedCredential;
-  const browserEvidenceIncomplete =
-    draft.path === 'browser-driven' && endpoints.webUi !== undefined &&
-    !isBrowserLoginCredential(credential);
-  const { path, endpoint } = choosePath(
+  const hasBrowserLogin = isBrowserLoginCredential(credential);
+  const hasProbeMarker = browserTitleMarker(relevantText) !== undefined;
+  const pathCandidates = connectionLadder(
     draft.path,
     endpoints,
-    isBrowserLoginCredential(credential),
+    hasBrowserLogin,
+    hasProbeMarker,
   );
+  const selected: { path: OrientationPath; endpoint?: string } = pathCandidates[0] ?? {
+    path: 'escalate',
+  };
+  const { path, endpoint } = selected;
+  const fallbackPath = pathCandidates[1]?.path ?? 'escalate';
+  const credentiallessBrowser =
+    pathCandidates.some((candidate): boolean => candidate.path === 'browser-driven') &&
+    !hasBrowserLogin;
   const mentionsMcp = /\bmcp\b/i.test(relevantText);
   const registrySuggestion =
     path === 'escalate' && (draft.path === 'mcp' || mentionsMcp)
@@ -1137,9 +1173,14 @@ export async function orientSurface(
       : undefined;
   const openQuestions = [...draft.openQuestions];
   if (drafted.note) openQuestions.push(drafted.note);
-  if (browserEvidenceIncomplete) {
+  if (credentiallessBrowser) {
     openQuestions.push(
-      'Document the web UI login credential before approving browser-driven access.',
+      'No web login credential was found; browser access is limited to content the documented UI exposes without sign-in.',
+    );
+  }
+  if (endpoints.webUi && !hasProbeMarker && draft.path === 'browser-driven') {
+    openQuestions.push(
+      `Document the page title Day0 should see at ${endpoints.webUi}, as "Probe marker: page title" followed by the title in backticks, before approving browser-driven access.`,
     );
   }
   if (endpoints.insecure) {
@@ -1181,7 +1222,8 @@ export async function orientSurface(
       system: surface.displayName,
       class: surface.class,
       chosenPath: path,
-      fallbackPath: draft.fallbackPath,
+      fallbackPath,
+      ladder: pathCandidates,
       confidence: endpoint ? draft.confidence : Math.min(draft.confidence, 0.65),
       reasoning: draft.reasoning,
     },
@@ -1208,7 +1250,8 @@ export async function orientSurface(
     request,
     whereFound: evidence,
     path,
-    fallbackPath: draft.fallbackPath,
+    fallbackPath,
+    pathCandidates,
     endpoint,
     credentialId: stored?.credentialId,
     credentialKind: stored?.kind,

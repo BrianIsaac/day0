@@ -10,6 +10,7 @@ import schema from '../../convex/schema';
 import {
   attributedUrls,
   choosePath,
+  connectionLadder,
   documentedEndpoints,
   draftOrientation,
   evidenceQuote,
@@ -631,15 +632,43 @@ describe('URL attribution', (): void => {
       path: 'documented-api',
       endpoint: 'https://slack.com/api/',
     });
-    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' }, true)).toEqual({
+    expect(
+      choosePath('browser-driven', { webUi: 'https://app.example.com' }, true, true),
+    ).toEqual({
       path: 'browser-driven',
       endpoint: 'https://app.example.com',
+    });
+    expect(
+      choosePath('browser-driven', { webUi: 'https://app.example.com' }, false, true),
+    ).toEqual({
+      path: 'browser-driven',
+      endpoint: 'https://app.example.com',
+    });
+    // Without the documented page-title marker the browser probe refuses the
+    // rung, so admitting it would ask both approvers to ratify a route the code
+    // already knows cannot run.
+    expect(choosePath('browser-driven', { webUi: 'https://app.example.com' }, true)).toEqual({
+      path: 'escalate',
     });
     expect(choosePath('browser-driven', { webUi: 'https://app.example.com' })).toEqual({
       path: 'escalate',
     });
     expect(choosePath('mcp', { webUi: 'https://app.example.com' })).toEqual({ path: 'escalate' });
     expect(choosePath('mcp', {})).toEqual({ path: 'escalate' });
+    const threeRung = {
+      mcp: 'https://mcp.example.com/mcp',
+      api: 'https://api.example.com/v1',
+      webUi: 'https://app.example.com',
+    };
+    expect(connectionLadder('browser-driven', threeRung, false, true)).toEqual([
+      { path: 'mcp', endpoint: 'https://mcp.example.com/mcp' },
+      { path: 'documented-api', endpoint: 'https://api.example.com/v1' },
+      { path: 'browser-driven', endpoint: 'https://app.example.com' },
+    ]);
+    expect(connectionLadder('browser-driven', threeRung, false, false)).toEqual([
+      { path: 'mcp', endpoint: 'https://mcp.example.com/mcp' },
+      { path: 'documented-api', endpoint: 'https://api.example.com/v1' },
+    ]);
     expect(
       isBrowserLoginCredential({
         found: 'value',
@@ -1223,7 +1252,7 @@ describe('the browser floor in orientation', (): void => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('does not admit the browser path when the model asked for something else', async (): Promise<void> => {
+  it('admits a documented login UI even when the model asks for an unsupported API', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'documented-api';
     const harness = convexTest(schema, orientationModules());
@@ -1234,11 +1263,42 @@ describe('the browser floor in orientation', (): void => {
     );
     await orientDeclared(harness, agentId);
     const tile = (await surfacesBySlug(harness, agentId))['looker-pipeline-tile'];
-    expect(tile).toMatchObject({ verdict: 'proposed', path: 'escalate' });
-    expect(tile.endpoint).toBeUndefined();
+    expect(tile).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+      endpoint: 'http://looker-tile:8080/',
+    });
   });
 
-  it('does not infer browser access from a web URL and the word browser without a login', async (): Promise<void> => {
+  it('admits a documented public web UI without inventing a login requirement', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'reports.md':
+          '# Forecast reports\n\nForecast reports use the browser at https://reports.example.test/forecast. There is no API or MCP server.\n\n- Probe marker: page title `Forecast reports`.',
+      },
+      [{ name: 'Forecast reports', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    expect(reports).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+      endpoint: 'https://reports.example.test/forecast',
+      fallbackPath: 'escalate',
+      pathCandidates: [
+        { path: 'browser-driven', endpoint: 'https://reports.example.test/forecast' },
+      ],
+    });
+    expect(reports.request?.openQuestions).toContain(
+      'No web login credential was found; browser access is limited to content the documented UI exposes without sign-in.',
+    );
+  });
+
+  it('escalates a web UI whose page title marker is not documented', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'browser-driven';
     const harness = convexTest(schema, orientationModules());
@@ -1252,10 +1312,12 @@ describe('the browser floor in orientation', (): void => {
     );
     await orientDeclared(harness, agentId);
     const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    // The probe refuses a browser rung with no documented marker, so the rung
+    // is not put in front of two approvers as though it could connect.
     expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
-    expect(reports.endpoint).toBeUndefined();
-    expect(reports.request?.openQuestions).toContain(
-      'Document the web UI login credential before approving browser-driven access.',
+    expect(reports).not.toHaveProperty('pathCandidates');
+    expect(reports.request?.openQuestions).toContainEqual(
+      expect.stringContaining('Document the page title Day0 should see at'),
     );
   });
 

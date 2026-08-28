@@ -256,6 +256,22 @@ describe('MCP adapter', (): void => {
       ok: false,
       reason: 'surface has no valid endpoint',
     });
+    // The probe validates the endpoint before it builds a bearer client, and
+    // transport re-derives the rule rather than inheriting that history: a row
+    // written by any other path cannot put the credential on a plaintext or
+    // userinfo-bearing URL.
+    for (const endpoint of [
+      'http://mcp.linear.app/mcp',
+      'https://someone:secret@mcp.linear.app/mcp',
+    ]) {
+      await expect(
+        adapter(client, [{ ...linear, endpoint }]).apply(ctx, run, commentCall, 0, 'k'),
+        endpoint,
+      ).resolves.toMatchObject({
+        ok: false,
+        reason: 'surface endpoint must be an HTTPS URL without userinfo',
+      });
+    }
     await expect(
       adapter(client, [{ ...linear, credentialId: undefined }]).apply(
         ctx,

@@ -5,6 +5,7 @@ import { decryptCredential, type DecryptCredential } from './credentials';
 import { clipEffect } from './mock';
 import {
   actionIntent,
+  mcpEndpointRefusal,
   parseSurfaceAction,
   surfaceRefusal,
   TOOL_NOT_ALLOWED,
@@ -425,16 +426,11 @@ export class McpAdapter implements SurfaceAdapter {
         };
       }
     } else {
-      try {
-        url = new URL(surface.endpoint ?? '');
-      } catch {
-        return {
-          tool: action.tool,
-          ok: false,
-          reason: 'surface has no valid endpoint',
-          idempotencyKey,
-        };
+      const endpointRefusal = mcpEndpointRefusal(surface);
+      if (endpointRefusal) {
+        return { tool: action.tool, ok: false, reason: endpointRefusal, idempotencyKey };
       }
+      url = new URL(surface.endpoint ?? '');
     }
     if (browserDriven) {
       const outside = navigationRefusal(call.tool, call.toolArgs, surface.endpoint);

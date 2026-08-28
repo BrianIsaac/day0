@@ -44,6 +44,14 @@ export interface SurfaceRecord {
   credentialLanded: boolean;
   lastVerifiedAt?: number;
   path?: SurfacePath;
+  pathCandidates?: Array<{ path: SurfacePath; endpoint: string }>;
+  probeAttempts?: Array<{
+    path: string;
+    endpoint?: string;
+    outcome: 'demoted' | 'ungranted' | 'listed-dead';
+    reason: string;
+    attemptedAt: number;
+  }>;
   endpoint?: string;
   toolAllowlist?: string[];
   toolArguments?: Array<{ tool: string; arguments: string[] }>;
@@ -131,6 +139,7 @@ export interface ConnectRequest {
     class: string;
     chosenPath: SurfacePath;
     fallbackPath: SurfacePath;
+    ladder?: Array<{ path: Exclude<SurfacePath, 'escalate'>; endpoint: string }>;
     confidence: number;
     reasoning: string;
   };

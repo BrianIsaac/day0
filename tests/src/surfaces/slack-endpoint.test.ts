@@ -19,6 +19,30 @@ describe('the local Slack proof endpoint', (): void => {
     expect(slackAuthorizeUrl().href).toBe('https://slack.com/oauth/v2/authorize');
   });
 
+  it('recognises the documented Slack API base however the docs wrote it', async (): Promise<void> => {
+    const { isSlackApiEndpoint } = await endpointModule();
+    // The endpoint is evidence, copied out of the enterprise's page. Requiring
+    // one exact spelling turned a system Day0 does probe into one it claimed
+    // not to support, and then descended the ladder past it.
+    for (const endpoint of [
+      'https://slack.com/api/',
+      'https://slack.com/api',
+    ]) {
+      expect(isSlackApiEndpoint(endpoint), endpoint).toBe(true);
+    }
+    for (const endpoint of [
+      undefined,
+      'not a url',
+      'http://slack.com/api/',
+      'https://slack.com.evil.example/api/',
+      'https://slack.com/apiary',
+      'https://slack.com/api/chat.postMessage',
+      'https://slack.com/api/../../oauth/v2/authorize',
+    ]) {
+      expect(isSlackApiEndpoint(endpoint), String(endpoint)).toBe(false);
+    }
+  });
+
   it('admits only the fake service in local no-auth real mode', async (): Promise<void> => {
     vi.stubEnv('DAY0_SURFACE_MODE', 'real');
     vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');

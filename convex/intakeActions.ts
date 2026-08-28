@@ -492,6 +492,9 @@ export function linearCandidate(
   };
 }
 
+/** The one MCP server this deployment's kanban intake reader speaks to. */
+const LINEAR_MCP_ENDPOINT = 'https://mcp.linear.app/mcp';
+
 /**
  * Create the production Linear MCP client for one exact documented endpoint.
  *
@@ -531,10 +534,29 @@ function createMcpClient(endpoint: URL, credential: string): McpIntakeClient {
 function linearEndpoint(endpoint: string | undefined): URL {
   if (!endpoint) throw new Error('Linear surface has no documented endpoint.');
   const parsed = new URL(endpoint);
-  if (parsed.href !== 'https://mcp.linear.app/mcp') {
+  if (parsed.href !== LINEAR_MCP_ENDPOINT) {
     throw new Error('Linear surface endpoint is not the approved host.');
   }
   return parsed;
+}
+
+/**
+ * Whether this deployment has a kanban intake reader for a connected surface.
+ *
+ * The probe admits any documented MCP server now, so a connected kanban surface
+ * is no longer necessarily Linear's. Intake still reads only Linear's contract,
+ * and saying so is the honest answer: telling an operator that their Jira row
+ * "is not the approved Linear host" is a claim about their configuration that
+ * Day0's own missing reader does not support.
+ *
+ * Args:
+ *   surface: A connected kanban surface.
+ *
+ * Returns:
+ *   Whether the waterfall can read work from it.
+ */
+export function hasKanbanIntakeReader(surface: Doc<'surfaces'>): boolean {
+  return surface.path === 'mcp' && surface.endpoint === LINEAR_MCP_ENDPOINT;
 }
 
 /**
@@ -1169,6 +1191,16 @@ export async function runIntakeSweep(
           surfaceId: surface._id,
           waterfallPosition,
           skipReason: `no intake reader for connected ${surface.class} surface`,
+        });
+        skipped += 1;
+        continue;
+      }
+      // Checked before the credential is decrypted, and named as Day0's gap.
+      if (surface.class === 'kanban' && !hasKanbanIntakeReader(surface)) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: `no intake reader for ${surface.displayName}; this Day0 deployment reads kanban work through Linear's MCP contract`,
         });
         skipped += 1;
         continue;

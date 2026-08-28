@@ -53,37 +53,104 @@ const READ_TOOL_PREFIX = /^(?:list|get|search|read|fetch|retrieve|query|find|des
  */
 const BROWSER_READ_TOOLS = new Set(['browser_navigate', 'browser_snapshot', 'browser_hover']);
 const HTTP_MUTATION_WORDS = new Set([
+  'activate',
   'add',
+  'apply',
   'approve',
   'archive',
+  'assign',
+  'attach',
+  'block',
   'cancel',
+  'change',
+  'clone',
   'close',
+  'complete',
   'create',
+  'deactivate',
   'delete',
+  'demote',
+  'deploy',
+  'destroy',
+  'detach',
+  'disable',
+  'drop',
+  'duplicate',
+  'edit',
+  'enable',
+  'escalate',
   'execute',
+  'grant',
+  'insert',
+  'install',
   'invite',
   'join',
   'kick',
   'leave',
+  'lock',
   'mark',
+  'merge',
+  'modify',
   'move',
+  'mute',
   'open',
+  'patch',
   'pin',
   'post',
+  'promote',
+  'provision',
   'publish',
+  'purge',
+  'push',
+  'reassign',
   'reject',
   'remove',
   'rename',
+  'replace',
   'reply',
+  'reset',
+  'resolve',
+  'restore',
+  'revert',
+  'revoke',
+  'rotate',
   'save',
   'schedule',
   'send',
   'set',
+  'share',
+  'submit',
+  'subscribe',
+  'suspend',
+  'sync',
+  'transfer',
   'transition',
   'trigger',
+  'unarchive',
+  'unassign',
+  'uninstall',
+  'unlock',
   'unpin',
+  'unsubscribe',
   'update',
+  'upload',
+  'upsert',
+  'wipe',
+  'write',
 ]);
+/**
+ * Words that join a second operation onto a read verb.
+ *
+ * The read prefix decides the intent of a whole name, so a catalogue tool
+ * called `list_and_delete_issues` was only held because `delete` happened to be
+ * in the mutation vocabulary. Once the server's own catalogue is the allowlist
+ * that vocabulary can never be complete - `search_and_replace`,
+ * `get_or_edit_page` and `fetch_and_apply_patch` are all somebody's real tool.
+ * A name that conjoins operations is therefore a write whatever its second
+ * verb is, on the same principle as the unrecognised-name default: Day0 cannot
+ * read the part it does not recognise, so it asks the manager.
+ */
+const COMPOUND_TOOL_WORDS = new Set(['and', 'or', 'then']);
 const STATUS_TOOL = /^(?:save|update|set|change|transition|move)[_-]|status|state/i;
 const STATUS_KEYS = ['status', 'state', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'];
 const COMMENT_TOOL = /comment|message|post|reply|note/i;
@@ -289,7 +356,9 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
  * Whether an action reads from or writes to its surface.
  *
  * Unknown MCP tool names count as writes, so an unrecognised tool needs the
- * stronger grant rather than slipping through as a read.
+ * stronger grant rather than slipping through as a read. A name that conjoins
+ * operations (`list_and_delete_issues`, `search_and_replace`) is a write for
+ * the same reason: the read verb in front of it describes only the first half.
  *
  * Args:
  *   parsed: A parsed surface action.
@@ -308,7 +377,9 @@ export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
       : 'read';
   }
   if (BROWSER_READ_TOOLS.has(parsed.tool)) return 'read';
-  if (operationTokens(parsed.tool).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
+  const tokens = operationTokens(parsed.tool);
+  if (tokens.some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
+  if (tokens.some((token) => COMPOUND_TOOL_WORDS.has(token))) return 'write';
   return READ_TOOL_PREFIX.test(parsed.tool) ? 'read' : 'write';
 }
 
@@ -604,6 +675,37 @@ export function resolveRequestUrl(endpoint: string, path: string): URL {
     throw new Error('path escapes the surface endpoint');
   }
   return target;
+}
+
+/**
+ * Why a surface's stored MCP endpoint may not carry a credential, if it may not.
+ *
+ * The probe validates the endpoint before it builds a bearer client, and only a
+ * validated route ever becomes `connected`. Transport re-derives the rule
+ * rather than inheriting that history, so a row written by any other path
+ * cannot put the surface's credential on a plaintext or userinfo-bearing URL.
+ * The public-address rule stays with the probe, which is the only place that
+ * can resolve a name.
+ *
+ * Args:
+ *   surface: The surface the action targets.
+ *
+ * Returns:
+ *   A refusal reason, or undefined when the endpoint may carry the credential.
+ */
+export function mcpEndpointRefusal(surface: SurfaceRecord): string | undefined {
+  // The browser floor's transport is Day0's own driver, not this address; the
+  // endpoint is the page the driver is bounded to and `navigationRefusal` owns it.
+  if (surface.path !== 'mcp') return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(surface.endpoint ?? '');
+  } catch {
+    return 'surface has no valid endpoint';
+  }
+  return parsed.protocol === 'https:' && !parsed.username && !parsed.password
+    ? undefined
+    : 'surface endpoint must be an HTTPS URL without userinfo';
 }
 
 /** Why an operation is outside the surface's probed allowlist, if it is. */

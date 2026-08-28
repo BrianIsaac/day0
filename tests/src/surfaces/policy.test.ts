@@ -32,6 +32,7 @@ import {
   skillApprovalRefusal,
   statusChangeWithoutComment,
   surfaceRefusal,
+  toolRefusal,
   TRAILER_REFUSED,
   USERNAME_REFUSED,
   type ParsedSurfaceAction,
@@ -170,6 +171,7 @@ describe('intent, scope and connection', (): void => {
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues' } }))).toBe('read');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue' } }))).toBe('read');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_and_delete_issues' } }))).toBe('write');
+    expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_and_modify_issues' } }))).toBe('write');
     expect(actionIntent(parsed(comment()))).toBe('write');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'frobnicate' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }))).toBe('read');
@@ -179,6 +181,69 @@ describe('intent, scope and connection', (): void => {
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', method: 'HEAD', path: '/conversations.open?users=U1' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'northstar', path: '/contacts/42' } }))).toBe('read');
     expect(actionIntent(parsed(chatPost('D0MANAGER')))).toBe('write');
+  });
+
+  it('refuses a read verb that carries a second operation on its name', (): void => {
+    // The server's own catalogue is the allowlist now, so the mutation
+    // vocabulary can never be complete. Every one of these is somebody's real
+    // MCP tool, and each used to run unattended as a read.
+    const mcpTool = (tool: string): ReturnType<typeof parsed> =>
+      parsed({ tool: 'mcp.call', args: { surface: 'jira', tool } });
+    for (const tool of [
+      'search_and_replace',
+      'search_replace',
+      'list_and_purge_issues',
+      'get_or_edit_page',
+      'read_write_file',
+      'fetch_and_apply_patch',
+      'query_and_run_sql',
+      'describe_and_deploy',
+      'find_and_assign_owner',
+      'retrieve_and_grant_access',
+      'list_users_and_reset_passwords',
+      'list_then_archive_issues',
+    ]) {
+      expect(actionIntent(mcpTool(tool))).toBe('write');
+    }
+    for (const tool of ['list_issues', 'get_issue', 'list_comments', 'search_issues']) {
+      expect(actionIntent(mcpTool(tool))).toBe('read');
+    }
+  });
+
+  it('grants nothing on a surface the ladder has just demoted', (): void => {
+    // The row exactly as `demoteAfterProbeFailure` leaves it: the next rung is
+    // approved, nothing about it has been probed, and the route-specific
+    // metadata is gone. Read from the gate rather than from the ladder.
+    const demoted: SurfaceRecord = {
+      ...linear,
+      verdict: 'approved',
+      path: 'browser-driven',
+      endpoint: 'https://linear.example/issues',
+      credentialLanded: false,
+      lastVerifiedAt: undefined,
+      toolAllowlist: undefined,
+    };
+    expect(surfaceRefusal(demoted, now)).toBe('surface not connected (ungranted)');
+    const snapshot = parsed({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'browser_snapshot' },
+    });
+    expect(toolRefusal(snapshot, demoted)).toContain('tool not in the surface allowlist');
+    // And it stays refused once the new rung's own probe has connected it, for
+    // anything that rung did not itself expose.
+    const reconnected: SurfaceRecord = {
+      ...demoted,
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: now,
+      toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+    };
+    expect(surfaceRefusal(reconnected, now)).toBeUndefined();
+    const saveIssue = parsed({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_issue' },
+    });
+    expect(toolRefusal(saveIssue, reconnected)).toContain('tool not in the surface allowlist');
   });
 
   it('derives the scope from the surface and intent', (): void => {

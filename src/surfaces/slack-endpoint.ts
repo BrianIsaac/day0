@@ -4,6 +4,38 @@ import { SURFACE_MODE } from '../lib/surface-mode';
 const SLACK_ORIGIN = 'https://slack.com';
 export const SLACK_API_ENDPOINT = `${SLACK_ORIGIN}/api/`;
 
+/**
+ * Whether a documented endpoint names the Slack Web API base.
+ *
+ * The evidence carries the address as the enterprise's documentation wrote it,
+ * and a team writes the base with or without its trailing slash. Both are the
+ * same base, so both take Slack's probe and Slack's transport. Comparing the
+ * parsed URL rather than the string keeps `https://slack.com/api/../elsewhere`
+ * and a look-alike host out, and the base forms alone are admitted so that the
+ * operation the hold-time gate names is the operation the adapter calls.
+ *
+ * Args:
+ *   endpoint: Evidence-derived surface endpoint.
+ *
+ * Returns:
+ *   Whether Slack's own probe and transport are the right ones for this row.
+ */
+export function isSlackApiEndpoint(endpoint: string | undefined): boolean {
+  if (!endpoint) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.origin === SLACK_ORIGIN &&
+    (parsed.pathname === '/api' || parsed.pathname === '/api/') &&
+    parsed.search === '' &&
+    parsed.hash === ''
+  );
+}
+
 function localProofMode(): boolean {
   return SURFACE_MODE === 'real';
 }

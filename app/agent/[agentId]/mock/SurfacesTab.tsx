@@ -29,7 +29,12 @@ type SurfaceEvidence = {
 };
 
 type ConnectRequestBody = {
-  target?: { reasoning?: string; fallbackPath?: string; confidence?: number };
+  target?: {
+    reasoning?: string;
+    fallbackPath?: string;
+    confidence?: number;
+    ladder?: Array<{ path: string; endpoint: string }>;
+  };
   evidence?: SurfaceEvidence[];
   scopeRequested?: string[];
   credential?: SurfaceCredentialFinding;
@@ -225,6 +230,51 @@ export function EvidenceQuote({ quote }: { quote?: string }): React.ReactNode {
   );
 }
 
+type SurfaceProbeAttempt = {
+  path: string;
+  endpoint?: string;
+  outcome: 'demoted' | 'ungranted' | 'listed-dead';
+  reason: string;
+  attemptedAt: number;
+};
+
+export interface SurfaceLadderProps {
+  candidates?: Array<{ path: string; endpoint: string }>;
+  attempts?: SurfaceProbeAttempt[];
+}
+
+/** Show exactly which routes were approved and what each failed probe established. */
+export function SurfaceLadder({ candidates, attempts }: SurfaceLadderProps): React.ReactNode {
+  if (!candidates?.length && !attempts?.length) return null;
+  return (
+    <div className="mt-2 rounded border border-[var(--color-border)] p-2 text-[10px]">
+      {candidates?.length ? (
+        <p>
+          <span className="text-[var(--color-muted)]">Approved ladder: </span>
+          {candidates.map((candidate): string => candidate.path).join(' → ')}
+        </p>
+      ) : null}
+      {attempts?.length ? (
+        <ol className="mt-1 space-y-1">
+          {attempts.map((attempt, index): React.ReactNode => (
+            <li key={`${attempt.attemptedAt}-${attempt.path}-${index}`}>
+              <span className="font-medium">{attempt.path} attempt failed: </span>
+              {attempt.reason}{' '}
+              <span className="text-[var(--color-muted)]">
+                {attempt.outcome === 'demoted'
+                  ? 'Fell to the next approved rung.'
+                  : attempt.outcome === 'ungranted'
+                    ? 'Waiting on Day0 or approved access.'
+                    : 'No approved fallback connected.'}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+
 export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });
@@ -375,6 +425,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       <div className="grid gap-3 md:grid-cols-2">
         {orderedSurfaces.map((surface, index): React.ReactNode => {
           const request = surface.request as ConnectRequestBody | undefined;
+          const ladder = request?.target?.ladder ?? surface.pathCandidates;
           const evidence = request?.evidence ?? (surface.whereFound as SurfaceEvidence[]);
           const summary = surface.credentialId
             ? credentialById.get(String(surface.credentialId))
@@ -433,6 +484,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                 Waterfall {surface.waterfallPosition ?? index + 1} - {surface.class} -{' '}
                 {surface.path || 'no approved path'}
               </p>
+              <SurfaceLadder candidates={ladder} attempts={surface.probeAttempts} />
               {skipReason ? (
                 <p className="mt-1 text-xs text-[var(--color-warn)]">Skipped: {skipReason}</p>
               ) : null}

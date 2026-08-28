@@ -33,6 +33,7 @@ import {
   isAutomatic,
   needsStandingGrant,
   NOT_AUTOMATIC,
+  mcpEndpointRefusal,
   parseSurfaceAction,
   pathRefusal,
   surfaceRefusal,
@@ -632,6 +633,7 @@ function authorityBeforeTransport(
     const refusal =
       surfaceRefusal(surface, Date.now()) ??
       pathRefusal(parsed.action, surface) ??
+      mcpEndpointRefusal(surface) ??
       toolRefusal(parsed.action, surface);
     if (refusal) return refusal;
     if (phase === 'auto' && !isAutomatic(parsed.action, surface, authority.autonomousActions)) {
