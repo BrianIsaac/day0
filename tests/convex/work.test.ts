@@ -817,6 +817,50 @@ describe('the exact-action gate', (): void => {
     });
   });
 
+  it('refuses a stale connected browser row at hold time when its component is absent', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', ['looker:read']);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        toolAllowlist: ['browser_navigate'],
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        createdAt: 1,
+      });
+    });
+    const output = {
+      draft: 'Read the tile.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'looker',
+            tool: 'browser_navigate',
+            toolArgsJson: '{"url":"http://looker-tile:8080/"}',
+          },
+        },
+      ],
+    };
+
+    await expect(
+      harness.mutation(internal.work.setActionsPending, { workItemId, runId, output }),
+    ).resolves.toEqual({ pending: true, phase: 'manager' });
+    expect((await readItem(harness, workItemId)).actionVerdicts).toEqual([
+      { disposition: 'refused', reason: 'surface not connected (ungranted)' },
+    ]);
+  });
+
   it('refuses a refused row at approval and applies the rest by selection', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

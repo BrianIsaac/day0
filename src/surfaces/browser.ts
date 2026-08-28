@@ -1,3 +1,5 @@
+import { isTransportUnreachable } from '../lib/transport-error';
+
 /**
  * The browser floor: what it may drive, and where it may drive it.
  *
@@ -69,8 +71,7 @@ export interface SnapshotElement {
 }
 
 /** Role words a description may carry that are not part of the element's name. */
-const ROLE_WORDS =
-  /\b(button|textbox|field|input|link|checkbox|combobox|box|control|element)\b/gi;
+const ROLE_WORDS = /\b(button|textbox|field|input|link|checkbox|combobox|box|control|element)\b/gi;
 
 /**
  * Read the addressable elements out of one driver snapshot.
@@ -312,8 +313,7 @@ export const BROWSER_COMPONENT_ABSENT =
   "day0's browser component is not running - add `--profile browser` (see running instructions)";
 
 /** The card's sentence: why this system needs the component, then what to do. */
-export const BROWSER_COMPONENT_CARD_MESSAGE =
-  `This system is reached through its web UI. ${BROWSER_COMPONENT_ABSENT}`;
+export const BROWSER_COMPONENT_CARD_MESSAGE = `This system is reached through its web UI. ${BROWSER_COMPONENT_ABSENT}`;
 
 /** The refusal an action, a probe or an intake sweep records. */
 export const BROWSER_DRIVER_ABSENT_REASON = `${BROWSER_DRIVER_ABSENT}: ${BROWSER_COMPONENT_ABSENT}`;
@@ -367,6 +367,44 @@ export function browserComponent(configured: string | undefined): BrowserCompone
   return { present: true, url: parsed };
 }
 
+/** A recordable refusal for an absent or unusable browser component. */
+export function browserComponentRefusal(configured: string | undefined): string | undefined {
+  try {
+    const component = browserComponent(configured);
+    return component.present ? undefined : component.reason;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
+ * Project a browser surface through the component state consumers have now.
+ *
+ * The stored row records the last provider probe. When the deployment switch
+ * is later removed, exposing that row as connected would let prompts and cards
+ * claim authority the transport will refuse. Proposed rows stay proposed so
+ * their evidence and disabled approval controls remain visible; later states
+ * degrade to the same ungranted refusal the next probe will persist.
+ */
+export function withBrowserComponentState<
+  T extends { credentialLanded: boolean; path?: string; reason?: string; verdict: string },
+>(surface: T, refusal: string | undefined): T {
+  if (!refusal || surface.path !== 'browser-driven') return surface;
+  if (
+    surface.verdict === 'declared' ||
+    surface.verdict === 'proposed' ||
+    surface.verdict === 'absent'
+  ) {
+    return surface;
+  }
+  return {
+    ...surface,
+    verdict: 'ungranted',
+    reason: refusal,
+    credentialLanded: false,
+  };
+}
+
 /**
  * What the Surfaces card should say about this deployment's browser component.
  *
@@ -405,26 +443,6 @@ export function presentBrowserComponent(input: {
  * Could not connect to server with any available HTTP transport"), which none
  * of the first list matched.
  */
-const UNREACHABLE_MARKERS = [
-  'econnrefused',
-  'enotfound',
-  'eai_again',
-  'ehostunreach',
-  'enetunreach',
-  'etimedout',
-  'econnreset',
-  'fetch failed',
-  'failed to fetch',
-  'connection refused',
-  'socket hang up',
-  'network error',
-  'getaddrinfo',
-  'could not connect',
-  'failed to connect',
-  'unable to connect',
-  'connection closed',
-];
-
 /**
  * Decide whether a client failure means the driver is not there.
  *
@@ -442,21 +460,7 @@ const UNREACHABLE_MARKERS = [
  *   Whether it reads as "nothing is listening there".
  */
 export function isDriverUnreachable(error: unknown): boolean {
-  const parts: string[] = [];
-  let current: unknown = error;
-  for (let depth = 0; current && depth < 5; depth += 1) {
-    if (typeof current === 'string') {
-      parts.push(current);
-      break;
-    }
-    if (!(current instanceof Error)) break;
-    parts.push(current.message);
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === 'string') parts.push(code);
-    current = current.cause;
-  }
-  const text = parts.join(' ').toLowerCase();
-  return UNREACHABLE_MARKERS.some((marker: string): boolean => text.includes(marker));
+  return isTransportUnreachable(error);
 }
 
 /**

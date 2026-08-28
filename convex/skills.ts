@@ -13,6 +13,10 @@ import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import {
+  browserComponentRefusal,
+  withBrowserComponentState,
+} from '../src/surfaces/browser';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -398,7 +402,14 @@ export const approve = mutation({
         .unique();
       const refusal = skillApprovalRefusal(
         row.targetSurface,
-        surface ? toSurfaceRecord(surface) : undefined,
+        surface
+          ? toSurfaceRecord(
+              withBrowserComponentState(
+                surface,
+                browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL),
+              ),
+            )
+          : undefined,
         Date.now(),
       );
       if (refusal) throw new Error(`cannot approve "${row.name}": ${refusal}`);

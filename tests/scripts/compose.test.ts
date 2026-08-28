@@ -28,8 +28,9 @@ describe('choosing components on the command line', (): void => {
   });
 
   it('never repeats a profile, however it was named', (): void => {
-    expect(parseComposeArguments(['--profile', 'real', '--profile=browser', '--profile', 'browser']))
-      .toEqual({ profiles: ['real', 'browser'], rest: [] });
+    expect(
+      parseComposeArguments(['--profile', 'real', '--profile=browser', '--profile', 'browser']),
+    ).toEqual({ profiles: ['real', 'browser'], rest: [] });
   });
 
   it('refuses a profile the compose file does not define, rather than starting nothing', (): void => {
@@ -78,7 +79,9 @@ describe('the profile list and the compose file agree', (): void => {
   });
 
   it('puts day0 itself, and nothing else, in the base profile', (): void => {
-    const services = [...COMPOSE_FILE.matchAll(/^ {2}([a-z][a-z0-9-]*):\n {4}profiles: \['([a-z-]+)'\]$/gm)];
+    const services = [
+      ...COMPOSE_FILE.matchAll(/^ {2}([a-z][a-z0-9-]*):\n {4}profiles: \['([a-z-]+)'\]$/gm),
+    ];
     const inBase = services
       .filter((match: RegExpMatchArray): boolean => match[2] === BASE_PROFILE)
       .map((match: RegExpMatchArray): string => match[1]);
@@ -100,5 +103,11 @@ describe('the profile list and the compose file agree', (): void => {
 
   it('keeps notion-mcp reachable as an alias, so links made before the rename still sync', (): void => {
     expect(COMPOSE_FILE).toContain("aliases: ['notion-mcp']");
+  });
+
+  it('does not require an optional Notion token while Compose renders another profile', (): void => {
+    expect(COMPOSE_FILE).not.toContain('DAY0_NOTION_MCP_AUTH_TOKEN:?');
+    expect(COMPOSE_FILE).toContain('AUTH_TOKEN=${DAY0_NOTION_MCP_AUTH_TOKEN:-}');
+    expect(COMPOSE_FILE).toContain('test -n "$$AUTH_TOKEN"');
   });
 });

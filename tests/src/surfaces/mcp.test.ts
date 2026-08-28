@@ -80,7 +80,9 @@ function fakeClient(results: Record<string, (args: unknown) => Promise<unknown>>
     create: (options: McpClientOptions): McpClientLike => {
       fake.options.push(options);
       return {
-        listTools: async (): Promise<Record<string, { execute: (args: unknown) => Promise<unknown> }>> =>
+        listTools: async (): Promise<
+          Record<string, { execute: (args: unknown) => Promise<unknown> }>
+        > =>
           Object.fromEntries(
             Object.entries(results).map(([name, execute]) => [
               name,
@@ -142,7 +144,9 @@ describe('MCP adapter', (): void => {
 
   it('revalidates authority after decrypt and before opening the MCP connection', async (): Promise<void> => {
     const client = fakeClient({
-      linear_save_comment: async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }),
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
     });
     const beforeTransport = vi.fn(async (): Promise<string> => 'not an automatic action');
     const result = await adapter(client, [linear], 'lin-secret', beforeTransport).apply(
@@ -226,24 +230,41 @@ describe('MCP adapter', (): void => {
   });
 
   it('refuses a tool the server does not expose', async (): Promise<void> => {
-    const client = fakeClient({ linear_list_issues: async (): Promise<unknown> => ({ content: [] }) });
+    const client = fakeClient({
+      linear_list_issues: async (): Promise<unknown> => ({ content: [] }),
+    });
     const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
-    expect(result).toMatchObject({ ok: false, reason: 'tool save_comment is not exposed by the server' });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'tool save_comment is not exposed by the server',
+    });
     expect(client.disconnected).toBe(1);
   });
 
   it('refuses an unconnected surface, a missing endpoint and a missing credential', async (): Promise<void> => {
     const client = fakeClient({});
     const dead = { ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 };
-    await expect(adapter(client, [dead]).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
+    await expect(
+      adapter(client, [dead]).apply(ctx, run, commentCall, 0, 'k'),
+    ).resolves.toMatchObject({
       ok: false,
       reason: 'surface not connected (listed-dead)',
     });
-    await expect(adapter(client, [{ ...linear, endpoint: 'not a url' }]).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
+    await expect(
+      adapter(client, [{ ...linear, endpoint: 'not a url' }]).apply(ctx, run, commentCall, 0, 'k'),
+    ).resolves.toMatchObject({
       ok: false,
       reason: 'surface has no valid endpoint',
     });
-    await expect(adapter(client, [{ ...linear, credentialId: undefined }]).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
+    await expect(
+      adapter(client, [{ ...linear, credentialId: undefined }]).apply(
+        ctx,
+        run,
+        commentCall,
+        0,
+        'k',
+      ),
+    ).resolves.toMatchObject({
       ok: false,
       reason: 'surface has no credential',
     });
@@ -299,22 +320,46 @@ describe('MCP adapter', (): void => {
 
 describe('tool result interpretation', (): void => {
   it('clips to the first text block and reads ids from JSON text or structured content', (): void => {
-    expect(interpretToolResult({ content: [{ type: 'image' }, { type: 'text', text: '{"comment":{"id":"c1"}}' }] })).toEqual({
+    expect(
+      interpretToolResult({
+        content: [{ type: 'image' }, { type: 'text', text: '{"comment":{"id":"c1"}}' }],
+      }),
+    ).toEqual({
       isError: false,
       text: '{"comment":{"id":"c1"}}',
       providerId: 'c1',
     });
-    expect(interpretToolResult({ content: [{ type: 'text', text: 'Created comment id: abc-123 on REVOPS-1' }], isError: false })).toMatchObject({
+    expect(
+      interpretToolResult({
+        content: [{ type: 'text', text: 'Created comment id: abc-123 on REVOPS-1' }],
+        isError: false,
+      }),
+    ).toMatchObject({
       providerId: 'abc-123',
     });
-    expect(interpretToolResult({ content: [], structuredContent: { issue: { identifier: 'REVOPS-1' } } })).toMatchObject({
+    expect(
+      interpretToolResult({
+        content: [],
+        structuredContent: { issue: { identifier: 'REVOPS-1' } },
+      }),
+    ).toMatchObject({
       text: '',
       providerId: 'REVOPS-1',
     });
-    expect(interpretToolResult({ id: 'x1', ok: true })).toEqual({ isError: false, text: '{"id":"x1","ok":true}', providerId: 'x1' });
-    expect(interpretToolResult('plain answer')).toEqual({ isError: false, text: 'plain answer', providerId: undefined });
+    expect(interpretToolResult({ id: 'x1', ok: true })).toEqual({
+      isError: false,
+      text: '{"id":"x1","ok":true}',
+      providerId: 'x1',
+    });
+    expect(interpretToolResult('plain answer')).toEqual({
+      isError: false,
+      text: 'plain answer',
+      providerId: undefined,
+    });
     expect(interpretToolResult(undefined)).toEqual({ isError: false, text: '' });
-    expect(interpretToolResult({ isError: true, content: [{ type: 'text', text: 'nope' }] })).toMatchObject({ isError: true, text: 'nope' });
+    expect(
+      interpretToolResult({ isError: true, content: [{ type: 'text', text: 'nope' }] }),
+    ).toMatchObject({ isError: true, text: 'nope' });
   });
 });
 
@@ -378,9 +423,11 @@ describe('the browser floor', (): void => {
       createClient: (options: McpClientOptions): McpClientLike => {
         built.push(options);
         return {
-          listTools: async () => ({ 'looker-pipeline-tile_browser_navigate': { execute },
+          listTools: async () => ({
+            'looker-pipeline-tile_browser_navigate': { execute },
             'looker-pipeline-tile_browser_fill_form': { execute },
-            'looker-pipeline-tile_browser_snapshot': { execute } }),
+            'looker-pipeline-tile_browser_snapshot': { execute },
+          }),
           disconnect: async (): Promise<void> => undefined,
         };
       },
@@ -497,13 +544,7 @@ describe('the browser floor', (): void => {
       ],
     });
 
-    const applied = await adapter.apply(
-      ctx,
-      run,
-      browserCall('browser_snapshot', {}),
-      0,
-      'key',
-    );
+    const applied = await adapter.apply(ctx, run, browserCall('browser_snapshot', {}), 0, 'key');
     expect(applied.effect).toContain('visible figure 74%');
     expect(applied.effect).toContain(audit);
     expect(applied.effect).not.toContain('padding');
@@ -512,7 +553,9 @@ describe('the browser floor', (): void => {
 
   it('runs without a credential when the docs record none', async (): Promise<void> => {
     const open: SurfaceRecord = { ...tile, credentialId: undefined, credentialKind: undefined };
-    const execute = vi.fn(async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }));
+    const execute = vi.fn(
+      async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'ok' }] }),
+    );
     const adapter = new McpAdapter([open], {
       decrypt: async (): Promise<string> => {
         throw new Error('should not decrypt');
@@ -626,12 +669,37 @@ describe('the browser floor across one run', (): void => {
     expect(built.count).toBe(0);
   });
 
+  it('keeps a malformed browser component address distinct from the surface endpoint', async (): Promise<void> => {
+    const adapter = new McpAdapter([tile], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (): McpClientLike => {
+        throw new Error('the malformed address must be refused before transport');
+      },
+      now: (): number => now,
+      browserMcpUrl: 'playwright-mcp:8931',
+    });
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'k0',
+    );
+
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: 'DAY0_BROWSER_MCP_URL must be an http or https URL.',
+    });
+  });
+
   it('refuses with the same code when a configured driver has stopped', async (): Promise<void> => {
     const adapter = new McpAdapter([tile], {
       decrypt: async (): Promise<string> => 'pipeline-tile-local',
       createClient: (): McpClientLike => ({
         listTools: async (): Promise<Record<string, never>> => {
-          throw new Error('fetch failed', { cause: new Error('connect ECONNREFUSED 172.18.0.9:8931') });
+          throw new Error('fetch failed', {
+            cause: new Error('connect ECONNREFUSED 172.18.0.9:8931'),
+          });
         },
         disconnect: async (): Promise<void> => undefined,
       }),
@@ -652,7 +720,13 @@ describe('the browser floor across one run', (): void => {
 
   it('keeps one browser for the whole run, so a sign-in survives to the save', async (): Promise<void> => {
     const { adapter, clientsBuilt, disconnects } = driver();
-    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k0');
+    await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'k0',
+    );
     await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1');
     expect(clientsBuilt.count).toBe(1);
     expect(disconnects.count).toBe(0);
@@ -675,7 +749,13 @@ describe('the browser floor across one run', (): void => {
 
   it('resolves the element a skill named against a snapshot it takes itself', async (): Promise<void> => {
     const { adapter, calls } = driver();
-    const applied = await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 0, 'k');
+    const applied = await adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Save' }),
+      0,
+      'k',
+    );
     expect(applied.ok).toBe(true);
     expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot', 'browser_click']);
     expect(calls[1].args).toEqual({ element: 'Save', target: 'e23' });
@@ -722,10 +802,9 @@ describe('the browser floor across one run', (): void => {
 
   it('redacts a credential echoed by the page when element resolution fails', async (): Promise<void> => {
     const { adapter } = driver(
-      [
-        '- textbox "Password pipeline-tile-local" [ref=e14]',
-        '- button "Sign in" [ref=e16]',
-      ].join('\n'),
+      ['- textbox "Password pipeline-tile-local" [ref=e14]', '- button "Sign in" [ref=e16]'].join(
+        '\n',
+      ),
     );
     const applied = await adapter.apply(
       ctx,
@@ -753,7 +832,13 @@ describe('the browser floor across one run', (): void => {
 
   it('does not snapshot for a tool that addresses no element', async (): Promise<void> => {
     const { adapter, calls } = driver();
-    await adapter.apply(ctx, run, call('browser_navigate', { url: 'http://looker-tile:8080/' }), 0, 'k');
+    await adapter.apply(
+      ctx,
+      run,
+      call('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      0,
+      'k',
+    );
     expect(calls.map((c) => c.tool)).toEqual(['browser_navigate']);
   });
 });

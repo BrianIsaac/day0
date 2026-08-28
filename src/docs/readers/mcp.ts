@@ -2,10 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
 import {
   assertDocsComponentReachable,
+  componentFor,
+  DOCS_NOTION_SERVICE,
   isBundledNotionLocator,
+  NOTION_DRIVER_ABSENT_REASON,
   type ReachFetch,
 } from '../components';
 import { createSecretMcpClient } from '../../surfaces/mcp-client';
+import { isTransportUnreachable } from '../../lib/transport-error';
 import { markdownPageTitle, offsetFromCursor } from './folder';
 
 const SERVER_NAME = 'docs';
@@ -228,7 +232,10 @@ export function unwrapWholePageFence(markdown: string): string {
   const lines = markdown.split(/\r?\n/);
   const first = lines.findIndex((line: string): boolean => line.trim().length > 0);
   let last = lines.length - 1;
-  while (last >= 0 && (lines[last].trim().length === 0 || TRAILING_PROVIDER_TAG.test(lines[last]))) {
+  while (
+    last >= 0 &&
+    (lines[last].trim().length === 0 || TRAILING_PROVIDER_TAG.test(lines[last]))
+  ) {
     last -= 1;
   }
   if (first < 0 || last <= first) return markdown;
@@ -461,6 +468,11 @@ export class McpReader implements DocSourceReader {
         return await this.readDriveBatch(client, source, cursor, limit);
       }
       return await this.readConfluenceBatch(client, source, cursor, Math.min(limit, 10));
+    } catch (error) {
+      if (componentFor(source) === DOCS_NOTION_SERVICE && isTransportUnreachable(error)) {
+        throw new Error(NOTION_DRIVER_ABSENT_REASON);
+      }
+      throw error;
     } finally {
       await client.disconnect();
     }

@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
  * whole tab can be rendered without a backend.
  */
 const state = vi.hoisted(() => ({
-  browserComponent: true,
+  browserComponent: true as boolean | undefined,
   reason: undefined as string | undefined,
 }));
 
@@ -16,7 +16,9 @@ vi.mock('convex/react', () => ({
   useMutation: (): (() => void) => (): void => undefined,
   useQuery: (reference: unknown): unknown => {
     const name = getFunctionName(reference as never);
-    if (name === 'config:components') return { browser: state.browserComponent };
+    if (name === 'config:components') {
+      return state.browserComponent === undefined ? undefined : { browser: state.browserComponent };
+    }
     if (name === 'surfaces:installRedirectConfigured') return false;
     if (name === 'surfaces:listForAgent') {
       return [
@@ -112,7 +114,9 @@ describe('SurfacesTab credential row', (): void => {
     expect(markup).toContain(
       'OAuth approval procedure: Ask IT to approve the app and follow the install link.',
     );
-    expect(markup).toContain('Until the install flow exists the administrator may land the shared token.');
+    expect(markup).toContain(
+      'Until the install flow exists the administrator may land the shared token.',
+    );
     expect(markup).toContain('type="password"');
     expect(markup).toContain('Land a shared bot token (fallback)');
     expect(markup).not.toContain('>Land credential<');
@@ -142,7 +146,9 @@ describe('SurfacesTab evidence quote', (): void => {
   });
 
   it('leaves every other quote as stored', (): void => {
-    expect(renderToStaticMarkup(<EvidenceQuote quote="# Linear automation" />)).toBe('# Linear automation');
+    expect(renderToStaticMarkup(<EvidenceQuote quote="# Linear automation" />)).toBe(
+      '# Linear automation',
+    );
     expect(renderToStaticMarkup(<EvidenceQuote quote='<page url="ftp://x">Linear</page>' />)).toBe(
       '&lt;page url=&quot;ftp://x&quot;&gt;Linear&lt;/page&gt;',
     );
@@ -170,7 +176,10 @@ describe('SurfacesTab dedicated-app row', (): void => {
   it('renders nothing for a system whose docs describe no install procedure', (): void => {
     expect(
       renderProvisioningRow(
-        presentProvisioning({ credential: { found: 'value', method: 'api-key' }, hasPublicUrl: true }),
+        presentProvisioning({
+          credential: { found: 'value', method: 'api-key' },
+          hasPublicUrl: true,
+        }),
       ),
     ).toBe('');
   });
@@ -279,9 +288,9 @@ describe('SurfacesTab and the optional browser component', (): void => {
     expect(markup).toContain('This system is reached through its web UI.');
     expect(markup).toContain('--profile browser');
     expect(markup).toContain('Approve as manager');
-    expect(markup.match(/<button[^>]*disabled=""[^>]*>Approve as (manager|IT)<\/button>/g)).toHaveLength(
-      2,
-    );
+    expect(
+      markup.match(/<button[^>]*disabled=""[^>]*>Approve as (manager|IT)<\/button>/g),
+    ).toHaveLength(2);
   });
 
   it('says the same when a configured driver turned out not to be listening', (): void => {
@@ -289,6 +298,15 @@ describe('SurfacesTab and the optional browser component', (): void => {
     state.reason = 'BROWSER_DRIVER_ABSENT: the component is not running';
     const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
     expect(markup).toContain('This system is reached through its web UI.');
+  });
+
+  it('holds approval while component status is still loading', (): void => {
+    state.browserComponent = undefined;
+    state.reason = undefined;
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(
+      markup.match(/<button[^>]*disabled=""[^>]*>Approve as (manager|IT)<\/button>/g),
+    ).toHaveLength(2);
   });
 
   it('leaves approval alone once the component is running', (): void => {

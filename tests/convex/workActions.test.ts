@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { completionFailure } from '../../convex/workActions';
+import { browserTransportRefusal, completionFailure } from '../../convex/workActions';
+import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { INTERRUPTED_APPLY_REASON } from '../../convex/work';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import {
@@ -46,7 +47,11 @@ const skillOutput: ExecutionOutput = {
     },
     {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'iss-1', state: 'Done' }) },
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'iss-1', state: 'Done' }),
+      },
     },
     {
       tool: 'http.request',
@@ -71,6 +76,20 @@ const skillOutput: ExecutionOutput = {
   ],
 };
 
+describe('browser authority at provider transport', (): void => {
+  it('refuses an absent or changed component after the adapter claim', (): void => {
+    const claimed = 'http://playwright-mcp:8931/mcp';
+    expect(browserTransportRefusal('mcp', claimed, undefined)).toBeUndefined();
+    expect(browserTransportRefusal('browser-driven', claimed, undefined)).toContain(
+      BROWSER_DRIVER_ABSENT,
+    );
+    expect(
+      browserTransportRefusal('browser-driven', claimed, 'http://other-driver:8931/mcp'),
+    ).toContain('changed before transport');
+    expect(browserTransportRefusal('browser-driven', claimed, claimed)).toBeUndefined();
+  });
+});
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: async (): Promise<never> => {
@@ -83,7 +102,10 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/work/execute-skill')>();
   return {
     ...original,
-    runSkill: async (args: { mode?: string; autonomousActions?: boolean }): Promise<ExecutionOutput> => {
+    runSkill: async (args: {
+      mode?: string;
+      autonomousActions?: boolean;
+    }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
       recorded.skillModes.push(args.mode);
       recorded.skillSwitches.push(args.autonomousActions);
@@ -129,7 +151,12 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
-                recorded.mcp.push({ server: options.serverName, tool, args, bearer: options.bearer ?? '' });
+                recorded.mcp.push({
+                  server: options.serverName,
+                  tool,
+                  args,
+                  bearer: options.bearer ?? '',
+                });
                 if (recorded.failMcpAfterRequest) {
                   throw new Error('socket closed after provider accepted the request');
                 }
@@ -143,14 +170,15 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   };
 });
 
-vi.stubGlobal(
-  'fetch',
-  async (input: URL | string, init?: RequestInit): Promise<Response> => {
-    const headers = (init?.headers ?? {}) as Record<string, string>;
-    recorded.http.push({ url: String(input), authorization: headers.Authorization, body: JSON.parse(String(init?.body)) });
-    return new Response(JSON.stringify({ ok: true, ts: '1787654400.000200' }), { status: 200 });
-  },
-);
+vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<Response> => {
+  const headers = (init?.headers ?? {}) as Record<string, string>;
+  recorded.http.push({
+    url: String(input),
+    authorization: headers.Authorization,
+    body: JSON.parse(String(init?.body)),
+  });
+  return new Response(JSON.stringify({ ok: true, ts: '1787654400.000200' }), { status: 200 });
+});
 
 afterEach((): void => {
   recorded.mcp.length = 0;
@@ -202,7 +230,9 @@ async function seed(
       name: 'Priya',
       userId: 'owner',
       state: 'active',
-      ...(options.autonomousActions !== undefined ? { autonomousActions: options.autonomousActions } : {}),
+      ...(options.autonomousActions !== undefined
+        ? { autonomousActions: options.autonomousActions }
+        : {}),
       createdAt: 1,
     });
     await ctx.db.insert('charters', {
@@ -231,7 +261,12 @@ async function seed(
       await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
     }
     if (mode === 'real') {
-      const live = { credentialLanded: true, lastVerifiedAt: Date.now(), whereFound: [], createdAt: 1 };
+      const live = {
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      };
       await ctx.db.insert('surfaces', {
         agentId,
         slug: 'linear',
@@ -326,7 +361,13 @@ describe('work action completion evidence', (): void => {
   it('treats held rows as accounted for', (): void => {
     expect(
       completionFailure([
-        { tool: 'http.request', ok: true, held: true, reason: HELD_PUBLIC_POST, idempotencyKey: 'run:0' },
+        {
+          tool: 'http.request',
+          ok: true,
+          held: true,
+          reason: HELD_PUBLIC_POST,
+          idempotencyKey: 'run:0',
+        },
       ]),
     ).toBeUndefined();
   });
@@ -362,7 +403,11 @@ describe('executing an approved plan through the gate', (): void => {
   it('drafts under the switch, then either continues without a click or asks the channel', async (): Promise<void> => {
     useSurfaceMode('real');
     const scheduled = async (harness: Harness): Promise<string[]> =>
-      (await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect()))
+      (
+        await harness.run(
+          async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+        )
+      )
         .map((row) => row.name)
         .sort();
     const toClaimed = async (harness: Harness, workItemId: Id<'workItems'>): Promise<void> => {
@@ -386,9 +431,9 @@ describe('executing an approved plan through the gate', (): void => {
     ).resolves.toEqual({ ok: true, reason: 'automatic actions applying' });
     expect(recorded.planSwitches).toEqual([true]);
     expect(recorded.skillSwitches).toEqual([true]);
-    const approvals = (
-      await on.run(async (ctx) => await ctx.db.query('events').collect())
-    ).filter((event) => event.type === 'work.plan-approved');
+    const approvals = (await on.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+      (event) => event.type === 'work.plan-approved',
+    );
     expect(approvals.map((event) => event.payload)).toEqual([
       { workItemId: seededOn.workItemId, by: 'autonomous' },
     ]);
@@ -402,7 +447,9 @@ describe('executing an approved plan through the gate', (): void => {
     const seededOff = await seed(off, 'real');
     await toClaimed(off, seededOff.workItemId);
     await expect(
-      off.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId: seededOff.workItemId }),
+      off
+        .withIdentity(OWNER)
+        .action(api.workActions.draftPlan, { workItemId: seededOff.workItemId }),
     ).resolves.toEqual({ ok: true });
     expect(recorded.planSwitches).toEqual([false]);
     expect(recorded.skillSwitches).toEqual([]);
@@ -416,7 +463,9 @@ describe('executing an approved plan through the gate', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'real');
-    const result = await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
     expect(result).toEqual({ ok: true, reason: 'automatic actions applying' });
     // No switch on the row is supervised: the DM applies on its own; the
     // comment, the state change and the public post wait for the manager,
@@ -428,7 +477,9 @@ describe('executing an approved plan through the gate', (): void => {
       { disposition: 'auto' },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ]);
-    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({
       ok: true,
       reason: "automatic actions applied; the rest await the manager's approval",
     });
@@ -436,14 +487,23 @@ describe('executing an approved plan through the gate', (): void => {
     expect(row.state).toBe('actions-pending');
     expect(row.pendingRunId).toBeDefined();
     expect((row.output as ExecutionOutput).actions).toEqual(skillOutput.actions);
-    expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false, entry.awaitingApproval ?? false, entry.authority])).toEqual([
+    expect(
+      ledger(row).map((entry) => [
+        entry.ok,
+        entry.held ?? false,
+        entry.awaitingApproval ?? false,
+        entry.authority,
+      ]),
+    ).toEqual([
       [true, true, true, undefined],
       [true, true, true, undefined],
       [true, false, false, 'standing'],
       [true, true, true, undefined],
     ]);
     expect(recorded.mcp).toHaveLength(0);
-    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
+    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual([
+      'D0MANAGER',
+    ]);
     const events = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -467,7 +527,13 @@ describe('executing an approved plan through the gate', (): void => {
     // The row is what survives a backend restart: state, run id and actions are
     // persisted, and approval reads only them.
     const { runId } = await park(harness, workItemId);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1] });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0, 1],
+      });
     const applied = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect(applied).toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
@@ -489,10 +555,18 @@ describe('executing an approved plan through the gate', (): void => {
       {
         server: 'linear',
         tool: 'save_comment',
-        args: { issueId: 'iss-1', body: `Prepared the close summary.\n\n-- Priya (Day0) · run ${workItemId}/${runId}` },
+        args: {
+          issueId: 'iss-1',
+          body: `Prepared the close summary.\n\n-- Priya (Day0) · run ${workItemId}/${runId}`,
+        },
         bearer: 'plain-cred-linear',
       },
-      { server: 'linear', tool: 'save_issue', args: { id: 'iss-1', state: 'Done' }, bearer: 'plain-cred-linear' },
+      {
+        server: 'linear',
+        tool: 'save_issue',
+        args: { id: 'iss-1', state: 'Done' },
+        bearer: 'plain-cred-linear',
+      },
     ]);
     expect(recorded.http).toEqual([
       {
@@ -509,7 +583,9 @@ describe('executing an approved plan through the gate', (): void => {
     expect(JSON.stringify(row.output)).not.toContain('plain-cred');
     expect(recorded.skillRuns).toBe(1);
     expect(recorded.skillModes.at(-1)).toBe('real');
-    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({
       ok: false,
       reason: 'workItem state is completed; expected actions-pending',
     });
@@ -529,10 +605,7 @@ describe('executing an approved plan through the gate', (): void => {
     if (!runId) throw new Error('pending run missing');
     await harness.run(async (ctx) => {
       await ctx.db.patch(workItemId, {
-        actionVerdicts: [
-          { held: false },
-          { held: true, reason: HELD_PUBLIC_POST },
-        ],
+        actionVerdicts: [{ held: false }, { held: true, reason: HELD_PUBLIC_POST }],
         replyTarget: undefined,
       });
     });
@@ -563,7 +636,9 @@ describe('executing an approved plan through the gate', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
     const { runId } = await park(harness, workItemId);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] });
     const applied = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect(applied.ok).toBe(false);
     const row = await readItem(harness, workItemId);
@@ -581,7 +656,12 @@ describe('executing an approved plan through the gate', (): void => {
   it('carries the manager DM on boss:message alone and lets the manager authorise a public post without slack:write', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(harness, 'real', ['boss:message', 'linear:read', 'linear:write', 'slack:read']);
+    const { workItemId } = await seed(harness, 'real', [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+    ]);
     const { row: pending, runId } = await park(harness, workItemId);
     expect(pending.actionVerdicts).toEqual([
       { disposition: 'held', reason: HELD_MUTATION },
@@ -589,8 +669,16 @@ describe('executing an approved plan through the gate', (): void => {
       { disposition: 'auto' },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ]);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 3] });
-    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0, 1, 3],
+      });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('completed');
     expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
@@ -600,7 +688,10 @@ describe('executing an approved plan through the gate', (): void => {
       [true, false, undefined],
     ]);
     expect(ledger(row)[2].providerId).toBe('1787654400.000200');
-    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER', 'C0PUBLIC']);
+    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual([
+      'D0MANAGER',
+      'C0PUBLIC',
+    ]);
   });
 
   it('refuses an ungranted read and the DM without boss:message from the moment the run is held', async (): Promise<void> => {
@@ -608,7 +699,14 @@ describe('executing an approved plan through the gate', (): void => {
     recorded.skillOutput = {
       ...skillOutput,
       actions: [
-        { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) } },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'get_issue',
+            toolArgsJson: JSON.stringify({ id: 'iss-1' }),
+          },
+        },
         skillOutput.actions[0],
         skillOutput.actions[2],
         skillOutput.actions[3],
@@ -627,10 +725,20 @@ describe('executing an approved plan through the gate', (): void => {
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ]);
     await expect(
-      harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0, 1, 2, 3] }),
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.work.approveActions, {
+          workItemId,
+          pendingRunId: runId,
+          approvedIndexes: [0, 1, 2, 3],
+        }),
     ).rejects.toThrow('action 1 is refused (no grant (linear:read))');
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] });
-    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [1] });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('completed');
     expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false, entry.reason])).toEqual([
@@ -648,7 +756,9 @@ describe('executing an approved plan through the gate', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
     const { runId } = await park(harness, workItemId);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
     recorded.failMcpAfterRequest = true;
 
     await expect(
@@ -672,7 +782,9 @@ describe('executing an approved plan through the gate', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'real');
     const { runId } = await park(harness, workItemId);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [0] });
     await harness.run(async (ctx) => await ctx.db.delete(agentId));
 
     await expect(
@@ -692,7 +804,10 @@ describe('executing an approved plan through the gate', (): void => {
   it('runs the skill again with a fresh run id after a rejection and retry', async (): Promise<void> => {
     useSurfaceMode('real');
     // Without the DM nothing applies on its own, so a rejection leaves no landed row to fence the retry.
-    recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0], skillOutput.actions[1], skillOutput.actions[3]] };
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [skillOutput.actions[0], skillOutput.actions[1], skillOutput.actions[3]],
+    };
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
@@ -717,18 +832,27 @@ describe('executing an approved plan through the gate', (): void => {
     recorded.skillOutput = {
       draft: 'Draft.',
       notes: '',
-      actions: [{ tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'Draft ready for review.' } }],
+      actions: [
+        {
+          tool: 'slack.postMessage',
+          args: { channelSlug: 'dm-manager', body: 'Draft ready for review.' },
+        },
+      ],
     };
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'mock');
-    const result = await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
     expect(result).toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('completed');
     expect(row.pendingRunId).toBeUndefined();
     expect(ledger(row)).toHaveLength(1);
     expect(ledger(row)[0]).toMatchObject({ tool: 'slack.postMessage', ok: true });
-    const messages = await harness.run(async (ctx) => await ctx.db.query('mockSlackMessages').collect());
+    const messages = await harness.run(
+      async (ctx) => await ctx.db.query('mockSlackMessages').collect(),
+    );
     expect(messages.map((message) => message.body)).toEqual(['Draft ready for review.']);
   });
 });
@@ -738,8 +862,18 @@ const ladderOutput: ExecutionOutput = {
   draft: 'Checked coverage.',
   notes: '',
   actions: [
-    { tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) } },
-    { tool: 'mcp.call', args: { surface: 'linear', tool: 'list_comments', toolArgsJson: JSON.stringify({ issueId: 'iss-1' }) } },
+    {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+    },
+    {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'list_comments',
+        toolArgsJson: JSON.stringify({ issueId: 'iss-1' }),
+      },
+    },
     skillOutput.actions[0],
     skillOutput.actions[2],
     {
@@ -749,7 +883,11 @@ const ladderOutput: ExecutionOutput = {
         method: 'POST',
         path: '/chat.postMessage',
         headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
-        body: JSON.stringify({ channel: 'C0PUBLIC', thread_ts: '1787746453.202809', text: 'Covered.' }),
+        body: JSON.stringify({
+          channel: 'C0PUBLIC',
+          thread_ts: '1787746453.202809',
+          text: 'Covered.',
+        }),
       },
     },
   ],
@@ -766,7 +904,10 @@ const ladderOutput: ExecutionOutput = {
  * Returns:
  *   The parked row and its pending run id.
  */
-async function park(harness: Harness, workItemId: Id<'workItems'>): Promise<{ row: Doc<'workItems'>; runId: Id<'events'> }> {
+async function park(
+  harness: Harness,
+  workItemId: Id<'workItems'>,
+): Promise<{ row: Doc<'workItems'>; runId: Id<'events'> }> {
   await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
   const held = await readItem(harness, workItemId);
   if (held.state === 'executing' && held.applyPhase === 'auto') {
@@ -793,7 +934,9 @@ describe('the autonomous-actions switch through the gate', (): void => {
     recorded.skillOutput = ladderOutput;
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'real');
-    const result = await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
     expect(result).toEqual({ ok: true, reason: 'automatic actions applying' });
     const held = await readItem(harness, workItemId);
     expect(held.state).toBe('executing');
@@ -806,7 +949,9 @@ describe('the autonomous-actions switch through the gate', (): void => {
       { disposition: 'auto' },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ]);
-    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({
       ok: true,
       reason: "automatic actions applied; the rest await the manager's approval",
     });
@@ -814,7 +959,15 @@ describe('the autonomous-actions switch through the gate', (): void => {
     expect(parked.state).toBe('actions-pending');
     expect(parked.approvedIndexes).toBeUndefined();
     expect(parked.applyPhase).toBeUndefined();
-    expect(ledger(parked).map((entry) => [entry.ok, entry.held ?? false, entry.awaitingApproval ?? false, entry.reason, entry.authority])).toEqual([
+    expect(
+      ledger(parked).map((entry) => [
+        entry.ok,
+        entry.held ?? false,
+        entry.awaitingApproval ?? false,
+        entry.reason,
+        entry.authority,
+      ]),
+    ).toEqual([
       [true, false, false, undefined, 'standing'],
       [true, false, false, undefined, 'standing'],
       [true, true, true, AWAITING_APPROVAL, undefined],
@@ -823,27 +976,59 @@ describe('the autonomous-actions switch through the gate', (): void => {
     ]);
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'list_comments']);
     expect(recorded.http).toHaveLength(1);
-    const pendingEvent = (await events(harness, agentId)).find((event) => event.type === 'work.actions-pending');
-    expect(pendingEvent?.payload).toMatchObject({ autoIndexes: [0, 1, 3], heldIndexes: [2, 4], refusedIndexes: [], autoApplied: true });
+    const pendingEvent = (await events(harness, agentId)).find(
+      (event) => event.type === 'work.actions-pending',
+    );
+    expect(pendingEvent?.payload).toMatchObject({
+      autoIndexes: [0, 1, 3],
+      heldIndexes: [2, 4],
+      refusedIndexes: [],
+      autoApplied: true,
+    });
     const runId = parked.pendingRunId;
     if (!runId) throw new Error('pending run missing');
 
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, { workItemId, pendingRunId: runId, approvedIndexes: [2, 4] });
-    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [2, 4],
+      });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('completed');
     // The auto rows' ledger entries are carried forward unchanged; the comment and the reply landed under the manager's approval.
-    expect([0, 1, 3].map((index) => ledger(row)[index])).toEqual([0, 1, 3].map((index) => ledger(parked)[index]));
+    expect([0, 1, 3].map((index) => ledger(row)[index])).toEqual(
+      [0, 1, 3].map((index) => ledger(parked)[index]),
+    );
     expect(ledger(row)[2]).toMatchObject({ ok: true, authority: 'manager' });
-    expect(ledger(row)[4]).toMatchObject({ ok: true, providerId: '1787654400.000200', authority: 'manager', idempotencyKey: `${workItemId}:${runId}:4` });
+    expect(ledger(row)[4]).toMatchObject({
+      ok: true,
+      providerId: '1787654400.000200',
+      authority: 'manager',
+      idempotencyKey: `${workItemId}:${runId}:4`,
+    });
     expect(ledger(row)[4].held).toBeUndefined();
-    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'list_comments', 'save_comment']);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual([
+      'get_issue',
+      'list_comments',
+      'save_comment',
+    ]);
     expect(recorded.http.map((call) => call.body)).toEqual([
       expect.objectContaining({ channel: 'D0MANAGER' }),
-      expect.objectContaining({ channel: 'C0PUBLIC', thread_ts: '1787746453.202809', text: `Covered.\n\n-- Priya (Day0) · run ${workItemId}/${runId}` }),
+      expect.objectContaining({
+        channel: 'C0PUBLIC',
+        thread_ts: '1787746453.202809',
+        text: `Covered.\n\n-- Priya (Day0) · run ${workItemId}/${runId}`,
+      }),
     ]);
     const types = (await events(harness, agentId)).map((event) => event.type);
-    expect(types.filter((type) => type.startsWith('skill.') || type.startsWith('agent.'))).toEqual([]);
+    expect(types.filter((type) => type.startsWith('skill.') || type.startsWith('agent.'))).toEqual(
+      [],
+    );
   });
 
   it('off: lands nothing more when the held rows are rejected, keeps the auto rows, and fences retry', async (): Promise<void> => {
@@ -852,17 +1037,35 @@ describe('the autonomous-actions switch through the gate', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
     const { row: parked, runId } = await park(harness, workItemId);
-    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'not in that thread' });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.rejectActions, {
+        workItemId,
+        pendingRunId: runId,
+        reason: 'not in that thread',
+      });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(row.skipReason).toBe('rejected by the manager: not in that thread');
-    expect([0, 1, 3].map((index) => ledger(row)[index])).toEqual([0, 1, 3].map((index) => ledger(parked)[index]));
-    expect(ledger(row)[2]).toMatchObject({ ok: true, held: true, reason: 'rejected by the manager: not in that thread' });
-    expect(ledger(row)[4]).toMatchObject({ ok: true, held: true, reason: 'rejected by the manager: not in that thread' });
+    expect([0, 1, 3].map((index) => ledger(row)[index])).toEqual(
+      [0, 1, 3].map((index) => ledger(parked)[index]),
+    );
+    expect(ledger(row)[2]).toMatchObject({
+      ok: true,
+      held: true,
+      reason: 'rejected by the manager: not in that thread',
+    });
+    expect(ledger(row)[4]).toMatchObject({
+      ok: true,
+      held: true,
+      reason: 'rejected by the manager: not in that thread',
+    });
     expect(ledger(row)[4].awaitingApproval).toBeUndefined();
     expect(recorded.http).toHaveLength(1);
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue', 'list_comments']);
-    await expect(harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId })).rejects.toThrow('reconcile the provider first');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).rejects.toThrow('reconcile the provider first');
   });
 
   it('on: applies the whole run without a stop, the public reply and the state change included, with no click and no write grant', async (): Promise<void> => {
@@ -876,12 +1079,26 @@ describe('the autonomous-actions switch through the gate', (): void => {
         skillOutput.actions[1],
         ladderOutput.actions[3],
         ladderOutput.actions[4],
-        { tool: 'mcp.call', args: { surface: 'linear', tool: 'delete_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) } },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'delete_issue',
+            toolArgsJson: JSON.stringify({ id: 'iss-1' }),
+          },
+        },
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { agentId, workItemId } = await seed(harness, 'real', ['boss:message', 'linear:read', 'slack:read'], { autonomousActions: true });
-    const result = await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const { agentId, workItemId } = await seed(
+      harness,
+      'real',
+      ['boss:message', 'linear:read', 'slack:read'],
+      { autonomousActions: true },
+    );
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
     expect(result).toEqual({ ok: true, reason: 'automatic actions applying' });
     const held = await readItem(harness, workItemId);
     expect(held.state).toBe('executing');
@@ -895,13 +1112,17 @@ describe('the autonomous-actions switch through the gate', (): void => {
       { disposition: 'auto' },
       { disposition: 'refused', reason: 'tool not in the surface allowlist (delete_issue)' },
     ]);
-    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('completed');
     expect(row.approvedIndexes).toBeUndefined();
     expect(row.applyPhase).toBeUndefined();
     // Every applied row records the switch as its authority; the refused row stays refused with its reason.
-    expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false, entry.reason, entry.authority])).toEqual([
+    expect(
+      ledger(row).map((entry) => [entry.ok, entry.held ?? false, entry.reason, entry.authority]),
+    ).toEqual([
       [true, false, undefined, 'autonomous'],
       [true, false, undefined, 'autonomous'],
       [true, false, undefined, 'autonomous'],
@@ -911,17 +1132,32 @@ describe('the autonomous-actions switch through the gate', (): void => {
     ]);
     expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([
       ['get_issue', { id: 'iss-1' }],
-      ['save_comment', { issueId: 'iss-1', body: expect.stringContaining('-- Priya (Day0) · run ') }],
+      [
+        'save_comment',
+        { issueId: 'iss-1', body: expect.stringContaining('-- Priya (Day0) · run ') },
+      ],
       ['save_issue', { id: 'iss-1', state: 'Done' }],
     ]);
     expect(recorded.http.map((call) => call.body)).toEqual([
       expect.objectContaining({ channel: 'D0MANAGER' }),
-      expect.objectContaining({ channel: 'C0PUBLIC', thread_ts: '1787746453.202809', text: expect.stringContaining('Covered.') }),
+      expect.objectContaining({
+        channel: 'C0PUBLIC',
+        thread_ts: '1787746453.202809',
+        text: expect.stringContaining('Covered.'),
+      }),
     ]);
     const types = (await events(harness, agentId)).map((event) => event.type);
-    expect(types).toEqual(['work.execution-claimed', 'work.actions-auto-applying', 'work.actions-applying', 'work.completed']);
+    expect(types).toEqual([
+      'work.execution-claimed',
+      'work.actions-auto-applying',
+      'work.actions-applying',
+      'work.completed',
+    ]);
     expect(types).not.toContain('work.actions-pending');
-    expect((await events(harness, agentId)).find((event) => event.type === 'work.actions-auto-applying')?.payload).toMatchObject({
+    expect(
+      (await events(harness, agentId)).find((event) => event.type === 'work.actions-auto-applying')
+        ?.payload,
+    ).toMatchObject({
       autonomousActions: true,
       refusedIndexes: [5],
     });
@@ -991,12 +1227,71 @@ describe('the autonomous-actions switch through the gate', (): void => {
     };
 
     const result = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
-    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('not an automatic action') });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('not an automatic action'),
+    });
     expect(recorded.mcp).toHaveLength(0);
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'not an automatic action' });
     expect(ledger(row)[0].authority).toBeUndefined();
+  });
+
+  it('re-reads the browser component switch after credential access and before transport', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    recorded.skillOutput = {
+      draft: 'Read the browser-only tile.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'looker',
+            tool: 'browser_navigate',
+            toolArgsJson: '{"url":"http://looker-tile:8080/"}',
+          },
+        },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', ['looker:read'], {
+      autonomousActions: true,
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_navigate'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    recorded.afterCredentialRead = async (): Promise<void> => {
+      vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
+      recorded.afterCredentialRead = undefined;
+    };
+
+    const result = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(BROWSER_DRIVER_ABSENT),
+    });
+    expect(recorded.mcp).toHaveLength(0);
+    expect(ledger(await readItem(harness, workItemId))[0]).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(BROWSER_DRIVER_ABSENT),
+    });
   });
 
   it('does not write after the agent row disappears between claim and transport', async (): Promise<void> => {
@@ -1027,13 +1322,25 @@ describe('the autonomous-actions switch through the gate', (): void => {
       ...ladderOutput,
       actions: [
         ladderOutput.actions[0],
-        { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x\n\n-- Someone Else (Day0) · run a/b' }) } },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({
+              issueId: 'iss-1',
+              body: 'x\n\n-- Someone Else (Day0) · run a/b',
+            }),
+          },
+        },
         { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'x' } },
         ladderOutput.actions[3],
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(harness, 'real', ['boss:message'], { autonomousActions: true });
+    const { workItemId } = await seed(harness, 'real', ['boss:message'], {
+      autonomousActions: true,
+    });
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const held = await readItem(harness, workItemId);
     expect(held.actionVerdicts).toEqual([
@@ -1042,15 +1349,22 @@ describe('the autonomous-actions switch through the gate', (): void => {
       { disposition: 'refused', reason: expect.stringContaining('mock verb refused in real mode') },
       { disposition: 'auto' },
     ]);
-    await expect(harness.action(internal.workActions.applyApprovedActions, { workItemId })).resolves.toEqual({ ok: true });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
     expect((await readItem(harness, workItemId)).state).toBe('completed');
     expect(recorded.mcp).toHaveLength(0);
-    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual(['D0MANAGER']);
+    expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual([
+      'D0MANAGER',
+    ]);
   });
 
   it('off: classifies a comment and a state change on the working item as held, not automatic', async (): Promise<void> => {
     useSurfaceMode('real');
-    recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0], skillOutput.actions[1]] };
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [skillOutput.actions[0], skillOutput.actions[1]],
+    };
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });

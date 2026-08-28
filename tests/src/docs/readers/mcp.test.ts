@@ -8,6 +8,7 @@ import {
   type McpConnectionConfig,
 } from '../../../../src/docs/readers/mcp';
 import type { DocSourceRecord } from '../../../../src/docs/types';
+import { NOTION_DRIVER_ABSENT } from '../../../../src/docs/components';
 import { notionPageTemplate, type NotionPageName } from '../../../fixtures/notion-pages';
 
 /** Wrap one object in the MCP text-content result shape. */
@@ -54,8 +55,11 @@ describe('whole-page Markdown fence handling', (): void => {
   });
 
   it('ignores empty provider blocks after the closing fence, as Notion renders a trailing paragraph', (): void => {
-    const body = '```markdown\n# Northstar CRM\n\nNo approved surface is recorded.\n```\n<empty-block/>\n';
-    expect(unwrapWholePageFence(body)).toBe('# Northstar CRM\n\nNo approved surface is recorded.\n<empty-block/>\n');
+    const body =
+      '```markdown\n# Northstar CRM\n\nNo approved surface is recorded.\n```\n<empty-block/>\n';
+    expect(unwrapWholePageFence(body)).toBe(
+      '# Northstar CRM\n\nNo approved surface is recorded.\n<empty-block/>\n',
+    );
     expect(unwrapWholePageFence('```md\n# Page\n```\n<empty-block/>\n<empty-block/>')).toBe(
       '# Page\n<empty-block/>\n<empty-block/>',
     );
@@ -169,16 +173,19 @@ describe('MCP documentation reader', (): void => {
   it('rejects provider errors and always disconnects', async (): Promise<void> => {
     vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
     const disconnect = vi.fn().mockResolvedValue(undefined);
-    const reader = new McpReader(() => ({
-      listTools: async () => ({
-        'docs_API-post-search': {
-          execute: async () => textResult({ status: 'error', code: 'unauthorised' }),
-        },
-        'docs_API-retrieve-page-markdown': { execute: async () => textResult({}) },
+    const reader = new McpReader(
+      () => ({
+        listTools: async () => ({
+          'docs_API-post-search': {
+            execute: async () => textResult({ status: 'error', code: 'unauthorised' }),
+          },
+          'docs_API-retrieve-page-markdown': { execute: async () => textResult({}) },
+        }),
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect,
       }),
-      resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
-      disconnect,
-    }), componentUp);
+      componentUp,
+    );
     await expect(
       reader.listPageBatch(notionSource(), ['ntn', 'wrong'].join('_'), undefined, 25),
     ).rejects.toThrow('provider returned an error');
@@ -194,8 +201,30 @@ describe('MCP documentation reader', (): void => {
     }, componentDown);
     await expect(
       reader.listPageBatch(notionSource(), ['ntn', 'value'].join('_'), undefined, 25),
-    ).rejects.toThrow('the Notion documentation component is not running - add `--profile docs-notion`');
+    ).rejects.toThrow(NOTION_DRIVER_ABSENT);
     expect(built).not.toHaveBeenCalled();
+  });
+
+  it('keeps the absence code when the component stops after the preflight', async (): Promise<void> => {
+    vi.stubEnv('DAY0_NOTION_MCP_AUTH_TOKEN', 'transport-contract-value');
+    const disconnect = vi.fn().mockResolvedValue(undefined);
+    const reader = new McpReader(
+      () => ({
+        listTools: async (): Promise<Record<string, never>> => {
+          throw new Error(
+            'Failed to connect to MCP server docs: Error: Could not connect to server with any available HTTP transport',
+          );
+        },
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect,
+      }),
+      componentUp,
+    );
+
+    await expect(reader.listPageBatch(notionSource(), 'ntn_value', undefined, 25)).rejects.toThrow(
+      NOTION_DRIVER_ABSENT,
+    );
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 
   it('authenticates the private hop under the new service name and the old alias', async (): Promise<void> => {

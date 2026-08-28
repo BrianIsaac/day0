@@ -348,7 +348,10 @@ export class McpAdapter implements SurfaceAdapter {
       if (!found) {
         return {
           reason: `the page has no element called "${description}" (${
-            snapshot.text.match(/"[^"]+"/g)?.slice(0, 8).join(', ') || 'nothing named on the page'
+            snapshot.text
+              .match(/"[^"]+"/g)
+              ?.slice(0, 8)
+              .join(', ') || 'nothing named on the page'
           })`,
         };
       }
@@ -369,12 +372,18 @@ export class McpAdapter implements SurfaceAdapter {
     void index;
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok || parsed.action.kind !== 'mcp.call') {
-      return { tool: action.tool, ok: false, reason: parsed.ok ? 'not an mcp.call' : parsed.reason, idempotencyKey };
+      return {
+        tool: action.tool,
+        ok: false,
+        reason: parsed.ok ? 'not an mcp.call' : parsed.reason,
+        idempotencyKey,
+      };
     }
     const call: ParsedMcpCall = parsed.action;
     const surface = this.surfaces.find((row) => row.slug === call.surface);
     const refusal = surfaceRefusal(surface, this.deps.now());
-    if (!surface || refusal) return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
+    if (!surface || refusal)
+      return { tool: action.tool, ok: false, reason: refusal, idempotencyKey };
     if (surface.path !== 'mcp' && surface.path !== 'browser-driven') {
       return {
         tool: action.tool,
@@ -384,7 +393,12 @@ export class McpAdapter implements SurfaceAdapter {
       };
     }
     if (!surface.toolAllowlist?.includes(call.tool)) {
-      return { tool: action.tool, ok: false, reason: `${TOOL_NOT_ALLOWED} (${call.tool})`, idempotencyKey };
+      return {
+        tool: action.tool,
+        ok: false,
+        reason: `${TOOL_NOT_ALLOWED} (${call.tool})`,
+        idempotencyKey,
+      };
     }
     // On the browser floor the transport and the target are different
     // addresses: the endpoint on the row is the system's own page, which is
@@ -392,8 +406,8 @@ export class McpAdapter implements SurfaceAdapter {
     // service. Everywhere else the endpoint is both.
     const browserDriven = surface.path === 'browser-driven';
     let url: URL;
-    try {
-      if (browserDriven) {
+    if (browserDriven) {
+      try {
         // The driver is an optional component. A deployment that never started
         // it refuses the row with the code, which is a complete answer rather
         // than a failure to configure something.
@@ -402,11 +416,25 @@ export class McpAdapter implements SurfaceAdapter {
           return { tool: action.tool, ok: false, reason: component.reason, idempotencyKey };
         }
         url = component.url;
-      } else {
-        url = new URL(surface.endpoint ?? '');
+      } catch (error) {
+        return {
+          tool: action.tool,
+          ok: false,
+          reason: error instanceof Error ? error.message : String(error),
+          idempotencyKey,
+        };
       }
-    } catch {
-      return { tool: action.tool, ok: false, reason: 'surface has no valid endpoint', idempotencyKey };
+    } else {
+      try {
+        url = new URL(surface.endpoint ?? '');
+      } catch {
+        return {
+          tool: action.tool,
+          ok: false,
+          reason: 'surface has no valid endpoint',
+          idempotencyKey,
+        };
+      }
     }
     if (browserDriven) {
       const outside = navigationRefusal(call.tool, call.toolArgs, surface.endpoint);
@@ -440,7 +468,12 @@ export class McpAdapter implements SurfaceAdapter {
         const tools = await client.listTools();
         const tool = tools[`${surface.slug}_${call.tool}`];
         if (!tool?.execute) {
-          return { tool: action.tool, ok: false, reason: `tool ${call.tool} is not exposed by the server`, idempotencyKey };
+          return {
+            tool: action.tool,
+            ok: false,
+            reason: `tool ${call.tool} is not exposed by the server`,
+            idempotencyKey,
+          };
         }
         writeAttempted = actionIntent(call) === 'write';
         let toolArgs = bearer
@@ -477,11 +510,7 @@ export class McpAdapter implements SurfaceAdapter {
           };
         }
         if (browserDriven) {
-          const landedOutside = navigationResultRefusal(
-            call.tool,
-            result.text,
-            surface.endpoint,
-          );
+          const landedOutside = navigationResultRefusal(call.tool, result.text, surface.endpoint);
           if (landedOutside) {
             return { tool: action.tool, ok: false, reason: landedOutside, idempotencyKey };
           }
