@@ -868,6 +868,31 @@ describe('real surface intake', (): void => {
     expect(harness.records[0].skipReason).toBe('no intake reader for connected analytics surface');
   });
 
+  it('names Day0 when a connected kanban surface is not the one it can read', async (): Promise<void> => {
+    // The probe admits any documented MCP server now, so a connected kanban
+    // surface is no longer necessarily Linear's. Telling the operator their
+    // Jira row "is not the approved Linear host" is a claim about their
+    // configuration that Day0's own missing reader does not support.
+    const jira = surfaceRow('jira', 'Jira', 'kanban', {
+      path: 'mcp',
+      endpoint: 'https://mcp.jira.example/mcp',
+      credentialId: id<'credentials'>('credential-jira'),
+      toolAllowlist: ['list_issues'],
+    });
+    const harness = runtimeHarness([jira], [], new Map([['credential-jira', 'jira-value']]));
+    const result = await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => 10_000,
+      browserMcpUrl: undefined,
+    });
+    expect(result).toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(harness.records[0].skipReason).toBe(
+      "no intake reader for Jira; this Day0 deployment reads kanban work through Linear's MCP contract",
+    );
+    // Named before the credential was decrypted; nothing was dialled.
+    expect(harness.records).toHaveLength(1);
+  });
+
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
     const runtime: IntakeRuntime = {
       listSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
