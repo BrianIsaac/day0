@@ -182,6 +182,33 @@ describe('intent, scope and connection', (): void => {
     expect(actionIntent(parsed(chatPost('D0MANAGER')))).toBe('write');
   });
 
+  it('refuses a read verb that carries a second operation on its name', (): void => {
+    // The server's own catalogue is the allowlist now, so the mutation
+    // vocabulary can never be complete. Every one of these is somebody's real
+    // MCP tool, and each used to run unattended as a read.
+    const mcpTool = (tool: string): ReturnType<typeof parsed> =>
+      parsed({ tool: 'mcp.call', args: { surface: 'jira', tool } });
+    for (const tool of [
+      'search_and_replace',
+      'search_replace',
+      'list_and_purge_issues',
+      'get_or_edit_page',
+      'read_write_file',
+      'fetch_and_apply_patch',
+      'query_and_run_sql',
+      'describe_and_deploy',
+      'find_and_assign_owner',
+      'retrieve_and_grant_access',
+      'list_users_and_reset_passwords',
+      'list_then_archive_issues',
+    ]) {
+      expect(actionIntent(mcpTool(tool))).toBe('write');
+    }
+    for (const tool of ['list_issues', 'get_issue', 'list_comments', 'search_issues']) {
+      expect(actionIntent(mcpTool(tool))).toBe('read');
+    }
+  });
+
   it('derives the scope from the surface and intent', (): void => {
     expect(requiredScope(parsed(comment()))).toBe('linear:write');
     expect(requiredScope(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues' } }))).toBe('linear:read');
