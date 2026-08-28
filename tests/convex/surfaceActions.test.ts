@@ -47,6 +47,8 @@ function slackResponse(payload: Record<string, unknown>, status = 200): Response
 }
 
 describe('surface MCP probing', (): void => {
+  const publicDns = async (): Promise<string[]> => ['93.184.216.34'];
+
   it('admits the server catalogue for any class and leaves writes to the action gate', (): void => {
     expect(
       mcpAllowlist({
@@ -116,6 +118,7 @@ describe('surface MCP probing', (): void => {
       'https://mcp.atlassian.example/mcp',
       credential,
       makeClient,
+      publicDns,
     );
 
     expect(result).toEqual({
@@ -156,12 +159,17 @@ describe('surface MCP probing', (): void => {
   it('always disconnects when provider discovery fails', async (): Promise<void> => {
     const disconnect = vi.fn(async (): Promise<void> => undefined);
     await expect(
-      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', () => ({
-        listToolDefinitionsWithErrors: async () => {
-          throw new Error('timed out');
-        },
-        disconnect,
-      })),
+      probeMcpSurface(
+        'https://mcp.linear.app/mcp',
+        'contract-value',
+        () => ({
+          listToolDefinitionsWithErrors: async () => {
+            throw new Error('timed out');
+          },
+          disconnect,
+        }),
+        publicDns,
+      ),
     ).rejects.toThrow('timed out');
     expect(disconnect).toHaveBeenCalledOnce();
   });
@@ -177,17 +185,49 @@ describe('surface MCP probing', (): void => {
       },
     });
     await expect(
-      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', () => ({
-        listToolDefinitionsWithErrors: refused,
-        disconnect: async (): Promise<void> => undefined,
-      })),
+      probeMcpSurface(
+        'https://mcp.linear.app/mcp',
+        'contract-value',
+        () => ({
+          listToolDefinitionsWithErrors: refused,
+          disconnect: async (): Promise<void> => undefined,
+        }),
+        publicDns,
+      ),
     ).rejects.toThrow('invalid_token');
     await expect(
-      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', () => ({
-        listToolDefinitionsWithErrors: async () => ({ definitions: { surface: {} }, errors: {} }),
-        disconnect: async (): Promise<void> => undefined,
-      })),
+      probeMcpSurface(
+        'https://mcp.linear.app/mcp',
+        'contract-value',
+        () => ({
+          listToolDefinitionsWithErrors: async () => ({ definitions: { surface: {} }, errors: {} }),
+          disconnect: async (): Promise<void> => undefined,
+        }),
+        publicDns,
+      ),
     ).rejects.toThrow('MCP server returned no tools.');
+  });
+
+  it('refuses private DNS answers before constructing a bearer client', async (): Promise<void> => {
+    const makeClient = vi.fn();
+
+    await expect(
+      probeMcpSurface(
+        'https://mcp.example.com/mcp',
+        'contract-value',
+        makeClient,
+        async (): Promise<string[]> => ['93.184.216.34', '169.254.169.254'],
+      ),
+    ).rejects.toThrow('resolved to a private, loopback, link-local, reserved');
+    await expect(
+      probeMcpSurface(
+        'https://mcp.example.com/mcp',
+        'contract-value',
+        makeClient,
+        async (): Promise<string[]> => ['fd00::1'],
+      ),
+    ).rejects.toThrow('resolved to a private, loopback, link-local, reserved');
+    expect(makeClient).not.toHaveBeenCalled();
   });
 });
 
