@@ -380,6 +380,20 @@ describe('surface probe generations', (): void => {
     });
     const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
     if (!first) throw new Error('probe was not reserved');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { fallbackPath: 'documented-api' });
+    });
+    await expect(
+      harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+        surfaceId,
+        generation: first.generation,
+        reason: 'must not choose an unnamed fallback',
+        attemptedAt: 99,
+      }),
+    ).resolves.toBeNull();
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { fallbackPath: 'browser-driven' });
+    });
 
     const demoted = await harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
       surfaceId,

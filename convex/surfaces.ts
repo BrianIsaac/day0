@@ -580,7 +580,8 @@ export const demoteAfterProbeFailure = internalMutation({
       (candidate): boolean =>
         candidate.path === surface.path && candidate.endpoint === surface.endpoint,
     );
-    const next = currentIndex >= 0 ? candidates[currentIndex + 1] : undefined;
+    const nextCandidate = currentIndex >= 0 ? candidates[currentIndex + 1] : undefined;
+    const next = nextCandidate?.path === surface.fallbackPath ? nextCandidate : undefined;
     if (!next) return null;
     const generation = args.generation + 1;
     const reason =
