@@ -28,6 +28,10 @@ type SurfaceEvidence = {
   url?: string;
 };
 
+export const LOADING_SURFACES = 'Loading discovered systems, connection status and evidence…';
+export const EMPTY_SURFACES =
+  'No systems have been discovered yet. After charter approval, orientation maps systems from the linked documentation and shows their connection status here.';
+
 type ConnectRequestBody = {
   target?: {
     reasoning?: string;
@@ -395,11 +399,9 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   }
 
   if (!surfaces || !pages || !credentialRows)
-    return <p className="text-xs text-[var(--color-muted)]">loading surfaces...</p>;
+    return <p className="text-xs text-[var(--color-muted)]">{LOADING_SURFACES}</p>;
   if (surfaces.length === 0)
-    return (
-      <p className="text-xs text-[var(--color-muted)]">Surfaces appear after charter approval.</p>
-    );
+    return <p className="text-xs text-[var(--color-muted)]">{EMPTY_SURFACES}</p>;
   const declared = surfaces.filter((surface): boolean => surface.verdict === 'declared');
 
   return (

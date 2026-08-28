@@ -8,7 +8,12 @@ import type { Id } from '@convex/_generated/dataModel';
 /** What an empty docs list means in each surface mode. */
 export const EMPTY_DOCS: Record<'mock' | 'real', string> = {
   mock: 'no docs yet - seed first',
-  real: 'no documentation mirrored yet in real mode - link a source on /documentation and its pages appear here after the next sync',
+  real: 'No linked documentation is available yet. Link a source or check its sync status on /documentation; synced pages will appear here.',
+};
+
+export const LOADING_DOCS: Record<'mock' | 'real', string> = {
+  mock: 'loading docs…',
+  real: 'Loading linked documentation…',
 };
 
 export function DocsTab({
@@ -41,7 +46,7 @@ export function DocsTab({
 
   const active = activeSlug ? sortedDocs.find((d) => d.slug === activeSlug) : sortedDocs[0];
 
-  if (!docs) return <div className="text-xs text-[var(--color-muted)]">loading docs…</div>;
+  if (!docs) return <div className="text-xs text-[var(--color-muted)]">{LOADING_DOCS[mode]}</div>;
   if (sortedDocs.length === 0)
     return <div className="text-xs text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</div>;
 
