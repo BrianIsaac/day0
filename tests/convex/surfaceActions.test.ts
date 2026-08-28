@@ -6,8 +6,8 @@ import type { Id } from '../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import {
+  approvedMcpEndpoint,
   argumentNamesFromSchema,
-  linearMcpEndpoint,
   managerUserId,
   mcpAllowlist,
   probeBrowserSurface,
@@ -18,6 +18,7 @@ import {
   safeProviderError,
   slackMethodsFromPolicy,
 } from '../../convex/surfaceActions';
+import { actionIntent } from '../../src/surfaces/policy';
 import {
   BROWSER_DRIVER_ABSENT,
   BROWSER_DRIVER_ABSENT_REASON,
@@ -46,30 +47,50 @@ function slackResponse(payload: Record<string, unknown>, status = 200): Response
 }
 
 describe('surface MCP probing', (): void => {
-  it('persists only class defaults and argument names discovered from schemas', (): void => {
+  it('admits the server catalogue for any class and leaves writes to the action gate', (): void => {
     expect(
-      mcpAllowlist(
-        {
-          list_issues: {
-            inputSchema: {
-              type: 'object',
-              properties: { updatedAfter: { type: 'string' }, project: { type: 'string' } },
-            },
+      mcpAllowlist({
+        list_issues: {
+          inputSchema: {
+            type: 'object',
+            properties: { updatedAfter: { type: 'string' }, project: { type: 'string' } },
           },
-          delete_issue: {
-            inputSchema: { type: 'object', properties: { issueId: { type: 'string' } } },
-          },
-          save_comment: { inputSchema: { type: 'object', properties: {} } },
         },
-        'kanban',
-      ),
+        delete_issue: {
+          inputSchema: { type: 'object', properties: { issueId: { type: 'string' } } },
+        },
+        sync_workspace: { inputSchema: { type: 'object', properties: {} } },
+      }),
     ).toEqual({
-      toolAllowlist: ['list_issues', 'save_comment'],
+      toolAllowlist: ['list_issues', 'delete_issue', 'sync_workspace'],
       toolArguments: [
         { tool: 'list_issues', arguments: ['project', 'updatedAfter'] },
-        { tool: 'save_comment', arguments: [] },
+        { tool: 'delete_issue', arguments: ['issueId'] },
+        { tool: 'sync_workspace', arguments: [] },
       ],
     });
+    expect(
+      actionIntent({ kind: 'mcp.call', surface: 'jira', tool: 'list_issues', toolArgs: {} }),
+    ).toBe('read');
+    expect(
+      actionIntent({
+        kind: 'mcp.call',
+        surface: 'jira',
+        tool: 'list_and_delete_issues',
+        toolArgs: {},
+      }),
+    ).toBe('write');
+    expect(
+      actionIntent({
+        kind: 'mcp.call',
+        surface: 'jira',
+        tool: 'list_and_modify_issues',
+        toolArgs: {},
+      }),
+    ).toBe('write');
+    expect(
+      actionIntent({ kind: 'mcp.call', surface: 'jira', tool: 'sync_workspace', toolArgs: {} }),
+    ).toBe('write');
     expect(argumentNamesFromSchema({ properties: null })).toEqual([]);
   });
 
@@ -92,9 +113,8 @@ describe('surface MCP probing', (): void => {
     }));
 
     const result = await probeMcpSurface(
-      'https://mcp.linear.app/mcp',
+      'https://mcp.atlassian.example/mcp',
       credential,
-      'kanban',
       makeClient,
     );
 
@@ -109,21 +129,34 @@ describe('surface MCP probing', (): void => {
     expect(JSON.stringify(result)).not.toContain(credential);
   });
 
-  it('rejects wrong hosts before creating a bearer client', async (): Promise<void> => {
-    const makeClient = vi.fn();
-    await expect(
-      probeMcpSurface('https://attacker.invalid/mcp', 'contract-value', 'kanban', makeClient),
-    ).rejects.toThrow('not the approved Linear host');
-    expect(makeClient).not.toHaveBeenCalled();
-    expect((): URL => linearMcpEndpoint('http://mcp.linear.app/mcp')).toThrow(
-      'not the approved Linear host',
+  it('accepts the exact approved public HTTPS endpoint and rejects SSRF targets before bearer use', (): void => {
+    expect(approvedMcpEndpoint('https://mcp.atlassian.example/mcp').href).toBe(
+      'https://mcp.atlassian.example/mcp',
     );
+    expect(approvedMcpEndpoint('https://mcp.example.com:8443/rpc').href).toBe(
+      'https://mcp.example.com:8443/rpc',
+    );
+    for (const endpoint of [
+      'http://mcp.example.com/mcp',
+      'https://localhost/mcp',
+      'https://mcp.internal/mcp',
+      'https://127.0.0.1/mcp',
+      'https://10.0.0.8/mcp',
+      'https://169.254.169.254/latest/meta-data',
+      'https://[::1]/mcp',
+      'https://user:pass@mcp.example.com/mcp',
+      'https://mcp.example.com/mcp#other',
+    ]) {
+      expect((): URL => approvedMcpEndpoint(endpoint), endpoint).toThrow(
+        'approved MCP endpoint must use a public HTTPS hostname',
+      );
+    }
   });
 
   it('always disconnects when provider discovery fails', async (): Promise<void> => {
     const disconnect = vi.fn(async (): Promise<void> => undefined);
     await expect(
-      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', 'kanban', () => ({
+      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', () => ({
         listToolDefinitionsWithErrors: async () => {
           throw new Error('timed out');
         },
@@ -144,13 +177,13 @@ describe('surface MCP probing', (): void => {
       },
     });
     await expect(
-      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', 'kanban', () => ({
+      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', () => ({
         listToolDefinitionsWithErrors: refused,
         disconnect: async (): Promise<void> => undefined,
       })),
     ).rejects.toThrow('invalid_token');
     await expect(
-      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', 'kanban', () => ({
+      probeMcpSurface('https://mcp.linear.app/mcp', 'contract-value', () => ({
         listToolDefinitionsWithErrors: async () => ({ definitions: { surface: {} }, errors: {} }),
         disconnect: async (): Promise<void> => undefined,
       })),
@@ -207,8 +240,12 @@ describe('Slack documented API probing', (): void => {
 
   it('reads the manager display name in the order Slack prefers', (): void => {
     expect(managerDisplayName({ id: 'U1', real_name: ' Brian Isaac ' })).toBe('Brian Isaac');
-    expect(managerDisplayName({ id: 'U1', profile: { display_name: 'brian', real_name: 'Brian I' } })).toBe('brian');
-    expect(managerDisplayName({ id: 'U1', profile: { display_name: '', real_name: 'Brian I' } })).toBe('Brian I');
+    expect(
+      managerDisplayName({ id: 'U1', profile: { display_name: 'brian', real_name: 'Brian I' } }),
+    ).toBe('brian');
+    expect(
+      managerDisplayName({ id: 'U1', profile: { display_name: '', real_name: 'Brian I' } }),
+    ).toBe('Brian I');
     expect(managerDisplayName({ id: 'U1', name: 'brian.isaac' })).toBe('brian.isaac');
     expect(managerDisplayName({ id: 'U1' })).toBeUndefined();
     expect(managerDisplayName(undefined)).toBeUndefined();
@@ -619,7 +656,9 @@ describe('credential landing from the card', (): void => {
       label: '',
       plaintext: ' lin_api_test_value ',
     });
-    const credentials = await harness.run(async (ctx) => await ctx.db.query('credentials').collect());
+    const credentials = await harness.run(
+      async (ctx) => await ctx.db.query('credentials').collect(),
+    );
     expect(credentials).toHaveLength(1);
     expect(credentials[0]).toMatchObject({
       kind: 'location',
@@ -789,7 +828,10 @@ describe('probing the browser floor', (): void => {
       'browser_type',
       'browser_fill_form',
     ]);
-    expect(discovery.toolArguments).toContainEqual({ tool: 'browser_type', arguments: ['ref', 'text'] });
+    expect(discovery.toolArguments).toContainEqual({
+      tool: 'browser_type',
+      arguments: ['ref', 'text'],
+    });
     expect(navigated).toEqual([{ name: 'browser_navigate', args: { url: TILE } }]);
     expect(disconnect).toHaveBeenCalledOnce();
   });
@@ -811,14 +853,9 @@ describe('probing the browser floor', (): void => {
         text: '- Page URL: http://looker-tile:8080/\n- Page Title: Generic reverse proxy',
       },
     });
-    await expect(
-      probeBrowserSurface(
-        TILE,
-        DRIVER,
-        () => client,
-        TITLE,
-      ),
-    ).rejects.toThrow('documented page title marker');
+    await expect(probeBrowserSurface(TILE, DRIVER, () => client, TITLE)).rejects.toThrow(
+      'documented page title marker',
+    );
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
@@ -858,7 +895,7 @@ describe('probing the browser floor', (): void => {
   it('fails when the driver exposes none of the floor tools', async (): Promise<void> => {
     const { client } = fakeDriver({ catalogue: { browser_evaluate: {} } });
     await expect(probeBrowserSurface(TILE, DRIVER, () => client, TITLE)).rejects.toThrow(
-      'no tools allowed for this surface class',
+      'no tools allowed for the browser floor',
     );
   });
 
@@ -1002,7 +1039,9 @@ describe('probing the browser floor', (): void => {
     expect(probeBrowser).toHaveBeenCalledWith(TILE, DRIVER, undefined, TITLE);
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({ verdict: 'connected', credentialLanded: true });
-    const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());
+    const grants = await harness.run(
+      async (ctx) => await ctx.db.query('permissionGrants').collect(),
+    );
     expect(grants.map((grant) => grant.scope)).toContain('looker-pipeline-tile:read');
     expect(grants.every((grant) => grant.agentId === agentId)).toBe(true);
   });

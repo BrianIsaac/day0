@@ -1,6 +1,7 @@
 'use node';
 
 import { randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import { v } from 'convex/values';
 import type { GenericId } from 'convex/values';
 import type { FunctionReference } from 'convex/server';
@@ -29,11 +30,7 @@ import {
 } from '../src/surfaces/slack-policy';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { slackApiUrl } from '../src/surfaces/slack-endpoint';
-
-const MCP_CLASS_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
-  kanban: ['list_issues', 'get_issue', 'list_comments', 'save_comment', 'save_issue'],
-  'browser-driven': BROWSER_TOOLS,
-};
+import { actionIntent } from '../src/surfaces/policy';
 
 const SLACK_METHOD_DEFAULTS = [
   'auth.test',
@@ -150,31 +147,30 @@ export function argumentNamesFromSchema(schema: unknown): string[] {
 }
 
 /**
- * Intersect provider-discovered tools with the immutable class allowlist.
+ * Admit the catalogue exposed by an approved MCP endpoint.
  *
  * Args:
  *   definitions: Tool definitions returned by MCP discovery.
- *   surfaceClass: Charter class used to select the maximum capability set.
- *
  * Returns:
  *   Persistable tool and argument metadata.
  *
  * Raises:
- *   Error: If the class has no MCP defaults or the provider exposes no allowed tool.
+ *   Error: If the provider exposes no named tools.
  */
-export function mcpAllowlist(
-  definitions: Record<string, ToolDefinition>,
-  surfaceClass: string,
-): McpDiscovery {
-  // `browser-driven` is a path, not a class: the floor's capability set is
-  // decided by how the system is reached, because every class of system that
-  // falls to the browser is driven the same way. `probeMcpSurface` passes it
-  // in place of the class for that path.
-  const defaults = MCP_CLASS_DEFAULTS[surfaceClass];
-  if (!defaults) throw new Error(`MCP probing is not supported for class ${surfaceClass}.`);
-  const toolAllowlist = defaults.filter((name: string): boolean => definitions[name] !== undefined);
+export function mcpAllowlist(definitions: Record<string, ToolDefinition>): McpDiscovery {
+  const classified = Object.keys(definitions)
+    .filter((tool: string): boolean => tool.trim().length > 0)
+    .map((tool: string) => ({
+      tool,
+      intent: actionIntent({ kind: 'mcp.call', surface: 'probe', tool, toolArgs: {} }),
+    }))
+    .sort((left, right): number => {
+      if (left.intent !== right.intent) return left.intent === 'read' ? -1 : 1;
+      return left.tool.localeCompare(right.tool);
+    });
+  const toolAllowlist = classified.map(({ tool }): string => tool);
   if (toolAllowlist.length === 0) {
-    throw new Error('MCP server returned no tools allowed for this surface class.');
+    throw new Error('MCP server returned no named tools.');
   }
   return {
     toolAllowlist,
@@ -182,6 +178,27 @@ export function mcpAllowlist(
       tool,
       arguments: argumentNamesFromSchema(definitions[tool]?.inputSchema),
     })),
+  };
+}
+
+/** Keep Day0's browser driver on its fixed floor capability set. */
+function browserAllowlist(definitions: Record<string, ToolDefinition>): McpDiscovery {
+  const admitted = Object.fromEntries(
+    BROWSER_TOOLS.filter((tool: string): boolean => definitions[tool] !== undefined).map(
+      (tool: string): [string, ToolDefinition] => [tool, definitions[tool]],
+    ),
+  );
+  if (Object.keys(admitted).length === 0) {
+    throw new Error('The browser driver returned no tools allowed for the browser floor.');
+  }
+  return {
+    toolAllowlist: Object.keys(admitted),
+    toolArguments: Object.keys(admitted).map(
+      (tool: string): { tool: string; arguments: string[] } => ({
+        tool,
+        arguments: argumentNamesFromSchema(admitted[tool]?.inputSchema),
+      }),
+    ),
   };
 }
 
@@ -217,27 +234,51 @@ export function safeProviderError(error: unknown, credential: string): string {
 }
 
 /**
- * Validate the one remote MCP endpoint supported in this lane.
+ * Validate the exact evidence-backed MCP endpoint stored on the approved row.
  *
  * Args:
  *   endpoint: Evidence-derived surface endpoint.
  *
  * Returns:
- *   The exact Linear Streamable HTTP endpoint.
+ *   The exact public HTTPS endpoint.
  *
  * Raises:
- *   Error: If the URL, scheme, host, or path is not the approved endpoint.
+ *   Error: If the URL could address this deployment or another private network.
  */
-export function linearMcpEndpoint(endpoint: string | undefined): URL {
-  if (!endpoint) throw new Error('No MCP endpoint is documented for this surface.');
+export function approvedMcpEndpoint(endpoint: string | undefined): URL {
+  const refusal = (): never => {
+    throw new Error('The approved MCP endpoint must use a public HTTPS hostname.');
+  };
+  if (!endpoint) return refusal();
   let parsed: URL;
   try {
     parsed = new URL(endpoint);
   } catch {
-    throw new Error('The documented MCP endpoint is not a valid URL.');
+    return refusal();
   }
-  if (parsed.href !== 'https://mcp.linear.app/mcp') {
-    throw new Error('The documented MCP endpoint is not the approved Linear host.');
+  const hostname = parsed.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '');
+  const privateName =
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.localdomain') ||
+    hostname.endsWith('.internal') ||
+    hostname.endsWith('.home') ||
+    hostname.endsWith('.lan') ||
+    !hostname.includes('.');
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.hash !== '' ||
+    hostname === '' ||
+    isIP(hostname) !== 0 ||
+    privateName
+  ) {
+    return refusal();
   }
   return parsed;
 }
@@ -349,7 +390,7 @@ export async function probeBrowserSurface(
     if (!catalog || Object.keys(catalog).length === 0) {
       throw new Error('The browser driver returned no tools.');
     }
-    const discovery = mcpAllowlist(catalog, 'browser-driven');
+    const discovery = browserAllowlist(catalog);
     const opened = await client.callTool('browser_navigate', { url: target.href });
     if (opened.isError) {
       throw new Error(`the documented page could not be opened: ${opened.text.slice(0, 160)}`);
@@ -374,7 +415,6 @@ export async function probeBrowserSurface(
  * Args:
  *   endpoint: Surface endpoint.
  *   credential: Decrypted bearer kept inside the Node action.
- *   surfaceClass: Class whose defaults cap the discovered tools.
  *   makeClient: Client factory, replaceable by behavioural tests.
  *
  * Returns:
@@ -383,10 +423,9 @@ export async function probeBrowserSurface(
 export async function probeMcpSurface(
   endpoint: string | undefined,
   credential: string,
-  surfaceClass: string,
   makeClient: McpClientFactory = createMcpClient,
 ): Promise<McpDiscovery> {
-  const url = linearMcpEndpoint(endpoint);
+  const url = approvedMcpEndpoint(endpoint);
   const client = makeClient(url, credential);
   try {
     // Discovery with errors first: `listTools()` returns an empty map for a
@@ -400,7 +439,7 @@ export async function probeMcpSurface(
     if (!catalog || Object.keys(catalog).length === 0) {
       throw new Error('MCP server returned no tools.');
     }
-    return mcpAllowlist(catalog, surfaceClass);
+    return mcpAllowlist(catalog);
   } finally {
     await client.disconnect();
   }
@@ -686,7 +725,7 @@ export async function runSurfaceProbe(
     let providerIdentityId: string | undefined;
     let providerWorkspaceId: string | undefined;
     if (surface.path === 'mcp') {
-      const discovery = await dependencies.probeMcp(surface.endpoint, credential, surface.class);
+      const discovery = await dependencies.probeMcp(surface.endpoint, credential);
       toolAllowlist = discovery.toolAllowlist;
       toolArguments = discovery.toolArguments;
     } else if (surface.path === 'browser-driven') {

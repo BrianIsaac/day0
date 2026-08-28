@@ -170,6 +170,7 @@ describe('intent, scope and connection', (): void => {
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues' } }))).toBe('read');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue' } }))).toBe('read');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_and_delete_issues' } }))).toBe('write');
+    expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'list_and_modify_issues' } }))).toBe('write');
     expect(actionIntent(parsed(comment()))).toBe('write');
     expect(actionIntent(parsed({ tool: 'mcp.call', args: { surface: 'linear', tool: 'frobnicate' } }))).toBe('write');
     expect(actionIntent(parsed({ tool: 'http.request', args: { surface: 'slack', path: 'conversations.history' } }))).toBe('read');

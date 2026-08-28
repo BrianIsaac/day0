@@ -67,6 +67,7 @@ const HTTP_MUTATION_WORDS = new Set([
   'leave',
   'mark',
   'move',
+  'modify',
   'open',
   'pin',
   'post',
