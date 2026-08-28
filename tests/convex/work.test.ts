@@ -426,6 +426,21 @@ describe('manager channel request claims', (): void => {
       lastPolledAt: 100,
       lastDecisionPolledAt: 300,
     });
+
+    // A failure must be visible on the row and must not move the checkpoint
+    // past the window it could not read.
+    await harness.mutation(internal.work.recordDecisionPoll, {
+      surfaceId,
+      failure: `decision poll failed: ${'x'.repeat(300)}`,
+    });
+    const failed = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(failed?.lastDecisionPolledAt).toBe(300);
+    expect(failed?.lastDecisionError).toHaveLength(240);
+
+    await harness.mutation(internal.work.recordDecisionPoll, { surfaceId, polledAt: 400 });
+    const recovered = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(recovered?.lastDecisionPolledAt).toBe(400);
+    expect(recovered?.lastDecisionError).toBeUndefined();
   });
 
   it('asks for no reply through a chat surface whose manager identity has not been probed', async (): Promise<void> => {

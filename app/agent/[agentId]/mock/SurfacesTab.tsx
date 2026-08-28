@@ -543,6 +543,11 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
               {skipReason ? (
                 <p className="mt-1 text-xs text-[var(--color-warn)]">Skipped: {skipReason}</p>
               ) : null}
+              {surface.lastDecisionError ? (
+                <p className="mt-1 text-xs text-[var(--color-warn)]">
+                  Manager decisions: {surface.lastDecisionError}
+                </p>
+              ) : null}
               {surface.endpoint ? (
                 <p className="mt-1 break-all font-mono text-[10px] text-[var(--color-muted)]">
                   {surface.endpoint}

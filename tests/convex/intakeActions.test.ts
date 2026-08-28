@@ -36,7 +36,7 @@ interface SeededCandidate extends Omit<WorkCandidate, 'observedAt'> {
 }
 
 interface RuntimeHarness {
-  decisionPolls: Array<{ surfaceId: Id<'surfaces'>; polledAt: number }>;
+  decisionPolls: Array<{ surfaceId: Id<'surfaces'>; polledAt?: number; failure?: string }>;
   decisions: unknown[];
   records: RecordedIntake[];
   runtime: IntakeRuntime;
@@ -154,7 +154,11 @@ function runtimeHarness(
   credentials: Map<string, string>,
 ): RuntimeHarness {
   const records: RecordedIntake[] = [];
-  const decisionPolls: Array<{ surfaceId: Id<'surfaces'>; polledAt: number }> = [];
+  const decisionPolls: Array<{
+    surfaceId: Id<'surfaces'>;
+    polledAt?: number;
+    failure?: string;
+  }> = [];
   const decisions: unknown[] = [];
   const seeds = new Map<string, SeededCandidate>();
   const openRequests = new Map<string, Array<{ ts: string }>>();
@@ -190,7 +194,18 @@ function runtimeHarness(
       const surface = surfaces.find(
         (candidate: Doc<'surfaces'>): boolean => candidate._id === record.surfaceId,
       );
-      if (surface) surface.lastDecisionPolledAt = record.polledAt;
+      if (!surface) return;
+      if (record.failure !== undefined) {
+        surface.lastDecisionError = record.failure;
+        return;
+      }
+      surface.lastDecisionError = undefined;
+      if (record.polledAt !== undefined) {
+        surface.lastDecisionPolledAt = Math.max(
+          surface.lastDecisionPolledAt ?? 0,
+          record.polledAt,
+        );
+      }
     },
     listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
       openRequests.get(String(surfaceId)) ?? [],
@@ -324,6 +339,63 @@ describe('real surface intake', (): void => {
     expect(surface.lastDecisionPolledAt).toBe(pollTime);
     expect(harness.records).toEqual([]);
     expect(harness.seeds.size).toBe(0);
+  });
+
+  it('keeps a failed decision poll visible and its checkpoint unmoved', async (): Promise<void> => {
+    const decisionCheckpoint = Date.parse('2026-08-26T01:04:00.000Z');
+    const pollTime = Date.parse('2026-08-26T01:05:00.000Z');
+    const slackCredential = id<'credentials'>('credential-slack');
+    const surface = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId: slackCredential,
+      endpoint: 'https://slack.com/api/',
+      // The probe's allowlist lost the one method the decision sweep needs.
+      toolAllowlist: ['conversations.list'],
+      providerIdentityId: 'UBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionPolledAt: decisionCheckpoint,
+    });
+    const harness = runtimeHarness(
+      [surface],
+      [],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    const fetcher = async (): Promise<Response> => slackResponse({ ok: true, messages: [] });
+
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => pollTime, fetcher }),
+    ).resolves.toEqual({ mode: 'real', polled: 0, skipped: 1, surfaces: 1 });
+    expect(surface.lastDecisionError).toContain(
+      'decision poll failed: Connected Slack surface does not allow conversations.history.',
+    );
+    expect(surface.lastDecisionPolledAt).toBe(decisionCheckpoint);
+    expect(harness.records).toEqual([]);
+
+    surface.toolAllowlist = ['conversations.list', 'conversations.history'];
+    const laterPoll = pollTime + 60_000;
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => laterPoll, fetcher }),
+    ).resolves.toEqual({ mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(surface.lastDecisionError).toBeUndefined();
+    expect(surface.lastDecisionPolledAt).toBe(laterPoll);
+  });
+
+  it('clears a stale decision failure once the surface stops being polled', async (): Promise<void> => {
+    const surface = surfaceRow('slack', 'Slack', 'chat', {
+      verdict: 'listed-dead',
+      credentialId: id<'credentials'>('credential-slack'),
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastDecisionError: 'decision poll failed: transport error',
+    });
+    const harness = runtimeHarness([surface], [], new Map());
+
+    await expect(
+      runDecisionSweep(harness.runtime, { mode: 'real' }),
+    ).resolves.toMatchObject({ polled: 0, skipped: 1 });
+    expect(harness.decisionPolls).toEqual([{ surfaceId: id<'surfaces'>('surface-slack') }]);
+    expect(surface.lastDecisionError).toBeUndefined();
   });
 
   it('walks the documented waterfall, checkpoints successes, and maps Linear and Slack work', async (): Promise<void> => {

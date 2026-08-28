@@ -280,6 +280,11 @@ export default defineSchema({
     lastPolledAt: v.optional(v.number()),
     /** Independent checkpoint for the latency-sensitive manager decision poll. */
     lastDecisionPolledAt: v.optional(v.number()),
+    /** Why the last manager decision poll could not read this surface. The
+     * work sweep no longer reads the manager DM, so its `intakeSkipReason`
+     * stays clean while approvals silently stop arriving; this is the row's
+     * own signal, cleared by the next poll that succeeds. */
+    lastDecisionError: v.optional(v.string()),
     /** Transitional validator for rows written before credentialId. Every
      * current state transition clears it; remove after deployed rows migrate. */
     credentialRef: v.optional(v.string()),

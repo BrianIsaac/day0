@@ -75,7 +75,11 @@ export interface IntakeRuntime {
   listPages(agentId: Id<'agents'>): Promise<Doc<'docPages'>[]>;
   decrypt(credentialId: CredentialId): Promise<string>;
   recordIntake(record: IntakeRecord): Promise<void>;
-  recordDecisionPoll(record: { surfaceId: Id<'surfaces'>; polledAt: number }): Promise<void>;
+  recordDecisionPoll(record: {
+    surfaceId: Id<'surfaces'>;
+    polledAt?: number;
+    failure?: string;
+  }): Promise<void>;
   seed(candidate: IntakeSeed): Promise<void>;
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
   /** Decision requests that landed on this surface and are still undecided. */
@@ -1291,6 +1295,11 @@ export async function runDecisionSweep(
       !surface.managerDmChannelId ||
       !surface.managerUserId
     ) {
+      // A row that is no longer polled cannot still be failing to poll, and
+      // its disconnection is already reported by the work sweep.
+      if (surface.lastDecisionError) {
+        await runtime.recordDecisionPoll({ surfaceId: surface._id });
+      }
       skipped += 1;
       continue;
     }
@@ -1318,9 +1327,12 @@ export async function runDecisionSweep(
       await runtime.recordDecisionPoll({ surfaceId: surface._id, polledAt: pollStartedAt });
       polled += 1;
     } catch (error) {
-      console.warn(
-        `Manager decision poll failed for ${surface.slug}: ${safeIntakeError(error, credential)}`,
-      );
+      // The checkpoint stays where it was, so the window this run could not
+      // read is re-read by the next one, and the reason lands on the surface
+      // card: the work sweep no longer touches the manager DM, so nothing
+      // else would tell the operator that approvals have stopped arriving.
+      const reason = `decision poll failed: ${safeIntakeError(error, credential)}`;
+      await runtime.recordDecisionPoll({ surfaceId: surface._id, failure: reason });
       skipped += 1;
     } finally {
       credential = '';

@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   browserComponent: true as boolean | undefined,
   reason: undefined as string | undefined,
   surfaceResult: 'loaded' as 'loaded' | 'empty' | 'loading',
+  lastDecisionError: undefined as string | undefined,
 }));
 
 vi.mock('convex/react', () => ({
@@ -37,6 +38,7 @@ vi.mock('convex/react', () => ({
           whereFound: [],
           credentialLanded: false,
           reason: state.reason,
+          lastDecisionError: state.lastDecisionError,
         },
       ];
     }
@@ -67,6 +69,7 @@ beforeEach((): void => {
   state.browserComponent = true;
   state.reason = undefined;
   state.surfaceResult = 'loaded';
+  state.lastDecisionError = undefined;
 });
 
 /** Render one isolated credential row without running dashboard hooks. */
@@ -419,6 +422,20 @@ describe('SurfacesTab and the optional browser component', (): void => {
     expect(
       markup.match(/<button[^>]*disabled=""[^>]*>Approve as (manager|IT)<\/button>/g),
     ).toHaveLength(2);
+  });
+
+  it('names a failing manager decision poll on the card that stopped answering', (): void => {
+    state.lastDecisionError =
+      'decision poll failed: Connected Slack surface does not allow conversations.history.';
+    const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+    expect(markup).toContain('Manager decisions: decision poll failed:');
+    expect(markup).toContain('does not allow conversations.history.');
+  });
+
+  it('says nothing about manager decisions while the poll is healthy', (): void => {
+    expect(renderToStaticMarkup(<SurfacesTab agentId={agentId} />)).not.toContain(
+      'Manager decisions:',
+    );
   });
 
   it('leaves approval alone once the component is running', (): void => {

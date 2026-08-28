@@ -472,14 +472,32 @@ export const openDecisionRequests = internalQuery({
   },
 });
 
-/** Advance the manager-reply checkpoint without changing discovery's cursor. */
+/**
+ * Record the outcome of one manager-reply poll.
+ *
+ * A success advances the checkpoint monotonically, so a slower overlapping run
+ * cannot move it backwards, and clears the row's failure. A failure records
+ * why and deliberately leaves the checkpoint alone: the window it could not
+ * read must be re-read, and the operator must be able to see on the surface
+ * card that manager approvals have stopped arriving.
+ */
 export const recordDecisionPoll = internalMutation({
-  args: { surfaceId: v.id('surfaces'), polledAt: v.number() },
+  args: {
+    surfaceId: v.id('surfaces'),
+    polledAt: v.optional(v.number()),
+    failure: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface || surface.class !== 'chat') return false;
-    if ((surface.lastDecisionPolledAt ?? 0) >= args.polledAt) return true;
-    await ctx.db.patch(surface._id, { lastDecisionPolledAt: args.polledAt });
+    if (args.failure !== undefined) {
+      await ctx.db.patch(surface._id, { lastDecisionError: args.failure.slice(0, 240) });
+      return true;
+    }
+    await ctx.db.patch(surface._id, {
+      lastDecisionError: undefined,
+      lastDecisionPolledAt: Math.max(surface.lastDecisionPolledAt ?? 0, args.polledAt ?? 0),
+    });
     return true;
   },
 });
