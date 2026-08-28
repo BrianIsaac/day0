@@ -266,10 +266,10 @@ services:
       [
         'sh',
         '-lc',
-        'npx -y @notionhq/notion-mcp-server@2.5.1 --transport http --host 0.0.0.0 --port 3000 --enable-token-passthrough',
+        'test -n "$$AUTH_TOKEN" || { echo "DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion; run pnpm dev once to generate it" >&2; exit 1; }; exec npx -y @notionhq/notion-mcp-server@2.5.1 --transport http --host 0.0.0.0 --port 3000 --enable-token-passthrough',
       ]
     environment:
-      - AUTH_TOKEN=${DAY0_NOTION_MCP_AUTH_TOKEN:?Run pnpm dev once to generate the Notion MCP transport token}
+      - AUTH_TOKEN=${DAY0_NOTION_MCP_AUTH_TOKEN:-}
     expose: ['3000']
     healthcheck:
       test:
@@ -298,7 +298,13 @@ services:
     ports:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${FAKE_SLACK_HOST_PORT:-8090}:8090'
     healthcheck:
-      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8090/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8090/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
       interval: 10s
       timeout: 5s
       start_period: 10s
@@ -319,7 +325,13 @@ services:
       - ./looker-tile/server.js:/app/server.js:ro
     expose: ['8080']
     healthcheck:
-      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
       interval: 10s
       timeout: 5s
       start_period: 10s

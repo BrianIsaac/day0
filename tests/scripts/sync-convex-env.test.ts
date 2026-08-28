@@ -100,4 +100,14 @@ describe('sync-convex-env.sh', (): void => {
     expect(status).toBe(1);
     expect(calls).toEqual([]);
   });
+
+  it('allows real mode without the optional Notion component token', (): void => {
+    const { status, calls } = runSync(
+      ['DAY0_NOTION_MCP_AUTH_TOKEN=old'],
+      'DAY0_SURFACE_MODE=real\nDAY0_CREDENTIAL_KEY=credential-key\nDAY0_NOTION_MCP_AUTH_TOKEN=\n',
+    );
+    expect(status).toBe(0);
+    expect(calls).toContain('convex env set DAY0_CREDENTIAL_KEY credential-key');
+    expect(calls).toContain('convex env remove DAY0_NOTION_MCP_AUTH_TOKEN');
+  });
 });

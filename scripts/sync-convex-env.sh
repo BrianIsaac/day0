@@ -119,12 +119,6 @@ if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ] && [ -z "$(read_local DAY0_CRE
   echo "       Run \`pnpm dev:no-auth-key\` once, then re-run this script." >&2
   exit 1
 fi
-if [ "$(read_local DAY0_SURFACE_MODE)" = "real" ] && [ -z "$(read_local DAY0_NOTION_MCP_AUTH_TOKEN)" ]; then
-  echo "error: DAY0_SURFACE_MODE=real in $ENV_FILE but DAY0_NOTION_MCP_AUTH_TOKEN is empty." >&2
-  echo "       Run \`pnpm dev:no-auth-key\` once, then re-run this script." >&2
-  exit 1
-fi
-
 # Clearing the no-auth pair is the one step whose silent failure is a security
 # downgrade rather than an inconvenience - an expired credential or the wrong
 # deployment would otherwise print `clear …` and `done.` while the flag that
