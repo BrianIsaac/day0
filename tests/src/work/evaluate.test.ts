@@ -180,7 +180,10 @@ describe('work surface enablement', (): void => {
 
     await expect(
       evaluateCandidate(work, context('real', [surface('linear'), retired]), lookups()),
-    ).resolves.toEqual({ decision: 'skip', reason: 'out-of-scope: no charter overlap' });
+    ).resolves.toEqual({
+      decision: 'skip',
+      reason: 'out-of-scope: no charter or current documented-system overlap',
+    });
   });
 
   it.each([

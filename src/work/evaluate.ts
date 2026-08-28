@@ -256,7 +256,10 @@ export async function evaluateCandidate(
   opts: EvaluateOptions = {},
 ): Promise<EvaluationVerdict> {
   if (!isEligible(candidate, ctx)) {
-    return { decision: 'skip', reason: 'out-of-scope: no charter overlap' };
+    return {
+      decision: 'skip',
+      reason: 'out-of-scope: no charter or current documented-system overlap',
+    };
   }
 
   const missingSurface = missingConnectionSurface(candidate, ctx);
