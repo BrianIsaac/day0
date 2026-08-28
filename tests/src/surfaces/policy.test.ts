@@ -32,6 +32,7 @@ import {
   skillApprovalRefusal,
   statusChangeWithoutComment,
   surfaceRefusal,
+  toolRefusal,
   TRAILER_REFUSED,
   USERNAME_REFUSED,
   type ParsedSurfaceAction,
@@ -207,6 +208,42 @@ describe('intent, scope and connection', (): void => {
     for (const tool of ['list_issues', 'get_issue', 'list_comments', 'search_issues']) {
       expect(actionIntent(mcpTool(tool))).toBe('read');
     }
+  });
+
+  it('grants nothing on a surface the ladder has just demoted', (): void => {
+    // The row exactly as `demoteAfterProbeFailure` leaves it: the next rung is
+    // approved, nothing about it has been probed, and the route-specific
+    // metadata is gone. Read from the gate rather than from the ladder.
+    const demoted: SurfaceRecord = {
+      ...linear,
+      verdict: 'approved',
+      path: 'browser-driven',
+      endpoint: 'https://linear.example/issues',
+      credentialLanded: false,
+      lastVerifiedAt: undefined,
+      toolAllowlist: undefined,
+    };
+    expect(surfaceRefusal(demoted, now)).toBe('surface not connected (ungranted)');
+    const snapshot = parsed({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'browser_snapshot' },
+    });
+    expect(toolRefusal(snapshot, demoted)).toContain('tool not in the surface allowlist');
+    // And it stays refused once the new rung's own probe has connected it, for
+    // anything that rung did not itself expose.
+    const reconnected: SurfaceRecord = {
+      ...demoted,
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: now,
+      toolAllowlist: ['browser_navigate', 'browser_snapshot'],
+    };
+    expect(surfaceRefusal(reconnected, now)).toBeUndefined();
+    const saveIssue = parsed({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_issue' },
+    });
+    expect(toolRefusal(saveIssue, reconnected)).toContain('tool not in the surface allowlist');
   });
 
   it('derives the scope from the surface and intent', (): void => {

@@ -1573,7 +1573,10 @@ describe('probing the browser floor', (): void => {
       false,
       { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
     );
-    expect(outcome).toMatchObject({ verdict: 'ungranted', reason: 'credential is unavailable or revoked' });
+    expect(outcome).toMatchObject({
+      verdict: 'ungranted',
+      reason: 'credential is unavailable or revoked',
+    });
     expect(probeBrowser).not.toHaveBeenCalled();
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({
