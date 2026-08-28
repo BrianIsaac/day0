@@ -40,8 +40,16 @@ export const discoveryModelSchema = z.object({
 export type DiscoveryModelResult = z.infer<typeof discoveryModelSchema>;
 
 const SYSTEM_DIRECTORY = /(?:^|\/)systems\/[^/]+(?:\.md)?$/i;
+/**
+ * Names that describe where something is written down rather than a system.
+ *
+ * The artefact word is matched wherever it falls in the name, not only at the
+ * front: "Escalation Queue" and "New Hire Onboarding" are as much artefacts as
+ * "Queue" and "Onboarding", and the operator's own `queue.md` is headed
+ * "Synthetic revenue operations queue".
+ */
 const DOCUMENT_LOCATION =
-  /(?:^\s*(?:how to|onboarding|queue)\b)|\b(?:documentation|docs|handbook|runbook|playbook|page|file|folder)\b/i;
+  /\b(?:how[\s-]*to|onboarding|queues?|documentation|docs|handbooks?|runbooks?|playbooks?|pages?|files?|folders?|wikis?)\b/i;
 const SYSTEM_HEADER = /^(?:system|product|service|tool)$/i;
 const TABLE_SEPARATOR = /^:?-{3,}:?$/;
 const SYSTEM_EVIDENCE =
@@ -128,11 +136,26 @@ function phrasePattern(name: string): RegExp {
   );
 }
 
+/**
+ * Find the one line of the page that both names the system and calls it one.
+ *
+ * A heading or title is no weaker as a location than a body line, but it is no
+ * stronger as evidence either: a page merely titled after a vendor it mentions
+ * in passing is not documentation that the enterprise runs that vendor. Every
+ * branch therefore carries the same system-bearing requirement.
+ *
+ * Args:
+ *   page: Redacted documentation page the candidate cited.
+ *   name: Exact system name the classifier returned.
+ *
+ * Returns:
+ *   The grounding quote, or undefined when the page evidences no system.
+ */
 function groundedQuote(page: DiscoveryPage, name: string): string | undefined {
   const pattern = phrasePattern(name);
   const heading = firstHeading(page);
-  if (heading && pattern.test(heading)) return `# ${heading}`;
-  if (pattern.test(page.title)) return page.title;
+  if (heading && pattern.test(heading) && SYSTEM_EVIDENCE.test(heading)) return `# ${heading}`;
+  if (pattern.test(page.title) && SYSTEM_EVIDENCE.test(page.title)) return page.title;
   for (const raw of page.markdown.split(/\r?\n/)) {
     const line = raw.trim();
     if (line && pattern.test(line) && SYSTEM_EVIDENCE.test(line)) return line;
