@@ -6,6 +6,8 @@ import {
   DOCS_NOTION_LOCATOR,
   DOCS_NOTION_SERVICE,
   isBundledNotionLocator,
+  NOTION_DRIVER_ABSENT,
+  NOTION_DRIVER_ABSENT_REASON,
   serverKindHelp,
 } from '../../../src/docs/components';
 
@@ -20,8 +22,12 @@ const silent = vi.fn(async (): Promise<Response> => {
 describe('which documentation sources need a day0 component', (): void => {
   it('needs none for the three kinds the backend reads itself', (): void => {
     expect(componentFor({ kind: 'folder', locator: '.' })).toBeUndefined();
-    expect(componentFor({ kind: 'git', locator: 'https://github.com/day0/handbook.git' })).toBeUndefined();
-    expect(componentFor({ kind: 'urls', locator: 'https://handbook.day0.local/onboarding' })).toBeUndefined();
+    expect(
+      componentFor({ kind: 'git', locator: 'https://github.com/day0/handbook.git' }),
+    ).toBeUndefined();
+    expect(
+      componentFor({ kind: 'urls', locator: 'https://handbook.day0.local/onboarding' }),
+    ).toBeUndefined();
   });
 
   it('needs the Notion component for a Notion source pointed at day0', (): void => {
@@ -46,7 +52,11 @@ describe('which documentation sources need a day0 component', (): void => {
     }
     // Not even for Notion, when the address is somebody else's copy of it.
     expect(
-      componentFor({ kind: 'mcp', serverKind: 'notion', locator: 'https://notion.internal.example/mcp' }),
+      componentFor({
+        kind: 'mcp',
+        serverKind: 'notion',
+        locator: 'https://notion.internal.example/mcp',
+      }),
     ).toBeUndefined();
     expect(isBundledNotionLocator('not a url')).toBe(false);
   });
@@ -59,7 +69,9 @@ describe('linking a source that needs a component', (): void => {
         { kind: 'mcp', serverKind: 'notion', locator: DOCS_NOTION_LOCATOR },
         silent,
       ),
-    ).rejects.toThrow(DOCS_NOTION_ABSENT);
+    ).rejects.toThrow(NOTION_DRIVER_ABSENT_REASON);
+    expect(NOTION_DRIVER_ABSENT_REASON).toContain(NOTION_DRIVER_ABSENT);
+    expect(NOTION_DRIVER_ABSENT_REASON).toContain(DOCS_NOTION_ABSENT);
     expect(DOCS_NOTION_ABSENT).toContain('--profile docs-notion');
   });
 

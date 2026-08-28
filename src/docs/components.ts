@@ -44,6 +44,12 @@ export const DOCS_NOTION_LOCATOR = `http://${DOCS_NOTION_SERVICE}:3000/mcp`;
 export const DOCS_NOTION_ABSENT =
   'the Notion documentation component is not running - add `--profile docs-notion`';
 
+/** Stable code used by link, sync and setup diagnostics for this absence. */
+export const NOTION_DRIVER_ABSENT = 'NOTION_DRIVER_ABSENT';
+
+/** The recordable refusal shared by every Notion component transport path. */
+export const NOTION_DRIVER_ABSENT_REASON = `${NOTION_DRIVER_ABSENT}: ${DOCS_NOTION_ABSENT}`;
+
 /**
  * Decide whether a locator addresses day0's own Notion component.
  *
@@ -108,10 +114,9 @@ export async function assertDocsComponentReachable(
   try {
     await reach(new URL(source.locator), { signal: AbortSignal.timeout(REACH_TIMEOUT_MS) });
   } catch {
-    throw new Error(DOCS_NOTION_ABSENT);
+    throw new Error(NOTION_DRIVER_ABSENT_REASON);
   }
 }
-
 
 /**
  * Say, in the link form, which server an MCP source kind actually reaches.
