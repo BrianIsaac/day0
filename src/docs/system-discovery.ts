@@ -43,12 +43,14 @@ const SYSTEM_DIRECTORY = /(?:^|\/)systems\/[^/]+(?:\.md)?$/i;
 /** Vocabulary that needs explicit system identity evidence rather than a name-only decision. */
 const DOCUMENT_ARTEFACT =
   /\b(?:how[\s-]*to|onboarding|queues?|documentation|docs|handbooks?|runbooks?|playbooks?|pages?|files?|folders?|wikis?)\b/i;
+const DOCUMENTATION_SOURCE_REFERENCE =
+  /\b(?:this\s+(?:handbook|wiki|documentation|docs?|page)|(?:linked|mounted)\s+(?:(?:notion|confluence|drive)\s+)?(?:workspace|folder|directory|documentation|docs?)|(?:documentation|docs?)\s+(?:sources?|locations?)|runbooks?\s+folder|queue\s+page)\b/i;
 const SYSTEM_HEADER = /^(?:system|product|service|tool)$/i;
 const TABLE_SEPARATOR = /^:?-{3,}:?$/;
 const SYSTEM_EVIDENCE =
   /\b(?:system|service|platform|workspace|source of record|api|mcp|integration|browser|web ui|dashboard|credential|login|access owner|automation)\b/i;
 const SYSTEM_IDENTITY_EVIDENCE =
-  /\b(?:system|service|platform|source of record|api|mcp|integration|browser|web ui|dashboard|automation)\b/i;
+  /\b(?:systems?(?!\s+(?:pages?|files?|folders?|docs?|documentation|handbooks?|runbooks?|playbooks?|wikis?|notes?))|service|platform|source of record|api|mcp|integration|browser|web ui|dashboard|automation)\b/i;
 
 function plain(value: string): string {
   return value
@@ -61,8 +63,33 @@ function firstHeading(page: DiscoveryPage): string | undefined {
   return /^#\s+(.+)$/m.exec(page.markdown)?.[1]?.trim();
 }
 
+function documentationArtefactReason(name: string, evidence: string): string | undefined {
+  if (!DOCUMENT_ARTEFACT.test(name)) return undefined;
+  if (
+    DOCUMENTATION_SOURCE_REFERENCE.test(evidence) &&
+    !SYSTEM_IDENTITY_EVIDENCE.test(`${name}\n${evidence}`)
+  ) {
+    return 'candidate describes the linked documentation sources';
+  }
+  if (!SYSTEM_IDENTITY_EVIDENCE.test(`${name}\n${evidence}`)) {
+    return 'artefact name lacks explicit system identity evidence';
+  }
+  return undefined;
+}
+
 function isDocumentationArtefact(name: string, evidence: string): boolean {
-  return DOCUMENT_ARTEFACT.test(name) && !SYSTEM_IDENTITY_EVIDENCE.test(`${name}\n${evidence}`);
+  return documentationArtefactReason(name, evidence) !== undefined;
+}
+
+function rejectDocumentationCandidate(
+  page: DiscoveryPage,
+  name: string,
+  evidence: string,
+): boolean {
+  const reason = documentationArtefactReason(name, evidence);
+  if (!reason) return false;
+  console.info('[documentation-discovery] candidate rejected', { name, reason, ref: page.ref });
+  return true;
 }
 
 function classFor(name: string, evidence: string): (typeof SYSTEM_CLASSES)[number] {
@@ -91,7 +118,7 @@ function tableCandidates(page: DiscoveryPage): DiscoveredSystemCandidate[] {
       const row = raw.trim();
       if (!row.startsWith('|') || !row.endsWith('|')) break;
       const name = plain(row.slice(1, -1).split('|')[0] ?? '');
-      if (!name || isDocumentationArtefact(name, row)) continue;
+      if (!name || rejectDocumentationCandidate(page, name, row)) continue;
       candidates.push({
         name,
         class: classFor(name, row),
@@ -113,7 +140,9 @@ export function structuralSystemCandidates(
     candidates.push(...tableCandidates(page));
     if (!SYSTEM_DIRECTORY.test(page.ref)) continue;
     const name = plain(firstHeading(page) ?? page.title);
-    if (!name || isDocumentationArtefact(name, groundedQuote(page, name) ?? '')) continue;
+    if (!name || rejectDocumentationCandidate(page, name, groundedQuote(page, name) ?? '')) {
+      continue;
+    }
     candidates.push({
       name,
       class: classFor(name, page.markdown),
@@ -178,7 +207,7 @@ export function validateModelCandidates(
       continue;
     }
     const quote = groundedQuote(page, name);
-    if (!quote || isDocumentationArtefact(name, quote)) continue;
+    if (!quote || rejectDocumentationCandidate(page, name, quote)) continue;
     candidates.push({ name, class: raw.class, ref: page.ref, quote, url: page.url });
   }
   return mergeCandidates(candidates);
