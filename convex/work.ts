@@ -998,6 +998,51 @@ export const claimForExecution = internalMutation({
   },
 });
 
+/** Atomically claim one discovered comparison task for the ordinary-agent arm. */
+export const claimForBaseline = internalMutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    { claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }
+  > => {
+    const item = await ctx.db.get(args.workItemId);
+    if (!item) throw new Error('workItem not found');
+    const agent = await ctx.db.get(item.agentId);
+    if (!agent) throw new Error('agent not found');
+    if (agent.arm !== 'baseline') {
+      return { claimed: false, reason: 'work item does not belong to the baseline arm' };
+    }
+    if (item.state !== 'discovered') {
+      return {
+        claimed: false,
+        reason:
+          item.state === 'executing'
+            ? 'another baseline execution already claimed this work item'
+            : `workItem state is ${item.state}; expected discovered`,
+      };
+    }
+    const runId = await ctx.db.insert('events', {
+      agentId: item.agentId,
+      type: 'work.execution-claimed',
+      payload: { workItemId: args.workItemId, arm: 'baseline' },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(args.workItemId, {
+      state: 'executing',
+      executionRunId: runId,
+      pendingRunId: undefined,
+      approvedIndexes: undefined,
+      actionVerdicts: undefined,
+      applyPhase: undefined,
+      applyAttemptId: undefined,
+      applyClaimedAt: undefined,
+    });
+    return { claimed: true, runId };
+  },
+});
+
 /** Persist the prerequisite ledger before spending the run's one dependent model turn. */
 export const prepareDependentPhase = internalMutation({
   args: {

@@ -9,6 +9,7 @@
  */
 
 import type * as agents from "../agents.js";
+import type * as baselineActions from "../baselineActions.js";
 import type * as charters from "../charters.js";
 import type * as config from "../config.js";
 import type * as coworker from "../coworker.js";
@@ -50,6 +51,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
+  baselineActions: typeof baselineActions;
   charters: typeof charters;
   config: typeof config;
   coworker: typeof coworker;
