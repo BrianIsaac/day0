@@ -128,6 +128,34 @@ describe('executor output contract', (): void => {
     expect(text).toContain('visible figure 74%');
     expect(text).toContain('Last updated by revops');
   });
+
+  it('redacts a credential shape that reached the ledger before it reaches the closing turn', (): void => {
+    const text = appliedLedgerPrompt(
+      [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'slack',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: '{"Authorization":"Bearer xoxb-1234567890-abcdefghijklmnop"}',
+            body: '{"channel":"D0MANAGER","text":"hi"}',
+          },
+        },
+      ],
+      [
+        {
+          tool: 'http.request',
+          ok: false,
+          reason: 'HTTP 401 · invalid_auth for token xoxb-1234567890-abcdefghijklmnop',
+          idempotencyKey: 'work:run:0',
+        },
+      ],
+    );
+    expect(text).not.toContain('xoxb-');
+    expect(text).toContain('<redacted>');
+    expect(text).toContain('failed');
+  });
 });
 
 describe('surface guidance in the executor prompt', (): void => {
@@ -162,6 +190,13 @@ describe('executor preamble by mode', (): void => {
     }
     expect(text).toContain('`slack.postMessage` to `dm-manager`');
     expect(text).not.toContain('refused');
+  });
+
+  it('never asks the mock executor to hold actions back for a phase the mock path does not run', (): void => {
+    const mock = executorPreamble('mock');
+    expect(mock).not.toContain('set `needsDependentPhase` to true');
+    expect(mock).toContain('set `needsDependentPhase` to false');
+    expect(executorPreamble('real', false)).toContain('set `needsDependentPhase` to true');
   });
 
   it('refuses the mock verbs and teaches the surface rules in real mode', (): void => {

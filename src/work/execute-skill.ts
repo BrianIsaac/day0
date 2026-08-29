@@ -14,6 +14,7 @@ import {
   type WorkCandidate,
 } from './types';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
+import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction } from './plan';
 
@@ -426,7 +427,14 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   };
 }
 
-/** Render only redacted, durable action outcomes for the dependent authoring turn. */
+/**
+ * Render only redacted, durable action outcomes for the dependent authoring turn.
+ *
+ * The adapters redact what they store, and the model wrote the action
+ * arguments itself; the pass here is defence in depth for a provider line or
+ * an argument that still carries a recognisable credential shape, so that
+ * nothing of that shape is echoed into a second model prompt.
+ */
 export function appliedLedgerPrompt(
   actions: readonly MockAction[],
   applied: readonly AppliedAction[],
@@ -440,7 +448,7 @@ export function appliedLedgerPrompt(
       const target = action
         ? JSON.stringify({ tool: action.tool, args: action.args })
         : JSON.stringify({ tool: entry.tool });
-      return `${index}. ${result} · ${target} · ${detail}`;
+      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}`);
     })
     .join('\n');
 }
