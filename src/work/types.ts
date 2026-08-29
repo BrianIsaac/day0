@@ -125,6 +125,32 @@ export interface ExecutionOutput {
   draft: string;
   notes: string;
   actions: MockAction[];
+  /**
+   * The emitted actions are prerequisites only; their actual ledger must be
+   * available before the run authors its final, result-dependent actions.
+   * Optional for rows and test fixtures written before dependent phases.
+   */
+  needsDependentPhase?: boolean;
+}
+
+/** The fixed upper bound on the one result-dependent phase of a run. */
+export const DEPENDENT_ACTION_CAP = 4;
+
+/** How one approved plan step is accounted for after real action results exist. */
+export interface PlanStepOutcome {
+  /** One-based position in the approved plan. */
+  step: number;
+  status: 'satisfied' | 'blocked';
+  /** A ledger effect, provider failure or explicit reason the step could not run. */
+  evidence: string;
+}
+
+/** Output authored once, after the initial action ledger has settled. */
+export interface DependentExecutionOutput {
+  draft: string;
+  notes: string;
+  actions: MockAction[];
+  planStepOutcomes: PlanStepOutcome[];
 }
 
 export interface MockSurfaceSnapshot {

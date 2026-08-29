@@ -77,6 +77,11 @@ export interface ApplyOptions {
    */
   priorLedger?: ReadonlyArray<AppliedAction | undefined>;
   /**
+   * Number of actions already emitted by an earlier run phase. It shifts only
+   * the durable action identity; policy ordering remains local to this phase.
+   */
+  idempotencyIndexOffset?: number;
+  /**
    * Whether this is the auto phase, applying what the gate decided at hold
    * time with no manager in the loop. A row that is not automatic now (a
    * write while the toggle is off) is refused even if it was listed, so a
@@ -248,10 +253,11 @@ export async function applySurfaceActions(
   const parsedByIndex: Array<ParsedSurfaceAction | undefined> = [];
   try {
     for (const [index, action] of actions.entries()) {
+      const durableIndex = index + (options.idempotencyIndexOffset ?? 0);
       const idempotencyKey = actionIdempotencyKey({
         workItemId: run.workItemId,
         runId: run.runId,
-        actionIndex: index,
+        actionIndex: durableIndex,
       });
       const prior = options.priorLedger?.[index];
       if (prior) {
@@ -285,7 +291,9 @@ export async function applySurfaceActions(
         continue;
       }
       if (!isSurfaceTool(action.tool)) {
-        applied.push(await adapter.apply(ctx, run as AdapterRun, action, index, idempotencyKey));
+        applied.push(
+          await adapter.apply(ctx, run as AdapterRun, action, durableIndex, idempotencyKey),
+        );
         continue;
       }
       const parsed = parseSurfaceAction(action);
@@ -370,7 +378,7 @@ export async function applySurfaceActions(
         ctx,
         { ...run, agentName: run.agentName ?? 'Day0' },
         serialiseSurfaceAction(provenance.action),
-        index,
+        durableIndex,
         idempotencyKey,
       );
       applied.push(authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome);
