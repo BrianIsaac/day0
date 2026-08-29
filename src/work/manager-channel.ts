@@ -101,7 +101,14 @@ function oneLine(value: unknown, fallback: string): string {
   return line || fallback;
 }
 
-/** Plain decision request sent when a supervised run parks. */
+/**
+ * Plain decision request sent when a supervised run parks.
+ *
+ * A run with a result-dependent phase asks twice: once for the prerequisite
+ * writes and once for the closing set authored from their results. The
+ * second request says so, or a manager who already approved once reads it
+ * as the same ask repeated.
+ */
 export function decisionRequestText(args: {
   agentName: string;
   title: string;
@@ -111,6 +118,8 @@ export function decisionRequestText(args: {
   actions?: MockAction[];
   heldIndexes?: number[];
   surfaces?: SurfaceRecord[];
+  /** The held actions are the run's closing phase, not its first set. */
+  closingPhase?: boolean;
 }): string {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   let detail: string;
@@ -124,7 +133,10 @@ export function decisionRequestText(args: {
       (index, position) =>
         `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [])}`,
     );
-    detail = `Held actions:\n${lines.join('\n') || '1. Review the held actions in day0.'}`;
+    const heading = args.closingPhase
+      ? 'Closing actions, written from the results of the actions already applied in this run:'
+      : 'Held actions:';
+    detail = `${heading}\n${lines.join('\n') || '1. Review the held actions in day0.'}`;
   }
   return [
     heading,

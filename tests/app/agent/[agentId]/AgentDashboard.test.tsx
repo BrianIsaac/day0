@@ -9,7 +9,9 @@ vi.mock('convex/react', () => ({
 
 import {
   ActionPayload,
+  DraftDetails,
   PlanExecutionLedger,
+  phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 
 describe('held action payload', (): void => {
@@ -56,5 +58,38 @@ describe('plan execution ledger', (): void => {
     expect(markup).toContain('Plan execution ledger');
     expect(markup).toContain('Step 1 · blocked');
     expect(markup).toContain('No Linear list or get action exists');
+  });
+});
+
+describe('a run with two phases', (): void => {
+  const twoPhase = {
+    draft: 'Verified the tile and closed REVOPS-7.',
+    notes: '',
+    actions: [{ tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{}' } }],
+    applied: [{ tool: 'mcp.call', ok: true, effect: 'save_issue on linear · Done' }],
+    initial: {
+      applied: [{ tool: 'mcp.call', ok: true, effect: 'browser_snapshot on looker · 74%' }],
+    },
+    planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: '74%' }],
+  };
+
+  it('labels every ledger row with the phase that applied it, and none when there was one phase', (): void => {
+    expect(phasedLedger(twoPhase).map((row) => [row.phase, row.effect])).toEqual([
+      ['prerequisite', 'browser_snapshot on looker · 74%'],
+      ['closing', 'save_issue on linear · Done'],
+    ]);
+    expect(
+      phasedLedger({ draft: 'd', notes: '', applied: twoPhase.applied }).map((row) => row.phase),
+    ).toEqual([undefined]);
+  });
+
+  it('says the closing draft was written after the prerequisite ledger, not before anything applied', (): void => {
+    const closing = renderToStaticMarkup(<DraftDetails output={twoPhase} />);
+    expect(closing).toContain('written after the prerequisite actions were applied');
+    expect(closing).not.toContain('written before anything was applied');
+    const single = renderToStaticMarkup(
+      <DraftDetails output={{ draft: 'd', notes: '', applied: twoPhase.applied }} />,
+    );
+    expect(single).toContain('written before anything was applied');
   });
 });

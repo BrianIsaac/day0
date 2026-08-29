@@ -43,7 +43,7 @@ describe('documentation system identity convergence', (): void => {
     });
   });
 
-  it('merges same-class candidates on a documented endpoint or host', (): void => {
+  it('merges same-class candidates on an exact documented endpoint', (): void => {
     expect(
       convergeDiscoveryCandidates([
         candidate(
@@ -56,10 +56,58 @@ describe('documentation system identity convergence', (): void => {
           'Operations connector',
           'kanban',
           'runbooks/incidents.md',
-          'Operations connector endpoint: https://ops.example.test/v2',
+          'Operations connector endpoint: https://ops.example.test/v1/incidents/',
         ),
       ]),
     ).toHaveLength(1);
+  });
+
+  it('merges a product and its qualified name on one documented host', (): void => {
+    const systems = convergeDiscoveryCandidates([
+      candidate('Slack', 'chat', 'onboarding.md', 'Slack workspace: https://slack.com/'),
+      candidate(
+        'Slack workspace',
+        'chat',
+        'runbooks/slack.md',
+        'Slack workspace API: https://slack.com/api',
+      ),
+    ]);
+    expect(systems.map((system) => system.name)).toEqual(['Slack']);
+    expect(systems[0]?.mergedNames).toEqual(['Slack workspace']);
+  });
+
+  it('keeps differently named same-class systems on a shared host distinct', (): void => {
+    expect(
+      convergeDiscoveryCandidates([
+        candidate('Linear', 'kanban', 'linear.md', 'Linear endpoint: https://api.example.com/linear'),
+        candidate('Jira', 'kanban', 'jira.md', 'Jira endpoint: https://api.example.com/jira'),
+      ]).map((system) => system.name),
+    ).toEqual(['Linear', 'Jira']);
+    expect(
+      convergeDiscoveryCandidates([
+        candidate('Ops portal', 'other', 'ops.md', 'Ops portal: https://tools.example.test/ops'),
+        candidate('Payroll', 'other', 'payroll.md', 'Payroll: https://tools.example.test/payroll'),
+      ]).map((system) => system.name),
+    ).toEqual(['Ops portal', 'Payroll']);
+  });
+
+  it('keeps the documented system name over a shorter alias found later', (): void => {
+    const systems = convergeDiscoveryCandidates([
+      candidate(
+        'Looker pipeline tile',
+        'analytics',
+        'systems/looker-pipeline-tile.md',
+        '# Looker pipeline tile',
+      ),
+      candidate(
+        'Looker',
+        'analytics',
+        'runbooks/how-to-refresh-the-tile.md',
+        'Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`).',
+      ),
+    ]);
+    expect(systems.map((system) => system.name)).toEqual(['Looker pipeline tile']);
+    expect(systems[0]?.mergedNames).toEqual(['Looker']);
   });
 
   it.each([

@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import {
   browserTransportRefusal,
   completionFailure,
+  dependentTransitionRefusal,
   prerequisiteOutput,
   validatePlanStepOutcomes,
 } from '../../convex/workActions';
@@ -477,9 +478,72 @@ describe('work action completion evidence', (): void => {
         outcomes: [{ step: 1, status: 'satisfied', evidence: 'Assumed from docs.' }],
         initialActions: [],
         initialLedger: [],
-        surfaceSlugs: ['linear', 'slack'],
+        surfaces: [
+          { slug: 'linear', displayName: 'Linear' },
+          { slug: 'slack', displayName: 'Slack' },
+        ],
       }),
-    ).toThrow('promised a linear read');
+    ).toThrow('promised a Linear read');
+  });
+
+  it('recognises a promised read by the surface display name, not only its slug', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: {
+          summary: 'Read the tile back.',
+          steps: ['Capture the Looker pipeline tile read-back evidence'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: '',
+          estimatedMinutes: 1,
+        },
+        outcomes: [{ step: 1, status: 'satisfied', evidence: 'The tile shows 74%.' }],
+        initialActions: [],
+        initialLedger: [],
+        surfaces: [{ slug: 'looker', displayName: 'Looker pipeline tile' }],
+      }),
+    ).toThrow('promised a Looker pipeline tile read');
+  });
+
+  it('lets a closing phase withhold the transition it accounted for as blocked', (): void => {
+    const plan = {
+      summary: 'Read then close.',
+      steps: ['Capture the read-back', 'Comment and close REVOPS-7'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const comment = skillOutput.actions[0];
+    const done = skillOutput.actions[1];
+    const satisfied = [
+      { step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' },
+      { step: 2, status: 'satisfied' as const, evidence: 'comment and Done' },
+    ];
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment, done], planStepOutcomes: satisfied }),
+    ).toBeUndefined();
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment], planStepOutcomes: satisfied }),
+    ).toContain('omitted the approved ticket state transition');
+    expect(
+      dependentTransitionRefusal({
+        plan,
+        actions: [comment],
+        planStepOutcomes: [
+          satisfied[0],
+          { step: 2, status: 'blocked', evidence: 'The Save step was not approved.' },
+        ],
+      }),
+    ).toBeUndefined();
+    expect(
+      dependentTransitionRefusal({
+        plan,
+        actions: [comment, done],
+        planStepOutcomes: satisfied,
+        initialFailure: 'browser_snapshot timed out',
+      }),
+    ).toContain('cannot change ticket state after a prerequisite failure');
   });
 });
 
@@ -784,6 +848,130 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
   });
 
+  it('applies a truthful closing comment and withholds Done when the manager left a prerequisite out', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    recorded.skillOutput = {
+      draft: 'Saving the figure, then reading the tile back.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'looker',
+            tool: 'browser_click',
+            toolArgsJson: JSON.stringify({ element: 'Save' }),
+          },
+        },
+        {
+          tool: 'mcp.call',
+          args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+        },
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'The Save step was not approved, so the tile is unchanged and REVOPS-7 stays open.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({
+              issueId: 'iss-1',
+              body: 'The Save step was not approved; the tile is unchanged and this issue stays open.',
+            }),
+          },
+        },
+      ],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', evidence: 'browser_click Save was held and not approved.' },
+        { step: 2, status: 'blocked', evidence: 'No refreshed figure exists to close on.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'looker:read',
+      'looker:write',
+    ]);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        externalId: 'REVOPS-7',
+        plan: {
+          summary: 'Save the figure, read it back, then close the ticket.',
+          steps: ['Save the figure and capture the read-back', 'Comment and close REVOPS-7'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'Re-run with an approved replacement figure.',
+          estimatedMinutes: 45,
+        },
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_click', 'browser_snapshot'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+    const runId = parked.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    // The manager approves nothing: the Save click stays held.
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).output).toMatchObject({
+      phase: 'dependent-authoring',
+    });
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    // With the switch off the closing comment is itself held; the manager sends it.
+    const closing = await readItem(harness, workItemId);
+    expect(closing.state).toBe('actions-pending');
+    expect((closing.output as ExecutionOutput).actions?.map((action) => action.args.tool)).toEqual([
+      'save_comment',
+    ]);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain('2 approved plan step(s) remained blocked');
+    expect(failed.skipReason).toContain('browser_click Save was held and not approved.');
+    // The snapshot shares the browser session with the held Save, so neither
+    // reached the provider; only the truthful closing comment did.
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+    expect(ledger(failed).map((entry) => [entry.tool, entry.ok, entry.held ?? false])).toEqual([
+      ['mcp.call', true, true],
+      ['mcp.call', true, true],
+      ['mcp.call', true, false],
+    ]);
+  });
+
   it('reports a failed snapshot truthfully and never emits the Done transition', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
@@ -950,18 +1138,74 @@ describe('executing an approved plan through the gate', (): void => {
     const runId = prepared.executionRunId;
     if (!runId) throw new Error('execution run missing');
     expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    expect((prepared.output as { initialFailure?: string }).initialFailure).toBeUndefined();
     await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
 
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
     expect(failed.skipReason).toBe(
-      'approved plan needs result evidence, but the skill emitted no prerequisite read action',
+      '3 approved plan step(s) remained blocked: step 1 (No Linear list or get action exists in the ledger.); step 2 (No Linear read exists in the ledger.); step 3 (The evidence prerequisite was not met.)',
     );
     expect(recorded.mcp.filter((call) => call.server === 'linear')).toHaveLength(0);
     expect(recorded.http).toHaveLength(0);
     expect((failed.output as { planStepOutcomes?: PlanStepOutcome[] }).planStepOutcomes).toEqual(
       recorded.dependentOutput.planStepOutcomes,
     );
+  });
+
+  it('completes a ticket update whose plan says read but whose evidence is the ticket itself', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Adding the audit note.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: skillOutput.actions.slice(0, 3),
+    };
+    recorded.dependentOutput = {
+      draft: 'Audit note added and the issue closed.',
+      notes: '',
+      actions: skillOutput.actions.slice(0, 3),
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The candidate body carries the ticket.' },
+        { step: 2, status: 'satisfied', evidence: 'save_comment and save_issue emitted.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, { autonomousActions: true });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Read the ticket, then add the audit note and close it.',
+          steps: ['Read the ticket and the runbook', 'Add the audit note and close the ticket'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    expect(prepared.state).toBe('executing');
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    expect((prepared.output as { initialFailure?: string }).initialFailure).toBeUndefined();
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const done = await readItem(harness, workItemId);
+    expect(done.state).toBe('completed');
+    expect(recorded.mcp.filter((call) => call.server === 'linear').map((call) => call.tool)).toEqual([
+      'save_comment',
+      'save_issue',
+    ]);
+    expect(ledger(done).map((entry) => entry.idempotencyKey)).toEqual([
+      `${workItemId}:${runId}:0`,
+      `${workItemId}:${runId}:1`,
+      `${workItemId}:${runId}:2`,
+    ]);
   });
 
   it('continues a channel-approved real plan without a browser identity', async (): Promise<void> => {
