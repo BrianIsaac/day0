@@ -51,6 +51,9 @@ const SYSTEM_EVIDENCE =
   /\b(?:system|service|platform|workspace|source of record|api|mcp|integration|browser|web ui|dashboard|credential|login|access owner|automation)\b/i;
 const SYSTEM_IDENTITY_EVIDENCE =
   /\b(?:systems?(?!\s+(?:pages?|files?|folders?|docs?|documentation|handbooks?|runbooks?|playbooks?|wikis?|notes?))|service|platform|source of record|api|mcp|integration|browser|web ui|dashboard|automation)\b/i;
+/** Nouns that say where documentation lives rather than what a system does. */
+const DOCUMENTATION_NOUN =
+  /\b(?:wikis?|handbooks?|runbooks?|playbooks?|documentation|docs|knowledge base)\b/i;
 
 function plain(value: string): string {
   return value
@@ -63,6 +66,22 @@ function firstHeading(page: DiscoveryPage): string | undefined {
   return /^#\s+(.+)$/m.exec(page.markdown)?.[1]?.trim();
 }
 
+/** A product class the vocabulary alone establishes, or undefined when it does not. */
+function recognisedClass(
+  name: string,
+  evidence: string,
+): Exclude<(typeof SYSTEM_CLASSES)[number], 'docs' | 'other'> | undefined {
+  const text = `${name}\n${evidence}`.toLowerCase();
+  if (/\b(?:crm|customer relationship|opportunit(?:y|ies))\b/.test(text)) return 'crm';
+  if (/\b(?:analytics|dashboard|looker|tableau|reporting|tile)\b/.test(text)) return 'analytics';
+  if (/\b(?:slack|chat|messaging|teams workspace)\b/.test(text)) return 'chat';
+  if (/\b(?:linear|jira|kanban|ticket|issue tracker|work queue)\b/.test(text)) return 'kanban';
+  if (/\b(?:spreadsheet|sheet|workbook)\b/.test(text)) return 'spreadsheet';
+  if (/\b(?:social|twitter|mastodon)\b/.test(text)) return 'social';
+  return undefined;
+}
+
+/** Why a name that carries artefact vocabulary is not, on this evidence, a system. */
 function documentationArtefactReason(name: string, evidence: string): string | undefined {
   if (!DOCUMENT_ARTEFACT.test(name)) return undefined;
   if (
@@ -77,8 +96,39 @@ function documentationArtefactReason(name: string, evidence: string): string | u
   return undefined;
 }
 
-function isDocumentationArtefact(name: string, evidence: string): boolean {
-  return documentationArtefactReason(name, evidence) !== undefined;
+/**
+ * Why one row or grounding line describes documentation rather than a system.
+ *
+ * The name alone is not the test: the documentation row of a systems table
+ * may be returned under the platform it lives in ("Notion"), and a wiki row
+ * may carry a vendor name ("Confluence"). A line whose evidence is about
+ * documentation, with no system identity and no recognised product class,
+ * is documentation whatever it is called. A platform the line calls a
+ * system of record, an API or an integration keeps its candidacy.
+ *
+ * Args:
+ *   name: Candidate name as the page or the model gave it.
+ *   evidence: The one row or line the candidate is grounded in.
+ *
+ * Returns:
+ *   The logged reason, or undefined when the evidence admits a system.
+ */
+function documentationReason(name: string, evidence: string): string | undefined {
+  const artefact = documentationArtefactReason(name, evidence);
+  if (artefact) return artefact;
+  if (
+    SYSTEM_IDENTITY_EVIDENCE.test(`${name}\n${evidence}`) ||
+    recognisedClass(name, evidence) !== undefined
+  ) {
+    return undefined;
+  }
+  if (DOCUMENTATION_SOURCE_REFERENCE.test(evidence)) {
+    return 'candidate describes the linked documentation sources';
+  }
+  if (DOCUMENTATION_NOUN.test(evidence)) {
+    return 'candidate describes documentation rather than a system';
+  }
+  return undefined;
 }
 
 function rejectDocumentationCandidate(
@@ -86,21 +136,16 @@ function rejectDocumentationCandidate(
   name: string,
   evidence: string,
 ): boolean {
-  const reason = documentationArtefactReason(name, evidence);
+  const reason = documentationReason(name, evidence);
   if (!reason) return false;
   console.info('[documentation-discovery] candidate rejected', { name, reason, ref: page.ref });
   return true;
 }
 
 function classFor(name: string, evidence: string): (typeof SYSTEM_CLASSES)[number] {
-  const text = `${name}\n${evidence}`.toLowerCase();
-  if (/\b(?:crm|customer relationship|opportunit(?:y|ies))\b/.test(text)) return 'crm';
-  if (/\b(?:analytics|dashboard|looker|tableau|reporting|tile)\b/.test(text)) return 'analytics';
-  if (/\b(?:slack|chat|messaging|teams workspace)\b/.test(text)) return 'chat';
-  if (/\b(?:linear|jira|kanban|ticket|issue tracker|work queue)\b/.test(text)) return 'kanban';
-  if (/\b(?:spreadsheet|sheet|workbook)\b/.test(text)) return 'spreadsheet';
-  if (/\b(?:social|twitter|mastodon)\b/.test(text)) return 'social';
-  if (isDocumentationArtefact(name, evidence)) return 'docs';
+  const recognised = recognisedClass(name, evidence);
+  if (recognised) return recognised;
+  if (documentationArtefactReason(name, evidence) !== undefined) return 'docs';
   return 'other';
 }
 

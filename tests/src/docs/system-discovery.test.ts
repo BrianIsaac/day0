@@ -66,6 +66,64 @@ describe('documentation system discovery', (): void => {
     info.mockRestore();
   });
 
+  it('refuses the documentation row under its platform name and a wiki row, and keeps a platform used as a system', (): void => {
+    const info = vi.spyOn(console, 'info').mockImplementation((): void => undefined);
+    const onboarding: DiscoveryPage = {
+      ref: 'onboarding.md',
+      title: 'Revenue operations onboarding',
+      markdown: readFileSync(resolve('tests', 'fixtures', 'notion-pages', 'onboarding.md'), 'utf8'),
+    };
+    // The model may name the documentation row after the platform it lives in.
+    expect(
+      validateModelCandidates([onboarding], {
+        systems: [{ name: 'Notion', class: 'other', pageRef: 'onboarding.md' }],
+      }),
+    ).toEqual([]);
+    expect(info).toHaveBeenCalledWith('[documentation-discovery] candidate rejected', {
+      name: 'Notion',
+      reason: 'candidate describes the linked documentation sources',
+      ref: 'onboarding.md',
+    });
+
+    const tools: DiscoveryPage = {
+      ref: 'tools.md',
+      title: 'Tools',
+      markdown: [
+        '| System | What it is for | Access owner |',
+        '|---|---|---|',
+        '| Confluence | Team wiki holding the runbooks and how-to pages. | Ops lead |',
+        '| Notion | Tracker database used during close; the API token is in 1Password. | RevOps |',
+        '| Slack | The channel list is kept in this handbook. | Messaging administrator |',
+      ].join('\n'),
+    };
+    expect(structuralSystemCandidates([tools]).map(({ name }): string => name)).toEqual([
+      'Notion',
+      'Slack',
+    ]);
+    expect(info).toHaveBeenCalledWith('[documentation-discovery] candidate rejected', {
+      name: 'Confluence',
+      reason: 'candidate describes documentation rather than a system',
+      ref: 'tools.md',
+    });
+
+    const runbook: DiscoveryPage = {
+      ref: 'runbooks/tracker.md',
+      title: 'How to update the tracker',
+      markdown: [
+        '# How to update the tracker',
+        '',
+        'Notion is the source of record for the close tracker; the integration token is in 1Password.',
+      ].join('\n'),
+    };
+    expect(
+      validateModelCandidates([runbook], {
+        systems: [{ name: 'Notion', class: 'other', pageRef: 'runbooks/tracker.md' }],
+      }),
+    ).toEqual([expect.objectContaining({ name: 'Notion', ref: 'runbooks/tracker.md' })]);
+
+    info.mockRestore();
+  });
+
   it('rejects invented names, wrong pages, documentation locations and shortened system pages', (): void => {
     const pages = [
       actualSystemPage('looker-pipeline-tile'),
