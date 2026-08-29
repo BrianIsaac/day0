@@ -556,8 +556,7 @@ describe('executing an approved plan through the gate', (): void => {
         },
       ],
     };
-    const auditLine =
-      'visible figure 74% · Last updated by revops at 2026-08-29 17:24:02 UTC';
+    const auditLine = 'visible figure 74% · Last updated by revops at 2026-08-29 17:24:02 UTC';
     recorded.dependentOutput = {
       draft: `The tile was read back as ${auditLine} and REVOPS-7 is ready to close.`,
       notes: '',
@@ -585,7 +584,11 @@ describe('executing an approved plan through the gate', (): void => {
       planStepOutcomes: [
         { step: 1, status: 'satisfied', evidence: 'The browser Save action landed.' },
         { step: 2, status: 'satisfied', evidence: auditLine },
-        { step: 3, status: 'satisfied', evidence: 'The dependent comment and Done action close the ticket.' },
+        {
+          step: 3,
+          status: 'satisfied',
+          evidence: 'The dependent comment and Done action close the ticket.',
+        },
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -602,7 +605,11 @@ describe('executing an approved plan through the gate', (): void => {
         contentSummary: 'Refresh the approved Friday standup figure to 74% and close the ticket.',
         plan: {
           summary: 'Refresh the tile, read it back, then update the ticket.',
-          steps: ['Refresh the Looker tile', 'Capture the read-back evidence', 'Comment and close REVOPS-7'],
+          steps: [
+            'Refresh the Looker tile',
+            'Capture the read-back evidence',
+            'Comment and close REVOPS-7',
+          ],
           expectedOutputType: 'ticket-update',
           riskNotes: '',
           reversibility: 'Re-run with an approved replacement figure.',
@@ -662,8 +669,7 @@ describe('executing an approved plan through the gate', (): void => {
   it('holds the dependent comment and Done transition together under one supervised decision', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
-    const auditLine =
-      'visible figure 74% · Last updated by revops at 2026-08-29 17:24:02 UTC';
+    const auditLine = 'visible figure 74% · Last updated by revops at 2026-08-29 17:24:02 UTC';
     recorded.skillOutput = {
       draft: 'Reading the refreshed tile back.',
       notes: '',
@@ -702,11 +708,13 @@ describe('executing an approved plan through the gate', (): void => {
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { agentId, workItemId } = await seed(
-      harness,
-      'real',
-      ['boss:message', 'linear:read', 'linear:write', 'looker:read', 'looker:write'],
-    );
+    const { agentId, workItemId } = await seed(harness, 'real', [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'looker:read',
+      'looker:write',
+    ]);
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.patch(workItemId, {
         externalId: 'REVOPS-7',
@@ -778,10 +786,9 @@ describe('executing an approved plan through the gate', (): void => {
     });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect((await readItem(harness, workItemId)).state).toBe('completed');
-    expect(recorded.mcp.filter((call) => call.server === 'linear').map((call) => call.tool)).toEqual([
-      'save_comment',
-      'save_issue',
-    ]);
+    expect(
+      recorded.mcp.filter((call) => call.server === 'linear').map((call) => call.tool),
+    ).toEqual(['save_comment', 'save_issue']);
   });
 
   it('reports a failed snapshot truthfully and never emits the Done transition', async (): Promise<void> => {
@@ -817,7 +824,11 @@ describe('executing an approved plan through the gate', (): void => {
       ],
       planStepOutcomes: [
         { step: 1, status: 'blocked', evidence: 'browser_snapshot failed: snapshot timed out' },
-        { step: 2, status: 'blocked', evidence: 'No read-back evidence exists, so Done is unsafe.' },
+        {
+          step: 2,
+          status: 'blocked',
+          evidence: 'No read-back evidence exists, so Done is unsafe.',
+        },
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -908,17 +919,22 @@ describe('executing an approved plan through the gate', (): void => {
       notes: 'No Slack reply was sent.',
       actions: [],
       planStepOutcomes: [
-        { step: 1, status: 'blocked', evidence: 'No Linear list or get action exists in the ledger.' },
+        {
+          step: 1,
+          status: 'blocked',
+          evidence: 'No Linear list or get action exists in the ledger.',
+        },
         { step: 2, status: 'blocked', evidence: 'No Linear read exists in the ledger.' },
         { step: 3, status: 'blocked', evidence: 'The evidence prerequisite was not met.' },
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(harness, 'real', [
-      'linear:read',
-      'slack:read',
-      'slack:write',
-    ], { autonomousActions: true });
+    const { workItemId } = await seed(
+      harness,
+      'real',
+      ['linear:read', 'slack:read', 'slack:write'],
+      { autonomousActions: true },
+    );
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.patch(workItemId, {
         sourceCategory: 'event-stream',
@@ -1117,13 +1133,11 @@ describe('executing an approved plan through the gate', (): void => {
     // The row is what survives a backend restart: state, run id and actions are
     // persisted, and approval reads only them.
     const { runId } = await park(harness, workItemId);
-    await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.approveActions, {
-        workItemId,
-        pendingRunId: runId,
-        approvedIndexes: [0, 1],
-      });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0, 1],
+    });
     const applied = await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     expect(applied).toEqual({ ok: true });
     const row = await readItem(harness, workItemId);
@@ -1259,13 +1273,11 @@ describe('executing an approved plan through the gate', (): void => {
       { disposition: 'auto' },
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ]);
-    await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.approveActions, {
-        workItemId,
-        pendingRunId: runId,
-        approvedIndexes: [0, 1, 3],
-      });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0, 1, 3],
+    });
     await expect(
       harness.action(internal.workActions.applyApprovedActions, { workItemId }),
     ).resolves.toEqual({ ok: true });
@@ -1315,13 +1327,11 @@ describe('executing an approved plan through the gate', (): void => {
       { disposition: 'held', reason: HELD_PUBLIC_POST },
     ]);
     await expect(
-      harness
-        .withIdentity(OWNER)
-        .mutation(api.work.approveActions, {
-          workItemId,
-          pendingRunId: runId,
-          approvedIndexes: [0, 1, 2, 3],
-        }),
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0, 1, 2, 3],
+      }),
     ).rejects.toThrow('action 1 is refused (no grant (linear:read))');
     await harness
       .withIdentity(OWNER)
@@ -1519,6 +1529,166 @@ async function events(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'eve
   );
 }
 describe('the autonomous-actions switch through the gate', (): void => {
+  it('defers queued work with the revoked read scope named in its verdict', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        state: 'discovered',
+        plan: undefined,
+        title: 'Triage the Linear close summary',
+        contentSummary: 'Triage this Linear close summary revenue operations hand-off.',
+      });
+    });
+    await harness.withIdentity(OWNER).mutation(api.agents.revokeScope, {
+      agentId,
+      scope: 'linear:read',
+      reason: 'containment trial',
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'defer' });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'deferred',
+      verdict: {
+        decision: 'defer',
+        reason: 'awaiting-permission',
+        missingPermissions: ['linear:read'],
+      },
+    });
+  });
+
+  it('refuses manager-approved reads and DMs whose standing grants were revoked', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+    const runId = await harness.run(async (ctx): Promise<Id<'events'>> => {
+      const id = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: { workItemId },
+        createdAt: 2,
+      });
+      await ctx.db.patch(workItemId, {
+        state: 'actions-pending',
+        executionRunId: id,
+        pendingRunId: id,
+        output: {
+          draft: 'Read then report.',
+          notes: '',
+          actions: [
+            {
+              tool: 'mcp.call',
+              args: {
+                surface: 'linear',
+                tool: 'get_issue',
+                toolArgsJson: '{"id":"iss-1"}',
+              },
+            },
+            skillOutput.actions[2],
+          ],
+        },
+        actionVerdicts: [
+          { disposition: 'held', reason: HELD_MUTATION },
+          { disposition: 'held', reason: HELD_MUTATION },
+        ],
+      });
+      return id;
+    });
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.agents.revokeScope, { agentId, scope: 'linear:read' });
+    await owner.mutation(api.agents.revokeScope, { agentId, scope: 'boss:message' });
+    await owner.mutation(api.agents.revokeScope, { agentId, scope: 'slack:write' });
+    await owner.mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0, 1],
+    });
+
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ ok: false });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(ledger(row).map((entry) => entry.reason)).toEqual([
+      'no grant (linear:read)',
+      'no grant (boss:message)',
+    ]);
+    expect(recorded.mcp).toHaveLength(0);
+    expect(recorded.http).toHaveLength(0);
+  });
+
+  it('refuses an in-flight automatic read when its grant is revoked before transport', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'get_issue',
+            toolArgsJson: '{"id":"iss-1"}',
+          },
+        },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', ['linear:read'], {
+      autonomousActions: true,
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    recorded.afterCredentialRead = async (): Promise<void> => {
+      await harness.withIdentity(OWNER).mutation(api.agents.revokeScope, {
+        agentId,
+        scope: 'linear:read',
+        reason: 'mid-flight containment trial',
+      });
+      recorded.afterCredentialRead = undefined;
+    };
+
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('no grant (linear:read)'),
+    });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'no grant (linear:read)' });
+    expect(recorded.mcp).toHaveLength(0);
+  });
+
+  it("keeps the manager's exact write approval valid after the generic write grant is revoked", async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0]] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+    const { runId } = await park(harness, workItemId);
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.agents.revokeScope, {
+      agentId,
+      scope: 'linear:write',
+      reason: 'generic writes off',
+    });
+    await owner.mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+    expect(ledger(await readItem(harness, workItemId))[0]).toMatchObject({
+      ok: true,
+      authority: 'manager',
+    });
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+
   it('off: applies the reads and the DM, parks the comment and the public reply, then sends the reply in its thread once approved', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = ladderOutput;
@@ -1578,13 +1748,11 @@ describe('the autonomous-actions switch through the gate', (): void => {
     const runId = parked.pendingRunId;
     if (!runId) throw new Error('pending run missing');
 
-    await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.approveActions, {
-        workItemId,
-        pendingRunId: runId,
-        approvedIndexes: [2, 4],
-      });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [2, 4],
+    });
     await expect(
       harness.action(internal.workActions.applyApprovedActions, { workItemId }),
     ).resolves.toEqual({ ok: true });
@@ -1627,13 +1795,11 @@ describe('the autonomous-actions switch through the gate', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
     const { row: parked, runId } = await park(harness, workItemId);
-    await harness
-      .withIdentity(OWNER)
-      .mutation(api.work.rejectActions, {
-        workItemId,
-        pendingRunId: runId,
-        reason: 'not in that thread',
-      });
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+      workItemId,
+      pendingRunId: runId,
+      reason: 'not in that thread',
+    });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(row.skipReason).toBe('rejected by the manager: not in that thread');

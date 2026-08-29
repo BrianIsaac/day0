@@ -107,10 +107,9 @@ describe('agent surface grants', (): void => {
     vi.useFakeTimers();
     useSurfaceMode('mock');
     const mockHarness = convexTest(schema, allConvexModules());
-    const mockAgent = await mockHarness.withIdentity({ subject: 'mock-owner' }).mutation(
-      api.agents.deploy,
-      { bossEmail: 'mock@day0.local' },
-    );
+    const mockAgent = await mockHarness
+      .withIdentity({ subject: 'mock-owner' })
+      .mutation(api.agents.deploy, { bossEmail: 'mock@day0.local' });
     const mockScopes = await mockHarness.run(
       async (ctx): Promise<string[]> =>
         (
@@ -129,13 +128,20 @@ describe('agent surface grants', (): void => {
       'spreadsheet:read',
       'ticket:read',
     ]);
+    const mockGrantEvents = await mockHarness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'permission.granted',
+      ),
+    );
+    expect(mockGrantEvents.map((event) => event.payload)).toEqual(
+      expect.arrayContaining(mockScopes.map((scope) => ({ scope, source: 'deploy' }))),
+    );
 
     useSurfaceMode('real');
     const realHarness = convexTest(schema, allConvexModules());
-    const realAgent = await realHarness.withIdentity({ subject: 'real-owner' }).mutation(
-      api.agents.deploy,
-      { bossEmail: 'real@day0.local' },
-    );
+    const realAgent = await realHarness
+      .withIdentity({ subject: 'real-owner' })
+      .mutation(api.agents.deploy, { bossEmail: 'real@day0.local' });
     const realScopes = await realHarness.run(
       async (ctx): Promise<string[]> =>
         (
@@ -167,21 +173,27 @@ describe('agent surface grants', (): void => {
           createdAt: 1,
         }),
     );
-    await harness.run(
-      async (ctx): Promise<void> => {
-        await ctx.db.insert('permissionGrants', {
-          agentId,
-          scope: 'linear:read',
-          createdAt: 1,
-          revokedAt: 2,
-        });
-      },
-    );
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('permissionGrants', {
+        agentId,
+        scope: 'linear:read',
+        createdAt: 1,
+        revokedAt: 2,
+      });
+    });
     await expect(
-      harness.mutation(internal.agents.grantScope, { agentId, scope: 'linear:read' }),
+      harness.mutation(internal.agents.grantScope, {
+        agentId,
+        scope: 'linear:read',
+        source: 'surface',
+      }),
     ).resolves.toEqual({ added: true });
     await expect(
-      harness.mutation(internal.agents.grantScope, { agentId, scope: 'linear:read' }),
+      harness.mutation(internal.agents.grantScope, {
+        agentId,
+        scope: 'linear:read',
+        source: 'surface',
+      }),
     ).resolves.toEqual({ added: false });
     const grants = await harness.run(
       async (ctx) =>
@@ -194,6 +206,95 @@ describe('agent surface grants', (): void => {
     );
     expect(grants).toHaveLength(2);
     expect(grants.filter((grant): boolean => grant.revokedAt === undefined)).toHaveLength(1);
+    expect(grants.find((grant) => grant.revokedAt === undefined)?.source).toBe('surface');
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect())).map(
+        (event) => event.payload,
+      ),
+    ).toContainEqual({ scope: 'linear:read', source: 'surface' });
+  });
+
+  it('revokes every active copy, emits one edge, and re-grants as a new row', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-30T12:00:00.000Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'grant test',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', {
+        agentId: id,
+        scope: 'linear:read',
+        source: 'surface',
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', {
+        agentId: id,
+        scope: 'linear:read',
+        source: 'skill',
+        createdAt: 2,
+      });
+      return id;
+    });
+    await expect(
+      harness.withIdentity({ subject: 'intruder' }).mutation(api.agents.revokeScope, {
+        agentId,
+        scope: 'linear:read',
+      }),
+    ).rejects.toThrow('forbidden');
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.agents.revokeScope, {
+        agentId,
+        scope: 'linear:read',
+        reason: '  Trial containment.  ',
+      }),
+    ).resolves.toEqual({ revoked: 2 });
+    await expect(
+      owner.mutation(api.agents.revokeScope, { agentId, scope: 'linear:read' }),
+    ).resolves.toEqual({ revoked: 0 });
+    expect(await owner.query(api.agents.permissionScopes, { agentId })).toEqual([
+      {
+        scope: 'linear:read',
+        active: false,
+        source: 'skill',
+        grantedAt: 2,
+        revokedAt: Date.parse('2026-08-30T12:00:00.000Z'),
+      },
+    ]);
+    await expect(
+      owner.mutation(api.agents.grantScopes, { agentId, scopes: ['linear:read'] }),
+    ).resolves.toEqual({ added: 1 });
+    await expect(
+      owner.mutation(api.agents.grantScopes, { agentId, scopes: ['linear:read'] }),
+    ).resolves.toEqual({ added: 0 });
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (q) => q.eq('agentId', agentId).eq('scope', 'linear:read'))
+          .collect(),
+    );
+    expect(grants).toHaveLength(3);
+    expect(grants.filter((grant) => grant.revokedAt === undefined)).toMatchObject([
+      { source: 'manager' },
+    ]);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.map((event) => [event.type, event.payload])).toEqual([
+      [
+        'permission.revoked',
+        {
+          scope: 'linear:read',
+          by: 'manager',
+          reason: 'Trial containment.',
+        },
+      ],
+      ['permission.granted', { scope: 'linear:read', source: 'manager' }],
+    ]);
   });
 });
 
@@ -212,33 +313,49 @@ describe('the autonomous-actions switch', (): void => {
         }),
     );
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .mutation(api.agents.setAutonomousActions, { agentId, on: true }),
     ).rejects.toThrow('forbidden');
-    await expect(harness.mutation(api.agents.setAutonomousActions, { agentId, on: true })).rejects.toThrow();
+    await expect(
+      harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toThrow();
     const owner = harness.withIdentity({ subject: 'owner' });
     // Off is what an absent field already is, so setting it records nothing.
-    await expect(owner.mutation(api.agents.setAutonomousActions, { agentId, on: false })).resolves.toEqual({
+    await expect(
+      owner.mutation(api.agents.setAutonomousActions, { agentId, on: false }),
+    ).resolves.toEqual({
       ok: true,
       autonomousActions: false,
       changed: false,
     });
-    await expect(owner.mutation(api.agents.setAutonomousActions, { agentId, on: true })).resolves.toEqual({
+    await expect(
+      owner.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).resolves.toEqual({
       ok: true,
       autonomousActions: true,
       changed: true,
     });
-    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions).toBe(true);
-    await expect(owner.mutation(api.agents.setAutonomousActions, { agentId, on: true })).resolves.toEqual({
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions).toBe(
+      true,
+    );
+    await expect(
+      owner.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).resolves.toEqual({
       ok: true,
       autonomousActions: true,
       changed: false,
     });
-    await expect(owner.mutation(api.agents.setAutonomousActions, { agentId, on: false })).resolves.toEqual({
+    await expect(
+      owner.mutation(api.agents.setAutonomousActions, { agentId, on: false }),
+    ).resolves.toEqual({
       ok: true,
       autonomousActions: false,
       changed: true,
     });
-    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions).toBe(false);
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions).toBe(
+      false,
+    );
     const events = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -266,12 +383,18 @@ describe('the autonomous-actions switch', (): void => {
         }),
     );
     await expect(
-      harness.withIdentity({ subject: 'owner' }).mutation(api.agents.setAutonomousActions, { agentId, on: true }),
-    ).rejects.toThrow('Autonomous actions is a local real-mode feature; this deployment runs in mock mode.');
-    await expect(harness.mutation(api.agents.setAutonomousActions, { agentId, on: true })).rejects.toThrow(
-      'local real-mode feature',
+      harness
+        .withIdentity({ subject: 'owner' })
+        .mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toThrow(
+      'Autonomous actions is a local real-mode feature; this deployment runs in mock mode.',
     );
-    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions).toBeUndefined();
+    await expect(
+      harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toThrow('local real-mode feature');
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(agentId)))?.autonomousActions,
+    ).toBeUndefined();
     expect(await harness.run(async (ctx) => await ctx.db.query('events').collect())).toEqual([]);
   });
 });

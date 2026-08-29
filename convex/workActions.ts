@@ -474,7 +474,10 @@ async function holdRealActions(
       if (!prepared.prepared) {
         return { ok: false, reason: 'the run moved on before its dependent phase was prepared' };
       }
-      return { ok: true, reason: 'missing prerequisite recorded; dependent failure report authoring' };
+      return {
+        ok: true,
+        reason: 'missing prerequisite recorded; dependent failure report authoring',
+      };
     }
     const pending = await ctx.runMutation(internal.work.setActionsPending, {
       workItemId: args.workItemId,
@@ -524,7 +527,8 @@ function isDependentPendingOutput(
   return (output as { phase?: unknown }).phase === 'dependent';
 }
 
-const RESULT_STEP = /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/i;
+const RESULT_STEP =
+  /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/i;
 const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/i;
 
 /** Whether the approved plan or emitted prerequisites require one result-aware turn. */
@@ -556,12 +560,7 @@ function successfulReadSurfaces(
   actions.forEach((action, index): void => {
     const row = applied[index];
     const parsed = parseSurfaceAction(action);
-    if (
-      row?.ok &&
-      !row.held &&
-      parsed.ok &&
-      actionIntent(parsed.action) === 'read'
-    ) {
+    if (row?.ok && !row.held && parsed.ok && actionIntent(parsed.action) === 'read') {
       surfaces.add(parsed.action.surface.toLowerCase());
     }
   });
@@ -683,7 +682,9 @@ export const authorDependentActions = internalAction({
           return parsed.ok && isStatusChange(parsed.action);
         });
         if (status) {
-          throw new Error('dependent phase cannot change ticket state after a prerequisite failure');
+          throw new Error(
+            'dependent phase cannot change ticket state after a prerequisite failure',
+          );
         }
       } else if (
         plan.expectedOutputType === 'ticket-update' &&
@@ -919,6 +920,9 @@ function authorityBeforeTransport(
     if (phase === 'auto' && !isAutomatic(parsed.action, surface, authority.autonomousActions)) {
       return NOT_AUTOMATIC;
     }
+    // Approved writes use the manager's exact-action approval as authority,
+    // even if the generic write grant was revoked after hold. Reads and the
+    // manager DM still require their standing grant at this last checkpoint.
     if (needsStandingGrant(parsed.action, surface) || phase === 'auto') {
       const grant = grantRefusal(
         parsed.action,
@@ -1012,7 +1016,10 @@ async function finishRun(
         output: { ...output, applied },
       });
       if (!parked.parked) {
-        return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
+        return {
+          ok: false,
+          reason: 'the run was moved on before its held actions could be parked',
+        };
       }
       return {
         ok: true,
@@ -1047,9 +1054,15 @@ async function finishRun(
         output: { ...output, applied },
       });
       if (!parked.parked) {
-        return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
+        return {
+          ok: false,
+          reason: 'the run was moved on before its held actions could be parked',
+        };
       }
-      return { ok: true, reason: "automatic actions applied; the rest await the manager's approval" };
+      return {
+        ok: true,
+        reason: "automatic actions applied; the rest await the manager's approval",
+      };
     }
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
       workItemId,

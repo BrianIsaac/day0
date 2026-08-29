@@ -324,8 +324,10 @@ export async function applySurfaceActions(
         continue;
       }
       // A read and the manager DM always need their standing grant. A write
-      // needs one, or the toggle, to apply on its own; a write the manager
-      // approved by index is authorised by that approval.
+      // needs one, or the toggle, to apply on its own. The manager's approval
+      // of one literal write is deliberately sufficient even when its generic
+      // <surface>:write scope was revoked after hold; that exact approval, not
+      // the revoked standing grant, is the authority recorded in the ledger.
       if (needsStandingGrant(parsed.action, surface) || !managerApproved) {
         const ungranted = grantRefusal(
           parsed.action,
