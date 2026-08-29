@@ -36,6 +36,7 @@ vi.mock('@mastra/core/agent', () => ({
 
 vi.mock('../../src/lib/mastra', () => ({
   MODEL_CONFIG: 'openai/mock-model',
+  MODEL_TEMPERATURE: 0.4,
   makeAgent: (): never => {
     throw new Error('unexpected makeAgent call');
   },
