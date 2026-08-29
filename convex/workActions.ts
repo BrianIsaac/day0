@@ -459,8 +459,9 @@ async function holdRealActions(
     });
     const stagedOutput = prerequisiteOutput(output, args.plan);
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
-      const reason =
-        'approved plan needs result evidence, but the skill emitted no prerequisite read action';
+      // Nothing to wait for is not a failed prerequisite: the closing phase
+      // authors the whole set and accounts for every plan step, and a step
+      // that promised a read no ledger row shows is what fails the run.
       const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
         workItemId: args.workItemId,
         runId: args.runId,
@@ -468,13 +469,12 @@ async function holdRealActions(
           ...stagedOutput,
           phase: 'dependent-authoring',
           applied: [],
-          initialFailure: reason,
         } satisfies DependentAuthoringOutput,
       });
       if (!prepared.prepared) {
         return { ok: false, reason: 'the run moved on before its dependent phase was prepared' };
       }
-      return { ok: true, reason: 'missing prerequisite recorded; dependent failure report authoring' };
+      return { ok: true, reason: 'no prerequisite action to apply; dependent actions authoring' };
     }
     const pending = await ctx.runMutation(internal.work.setActionsPending, {
       workItemId: args.workItemId,
