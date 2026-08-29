@@ -30,6 +30,40 @@ export const seedTasks = mutation({
   },
 });
 
+const TERMINAL_STATES = new Set(['completed', 'cancelled', 'failed', 'skipped', 'deferred']);
+
+export const timeoutTask = mutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ timedOut: boolean }> => {
+    requireMockMode();
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    await assertOwnsAgent(ctx, row.agentId);
+    if (!row.externalId.startsWith('EVAL-')) {
+      throw new Error('only evaluation work items may be timed out by the harness');
+    }
+    if (TERMINAL_STATES.has(row.state)) return { timedOut: false };
+    const reason = 'evaluation timeout: the task exceeded its declared wall-clock deadline';
+    await ctx.db.patch(args.workItemId, {
+      state: 'failed',
+      skipReason: reason,
+      executionRunId: undefined,
+      pendingRunId: undefined,
+      applyAttemptId: undefined,
+      applyClaimedAt: undefined,
+      approvedIndexes: undefined,
+      applyPhase: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.failed',
+      payload: { workItemId: args.workItemId, reason, source: 'evaluation-harness' },
+      createdAt: Date.now(),
+    });
+    return { timedOut: true };
+  },
+});
+
 export const snapshot = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {

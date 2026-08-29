@@ -3,6 +3,7 @@
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
+import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -65,5 +66,41 @@ describe('evaluation backend boundary', (): void => {
     await expect(owner.mutation(api.evaluation.seedTasks, { agentId, tasks })).rejects.toThrow(
       'mock mode',
     );
+  });
+
+  it('terminalises a timed-out benchmark row and fences its late execution run', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'boss@day0.local',
+      arm: 'day0',
+    });
+    const [workItemId] = await owner.mutation(api.evaluation.seedTasks, {
+      agentId,
+      tasks: [tasks[0]!],
+    });
+    const runId = await harness.run(
+      async (ctx): Promise<Id<'events'>> =>
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.execution-claimed',
+          payload: { workItemId },
+          createdAt: 10,
+        }),
+    );
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { state: 'executing', executionRunId: runId });
+    });
+
+    await expect(owner.mutation(api.evaluation.timeoutTask, { workItemId })).resolves.toEqual({
+      timedOut: true,
+    });
+    const row = await owner.query(api.work.get, { workItemId });
+    expect(row.state).toBe('failed');
+    expect(row.executionRunId).toBeUndefined();
+    expect(row.skipReason).toContain('evaluation timeout');
+    const snapshot = await owner.query(api.evaluation.snapshot, { agentId });
+    expect(snapshot.events.some((event) => event.type === 'work.failed')).toBe(true);
   });
 });

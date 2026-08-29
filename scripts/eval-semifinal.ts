@@ -613,6 +613,10 @@ async function runTask(
     item = workItemForTask(raw, task);
   }
 
+  if (!TERMINAL_STATES.has(item.state) && Date.now() >= deadline) {
+    await context.client.mutation(api.evaluation.timeoutTask, { workItemId: item._id });
+  }
+
   raw = await context.client.query(api.evaluation.snapshot, { agentId });
   item = workItemForTask(raw, task);
   const snapshot = graderSnapshot(raw, item);
