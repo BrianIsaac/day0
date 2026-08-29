@@ -171,6 +171,7 @@ function decisionResult(event: Doc<'events'>):
     };
   }
   if (event.type !== 'work.actions-approved') return undefined;
+  if (!payload) return undefined;
   return {
     workItemId,
     kind: 'actions',
