@@ -848,6 +848,130 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
   });
 
+  it('applies a truthful closing comment and withholds Done when the manager left a prerequisite out', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    recorded.skillOutput = {
+      draft: 'Saving the figure, then reading the tile back.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'looker',
+            tool: 'browser_click',
+            toolArgsJson: JSON.stringify({ element: 'Save' }),
+          },
+        },
+        {
+          tool: 'mcp.call',
+          args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+        },
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'The Save step was not approved, so the tile is unchanged and REVOPS-7 stays open.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({
+              issueId: 'iss-1',
+              body: 'The Save step was not approved; the tile is unchanged and this issue stays open.',
+            }),
+          },
+        },
+      ],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', evidence: 'browser_click Save was held and not approved.' },
+        { step: 2, status: 'blocked', evidence: 'No refreshed figure exists to close on.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real', [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'looker:read',
+      'looker:write',
+    ]);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        externalId: 'REVOPS-7',
+        plan: {
+          summary: 'Save the figure, read it back, then close the ticket.',
+          steps: ['Save the figure and capture the read-back', 'Comment and close REVOPS-7'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'Re-run with an approved replacement figure.',
+          estimatedMinutes: 45,
+        },
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_click', 'browser_snapshot'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('actions-pending');
+    const runId = parked.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    // The manager approves nothing: the Save click stays held.
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(harness, workItemId)).output).toMatchObject({
+      phase: 'dependent-authoring',
+    });
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    // With the switch off the closing comment is itself held; the manager sends it.
+    const closing = await readItem(harness, workItemId);
+    expect(closing.state).toBe('actions-pending');
+    expect((closing.output as ExecutionOutput).actions?.map((action) => action.args.tool)).toEqual([
+      'save_comment',
+    ]);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain('2 approved plan step(s) remained blocked');
+    expect(failed.skipReason).toContain('browser_click Save was held and not approved.');
+    // The snapshot shares the browser session with the held Save, so neither
+    // reached the provider; only the truthful closing comment did.
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+    expect(ledger(failed).map((entry) => [entry.tool, entry.ok, entry.held ?? false])).toEqual([
+      ['mcp.call', true, true],
+      ['mcp.call', true, true],
+      ['mcp.call', true, false],
+    ]);
+  });
+
   it('reports a failed snapshot truthfully and never emits the Done transition', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
