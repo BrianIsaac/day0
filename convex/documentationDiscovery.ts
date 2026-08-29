@@ -158,17 +158,14 @@ export const apply = internalMutation({
     ]);
     if (existing.length > 1_000) throw new Error('Documentation discovery exceeds 1,000 systems.');
     if (agents.length > 100) throw new Error('Documentation discovery exceeds 100 agents.');
-    const surfaces = (
-      await Promise.all(
-        agents.map(
-          async (agent) =>
-            await ctx.db
-              .query('surfaces')
-              .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
-              .collect(),
-        ),
-      )
-    ).flat();
+    const representative = agents.find((agent) => agentReadsSource(agent, source._id));
+    const surfaces = representative
+      ? await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', representative._id))
+          .take(1_001)
+      : [];
+    if (surfaces.length > 1_000) throw new Error('Documentation discovery exceeds 1,000 surfaces.');
     const targets = [
       ...existing
         .filter((row) => row.current)
