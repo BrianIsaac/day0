@@ -22,6 +22,7 @@ import type * as documentationDiscoveryActions from "../documentationDiscoveryAc
 import type * as docSources from "../docSources.js";
 import type * as docSyncActions from "../docSyncActions.js";
 import type * as events from "../events.js";
+import type * as evaluation from "../evaluation.js";
 import type * as intakeActions from "../intakeActions.js";
 import type * as managerChannelActions from "../managerChannelActions.js";
 import type * as mock from "../mock.js";
@@ -64,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   docSources: typeof docSources;
   docSyncActions: typeof docSyncActions;
   events: typeof events;
+  evaluation: typeof evaluation;
   intakeActions: typeof intakeActions;
   managerChannelActions: typeof managerChannelActions;
   mock: typeof mock;

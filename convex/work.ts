@@ -199,48 +199,69 @@ export const getInternal = internalQuery({
   handler: async (ctx, args) => await ctx.db.get(args.workItemId),
 });
 
+export const workItemSeedFields = {
+  sourceCategory: v.string(),
+  sourceSystem: v.string(),
+  externalId: v.string(),
+  title: v.string(),
+  contentSummary: v.string(),
+  contentRefs: v.array(v.string()),
+  priority: v.optional(v.string()),
+  requesterLabel: v.optional(v.string()),
+  replyTarget: v.optional(
+    v.object({
+      channel: v.string(),
+      channelName: v.optional(v.string()),
+      threadTs: v.optional(v.string()),
+    }),
+  ),
+} as const;
+
+export interface WorkItemSeedInput {
+  agentId: Id<'agents'>;
+  sourceCategory: string;
+  sourceSystem: string;
+  externalId: string;
+  title: string;
+  contentSummary: string;
+  contentRefs: string[];
+  priority?: string;
+  requesterLabel?: string;
+  replyTarget?: { channel: string; channelName?: string; threadTs?: string };
+}
+
+/** Share intake's idempotency boundary with fixed evaluation task batches. */
+export async function seedItemInTransaction(
+  ctx: MutationCtx,
+  args: WorkItemSeedInput,
+): Promise<Id<'workItems'>> {
+  const existing = await ctx.db
+    .query('workItems')
+    .withIndex('by_extId', (q) =>
+      q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
+    )
+    .filter((q) => q.eq(q.field('agentId'), args.agentId))
+    .first();
+  if (existing) return existing._id;
+  const id = await ctx.db.insert('workItems', {
+    ...args,
+    state: 'discovered',
+    observedAt: Date.now(),
+    createdAt: Date.now(),
+  });
+  await ctx.db.insert('events', {
+    agentId: args.agentId,
+    type: 'work.discovered',
+    payload: { workItemId: id, title: args.title },
+    createdAt: Date.now(),
+  });
+  return id;
+}
+
 export const seedItem = internalMutation({
-  args: {
-    agentId: v.id('agents'),
-    sourceCategory: v.string(),
-    sourceSystem: v.string(),
-    externalId: v.string(),
-    title: v.string(),
-    contentSummary: v.string(),
-    contentRefs: v.array(v.string()),
-    priority: v.optional(v.string()),
-    requesterLabel: v.optional(v.string()),
-    replyTarget: v.optional(
-      v.object({
-        channel: v.string(),
-        channelName: v.optional(v.string()),
-        threadTs: v.optional(v.string()),
-      }),
-    ),
-  },
-  handler: async (ctx, args): Promise<Id<'workItems'>> => {
-    const existing = await ctx.db
-      .query('workItems')
-      .withIndex('by_extId', (q) =>
-        q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
-      )
-      .filter((q) => q.eq(q.field('agentId'), args.agentId))
-      .first();
-    if (existing) return existing._id;
-    const id = await ctx.db.insert('workItems', {
-      ...args,
-      state: 'discovered',
-      observedAt: Date.now(),
-      createdAt: Date.now(),
-    });
-    await ctx.db.insert('events', {
-      agentId: args.agentId,
-      type: 'work.discovered',
-      payload: { workItemId: id, title: args.title },
-      createdAt: Date.now(),
-    });
-    return id;
-  },
+  args: { agentId: v.id('agents'), ...workItemSeedFields },
+  handler: async (ctx, args): Promise<Id<'workItems'>> =>
+    await seedItemInTransaction(ctx, args),
 });
 
 /**
