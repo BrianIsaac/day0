@@ -52,14 +52,24 @@ const DRAFT_DISCIPLINE = [
   '  - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three `spreadsheet.appendRow` actions, not one action and a sentence saying three.',
   '  - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a `slack.postMessage` in this response says it.',
   '  - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in `notes` rather than describing the work as finished.',
-  '  - When any later action needs an earlier action\'s result, emit only the prerequisite actions now and set `needsDependentPhase` to true. Do not prewrite the later comment, state change, reply or summary: it will be authored once from the applied ledger.',
-  '',
 ];
+
+/**
+ * Only the real path runs a second, result-dependent phase. The mock path
+ * applies the whole set in one call, so a mock executor that held actions
+ * back would leave the demo run half done with no turn to finish it.
+ */
+const DEPENDENT_PHASE_REAL =
+  '  - When any later action needs an earlier action\'s result, emit only the prerequisite actions now and set `needsDependentPhase` to true. Do not prewrite the later comment, state change, reply or summary: it will be authored once from the applied ledger.';
+const DEPENDENT_PHASE_MOCK =
+  '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment applies the whole set at once and runs no second phase.';
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   ...DRAFT_DISCIPLINE,
+  DEPENDENT_PHASE_MOCK,
+  '',
   'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. Available tools:',
   "  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }",
   "  - slack.postMessage    — { channelSlug, threadKey?, body }",
@@ -87,6 +97,8 @@ const REAL_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. Write every action as it should land; the live action mode below says whether it lands immediately or waits.',
   ...DRAFT_DISCIPLINE,
+  DEPENDENT_PHASE_REAL,
+  '',
   'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
   '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
@@ -411,7 +423,9 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     '--- Team docs (read-only context) ---',
     renderTeamDocs(mockEnv.teamDocs),
     '',
-    'Produce the draft, notes, needsDependentPhase flag, and prerequisite actions now.',
+    mode === 'real'
+      ? 'Produce the draft, notes, needsDependentPhase flag, and prerequisite actions now.'
+      : 'Produce the draft, notes, and actions now.',
   ].join('\n');
 
   const raw = await agentJson<z.infer<typeof executeSchema>>({
