@@ -459,8 +459,9 @@ async function holdRealActions(
     });
     const stagedOutput = prerequisiteOutput(output, args.plan);
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
-      const reason =
-        'approved plan needs result evidence, but the skill emitted no prerequisite read action';
+      // Nothing to wait for is not a failed prerequisite: the closing phase
+      // authors the whole set and accounts for every plan step, and a step
+      // that promised a read no ledger row shows is what fails the run.
       const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
         workItemId: args.workItemId,
         runId: args.runId,
@@ -468,16 +469,12 @@ async function holdRealActions(
           ...stagedOutput,
           phase: 'dependent-authoring',
           applied: [],
-          initialFailure: reason,
         } satisfies DependentAuthoringOutput,
       });
       if (!prepared.prepared) {
         return { ok: false, reason: 'the run moved on before its dependent phase was prepared' };
       }
-      return {
-        ok: true,
-        reason: 'missing prerequisite recorded; dependent failure report authoring',
-      };
+      return { ok: true, reason: 'no prerequisite action to apply; dependent actions authoring' };
     }
     const pending = await ctx.runMutation(internal.work.setActionsPending, {
       workItemId: args.workItemId,
@@ -567,13 +564,22 @@ function successfulReadSurfaces(
   return surfaces;
 }
 
-/** Refuse a silent omission when an approved step explicitly promised a surface read. */
+function namedInStep(step: string, name: string): boolean {
+  return new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(step);
+}
+
+/**
+ * Refuse a silent omission when an approved step explicitly promised a surface read.
+ *
+ * A step names a surface by its slug or by its display name: a plan says
+ * "the Looker pipeline tile", not "looker-pipeline-tile".
+ */
 export function validatePlanStepOutcomes(args: {
   plan: ExecutionPlan;
   outcomes: readonly PlanStepOutcome[];
   initialActions: readonly ExecutionOutput['actions'][number][];
   initialLedger: readonly AppliedAction[];
-  surfaceSlugs: readonly string[];
+  surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
 }): void {
   const ordered = [...args.outcomes].sort((a, b) => a.step - b.step);
   if (
@@ -585,19 +591,54 @@ export function validatePlanStepOutcomes(args: {
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
   for (const [index, step] of args.plan.steps.entries()) {
     if (!RESULT_STEP.test(step)) continue;
-    const named = args.surfaceSlugs.filter((slug) =>
-      new RegExp(`\\b${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(step),
+    const named = args.surfaces.filter(
+      (surface) => namedInStep(step, surface.slug) || namedInStep(step, surface.displayName),
     );
-    for (const slug of named) {
-      if (reads.has(slug.toLowerCase())) continue;
+    for (const surface of named) {
+      if (reads.has(surface.slug.toLowerCase())) continue;
       const outcome = ordered[index];
       if (outcome.status !== 'blocked' || outcome.evidence.trim() === '') {
         throw new Error(
-          `approved plan step ${index + 1} promised a ${slug} read, but no landed read or blocking ledger reason was recorded`,
+          `approved plan step ${index + 1} promised a ${surface.displayName} read, but no landed read or blocking ledger reason was recorded`,
         );
       }
     }
   }
+}
+
+/**
+ * Why a closing action set may not stand, judged against the plan it closes.
+ *
+ * After a failed prerequisite no ticket state may change. Otherwise a
+ * ticket-update plan that promised a close must either carry the transition
+ * or account for its absence: a phase that withholds Done because a
+ * prerequisite was held, or the evidence was wrong, records the step as
+ * blocked, and that record is honoured rather than refused.
+ */
+export function dependentTransitionRefusal(args: {
+  plan: ExecutionPlan;
+  actions: readonly ExecutionOutput['actions'][number][];
+  planStepOutcomes: readonly PlanStepOutcome[];
+  initialFailure?: string;
+}): string | undefined {
+  const statusChange = args.actions.some((action): boolean => {
+    const parsed = parseSurfaceAction(action);
+    return parsed.ok && isStatusChange(parsed.action);
+  });
+  if (args.initialFailure) {
+    return statusChange
+      ? 'dependent phase cannot change ticket state after a prerequisite failure'
+      : undefined;
+  }
+  if (
+    args.plan.expectedOutputType !== 'ticket-update' ||
+    !args.plan.steps.some((step) => CLOSE_STEP.test(step)) ||
+    statusChange ||
+    args.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
+  ) {
+    return undefined;
+  }
+  return 'dependent phase omitted the approved ticket state transition without a blocked plan step';
 }
 
 function flattenedDependentOutput(
@@ -674,28 +715,18 @@ export const authorDependentActions = internalAction({
         outcomes: output.planStepOutcomes,
         initialActions: initial.actions,
         initialLedger: initial.applied,
-        surfaceSlugs: surfaces.map((surface) => surface.slug),
+        surfaces: surfaces.map((surface) => ({
+          slug: surface.slug,
+          displayName: surface.displayName,
+        })),
       });
-      if (initial.initialFailure) {
-        const status = output.actions.find((action): boolean => {
-          const parsed = parseSurfaceAction(action);
-          return parsed.ok && isStatusChange(parsed.action);
-        });
-        if (status) {
-          throw new Error(
-            'dependent phase cannot change ticket state after a prerequisite failure',
-          );
-        }
-      } else if (
-        plan.expectedOutputType === 'ticket-update' &&
-        plan.steps.some((step) => CLOSE_STEP.test(step)) &&
-        !output.actions.some((action): boolean => {
-          const parsed = parseSurfaceAction(action);
-          return parsed.ok && isStatusChange(parsed.action);
-        })
-      ) {
-        throw new Error('dependent phase omitted the approved ticket state transition');
-      }
+      const transitionRefusal = dependentTransitionRefusal({
+        plan,
+        actions: output.actions,
+        planStepOutcomes: output.planStepOutcomes,
+        initialFailure: initial.initialFailure,
+      });
+      if (transitionRefusal) throw new Error(transitionRefusal);
       const dependent: DependentPendingOutput = {
         ...output,
         phase: 'dependent',

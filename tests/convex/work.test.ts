@@ -1658,6 +1658,85 @@ describe('the exact-action gate', (): void => {
     await expect(harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId })).rejects.toThrow('reconcile the provider first');
   });
 
+  it('claims the dependent authoring turn once and never prepares a second phase', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing');
+    await expect(
+      harness.mutation(internal.work.prepareDependentPhase, {
+        workItemId,
+        runId,
+        output: { ...pendingOutput, needsDependentPhase: true, phase: 'dependent-authoring', applied: [] },
+      }),
+    ).resolves.toEqual({ prepared: true });
+    const first = await harness.mutation(internal.work.claimDependentAuthoring, { workItemId, runId });
+    expect(first.claimed).toBe(true);
+    await expect(
+      harness.mutation(internal.work.claimDependentAuthoring, { workItemId, runId }),
+    ).resolves.toEqual({
+      claimed: false,
+      reason: 'another dependent authoring turn already claimed the run',
+    });
+    if (!first.claimed) throw new Error('unreachable');
+    await expect(
+      harness.mutation(internal.work.setActionsPending, {
+        workItemId,
+        runId,
+        authoringAttemptId: first.authoringAttemptId,
+        output: { ...pendingOutput, phase: 'dependent', actionIndexOffset: 0, planStepOutcomes: [], initial: {} },
+      }),
+    ).resolves.toEqual({ pending: true, phase: 'manager' });
+    // The closing set is now pending; a second phase cannot be prepared behind it.
+    await expect(
+      harness.mutation(internal.work.prepareDependentPhase, {
+        workItemId,
+        runId,
+        output: { ...pendingOutput, phase: 'dependent-authoring', applied: [] },
+      }),
+    ).resolves.toEqual({ prepared: false });
+    await expect(
+      harness.mutation(internal.work.claimDependentAuthoring, { workItemId, runId }),
+    ).resolves.toEqual({ claimed: false, reason: 'dependent phase is not awaiting authoring' });
+  });
+
+  it('fences retry on prerequisite writes that landed before a rejected dependent set', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'actions-pending');
+    const initial = {
+      draft: 'Refreshing the tile.',
+      notes: '',
+      needsDependentPhase: true,
+      phase: 'dependent-authoring',
+      actions: [
+        { tool: 'mcp.call', args: { surface: 'looker', tool: 'browser_click', toolArgsJson: '{"element":"Save"}' } },
+        { tool: 'mcp.call', args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' } },
+      ],
+      applied: [
+        { tool: 'mcp.call', ok: true, effect: 'browser_click on looker · Save', idempotencyKey: 'k0' },
+        { tool: 'mcp.call', ok: true, effect: 'browser_snapshot on looker · 74%', idempotencyKey: 'k1' },
+      ],
+    };
+    await harness.run(async (ctx) =>
+      await ctx.db.patch(workItemId, {
+        pendingRunId: runId,
+        executionRunId: runId,
+        actionVerdicts: [{ disposition: 'held', reason: HELD_MUTATION }],
+        output: {
+          ...pendingOutput,
+          actions: [pendingOutput.actions[0]],
+          phase: 'dependent',
+          actionIndexOffset: 2,
+          planStepOutcomes: [],
+          initial,
+        },
+      }),
+    );
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason: 'not now' });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+    await expect(harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId })).rejects.toThrow('reconcile the provider first');
+  });
+
   it('reschedules an unclaimed auto phase and records unknown outcomes for a claimed one', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

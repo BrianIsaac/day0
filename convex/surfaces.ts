@@ -13,6 +13,7 @@ import {
 import {
   documentedSystemIdentity,
   sameDocumentedSystem,
+  stableSlug,
   type DocumentedSystemIdentity,
 } from '../src/docs/system-discovery';
 
@@ -234,12 +235,8 @@ export async function reconcileDocumentedSystems(
       );
     const direct = bySlug.get(system.slug);
     const matches = surfaces.filter(sameIdentity);
-    const existing =
-      direct && sameIdentity(direct) ? direct : matches.length === 1 ? matches[0] : undefined;
-    const host = identity.hosts[0]
-      ?.toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+    const existing = direct && sameIdentity(direct) ? direct : matches.length === 1 ? matches[0] : undefined;
+    const host = stableSlug(identity.hosts[0] ?? '');
     const slug = existing?.slug ?? (direct ? `${system.slug}-${host || 'system'}` : system.slug);
     const prior = resolved.get(slug);
     const evidence = [

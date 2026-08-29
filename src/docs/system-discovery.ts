@@ -51,6 +51,9 @@ const SYSTEM_EVIDENCE =
   /\b(?:system|service|platform|workspace|source of record|api|mcp|integration|browser|web ui|dashboard|credential|login|access owner|automation)\b/i;
 const SYSTEM_IDENTITY_EVIDENCE =
   /\b(?:systems?(?!\s+(?:pages?|files?|folders?|docs?|documentation|handbooks?|runbooks?|playbooks?|wikis?|notes?))|service|platform|source of record|api|mcp|integration|browser|web ui|dashboard|automation)\b/i;
+/** Nouns that say where documentation lives rather than what a system does. */
+const DOCUMENTATION_NOUN =
+  /\b(?:wikis?|handbooks?|runbooks?|playbooks?|documentation|docs|knowledge base)\b/i;
 
 function plain(value: string): string {
   return value
@@ -63,6 +66,22 @@ function firstHeading(page: DiscoveryPage): string | undefined {
   return /^#\s+(.+)$/m.exec(page.markdown)?.[1]?.trim();
 }
 
+/** A product class the vocabulary alone establishes, or undefined when it does not. */
+function recognisedClass(
+  name: string,
+  evidence: string,
+): Exclude<(typeof SYSTEM_CLASSES)[number], 'docs' | 'other'> | undefined {
+  const text = `${name}\n${evidence}`.toLowerCase();
+  if (/\b(?:crm|customer relationship|opportunit(?:y|ies))\b/.test(text)) return 'crm';
+  if (/\b(?:analytics|dashboard|looker|tableau|reporting|tile)\b/.test(text)) return 'analytics';
+  if (/\b(?:slack|chat|messaging|teams workspace)\b/.test(text)) return 'chat';
+  if (/\b(?:linear|jira|kanban|ticket|issue tracker|work queue)\b/.test(text)) return 'kanban';
+  if (/\b(?:spreadsheet|sheet|workbook)\b/.test(text)) return 'spreadsheet';
+  if (/\b(?:social|twitter|mastodon)\b/.test(text)) return 'social';
+  return undefined;
+}
+
+/** Why a name that carries artefact vocabulary is not, on this evidence, a system. */
 function documentationArtefactReason(name: string, evidence: string): string | undefined {
   if (!DOCUMENT_ARTEFACT.test(name)) return undefined;
   if (
@@ -77,8 +96,39 @@ function documentationArtefactReason(name: string, evidence: string): string | u
   return undefined;
 }
 
-function isDocumentationArtefact(name: string, evidence: string): boolean {
-  return documentationArtefactReason(name, evidence) !== undefined;
+/**
+ * Why one row or grounding line describes documentation rather than a system.
+ *
+ * The name alone is not the test: the documentation row of a systems table
+ * may be returned under the platform it lives in ("Notion"), and a wiki row
+ * may carry a vendor name ("Confluence"). A line whose evidence is about
+ * documentation, with no system identity and no recognised product class,
+ * is documentation whatever it is called. A platform the line calls a
+ * system of record, an API or an integration keeps its candidacy.
+ *
+ * Args:
+ *   name: Candidate name as the page or the model gave it.
+ *   evidence: The one row or line the candidate is grounded in.
+ *
+ * Returns:
+ *   The logged reason, or undefined when the evidence admits a system.
+ */
+function documentationReason(name: string, evidence: string): string | undefined {
+  const artefact = documentationArtefactReason(name, evidence);
+  if (artefact) return artefact;
+  if (
+    SYSTEM_IDENTITY_EVIDENCE.test(`${name}\n${evidence}`) ||
+    recognisedClass(name, evidence) !== undefined
+  ) {
+    return undefined;
+  }
+  if (DOCUMENTATION_SOURCE_REFERENCE.test(evidence)) {
+    return 'candidate describes the linked documentation sources';
+  }
+  if (DOCUMENTATION_NOUN.test(evidence)) {
+    return 'candidate describes documentation rather than a system';
+  }
+  return undefined;
 }
 
 function rejectDocumentationCandidate(
@@ -86,21 +136,16 @@ function rejectDocumentationCandidate(
   name: string,
   evidence: string,
 ): boolean {
-  const reason = documentationArtefactReason(name, evidence);
+  const reason = documentationReason(name, evidence);
   if (!reason) return false;
   console.info('[documentation-discovery] candidate rejected', { name, reason, ref: page.ref });
   return true;
 }
 
 function classFor(name: string, evidence: string): (typeof SYSTEM_CLASSES)[number] {
-  const text = `${name}\n${evidence}`.toLowerCase();
-  if (/\b(?:crm|customer relationship|opportunit(?:y|ies))\b/.test(text)) return 'crm';
-  if (/\b(?:analytics|dashboard|looker|tableau|reporting|tile)\b/.test(text)) return 'analytics';
-  if (/\b(?:slack|chat|messaging|teams workspace)\b/.test(text)) return 'chat';
-  if (/\b(?:linear|jira|kanban|ticket|issue tracker|work queue)\b/.test(text)) return 'kanban';
-  if (/\b(?:spreadsheet|sheet|workbook)\b/.test(text)) return 'spreadsheet';
-  if (/\b(?:social|twitter|mastodon)\b/.test(text)) return 'social';
-  if (isDocumentationArtefact(name, evidence)) return 'docs';
+  const recognised = recognisedClass(name, evidence);
+  if (recognised) return recognised;
+  if (documentationArtefactReason(name, evidence) !== undefined) return 'docs';
   return 'other';
 }
 
@@ -219,10 +264,7 @@ export function mergeCandidates(
 ): DiscoveredSystemCandidate[] {
   const merged = new Map<string, DiscoveredSystemCandidate>();
   for (const candidate of candidates) {
-    const slug = candidate.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+    const slug = stableSlug(candidate.name);
     if (!slug || candidate.class === 'docs' || merged.has(slug)) continue;
     merged.set(slug, candidate);
   }
@@ -301,7 +343,8 @@ const TRANSPORT_DESCRIPTION =
   /\b(?:approved transport|transport is|integration endpoint|mcp endpoint|web api over|reached (?:through|via|over)|web ui only)\b/i;
 const DOCUMENTED_URL = /https?:\/\/[^\s`<>"'\])}]+/gi;
 
-function stableSlug(value: string): string {
+/** The one slug rule for a system name or a documented host, everywhere it is keyed. */
+export function stableSlug(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -357,6 +400,31 @@ function intersects(left: readonly string[], right: readonly string[]): boolean 
   return left.some((value) => rightValues.has(value));
 }
 
+/** Whether one product name's words all appear in the other's ("Slack" and "Slack workspace"). */
+function compatibleNameKeys(left: readonly string[], right: readonly string[]): boolean {
+  return left.some((leftKey) => {
+    const leftWords = leftKey.split('-');
+    return right.some((rightKey) => {
+      const rightWords = new Set(rightKey.split('-'));
+      const leftSet = new Set(leftWords);
+      return (
+        leftWords.every((word) => rightWords.has(word)) ||
+        [...rightWords].every((word) => leftSet.has(word))
+      );
+    });
+  });
+}
+
+/**
+ * Decide whether two documented identities name one system.
+ *
+ * A conflicting documented host is a hard difference. After that, an exact
+ * slug or an exact documented endpoint is decisive. A shared host is not: an
+ * enterprise gateway fronts many products on one host, so a host match only
+ * merges names that are the same product name with or without a qualifier.
+ * Last, the transport-normalised name key merges "Slack" with "Slack Web
+ * API". Every signal requires the same system class.
+ */
 export function sameDocumentedSystem(
   leftClass: string,
   left: DocumentedSystemIdentity,
@@ -369,7 +437,9 @@ export function sameDocumentedSystem(
   }
   if (intersects(left.slugs, right.slugs)) return true;
   if (intersects(left.endpoints, right.endpoints)) return true;
-  if (intersects(left.hosts, right.hosts)) return true;
+  if (intersects(left.hosts, right.hosts) && compatibleNameKeys(left.nameKeys, right.nameKeys)) {
+    return true;
+  }
   return intersects(left.nameKeys, right.nameKeys);
 }
 
@@ -392,17 +462,16 @@ function isTransportDescription(candidate: DiscoveredSystemCandidate): boolean {
   return identity.slugs[0] !== identity.nameKeys[0] && TRANSPORT_DESCRIPTION.test(candidate.quote);
 }
 
+/**
+ * The member whose name the merged system carries: the first candidate that
+ * is not a transport description. Structural candidates (a systems page
+ * heading, a systems-table row) precede model candidates, so the documented
+ * name wins over a shorter alias a runbook line happens to use.
+ */
 function canonicalCandidate(
   candidates: readonly DiscoveredSystemCandidate[],
 ): DiscoveredSystemCandidate {
-  return [...candidates].sort((left, right): number => {
-    const transportDifference =
-      Number(isTransportDescription(left)) - Number(isTransportDescription(right));
-    if (transportDifference !== 0) return transportDifference;
-    const wordDifference = plain(left.name).split(/\s+/).length - plain(right.name).split(/\s+/).length;
-    if (wordDifference !== 0) return wordDifference;
-    return left.name.localeCompare(right.name);
-  })[0]!;
+  return candidates.find((candidate) => !isTransportDescription(candidate)) ?? candidates[0]!;
 }
 
 /** Converge product names, transport descriptions and documented routes before cards exist. */

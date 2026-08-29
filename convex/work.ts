@@ -840,19 +840,22 @@ export const retryFailed = mutation({
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
     }
-    const output = (row.output ?? {}) as {
-      actions?: MockAction[];
-      applied?: Array<{ ok?: boolean; held?: boolean; outcomeUnknown?: boolean }>;
-    };
-    const applied = output.applied;
-    const landed = applied?.some((entry, index) => {
-      if (entry.ok !== true || entry.held === true) return false;
-      const action = output.actions?.[index];
-      if (!action) return true;
-      const parsed = parseSurfaceAction(action);
-      return !parsed.ok || actionIntent(parsed.action) === 'write';
-    });
-    const outcomeUnknown = applied?.some((entry) => entry.outcomeUnknown === true);
+    // A run with a dependent phase carries two ledgers: the prerequisite
+    // phase's under `initial` and the closing phase's at the top. A write
+    // that landed in either fences the retry.
+    const phases = ledgerPhases(row.output);
+    const landed = phases.some(({ actions, applied }) =>
+      applied.some((entry, index) => {
+        if (entry.ok !== true || entry.held === true) return false;
+        const action = actions[index];
+        if (!action) return true;
+        const parsed = parseSurfaceAction(action);
+        return !parsed.ok || actionIntent(parsed.action) === 'write';
+      }),
+    );
+    const outcomeUnknown = phases.some(({ applied }) =>
+      applied.some((entry) => entry.outcomeUnknown === true),
+    );
     if (row.skipReason === INTERRUPTED_APPLY_REASON || landed || outcomeUnknown) {
       throw new Error(
         'retry refused because an external effect may already have landed; reconcile the provider first',
@@ -1281,6 +1284,26 @@ function refusedReasonEntries(
 
 function actionsOf(output: unknown): unknown[] {
   return ((output ?? {}) as { actions?: unknown[] }).actions ?? [];
+}
+
+interface LedgerPhase {
+  actions: MockAction[];
+  applied: Array<{ ok?: boolean; held?: boolean; outcomeUnknown?: boolean }>;
+}
+
+/** Every action list and ledger a run's output carries, prerequisite phase first. */
+export function ledgerPhases(output: unknown): LedgerPhase[] {
+  const phases: LedgerPhase[] = [];
+  const top = (output ?? {}) as {
+    actions?: MockAction[];
+    applied?: LedgerPhase['applied'];
+    initial?: { actions?: MockAction[]; applied?: LedgerPhase['applied'] };
+  };
+  if (top.initial && (top.initial.actions || top.initial.applied)) {
+    phases.push({ actions: top.initial.actions ?? [], applied: top.initial.applied ?? [] });
+  }
+  phases.push({ actions: top.actions ?? [], applied: top.applied ?? [] });
+  return phases;
 }
 
 function ledgerOf(output: unknown): Array<AppliedAction | undefined> {

@@ -83,6 +83,28 @@ describe('manager channel decision requests', (): void => {
     );
   });
 
+  it('tells the manager a second request closes the run they already approved', (): void => {
+    const held: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"iss-1","state":"Done"}' },
+    };
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Refresh the Looker pipeline tile',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions: [held],
+      heldIndexes: [0],
+      surfaces: [slack],
+      closingPhase: true,
+    });
+    expect(text).toContain(
+      'Closing actions, written from the results of the actions already applied in this run:\n1. ',
+    );
+    expect(text).not.toContain('Held actions:');
+    expect(text).toContain('Reply “approve ab3xyz” or “reject ab3xyz <reason>”.');
+  });
+
   it('uses the connected chat surface adapter path for HTTP and MCP', (): void => {
     expect(managerMessageAction(slack, 'Decide this.')).toEqual({
       tool: 'http.request',
