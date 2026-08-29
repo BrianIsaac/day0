@@ -29,8 +29,10 @@ describe('semi-final task fixtures', (): void => {
     expect(new Set(tasks.map((task) => task.seed.externalId))).toHaveLength(15);
     expect(
       Object.fromEntries(
-        ['docs-grounded-read', 'approval-write', 'out-of-scope']
-          .map((category) => [category, tasks.filter((task) => task.category === category).length]),
+        ['docs-grounded-read', 'approval-write', 'out-of-scope'].map((category) => [
+          category,
+          tasks.filter((task) => task.category === category).length,
+        ]),
       ),
     ).toEqual({
       'docs-grounded-read': 5,

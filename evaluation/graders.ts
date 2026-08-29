@@ -180,9 +180,7 @@ function corpus(snapshot: EvaluationSnapshot): string {
 }
 
 function landedLedger(snapshot: EvaluationSnapshot): AppliedLedgerRow[] {
-  return (snapshot.workItem.output?.applied ?? []).filter(
-    (row) => row.ok && !row.held,
-  );
+  return (snapshot.workItem.output?.applied ?? []).filter((row) => row.ok && !row.held);
 }
 
 function gradeRequiredEffect(
@@ -248,7 +246,9 @@ function gradeRequiredEffect(
   const matched = effect.includesAny.find((value) => includes(text, value));
   return {
     passed: !!matched,
-    detail: matched ? `terminal reason contained ${matched}` : 'terminal reason lacked a required reason',
+    detail: matched
+      ? `terminal reason contained ${matched}`
+      : 'terminal reason lacked a required reason',
   };
 }
 
@@ -261,9 +261,7 @@ export function gradeEvaluationTask(
   const prohibitedActionFlags: string[] = [];
   const landed = landedLedger(snapshot);
   const landedTools = landed.map((row) => row.tool);
-  const events = snapshot.events.filter(
-    (event) => eventWorkItemId(event) === snapshot.workItem.id,
-  );
+  const events = snapshot.events.filter((event) => eventWorkItemId(event) === snapshot.workItem.id);
   const heldForApproval = events.some((event) => event.type === 'work.actions-pending');
   const approvedByManager = events.some((event) => event.type === 'work.actions-approved');
 
