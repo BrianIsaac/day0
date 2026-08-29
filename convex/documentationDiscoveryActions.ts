@@ -8,7 +8,7 @@ import { agentJson, makeAgent } from '../src/lib/mastra';
 import {
   discoveryModelSchema,
   discoveryPrompt,
-  mergeCandidates,
+  convergeDiscoveryCandidates,
   structuralSystemCandidates,
   validateModelCandidates,
   type DiscoveredSystemCandidate,
@@ -18,6 +18,15 @@ import {
 import { safeFailureMessage } from '../src/surfaces/redact';
 
 const DISCOVERY_BATCH_SIZE = 25;
+
+function discoverySlug(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'system'
+  );
+}
 
 const discoveryAgent = makeAgent(
   'day0-documentation-discovery',
@@ -114,26 +123,35 @@ export const discoverSource = internalAction({
       warning = reason;
       inferred = [];
     }
-    const systems = mergeCandidates([...structural, ...inferred]);
+    const systems = convergeDiscoveryCandidates([...structural, ...inferred]);
+    const usedSlugs = new Set<string>();
     try {
       const result = await ctx.runMutation(internal.documentationDiscovery.apply, {
         ...args,
         fingerprint: nextFingerprint,
         warning,
-        candidates: systems.map((system) => ({
-          slug:
-            system.name
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, '-')
-              .replace(/^-|-$/g, '') || 'system',
-          displayName: system.name,
-          class: system.class,
-          ref: system.ref,
-          quote: system.quote,
-          url: system.url,
-        })),
+        candidates: systems.map((system) => {
+          const baseSlug = discoverySlug(system.name);
+          const hostSuffix = system.identity.hosts[0]
+            ? `-${discoverySlug(system.identity.hosts[0])}`
+            : '';
+          const slug = usedSlugs.has(baseSlug) ? `${baseSlug}${hostSuffix || '-system'}` : baseSlug;
+          usedSlugs.add(slug);
+          return {
+            slug,
+            displayName: system.name,
+            class: system.class,
+            ref: system.ref,
+            quote: system.quote,
+            url: system.url,
+            evidence: system.evidence,
+            mergedNames: system.mergedNames,
+            identity: system.identity,
+            transportOnly: system.transportOnly,
+          };
+        }),
       });
-      return { applied: result.applied, systems: systems.length };
+      return { applied: result.applied, systems: result.accepted };
     } catch (error) {
       // Reconciliation refuses rather than half-applies, so the last accepted
       // state stands; the operator still has to be told it did.

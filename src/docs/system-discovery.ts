@@ -217,3 +217,202 @@ export function discoveryPrompt(pages: readonly DiscoveryPage[]): string {
     ...rendered,
   ].join('\n');
 }
+
+export interface DiscoveryCandidateEvidence {
+  displayName: string;
+  ref: string;
+  quote: string;
+  url?: string;
+}
+
+export interface DocumentedSystemIdentity {
+  slugs: string[];
+  nameKeys: string[];
+  endpoints: string[];
+  hosts: string[];
+}
+
+export interface ConvergedSystemCandidate extends DiscoveredSystemCandidate {
+  evidence: DiscoveryCandidateEvidence[];
+  mergedNames: string[];
+  identity: DocumentedSystemIdentity;
+  transportOnly: boolean;
+}
+
+const TRANSPORT_NAME_WORDS = new Set([
+  'api',
+  'automation',
+  'browser',
+  'connector',
+  'dashboard',
+  'endpoint',
+  'http',
+  'https',
+  'integration',
+  'interface',
+  'mcp',
+  'pipeline',
+  'platform',
+  'server',
+  'tile',
+  'transport',
+  'ui',
+  'web',
+]);
+const STRONG_TRANSPORT_NAME_WORDS = new Set([
+  'api',
+  'browser',
+  'dashboard',
+  'mcp',
+  'tile',
+  'ui',
+  'web',
+]);
+const TRANSPORT_DESCRIPTION =
+  /\b(?:approved transport|transport is|integration endpoint|mcp endpoint|web api over|reached (?:through|via|over)|web ui only)\b/i;
+const DOCUMENTED_URL = /https?:\/\/[^\s`<>"'\])}]+/gi;
+
+function stableSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function transportNameKey(name: string): string {
+  const words = plain(name)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (!words.some((word) => STRONG_TRANSPORT_NAME_WORDS.has(word))) return words.join('-');
+  const productWords = words.filter((word) => !TRANSPORT_NAME_WORDS.has(word));
+  return productWords.length > 0 ? productWords.join('-') : words.join('-');
+}
+
+function documentedEndpoints(values: readonly string[]): string[] {
+  const endpoints = new Set<string>();
+  for (const value of values) {
+    for (const raw of value.match(DOCUMENTED_URL) ?? []) {
+      try {
+        const endpoint = new URL(raw);
+        endpoint.username = '';
+        endpoint.password = '';
+        endpoint.search = '';
+        endpoint.hash = '';
+        endpoint.pathname = endpoint.pathname.replace(/\/+$/, '') || '/';
+        endpoints.add(endpoint.toString().replace(/\/$/, ''));
+      } catch {
+        // A malformed string is not an identity signal.
+      }
+    }
+  }
+  return [...endpoints].sort();
+}
+
+export function documentedSystemIdentity(args: {
+  name: string;
+  quotes?: readonly string[];
+  endpoints?: readonly string[];
+}): DocumentedSystemIdentity {
+  const endpoints = documentedEndpoints([...(args.quotes ?? []), ...(args.endpoints ?? [])]);
+  return {
+    slugs: [stableSlug(args.name)].filter(Boolean),
+    nameKeys: [transportNameKey(args.name)].filter(Boolean),
+    endpoints,
+    hosts: [...new Set(endpoints.map((endpoint) => new URL(endpoint).host.toLowerCase()))].sort(),
+  };
+}
+
+function intersects(left: readonly string[], right: readonly string[]): boolean {
+  const rightValues = new Set(right);
+  return left.some((value) => rightValues.has(value));
+}
+
+export function sameDocumentedSystem(
+  leftClass: string,
+  left: DocumentedSystemIdentity,
+  rightClass: string,
+  right: DocumentedSystemIdentity,
+): boolean {
+  if (leftClass !== rightClass) return false;
+  if (left.hosts.length > 0 && right.hosts.length > 0 && !intersects(left.hosts, right.hosts)) {
+    return false;
+  }
+  if (intersects(left.slugs, right.slugs)) return true;
+  if (intersects(left.endpoints, right.endpoints)) return true;
+  if (intersects(left.hosts, right.hosts)) return true;
+  return intersects(left.nameKeys, right.nameKeys);
+}
+
+function combinedIdentity(
+  candidates: readonly DiscoveredSystemCandidate[],
+): DocumentedSystemIdentity {
+  const identities = candidates.map((candidate) =>
+    documentedSystemIdentity({ name: candidate.name, quotes: [candidate.quote] }),
+  );
+  return {
+    slugs: [...new Set(identities.flatMap((identity) => identity.slugs))].sort(),
+    nameKeys: [...new Set(identities.flatMap((identity) => identity.nameKeys))].sort(),
+    endpoints: [...new Set(identities.flatMap((identity) => identity.endpoints))].sort(),
+    hosts: [...new Set(identities.flatMap((identity) => identity.hosts))].sort(),
+  };
+}
+
+function isTransportDescription(candidate: DiscoveredSystemCandidate): boolean {
+  const identity = documentedSystemIdentity({ name: candidate.name });
+  return identity.slugs[0] !== identity.nameKeys[0] && TRANSPORT_DESCRIPTION.test(candidate.quote);
+}
+
+function canonicalCandidate(
+  candidates: readonly DiscoveredSystemCandidate[],
+): DiscoveredSystemCandidate {
+  return [...candidates].sort((left, right): number => {
+    const transportDifference =
+      Number(isTransportDescription(left)) - Number(isTransportDescription(right));
+    if (transportDifference !== 0) return transportDifference;
+    const wordDifference = plain(left.name).split(/\s+/).length - plain(right.name).split(/\s+/).length;
+    if (wordDifference !== 0) return wordDifference;
+    return left.name.localeCompare(right.name);
+  })[0]!;
+}
+
+/** Converge product names, transport descriptions and documented routes before cards exist. */
+export function convergeDiscoveryCandidates(
+  candidates: readonly DiscoveredSystemCandidate[],
+): ConvergedSystemCandidate[] {
+  const groups: DiscoveredSystemCandidate[][] = [];
+  for (const candidate of candidates) {
+    const identity = documentedSystemIdentity({ name: candidate.name, quotes: [candidate.quote] });
+    const group = groups.find((members) =>
+      sameDocumentedSystem(candidate.class, identity, members[0]!.class, combinedIdentity(members)),
+    );
+    if (group) group.push(candidate);
+    else groups.push([candidate]);
+  }
+  return groups.map((members): ConvergedSystemCandidate => {
+    const canonical = canonicalCandidate(members);
+    const evidence = new Map<string, DiscoveryCandidateEvidence>();
+    for (const member of members) {
+      const item = {
+        displayName: member.name,
+        ref: member.ref,
+        quote: member.quote,
+        url: member.url,
+      };
+      evidence.set(`${item.ref}\0${item.quote}`, item);
+    }
+    return {
+      ...canonical,
+      evidence: [...evidence.values()],
+      mergedNames: [
+        ...new Set(
+          members
+            .map((member) => member.name)
+            .filter((name) => name.toLowerCase() !== canonical.name.toLowerCase()),
+        ),
+      ],
+      identity: combinedIdentity(members),
+      transportOnly: members.every(isTransportDescription),
+    };
+  });
+}
