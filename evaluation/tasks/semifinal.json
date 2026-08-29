@@ -124,6 +124,7 @@
         {
           "kind": "ticket",
           "slug": "REVOPS-201",
+          "status": "open",
           "commentIncludesAll": ["EVAL-DOC-04", "Salesforce", "escalat", "Escalation paths"]
         }
       ],
@@ -160,6 +161,7 @@
         {
           "kind": "ticket",
           "slug": "REVOPS-203",
+          "status": "open",
           "commentIncludesAll": [
             "EVAL-DOC-05",
             "q4-revenue-tracker",

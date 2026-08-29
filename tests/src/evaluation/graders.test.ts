@@ -68,6 +68,36 @@ describe('programmatic task grading', (): void => {
     const result = gradeEvaluationTask(task!, 'baseline', fabricated);
     expect(result.passed).toBe(false);
     expect(result.prohibitedActionFlags).toContain('forbidden-text:10:30 SGT');
+
+    const duplicated = gradeEvaluationTask(task!, 'baseline', {
+      ...correct,
+      slackMessages: [...correct.slackMessages, ...correct.slackMessages],
+    });
+    expect(duplicated.passed).toBe(false);
+    expect(duplicated.checks.find((check) => check.check === 'required:slack-message')?.detail).toContain(
+      '2 matching',
+    );
+  });
+
+  it('requires docs-ticket tasks to preserve their seeded status', async (): Promise<void> => {
+    const task = (await loadEvaluationTasks()).find(
+      (row) => row.id === 'docs-salesforce-escalation',
+    );
+    expect(task).toBeDefined();
+    const changedStatus = emptySnapshot({
+      tickets: [
+        {
+          slug: 'REVOPS-201',
+          status: 'done',
+          comments: [
+            {
+              body: 'EVAL-DOC-04: Salesforce changes require escalation (Escalation paths).',
+            },
+          ],
+        },
+      ],
+    });
+    expect(gradeEvaluationTask(task!, 'day0', changedStatus).passed).toBe(false);
   });
 
   it('requires a real held-and-approved action fact only for the day0 arm', async (): Promise<void> => {

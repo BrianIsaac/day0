@@ -188,58 +188,63 @@ function gradeRequiredEffect(
   snapshot: EvaluationSnapshot,
 ): { passed: boolean; detail: string } {
   if (effect.kind === 'slack-message') {
-    const match = snapshot.slackMessages.find(
+    const matches = snapshot.slackMessages.filter(
       (row) =>
         row.channelSlug === effect.channelSlug &&
         (effect.threadKey === undefined || row.threadKey === effect.threadKey) &&
         effect.includesAll.every((value) => includes(row.body, value)),
     );
     return {
-      passed: !!match,
-      detail: match
-        ? `matching message found in ${effect.channelSlug}`
-        : `no ${effect.channelSlug} message contained ${effect.includesAll.join(', ')}`,
+      passed: matches.length === 1,
+      detail:
+        matches.length === 1
+          ? `one matching message found in ${effect.channelSlug}`
+          : `${matches.length} matching ${effect.channelSlug} messages; expected exactly one`,
     };
   }
   if (effect.kind === 'ticket') {
     const ticket = snapshot.tickets.find((row) => row.slug === effect.slug);
     const statusMatches = effect.status === undefined || ticket?.status === effect.status;
+    const matchingComments =
+      effect.commentIncludesAll === undefined
+        ? []
+        : (ticket?.comments.filter((comment) =>
+            effect.commentIncludesAll!.every((value) => includes(comment.body, value)),
+          ) ?? []);
     const commentMatches =
-      effect.commentIncludesAll === undefined ||
-      ticket?.comments.some((comment) =>
-        effect.commentIncludesAll!.every((value) => includes(comment.body, value)),
-      ) === true;
+      effect.commentIncludesAll === undefined || matchingComments.length === 1;
     return {
       passed: !!ticket && statusMatches && commentMatches,
       detail:
         ticket && statusMatches && commentMatches
           ? `ticket ${effect.slug} matched`
-          : `ticket ${effect.slug} did not match the required status/comment`,
+          : `ticket ${effect.slug} status=${ticket?.status ?? 'missing'}, matching comments=${matchingComments.length}`,
     };
   }
   if (effect.kind === 'spreadsheet-row') {
-    const match = snapshot.spreadsheets.find(
+    const matches = snapshot.spreadsheets.filter(
       (row) =>
         row.sheetSlug === effect.sheetSlug &&
         row.tabName === effect.tabName &&
         Object.entries(effect.cells).every(([header, value]) => row.cells[header] === value),
     );
     return {
-      passed: !!match,
-      detail: match
-        ? `matching row found in ${effect.sheetSlug}/${effect.tabName}`
-        : `no exact row found in ${effect.sheetSlug}/${effect.tabName}`,
+      passed: matches.length === 1,
+      detail:
+        matches.length === 1
+          ? `one matching row found in ${effect.sheetSlug}/${effect.tabName}`
+          : `${matches.length} exact rows found in ${effect.sheetSlug}/${effect.tabName}; expected one`,
     };
   }
   if (effect.kind === 'tweet-reply') {
-    const match = snapshot.tweetReplies.find(
+    const matches = snapshot.tweetReplies.filter(
       (row) =>
         row.tweetSlug === effect.tweetSlug &&
         effect.includesAll.every((value) => includes(row.body, value)),
     );
     return {
-      passed: !!match,
-      detail: match ? `matching reply found on ${effect.tweetSlug}` : 'required reply not found',
+      passed: matches.length === 1,
+      detail: `${matches.length} matching replies found on ${effect.tweetSlug}; expected one`,
     };
   }
   const text = reasonText(snapshot);
