@@ -568,13 +568,22 @@ function successfulReadSurfaces(
   return surfaces;
 }
 
-/** Refuse a silent omission when an approved step explicitly promised a surface read. */
+function namedInStep(step: string, name: string): boolean {
+  return new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(step);
+}
+
+/**
+ * Refuse a silent omission when an approved step explicitly promised a surface read.
+ *
+ * A step names a surface by its slug or by its display name: a plan says
+ * "the Looker pipeline tile", not "looker-pipeline-tile".
+ */
 export function validatePlanStepOutcomes(args: {
   plan: ExecutionPlan;
   outcomes: readonly PlanStepOutcome[];
   initialActions: readonly ExecutionOutput['actions'][number][];
   initialLedger: readonly AppliedAction[];
-  surfaceSlugs: readonly string[];
+  surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
 }): void {
   const ordered = [...args.outcomes].sort((a, b) => a.step - b.step);
   if (
@@ -586,15 +595,15 @@ export function validatePlanStepOutcomes(args: {
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
   for (const [index, step] of args.plan.steps.entries()) {
     if (!RESULT_STEP.test(step)) continue;
-    const named = args.surfaceSlugs.filter((slug) =>
-      new RegExp(`\\b${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(step),
+    const named = args.surfaces.filter(
+      (surface) => namedInStep(step, surface.slug) || namedInStep(step, surface.displayName),
     );
-    for (const slug of named) {
-      if (reads.has(slug.toLowerCase())) continue;
+    for (const surface of named) {
+      if (reads.has(surface.slug.toLowerCase())) continue;
       const outcome = ordered[index];
       if (outcome.status !== 'blocked' || outcome.evidence.trim() === '') {
         throw new Error(
-          `approved plan step ${index + 1} promised a ${slug} read, but no landed read or blocking ledger reason was recorded`,
+          `approved plan step ${index + 1} promised a ${surface.displayName} read, but no landed read or blocking ledger reason was recorded`,
         );
       }
     }
@@ -710,7 +719,10 @@ export const authorDependentActions = internalAction({
         outcomes: output.planStepOutcomes,
         initialActions: initial.actions,
         initialLedger: initial.applied,
-        surfaceSlugs: surfaces.map((surface) => surface.slug),
+        surfaces: surfaces.map((surface) => ({
+          slug: surface.slug,
+          displayName: surface.displayName,
+        })),
       });
       const transitionRefusal = dependentTransitionRefusal({
         plan,
