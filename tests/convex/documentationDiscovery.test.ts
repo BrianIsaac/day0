@@ -85,6 +85,35 @@ const northstar = {
   quote: '# Northstar CRM',
 };
 
+const slack = {
+  slug: 'slack',
+  displayName: 'Slack',
+  class: 'chat',
+  ref: 'onboarding.md',
+  quote: '| Slack | #revops-asks receives inbound requests. | Messaging administrator |',
+};
+
+const slackTransport = {
+  slug: 'slack-web-api',
+  displayName: 'Slack Web API',
+  class: 'chat',
+  ref: 'runbooks/how-to-post-slack.md',
+  quote: 'The approved transport is the Slack Web API over HTTPS at https://slack.com/api/.',
+};
+
+const convergedSlack = {
+  ...slack,
+  evidence: [
+    { displayName: slack.displayName, ref: slack.ref, quote: slack.quote },
+    {
+      displayName: slackTransport.displayName,
+      ref: slackTransport.ref,
+      quote: slackTransport.quote,
+    },
+  ],
+  mergedNames: ['Slack Web API'],
+};
+
 afterEach((): void => {
   vi.useRealTimers();
 });
@@ -249,6 +278,152 @@ describe('documentation discovery lifecycle', (): void => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ verdict: 'declared', reason: 'Rejected.' });
     expect(jobsAfter).toHaveLength(jobsBefore.length);
+  });
+
+  it('attaches an evidence-only transport from another source to the existing system', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId, runId } = await seedDiscovery(harness, 'deployed');
+    await harness.mutation(internal.documentationDiscovery.apply, {
+      sourceId,
+      runId,
+      fingerprint: 'first',
+      candidates: [slack],
+    });
+    const second = await harness.run(async (ctx): Promise<{
+      sourceId: Id<'docSources'>;
+      runId: Id<'docSyncRuns'>;
+    }> => {
+      const otherSourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Runbooks',
+        kind: 'folder',
+        locator: 'runbooks',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const otherRunId = await ctx.db.insert('docSyncRuns', {
+        sourceId: otherSourceId,
+        refs: [],
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 1,
+        completedAt: 1,
+      });
+      await ctx.db.patch(otherSourceId, { lastCompletedSyncId: otherRunId });
+      return { sourceId: otherSourceId, runId: otherRunId };
+    });
+
+    await expect(
+      harness.mutation(internal.documentationDiscovery.apply, {
+        sourceId: second.sourceId,
+        runId: second.runId,
+        fingerprint: 'first',
+        candidates: [{ ...slackTransport, transportOnly: true }],
+      }),
+    ).resolves.toMatchObject({ applied: true, created: 0, updated: 1, scheduled: 0 });
+    const surfaces = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(surfaces).toHaveLength(1);
+    expect(surfaces[0]).toMatchObject({
+      slug: 'slack',
+      displayName: 'Slack',
+      discoveryEvidence: [
+        expect.objectContaining({ sourceId, ref: 'onboarding.md', current: true }),
+        expect.objectContaining({
+          sourceId: second.sourceId,
+          ref: 'runbooks/how-to-post-slack.md',
+          current: true,
+        }),
+      ],
+    });
+  });
+
+  it('retires a legacy duplicate discovery without changing either surface decision', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId, runId } = await seedDiscovery(harness, 'deployed');
+    await harness.mutation(internal.documentationDiscovery.apply, {
+      sourceId,
+      runId,
+      fingerprint: 'legacy',
+      candidates: [slack, slackTransport],
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      const surfaces = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect();
+      const primary = surfaces.find((surface) => surface.slug === 'slack');
+      const duplicate = surfaces.find((surface) => surface.slug === 'slack-web-api');
+      if (!primary || !duplicate) throw new Error('legacy surfaces missing');
+      await ctx.db.patch(primary._id, {
+        verdict: 'approved',
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        managerApprovedAt: 10,
+        itApprovedAt: 11,
+      });
+      await ctx.db.patch(duplicate._id, { verdict: 'declared', reason: 'Rejected by operator.' });
+    });
+
+    const mergedRun = await nextRun(harness, sourceId);
+    await expect(
+      harness.mutation(internal.documentationDiscovery.apply, {
+        sourceId,
+        runId: mergedRun,
+        fingerprint: 'merged',
+        candidates: [convergedSlack],
+      }),
+    ).resolves.toMatchObject({ applied: true, created: 0, updated: 1, retired: 1, scheduled: 0 });
+    const secondMergedRun = await nextRun(harness, sourceId);
+    await expect(
+      harness.mutation(internal.documentationDiscovery.apply, {
+        sourceId,
+        runId: secondMergedRun,
+        fingerprint: 'merged-again',
+        candidates: [convergedSlack],
+      }),
+    ).resolves.toMatchObject({ applied: true, created: 0, updated: 1, retired: 0, scheduled: 0 });
+
+    const result = await harness.run(async (ctx) => ({
+      discoveries: await ctx.db
+        .query('docSystemDiscoveries')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .collect(),
+      surfaces: await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect(),
+    }));
+    expect(result.discoveries.filter((row) => row.current)).toMatchObject([
+      {
+        slug: 'slack',
+        mergedNames: ['Slack Web API'],
+        evidence: [
+          expect.objectContaining({ ref: 'onboarding.md' }),
+          expect.objectContaining({ ref: 'runbooks/how-to-post-slack.md' }),
+        ],
+      },
+    ]);
+    expect(result.discoveries.find((row) => row.slug === 'slack-web-api')?.current).toBe(false);
+    expect(result.surfaces.find((surface) => surface.slug === 'slack')).toMatchObject({
+      verdict: 'approved',
+      endpoint: 'https://slack.com/api/',
+      managerApprovedAt: 10,
+      itApprovedAt: 11,
+    });
+    expect(result.surfaces.find((surface) => surface.slug === 'slack-web-api')).toMatchObject({
+      verdict: 'declared',
+      reason: 'Rejected by operator.',
+      discoveryEvidence: [expect.objectContaining({ current: false })],
+    });
   });
 
   it('updates page provenance after approval without changing approved authority', async (): Promise<void> => {
