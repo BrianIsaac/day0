@@ -30,6 +30,9 @@ export default defineSchema({
       v.literal('charter-pending'),
       v.literal('active'),
     ),
+    /** Controlled-comparison mechanism. Optional only for rows deployed before
+     * the evaluation harness; every new deploy persists one arm. */
+    arm: v.optional(v.union(v.literal('day0'), v.literal('baseline'))),
     /** Whether the agent may act on connected systems without asking.
      * Absent reads as `false`, the supervised state: reads and the manager
      * DM apply on their own and every other write waits for the manager.
