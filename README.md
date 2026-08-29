@@ -24,7 +24,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
-**Project** · [Credits](#credits) · [Licence](#licence)
+**Project** · [Controlled evaluation](evaluation/README.md) · [Credits](#credits) · [Licence](#licence)
 
 ## What is unusual about it
 
@@ -52,7 +52,7 @@ A work item that matches no registered skill returns `needs-skill` rather than b
 
 ## What this is, and what it is not
 
-Day0 is a working demonstration of the whole loop rather than a product: it has no users, no benchmarks, and it makes no measured claim about how well the agent does the work it takes on. What it shows is that the loop closes.
+Day0 is a working demonstration rather than a product and has no users. Its measured claim is deliberately narrow: the repository ships a [controlled, programmatically graded comparison](evaluation/README.md) of onboarded Day0 versus an ordinary agent on the same 15 unfamiliar mock-office tasks. It does not claim that this benchmark predicts every real team's work.
 
 The agent works inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue, a social feed - seeded per agent. There are no connectors to real corporate systems, and that is deliberate: the mock environment is what makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust. Everything around it is real - the model calls, the sandbox, the state machine, the approval gates.
 
