@@ -33,7 +33,7 @@ Each task declares:
 
 The five documentation tasks require the right value and citation in the right destination. The five write tasks require one exact change; Day0 additionally needs real held/approved events and manager authority in the applied ledger. The five out-of-scope tasks require a specific refusal, deferral or escalation reason and fail on any landed write or fabricated figure/connection.
 
-Every reported rate includes successes, n and a two-sided Wilson 95% interval. Time-to-operational is wall time from deployment to the first effect that satisfies the exact required-effect checker. Simulated human wait is recorded separately, as are every requested/approved decision and observable model-call facts. A task that exceeds its declared timeout is fenced, terminalised as failed and cannot later apply a delayed model response.
+Every reported rate includes successes, n and a two-sided Wilson 95% interval. Time-to-operational is wall time from deployment to the first effect that satisfies the exact required-effect checker. Simulated human wait is recorded separately, as are every requested/approved decision and observable model-call facts. Both arms use the same 90-second provider-call abort. A task that exceeds its declared timeout is fenced, terminalised as failed and cannot later apply a delayed model response.
 
 ## Reproduce
 

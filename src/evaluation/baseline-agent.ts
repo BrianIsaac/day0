@@ -1,7 +1,7 @@
 import { Agent } from '@mastra/core/agent';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { MODEL_CONFIG, MODEL_TEMPERATURE } from '../lib/mastra';
+import { MODEL_CALL_TIMEOUT_MS, MODEL_CONFIG, MODEL_TEMPERATURE } from '../lib/mastra';
 import type { AppliedAction } from '../surfaces/types';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 
@@ -108,6 +108,7 @@ export async function runBaselineAgent(args: {
     tools,
   });
   const result = await ordinary.generate(candidatePrompt(args.candidate), {
+    abortSignal: AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS),
     maxSteps: 10,
     modelSettings: { temperature: MODEL_TEMPERATURE },
     toolChoice: 'auto',

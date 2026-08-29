@@ -25,7 +25,7 @@ import {
   type EvaluationTaskResult,
 } from '../evaluation/report';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
-import { MODEL_TEMPERATURE } from '../src/lib/mastra';
+import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
 
 const DEFAULT_OUT = 'evaluation/results/semifinal.json';
@@ -222,6 +222,7 @@ function assertResumeCompatible(
     config.commit !== commit ||
     config.model !== MODEL ||
     config.temperature !== MODEL_TEMPERATURE ||
+    config.modelCallTimeoutMs !== MODEL_CALL_TIMEOUT_MS ||
     config.requestedRuns !== options.runs ||
     config.approvalDelayMs !== options.approvalDelayMs ||
     config.pollIntervalMs !== options.pollIntervalMs ||
@@ -259,6 +260,7 @@ async function loadOrCreateEvidence(
       commit,
       model: MODEL,
       temperature: MODEL_TEMPERATURE,
+      modelCallTimeoutMs: MODEL_CALL_TIMEOUT_MS,
       surfaceMode: 'mock',
       arms: options.arms,
       requestedRuns: options.runs,

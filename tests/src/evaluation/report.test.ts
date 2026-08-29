@@ -26,6 +26,7 @@ function evidence(): EvaluationEvidence {
       commit: 'abcdef0',
       model: 'gpt-5.5',
       temperature: 0.4,
+      modelCallTimeoutMs: 90_000,
       surfaceMode: 'mock',
       arms: ['day0'],
       requestedRuns: 1,

@@ -42,6 +42,11 @@ export const MODEL_CONFIG: MastraModelConfig = env.OPENAI_BASE_URL
 
 /** Shared sampling setting for the shipped agent and the evaluation control. */
 export const MODEL_TEMPERATURE = 0.4;
+export const MODEL_CALL_TIMEOUT_MS = 90_000;
+
+function modelAbortSignal(): AbortSignal {
+  return AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS);
+}
 
 const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 2000;
@@ -312,6 +317,7 @@ async function generateObject<T>(
   let response;
   try {
     response = await args.agent.generate(args.user, {
+      abortSignal: modelAbortSignal(),
       modelSettings: { temperature: MODEL_TEMPERATURE },
       // Zod 4 schemas pass through Mastra's PublicSchema bridge; the cast
       // sidesteps the v4-vs-v3 peer-dep nuance without losing the
@@ -338,6 +344,7 @@ async function generateObject<T>(
 export async function agentText(args: { agent: Agent; user: string }): Promise<string> {
   return withRetry(`agentText(${args.agent.name})`, async () => {
     const response = await args.agent.generate(args.user, {
+      abortSignal: modelAbortSignal(),
       modelSettings: { temperature: MODEL_TEMPERATURE },
     });
     return response.text ?? '';

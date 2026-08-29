@@ -52,6 +52,7 @@ export interface EvaluationEvidence {
     commit: string;
     model: string;
     temperature: number;
+    modelCallTimeoutMs: number;
     surfaceMode: 'mock';
     arms?: EvaluationArm[];
     requestedRuns: number;
@@ -208,7 +209,7 @@ No LLM judge contributes to any reported number. The graders inspect terminal wo
 
 Day0 onboarding uses ${evidence.configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
 
-Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`. A timeout is terminal for the harness and remains a failed programmatic grade. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
+Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`; each provider call has a shared ${(evidence.configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. A timeout is terminal for the harness and remains a failed programmatic grade. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
 
 ## Task-level evidence
 
