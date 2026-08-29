@@ -4,6 +4,8 @@ import { agentJson, MODEL_CONFIG } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import {
   ACTION_TOOLS,
+  DEPENDENT_ACTION_CAP,
+  type DependentExecutionOutput,
   type ExecutionOutput,
   type ExecutionPlan,
   type MockAction,
@@ -11,7 +13,8 @@ import {
   type ReplyTarget,
   type WorkCandidate,
 } from './types';
-import type { SurfaceMode, SurfaceRecord } from '../surfaces/types';
+import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
+import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction } from './plan';
 
@@ -49,13 +52,24 @@ const DRAFT_DISCIPLINE = [
   '  - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three `spreadsheet.appendRow` actions, not one action and a sentence saying three.',
   '  - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a `slack.postMessage` in this response says it.',
   '  - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in `notes` rather than describing the work as finished.',
-  '',
 ];
+
+/**
+ * Only the real path runs a second, result-dependent phase. The mock path
+ * applies the whole set in one call, so a mock executor that held actions
+ * back would leave the demo run half done with no turn to finish it.
+ */
+const DEPENDENT_PHASE_REAL =
+  '  - When any later action needs an earlier action\'s result, emit only the prerequisite actions now and set `needsDependentPhase` to true. Do not prewrite the later comment, state change, reply or summary: it will be authored once from the applied ledger.';
+const DEPENDENT_PHASE_MOCK =
+  '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment applies the whole set at once and runs no second phase.';
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   ...DRAFT_DISCIPLINE,
+  DEPENDENT_PHASE_MOCK,
+  '',
   'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. Available tools:',
   "  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }",
   "  - slack.postMessage    — { channelSlug, threadKey?, body }",
@@ -83,6 +97,8 @@ const REAL_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. Write every action as it should land; the live action mode below says whether it lands immediately or waits.',
   ...DRAFT_DISCIPLINE,
+  DEPENDENT_PHASE_REAL,
+  '',
   'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
   '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
@@ -166,10 +182,31 @@ export const actionArgsSchema = z.object({
 export const executeSchema = z.object({
   draft: z.string(),
   notes: z.string(),
+  needsDependentPhase: z.boolean(),
   actions: z.array(
     z.object({
       tool: z.enum(ACTION_TOOLS),
       args: actionArgsSchema,
+    }),
+  ),
+});
+
+export const dependentExecuteSchema = z.object({
+  draft: z.string(),
+  notes: z.string(),
+  actions: z
+    .array(
+      z.object({
+        tool: z.enum(ACTION_TOOLS),
+        args: actionArgsSchema,
+      }),
+    )
+    .max(DEPENDENT_ACTION_CAP),
+  planStepOutcomes: z.array(
+    z.object({
+      step: z.number().int().positive(),
+      status: z.enum(['satisfied', 'blocked']),
+      evidence: z.string().min(1),
     }),
   ),
 });
@@ -197,6 +234,12 @@ export interface RunSkillArgs {
   autonomousActions?: boolean;
   /** Clock for the connection verdict; defaults to now. */
   now?: number;
+}
+
+export interface RunDependentSkillArgs extends RunSkillArgs {
+  initialOutput: ExecutionOutput;
+  initialLedger: AppliedAction[];
+  initialFailure?: string;
 }
 
 /**
@@ -380,7 +423,9 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     '--- Team docs (read-only context) ---',
     renderTeamDocs(mockEnv.teamDocs),
     '',
-    'Produce the draft, notes, and actions now.',
+    mode === 'real'
+      ? 'Produce the draft, notes, needsDependentPhase flag, and prerequisite actions now.'
+      : 'Produce the draft, notes, and actions now.',
   ].join('\n');
 
   const raw = await agentJson<z.infer<typeof executeSchema>>({
@@ -391,6 +436,110 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   return {
     draft: raw.draft,
     notes: raw.notes,
+    needsDependentPhase: raw.needsDependentPhase,
     actions: raw.actions as MockAction[],
+  };
+}
+
+/**
+ * Render only redacted, durable action outcomes for the dependent authoring turn.
+ *
+ * The adapters redact what they store, and the model wrote the action
+ * arguments itself; the pass here is defence in depth for a provider line or
+ * an argument that still carries a recognisable credential shape, so that
+ * nothing of that shape is echoed into a second model prompt.
+ */
+export function appliedLedgerPrompt(
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+): string {
+  if (applied.length === 0) return '(no action result was recorded)';
+  return applied
+    .map((entry, index): string => {
+      const action = actions[index];
+      const result = entry.ok && !entry.held ? 'landed' : entry.held ? 'held' : 'failed';
+      const detail = entry.effect ?? entry.reason ?? '(no provider detail)';
+      const target = action
+        ? JSON.stringify({ tool: action.tool, args: action.args })
+        : JSON.stringify({ tool: entry.tool });
+      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}`);
+    })
+    .join('\n');
+}
+
+/**
+ * Author the run's one closing phase from action results that already exist.
+ * The returned literals are still proposals: the caller sends the whole set
+ * through the same exact-action gate used by the initial phase.
+ */
+export async function runDependentSkill(
+  args: RunDependentSkillArgs,
+): Promise<DependentExecutionOutput> {
+  const { skill, plan, candidate, charter, mockEnv } = args;
+  const mode: SurfaceMode = args.mode ?? 'mock';
+  const base = executorInstructions({
+    mode,
+    autonomousActions: args.autonomousActions ?? false,
+    skillBody: skill.body,
+    surfaces: args.surfaces ?? [],
+    mockEnv,
+    now: args.now ?? Date.now(),
+  });
+  const instructions = [
+    base,
+    '',
+    '--- Result-dependent phase (second and final phase) ---',
+    'The prerequisite actions have finished. This is the run\'s only dependent phase; there is no third turn and no loop.',
+    'The earlier needsDependentPhase instruction no longer applies; this final schema has no continuation flag.',
+    `Emit at most ${DEPENDENT_ACTION_CAP} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
+    'Treat only the applied ledger below as evidence of what happened. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
+    'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
+    'Return one planStepOutcomes row for every approved plan step, in order. Mark a step satisfied only when the ledger proves it; otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
+  ].join('\n');
+
+  const skillAgent = new Agent({
+    id: `day0-skill-${skill.name}-dependent`,
+    name: `day0-skill-${skill.name}-dependent`,
+    instructions,
+    model: MODEL_CONFIG,
+  });
+  const userPrompt = [
+    `Role: ${charter.proposedFunction}`,
+    '',
+    `Approved plan: ${plan.summary}`,
+    `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
+    `Expected output type: ${plan.expectedOutputType}`,
+    '',
+    '--- Candidate ---',
+    `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
+    `Title: ${candidate.title}`,
+    `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
+    ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
+    `Body: ${candidate.contentSummary}`,
+    '',
+    '--- Applied prerequisite ledger ---',
+    appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
+    ...(args.initialFailure ? ['', `Prerequisite phase failure: ${args.initialFailure}`] : []),
+    '',
+    'Produce the truthful closing draft, notes, plan-step outcomes, and at most one bounded set of closing actions now.',
+  ].join('\n');
+
+  const raw = await agentJson<z.infer<typeof dependentExecuteSchema>>({
+    agent: skillAgent,
+    user: userPrompt,
+    schema: dependentExecuteSchema,
+  });
+  const ordered = [...raw.planStepOutcomes].sort((a, b) => a.step - b.step);
+  if (
+    ordered.length !== plan.steps.length ||
+    ordered.some((outcome, index) => outcome.step !== index + 1)
+  ) {
+    throw new Error('dependent phase did not account for every approved plan step exactly once');
+  }
+  return {
+    draft: raw.draft,
+    notes: raw.notes,
+    actions: raw.actions as MockAction[],
+    planStepOutcomes: ordered,
   };
 }

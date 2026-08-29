@@ -8,20 +8,25 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
 /** Controllable discovery classifier boundary. */
-const model = vi.hoisted(() => ({ calls: 0, error: undefined as Error | undefined }));
+const model = vi.hoisted(() => ({
+  calls: 0,
+  error: undefined as Error | undefined,
+  systems: [] as Array<{ name: string; class: 'chat'; pageRef: string }>,
+}));
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async (): Promise<{ systems: [] }> => {
+  agentJson: async (): Promise<{ systems: typeof model.systems }> => {
     model.calls += 1;
     if (model.error) throw model.error;
-    return { systems: [] };
+    return { systems: model.systems };
   },
 }));
 
 beforeEach((): void => {
   model.calls = 0;
   model.error = undefined;
+  model.systems = [];
 });
 
 interface Seeded {
@@ -78,6 +83,90 @@ async function seedGeneration(
 }
 
 describe('the documentation discovery action', (): void => {
+  it('converges a system table and its transport line before filing discoveries', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness, 0);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'onboarding.md',
+        title: 'Revenue operations onboarding',
+        markdown: [
+          '| System | What it is for | Access owner |',
+          '|---|---|---|',
+          '| Slack | `#revops-asks` receives inbound requests. | Messaging administrator |',
+        ].join('\n'),
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/how-to-post-slack.md',
+        title: 'How to post to Slack',
+        markdown:
+          'The approved transport is the Slack Web API over HTTPS at `https://slack.com/api/` with the bot token as a bearer.',
+        updatedAt: 1,
+      });
+    });
+    model.systems = [
+      { name: 'Slack Web API', class: 'chat', pageRef: 'runbooks/how-to-post-slack.md' },
+    ];
+
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+    ).resolves.toMatchObject({ applied: true, systems: 1 });
+    const discoveries = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docSystemDiscoveries')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    );
+    expect(discoveries.filter((row) => row.current).map((row) => row.displayName)).toEqual([
+      'Slack',
+    ]);
+    expect(discoveries[0]).toMatchObject({
+      slug: 'slack',
+      mergedNames: ['Slack Web API'],
+      evidence: [
+        expect.objectContaining({ displayName: 'Slack', ref: 'onboarding.md' }),
+        expect.objectContaining({
+          displayName: 'Slack Web API',
+          ref: 'runbooks/how-to-post-slack.md',
+        }),
+      ],
+    });
+  });
+
+  it('does not turn an unattached transport line into a system', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness, 0);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/how-to-post-slack.md',
+        title: 'How to post to Slack',
+        markdown:
+          'The approved transport is the Slack Web API over HTTPS at `https://slack.com/api/` with the bot token as a bearer.',
+        updatedAt: 1,
+      });
+    });
+    model.systems = [
+      { name: 'Slack Web API', class: 'chat', pageRef: 'runbooks/how-to-post-slack.md' },
+    ];
+
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+    ).resolves.toMatchObject({ applied: true, systems: 0 });
+    const discoveries = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docSystemDiscoveries')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    );
+    expect(discoveries).toEqual([]);
+  });
+
   it('records why an over-cap source was never read instead of failing silently', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, runId } = await seedGeneration(harness, 501);

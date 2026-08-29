@@ -10,6 +10,12 @@ import {
   browserComponentRefusal,
   withBrowserComponentState,
 } from '../src/surfaces/browser';
+import {
+  documentedSystemIdentity,
+  sameDocumentedSystem,
+  stableSlug,
+  type DocumentedSystemIdentity,
+} from '../src/docs/system-discovery';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -35,6 +41,8 @@ export interface DocumentedSystemSeed {
   ref: string;
   quote: string;
   url?: string;
+  evidence?: Array<{ displayName: string; ref: string; quote: string; url?: string }>;
+  identity?: DocumentedSystemIdentity;
 }
 
 export interface CharterSystemSeed {
@@ -209,7 +217,48 @@ export async function reconcileDocumentedSystems(
   const bySlug = new Map(
     surfaces.map((surface): [string, Doc<'surfaces'>] => [surface.slug, surface]),
   );
-  const currentSlugs = new Set(args.systems.map((system): string => system.slug));
+  const resolved = new Map<string, DocumentedSystemSeed>();
+  for (const system of args.systems) {
+    const identity =
+      system.identity ??
+      documentedSystemIdentity({
+        name: system.displayName,
+        quotes: (system.evidence ?? [system]).map((item) => item.quote),
+      });
+    const sameIdentity = (surface: Doc<'surfaces'>): boolean =>
+      sameDocumentedSystem(
+        system.class,
+        identity,
+        surface.class,
+        documentedSystemIdentity({
+          name: surface.displayName,
+          quotes: (surface.discoveryEvidence ?? []).map((item) => item.quote),
+          endpoints: surface.endpoint ? [surface.endpoint] : [],
+        }),
+      );
+    const direct = bySlug.get(system.slug);
+    const matches = surfaces.filter(sameIdentity);
+    const existing = direct && sameIdentity(direct) ? direct : matches.length === 1 ? matches[0] : undefined;
+    const host = stableSlug(identity.hosts[0] ?? '');
+    const slug = existing?.slug ?? (direct ? `${system.slug}-${host || 'system'}` : system.slug);
+    const prior = resolved.get(slug);
+    const evidence = [
+      ...(prior?.evidence ?? (prior ? [prior] : [])),
+      ...(system.evidence ?? [system]),
+    ];
+    const uniqueEvidence = new Map(
+      evidence.map((item) => [`${item.ref}\0${item.quote}`, item] as const),
+    );
+    resolved.set(slug, {
+      ...system,
+      slug,
+      displayName: existing?.displayName ?? prior?.displayName ?? system.displayName,
+      evidence: [...uniqueEvidence.values()],
+      identity,
+    });
+  }
+  const systems = [...resolved.values()];
+  const currentSlugs = new Set(systems.map((system): string => system.slug));
   let created = 0;
   let updated = 0;
   let retired = 0;
@@ -232,28 +281,39 @@ export async function reconcileDocumentedSystems(
     }
   }
 
-  for (const system of args.systems) {
+  for (const system of systems) {
     if (system.class === 'docs') continue;
     const existing = bySlug.get(system.slug);
     const prior = existing?.discoveryEvidence ?? [];
-    const previous = prior.find(
-      (item): boolean => item.kind === 'documentation' && item.sourceId === args.sourceId,
+    const incoming = new Map(
+      (system.evidence ?? [system]).map((item) => [item.ref, item] as const),
     );
-    const evidence: DiscoveryEvidence = {
-      kind: 'documentation',
-      sourceId: args.sourceId,
-      ref: system.ref,
-      quote: system.quote,
-      url: system.url,
-      current: true,
-      firstSeenAt: previous?.firstSeenAt ?? args.now,
-      lastSeenAt: args.now,
-    };
+    const previousByRef = new Map(
+      prior
+        .filter(
+          (item): boolean => item.kind === 'documentation' && item.sourceId === args.sourceId,
+        )
+        .map((item) => [item.ref, item] as const),
+    );
     const discoveryEvidence = [
       ...prior.filter(
         (item): boolean => item.kind !== 'documentation' || item.sourceId !== args.sourceId,
       ),
-      evidence,
+      ...[...incoming.values()].map(
+        (item): DiscoveryEvidence => {
+          const previous = previousByRef.get(item.ref);
+          return {
+            kind: 'documentation',
+            sourceId: args.sourceId,
+            ref: item.ref,
+            quote: item.quote,
+            url: item.url,
+            current: true,
+            firstSeenAt: previous?.firstSeenAt ?? args.now,
+            lastSeenAt: args.now,
+          };
+        },
+      ),
     ];
     if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
       throw new Error('Surface discovery provenance exceeds 64 sources.');
@@ -269,14 +329,12 @@ export async function reconcileDocumentedSystems(
       displayName: system.displayName,
       class: system.class,
       verdict: 'declared',
-      whereFound: [
-        {
+      whereFound: (system.evidence ?? [system]).map((item) => ({
           sourceId: args.sourceId,
-          ref: system.ref,
-          quote: system.quote,
-          url: system.url,
-        },
-      ],
+          ref: item.ref,
+          quote: item.quote,
+          url: item.url,
+        })),
       discoveryEvidence,
       credentialLanded: false,
       createdAt: args.now,

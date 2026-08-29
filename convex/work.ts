@@ -845,19 +845,22 @@ export const retryFailed = mutation({
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
     }
-    const output = (row.output ?? {}) as {
-      actions?: MockAction[];
-      applied?: Array<{ ok?: boolean; held?: boolean; outcomeUnknown?: boolean }>;
-    };
-    const applied = output.applied;
-    const landed = applied?.some((entry, index) => {
-      if (entry.ok !== true || entry.held === true) return false;
-      const action = output.actions?.[index];
-      if (!action) return true;
-      const parsed = parseSurfaceAction(action);
-      return !parsed.ok || actionIntent(parsed.action) === 'write';
-    });
-    const outcomeUnknown = applied?.some((entry) => entry.outcomeUnknown === true);
+    // A run with a dependent phase carries two ledgers: the prerequisite
+    // phase's under `initial` and the closing phase's at the top. A write
+    // that landed in either fences the retry.
+    const phases = ledgerPhases(row.output);
+    const landed = phases.some(({ actions, applied }) =>
+      applied.some((entry, index) => {
+        if (entry.ok !== true || entry.held === true) return false;
+        const action = actions[index];
+        if (!action) return true;
+        const parsed = parseSurfaceAction(action);
+        return !parsed.ok || actionIntent(parsed.action) === 'write';
+      }),
+    );
+    const outcomeUnknown = phases.some(({ applied }) =>
+      applied.some((entry) => entry.outcomeUnknown === true),
+    );
     if (row.skipReason === INTERRUPTED_APPLY_REASON || landed || outcomeUnknown) {
       throw new Error(
         'retry refused because an external effect may already have landed; reconcile the provider first',
@@ -992,6 +995,102 @@ export const claimForExecution = internalMutation({
       applyClaimedAt: undefined,
     });
     return { claimed: true, runId };
+  },
+});
+
+/** Persist the prerequisite ledger before spending the run's one dependent model turn. */
+export const prepareDependentPhase = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    runId: v.id('events'),
+    applyAttemptId: v.optional(v.id('events')),
+    output: v.any(),
+  },
+  handler: async (ctx, args): Promise<{ prepared: boolean }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    if (
+      row.state !== 'executing' ||
+      row.executionRunId !== args.runId ||
+      (args.applyAttemptId !== undefined
+        ? row.applyAttemptId !== args.applyAttemptId
+        : row.applyAttemptId !== undefined || row.pendingRunId !== undefined)
+    ) {
+      return { prepared: false };
+    }
+    const output = args.output as {
+      phase?: unknown;
+      actions?: unknown[];
+      applied?: unknown[];
+    };
+    if (
+      output.phase !== 'dependent-authoring' ||
+      !Array.isArray(output.actions) ||
+      !Array.isArray(output.applied)
+    ) {
+      throw new Error('dependent phase needs the persisted prerequisite actions and ledger');
+    }
+    await ctx.db.patch(args.workItemId, {
+      output: args.output,
+      pendingRunId: undefined,
+      approvedIndexes: undefined,
+      actionVerdicts: undefined,
+      applyPhase: undefined,
+      applyAttemptId: undefined,
+      applyClaimedAt: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.dependent-authoring',
+      payload: {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        prerequisiteActionCount: output.actions.length,
+      },
+      createdAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.workActions.authorDependentActions, {
+      workItemId: args.workItemId,
+      runId: args.runId,
+    });
+    return { prepared: true };
+  },
+});
+
+/** Claim the single result-dependent authoring turn without claiming a provider apply. */
+export const claimDependentAuthoring = internalMutation({
+  args: { workItemId: v.id('workItems'), runId: v.id('events') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    | { claimed: true; authoringAttemptId: Id<'events'> }
+    | { claimed: false; reason: string }
+  > => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    const output = (row.output ?? {}) as { phase?: unknown };
+    if (
+      row.state !== 'executing' ||
+      row.executionRunId !== args.runId ||
+      output.phase !== 'dependent-authoring'
+    ) {
+      return { claimed: false, reason: 'dependent phase is not awaiting authoring' };
+    }
+    if (row.applyAttemptId !== undefined) {
+      return { claimed: false, reason: 'another dependent authoring turn already claimed the run' };
+    }
+    const authoringAttemptId = await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.dependent-authoring-claimed',
+      payload: { workItemId: args.workItemId, runId: args.runId },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(args.workItemId, {
+      applyAttemptId: authoringAttemptId,
+      applyClaimedAt: Date.now(),
+    });
+    return { claimed: true, authoringAttemptId };
   },
 });
 
@@ -1191,6 +1290,26 @@ function actionsOf(output: unknown): unknown[] {
   return ((output ?? {}) as { actions?: unknown[] }).actions ?? [];
 }
 
+interface LedgerPhase {
+  actions: MockAction[];
+  applied: Array<{ ok?: boolean; held?: boolean; outcomeUnknown?: boolean }>;
+}
+
+/** Every action list and ledger a run's output carries, prerequisite phase first. */
+export function ledgerPhases(output: unknown): LedgerPhase[] {
+  const phases: LedgerPhase[] = [];
+  const top = (output ?? {}) as {
+    actions?: MockAction[];
+    applied?: LedgerPhase['applied'];
+    initial?: { actions?: MockAction[]; applied?: LedgerPhase['applied'] };
+  };
+  if (top.initial && (top.initial.actions || top.initial.applied)) {
+    phases.push({ actions: top.initial.actions ?? [], applied: top.initial.applied ?? [] });
+  }
+  phases.push({ actions: top.actions ?? [], applied: top.applied ?? [] });
+  return phases;
+}
+
 function ledgerOf(output: unknown): Array<AppliedAction | undefined> {
   return ((output ?? {}) as { applied?: Array<AppliedAction | undefined> }).applied ?? [];
 }
@@ -1231,7 +1350,12 @@ async function scheduleApply(
  * the manager has already decided.
  */
 export const setActionsPending = internalMutation({
-  args: { workItemId: v.id('workItems'), runId: v.id('events'), output: v.any() },
+  args: {
+    workItemId: v.id('workItems'),
+    runId: v.id('events'),
+    output: v.any(),
+    authoringAttemptId: v.optional(v.id('events')),
+  },
   handler: async (
     ctx,
     args,
@@ -1240,6 +1364,15 @@ export const setActionsPending = internalMutation({
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'executing') return { pending: false };
     if (row.executionRunId !== args.runId || row.pendingRunId !== undefined) {
+      return { pending: false };
+    }
+    const dependent = args.authoringAttemptId !== undefined;
+    if (
+      dependent
+        ? row.applyAttemptId !== args.authoringAttemptId ||
+          (args.output as { phase?: unknown }).phase !== 'dependent'
+        : row.applyAttemptId !== undefined
+    ) {
       return { pending: false };
     }
     const actions = (args.output as { actions?: unknown[] }).actions;
@@ -1260,6 +1393,7 @@ export const setActionsPending = internalMutation({
       heldIndexes,
       refusedIndexes,
       autonomousActions,
+      ...(dependent ? { dependentPhase: true } : {}),
     };
     if (autoIndexes.length > 0) {
       await ctx.db.patch(args.workItemId, {
@@ -1287,6 +1421,8 @@ export const setActionsPending = internalMutation({
       approvedIndexes: undefined,
       applyPhase: undefined,
       actionVerdicts,
+      applyAttemptId: undefined,
+      applyClaimedAt: undefined,
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1775,12 +1911,19 @@ export const recoverInterruptedApply = internalMutation({
     }
     const output = (row.output ?? {}) as {
       actions?: Array<{ tool?: unknown }>;
+      actionIndexOffset?: unknown;
       [key: string]: unknown;
     };
     const approved = new Set(row.approvedIndexes ?? []);
     const count = output.actions?.length ?? 0;
     const verdicts = verdictList(row.actionVerdicts, count);
     const prior = ledgerOf(row.output);
+    const actionIndexOffset =
+      typeof output.actionIndexOffset === 'number' &&
+      Number.isInteger(output.actionIndexOffset) &&
+      output.actionIndexOffset >= 0
+        ? output.actionIndexOffset
+        : 0;
     // In the auto phase a held row was never offered to the manager, so it
     // keeps the reason the gate held it for; in the approved phase an
     // unapproved held row is one the manager left out.
@@ -1802,7 +1945,7 @@ export const recoverInterruptedApply = internalMutation({
         idempotencyKey: actionIdempotencyKey({
           workItemId: args.workItemId,
           runId: args.pendingRunId,
-          actionIndex: index,
+          actionIndex: index + actionIndexOffset,
         }),
       };
     });

@@ -138,7 +138,7 @@ describe('surface adapter registry', (): void => {
         { tool: 'ticket.update', args: { slug: 'REVOPS-5', status: 'done', comment: 'Done.' } },
         comment,
       ],
-      { deps: deps(recorded), grants: new Set(['linear:write']) },
+      { deps: deps(recorded), grants: new Set(['linear:write']), now },
     );
     expect(applied[0]).toEqual({
       tool: 'slack.postMessage',
@@ -196,6 +196,22 @@ describe('applying surface actions', (): void => {
         },
       },
     ]);
+  });
+
+  it('offsets dependent-phase idempotency keys without changing local action ordering', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {
+      deps: deps(recorded),
+      grants,
+      idempotencyIndexOffset: 6,
+      now,
+    });
+    expect(applied.map((row) => row.idempotencyKey)).toEqual([
+      'wi_1:run_1:6',
+      'wi_1:run_1:7',
+    ]);
+    expect(applied.map((row) => row.ok)).toEqual([true, true]);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
   });
 
   it('holds a public post the manager did not approve and sends the one they did, in its thread', async (): Promise<void> => {

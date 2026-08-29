@@ -160,6 +160,25 @@ export default defineSchema({
     ref: v.string(),
     quote: v.string(),
     url: v.optional(v.string()),
+    evidence: v.optional(
+      v.array(
+        v.object({
+          displayName: v.string(),
+          ref: v.string(),
+          quote: v.string(),
+          url: v.optional(v.string()),
+        }),
+      ),
+    ),
+    mergedNames: v.optional(v.array(v.string())),
+    identity: v.optional(
+      v.object({
+        slugs: v.array(v.string()),
+        nameKeys: v.array(v.string()),
+        endpoints: v.array(v.string()),
+        hosts: v.array(v.string()),
+      }),
+    ),
     current: v.boolean(),
     firstSeenAt: v.number(),
     lastSeenAt: v.number(),

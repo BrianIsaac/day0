@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
   actionArgsSchema,
+  appliedLedgerPrompt,
+  dependentExecuteSchema,
   executeSchema,
   executorInstructions,
   executorPreamble,
@@ -9,7 +11,7 @@ import {
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
-import { ACTION_TOOLS } from '../../../src/work/types';
+import { ACTION_TOOLS, DEPENDENT_ACTION_CAP } from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
 
@@ -49,7 +51,14 @@ const emptyMock = {
 describe('executor output contract', (): void => {
   it('accepts every verb, including the two surface verbs, with flat string args', (): void => {
     for (const tool of ACTION_TOOLS) {
-      expect(executeSchema.safeParse({ draft: 'd', notes: 'n', actions: [{ tool, args: {} }] }).success).toBe(true);
+      expect(
+        executeSchema.safeParse({
+          draft: 'd',
+          notes: 'n',
+          needsDependentPhase: false,
+          actions: [{ tool, args: {} }],
+        }).success,
+      ).toBe(true);
     }
     const parsed = actionArgsSchema.safeParse({
       surface: 'linear',
@@ -66,7 +75,86 @@ describe('executor output contract', (): void => {
   it('keeps the flat rule: structured provider arguments must be strings', (): void => {
     expect(actionArgsSchema.safeParse({ toolArgsJson: { issueId: 'x' } }).success).toBe(false);
     expect(actionArgsSchema.safeParse({ headersJson: ['a'] }).success).toBe(false);
-    expect(executeSchema.safeParse({ draft: 'd', notes: 'n', actions: [{ tool: 'jira.update', args: {} }] }).success).toBe(false);
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [{ tool: 'jira.update', args: {} }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('caps the one dependent phase at four actions', (): void => {
+    const base = {
+      draft: 'd',
+      notes: 'n',
+      planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' }],
+    };
+    const action = { tool: 'mcp.call' as const, args: {} };
+    expect(
+      dependentExecuteSchema.safeParse({
+        ...base,
+        actions: Array.from({ length: DEPENDENT_ACTION_CAP }, () => action),
+      }).success,
+    ).toBe(true);
+    expect(
+      dependentExecuteSchema.safeParse({
+        ...base,
+        actions: Array.from({ length: DEPENDENT_ACTION_CAP + 1 }, () => action),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('renders durable provider evidence for the closing turn', (): void => {
+    const text = appliedLedgerPrompt(
+      [
+        {
+          tool: 'mcp.call',
+          args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+        },
+      ],
+      [
+        {
+          tool: 'mcp.call',
+          ok: true,
+          effect:
+            'browser_snapshot on looker · visible figure 74% · Last updated by revops at 2026-08-29 17:24:02 UTC',
+          idempotencyKey: 'work:run:5',
+        },
+      ],
+    );
+    expect(text).toContain('landed');
+    expect(text).toContain('visible figure 74%');
+    expect(text).toContain('Last updated by revops');
+  });
+
+  it('redacts a credential shape that reached the ledger before it reaches the closing turn', (): void => {
+    const text = appliedLedgerPrompt(
+      [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'slack',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: '{"Authorization":"Bearer xoxb-1234567890-abcdefghijklmnop"}',
+            body: '{"channel":"D0MANAGER","text":"hi"}',
+          },
+        },
+      ],
+      [
+        {
+          tool: 'http.request',
+          ok: false,
+          reason: 'HTTP 401 · invalid_auth for token xoxb-1234567890-abcdefghijklmnop',
+          idempotencyKey: 'work:run:0',
+        },
+      ],
+    );
+    expect(text).not.toContain('xoxb-');
+    expect(text).toContain('<redacted>');
+    expect(text).toContain('failed');
   });
 });
 
@@ -104,6 +192,13 @@ describe('executor preamble by mode', (): void => {
     expect(text).not.toContain('refused');
   });
 
+  it('never asks the mock executor to hold actions back for a phase the mock path does not run', (): void => {
+    const mock = executorPreamble('mock');
+    expect(mock).not.toContain('set `needsDependentPhase` to true');
+    expect(mock).toContain('set `needsDependentPhase` to false');
+    expect(executorPreamble('real', false)).toContain('set `needsDependentPhase` to true');
+  });
+
   it('refuses the mock verbs and teaches the surface rules in real mode', (): void => {
     const text = executorPreamble('real', false);
     expect(text).toContain('The mock verbs (spreadsheet.appendRow, slack.postMessage, twitter.reply, ticket.update) do not exist on this deployment');
@@ -114,6 +209,7 @@ describe('executor preamble by mode', (): void => {
     expect(text).not.toContain('  - ticket.update');
     expect(text).not.toContain('`dm-manager`');
     expect(text).toContain('A draft (human-readable)');
+    expect(text).toContain('set `needsDependentPhase` to true');
   });
 
   it('emits a public reply as its own threaded chat.postMessage and keeps the DM for questions', (): void => {

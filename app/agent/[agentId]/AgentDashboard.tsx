@@ -1037,6 +1037,92 @@ interface LedgerRow {
   providerId?: string;
 }
 
+interface PlanStepOutcomeRow {
+  step: number;
+  status: 'satisfied' | 'blocked';
+  evidence: string;
+}
+
+/** A run's persisted output as the card reads it, in either of its two phases. */
+interface RunOutput {
+  draft: string;
+  notes: string;
+  actions?: MockAction[];
+  applied?: LedgerRow[];
+  initial?: { applied?: LedgerRow[] };
+  planStepOutcomes?: PlanStepOutcomeRow[];
+}
+
+type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
+
+/**
+ * Every applied row of a run, prerequisite phase first, each labelled with the
+ * phase that applied it when the run had two. A single-phase run carries no
+ * label, so the ordinary card is unchanged.
+ */
+export function phasedLedger(output: RunOutput | undefined): PhasedLedgerRow[] {
+  const initial = output?.initial?.applied;
+  const closing = output?.applied ?? [];
+  if (!initial) return closing.map((row): PhasedLedgerRow => ({ ...row }));
+  return [
+    ...initial.map((row): PhasedLedgerRow => ({ ...row, phase: 'prerequisite' })),
+    ...closing.map((row): PhasedLedgerRow => ({ ...row, phase: 'closing' })),
+  ];
+}
+
+function PhaseLabel({ phase }: { phase?: 'prerequisite' | 'closing' }) {
+  if (!phase) return null;
+  return (
+    <span className="ml-1 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+      {phase}
+    </span>
+  );
+}
+
+/**
+ * The draft, with an honest account of when it was written: before anything
+ * was applied for a single-phase run, after the prerequisite ledger for a run
+ * whose closing phase authored it from real results.
+ */
+export function DraftDetails({ output }: { output: RunOutput }) {
+  const closingPhase = output.initial !== undefined || output.planStepOutcomes !== undefined;
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-[var(--color-accent)]">
+        Draft the agent wrote ({output.draft.length} chars)
+      </summary>
+      <pre className="mt-2 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap text-[var(--color-fg)]">
+        {output.draft}
+      </pre>
+      {output.notes ? (
+        <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
+      ) : null}
+      <p className="mt-1 text-[10px] text-[var(--color-muted)]">
+        {closingPhase
+          ? 'The closing draft, written after the prerequisite actions were applied and from their ledger. Only the changes listed above reached the work environment.'
+          : "The agent's own words, written before anything was applied. Only the changes listed above reached the work environment."}
+      </p>
+    </details>
+  );
+}
+
+/** The approved plan's result-aware accounting, including promised work that could not run. */
+export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
+  if (outcomes.length === 0) return null;
+  return (
+    <div className="mt-2 p-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs">
+      <p className="font-medium text-[var(--color-fg)] mb-1">Plan execution ledger</p>
+      <ol className="space-y-0.5 text-[var(--color-muted)]">
+        {outcomes.map((outcome) => (
+          <li key={outcome.step}>
+            Step {outcome.step} · {outcome.status} - {outcome.evidence}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /**
  * The headline of the landed-changes list, naming how many applied under the toggle.
  *
@@ -1369,15 +1455,8 @@ function WorkItemCard({
         expectedOutputType: string;
       }
     | undefined;
-  const output = item.output as
-    | {
-        draft: string;
-        notes: string;
-        actions?: MockAction[];
-        applied?: LedgerRow[];
-      }
-    | undefined;
-  const appliedActions = output?.applied ?? [];
+  const output = item.output as RunOutput | undefined;
+  const appliedActions = phasedLedger(output);
   // A row the auto phase deferred is in the gate box above, not in the ledger's held list.
   const heldActions = appliedActions.filter((a) => a.held && !a.awaitingApproval);
   const failedActions = appliedActions.filter((a) => !a.ok && !a.held);
@@ -1477,6 +1556,12 @@ function WorkItemCard({
         </p>
       ) : null}
 
+      {item.state === 'actions-pending' && output?.initial !== undefined ? (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">
+          Closing actions, authored from the prerequisite ledger below.
+        </p>
+      ) : null}
+
       {item.state === 'actions-pending' && output && item.approvedIndexes === undefined ? (
         <PendingActions
           key={`${item._id}:${item.pendingRunId ?? ''}`}
@@ -1510,6 +1595,7 @@ function WorkItemCard({
                     id {a.providerId}
                   </span>
                 ) : null}
+                <PhaseLabel phase={a.phase} />
               </li>
             ))}
           </ul>
@@ -1527,6 +1613,7 @@ function WorkItemCard({
             {heldActions.map((a, i) => (
               <li key={i}>
                 <span className="font-mono text-[10px]">{a.tool}</span> - {a.reason ?? 'held'}
+                <PhaseLabel phase={a.phase} />
                 {a.effect ? (
                   <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">{a.effect}</code>
                 ) : null}
@@ -1536,23 +1623,9 @@ function WorkItemCard({
         </div>
       ) : null}
 
-      {output ? (
-        <details className="mt-2 text-xs">
-          <summary className="cursor-pointer text-[var(--color-accent)]">
-            Draft the agent wrote ({output.draft.length} chars)
-          </summary>
-          <pre className="mt-2 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap text-[var(--color-fg)]">
-            {output.draft}
-          </pre>
-          {output.notes ? (
-            <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
-          ) : null}
-          <p className="mt-1 text-[10px] text-[var(--color-muted)]">
-            The agent&apos;s own words, written before anything was applied. Only the changes listed
-            above reached the work environment.
-          </p>
-        </details>
-      ) : null}
+      <PlanExecutionLedger outcomes={output?.planStepOutcomes ?? []} />
+
+      {output ? <DraftDetails output={output} /> : null}
 
       {/* Not inside the details element above: an action that never reached the
           work environment is the headline of this card, not a footnote to the
@@ -1567,6 +1640,7 @@ function WorkItemCard({
             {failedActions.map((a, i) => (
               <li key={i}>
                 {a.tool} - {a.reason ?? 'unknown reason'}
+                <PhaseLabel phase={a.phase} />
               </li>
             ))}
           </ul>
