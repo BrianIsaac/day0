@@ -12,6 +12,7 @@ import type { Charter } from '../src/agent/charter';
 import {
   documentedSystemIdentity,
   sameDocumentedSystem,
+  stableSlug,
   type DocumentedSystemIdentity,
 } from '../src/docs/system-discovery';
 
@@ -218,25 +219,17 @@ export const apply = internalMutation({
       const matches = targets.filter((target) =>
         sameDocumentedSystem(original.class, identity, target.class, target.identity),
       );
+      // Targets are listed with current discovery rows before the agent's
+      // surfaces, so among equal matches the row the source already keeps wins.
       const target =
         matches.find((match) => match.slug === original.slug) ??
-        [...matches].sort((left, right): number => {
-          const leftTransport = Number(left.identity.nameKeys[0] !== left.identity.slugs[0]);
-          const rightTransport = Number(right.identity.nameKeys[0] !== right.identity.slugs[0]);
-          return (
-            leftTransport - rightTransport ||
-            left.displayName.split(/\s+/).length - right.displayName.split(/\s+/).length ||
-            left.displayName.localeCompare(right.displayName)
-          );
-        })[0];
+        matches.find((match) => match.identity.nameKeys[0] === match.identity.slugs[0]) ??
+        matches[0];
       if (original.transportOnly && !target) continue;
       const conflictingSlug = existing.some(
         (row) => row.slug === original.slug && !matches.some((match) => match.slug === row.slug),
       );
-      const host = identity.hosts[0]
-        ?.toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '');
+      const host = stableSlug(identity.hosts[0] ?? '');
       const slug = target?.slug ?? (conflictingSlug ? `${original.slug}-${host || 'system'}` : original.slug);
       const candidate = {
         ...original,

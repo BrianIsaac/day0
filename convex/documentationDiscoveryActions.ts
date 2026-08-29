@@ -9,6 +9,7 @@ import {
   discoveryModelSchema,
   discoveryPrompt,
   convergeDiscoveryCandidates,
+  stableSlug,
   structuralSystemCandidates,
   validateModelCandidates,
   type DiscoveredSystemCandidate,
@@ -20,12 +21,7 @@ import { safeFailureMessage } from '../src/surfaces/redact';
 const DISCOVERY_BATCH_SIZE = 25;
 
 function discoverySlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || 'system'
-  );
+  return stableSlug(name) || 'system';
 }
 
 const discoveryAgent = makeAgent(

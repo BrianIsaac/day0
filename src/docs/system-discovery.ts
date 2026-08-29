@@ -264,10 +264,7 @@ export function mergeCandidates(
 ): DiscoveredSystemCandidate[] {
   const merged = new Map<string, DiscoveredSystemCandidate>();
   for (const candidate of candidates) {
-    const slug = candidate.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+    const slug = stableSlug(candidate.name);
     if (!slug || candidate.class === 'docs' || merged.has(slug)) continue;
     merged.set(slug, candidate);
   }
@@ -346,7 +343,8 @@ const TRANSPORT_DESCRIPTION =
   /\b(?:approved transport|transport is|integration endpoint|mcp endpoint|web api over|reached (?:through|via|over)|web ui only)\b/i;
 const DOCUMENTED_URL = /https?:\/\/[^\s`<>"'\])}]+/gi;
 
-function stableSlug(value: string): string {
+/** The one slug rule for a system name or a documented host, everywhere it is keyed. */
+export function stableSlug(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -402,6 +400,31 @@ function intersects(left: readonly string[], right: readonly string[]): boolean 
   return left.some((value) => rightValues.has(value));
 }
 
+/** Whether one product name's words all appear in the other's ("Slack" and "Slack workspace"). */
+function compatibleNameKeys(left: readonly string[], right: readonly string[]): boolean {
+  return left.some((leftKey) => {
+    const leftWords = leftKey.split('-');
+    return right.some((rightKey) => {
+      const rightWords = new Set(rightKey.split('-'));
+      const leftSet = new Set(leftWords);
+      return (
+        leftWords.every((word) => rightWords.has(word)) ||
+        [...rightWords].every((word) => leftSet.has(word))
+      );
+    });
+  });
+}
+
+/**
+ * Decide whether two documented identities name one system.
+ *
+ * A conflicting documented host is a hard difference. After that, an exact
+ * slug or an exact documented endpoint is decisive. A shared host is not: an
+ * enterprise gateway fronts many products on one host, so a host match only
+ * merges names that are the same product name with or without a qualifier.
+ * Last, the transport-normalised name key merges "Slack" with "Slack Web
+ * API". Every signal requires the same system class.
+ */
 export function sameDocumentedSystem(
   leftClass: string,
   left: DocumentedSystemIdentity,
@@ -414,7 +437,9 @@ export function sameDocumentedSystem(
   }
   if (intersects(left.slugs, right.slugs)) return true;
   if (intersects(left.endpoints, right.endpoints)) return true;
-  if (intersects(left.hosts, right.hosts)) return true;
+  if (intersects(left.hosts, right.hosts) && compatibleNameKeys(left.nameKeys, right.nameKeys)) {
+    return true;
+  }
   return intersects(left.nameKeys, right.nameKeys);
 }
 
@@ -437,17 +462,16 @@ function isTransportDescription(candidate: DiscoveredSystemCandidate): boolean {
   return identity.slugs[0] !== identity.nameKeys[0] && TRANSPORT_DESCRIPTION.test(candidate.quote);
 }
 
+/**
+ * The member whose name the merged system carries: the first candidate that
+ * is not a transport description. Structural candidates (a systems page
+ * heading, a systems-table row) precede model candidates, so the documented
+ * name wins over a shorter alias a runbook line happens to use.
+ */
 function canonicalCandidate(
   candidates: readonly DiscoveredSystemCandidate[],
 ): DiscoveredSystemCandidate {
-  return [...candidates].sort((left, right): number => {
-    const transportDifference =
-      Number(isTransportDescription(left)) - Number(isTransportDescription(right));
-    if (transportDifference !== 0) return transportDifference;
-    const wordDifference = plain(left.name).split(/\s+/).length - plain(right.name).split(/\s+/).length;
-    if (wordDifference !== 0) return wordDifference;
-    return left.name.localeCompare(right.name);
-  })[0]!;
+  return candidates.find((candidate) => !isTransportDescription(candidate)) ?? candidates[0]!;
 }
 
 /** Converge product names, transport descriptions and documented routes before cards exist. */
