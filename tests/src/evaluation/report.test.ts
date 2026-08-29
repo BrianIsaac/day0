@@ -27,6 +27,7 @@ function evidence(): EvaluationEvidence {
       model: 'gpt-5.5',
       temperature: 0.4,
       surfaceMode: 'mock',
+      arms: ['day0'],
       requestedRuns: 1,
       taskIds: ['docs-team-cadence'],
       approvalDelayMs: 750,

@@ -1,8 +1,4 @@
-import type {
-  EvaluationArm,
-  EvaluationGrade,
-  EvaluationTask,
-} from './graders';
+import type { EvaluationArm, EvaluationGrade, EvaluationTask } from './graders';
 
 export interface EvaluationDecision {
   kind: 'charter' | 'skill' | 'plan' | 'actions';
@@ -57,6 +53,7 @@ export interface EvaluationEvidence {
     model: string;
     temperature: number;
     surfaceMode: 'mock';
+    arms?: EvaluationArm[];
     requestedRuns: number;
     taskIds: string[];
     taskTimeoutMs?: Record<string, number>;
@@ -80,7 +77,11 @@ function round4(value: number): number {
 }
 
 /** Two-sided score interval. n=0 deliberately reports the full uncertainty range. */
-export function wilsonInterval(successes: number, n: number, z = 1.959963984540054): WilsonInterval {
+export function wilsonInterval(
+  successes: number,
+  n: number,
+  z = 1.959963984540054,
+): WilsonInterval {
   if (!Number.isInteger(successes) || !Number.isInteger(n) || successes < 0 || n < successes) {
     throw new Error(`invalid rate ${successes}/${n}`);
   }
@@ -89,8 +90,7 @@ export function wilsonInterval(successes: number, n: number, z = 1.9599639845400
   const z2 = z * z;
   const denominator = 1 + z2 / n;
   const centre = (p + z2 / (2 * n)) / denominator;
-  const margin =
-    (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denominator;
+  const margin = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denominator;
   return { low: round4(centre - margin), high: round4(centre + margin) };
 }
 
@@ -106,20 +106,24 @@ function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1
-    ? sorted[middle]!
-    : (sorted[middle - 1]! + sorted[middle]!) / 2;
+  return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
 function duration(value: number | null): string {
   return value === null ? 'not observed' : `${(value / 1000).toFixed(2)} s`;
 }
 
-function taskRows(evidence: EvaluationEvidence): Array<EvaluationTaskResult & { run: EvaluationRun }> {
+function taskRows(
+  evidence: EvaluationEvidence,
+): Array<EvaluationTaskResult & { run: EvaluationRun }> {
   return evidence.runs.flatMap((run) => run.tasks.map((task) => ({ ...task, run })));
 }
 
-function rateRow(label: string, rows: EvaluationTaskResult[], predicate: (row: EvaluationTaskResult) => boolean): string {
+function rateRow(
+  label: string,
+  rows: EvaluationTaskResult[],
+  predicate: (row: EvaluationTaskResult) => boolean,
+): string {
   return `| ${label} | ${formatRate(rows.filter(predicate).length, rows.length)} |`;
 }
 
@@ -132,7 +136,8 @@ export function renderEvaluationReport(evidence: EvaluationEvidence): string {
     'out-of-scope',
   ];
   const completedRuns = evidence.runs.filter((run) => run.status === 'completed').length;
-  const expectedRuns = evidence.configuration.requestedRuns * 2;
+  const expectedRuns =
+    evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
   const summary: string[] = ['| Measure | Result |', '| --- | --- |'];
 
   for (const arm of arms) {
@@ -147,9 +152,7 @@ export function renderEvaluationReport(evidence: EvaluationEvidence): string {
     );
     for (const category of categories) {
       const categoryRows = armRows.filter((row) => row.category === category);
-      summary.push(
-        rateRow(`${arm}: ${category} pass`, categoryRows, (row) => row.grade.passed),
-      );
+      summary.push(rateRow(`${arm}: ${category} pass`, categoryRows, (row) => row.grade.passed));
     }
     const writeRows = armRows.filter((row) => row.category === 'approval-write');
     summary.push(
@@ -166,9 +169,7 @@ export function renderEvaluationReport(evidence: EvaluationEvidence): string {
     const observed = armRows
       .map((row) => row.deployToFirstCorrectActionMs)
       .filter((value): value is number => value !== null);
-    const humanWait = evidence.runs
-      .filter((run) => run.arm === arm)
-      .map((run) => run.humanWaitMs);
+    const humanWait = evidence.runs.filter((run) => run.arm === arm).map((run) => run.humanWaitMs);
     return `| ${arm} | ${duration(median(observed))} (${observed.length} observed tasks) | ${duration(
       median(humanWait),
     )} (${humanWait.length} runs) |`;
