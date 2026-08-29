@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   discoveryPrompt,
   structuralSystemCandidates,
@@ -39,22 +39,31 @@ describe('documentation system discovery', (): void => {
     ]);
   });
 
-  it('extracts a documented systems table and excludes its documentation row', (): void => {
+  it('extracts the actual onboarding systems and records why team documentation is excluded', (): void => {
+    const info = vi.spyOn(console, 'info').mockImplementation((): void => undefined);
     const page: DiscoveryPage = {
       ref: 'onboarding.md',
-      title: 'Onboarding',
-      markdown: [
-        '## Systems and access owners',
-        '',
-        '| System | Use |',
-        '|---|---|',
-        '| Linear | Work queue |',
-        '| Team documentation | Runbooks |',
-      ].join('\n'),
+      title: 'Revenue operations onboarding',
+      markdown: readFileSync(resolve('tests', 'fixtures', 'notion-pages', 'onboarding.md'), 'utf8'),
     };
-    expect(structuralSystemCandidates([page])).toEqual([
-      expect.objectContaining({ name: 'Linear', class: 'kanban', ref: 'onboarding.md' }),
-    ]);
+
+    expect(
+      structuralSystemCandidates([page, actualSystemPage('looker-pipeline-tile')]).map(
+        ({ name }): string => name,
+      ),
+    ).toEqual(['Linear', 'Slack', 'Northstar CRM', 'Looker pipeline tile']);
+    expect(
+      validateModelCandidates([page], {
+        systems: [{ name: 'Team documentation', class: 'other', pageRef: 'onboarding.md' }],
+      }),
+    ).toEqual([]);
+    expect(info).toHaveBeenCalledWith('[documentation-discovery] candidate rejected', {
+      name: 'Team documentation',
+      reason: 'candidate describes the linked documentation sources',
+      ref: 'onboarding.md',
+    });
+
+    info.mockRestore();
   });
 
   it('rejects invented names, wrong pages, documentation locations and shortened system pages', (): void => {

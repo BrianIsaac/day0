@@ -138,7 +138,7 @@ describe('surface adapter registry', (): void => {
         { tool: 'ticket.update', args: { slug: 'REVOPS-5', status: 'done', comment: 'Done.' } },
         comment,
       ],
-      { deps: deps(recorded), grants: new Set(['linear:write']) },
+      { deps: deps(recorded), grants: new Set(['linear:write']), now },
     );
     expect(applied[0]).toEqual({
       tool: 'slack.postMessage',
