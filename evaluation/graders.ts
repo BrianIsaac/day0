@@ -105,20 +105,24 @@ export interface EvaluationSnapshot {
     sheetSlug: string;
     tabName: string;
     cells: Record<string, string>;
+    createdAt?: number;
   }>;
   slackMessages: Array<{
     channelSlug: string;
     threadKey?: string;
     body: string;
+    createdAt?: number;
   }>;
   tweetReplies: Array<{
     tweetSlug: string;
     body: string;
+    createdAt?: number;
   }>;
   tickets: Array<{
     slug: string;
     status: string;
-    comments: Array<{ body: string }>;
+    updatedAt?: number;
+    comments: Array<{ body: string; createdAt?: number }>;
   }>;
 }
 
@@ -255,6 +259,62 @@ function gradeRequiredEffect(
       ? `terminal reason contained ${matched}`
       : 'terminal reason lacked a required reason',
   };
+}
+
+function requiredEffectTimestamp(
+  effect: z.infer<typeof requiredEffectSchema>,
+  snapshot: EvaluationSnapshot,
+): number | null {
+  if (effect.kind === 'slack-message') {
+    const matches = snapshot.slackMessages.filter(
+      (row) =>
+        row.channelSlug === effect.channelSlug &&
+        (effect.threadKey === undefined || row.threadKey === effect.threadKey) &&
+        effect.includesAll.every((value) => includes(row.body, value)),
+    );
+    return matches.length === 1 ? (matches[0]!.createdAt ?? null) : null;
+  }
+  if (effect.kind === 'ticket') {
+    const ticket = snapshot.tickets.find((row) => row.slug === effect.slug);
+    if (!ticket || (effect.status !== undefined && ticket.status !== effect.status)) return null;
+    if (effect.commentIncludesAll === undefined) return ticket.updatedAt ?? null;
+    const comments = ticket.comments.filter((comment) =>
+      effect.commentIncludesAll!.every((value) => includes(comment.body, value)),
+    );
+    return comments.length === 1 ? (comments[0]!.createdAt ?? null) : null;
+  }
+  if (effect.kind === 'spreadsheet-row') {
+    const matches = snapshot.spreadsheets.filter(
+      (row) =>
+        row.sheetSlug === effect.sheetSlug &&
+        row.tabName === effect.tabName &&
+        Object.entries(effect.cells).every(([header, value]) => row.cells[header] === value),
+    );
+    return matches.length === 1 ? (matches[0]!.createdAt ?? null) : null;
+  }
+  if (effect.kind === 'tweet-reply') {
+    const matches = snapshot.tweetReplies.filter(
+      (row) =>
+        row.tweetSlug === effect.tweetSlug &&
+        effect.includesAll.every((value) => includes(row.body, value)),
+    );
+    return matches.length === 1 ? (matches[0]!.createdAt ?? null) : null;
+  }
+  return null;
+}
+
+/** Timestamp of the first persisted adapter effect once every required effect is exact. */
+export function firstCorrectEffectAt(
+  task: EvaluationTask,
+  snapshot: EvaluationSnapshot,
+): number | null {
+  if (task.grader.requiredEffects.some((effect) => !gradeRequiredEffect(effect, snapshot).passed)) {
+    return null;
+  }
+  const timestamps = task.grader.requiredEffects
+    .map((effect) => requiredEffectTimestamp(effect, snapshot))
+    .filter((value): value is number => value !== null);
+  return timestamps.length === 0 ? null : Math.min(...timestamps);
 }
 
 export function gradeEvaluationTask(

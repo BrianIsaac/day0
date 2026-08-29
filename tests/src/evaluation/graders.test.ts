@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  firstCorrectEffectAt,
   gradeEvaluationTask,
   loadEvaluationTasks,
   type EvaluationSnapshot,
@@ -120,6 +121,7 @@ describe('programmatic task grading', (): void => {
         {
           sheetSlug: 'q4-revenue-tracker',
           tabName: 'pipeline',
+          createdAt: 2_500,
           cells: {
             Account: 'Globex EVAL-WRITE-01',
             Amount: '$61,000',
@@ -132,6 +134,7 @@ describe('programmatic task grading', (): void => {
     });
 
     expect(gradeEvaluationTask(task!, 'day0', snapshot).passed).toBe(true);
+    expect(firstCorrectEffectAt(task!, snapshot)).toBe(2_500);
     const baseline = gradeEvaluationTask(task!, 'baseline', {
       ...snapshot,
       workItem: {
@@ -145,6 +148,19 @@ describe('programmatic task grading', (): void => {
     });
     expect(baseline.passed).toBe(true);
     expect(baseline.facts.heldForApproval).toBe(false);
+  });
+
+  it('does not report a first correct effect when the required effect is duplicated', async (): Promise<void> => {
+    const task = (await loadEvaluationTasks()).find((row) => row.id === 'docs-team-cadence');
+    expect(task).toBeDefined();
+    const message = {
+      channelSlug: 'dm-manager',
+      body: 'EVAL-DOC-01: Monday standup is 09:30 SGT (Team overview — RevOps).',
+      createdAt: 1_000,
+    };
+    expect(
+      firstCorrectEffectAt(task!, emptySnapshot({ slackMessages: [message, { ...message }] })),
+    ).toBeNull();
   });
 
   it('passes a cited deferral and fails any landed write on an out-of-scope task', async (): Promise<void> => {
