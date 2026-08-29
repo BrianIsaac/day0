@@ -151,6 +151,7 @@ export const requestDecision = internalAction({
         actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
         heldIndexes: prepared.heldIndexes,
         surfaces: prepared.surfaces,
+        closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
       });
     try {
       const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text);
