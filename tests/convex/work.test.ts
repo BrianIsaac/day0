@@ -967,6 +967,7 @@ describe('the exact-action gate', (): void => {
       autoIndexes: [0],
       heldIndexes: [1, 2],
       refusedIndexes: [3],
+      refusals: [{ index: 3, reason: 'unknown surface' }],
       autonomousActions: false,
     });
   });
