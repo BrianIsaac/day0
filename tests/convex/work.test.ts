@@ -1321,6 +1321,41 @@ describe('the exact-action gate', (): void => {
     ).rejects.toThrow('reconcile the provider first');
   });
 
+  it('keeps dependent action indexes disjoint when recovering an interrupted apply', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'actions-pending');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        pendingRunId: runId,
+        executionRunId: runId,
+        output: { ...pendingOutput, phase: 'dependent', actionIndexOffset: 6 },
+        actionVerdicts: [
+          { disposition: 'held', reason: HELD_MUTATION },
+          { disposition: 'held', reason: HELD_MUTATION },
+        ],
+      });
+    });
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: runId,
+      approvedIndexes: [0],
+    });
+    await harness.mutation(internal.work.claimApprovedActions, { workItemId });
+    await harness.mutation(internal.work.recoverInterruptedApply, {
+      workItemId,
+      pendingRunId: runId,
+      phase: 'approved',
+    });
+    const applied = ((await readItem(harness, workItemId)).output as {
+      applied: Array<{ idempotencyKey: string }>;
+    }).applied;
+    expect(applied.map((entry) => entry.idempotencyKey)).toEqual([
+      `${workItemId}:${runId}:6`,
+      `${workItemId}:${runId}:7`,
+    ]);
+  });
+
   it('reschedules an approved run that was interrupted before its apply claim', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

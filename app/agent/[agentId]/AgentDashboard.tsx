@@ -1037,6 +1037,29 @@ interface LedgerRow {
   providerId?: string;
 }
 
+interface PlanStepOutcomeRow {
+  step: number;
+  status: 'satisfied' | 'blocked';
+  evidence: string;
+}
+
+/** The approved plan's result-aware accounting, including promised work that could not run. */
+export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
+  if (outcomes.length === 0) return null;
+  return (
+    <div className="mt-2 p-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs">
+      <p className="font-medium text-[var(--color-fg)] mb-1">Plan execution ledger</p>
+      <ol className="space-y-0.5 text-[var(--color-muted)]">
+        {outcomes.map((outcome) => (
+          <li key={outcome.step}>
+            Step {outcome.step} · {outcome.status} - {outcome.evidence}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /**
  * The headline of the landed-changes list, naming how many applied under the toggle.
  *
@@ -1375,9 +1398,11 @@ function WorkItemCard({
         notes: string;
         actions?: MockAction[];
         applied?: LedgerRow[];
+        initial?: { applied?: LedgerRow[] };
+        planStepOutcomes?: PlanStepOutcomeRow[];
       }
     | undefined;
-  const appliedActions = output?.applied ?? [];
+  const appliedActions = [...(output?.initial?.applied ?? []), ...(output?.applied ?? [])];
   // A row the auto phase deferred is in the gate box above, not in the ledger's held list.
   const heldActions = appliedActions.filter((a) => a.held && !a.awaitingApproval);
   const failedActions = appliedActions.filter((a) => !a.ok && !a.held);
@@ -1535,6 +1560,8 @@ function WorkItemCard({
           </ul>
         </div>
       ) : null}
+
+      <PlanExecutionLedger outcomes={output?.planStepOutcomes ?? []} />
 
       {output ? (
         <details className="mt-2 text-xs">

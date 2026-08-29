@@ -7,7 +7,10 @@ vi.mock('convex/react', () => ({
   useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
 }));
 
-import { ActionPayload } from '../../../../app/agent/[agentId]/AgentDashboard';
+import {
+  ActionPayload,
+  PlanExecutionLedger,
+} from '../../../../app/agent/[agentId]/AgentDashboard';
 
 describe('held action payload', (): void => {
   it('renders the verb with the arguments it reads and none of the empty flat-bag defaults', (): void => {
@@ -34,5 +37,24 @@ describe('held action payload', (): void => {
     expect(markup).not.toContain('channelSlug');
     expect(markup).not.toContain('&quot;status&quot;');
     expect(markup).not.toContain('cells');
+  });
+});
+
+describe('plan execution ledger', (): void => {
+  it('shows the explicit reason a promised read did not run', (): void => {
+    const markup = renderToStaticMarkup(
+      <PlanExecutionLedger
+        outcomes={[
+          {
+            step: 1,
+            status: 'blocked',
+            evidence: 'No Linear list or get action exists in the applied ledger.',
+          },
+        ]}
+      />,
+    );
+    expect(markup).toContain('Plan execution ledger');
+    expect(markup).toContain('Step 1 · blocked');
+    expect(markup).toContain('No Linear list or get action exists');
   });
 });
