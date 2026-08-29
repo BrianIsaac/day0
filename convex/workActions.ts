@@ -601,6 +601,41 @@ export function validatePlanStepOutcomes(args: {
   }
 }
 
+/**
+ * Why a closing action set may not stand, judged against the plan it closes.
+ *
+ * After a failed prerequisite no ticket state may change. Otherwise a
+ * ticket-update plan that promised a close must either carry the transition
+ * or account for its absence: a phase that withholds Done because a
+ * prerequisite was held, or the evidence was wrong, records the step as
+ * blocked, and that record is honoured rather than refused.
+ */
+export function dependentTransitionRefusal(args: {
+  plan: ExecutionPlan;
+  actions: readonly ExecutionOutput['actions'][number][];
+  planStepOutcomes: readonly PlanStepOutcome[];
+  initialFailure?: string;
+}): string | undefined {
+  const statusChange = args.actions.some((action): boolean => {
+    const parsed = parseSurfaceAction(action);
+    return parsed.ok && isStatusChange(parsed.action);
+  });
+  if (args.initialFailure) {
+    return statusChange
+      ? 'dependent phase cannot change ticket state after a prerequisite failure'
+      : undefined;
+  }
+  if (
+    args.plan.expectedOutputType !== 'ticket-update' ||
+    !args.plan.steps.some((step) => CLOSE_STEP.test(step)) ||
+    statusChange ||
+    args.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
+  ) {
+    return undefined;
+  }
+  return 'dependent phase omitted the approved ticket state transition without a blocked plan step';
+}
+
 function flattenedDependentOutput(
   output: DependentPendingOutput,
   applied: AppliedAction[],
@@ -677,24 +712,13 @@ export const authorDependentActions = internalAction({
         initialLedger: initial.applied,
         surfaceSlugs: surfaces.map((surface) => surface.slug),
       });
-      if (initial.initialFailure) {
-        const status = output.actions.find((action): boolean => {
-          const parsed = parseSurfaceAction(action);
-          return parsed.ok && isStatusChange(parsed.action);
-        });
-        if (status) {
-          throw new Error('dependent phase cannot change ticket state after a prerequisite failure');
-        }
-      } else if (
-        plan.expectedOutputType === 'ticket-update' &&
-        plan.steps.some((step) => CLOSE_STEP.test(step)) &&
-        !output.actions.some((action): boolean => {
-          const parsed = parseSurfaceAction(action);
-          return parsed.ok && isStatusChange(parsed.action);
-        })
-      ) {
-        throw new Error('dependent phase omitted the approved ticket state transition');
-      }
+      const transitionRefusal = dependentTransitionRefusal({
+        plan,
+        actions: output.actions,
+        planStepOutcomes: output.planStepOutcomes,
+        initialFailure: initial.initialFailure,
+      });
+      if (transitionRefusal) throw new Error(transitionRefusal);
       const dependent: DependentPendingOutput = {
         ...output,
         phase: 'dependent',
