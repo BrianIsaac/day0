@@ -13,6 +13,7 @@ import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   actionIntent,
   HELD_NOT_APPROVED,
+  HELD_WRITE,
   normaliseActionVerdict,
   parseSurfaceAction,
   reviewActions,
@@ -33,6 +34,7 @@ import {
   browserComponentRefusal,
   withBrowserComponentState,
 } from '../src/surfaces/browser';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
@@ -132,21 +134,23 @@ export const transportAuthority = internalQuery({
  *   discovered → skipped | deferred | needs-skill
  *   plan-pending → cancelled
  *
- * Real mode adds the exact-action gate between the skill run and apply:
+ * Day0 adds the exact-action gate between the skill run and apply:
  *   executing → actions-pending → (approve) executing → completed | failed
  *                               → (reject)  failed
  * The run id minted by `claimForExecution` is kept on the row through the
  * gate, so approval applies with the same idempotency keys the run would have
  * used had it not paused.
  *
- * The gate runs in two phases over the same claim and apply path. Rows it
+ * In real mode the gate runs in two phases over the same claim and apply path. Rows it
  * classifies `auto` (reads and the manager DM; every non-refused row once
  * the manager has turned autonomous actions on) are applied straight from
  * the hold while the row is still `executing` (`applyPhase: 'auto'`); when
  * the run also has `held` rows it then parks at `actions-pending` with the
  * auto rows already in the ledger, and the manager's approval runs the
  * second phase (`applyPhase: 'approved'`). A run with no held row never
- * enters `actions-pending`; a run with no auto row parks at once.
+ * enters `actions-pending`; a run with no auto row parks at once. In mock
+ * comparison mode every proposed mock write parks and uses the same approved
+ * apply path, so the control arm can be graded against the same ledger.
  */
 
 /**
@@ -1273,6 +1277,12 @@ async function reviewHeldActions(
       .collect(),
   ]);
   if (!agent) throw new Error('agent not found');
+  if (SURFACE_MODE === 'mock') {
+    return {
+      verdicts: actions.map(() => ({ disposition: 'held', reason: HELD_WRITE })),
+      autonomousActions: false,
+    };
+  }
   const grants = new Set(grantRows.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
   const autonomousActions = autonomousActionsOn(agent);
   const browserRefusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
@@ -1384,8 +1394,8 @@ async function scheduleApply(
 /**
  * Hold an executing run at the exact-action gate and apply what the gate allows.
  *
- * Called by the action that ran the skill, in real mode, instead of applying
- * anything itself. The draft, notes and literal `actions` are persisted with
+ * Called by the action that ran the day0 skill instead of applying anything
+ * itself. The draft, notes and literal `actions` are persisted with
  * the run id and one verdict per row. Rows the gate classifies `auto` are
  * approved here and applied by the same scheduled path a manager's approval
  * uses, while the row stays `executing`; when nothing is `auto` the row moves

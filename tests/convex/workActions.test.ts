@@ -20,6 +20,7 @@ import {
   HELD_MUTATION,
   HELD_NOT_APPROVED,
   HELD_PUBLIC_POST,
+  HELD_WRITE,
 } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
 import type {
@@ -1661,7 +1662,7 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.mcp).toHaveLength(0);
   });
 
-  it('keeps the mock path single-shot: no gate, applied in the same call', async (): Promise<void> => {
+  it('holds day0 mock writes until the manager approves the literal action', async (): Promise<void> => {
     useSurfaceMode('mock');
     recorded.skillOutput = {
       draft: 'Draft.',
@@ -1678,12 +1679,29 @@ describe('executing an approved plan through the gate', (): void => {
     const result = await harness
       .withIdentity(OWNER)
       .action(api.workActions.executeApprovedPlan, { workItemId });
-    expect(result).toEqual({ ok: true });
-    const row = await readItem(harness, workItemId);
-    expect(row.state).toBe('completed');
-    expect(row.pendingRunId).toBeUndefined();
-    expect(ledger(row)).toHaveLength(1);
-    expect(ledger(row)[0]).toMatchObject({ tool: 'slack.postMessage', ok: true });
+    expect(result).toEqual({ ok: true, reason: "actions pending the manager's approval" });
+    const held = await readItem(harness, workItemId);
+    expect(held.state).toBe('actions-pending');
+    expect(held.pendingRunId).toBeDefined();
+    expect(held.actionVerdicts).toEqual([{ disposition: 'held', reason: HELD_WRITE }]);
+    expect(ledger(held)).toEqual([]);
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('mockSlackMessages').collect()),
+    ).toEqual([]);
+    if (!held.pendingRunId) throw new Error('pending run missing');
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: held.pendingRunId,
+      approvedIndexes: [0],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const completed = await readItem(harness, workItemId);
+    expect(completed.state).toBe('completed');
+    expect(completed.pendingRunId).toBeUndefined();
+    expect(ledger(completed)).toEqual([
+      expect.objectContaining({ tool: 'slack.postMessage', ok: true, authority: 'manager' }),
+    ]);
     const messages = await harness.run(
       async (ctx) => await ctx.db.query('mockSlackMessages').collect(),
     );

@@ -55,14 +55,14 @@ const DRAFT_DISCIPLINE = [
 ];
 
 /**
- * Only the real path runs a second, result-dependent phase. The mock path
- * applies the whole set in one call, so a mock executor that held actions
- * back would leave the demo run half done with no turn to finish it.
+ * Only the real path runs a second, result-dependent authoring phase. The
+ * mock path proposes one complete set; the action gate may pause that set,
+ * but it never asks the model for another continuation.
  */
 const DEPENDENT_PHASE_REAL =
   '  - When any later action needs an earlier action\'s result, emit only the prerequisite actions now and set `needsDependentPhase` to true. Do not prewrite the later comment, state change, reply or summary: it will be authored once from the applied ledger.';
 const DEPENDENT_PHASE_MOCK =
-  '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment applies the whole set at once and runs no second phase.';
+  '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment treats it as one approval set and runs no second authoring phase.';
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,

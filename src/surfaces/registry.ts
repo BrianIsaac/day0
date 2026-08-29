@@ -291,9 +291,14 @@ export async function applySurfaceActions(
         continue;
       }
       if (!isSurfaceTool(action.tool)) {
-        applied.push(
-          await adapter.apply(ctx, run as AdapterRun, action, durableIndex, idempotencyKey),
+        const outcome = await adapter.apply(
+          ctx,
+          run as AdapterRun,
+          action,
+          durableIndex,
+          idempotencyKey,
         );
+        applied.push(authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome);
         continue;
       }
       const parsed = parseSurfaceAction(action);
