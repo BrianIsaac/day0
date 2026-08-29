@@ -37,13 +37,13 @@ Every reported rate includes successes, n and a two-sided Wilson 95% interval. T
 
 ## Reproduce
 
-Use Node 22+, pnpm and the self-hosted backend in mock mode. An OpenAI key is required for the reported model, and the local sandbox is required when Day0 authors a missing skill.
+Use Node 22+, pnpm and the self-hosted backend in mock mode. The checked-in evidence uses the local `qwen3:8b` model through an OpenAI-compatible Ollama endpoint; another provider can be used for a new evidence file, provided both arms retain the same model settings. The local sandbox is required when Day0 authors a missing skill.
 
 ```bash
 pnpm install
 
-# .env.local: self-hosted URL/admin key, no-auth keys, OpenAI key/model,
-# and DAY0_SURFACE_MODE=mock
+# .env.local: self-hosted URL/admin key, no-auth keys, model/base URL,
+# and DAY0_SURFACE_MODE=mock. Configure the same model endpoint on Convex.
 pnpm convex:up
 pnpm sandbox:up
 pnpm sync:env
