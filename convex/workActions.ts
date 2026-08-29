@@ -248,6 +248,7 @@ export const draftPlan = action({
       candidate: rowToCandidate(item),
       charter: charterRow.body as Charter,
       autonomousActions: autonomousActionsOn(agent),
+      surfaceMode: SURFACE_MODE,
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -475,7 +476,8 @@ function isDependentPendingOutput(
   return (output as { phase?: unknown }).phase === 'dependent';
 }
 
-const RESULT_STEP = /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/i;
+const RESULT_STEP =
+  /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/i;
 const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/i;
 
 /** Whether the approved plan or emitted prerequisites require one result-aware turn. */
@@ -507,12 +509,7 @@ function successfulReadSurfaces(
   actions.forEach((action, index): void => {
     const row = applied[index];
     const parsed = parseSurfaceAction(action);
-    if (
-      row?.ok &&
-      !row.held &&
-      parsed.ok &&
-      actionIntent(parsed.action) === 'read'
-    ) {
+    if (row?.ok && !row.held && parsed.ok && actionIntent(parsed.action) === 'read') {
       surfaces.add(parsed.action.surface.toLowerCase());
     }
   });
@@ -999,7 +996,10 @@ async function finishRun(
         output: { ...output, applied },
       });
       if (!parked.parked) {
-        return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
+        return {
+          ok: false,
+          reason: 'the run was moved on before its held actions could be parked',
+        };
       }
       return {
         ok: true,
@@ -1034,9 +1034,15 @@ async function finishRun(
         output: { ...output, applied },
       });
       if (!parked.parked) {
-        return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
+        return {
+          ok: false,
+          reason: 'the run was moved on before its held actions could be parked',
+        };
       }
-      return { ok: true, reason: "automatic actions applied; the rest await the manager's approval" };
+      return {
+        ok: true,
+        reason: "automatic actions applied; the rest await the manager's approval",
+      };
     }
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
       workItemId,

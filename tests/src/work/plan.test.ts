@@ -21,4 +21,12 @@ describe('plan drafter action mode', (): void => {
     expect(actionModeInstruction(true)).not.toMatch(/is held|waits for/);
     expect(planSystemPrompt(false).split(actionModeInstruction(false))).toHaveLength(2);
   });
+
+  it('states that every mock comparison action waits at the exact-action gate', (): void => {
+    const instruction = actionModeInstruction(true, 'mock');
+    expect(instruction).toContain('Mock comparison mode');
+    expect(instruction).toContain('every emitted action is held');
+    expect(instruction).not.toContain('lands as emitted');
+    expect(planSystemPrompt(false, 'mock')).toContain(instruction);
+  });
 });

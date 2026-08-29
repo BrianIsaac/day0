@@ -308,6 +308,7 @@ async function approveAfterDelay(
 ): Promise<void> {
   const waitStarted = Date.now();
   await sleep(context.options.approvalDelayMs);
+  const waitEnded = Date.now();
   await authenticate(context);
   await approve();
   const approvedAt = Date.now();
@@ -316,7 +317,7 @@ async function approveAfterDelay(
     taskId: active?.taskId,
     requestedAt: new Date(requestedAtMs).toISOString(),
     approvedAt: new Date(approvedAt).toISOString(),
-    delayMs: approvedAt - waitStarted,
+    delayMs: waitEnded - waitStarted,
   };
   run.decisions.push(decision);
   run.humanWaitMs += decision.delayMs;
