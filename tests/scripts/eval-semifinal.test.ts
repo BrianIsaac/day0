@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { loadEvaluationTasks } from '../../evaluation/graders';
-import { parseCliOptions, selectEvaluationTasks } from '../../scripts/eval-semifinal';
+import {
+  isFatalEvaluationInfrastructureError,
+  parseCliOptions,
+  selectEvaluationTasks,
+} from '../../scripts/eval-semifinal';
 
 describe('semi-final evaluation CLI', (): void => {
   it('defaults to the full paired three-run comparison', (): void => {
@@ -50,5 +54,13 @@ describe('semi-final evaluation CLI', (): void => {
       selectEvaluationTasks(tasks, ['EVAL-WRITE-01', 'docs-team-cadence']).map((task) => task.id),
     ).toEqual(['write-pipeline-row', 'docs-team-cadence']);
     expect(() => selectEvaluationTasks(tasks, ['missing-task'])).toThrow('unknown evaluation task');
+  });
+
+  it('stops a run on hard provider billing or authentication failures', (): void => {
+    expect(isFatalEvaluationInfrastructureError('You have no credits remaining.')).toBe(true);
+    expect(isFatalEvaluationInfrastructureError('insufficient_quota')).toBe(true);
+    expect(isFatalEvaluationInfrastructureError('invalid api key')).toBe(true);
+    expect(isFatalEvaluationInfrastructureError('rate limit: retry later')).toBe(false);
+    expect(isFatalEvaluationInfrastructureError(undefined)).toBe(false);
   });
 });

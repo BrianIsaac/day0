@@ -98,6 +98,13 @@ interface HarnessContext {
   options: CliOptions;
 }
 
+export function isFatalEvaluationInfrastructureError(value: unknown): boolean {
+  const message = value instanceof Error ? value.message : typeof value === 'string' ? value : '';
+  return /no credits remaining|insufficient_quota|invalid api key|incorrect api key|billing.*(?:disabled|required)|account.*(?:deactivated|disabled)/i.test(
+    message,
+  );
+}
+
 function positiveInteger(flag: string, value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -500,7 +507,10 @@ async function driveSkillApproval(
   if (skill.state === 'rejected') throw new Error(`skill ${skill.name} was rejected`);
   await incrementModelStage(context, active);
   const result = await context.client.action(api.skillActions.authorAndRegisterSkill, { skillId });
-  if (!result.ok) active.lastError = result.reason;
+  if (!result.ok) {
+    if (isFatalEvaluationInfrastructureError(result.reason)) throw new Error(result.reason);
+    active.lastError = result.reason;
+  }
   await persist(context);
 }
 
@@ -523,7 +533,10 @@ async function driveDay0State(
     const result = await context.client.action(api.workActions.draftPlan, {
       workItemId: item._id,
     });
-    if (!result.ok) active.lastError = result.reason;
+    if (!result.ok) {
+      if (isFatalEvaluationInfrastructureError(result.reason)) throw new Error(result.reason);
+      active.lastError = result.reason;
+    }
     return;
   }
   if (item.state === 'plan-pending') {
@@ -542,7 +555,10 @@ async function driveDay0State(
     const result = await context.client.action(api.workActions.executeApprovedPlan, {
       workItemId: item._id,
     });
-    if (!result.ok) active.lastError = result.reason;
+    if (!result.ok) {
+      if (isFatalEvaluationInfrastructureError(result.reason)) throw new Error(result.reason);
+      active.lastError = result.reason;
+    }
     return;
   }
   if (item.state === 'actions-pending') {
@@ -601,12 +617,16 @@ async function runTask(
         });
         active.logicalStages += result.modelCalls ?? 0;
         active.observableProviderCalls = result.modelCalls ?? null;
-        if (!result.ok) active.lastError = result.reason;
+        if (!result.ok) {
+          if (isFatalEvaluationInfrastructureError(result.reason)) throw new Error(result.reason);
+          active.lastError = result.reason;
+        }
         await persist(context);
       } else {
         await driveDay0State(context, run, active, item);
       }
     } catch (error) {
+      if (isFatalEvaluationInfrastructureError(error)) throw error;
       active.lastError = error instanceof Error ? error.message : String(error);
       await persist(context);
       await sleep(context.options.pollIntervalMs);
