@@ -390,8 +390,13 @@ function workItemForTask(raw: RawSnapshot, task: EvaluationTask): Doc<'workItems
   return row;
 }
 
-function graderSnapshot(raw: RawSnapshot, item: Doc<'workItems'>): EvaluationSnapshot {
+function graderSnapshot(
+  raw: RawSnapshot,
+  item: Doc<'workItems'>,
+  since: number,
+): EvaluationSnapshot {
   return {
+    since,
     workItem: {
       id: item._id,
       state: item.state,
@@ -654,7 +659,7 @@ async function runTask(
 
   raw = await context.client.query(api.evaluation.snapshot, { agentId });
   item = workItemForTask(raw, task);
-  const snapshot = graderSnapshot(raw, item);
+  const snapshot = graderSnapshot(raw, item, new Date(active.startedAt).getTime());
   const observedAt = Date.now();
   const finishedAt = terminalTimestamp(raw, item) ?? observedAt;
   const timedOut = finishedAt > deadline || !TERMINAL_STATES.has(item.state);

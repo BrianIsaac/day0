@@ -14,6 +14,7 @@ const passingGrade = {
     heldForApproval: true,
     approvedByManager: true,
     landedTools: ['slack.postMessage'],
+    proposedTools: ['slack.postMessage'],
   },
 };
 
