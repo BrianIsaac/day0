@@ -252,6 +252,14 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
   initialFailure?: string;
 }
 
+const PARTIAL_WORK = /\b(?:partial(?:ly)?|incomplete|outstanding|remainder|remaining)\b/i;
+const NO_PARTIAL_WORK = /\b(?:no|zero|without any)\s+(?:work\s+)?(?:outstanding|remaining)\b/i;
+
+function approvedWorkIsPartial(candidate: WorkCandidate, plan: ExecutionPlan): boolean {
+  const approvedWork = [candidate.contentSummary, plan.summary, ...plan.steps].join('\n');
+  return PARTIAL_WORK.test(approvedWork) && !NO_PARTIAL_WORK.test(approvedWork);
+}
+
 /**
  * Validate the semantic action set before any literal reaches the exact-action gate.
  *
@@ -296,7 +304,7 @@ export function mockActionContractIssues(
     const explicitStatus = candidate.contentSummary.match(
       /\b(?:move|set|change)\b[^.!?\n]{0,100}?\bto\s+[`"']?(open|in-progress|blocked|done)\b/i,
     )?.[1] as MockAction['args']['status'] | undefined;
-    const requiredStatus = explicitStatus ?? 'done';
+    const requiredStatus = explicitStatus ?? (approvedWorkIsPartial(candidate, plan) ? 'in-progress' : 'done');
     if (
       originActions.length > 0 &&
       !originActions.some((action) => action.args.status === requiredStatus)

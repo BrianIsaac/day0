@@ -235,6 +235,46 @@ describe('executor output contract', (): void => {
     ]);
   });
 
+  it('accepts an in-progress transition when the approved plan leaves work outstanding', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Recorded the first reconciliation pass; the second pass remains outstanding.',
+        notes: 'The approved work is intentionally incomplete.',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: {
+              slug: 'REVOPS-PARTIAL-01',
+              status: 'in-progress',
+              comment: 'Finished the first reconciliation pass; the remaining accounts are next.',
+            },
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: 'PARTIAL-01',
+        title: 'Run the first of two reconciliation passes',
+        contentSummary:
+          'Complete the first reconciliation pass on REVOPS-PARTIAL-01, record what was checked, and leave the remaining accounts for tomorrow.',
+        contentRefs: ['ticket://REVOPS-PARTIAL-01'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Complete only the first of two reconciliation passes.',
+        steps: ['Record the first pass; the second pass remains outstanding.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 10,
+      },
+    );
+
+    expect(issues).toEqual([]);
+  });
+
   it('accepts every verb, including the two surface verbs, with flat string args', (): void => {
     for (const tool of ACTION_TOOLS) {
       expect(
