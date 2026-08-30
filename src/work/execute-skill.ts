@@ -91,6 +91,15 @@ const MOCK_PREAMBLE = [
   '  - These extra actions are NOT optional when the conditions hold; they are how the agent demonstrates trustworthy follow-through. NEVER replace the manager DM with a ticket update — both fire.',
 ].join('\n');
 
+const MOCK_ACTION_CONTRACT = [
+  '--- Mock action-set contract (takes precedence over contradictory skill wording) ---',
+  'The approved plan and candidate define the work for this turn. Apply these invariants even when a skill body was authored with broader prerequisites or calls itself read-only:',
+  '  - For an approved spreadsheet-update, the literal destination and values in the approved candidate are sufficient authority. Emit the requested `spreadsheet.appendRow`; do not invent source-evidence or duplicate-check prerequisites that the candidate does not require.',
+  '  - For ticket-queue work, emit a non-empty audit comment on the exact originating `ticket://` reference. Full closure uses `done`; use `in-progress` only when the candidate explicitly requests partial work such as moving that ticket to in-progress.',
+  '  - One `ticket.update` may carry both the comment and status. A split pair is also valid only as comment-only followed by status-only. Never emit the same ticket status twice.',
+  '  - A manager DM is the review trail, not a replacement for the requested primary mutation or originating-ticket audit.',
+].join('\n');
+
 /** The four verbs that exist only for the mock environment. */
 const MOCK_VERBS = 'spreadsheet.appendRow, slack.postMessage, twitter.reply, ticket.update';
 
@@ -244,6 +253,77 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
 }
 
 /**
+ * Validate the semantic action set before any literal reaches the exact-action gate.
+ *
+ * The structured-output schema proves that each row is well formed; this check
+ * proves that rows do not contradict one another or the approved work item.
+ */
+export function mockActionContractIssues(
+  output: ExecutionOutput,
+  candidate: WorkCandidate,
+  plan: ExecutionPlan,
+): string[] {
+  const issues: string[] = [];
+  if (
+    plan.expectedOutputType === 'spreadsheet-update' &&
+    !output.actions.some((action) => action.tool === 'spreadsheet.appendRow')
+  ) {
+    issues.push(
+      'approved spreadsheet-update plan emitted no spreadsheet.appendRow; use the literal destination and cells in the candidate instead of inventing evidence or duplicate-check prerequisites',
+    );
+  }
+  const origin =
+    candidate.sourceCategory === 'ticket-queue'
+      ? candidate.contentRefs.find((ref) => ref.startsWith('ticket://'))?.slice('ticket://'.length)
+      : undefined;
+  if (
+    origin &&
+    !output.actions.some(
+      (action) =>
+        action.tool === 'ticket.update' &&
+        action.args.slug === origin &&
+        action.args.comment?.trim(),
+    )
+  ) {
+    issues.push(
+      `ticket-queue work omitted the originating-ticket comment on ${origin} required by how-to-update-ticket`,
+    );
+  }
+  if (origin) {
+    const originActions = output.actions.filter(
+      (action) => action.tool === 'ticket.update' && action.args.slug === origin,
+    );
+    const explicitStatus = candidate.contentSummary.match(
+      /\b(?:move|set|change)\b[^.!?\n]{0,100}?\bto\s+[`"']?(open|in-progress|blocked|done)\b/i,
+    )?.[1] as MockAction['args']['status'] | undefined;
+    const requiredStatus = explicitStatus ?? 'done';
+    if (
+      originActions.length > 0 &&
+      !originActions.some((action) => action.args.status === requiredStatus)
+    ) {
+      issues.push(
+        explicitStatus
+          ? `originating ticket ${origin} must use the candidate's explicitly requested status ${requiredStatus}`
+          : `originating ticket ${origin} must use status done for full closure; in-progress is only for partial work explicitly requested by the candidate`,
+      );
+    }
+  }
+  const statusesByTicket = new Map<string, Set<string>>();
+  for (const action of output.actions) {
+    if (action.tool !== 'ticket.update' || !action.args.slug || !action.args.status) continue;
+    const statuses = statusesByTicket.get(action.args.slug) ?? new Set<string>();
+    if (statuses.has(action.args.status)) {
+      issues.push(
+        `ticket ${action.args.slug} repeats status ${action.args.status} after an earlier action already set it`,
+      );
+    }
+    statuses.add(action.args.status);
+    statusesByTicket.set(action.args.slug, statuses);
+  }
+  return issues;
+}
+
+/**
  * Describe the connected surfaces and the two verbs that reach them.
  *
  * Only connected surfaces are listed: a skill may not target anything else,
@@ -373,7 +453,9 @@ export function executorInstructions(args: {
     '',
     '--- Skill body (apply as your behavioural prior) ---',
     args.skillBody,
-    ...(args.mode === 'real'
+    ...(args.mode === 'mock'
+      ? ['', MOCK_ACTION_CONTRACT]
+      : args.mode === 'real'
       ? [
           '',
           '--- Live run context (takes precedence over approval wording in the skill body) ---',
@@ -437,12 +519,46 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     user: userPrompt,
     schema: executeSchema,
   });
-  return {
+  const output: ExecutionOutput = {
     draft: raw.draft,
     notes: raw.notes,
     needsDependentPhase: raw.needsDependentPhase,
     actions: raw.actions as MockAction[],
   };
+  if (mode !== 'mock') return output;
+
+  const issues = mockActionContractIssues(output, candidate, plan);
+  if (issues.length === 0) return output;
+
+  const repairPrompt = [
+    userPrompt,
+    '',
+    '--- Required action-set correction ---',
+    'Your previous structured response was not applied and none of its actions reached the gate.',
+    'Return one full replacement response that fixes every issue below. Keep the literal candidate as the authority for requested destinations, values, comments and statuses; do not invent evidence, duplicate-check prerequisites or extra mutations.',
+    ...issues.map((issue) => `- ${issue}`),
+    '',
+    'Previous structured response:',
+    JSON.stringify(output),
+    '',
+    'Produce the complete corrected draft, notes, and actions now.',
+  ].join('\n');
+  const repairedRaw = await agentJson<z.infer<typeof executeSchema>>({
+    agent: skillAgent,
+    user: repairPrompt,
+    schema: executeSchema,
+  });
+  const repaired: ExecutionOutput = {
+    draft: repairedRaw.draft,
+    notes: repairedRaw.notes,
+    needsDependentPhase: repairedRaw.needsDependentPhase,
+    actions: repairedRaw.actions as MockAction[],
+  };
+  const remaining = mockActionContractIssues(repaired, candidate, plan);
+  if (remaining.length > 0) {
+    throw new Error(`executor action contract remained invalid after one repair: ${remaining.join('; ')}`);
+  }
+  return repaired;
 }
 
 /**
