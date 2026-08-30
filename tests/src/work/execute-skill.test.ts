@@ -100,7 +100,7 @@ describe('executor output contract', (): void => {
     );
 
     expect(issues).toEqual([
-      'ticket REVOPS-EVAL-08 repeats status in-progress after an earlier action already set it',
+      'action set repeats a ticket status transition after it was already set',
     ]);
   });
 
@@ -141,9 +141,7 @@ describe('executor output contract', (): void => {
       },
     );
 
-    expect(issues).toEqual([
-      'approved spreadsheet-update plan emitted no spreadsheet.appendRow; use the literal destination and cells in the candidate instead of inventing evidence or duplicate-check prerequisites',
-    ]);
+    expect(issues).toEqual(['action set omitted the approved primary spreadsheet mutation']);
   });
 
   it('rejects a ticket-queue result that omits the documented originating-ticket comment', (): void => {
@@ -184,7 +182,7 @@ describe('executor output contract', (): void => {
     );
 
     expect(issues).toEqual([
-      'ticket-queue work omitted the originating-ticket comment on REVOPS-EVAL-04 required by how-to-update-ticket',
+      'ticket-queue action set omitted its documented originating-ticket audit comment',
     ]);
   });
 
@@ -231,7 +229,7 @@ describe('executor output contract', (): void => {
     );
 
     expect(issues).toEqual([
-      'originating ticket REVOPS-EVAL-05 must use status done for full closure; in-progress is only for partial work explicitly requested by the candidate',
+      'originating-ticket transition contradicts the documented closure state',
     ]);
   });
 

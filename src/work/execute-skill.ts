@@ -276,9 +276,7 @@ export function mockActionContractIssues(
     plan.expectedOutputType === 'spreadsheet-update' &&
     !output.actions.some((action) => action.tool === 'spreadsheet.appendRow')
   ) {
-    issues.push(
-      'approved spreadsheet-update plan emitted no spreadsheet.appendRow; use the literal destination and cells in the candidate instead of inventing evidence or duplicate-check prerequisites',
-    );
+    issues.push('action set omitted the approved primary spreadsheet mutation');
   }
   const origin =
     candidate.sourceCategory === 'ticket-queue'
@@ -293,9 +291,7 @@ export function mockActionContractIssues(
         action.args.comment?.trim(),
     )
   ) {
-    issues.push(
-      `ticket-queue work omitted the originating-ticket comment on ${origin} required by how-to-update-ticket`,
-    );
+    issues.push('ticket-queue action set omitted its documented originating-ticket audit comment');
   }
   if (origin) {
     const originActions = output.actions.filter(
@@ -311,8 +307,8 @@ export function mockActionContractIssues(
     ) {
       issues.push(
         explicitStatus
-          ? `originating ticket ${origin} must use the candidate's explicitly requested status ${requiredStatus}`
-          : `originating ticket ${origin} must use status done for full closure; in-progress is only for partial work explicitly requested by the candidate`,
+          ? "originating-ticket transition contradicts the candidate's explicit status request"
+          : 'originating-ticket transition contradicts the documented closure state',
       );
     }
   }
@@ -321,9 +317,7 @@ export function mockActionContractIssues(
     if (action.tool !== 'ticket.update' || !action.args.slug || !action.args.status) continue;
     const statuses = statusesByTicket.get(action.args.slug) ?? new Set<string>();
     if (statuses.has(action.args.status)) {
-      issues.push(
-        `ticket ${action.args.slug} repeats status ${action.args.status} after an earlier action already set it`,
-      );
+      issues.push('action set repeats a ticket status transition after it was already set');
     }
     statuses.add(action.args.status);
     statusesByTicket.set(action.args.slug, statuses);

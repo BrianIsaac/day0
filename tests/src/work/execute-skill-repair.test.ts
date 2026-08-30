@@ -132,9 +132,12 @@ describe('mock executor semantic repair', (): void => {
 
     expect(recorded.calls).toHaveLength(2);
     expect(recorded.calls[1].user).toContain('Your previous structured response was not applied');
-    expect(recorded.calls[1].user).toContain(
-      'ticket REVOPS-EVAL-08 repeats status in-progress after an earlier action already set it',
-    );
+    const correction = recorded.calls[1].user
+      .split('--- Required action-set correction ---')[1]!
+      .split('Previous structured response:')[0]!;
+    expect(correction).toContain('repeats a ticket status transition');
+    expect(correction).not.toContain('REVOPS-EVAL-08');
+    expect(correction).not.toContain('in-progress');
     expect(output.actions).toEqual([
       {
         tool: 'ticket.update',
