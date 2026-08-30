@@ -69,7 +69,7 @@ interface CliOptions {
   help: boolean;
 }
 
-interface ActiveTask {
+export interface ActiveTask {
   taskId: string;
   startedAt: string;
   humanWaitMs: number;
@@ -81,7 +81,7 @@ interface ActiveTask {
 
 type RawSnapshot = FunctionReturnType<typeof api.evaluation.snapshot>;
 
-interface RunWithProgress extends EvaluationRun {
+export interface RunWithProgress extends EvaluationRun {
   activeTask?: ActiveTask;
 }
 
@@ -89,8 +89,8 @@ interface EvidenceWithProgress extends EvaluationEvidence {
   runs: RunWithProgress[];
 }
 
-interface HarnessContext {
-  client: ConvexHttpClient;
+export interface HarnessContext {
+  client: Pick<ConvexHttpClient, 'query' | 'mutation' | 'action' | 'setAuth'>;
   authenticatedAt: number;
   evidence: EvidenceWithProgress;
   outPath: string;
@@ -514,7 +514,15 @@ async function driveSkillApproval(
   await persist(context);
 }
 
-async function driveDay0State(
+/**
+ * Advance one day0 work item by the single step its state calls for.
+ *
+ * Every branch performs at most one call and returns, so the caller's poll
+ * loop re-reads the row between steps. A decided hold is left alone: the
+ * manager's approval keeps the row at `actions-pending` until the scheduled
+ * apply moves it, and a second approval would be refused by the backend.
+ */
+export async function driveDay0State(
   context: HarnessContext,
   run: RunWithProgress,
   active: ActiveTask,
@@ -562,6 +570,10 @@ async function driveDay0State(
     return;
   }
   if (item.state === 'actions-pending') {
+    if (item.approvedIndexes !== undefined) {
+      await sleep(context.options.pollIntervalMs);
+      return;
+    }
     if (!item.pendingRunId) throw new Error('actions-pending work has no pending run id');
     const approvedIndexes = (item.actionVerdicts ?? [])
       .map((verdict, index) => ({ verdict, index }))
@@ -583,6 +595,34 @@ async function driveDay0State(
     return;
   }
   await sleep(context.options.pollIntervalMs);
+}
+
+/**
+ * Advance one baseline work item.
+ *
+ * Only a `discovered` row is executed; a row already claimed by a run that is
+ * still going, or one left claimed by an interrupted harness, is waited on
+ * until it settles or the task deadline terminalises it.
+ */
+export async function driveBaselineState(
+  context: HarnessContext,
+  active: ActiveTask,
+  item: Doc<'workItems'>,
+): Promise<void> {
+  if (item.state !== 'discovered') {
+    await sleep(context.options.pollIntervalMs);
+    return;
+  }
+  const result = await context.client.action(api.baselineActions.executeTask, {
+    workItemId: item._id,
+  });
+  active.logicalStages += result.modelCalls ?? 0;
+  active.observableProviderCalls = result.modelCalls ?? null;
+  if (!result.ok) {
+    if (isFatalEvaluationInfrastructureError(result.reason)) throw new Error(result.reason);
+    active.lastError = result.reason;
+  }
+  await persist(context);
 }
 
 async function runTask(
@@ -612,16 +652,7 @@ async function runTask(
     await authenticate(context);
     try {
       if (run.arm === 'baseline') {
-        const result = await context.client.action(api.baselineActions.executeTask, {
-          workItemId: item._id,
-        });
-        active.logicalStages += result.modelCalls ?? 0;
-        active.observableProviderCalls = result.modelCalls ?? null;
-        if (!result.ok) {
-          if (isFatalEvaluationInfrastructureError(result.reason)) throw new Error(result.reason);
-          active.lastError = result.reason;
-        }
-        await persist(context);
+        await driveBaselineState(context, active, item);
       } else {
         await driveDay0State(context, run, active, item);
       }
