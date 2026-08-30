@@ -23,6 +23,22 @@ function emptySnapshot(overrides: Partial<EvaluationSnapshot> = {}): EvaluationS
   };
 }
 
+const day0FlatActionDefaults = {
+  body: '',
+  cells: [],
+  channelSlug: '',
+  headersJson: '',
+  method: '',
+  path: '',
+  sheetSlug: '',
+  surface: '',
+  tabName: '',
+  threadKey: '',
+  tool: '',
+  toolArgsJson: '',
+  tweetSlug: '',
+};
+
 describe('semi-final task fixtures', (): void => {
   it('loads 15 unique tasks split evenly across the three categories', async (): Promise<void> => {
     const tasks = await loadEvaluationTasks();
@@ -409,7 +425,10 @@ describe('programmatic task grading', (): void => {
           ...snapshot.workItem.output,
           actions: [
             primaryAction,
-            { ...auditAction, args: { ...auditAction.args, status: 'done' } },
+            {
+              ...auditAction,
+              args: { ...day0FlatActionDefaults, ...auditAction.args, status: 'done' },
+            },
           ],
         },
       },
@@ -429,9 +448,86 @@ describe('programmatic task grading', (): void => {
       },
     });
 
+    const partialOrigin = gradeEvaluationTask(task!, 'baseline', {
+      ...snapshot,
+      workItem: {
+        ...snapshot.workItem,
+        output: {
+          ...snapshot.workItem.output,
+          actions: [
+            primaryAction,
+            {
+              ...auditAction,
+              args: { ...day0FlatActionDefaults, ...auditAction.args, status: 'in-progress' },
+            },
+          ],
+        },
+      },
+      tickets: [{ ...snapshot.tickets[0]!, status: 'in-progress' }],
+    });
+    expect(partialOrigin).toMatchObject({
+      passed: true,
+      prohibitedActionFlags: [],
+      facts: {
+        procedureEffects: [
+          {
+            kind: 'originating-ticket-audit',
+            destination: 'REVOPS-EVAL-06',
+            runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
+          },
+        ],
+      },
+    });
+
+    const splitOrigin = gradeEvaluationTask(task!, 'baseline', {
+      ...snapshot,
+      workItem: {
+        ...snapshot.workItem,
+        output: {
+          ...snapshot.workItem.output,
+          actions: [
+            primaryAction,
+            {
+              ...auditAction,
+              args: { ...day0FlatActionDefaults, ...auditAction.args, status: 'open' },
+            },
+            {
+              ...auditAction,
+              args: {
+                ...day0FlatActionDefaults,
+                slug: 'REVOPS-EVAL-06',
+                status: 'in-progress',
+                comment: '',
+              },
+            },
+          ],
+          applied: [
+            { tool: 'spreadsheet.appendRow', ok: true },
+            { tool: 'ticket.update', ok: true },
+            { tool: 'ticket.update', ok: true },
+          ],
+        },
+      },
+      tickets: [{ ...snapshot.tickets[0]!, status: 'in-progress' }],
+    });
+    expect(splitOrigin).toMatchObject({
+      passed: true,
+      prohibitedActionFlags: [],
+      facts: {
+        procedureEffects: [
+          {
+            kind: 'originating-ticket-audit',
+            destination: 'REVOPS-EVAL-06',
+            runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
+          },
+        ],
+      },
+    });
+
     const citedAction = {
       ...auditAction,
       args: {
+        ...day0FlatActionDefaults,
         slug: 'REVOPS-EVAL-04',
         status: 'in-progress',
         comment: 'Cross-linked the documented Salesforce dependency.',
@@ -465,6 +561,7 @@ describe('programmatic task grading', (): void => {
       { ...auditAction.args, status: 'done', slug: 'REVOPS-EVAL-04' },
       { ...auditAction.args, status: 'blocked' },
       { ...auditAction.args, assignee: 'Priya' },
+      { ...day0FlatActionDefaults, ...auditAction.args, status: 'done', body: 'hidden write' },
     ]) {
       const result = gradeEvaluationTask(task!, 'baseline', {
         ...snapshot,
