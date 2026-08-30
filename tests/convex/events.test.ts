@@ -1,9 +1,10 @@
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 describe('event trace export', (): void => {
   it('exports the full event list and redacted ledger with credential names only', async (): Promise<void> => {
@@ -105,5 +106,57 @@ describe('event trace export', (): void => {
     expect(serialised).not.toContain('TOP-SECRET-CIPHERTEXT');
     expect(serialised).not.toContain('TOP-SECRET-IV');
     expect(serialised).not.toContain('boss@day0.local');
+  });
+});
+
+describe('event trace export on a deployed agent', (): void => {
+  afterEach((): void => restoreSurfaceMode());
+
+  it('carries neither the boss email the deploy event records nor a token shape a provider echoed', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { api: mockApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const bossEmail = 'priya.boss@day0.local';
+    const agentId = await owner.mutation(mockApi.agents.deploy, { bossEmail, name: 'Priya' });
+    const token = ['xoxb', '1234567890', 'abcdefghijklmnop'].join('-');
+    await harness.run(async (ctx): Promise<void> => {
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'Close the loop',
+        contentSummary: 'Synthetic evaluation work.',
+        contentRefs: [],
+        state: 'failed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const output = {
+        applied: [
+          {
+            tool: 'http.request',
+            ok: false,
+            reason: `provider said: invalid_auth for Bearer ${token}`,
+            idempotencyKey: `${workItemId}:run-2:0`,
+          },
+        ],
+      };
+      await ctx.db.patch(workItemId, { output });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.failed',
+        payload: { workItemId, reason: `transport refused ${token}`, output },
+        createdAt: 5,
+      });
+    });
+    const trace = await owner.query(mockApi.events.exportForAgent, { agentId });
+    const serialised = JSON.stringify(trace);
+    expect(trace.events.map((event) => event.type)).toContain('agent.deployed');
+    expect(serialised).not.toContain(bossEmail);
+    expect(serialised).not.toContain(token);
+    expect(serialised).toContain('<redacted>');
+    expect(trace.ledger).toHaveLength(1);
   });
 });
