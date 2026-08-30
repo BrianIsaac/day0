@@ -621,7 +621,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
       model: MODEL,
       composeProject: options.composeProject,
       profiles: ['real', 'test', 'demo', 'browser', 'sandbox'],
-      folderDocumentation: 'docs-fixture/ (copied from docs-local/) mounted read-only at /docs',
+      folderDocumentation: 'docs-local/ mounted read-only at /docs',
       fakeProviders: ['fake-slack', 'looker-tile'],
       daytonaBlanked: true,
       onboardingTranscriptPath: 'evaluation/onboarding/day0.json',
