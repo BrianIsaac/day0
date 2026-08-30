@@ -56,6 +56,7 @@ describe('mock executor semantic repair', (): void => {
   });
 
   it('repairs the recorded redundant ownership transition once before gating', async (): Promise<void> => {
+    let additionalModelCalls = 0;
     recorded.outputs.push(
       {
         draft: 'Move REVOPS-EVAL-08 to in-progress with the requested ownership note.',
@@ -128,9 +129,13 @@ describe('mock executor semantic repair', (): void => {
       charter,
       mockEnv,
       mode: 'mock',
+      onAdditionalModelCall: () => {
+        additionalModelCalls += 1;
+      },
     });
 
     expect(recorded.calls).toHaveLength(2);
+    expect(additionalModelCalls).toBe(1);
     expect(recorded.calls[1].user).toContain('Your previous structured response was not applied');
     const correction = recorded.calls[1].user
       .split('--- Required action-set correction ---')[1]!

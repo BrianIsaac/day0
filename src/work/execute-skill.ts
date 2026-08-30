@@ -244,6 +244,8 @@ export interface RunSkillArgs {
   autonomousActions?: boolean;
   /** Clock for the connection verdict; defaults to now. */
   now?: number;
+  /** Evidence hook for deliberate model calls after the initial executor turn. */
+  onAdditionalModelCall?: () => void;
 }
 
 export interface RunDependentSkillArgs extends RunSkillArgs {
@@ -545,6 +547,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     '',
     'Produce the complete corrected draft, notes, and actions now.',
   ].join('\n');
+  args.onAdditionalModelCall?.();
   const repairedRaw = await agentJson<z.infer<typeof executeSchema>>({
     agent: skillAgent,
     user: repairPrompt,

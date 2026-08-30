@@ -574,6 +574,7 @@ export async function driveDay0State(
     const result = await context.client.action(api.workActions.executeApprovedPlan, {
       workItemId: item._id,
     });
+    active.logicalStages += result.additionalModelCalls ?? 0;
     if (!result.ok) {
       if (isFatalEvaluationInfrastructureError(result.reason)) throw new Error(result.reason);
       active.lastError = result.reason;

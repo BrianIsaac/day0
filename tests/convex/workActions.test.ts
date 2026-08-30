@@ -46,6 +46,7 @@ const recorded = vi.hoisted(() => ({
   skillOutput: undefined as ExecutionOutput | undefined,
   dependentOutput: undefined as DependentExecutionOutput | undefined,
   dependentRuns: 0,
+  additionalModelCalls: 0,
 }));
 
 const skillOutput: ExecutionOutput = {
@@ -120,10 +121,14 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     runSkill: async (args: {
       mode?: string;
       autonomousActions?: boolean;
+      onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
       recorded.skillModes.push(args.mode);
       recorded.skillSwitches.push(args.autonomousActions);
+      for (let call = 0; call < recorded.additionalModelCalls; call += 1) {
+        args.onAdditionalModelCall?.();
+      }
       return recorded.skillOutput ?? skillOutput;
     },
     runDependentSkill: async (args: {
@@ -257,6 +262,7 @@ afterEach((): void => {
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
   recorded.dependentRuns = 0;
+  recorded.additionalModelCalls = 0;
   restoreSurfaceMode();
 });
 
@@ -1674,6 +1680,7 @@ describe('executing an approved plan through the gate', (): void => {
 
   it('holds day0 mock writes until the manager approves the literal action', async (): Promise<void> => {
     useSurfaceMode('mock');
+    recorded.additionalModelCalls = 1;
     recorded.skillOutput = {
       draft: 'Draft.',
       notes: '',
@@ -1689,7 +1696,11 @@ describe('executing an approved plan through the gate', (): void => {
     const result = await harness
       .withIdentity(OWNER)
       .action(api.workActions.executeApprovedPlan, { workItemId });
-    expect(result).toEqual({ ok: true, reason: "actions pending the manager's approval" });
+    expect(result).toEqual({
+      ok: true,
+      reason: "actions pending the manager's approval",
+      additionalModelCalls: 1,
+    });
     const held = await readItem(harness, workItemId);
     expect(held.state).toBe('actions-pending');
     expect(held.pendingRunId).toBeDefined();

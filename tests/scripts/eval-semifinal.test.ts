@@ -164,6 +164,27 @@ function activeTask() {
 }
 
 describe('headless day0 driver', (): void => {
+  it('counts a bounded action-set repair as an additional logical model call', async (): Promise<void> => {
+    const { context, calls } = await stubContext({
+      'workActions:executeApprovedPlan': { ok: true, additionalModelCalls: 1 },
+    });
+    const run = {
+      id: 'day0-r1',
+      arm: 'day0',
+      run: 1,
+      status: 'running',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    } as never;
+    const active = activeTask();
+
+    await driveDay0State(context, run, active, workItem({ state: 'plan-approved' }));
+
+    expect(calls.map((call) => call.name)).toEqual(['workActions:executeApprovedPlan']);
+    expect(active.logicalStages).toBe(2);
+  });
+
   it('approves a held run once and then waits for the scheduled apply', async (): Promise<void> => {
     const { context, calls } = await stubContext();
     const run = {
