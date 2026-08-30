@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatRate,
   renderEvaluationReport,
+  timeToOperational,
   wilsonInterval,
   type EvaluationEvidence,
 } from '../../../evaluation/report';
@@ -182,6 +183,19 @@ function twoRunEvidence(): EvaluationEvidence {
   ];
   return base;
 }
+
+describe('time to operational', (): void => {
+  it('takes the first effect of a task that passed, never one that also did something prohibited', (): void => {
+    const run = twoRunEvidence().runs[0]!;
+    expect(timeToOperational(run)).toEqual({ rawMs: 5_000, humanWaitBeforeMs: 750 });
+    const firstFailed = {
+      ...run,
+      tasks: [{ ...run.tasks[0]!, grade: { ...run.tasks[0]!.grade, passed: false } }, run.tasks[1]!],
+    };
+    expect(timeToOperational(firstFailed)).toEqual({ rawMs: 9_000, humanWaitBeforeMs: 1_500 });
+    expect(timeToOperational({ ...run, tasks: [] })).toEqual({ rawMs: null, humanWaitBeforeMs: null });
+  });
+});
 
 describe('per-task and per-run summaries', (): void => {
   it('reports the majority outcome per task, time to operational per run, and time on task per task', (): void => {

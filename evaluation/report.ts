@@ -121,7 +121,9 @@ function duration(value: number | null): string {
 
 /**
  * One run's time to operational: deploy to the first correct effect of any
- * task in the run, with the human wait that preceded that effect.
+ * task in the run, with the human wait that preceded that effect. A task
+ * whose required effect landed beside a prohibited one did not do the work
+ * correctly, so only tasks that passed are considered.
  *
  * Args:
  *   run: A run with its task results and recorded decisions.
@@ -135,6 +137,7 @@ export function timeToOperational(run: EvaluationRun): {
   humanWaitBeforeMs: number | null;
 } {
   const observed = run.tasks
+    .filter((task) => task.grade.passed)
     .map((task) => task.deployToFirstCorrectActionMs)
     .filter((value): value is number => value !== null);
   if (observed.length === 0 || !run.deployedAt) return { rawMs: null, humanWaitBeforeMs: null };

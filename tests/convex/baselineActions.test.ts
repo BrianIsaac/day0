@@ -181,6 +181,28 @@ describe('ordinary-agent comparison arm', (): void => {
     expect(model.calls).toBe(1);
   });
 
+  it('records a model failure as a fenced work failure without inventing a call count', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const { agentId } = await owner.action(api.baselineActions.deployBaseline, {
+      bossEmail: 'boss@day0.local',
+    });
+    const workItemId = await seedWork(harness, agentId, 'EVAL-FAILURE');
+    model.run = async () => {
+      throw new Error('provider timeout');
+    };
+
+    await expect(owner.action(api.baselineActions.executeTask, { workItemId })).resolves.toEqual({
+      ok: false,
+      reason: 'provider timeout',
+      toolCalls: 0,
+    });
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(row).toMatchObject({ state: 'failed', skipReason: 'provider timeout' });
+  });
+
   it('spends only one model run when the same task is executed concurrently', async (): Promise<void> => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');

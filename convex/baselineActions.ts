@@ -161,7 +161,7 @@ export const executeTask = action({
           applied,
         },
       });
-      return { ok: false, reason, modelCalls: 1, toolCalls };
+      return { ok: false, reason, toolCalls };
     }
   },
 });
