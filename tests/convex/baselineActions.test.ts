@@ -6,6 +6,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { EVALUATION_SCOPES } from '../../src/evaluation/scopes';
 
 interface FakeTool {
   execute?: (input: never) => Promise<unknown>;
@@ -79,7 +80,7 @@ async function seedWork(
 }
 
 describe('ordinary-agent comparison arm', (): void => {
-  it('deploys an active baseline with a stub charter, every benchmark scope, and no skill or generated work', async (): Promise<void> => {
+  it('deploys an active baseline with a stub charter, the mock-office scopes only, and no skill or generated work', async (): Promise<void> => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
@@ -101,21 +102,9 @@ describe('ordinary-agent comparison arm', (): void => {
     expect(state.agent).toMatchObject({ arm: 'baseline', state: 'active' });
     expect(state.charters).toHaveLength(1);
     expect(state.charters[0]).toMatchObject({ approved: true, version: 'evaluation-baseline' });
-    expect(state.grants).toEqual(
-      expect.arrayContaining([
-        'docs:read',
-        'spreadsheet:read',
-        'spreadsheet:write',
-        'slack:read',
-        'slack:write',
-        'ticket:read',
-        'ticket:write',
-        'social:read',
-        'social:write',
-        'salesforce:read',
-        'pagerduty:read',
-        'northstar:read',
-      ]),
+    expect(state.grants).toEqual([...EVALUATION_SCOPES].sort());
+    expect(state.grants.some((scope) => /^(salesforce|pagerduty|northstar):/.test(scope))).toBe(
+      false,
     );
     expect(state.docs.length).toBeGreaterThan(0);
     expect(state.skills).toEqual([]);

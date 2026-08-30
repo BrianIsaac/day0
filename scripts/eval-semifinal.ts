@@ -27,31 +27,13 @@ import {
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
+import { EVALUATION_SCOPES } from '../src/evaluation/scopes';
 
 const DEFAULT_OUT = 'evaluation/results/semifinal.json';
 const DEFAULT_APPROVAL_DELAY_MS = 750;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const TOKEN_REFRESH_MS = 45 * 60 * 1000;
 const TERMINAL_STATES = new Set(['completed', 'cancelled', 'failed', 'skipped', 'deferred']);
-const ALL_SCOPES = [
-  'boss:message',
-  'docs:read',
-  'docs:write',
-  'spreadsheet:read',
-  'spreadsheet:write',
-  'slack:read',
-  'slack:write',
-  'social:read',
-  'social:write',
-  'ticket:read',
-  'ticket:write',
-  'salesforce:read',
-  'salesforce:write',
-  'pagerduty:read',
-  'pagerduty:write',
-  'northstar:read',
-  'northstar:write',
-] as const;
 
 const onboardingFixtureSchema = z.object({
   bossLabel: z.string().min(1),
@@ -355,7 +337,7 @@ async function prepareDay0(context: HarnessContext, run: RunWithProgress): Promi
   await context.client.action(api.seed.seedDemo, { agentId });
   await context.client.mutation(api.agents.grantScopes, {
     agentId,
-    scopes: [...ALL_SCOPES],
+    scopes: [...EVALUATION_SCOPES],
   });
   const agent = await context.client.query(api.agents.get, { agentId });
   let charter = await context.client.query(api.charters.latest, { agentId });

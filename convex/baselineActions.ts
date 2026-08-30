@@ -10,26 +10,7 @@ import { applySurfaceActions, readSurfaceSnapshot } from '../src/surfaces/regist
 import type { AppliedAction } from '../src/surfaces/types';
 import type { MockAction } from '../src/work/types';
 import { runBaselineAgent } from '../src/evaluation/baseline-agent';
-
-const BASELINE_SCOPES = [
-  'boss:message',
-  'docs:read',
-  'docs:write',
-  'spreadsheet:read',
-  'spreadsheet:write',
-  'slack:read',
-  'slack:write',
-  'social:read',
-  'social:write',
-  'ticket:read',
-  'ticket:write',
-  'salesforce:read',
-  'salesforce:write',
-  'pagerduty:read',
-  'pagerduty:write',
-  'northstar:read',
-  'northstar:write',
-] as const;
+import { EVALUATION_SCOPES } from '../src/evaluation/scopes';
 
 const STUB_CHARTER = {
   whyThisHire: 'Evaluation control arm.',
@@ -67,7 +48,7 @@ export const deployBaseline = action({
     await ctx.runMutation(api.charters.approve, { charterId });
     await ctx.runMutation(api.agents.grantScopes, {
       agentId,
-      scopes: [...BASELINE_SCOPES],
+      scopes: [...EVALUATION_SCOPES],
     });
     return { agentId, charterId };
   },
