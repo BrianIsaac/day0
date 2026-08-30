@@ -121,10 +121,19 @@ export interface MockAction {
   args: MockActionArgs;
 }
 
+export interface SuppressedDuplicateAction {
+  phase: 'initial' | 'dependent';
+  index: number;
+  duplicateOf: number;
+  tool: ActionTool;
+  reason: 'duplicate write effect in the same phase';
+}
+
 export interface ExecutionOutput {
   draft: string;
   notes: string;
   actions: MockAction[];
+  suppressedDuplicateActions?: SuppressedDuplicateAction[];
   /**
    * The emitted actions are prerequisites only; their actual ledger must be
    * available before the run authors its final, result-dependent actions.
@@ -150,6 +159,7 @@ export interface DependentExecutionOutput {
   draft: string;
   notes: string;
   actions: MockAction[];
+  suppressedDuplicateActions?: SuppressedDuplicateAction[];
   planStepOutcomes: PlanStepOutcome[];
 }
 

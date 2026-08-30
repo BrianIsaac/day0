@@ -15,7 +15,9 @@ import {
   DEPENDENT_ACTION_CAP,
   type DependentExecutionOutput,
   type ExecutionPlan,
+  type MockAction,
   type PlanStepOutcome,
+  type SuppressedDuplicateAction,
   type WorkCandidate,
   type WorkSourceCategory,
 } from '../src/work/types';
@@ -66,6 +68,105 @@ interface SimpleSkillRow {
   name: string;
   description: string;
   body: string;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
+function writeEffectKey(action: MockAction): string | undefined {
+  switch (action.tool) {
+    case 'spreadsheet.appendRow':
+      return canonicalJson({
+        tool: action.tool,
+        sheetSlug: action.args.sheetSlug,
+        tabName: action.args.tabName,
+        cells: [...(action.args.cells ?? [])].sort(
+          (left, right) =>
+            left.header.localeCompare(right.header) || left.value.localeCompare(right.value),
+        ),
+      });
+    case 'slack.postMessage':
+      return canonicalJson({
+        tool: action.tool,
+        channelSlug: action.args.channelSlug,
+        threadKey: action.args.threadKey,
+        body: action.args.body,
+      });
+    case 'twitter.reply':
+      return canonicalJson({
+        tool: action.tool,
+        tweetSlug: action.args.tweetSlug,
+        body: action.args.body,
+      });
+    case 'ticket.update':
+      return canonicalJson({
+        tool: action.tool,
+        slug: action.args.slug,
+        status: action.args.status,
+        comment: action.args.comment,
+      });
+    case 'mcp.call':
+    case 'http.request': {
+      const parsed = parseSurfaceAction(action);
+      if (!parsed.ok || actionIntent(parsed.action) !== 'write') return undefined;
+      const effect =
+        parsed.action.kind === 'mcp.call'
+          ? parsed.action
+          : {
+              kind: parsed.action.kind,
+              surface: parsed.action.surface,
+              method: parsed.action.method,
+              path: parsed.action.path,
+              headers: parsed.action.headers,
+              body: parsed.action.bodyJson ?? parsed.action.body,
+            };
+      return canonicalJson(effect);
+    }
+  }
+}
+
+function withoutDuplicateWrites<
+  T extends {
+    actions: MockAction[];
+    suppressedDuplicateActions?: SuppressedDuplicateAction[];
+  },
+>(output: T, phase: SuppressedDuplicateAction['phase']): T {
+  const seen = new Map<string, number>();
+  const actions: MockAction[] = [];
+  const suppressed: SuppressedDuplicateAction[] = [];
+  output.actions.forEach((action, index): void => {
+    const key = writeEffectKey(action);
+    const duplicateOf = key === undefined ? undefined : seen.get(key);
+    if (duplicateOf !== undefined) {
+      suppressed.push({
+        phase,
+        index,
+        duplicateOf,
+        tool: action.tool,
+        reason: 'duplicate write effect in the same phase',
+      });
+      return;
+    }
+    if (key !== undefined) seen.set(key, index);
+    actions.push(action);
+  });
+  if (suppressed.length === 0) return output;
+  return {
+    ...output,
+    actions,
+    suppressedDuplicateActions: [
+      ...(output.suppressedDuplicateActions ?? []),
+      ...suppressed,
+    ],
+  };
 }
 
 function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
@@ -392,20 +493,23 @@ async function holdDay0Actions(
       ? await ctx.runQuery(internal.mock.snapshotInternal, { agentId: args.agentId })
       : await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
     const surfaces = SURFACE_MODE === 'real' ? await loadSurfaces(ctx, args.agentId) : [];
-    const output = await runSkill({
-      skill: {
-        name: args.skill.name,
-        description: args.skill.description,
-        body: args.skill.body,
-      },
-      plan: args.plan,
-      candidate: args.candidate,
-      charter: args.charter,
-      mockEnv,
-      surfaces,
-      mode: SURFACE_MODE,
-      autonomousActions: autonomousActionsOn(agent),
-    });
+    const output = withoutDuplicateWrites(
+      await runSkill({
+        skill: {
+          name: args.skill.name,
+          description: args.skill.description,
+          body: args.skill.body,
+        },
+        plan: args.plan,
+        candidate: args.candidate,
+        charter: args.charter,
+        mockEnv,
+        surfaces,
+        mode: SURFACE_MODE,
+        autonomousActions: autonomousActionsOn(agent),
+      }),
+      'initial',
+    );
     const stagedOutput =
       SURFACE_MODE === 'real'
         ? prerequisiteOutput(output, args.plan)
@@ -644,7 +748,7 @@ export const authorDependentActions = internalAction({
       const skill = skills.find((row: Doc<'skills'>): boolean => row._id === item.skillId);
       if (!skill) throw new Error('dependent phase skill is no longer registered');
       const plan = item.plan as ExecutionPlan;
-      const output = await runDependentSkill({
+      const authoredOutput = await runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
         candidate: rowToCandidate(item),
@@ -657,11 +761,12 @@ export const authorDependentActions = internalAction({
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,
       });
-      if (output.actions.length > DEPENDENT_ACTION_CAP) {
+      if (authoredOutput.actions.length > DEPENDENT_ACTION_CAP) {
         throw new Error(
-          `dependent phase emitted ${output.actions.length} actions; cap is ${DEPENDENT_ACTION_CAP}`,
+          `dependent phase emitted ${authoredOutput.actions.length} actions; cap is ${DEPENDENT_ACTION_CAP}`,
         );
       }
+      const output = withoutDuplicateWrites(authoredOutput, 'dependent');
       validatePlanStepOutcomes({
         plan,
         outcomes: output.planStepOutcomes,
