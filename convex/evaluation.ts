@@ -3,6 +3,7 @@ import { mutation, query } from './_generated/server';
 import { assertOwnsAgent } from './ownership';
 import { seedItemInTransaction, workItemSeedFields } from './work';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { isTerminalWorkState } from '../src/evaluation/states';
 
 function requireMockMode(): void {
   if (SURFACE_MODE !== 'mock') throw new Error('evaluation harness requires mock mode');
@@ -30,8 +31,6 @@ export const seedTasks = mutation({
   },
 });
 
-const TERMINAL_STATES = new Set(['completed', 'cancelled', 'failed', 'skipped', 'deferred']);
-
 export const timeoutTask = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<{ timedOut: boolean }> => {
@@ -42,7 +41,7 @@ export const timeoutTask = mutation({
     if (!row.externalId.startsWith('EVAL-')) {
       throw new Error('only evaluation work items may be timed out by the harness');
     }
-    if (TERMINAL_STATES.has(row.state)) return { timedOut: false };
+    if (isTerminalWorkState(row.state)) return { timedOut: false };
     const reason = 'evaluation timeout: the task exceeded its declared wall-clock deadline';
     await ctx.db.patch(args.workItemId, {
       state: 'failed',

@@ -28,6 +28,7 @@ import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
 import { EVALUATION_SCOPES } from '../src/evaluation/scopes';
+import { isTerminalWorkState } from '../src/evaluation/states';
 
 /** Each invocation writes its own directory; pass `--out` with an earlier path to resume it. */
 function defaultOutPath(now = new Date()): string {
@@ -37,7 +38,6 @@ function defaultOutPath(now = new Date()): string {
 const DEFAULT_APPROVAL_DELAY_MS = 750;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const TOKEN_REFRESH_MS = 45 * 60 * 1000;
-const TERMINAL_STATES = new Set(['completed', 'cancelled', 'failed', 'skipped', 'deferred']);
 
 const onboardingFixtureSchema = z.object({
   bossLabel: z.string().min(1),
@@ -450,7 +450,7 @@ function eventWorkItemId(event: RawSnapshot['events'][number]): string | undefin
 }
 
 function terminalTimestamp(raw: RawSnapshot, item: Doc<'workItems'>): number | null {
-  if (!TERMINAL_STATES.has(item.state)) return null;
+  if (!isTerminalWorkState(item.state)) return null;
   const terminalTypes = new Set(['work.completed', 'work.failed', 'work.cancelled']);
   const candidates = raw.events
     .filter(
@@ -640,7 +640,7 @@ async function runTask(
   let raw = await context.client.query(api.evaluation.snapshot, { agentId });
   let item = workItemForTask(raw, task);
 
-  while (!TERMINAL_STATES.has(item.state) && Date.now() < deadline) {
+  while (!isTerminalWorkState(item.state) && Date.now() < deadline) {
     await authenticate(context);
     try {
       if (run.arm === 'baseline') {
@@ -658,7 +658,7 @@ async function runTask(
     item = workItemForTask(raw, task);
   }
 
-  if (!TERMINAL_STATES.has(item.state) && Date.now() >= deadline) {
+  if (!isTerminalWorkState(item.state) && Date.now() >= deadline) {
     await context.client.mutation(api.evaluation.timeoutTask, { workItemId: item._id });
   }
 
@@ -667,7 +667,7 @@ async function runTask(
   const snapshot = graderSnapshot(raw, item, new Date(active.startedAt).getTime());
   const observedAt = Date.now();
   const finishedAt = terminalTimestamp(raw, item) ?? observedAt;
-  const timedOut = finishedAt > deadline || !TERMINAL_STATES.has(item.state);
+  const timedOut = finishedAt > deadline || !isTerminalWorkState(item.state);
   const correctEffectAt = firstCorrectEffectAt(task, snapshot);
   const deployedAt = run.deployedAt ? new Date(run.deployedAt).getTime() : finishedAt;
   const grade = gradeEvaluationTask(task, run.arm, snapshot);
