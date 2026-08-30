@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   formatRate,
@@ -101,9 +102,50 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('human wait');
     expect(report).toContain('not a verbatim transcript');
     expect(report).toContain('manager-report:dm-manager');
+    expect(report).toContain('| Measure | Direction | Result |');
+    expect(report).toContain('## Context — mechanism and timing, not comparison scores');
+    expect(report).toContain('day0’s figure includes onboarding by design');
     expect(report).toContain(
       '| day0-r1 | day0 | docs-team-cadence | completed | pass | none | manager-report:dm-manager |',
     );
+  });
+
+  it('puts a direction on every score row and no direction on context rows', (): void => {
+    const report = renderEvaluationReport(twoRunEvidence());
+    const scoreSection = report
+      .split('## Comparison scores')[1]!
+      .split('## Context — mechanism and timing, not comparison scores')[0]!;
+    const scoreRows = scoreSection
+      .split('\n')
+      .filter((line) => /^\| (?:day0|baseline):/.test(line));
+    expect(scoreRows.length).toBeGreaterThan(0);
+    for (const row of scoreRows) {
+      expect(row.split('|')[2]?.trim(), row).toMatch(/^(?:higher|lower) is better$/);
+    }
+
+    const contextSection = report
+      .split('## Context — mechanism and timing, not comparison scores')[1]!
+      .split('## Per-task outcomes')[0]!;
+    expect(contextSection).toContain('supervision present');
+    expect(contextSection).not.toMatch(/\b(?:higher|lower) is better\b/);
+    expect(contextSection).not.toContain('| Direction |');
+  });
+
+  it('re-renders all four committed three-run comparisons from JSON', async (): Promise<void> => {
+    const directories = [
+      '2026-08-30T02-47-08Z',
+      '2026-08-30T05-21-02Z',
+      '2026-08-30T05-23-16Z',
+      '2026-08-30T06-17-57Z',
+    ];
+    for (const directory of directories) {
+      const file = new URL(
+        `../../../evaluation/results/${directory}/semifinal.json`,
+        import.meta.url,
+      );
+      const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
+      expect(() => renderEvaluationReport(comparison, { renderedAtCommit: 'test-commit' })).not.toThrow();
+    }
   });
 });
 
@@ -217,9 +259,10 @@ describe('per-task and per-run summaries', (): void => {
   it('reports the majority outcome per task, time to operational per run, and time on task per task', (): void => {
     const report = renderEvaluationReport(twoRunEvidence());
     expect(report).toContain(
-      '| day0: tasks passed in a majority of runs | 50.0% (1/2; Wilson 95% CI 9.4–90.5%, width 81.1 points) |',
+      '| day0: tasks passed in a majority of runs | higher is better | 50.0% (1/2; Wilson 95% CI 9.4–90.5%, width 81.1 points) |',
     );
-    expect(report).toContain('| day0: per-run task pass | 75.0% (3/4;');
+    expect(report).toContain('| day0: per-run task pass | higher is better | 75.0% (3/4;');
+    expect(report).toContain('| day0: supervision present | 100.0% (2/2;');
     expect(report).toContain('| day0 | 4.50 s | 0.75 s | 3.75 s | 2 |');
     expect(report).toContain('| baseline | not observed | not observed | not observed | 0 |');
     expect(report).toContain(

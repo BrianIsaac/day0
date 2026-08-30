@@ -9,10 +9,28 @@ function requireMockMode(): void {
   if (SURFACE_MODE !== 'mock') throw new Error('evaluation harness requires mock mode');
 }
 
+const originatingTicketFields = {
+  slug: v.string(),
+  title: v.string(),
+  body: v.string(),
+  status: v.union(
+    v.literal('open'),
+    v.literal('in-progress'),
+    v.literal('blocked'),
+    v.literal('done'),
+  ),
+  priority: v.string(),
+} as const;
+
 export const seedTasks = mutation({
   args: {
     agentId: v.id('agents'),
-    tasks: v.array(v.object(workItemSeedFields)),
+    tasks: v.array(
+      v.object({
+        ...workItemSeedFields,
+        originatingTicket: v.optional(v.object(originatingTicketFields)),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     requireMockMode();
@@ -26,7 +44,29 @@ export const seedTasks = mutation({
       }
     }
     return await Promise.all(
-      args.tasks.map((task) => seedItemInTransaction(ctx, { agentId: args.agentId, ...task })),
+      args.tasks.map(async (task) => {
+        const { originatingTicket, ...workItem } = task;
+        if (originatingTicket) {
+          if (!originatingTicket.slug.startsWith('REVOPS-EVAL-')) {
+            throw new Error('evaluation ticket slugs must start with REVOPS-EVAL-');
+          }
+          const existing = await ctx.db
+            .query('mockTickets')
+            .withIndex('by_agent_slug', (q) =>
+              q.eq('agentId', args.agentId).eq('slug', originatingTicket.slug),
+            )
+            .unique();
+          if (!existing) {
+            await ctx.db.insert('mockTickets', {
+              agentId: args.agentId,
+              ...originatingTicket,
+              comments: [],
+              updatedAt: Date.now(),
+            });
+          }
+        }
+        return await seedItemInTransaction(ctx, { agentId: args.agentId, ...workItem });
+      }),
     );
   },
 });

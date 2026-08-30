@@ -283,13 +283,13 @@ function retainedSnapshot() {
         externalId: 'EVAL-DOC-04',
         title: 'x',
         contentSummary: 'y',
-        contentRefs: ['ticket://REVOPS-201'],
+        contentRefs: ['ticket://REVOPS-EVAL-04'],
         state: 'completed',
         observedAt: 1_000,
         createdAt: 1_000,
         output: {
           actions: [
-            { tool: 'ticket.update', args: { slug: 'REVOPS-201', comment } },
+            { tool: 'ticket.update', args: { slug: 'REVOPS-EVAL-04', comment } },
             {
               tool: 'slack.postMessage',
               args: { channelSlug: 'dm-manager', body: report },
@@ -322,7 +322,7 @@ function retainedSnapshot() {
         _id: 'ticket-1',
         _creationTime: 0,
         agentId: 'agent-1',
-        slug: 'REVOPS-201',
+        slug: 'REVOPS-EVAL-04',
         title: 'Salesforce escalation',
         body: 'x',
         status: 'open',

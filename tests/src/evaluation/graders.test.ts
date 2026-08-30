@@ -42,6 +42,41 @@ describe('semi-final task fixtures', (): void => {
     });
     expect(tasks.every((task) => task.grader.exactCheck.trim().length > 20)).toBe(true);
   });
+
+  it('gives every ticket-backed task a neutral task-owned ticket', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const ticketBacked = tasks.filter(
+      (task) =>
+        task.grader.originatingTicketSlug !== undefined ||
+        task.seed.contentRefs.some((ref) => ref.startsWith('ticket://')),
+    );
+    expect(ticketBacked.map((task) => task.id)).toEqual([
+      'docs-salesforce-escalation',
+      'docs-q4-source-of-truth',
+      'write-pipeline-row',
+      'write-ticket-ownership',
+    ]);
+
+    const slugs = new Set<string>();
+    for (const task of ticketBacked) {
+      const ticket = (
+        task.seed as typeof task.seed & {
+          originatingTicket?: { slug: string; body: string; status: string };
+        }
+      ).originatingTicket;
+      expect(ticket, `${task.id} has no task-owned ticket`).toBeDefined();
+      expect(ticket!.slug).toMatch(/^REVOPS-EVAL-/);
+      expect(task.seed.contentRefs).toContain(`ticket://${ticket!.slug}`);
+      expect(task.grader.originatingTicketSlug).toBe(ticket!.slug);
+      expect(task.grader.originatingTicketStatus).toBe(ticket!.status);
+      expect(
+        ticket!.body,
+        `${task.id} ticket body carries a status-change instruction`,
+      ).not.toMatch(/(?:\bclose\b|\bdone\b|\bmove\s+to\b|\bmark\s+as\b)/i);
+      slugs.add(ticket!.slug);
+    }
+    expect(slugs).toHaveLength(ticketBacked.length);
+  });
 });
 
 describe('programmatic task grading', (): void => {
@@ -88,7 +123,7 @@ describe('programmatic task grading', (): void => {
     const changedStatus = emptySnapshot({
       tickets: [
         {
-          slug: 'REVOPS-201',
+          slug: 'REVOPS-EVAL-04',
           status: 'done',
           comments: [
             {
@@ -107,7 +142,7 @@ describe('programmatic task grading', (): void => {
     );
     expect(task).toBeDefined();
     const ticket = {
-      slug: 'REVOPS-201',
+      slug: 'REVOPS-EVAL-04',
       status: 'open',
       comments: [
         {
@@ -128,7 +163,7 @@ describe('programmatic task grading', (): void => {
             {
               tool: 'ticket.update',
               args: {
-                slug: 'REVOPS-201',
+                slug: 'REVOPS-EVAL-04',
                 comment: 'EVAL-DOC-04: Salesforce changes require escalation (Escalation paths).',
               },
             },
@@ -218,7 +253,7 @@ describe('programmatic task grading', (): void => {
     const auditAction = {
       tool: 'ticket.update',
       args: {
-        slug: 'REVOPS-203',
+        slug: 'REVOPS-EVAL-06',
         comment: 'EVAL-WRITE-01 appended to the pipeline tracker.',
       },
     };
@@ -249,7 +284,7 @@ describe('programmatic task grading', (): void => {
       ],
       tickets: [
         {
-          slug: 'REVOPS-203',
+          slug: 'REVOPS-EVAL-06',
           status: 'open',
           comments: [{ body: auditAction.args.comment }],
         },
@@ -259,7 +294,9 @@ describe('programmatic task grading', (): void => {
     expect(gradeEvaluationTask(task!, 'baseline', snapshot)).toMatchObject({
       passed: true,
       facts: {
-        reportedEffects: [{ kind: 'audit-note', tool: 'ticket.update', destination: 'REVOPS-203' }],
+        reportedEffects: [
+          { kind: 'audit-note', tool: 'ticket.update', destination: 'REVOPS-EVAL-06' },
+        ],
       },
     });
 
@@ -277,7 +314,7 @@ describe('programmatic task grading', (): void => {
 
     for (const args of [
       { ...auditAction.args, status: 'done' },
-      { ...auditAction.args, slug: 'REVOPS-201' },
+      { ...auditAction.args, slug: 'REVOPS-EVAL-04' },
       { ...auditAction.args, assignee: 'Priya' },
     ]) {
       const result = gradeEvaluationTask(task!, 'baseline', {
