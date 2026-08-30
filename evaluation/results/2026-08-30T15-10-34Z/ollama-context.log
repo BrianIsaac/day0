@@ -1,0 +1,19 @@
+# Untreated qwen3:8b startup
+print_info: n_ctx_train           = 40960
+llama_context: n_ctx         = 4096
+
+# Untreated Day0 docs-team-cadence action-generation prompt
+time=2026-08-30T15:07:07.961Z level=WARN source=llama_server.go:315 msg="truncating input prompt" limit=2050 prompt=4538 keep=4 new=2050
+
+# Untreated baseline docs-team-cadence prompt
+slot   operator(): id  0 | task 4350 | new prompt, n_ctx_slot = 4096, n_keep = 4, task.n_tokens = 1042
+
+# Corrected qwen3:8b startup
+llama_context: n_ctx         = 16384
+llama_context: n_ctx_seq     = 16384
+
+# Corrected Day0 docs-team-cadence native and prompt-fallback action-generation prompts
+slot   operator(): id  0 | task 3474 | new prompt, n_ctx_slot = 16384, n_keep = 4, task.n_tokens = 4560
+slot   operator(): id  0 | task 3817 | new prompt, n_ctx_slot = 16384, n_keep = 4, task.n_tokens = 4893
+
+# `docker logs --since 2026-08-30T15:10:20Z model | rg 'truncating input prompt'` returned no lines.
