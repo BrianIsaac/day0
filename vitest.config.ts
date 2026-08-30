@@ -40,6 +40,7 @@ export default defineConfig({
             'tests/src/**/*.test.ts',
             'tests/app/**/*.test.ts',
             'tests/app/**/*.test.tsx',
+            'tests/evaluation/**/*.test.ts',
             'tests/scripts/**/*.test.ts',
             'evaluation/gate/**/*.test.ts',
           ],
