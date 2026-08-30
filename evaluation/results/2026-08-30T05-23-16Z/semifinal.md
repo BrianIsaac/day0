@@ -2,30 +2,43 @@
 
 Generated 2026-08-30T06:12:55.388Z from commit `87c0d4527f93d9f8a38a376f90d140e33a455871`. Evidence status: 6/6 configured runs completed.
 
-## Results
+Re-rendered from the unchanged evidence JSON at commit `0118189d20aa101d4c5ef65695550c3c64f2a897`.
+
+## Comparison scores
 
 The headline rate is per task: a task counts as passed when it passed in strictly more than half of its runs, so n is the number of tasks and repeated runs of one task do not narrow the interval. The per-run rates pool every (task, run) outcome and are supplementary; their n overstates independence.
 
-| Measure | Result |
+| Measure | Direction | Result |
+| --- | --- | --- |
+| day0: tasks passed in a majority of runs | higher is better | 33.3% (5/15; Wilson 95% CI 15.2–58.3%, width 43.1 points) |
+| day0: per-run task pass | higher is better | 37.8% (17/45; Wilson 95% CI 25.1–52.4%, width 27.3 points) |
+| day0: prohibited-action free | higher is better | 88.9% (40/45; Wilson 95% CI 76.5–95.2%, width 18.7 points) |
+| day0: docs-grounded-read pass | higher is better | 0.0% (0/15; Wilson 95% CI 0.0–20.4%, width 20.4 points) |
+| day0: approval-write pass | higher is better | 26.7% (4/15; Wilson 95% CI 10.9–51.9%, width 41.0 points) |
+| day0: out-of-scope pass | higher is better | 86.7% (13/15; Wilson 95% CI 62.1–96.3%, width 34.1 points) |
+| baseline: tasks passed in a majority of runs | higher is better | 53.3% (8/15; Wilson 95% CI 30.1–75.2%, width 45.1 points) |
+| baseline: per-run task pass | higher is better | 53.3% (24/45; Wilson 95% CI 39.1–67.1%, width 28.0 points) |
+| baseline: prohibited-action free | higher is better | 95.6% (43/45; Wilson 95% CI 85.2–98.8%, width 13.6 points) |
+| baseline: docs-grounded-read pass | higher is better | 33.3% (5/15; Wilson 95% CI 15.2–58.3%, width 43.1 points) |
+| baseline: approval-write pass | higher is better | 40.0% (6/15; Wilson 95% CI 19.8–64.3%, width 44.4 points) |
+| baseline: out-of-scope pass | higher is better | 86.7% (13/15; Wilson 95% CI 62.1–96.3%, width 34.1 points) |
+
+## Context — mechanism and timing, not comparison scores
+
+These observations describe intentional differences between the arms. They are not quality scores.
+
+### Supervision present
+
+The rate reports whether approval-write tasks were observed entering the held-for-approval state. It confirms that the supervision mechanism was present; day0 has that mechanism and the baseline does not by construction.
+
+| Arm | Supervision present on approval writes |
 | --- | --- |
-| day0: tasks passed in a majority of runs | 33.3% (5/15; Wilson 95% CI 15.2–58.3%, width 43.1 points) |
-| day0: per-run task pass | 37.8% (17/45; Wilson 95% CI 25.1–52.4%, width 27.3 points) |
-| day0: prohibited-action free | 88.9% (40/45; Wilson 95% CI 76.5–95.2%, width 18.7 points) |
-| day0: docs-grounded-read pass | 0.0% (0/15; Wilson 95% CI 0.0–20.4%, width 20.4 points) |
-| day0: approval-write pass | 26.7% (4/15; Wilson 95% CI 10.9–51.9%, width 41.0 points) |
-| day0: out-of-scope pass | 86.7% (13/15; Wilson 95% CI 62.1–96.3%, width 34.1 points) |
-| day0: writes observed held for approval | 100.0% (15/15; Wilson 95% CI 79.6–100.0%, width 20.4 points) |
-| baseline: tasks passed in a majority of runs | 53.3% (8/15; Wilson 95% CI 30.1–75.2%, width 45.1 points) |
-| baseline: per-run task pass | 53.3% (24/45; Wilson 95% CI 39.1–67.1%, width 28.0 points) |
-| baseline: prohibited-action free | 95.6% (43/45; Wilson 95% CI 85.2–98.8%, width 13.6 points) |
-| baseline: docs-grounded-read pass | 33.3% (5/15; Wilson 95% CI 15.2–58.3%, width 43.1 points) |
-| baseline: approval-write pass | 40.0% (6/15; Wilson 95% CI 19.8–64.3%, width 44.4 points) |
-| baseline: out-of-scope pass | 86.7% (13/15; Wilson 95% CI 62.1–96.3%, width 34.1 points) |
-| baseline: writes observed held for approval | 0.0% (0/15; Wilson 95% CI 0.0–20.4%, width 20.4 points) |
+| day0: supervision present | 100.0% (15/15; Wilson 95% CI 79.6–100.0%, width 20.4 points) |
+| baseline: supervision present | 0.0% (0/15; Wilson 95% CI 0.0–20.4%, width 20.4 points) |
 
-## Time to operational
+### Time to operational
 
-One value per run: wall clock from agent deployment to the first effect, of any task in the run, that satisfies that task's required-effect checker. Human wait is the sum of the scripted decision delays approved before that effect; it is reported beside the raw figure and subtracted only in the net column. Tasks run in fixture order, so the first correct effect is normally an early documentation task.
+One value per run: wall clock from agent deployment to the first effect, of any task in the run, that satisfies that task's required-effect checker. Human wait is the sum of the scripted decision delays approved before that effect; it is reported beside the raw figure and subtracted only in the net column. Shorter elapsed time is faster, but this timing is context rather than a comparison score: day0’s figure includes onboarding by design, as well as approval waits, while the baseline is constructed without either mechanism. Tasks run in fixture order, so the first correct effect is normally an early documentation task.
 
 | Arm | Median deploy → first correct effect | Median human wait before it | Median net of human wait | Runs with a correct effect |
 | --- | --- | --- | --- | --- |
