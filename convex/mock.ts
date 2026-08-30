@@ -1,7 +1,8 @@
 import { v } from 'convex/values';
-import { internalMutation, query } from './_generated/server';
+import { internalMutation, internalQuery, query } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
+import type { MockSurfaceSnapshot } from '../src/work/types';
 
 /**
  * Read + write API for the mock work environment.
@@ -26,6 +27,63 @@ export interface MockWriteResult {
   changed: boolean;
   reason?: string;
 }
+
+/** Internal snapshot used only by an already-authorised scheduler continuation. */
+export const snapshotInternal = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<MockSurfaceSnapshot> => {
+    const [docs, sheets, rows, channels, messages, tweets, tickets] = await Promise.all([
+      ctx.db.query('mockDocs').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockSpreadsheets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockSpreadsheetRows').withIndex('by_agent_sheet_tab', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockSlackChannels').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockSlackMessages').withIndex('by_agent_channel', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockTweets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+      ctx.db.query('mockTickets').withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId)).collect(),
+    ]);
+    return {
+      howToGuides: docs
+        .filter((doc) => doc.category === 'how-to-guide')
+        .map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })),
+      teamDocs: docs
+        .filter((doc) => doc.category === 'team-doc')
+        .map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })),
+      spreadsheets: sheets.map((sheet) => ({
+        slug: sheet.slug,
+        title: sheet.title,
+        tabs: sheet.tabs,
+        rows: rows
+          .filter((row) => row.sheetSlug === sheet.slug)
+          .map((row) => ({ tabName: row.tabName, cells: row.cells as Record<string, string> })),
+      })),
+      slackChannels: channels.map((channel) => ({
+        slug: channel.slug,
+        displayName: channel.displayName,
+        kind: channel.kind,
+        recentMessages: messages
+          .filter((message) => message.channelSlug === channel.slug)
+          .slice(-12)
+          .map((message) => ({
+            sender: message.sender,
+            body: message.body,
+            threadKey: message.threadKey,
+          })),
+      })),
+      tweets: tweets.map((tweet) => ({
+        slug: tweet.slug,
+        author: tweet.author,
+        handle: tweet.handle,
+        body: tweet.body,
+      })),
+      tickets: tickets.map((ticket) => ({
+        slug: ticket.slug,
+        title: ticket.title,
+        status: ticket.status,
+        body: ticket.body,
+      })),
+    };
+  },
+});
 
 // ---------- Docs ----------
 
@@ -58,6 +116,9 @@ export const upsertDoc = internalMutation({
     title: v.string(),
     body: v.string(),
     category: v.union(v.literal('team-doc'), v.literal('how-to-guide')),
+    sourceId: v.optional(v.id('docSources')),
+    sourceRef: v.optional(v.string()),
+    sourceUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -68,6 +129,9 @@ export const upsertDoc = internalMutation({
       title: args.title,
       body: args.body,
       category: args.category,
+      sourceId: args.sourceId,
+      sourceRef: args.sourceRef,
+      sourceUrl: args.sourceUrl,
       updatedAt: Date.now(),
     };
     if (existing) {
@@ -246,9 +310,7 @@ export const postSlackMessage = internalMutation({
   handler: async (ctx, args): Promise<MockWriteResult> => {
     const channel = await ctx.db
       .query('mockSlackChannels')
-      .withIndex('by_agent_slug', (q) =>
-        q.eq('agentId', args.agentId).eq('slug', args.channelSlug),
-      )
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.channelSlug))
       .unique();
     if (!channel) {
       return { changed: false, reason: `no Slack channel with slug "${args.channelSlug}"` };
@@ -406,12 +468,7 @@ export const updateTicket = internalMutation({
     agentId: v.id('agents'),
     slug: v.string(),
     status: v.optional(
-      v.union(
-        v.literal('open'),
-        v.literal('in-progress'),
-        v.literal('blocked'),
-        v.literal('done'),
-      ),
+      v.union(v.literal('open'), v.literal('in-progress'), v.literal('blocked'), v.literal('done')),
     ),
     comment: v.optional(v.string()),
     commentAuthor: v.optional(v.string()),

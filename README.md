@@ -24,7 +24,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
-**Project** · [Credits](#credits) · [Licence](#licence)
+**Project** · [Controlled evaluation](evaluation/README.md) · [Credits](#credits) · [Licence](#licence)
 
 ## What is unusual about it
 
@@ -52,7 +52,7 @@ A work item that matches no registered skill returns `needs-skill` rather than b
 
 ## What this is, and what it is not
 
-Day0 is a working demonstration of the whole loop rather than a product: it has no users, no benchmarks, and it makes no measured claim about how well the agent does the work it takes on. What it shows is that the loop closes.
+Day0 is a working demonstration rather than a product and has no users. Its measured claim is deliberately narrow: the repository ships a [controlled, programmatically graded comparison](evaluation/README.md) of onboarded Day0 versus an ordinary agent on the same 15 unfamiliar mock-office tasks. It does not claim that this benchmark predicts every real team's work.
 
 The agent works inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue, a social feed - seeded per agent. There are no connectors to real corporate systems, and that is deliberate: the mock environment is what makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust. Everything around it is real - the model calls, the sandbox, the state machine, the approval gates.
 
@@ -86,7 +86,7 @@ You need Docker, Node 22+ and pnpm. Run every command from the repository root.
 pnpm install                     # first: everything below is a repo-local binary
 cp .env.example .env.local
 
-pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
+pnpm convex:up                   # day0's backend on 3210/3211 (add --profile dev for the dashboard on 6791)
 pnpm model:up                    # OpenAI-compatible model server on 11434, on the GPU if you have one
 pnpm model:pull qwen3:8b         # ~5 GB, tool-capable, runs the whole loop
 pnpm sandbox:up                  # the sandbox that verifies authored skills; no port, no account
@@ -194,12 +194,14 @@ Every `:up` has a matching `:down`, and `pnpm convex:down` really does mean only
 ```bash
 pnpm model:down                  # the model server; the pulled weights stay
 pnpm sandbox:down                # the verification sandbox; it holds nothing
-pnpm convex:down                 # backend + dashboard; the data volume stays
+pnpm convex:down                 # the backend; the data volume stays
 ```
 
 In that order: `convex:down` removes the compose network on its way out, and cannot while the model container is still attached to it. The sandbox is on no network at all, so it is only in that list to be tidy - it is a few megabytes of idle Python.
 
-To throw the volumes away too, all together: `docker compose --env-file .env.local --profile model --profile sandbox down -v`.
+To throw the volumes away too, all together: `pnpm convex:down --profile model --profile sandbox -- -v`.
+
+Every service in `docker-compose.yml` sits behind a profile, and the profiles are the components: `real` is day0's backend and is added to every `pnpm convex:*` command for you, and each other profile adds one optional component. `pnpm convex:up --help` lists them; what each one is for, when you need it and what it never sees is in `docs/running/components.md`.
 
 ### Without Docker for Convex
 
@@ -225,7 +227,7 @@ Everything the route above runs, minus the model. The same self-hosted Convex ba
 pnpm install
 cp .env.example .env.local
 
-pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
+pnpm convex:up                   # day0's backend on 3210/3211 (add --profile dev for the dashboard on 6791)
 pnpm sandbox:up                  # verifies authored skills; no account, no key
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
 ```
@@ -350,8 +352,8 @@ The [sandbox](#the-local-skill-sandbox) has no entry here because it has no port
 To run two backends side by side, give each its own compose project so the volumes stay separate:
 
 ```bash
-docker compose -p day0-review --env-file .env.local up -d
-docker compose -p day0-review --env-file .env.local down -v
+docker compose -p day0-review --env-file .env.local --profile real up -d
+docker compose -p day0-review --env-file .env.local --profile real down -v
 ```
 
 Override `CONVEX_CLOUD_ORIGIN` or `CONVEX_SITE_ORIGIN` only with an address that resolves *inside* the container. An address only your browser can resolve belongs in `NEXT_PUBLIC_CONVEX_URL` (the app) or `CONVEX_BROWSER_ORIGIN` (the Convex dashboard container) instead.

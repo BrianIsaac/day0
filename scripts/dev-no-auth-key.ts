@@ -40,12 +40,18 @@ const SECRET_VAR = 'DEV_NO_AUTH_SECRET';
 const SIGNING_KEY_VAR = 'DEV_NO_AUTH_SIGNING_KEY';
 const JWKS_VAR = 'DEV_NO_AUTH_JWKS';
 const FLAG_VAR = 'NEXT_PUBLIC_DEV_NO_AUTH';
+const CREDENTIAL_KEY_VAR = 'DAY0_CREDENTIAL_KEY';
+const NOTION_MCP_AUTH_TOKEN_VAR = 'DAY0_NOTION_MCP_AUTH_TOKEN';
 
+/** Run key initialisation or print the local unlock URL. */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const mode = args.find((arg) => !arg.startsWith('--')) ?? 'init';
 
-  if (mode === 'url') return printUnlockUrl();
+  if (mode === 'url') {
+    ensureRealSurfaceKeys(false);
+    return printUnlockUrl();
+  }
   if (mode === 'init') return init(args.includes('--force'));
 
   fail(`unknown mode "${mode}" - expected "init" or "url"`);
@@ -60,13 +66,26 @@ function readEnvFile(): Record<string, string> {
       if (match) values[match[1]] = match[2].trim().replace(/^"(.*)"$/, '$1');
     }
   }
-  for (const key of [FLAG_VAR, SECRET_VAR, SIGNING_KEY_VAR, JWKS_VAR]) {
+  for (const key of [
+    FLAG_VAR,
+    SECRET_VAR,
+    SIGNING_KEY_VAR,
+    JWKS_VAR,
+    CREDENTIAL_KEY_VAR,
+    NOTION_MCP_AUTH_TOKEN_VAR,
+  ]) {
     const fromEnvironment = process.env[key];
     if (fromEnvironment) values[key] = fromEnvironment;
   }
   return values;
 }
 
+/**
+ * Persist generated values without disturbing unrelated local settings.
+ *
+ * Args:
+ *   updates: Environment names and values to replace or append.
+ */
 function upsertEnvFile(updates: Record<string, string>): void {
   if (!existsSync(ENV_FILE)) {
     fail(`${ENV_FILE} not found. Copy .env.example to ${ENV_FILE} first.`);
@@ -80,49 +99,88 @@ function upsertEnvFile(updates: Record<string, string>): void {
   writeFileSync(ENV_FILE, lines.join('\n'), 'utf8');
 }
 
+/**
+ * Ensure the no-auth signing material and credential key exist.
+ *
+ * Args:
+ *   force: Rotate every generated value when true.
+ */
 async function init(force: boolean): Promise<void> {
   const existing = readEnvFile();
-  const complete = !!existing[SECRET_VAR] && !!existing[SIGNING_KEY_VAR] && !!existing[JWKS_VAR];
-  if (complete && !force) {
+  const authComplete =
+    !!existing[SECRET_VAR] && !!existing[SIGNING_KEY_VAR] && !!existing[JWKS_VAR];
+  const credentialComplete = !!existing[CREDENTIAL_KEY_VAR];
+  const notionAuthComplete = !!existing[NOTION_MCP_AUTH_TOKEN_VAR];
+  if (authComplete && credentialComplete && notionAuthComplete && !force) {
     console.log(`${ENV_FILE} already carries a no-auth key. Pass --force to rotate it.\n`);
     return printUnlockUrl();
   }
 
-  const { privateKey, publicKey } = (await crypto.subtle.generateKey(
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    true,
-    ['sign', 'verify'],
-  )) as CryptoKeyPair;
+  const updates: Record<string, string> = {};
+  if (!authComplete || force) {
+    const { privateKey, publicKey } = (await crypto.subtle.generateKey(
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      true,
+      ['sign', 'verify'],
+    )) as CryptoKeyPair;
+    const pkcs8 = await crypto.subtle.exportKey('pkcs8', privateKey);
+    const jwk = await crypto.subtle.exportKey('jwk', publicKey);
+    const jwks = {
+      keys: [
+        {
+          kty: jwk.kty,
+          crv: jwk.crv,
+          x: jwk.x,
+          y: jwk.y,
+          alg: 'ES256',
+          use: 'sig',
+          kid: DEV_NO_AUTH_KEY_ID,
+        },
+      ],
+    };
+    updates[SECRET_VAR] = randomBytes(32).toString('base64url');
+    updates[SIGNING_KEY_VAR] = Buffer.from(pkcs8).toString('base64');
+    updates[JWKS_VAR] =
+      `data:text/plain;charset=utf-8;base64,${Buffer.from(JSON.stringify(jwks)).toString('base64')}`;
+  }
+  if (!credentialComplete || force) {
+    updates[CREDENTIAL_KEY_VAR] = randomBytes(32).toString('base64');
+  }
+  if (!notionAuthComplete || force) {
+    updates[NOTION_MCP_AUTH_TOKEN_VAR] = randomBytes(32).toString('base64url');
+  }
+  upsertEnvFile(updates);
 
-  const pkcs8 = await crypto.subtle.exportKey('pkcs8', privateKey);
-  const jwk = await crypto.subtle.exportKey('jwk', publicKey);
-  const jwks = {
-    keys: [
-      {
-        kty: jwk.kty,
-        crv: jwk.crv,
-        x: jwk.x,
-        y: jwk.y,
-        alg: 'ES256',
-        use: 'sig',
-        kid: DEV_NO_AUTH_KEY_ID,
-      },
-    ],
-  };
-
-  upsertEnvFile({
-    [SECRET_VAR]: randomBytes(32).toString('base64url'),
-    [SIGNING_KEY_VAR]: Buffer.from(pkcs8).toString('base64'),
-    // A data URI rather than a URL: the deployment must be able to verify a
-    // signature without reaching back to a server on this machine.
-    [JWKS_VAR]: `data:text/plain;charset=utf-8;base64,${Buffer.from(JSON.stringify(jwks)).toString('base64')}`,
-  });
-
-  console.log(`Wrote ${SECRET_VAR}, ${SIGNING_KEY_VAR} and ${JWKS_VAR} to ${ENV_FILE}.`);
+  console.log(`Wrote ${Object.keys(updates).join(', ')} to ${ENV_FILE}.`);
   console.log('Next: ./scripts/sync-convex-env.sh, then push your functions.\n');
   printUnlockUrl();
 }
 
+/**
+ * Ensure ordinary `pnpm dev` creates stable real-surface secrets once.
+ *
+ * Without `.env.local` there is nothing to write into and nothing that would
+ * read the key, so `pnpm dev` starts as it always did rather than failing.
+ *
+ * Args:
+ *   force: Rotate the key when true.
+ */
+function ensureRealSurfaceKeys(force: boolean): void {
+  if (!existsSync(ENV_FILE)) return;
+  const existing = readEnvFile();
+  const updates: Record<string, string> = {};
+  if (!existing[CREDENTIAL_KEY_VAR] || force) {
+    updates[CREDENTIAL_KEY_VAR] = randomBytes(32).toString('base64');
+  }
+  if (!existing[NOTION_MCP_AUTH_TOKEN_VAR] || force) {
+    updates[NOTION_MCP_AUTH_TOKEN_VAR] = randomBytes(32).toString('base64url');
+  }
+  if (Object.keys(updates).length === 0) return;
+  upsertEnvFile(updates);
+  console.log(`Wrote ${Object.keys(updates).join(', ')} to ${ENV_FILE}.`);
+}
+
+/** Print the no-auth unlock URL when that local mode is enabled. */
 function printUnlockUrl(): void {
   const values = readEnvFile();
   if (values[FLAG_VAR] !== 'true') return;
@@ -140,6 +198,12 @@ function printUnlockUrl(): void {
   console.log(`  http://localhost:${port}/?${UNLOCK_PARAM}=${values[SECRET_VAR]}\n`);
 }
 
+/**
+ * Stop key setup with a concise diagnostic.
+ *
+ * Args:
+ *   message: Failure detail safe to print.
+ */
 function fail(message: string): never {
   console.error(`error: ${message}`);
   process.exit(1);

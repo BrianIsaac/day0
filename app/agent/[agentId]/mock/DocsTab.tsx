@@ -5,7 +5,24 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 
-export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
+/** What an empty docs list means in each surface mode. */
+export const EMPTY_DOCS: Record<'mock' | 'real', string> = {
+  mock: 'no docs yet - seed first',
+  real: 'No linked documentation is available yet. Link a source or check its sync status on /documentation; synced pages will appear here.',
+};
+
+export const LOADING_DOCS: Record<'mock' | 'real', string> = {
+  mock: 'loading docs…',
+  real: 'Loading linked documentation…',
+};
+
+export function DocsTab({
+  agentId,
+  mode = 'mock',
+}: {
+  agentId: Id<'agents'>;
+  mode?: 'mock' | 'real';
+}) {
   const docs = useQuery(api.mock.listDocs, { agentId });
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
 
@@ -17,14 +34,21 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
       return a.title.localeCompare(b.title);
     });
   }, [docs]);
+  const sourceIds = useMemo(
+    () => [...new Set((docs ?? []).flatMap((doc) => (doc.sourceId ? [doc.sourceId] : [])))],
+    [docs],
+  );
+  const sources = useQuery(api.docSources.byIds, { sourceIds });
+  const sourceLabels = useMemo(
+    () => new Map((sources ?? []).map((source) => [source._id, source.label])),
+    [sources],
+  );
 
-  const active = activeSlug
-    ? sortedDocs.find((d) => d.slug === activeSlug)
-    : sortedDocs[0];
+  const active = activeSlug ? sortedDocs.find((d) => d.slug === activeSlug) : sortedDocs[0];
 
-  if (!docs) return <div className="text-xs text-[var(--color-muted)]">loading docs…</div>;
+  if (!docs) return <div className="text-xs text-[var(--color-muted)]">{LOADING_DOCS[mode]}</div>;
   if (sortedDocs.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">no docs yet — seed first</div>;
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</div>;
 
   return (
     <div className="grid grid-cols-[12rem_1fr] gap-4 h-full">
@@ -45,6 +69,11 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
                       : 'text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
                   }`}
                 >
+                  <span className="block text-[9px] text-[var(--color-muted)]">
+                    {d.sourceId
+                      ? sourceLabels.get(d.sourceId) || 'linked source'
+                      : 'Demo docs (seeded)'}
+                  </span>
                   {d.title}
                 </button>
               </li>
@@ -66,6 +95,11 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
                       : 'text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
                   }`}
                 >
+                  <span className="block text-[9px] text-[var(--color-muted)]">
+                    {d.sourceId
+                      ? sourceLabels.get(d.sourceId) || 'linked source'
+                      : 'Demo docs (seeded)'}
+                  </span>
                   {d.title}
                 </button>
               </li>
@@ -87,6 +121,16 @@ export function DocsTab({ agentId }: { agentId: Id<'agents'> }) {
               >
                 {active.category === 'how-to-guide' ? 'agent-readable' : 'team doc'}
               </span>
+              {active.sourceUrl ? (
+                <a
+                  href={active.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-[var(--color-accent)] underline"
+                >
+                  open source
+                </a>
+              ) : null}
             </div>
             <pre className="text-xs whitespace-pre-wrap font-sans leading-relaxed text-[var(--color-fg)]">
               {active.body}
