@@ -14,12 +14,16 @@ import {
   cancelsAutonomyConfirm,
   cancelledReason,
   decisionAttribution,
+  formatMetricDuration,
   landedHeadline,
+  MetricsCard,
   PendingActions,
   pendingHeadline,
   pendingVerdicts,
+  PermissionRows,
   retryRequiresReconciliation,
 } from '../../app/agent/[agentId]/AgentDashboard';
+import type { AgentMetrics } from '../../convex/metrics';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
 import { AUTONOMY_WARNING, HELD_BEFORE_AUTONOMY_NOTE, HELD_WHILE_SUPERVISED_NOTE } from '../../src/work/autonomy';
 import type { SurfaceRecord } from '../../src/surfaces/types';
@@ -248,5 +252,104 @@ describe('dashboard exact-action gate', (): void => {
       ),
     ).toBe(true);
     expect(retryRequiresReconciliation([{ tool: 'mcp.call', ok: false }])).toBe(false);
+  });
+});
+
+const completeMetrics: AgentMetrics = {
+  charter: {
+    timeToFirstDraftedMs: 120_000,
+    timeToFirstApprovedMs: 208_000,
+    revisions: 1,
+    requestChanges: 1,
+  },
+  decisions: {
+    requested: 2,
+    approved: 2,
+    rejected: 0,
+    partiallyApproved: 0,
+    cancelled: 0,
+    medianLatencyMs: 1_000,
+    p90LatencyMs: 1_000,
+    byVia: {
+      dashboard: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+      channel: { decided: 2, medianLatencyMs: 1_000, p90LatencyMs: 1_000 },
+    },
+  },
+  actions: {
+    autoApplied: 4,
+    held: 2,
+    approved: 2,
+    rejected: 0,
+    refused: 0,
+    blockedAfterRevocation: 0,
+    firstBlockAfterRevocationMs: null,
+  },
+  surfaces: { approved: 3, rejected: 0, absent: 1 },
+  skills: { approved: 3, rejected: 0 },
+  autonomyChanges: 1,
+  auditTrail: { complete: 11, total: 11, fraction: 1 },
+};
+
+describe('judge-facing dashboard evidence', (): void => {
+  it('renders the judges\' labels with the live-run numbers', (): void => {
+    const html = renderToStaticMarkup(createElement(MetricsCard, { metrics: completeMetrics }));
+    expect(html).toContain('Supervision metrics');
+    expect(html).toContain('time to first approved charter');
+    expect(html).toContain('3 min 28 s');
+    expect(html).toContain('human decisions (approved / rejected)');
+    expect(html).toContain('2 / 0');
+    expect(html).toContain('median decision latency');
+    expect(html).toContain('1 s');
+    expect(html).toContain('actions blocked after revocation');
+    expect(html).toContain('audit-trail completeness');
+    expect(html).toContain('100% (11/11)');
+    expect(formatMetricDuration(208_000)).toBe('3 min 28 s');
+  });
+
+  it('uses not yet instead of zero seconds when evidence is absent', (): void => {
+    const metrics: AgentMetrics = {
+      ...completeMetrics,
+      charter: { ...completeMetrics.charter, timeToFirstApprovedMs: null },
+      decisions: {
+        ...completeMetrics.decisions,
+        requested: 0,
+        approved: 0,
+        rejected: 0,
+        medianLatencyMs: null,
+        p90LatencyMs: null,
+      },
+      actions: {
+        ...completeMetrics.actions,
+        blockedAfterRevocation: null,
+      },
+      auditTrail: { complete: 0, total: 0, fraction: null },
+    };
+    const html = renderToStaticMarkup(createElement(MetricsCard, { metrics }));
+    expect(html.match(/not yet/g)).toHaveLength(5);
+    expect(html).not.toContain('0 s');
+  });
+
+  it('shows grant origins, re-grant, and one inline revocation confirmation', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(PermissionRows, {
+        scopes: [
+          { scope: 'linear:read', active: true, source: 'surface', grantedAt: 1, revokedAt: null },
+          { scope: 'linear:write', active: false, source: 'skill', grantedAt: 2, revokedAt: 3 },
+        ],
+        confirmingScope: 'linear:read',
+        busyScope: null,
+        onAskRevoke: vi.fn(),
+        onCancelRevoke: vi.fn(),
+        onRevoke: vi.fn(),
+        onRegrant: vi.fn(),
+      }),
+    );
+    expect(html).toContain('linear:read');
+    expect(html).toContain('granted - from surface');
+    expect(html).toContain('revoked - from skill');
+    expect(html).toContain('Confirm revoke');
+    expect(html).toContain('Keep grant');
+    expect(html).toContain('Re-grant');
+    expect(html).not.toContain('role="dialog"');
   });
 });

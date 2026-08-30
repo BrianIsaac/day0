@@ -29,10 +29,7 @@ import {
   type ReplyTarget,
 } from '../src/work/types';
 import type { DecisionKind } from '../src/work/manager-channel';
-import {
-  browserComponentRefusal,
-  withBrowserComponentState,
-} from '../src/surfaces/browser';
+import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
@@ -623,9 +620,7 @@ export const prepareDecisionNotice = internalMutation({
       decision: { ...row.decision, duplicateNoticeClaimedAt: Date.now() },
     });
     const origin =
-      row.decision.decidedVia === 'channel'
-        ? row.decision.surfaceName
-        : 'the day0 dashboard';
+      row.decision.decidedVia === 'channel' ? row.decision.surfaceName : 'the day0 dashboard';
     return {
       prepared: true as const,
       agentId: row.agentId,
@@ -964,9 +959,7 @@ export const claimForExecution = internalMutation({
   handler: async (
     ctx,
     args,
-  ): Promise<
-    { claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }
-  > => {
+  ): Promise<{ claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }> => {
     const { item } = await assertSameAgent(ctx, args.workItemId, args.skillId);
     if (item.state !== 'plan-approved') {
       return {
@@ -1064,8 +1057,7 @@ export const claimDependentAuthoring = internalMutation({
     ctx,
     args,
   ): Promise<
-    | { claimed: true; authoringAttemptId: Id<'events'> }
-    | { claimed: false; reason: string }
+    { claimed: true; authoringAttemptId: Id<'events'> } | { claimed: false; reason: string }
   > => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
@@ -1263,7 +1255,10 @@ export function verdictList(
   );
 }
 
-function indexesWith(verdicts: readonly ActionVerdict[], disposition: ActionVerdict['disposition']): number[] {
+function indexesWith(
+  verdicts: readonly ActionVerdict[],
+  disposition: ActionVerdict['disposition'],
+): number[] {
   return verdicts.flatMap((verdict, index) => (verdict.disposition === disposition ? [index] : []));
 }
 
@@ -1281,8 +1276,9 @@ function refusedReasonEntries(
   verdicts: Doc<'workItems'>['actionVerdicts'] | undefined,
   count: number,
 ): Array<[number, string]> {
-  return verdictList(verdicts, count).flatMap((verdict, index): Array<[number, string]> =>
-    verdict.disposition === 'refused' ? [[index, verdict.reason]] : [],
+  return verdictList(verdicts, count).flatMap(
+    (verdict, index): Array<[number, string]> =>
+      verdict.disposition === 'refused' ? [[index, verdict.reason]] : [],
   );
 }
 
@@ -1356,10 +1352,7 @@ export const setActionsPending = internalMutation({
     output: v.any(),
     authoringAttemptId: v.optional(v.id('events')),
   },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ pending: boolean; phase?: 'auto' | 'manager' }> => {
+  handler: async (ctx, args): Promise<{ pending: boolean; phase?: 'auto' | 'manager' }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'executing') return { pending: false };
@@ -1385,6 +1378,9 @@ export const setActionsPending = internalMutation({
     const autoIndexes = indexesWith(actionVerdicts, 'auto');
     const heldIndexes = indexesWith(actionVerdicts, 'held');
     const refusedIndexes = indexesWith(actionVerdicts, 'refused');
+    const refusals = refusedReasonEntries(actionVerdicts, actions.length).map(
+      ([index, reason]) => ({ index, reason }),
+    );
     const payload = {
       workItemId: args.workItemId,
       runId: args.runId,
@@ -1392,6 +1388,7 @@ export const setActionsPending = internalMutation({
       autoIndexes,
       heldIndexes,
       refusedIndexes,
+      ...(refusals.length > 0 ? { refusals } : {}),
       autonomousActions,
       ...(dependent ? { dependentPhase: true } : {}),
     };
@@ -1464,6 +1461,10 @@ export const setAwaitingApproval = internalMutation({
     }
     const actions = actionsOf(args.output);
     const verdicts = verdictList(row.actionVerdicts, actions.length);
+    const refusals = refusedReasonEntries(verdicts, actions.length).map(([index, reason]) => ({
+      index,
+      reason,
+    }));
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       output: args.output,
@@ -1482,6 +1483,7 @@ export const setAwaitingApproval = internalMutation({
         autoIndexes: indexesWith(verdicts, 'auto'),
         heldIndexes: indexesWith(verdicts, 'held'),
         refusedIndexes: indexesWith(verdicts, 'refused'),
+        ...(refusals.length > 0 ? { refusals } : {}),
         autoApplied: true,
       },
       createdAt: Date.now(),
@@ -1525,56 +1527,56 @@ async function approveActionsInTransaction(
   via: DecisionVia,
   messageTs?: string,
 ): Promise<{ ok: true; approvedIndexes: number[] }> {
-    if (row.state !== 'actions-pending') {
-      throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+  if (row.state !== 'actions-pending') {
+    throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+  }
+  if (!row.pendingRunId) throw new Error('workItem has no pending run');
+  if (row.pendingRunId !== args.pendingRunId) {
+    throw new Error('pending run changed; refresh the action list');
+  }
+  if (row.approvedIndexes !== undefined) {
+    throw new Error('actions have already been approved');
+  }
+  const actions = actionsOf(row.output);
+  const verdicts = verdictList(row.actionVerdicts, actions.length);
+  const approvedIndexes = [...new Set(args.approvedIndexes)].sort((a, b) => a - b);
+  for (const index of approvedIndexes) {
+    if (!Number.isInteger(index) || index < 0 || index >= actions.length) {
+      throw new Error(`action index ${index} is outside the pending list`);
     }
-    if (!row.pendingRunId) throw new Error('workItem has no pending run');
-    if (row.pendingRunId !== args.pendingRunId) {
-      throw new Error('pending run changed; refresh the action list');
+    const verdict = verdicts[index];
+    if (verdict.disposition === 'refused') {
+      throw new Error(
+        `action ${index + 1} is refused (${verdict.reason}); approve the others by selection`,
+      );
     }
-    if (row.approvedIndexes !== undefined) {
-      throw new Error('actions have already been approved');
+    if (verdict.disposition === 'auto') {
+      throw new Error(`action ${index + 1} was applied automatically and cannot be approved again`);
     }
-    const actions = actionsOf(row.output);
-    const verdicts = verdictList(row.actionVerdicts, actions.length);
-    const approvedIndexes = [...new Set(args.approvedIndexes)].sort((a, b) => a - b);
-    for (const index of approvedIndexes) {
-      if (!Number.isInteger(index) || index < 0 || index >= actions.length) {
-        throw new Error(`action index ${index} is outside the pending list`);
-      }
-      const verdict = verdicts[index];
-      if (verdict.disposition === 'refused') {
-        throw new Error(
-          `action ${index + 1} is refused (${verdict.reason}); approve the others by selection`,
-        );
-      }
-      if (verdict.disposition === 'auto') {
-        throw new Error(`action ${index + 1} was applied automatically and cannot be approved again`);
-      }
-    }
-    const heldIndexes = indexesWith(verdicts, 'held');
-    const rejectedIndexes = heldIndexes.filter((index) => !approvedIndexes.includes(index));
-    await ctx.db.patch(args.workItemId, {
+  }
+  const heldIndexes = indexesWith(verdicts, 'held');
+  const rejectedIndexes = heldIndexes.filter((index) => !approvedIndexes.includes(index));
+  await ctx.db.patch(args.workItemId, {
+    approvedIndexes,
+    applyPhase: 'approved',
+    ...decidedPatch(row, 'actions', via, 'approved', messageTs),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.actions-approved',
+    payload: {
+      workItemId: args.workItemId,
+      runId: row.pendingRunId,
       approvedIndexes,
-      applyPhase: 'approved',
-      ...decidedPatch(row, 'actions', via, 'approved', messageTs),
-    });
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.actions-approved',
-      payload: {
-        workItemId: args.workItemId,
-        runId: row.pendingRunId,
-        approvedIndexes,
-        rejectedIndexes,
-        refusedIndexes: indexesWith(verdicts, 'refused'),
-        autoIndexes: indexesWith(verdicts, 'auto'),
-        decidedVia: via,
-      },
-      createdAt: Date.now(),
-    });
-    await scheduleApply(ctx, args.workItemId, row.pendingRunId, 'approved');
-    return { ok: true, approvedIndexes };
+      rejectedIndexes,
+      refusedIndexes: indexesWith(verdicts, 'refused'),
+      autoIndexes: indexesWith(verdicts, 'auto'),
+      decidedVia: via,
+    },
+    createdAt: Date.now(),
+  });
+  await scheduleApply(ctx, args.workItemId, row.pendingRunId, 'approved');
+  return { ok: true, approvedIndexes };
 }
 
 /**
@@ -1598,50 +1600,50 @@ async function rejectActionsInTransaction(
   via: DecisionVia,
   messageTs?: string,
 ): Promise<{ ok: true }> {
-    if (row.state !== 'actions-pending') {
-      throw new Error(`workItem state is ${row.state}; expected actions-pending`);
-    }
-    if (row.approvedIndexes !== undefined) {
-      throw new Error('actions have already been approved');
-    }
-    if (!row.pendingRunId) throw new Error('workItem has no pending run');
-    if (row.pendingRunId !== args.pendingRunId) {
-      throw new Error('pending run changed; refresh the action list');
-    }
-    const reason = args.reason.replace(/\s+/g, ' ').trim().slice(0, 200);
-    const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';
-    const applied = ledgerOf(row.output);
-    const output =
-      applied.length > 0
-        ? {
-            ...(row.output as Record<string, unknown>),
-            applied: applied.map((entry) =>
-              entry?.awaitingApproval
-                ? { ...entry, awaitingApproval: undefined, reason: skipReason }
-                : entry,
-            ),
-          }
-        : undefined;
-    await ctx.db.patch(args.workItemId, {
-      state: 'failed',
-      skipReason,
-      ...(output !== undefined ? { output } : {}),
-      pendingRunId: undefined,
-      approvedIndexes: undefined,
-      actionVerdicts: undefined,
-      applyPhase: undefined,
-      executionRunId: undefined,
-      applyAttemptId: undefined,
-      applyClaimedAt: undefined,
-      ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
-    });
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.actions-rejected',
-      payload: { workItemId: args.workItemId, reason: skipReason, decidedVia: via },
-      createdAt: Date.now(),
-    });
-    return { ok: true };
+  if (row.state !== 'actions-pending') {
+    throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+  }
+  if (row.approvedIndexes !== undefined) {
+    throw new Error('actions have already been approved');
+  }
+  if (!row.pendingRunId) throw new Error('workItem has no pending run');
+  if (row.pendingRunId !== args.pendingRunId) {
+    throw new Error('pending run changed; refresh the action list');
+  }
+  const reason = args.reason.replace(/\s+/g, ' ').trim().slice(0, 200);
+  const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';
+  const applied = ledgerOf(row.output);
+  const output =
+    applied.length > 0
+      ? {
+          ...(row.output as Record<string, unknown>),
+          applied: applied.map((entry) =>
+            entry?.awaitingApproval
+              ? { ...entry, awaitingApproval: undefined, reason: skipReason }
+              : entry,
+          ),
+        }
+      : undefined;
+  await ctx.db.patch(args.workItemId, {
+    state: 'failed',
+    skipReason,
+    ...(output !== undefined ? { output } : {}),
+    pendingRunId: undefined,
+    approvedIndexes: undefined,
+    actionVerdicts: undefined,
+    applyPhase: undefined,
+    executionRunId: undefined,
+    applyAttemptId: undefined,
+    applyClaimedAt: undefined,
+    ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.actions-rejected',
+    payload: { workItemId: args.workItemId, reason: skipReason, decidedVia: via },
+    createdAt: Date.now(),
+  });
+  return { ok: true };
 }
 
 /** Resolve one parsed manager reply inside the same transaction as the dashboard controls. */
@@ -1893,11 +1895,7 @@ export const recoverInterruptedApply = internalMutation({
     args,
   ): Promise<{ recovered: 'ignored' | 'rescheduled' | 'outcome-unknown' }> => {
     const row = await ctx.db.get(args.workItemId);
-    if (
-      !row ||
-      row.executionRunId !== args.pendingRunId ||
-      row.applyPhase !== args.phase
-    ) {
+    if (!row || row.executionRunId !== args.pendingRunId || row.applyPhase !== args.phase) {
       return { recovered: 'ignored' };
     }
     const unclaimedAuto =
