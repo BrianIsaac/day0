@@ -12,7 +12,11 @@ import {
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
-import { ACTION_TOOLS, DEPENDENT_ACTION_CAP } from '../../../src/work/types';
+import {
+  ACTION_TOOLS,
+  DEPENDENT_ACTION_CAP,
+  type MockActionArgs,
+} from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
 
@@ -49,6 +53,37 @@ const emptyMock = {
   tickets: [],
 };
 
+const ticketGuides = [
+  {
+    slug: 'how-to-update-ticket',
+    title: 'How to update a ticket (action guide)',
+    body: 'For the originating ticket, use `status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
+  },
+];
+
+const recordedFlatArgs = {
+  body: '',
+  cells: [],
+  channelSlug: '',
+  comment: '',
+  headersJson: '',
+  method: '',
+  path: '',
+  sheetSlug: '',
+  slug: '',
+  status: 'open',
+  surface: '',
+  tabName: '',
+  threadKey: '',
+  tool: '',
+  toolArgsJson: '',
+  tweetSlug: '',
+} satisfies MockActionArgs;
+
+function recordedArgs(overrides: Partial<MockActionArgs>): MockActionArgs {
+  return { ...recordedFlatArgs, ...overrides };
+}
+
 // Assembled at runtime so the literal never sits in the source: GitHub push protection
 // flags any string shaped like a Slack token, synthetic or not.
 const SYNTHETIC_SLACK_TOKEN = ['xoxb', '1234567890-abcdefghijklmnop'].join('-');
@@ -63,19 +98,27 @@ describe('executor output contract', (): void => {
         actions: [
           {
             tool: 'ticket.update',
-            args: {
+            args: recordedArgs({
               slug: 'REVOPS-EVAL-08',
               status: 'in-progress',
               comment: 'EVAL-WRITE-03 Priya owns the dbt dependency check',
-            },
+            }),
           },
           {
             tool: 'ticket.update',
-            args: { slug: 'REVOPS-EVAL-08', status: 'in-progress', comment: '' },
+            args: recordedArgs({
+              slug: 'REVOPS-EVAL-08',
+              status: 'in-progress',
+              comment: '',
+            }),
           },
           {
             tool: 'slack.postMessage',
-            args: { channelSlug: 'dm-manager', body: 'Prepared the requested ticket update.' },
+            args: recordedArgs({
+              channelSlug: 'dm-manager',
+              body: 'Prepared the requested ticket update.',
+              status: 'in-progress',
+            }),
           },
         ],
       },
@@ -97,6 +140,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 3,
       },
+      ticketGuides,
     );
 
     expect(issues).toEqual([
@@ -114,10 +158,10 @@ describe('executor output contract', (): void => {
         actions: [
           {
             tool: 'slack.postMessage',
-            args: {
+            args: recordedArgs({
               channelSlug: 'dm-manager',
               body: 'Please provide source evidence and a duplicate check before approval.',
-            },
+            }),
           },
         ],
       },
@@ -139,6 +183,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 3,
       },
+      [],
     );
 
     expect(issues).toEqual(['action set omitted the approved primary spreadsheet mutation']);
@@ -154,10 +199,10 @@ describe('executor output contract', (): void => {
         actions: [
           {
             tool: 'slack.postMessage',
-            args: {
+            args: recordedArgs({
               channelSlug: 'dm-manager',
               body: 'Manager — proposed comment for REVOPS-EVAL-04, pending your approval.',
-            },
+            }),
           },
         ],
       },
@@ -179,6 +224,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 5,
       },
+      ticketGuides,
     );
 
     expect(issues).toEqual([
@@ -195,16 +241,16 @@ describe('executor output contract', (): void => {
         actions: [
           {
             tool: 'slack.postMessage',
-            args: { channelSlug: 'dm-manager', body: 'Draft for review.' },
+            args: recordedArgs({ channelSlug: 'dm-manager', body: 'Draft for review.' }),
           },
           {
             tool: 'ticket.update',
-            args: {
+            args: recordedArgs({
               slug: 'REVOPS-EVAL-05',
               status: 'in-progress',
               comment:
                 'EVAL-DOC-05 — q4-revenue-tracker is the source of truth. (Team overview)',
-            },
+            }),
           },
         ],
       },
@@ -226,6 +272,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 5,
       },
+      ticketGuides,
     );
 
     expect(issues).toEqual([
@@ -268,6 +315,96 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 10,
       },
+      ticketGuides,
+    );
+
+    expect(issues).toEqual([]);
+  });
+
+  it('does not invent a closure policy when no ticket procedure is loaded', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Recorded the requested ticket note.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: {
+              slug: 'REVOPS-NO-GUIDE-01',
+              status: 'in-progress',
+              comment: 'Recorded the requested note.',
+            },
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: 'NO-GUIDE-01',
+        title: 'Record the note',
+        contentSummary: 'Record the requested note on REVOPS-NO-GUIDE-01.',
+        contentRefs: ['ticket://REVOPS-NO-GUIDE-01'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Record the requested note.',
+        steps: ['Add the note.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      [],
+    );
+
+    expect(issues).toEqual([]);
+  });
+
+  it('accepts the same status transition on two distinct tickets', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Updated the origin and cross-linked ticket.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-ORIGIN-01',
+              status: 'in-progress',
+              comment: 'Origin work remains partial.',
+            }),
+          },
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-CROSS-LINK-02',
+              status: 'in-progress',
+              comment: 'Cross-linked the partial work.',
+            }),
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: 'PARTIAL-CROSS-LINK-01',
+        title: 'Record partial work on both related tickets',
+        contentSummary:
+          'Move REVOPS-ORIGIN-01 to in-progress with a note and cross-link the partial work on REVOPS-CROSS-LINK-02.',
+        contentRefs: ['ticket://REVOPS-ORIGIN-01', 'ticket://REVOPS-CROSS-LINK-02'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Record partial progress on the origin and related ticket.',
+        steps: ['Update both distinct tickets to in-progress with separate comments.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 3,
+      },
+      ticketGuides,
     );
 
     expect(issues).toEqual([]);
@@ -540,26 +677,50 @@ describe('executor preamble by mode', (): void => {
   });
 
   it('puts the literal mock action contract after a conflicting skill body', (): void => {
-    const legacy =
-      'This skill is read-only and requires source evidence plus a duplicate check before any append.';
+    const conflictingBodies = [
+      [
+        '- Drafts only — never claim an answer was posted to the team.',
+        '- If the question implies needing to *change* something (update a spreadsheet, file a ticket), surface that as a follow-up; this skill is read-only.',
+      ].join('\n'),
+      [
+        '- Check duplication. Require a non-empty dedupeKey before appending.',
+        '- If any check fails, emit no spreadsheet mutation.',
+      ].join('\n'),
+    ];
+    for (const skillBody of conflictingBodies) {
+      const prompt = executorInstructions({
+        mode: 'mock',
+        autonomousActions: false,
+        skillBody,
+        surfaces: [],
+        mockEnv: { ...emptyMock, howToGuides: ticketGuides },
+        now,
+      });
+      const header =
+        '--- Mock action-set contract (takes precedence over contradictory skill wording) ---';
+      expect(prompt.indexOf(header)).toBeGreaterThan(prompt.indexOf(skillBody));
+      expect(prompt).toContain(
+        'the literal destination and values in the approved candidate are sufficient authority',
+      );
+      expect(prompt).toContain(
+        'Full closure uses `done`; use `in-progress` only when the candidate explicitly requests partial work',
+      );
+      expect(prompt).toContain('Never emit the same ticket status twice');
+    }
+  });
+
+  it('does not put an invented closure policy in the prompt when no guide is loaded', (): void => {
     const prompt = executorInstructions({
       mode: 'mock',
       autonomousActions: false,
-      skillBody: legacy,
+      skillBody: 'Record the approved ticket note.',
       surfaces: [],
       mockEnv: emptyMock,
       now,
     });
-    const header =
-      '--- Mock action-set contract (takes precedence over contradictory skill wording) ---';
-    expect(prompt.indexOf(header)).toBeGreaterThan(prompt.indexOf(legacy));
-    expect(prompt).toContain(
-      'the literal destination and values in the approved candidate are sufficient authority',
-    );
-    expect(prompt).toContain(
-      'Full closure uses `done`; use `in-progress` only when the candidate explicitly requests partial work',
-    );
-    expect(prompt).toContain('Never emit the same ticket status twice');
+
+    expect(prompt).not.toContain('`status: "done"` for full closure');
+    expect(prompt).not.toContain('Full closure uses `done`');
   });
 
   it('prints the reply target line the preamble refers to', (): void => {

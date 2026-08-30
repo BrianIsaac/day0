@@ -19,8 +19,33 @@ vi.mock('../../../src/lib/mastra', () => ({
 
 import { runSkill } from '../../../src/work/execute-skill';
 
+const recordedFlatArgs = {
+  body: '',
+  cells: [],
+  channelSlug: '',
+  comment: '',
+  headersJson: '',
+  method: '',
+  path: '',
+  sheetSlug: '',
+  slug: '',
+  status: 'open' as const,
+  surface: '',
+  tabName: '',
+  threadKey: '',
+  tool: '',
+  toolArgsJson: '',
+  tweetSlug: '',
+};
+
 const mockEnv: MockSurfaceSnapshot = {
-  howToGuides: [],
+  howToGuides: [
+    {
+      slug: 'how-to-update-ticket',
+      title: 'How to update a ticket (action guide)',
+      body: 'For the originating ticket, use `status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
+    },
+  ],
   teamDocs: [],
   spreadsheets: [],
   slackChannels: [],
@@ -66,6 +91,7 @@ describe('mock executor semantic repair', (): void => {
           {
             tool: 'ticket.update',
             args: {
+              ...recordedFlatArgs,
               slug: 'REVOPS-EVAL-08',
               status: 'in-progress',
               comment: 'EVAL-WRITE-03 Priya owns the dbt dependency check',
@@ -73,11 +99,21 @@ describe('mock executor semantic repair', (): void => {
           },
           {
             tool: 'ticket.update',
-            args: { slug: 'REVOPS-EVAL-08', status: 'in-progress', comment: '' },
+            args: {
+              ...recordedFlatArgs,
+              slug: 'REVOPS-EVAL-08',
+              status: 'in-progress',
+              comment: '',
+            },
           },
           {
             tool: 'slack.postMessage',
-            args: { channelSlug: 'dm-manager', body: 'Prepared the requested ticket update.' },
+            args: {
+              ...recordedFlatArgs,
+              channelSlug: 'dm-manager',
+              body: 'Prepared the requested ticket update.',
+              status: 'in-progress',
+            },
           },
         ],
       },
@@ -89,6 +125,7 @@ describe('mock executor semantic repair', (): void => {
           {
             tool: 'ticket.update',
             args: {
+              ...recordedFlatArgs,
               slug: 'REVOPS-EVAL-08',
               status: 'in-progress',
               comment: 'EVAL-WRITE-03 Priya owns the dbt dependency check',
@@ -96,7 +133,12 @@ describe('mock executor semantic repair', (): void => {
           },
           {
             tool: 'slack.postMessage',
-            args: { channelSlug: 'dm-manager', body: 'Prepared the requested ticket update.' },
+            args: {
+              ...recordedFlatArgs,
+              channelSlug: 'dm-manager',
+              body: 'Prepared the requested ticket update.',
+              status: 'in-progress',
+            },
           },
         ],
       },
@@ -147,6 +189,7 @@ describe('mock executor semantic repair', (): void => {
       {
         tool: 'ticket.update',
         args: {
+          ...recordedFlatArgs,
           slug: 'REVOPS-EVAL-08',
           status: 'in-progress',
           comment: 'EVAL-WRITE-03 Priya owns the dbt dependency check',
@@ -154,7 +197,12 @@ describe('mock executor semantic repair', (): void => {
       },
       {
         tool: 'slack.postMessage',
-        args: { channelSlug: 'dm-manager', body: 'Prepared the requested ticket update.' },
+        args: {
+          ...recordedFlatArgs,
+          channelSlug: 'dm-manager',
+          body: 'Prepared the requested ticket update.',
+          status: 'in-progress',
+        },
       },
     ]);
   });
