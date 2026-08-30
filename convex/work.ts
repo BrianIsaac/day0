@@ -1254,7 +1254,11 @@ export const setFailed = internalMutation({
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.failed',
-      payload: { workItemId: args.workItemId, reason: args.reason },
+      payload: {
+        workItemId: args.workItemId,
+        reason: args.reason,
+        ...(args.output !== undefined ? { output: args.output } : {}),
+      },
       createdAt: Date.now(),
     });
   },
