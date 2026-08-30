@@ -165,13 +165,22 @@ describe('executor output contract', (): void => {
 describe('surface guidance in the executor prompt', (): void => {
   it('is empty when no surface is connected, so the mock prompt is unchanged', (): void => {
     expect(surfaceInstructions([], now)).toBe('');
-    expect(surfaceInstructions([{ ...linear, verdict: 'approved', credentialLanded: false }], now)).toBe('');
-    expect(surfaceInstructions([{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], now)).toBe('');
+    expect(
+      surfaceInstructions([{ ...linear, verdict: 'approved', credentialLanded: false }], now),
+    ).toBe('');
+    expect(
+      surfaceInstructions([{ ...linear, lastVerifiedAt: now - 7 * 60 * 60 * 1000 }], now),
+    ).toBe('');
   });
 
   it('lists connected surfaces with allowlists, the manager DM id and the two verbs', (): void => {
-    const text = surfaceInstructions([linear, slack, { ...linear, slug: 'jira', verdict: 'absent' }], now);
-    expect(text).toContain('  - linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: save_comment, save_issue');
+    const text = surfaceInstructions(
+      [linear, slack, { ...linear, slug: 'jira', verdict: 'absent' }],
+      now,
+    );
+    expect(text).toContain(
+      '  - linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: save_comment, save_issue',
+    );
     expect(text).toContain(
       '  - slack (Slack) - class chat · path documented-api · endpoint https://slack.com/api/ · allowed tools: (none) · manager DM channel id: D0MANAGER',
     );
@@ -189,7 +198,12 @@ describe('surface guidance in the executor prompt', (): void => {
 describe('executor preamble by mode', (): void => {
   it('teaches the four mock verbs and the mock fanout rules in mock mode', (): void => {
     const text = executorPreamble('mock');
-    for (const verb of ['spreadsheet.appendRow', 'slack.postMessage', 'twitter.reply', 'ticket.update']) {
+    for (const verb of [
+      'spreadsheet.appendRow',
+      'slack.postMessage',
+      'twitter.reply',
+      'ticket.update',
+    ]) {
       expect(text).toContain(`  - ${verb}`);
     }
     expect(text).toContain('`slack.postMessage` to `dm-manager`');
@@ -205,7 +219,9 @@ describe('executor preamble by mode', (): void => {
 
   it('refuses the mock verbs and teaches the surface rules in real mode', (): void => {
     const text = executorPreamble('real', false);
-    expect(text).toContain('The mock verbs (spreadsheet.appendRow, slack.postMessage, twitter.reply, ticket.update) do not exist on this deployment');
+    expect(text).toContain(
+      'The mock verbs (spreadsheet.appendRow, slack.postMessage, twitter.reply, ticket.update) do not exist on this deployment',
+    );
     expect(text).toContain('refused if emitted');
     expect(text).toContain('If no surface is connected, emit no actions');
     expect(text).toContain('add the audit comment on the originating issue through `mcp.call`');
@@ -218,10 +234,18 @@ describe('executor preamble by mode', (): void => {
 
   it('emits a public reply as its own threaded chat.postMessage and keeps the DM for questions', (): void => {
     const text = executorPreamble('real', false);
-    expect(text).toContain('A reply to a channel or thread is its own action, never text inside another message');
-    expect(text).toContain('`channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line');
-    expect(text).toContain("The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on)");
-    expect(text).toContain('The manager DM through the connected chat surface is for questions and escalation');
+    expect(text).toContain(
+      'A reply to a channel or thread is its own action, never text inside another message',
+    );
+    expect(text).toContain(
+      '`channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line',
+    );
+    expect(text).toContain(
+      "The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on)",
+    );
+    expect(text).toContain(
+      'The manager DM through the connected chat surface is for questions and escalation',
+    );
     expect(text).toContain('It never carries a draft that belongs in a channel or thread');
     expect(text).toContain(
       "Autonomous actions are OFF: reads and the manager DM land now; every other write is held for the manager's literal approval - say so.",
@@ -261,6 +285,13 @@ describe('executor preamble by mode', (): void => {
     expect(executorPreamble('real', false)).not.toMatch(/lands as emitted|applied as emitted/);
   });
 
+  it('states the mock comparison gate even when autonomous actions are on', (): void => {
+    expect(executorPreamble('mock', true)).toContain(
+      'Mock comparison mode: every emitted action is held for the manager',
+    );
+    expect(executorPreamble('mock', true)).not.toContain('lands as emitted');
+  });
+
   it('puts the live mode after a legacy skill body so it takes precedence', (): void => {
     const legacy = 'Tell the manager this is for your approval.';
     const prompt = executorInstructions({
@@ -271,19 +302,33 @@ describe('executor preamble by mode', (): void => {
       mockEnv: emptyMock,
       now,
     });
-    const header = '--- Live run context (takes precedence over approval wording in the skill body) ---';
+    const header =
+      '--- Live run context (takes precedence over approval wording in the skill body) ---';
     expect(prompt.endsWith(`${header}\n${actionModeInstruction(true)}`)).toBe(true);
     expect(prompt.indexOf(header)).toBeGreaterThan(prompt.indexOf(legacy));
     // The mock prompt carries no such trailer: the mode is a real-surface concern.
     expect(
-      executorInstructions({ mode: 'mock', autonomousActions: true, skillBody: legacy, surfaces: [], mockEnv: emptyMock, now }),
+      executorInstructions({
+        mode: 'mock',
+        autonomousActions: true,
+        skillBody: legacy,
+        surfaces: [],
+        mockEnv: emptyMock,
+        now,
+      }),
     ).not.toContain(header);
   });
 
   it('prints the reply target line the preamble refers to', (): void => {
-    expect(replyTargetLine({ channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1787746453.202809' })).toBe(
-      'Reply target: channel C0BSF04TZ19 (#revops-asks), thread_ts 1787746453.202809',
+    expect(
+      replyTargetLine({
+        channel: 'C0BSF04TZ19',
+        channelName: 'revops-asks',
+        threadTs: '1787746453.202809',
+      }),
+    ).toBe('Reply target: channel C0BSF04TZ19 (#revops-asks), thread_ts 1787746453.202809');
+    expect(replyTargetLine({ channel: 'C0BSF04TZ19' })).toBe(
+      'Reply target: channel C0BSF04TZ19, top-level post',
     );
-    expect(replyTargetLine({ channel: 'C0BSF04TZ19' })).toBe('Reply target: channel C0BSF04TZ19, top-level post');
   });
 });

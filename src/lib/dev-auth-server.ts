@@ -3,13 +3,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { auth } from '@clerk/nextjs/server';
-import {
-  DEV_NO_AUTH_ALGORITHM,
-  DEV_NO_AUTH_AUDIENCE,
-  DEV_NO_AUTH_ISSUER,
-  DEV_NO_AUTH_KEY_ID,
-  DEV_NO_AUTH_SUBJECT,
-} from '@convex/devAuth';
+import { DEV_NO_AUTH_SUBJECT } from '@convex/devAuth';
 import { DEV_NO_AUTH } from './dev-auth';
 
 /**
@@ -48,8 +42,6 @@ export const DEV_NO_AUTH_COOKIE = 'day0_dev_no_auth';
 
 /** Carries `DEV_NO_AUTH_SECRET` on the unlock URL `pnpm dev` prints. */
 export const DEV_NO_AUTH_UNLOCK_PARAM = 'day0_key';
-
-const TOKEN_LIFETIME_SECONDS = 3600;
 
 /** Which of the two secrets are missing, or null when both are present. */
 export function devNoAuthKeyGaps(): string[] | null {
@@ -126,68 +118,4 @@ export async function establishCaller(): Promise<Caller> {
  * private key. Throws when the key is absent rather than returning an
  * unauthenticated client to the caller.
  */
-export async function mintDevNoAuthToken(): Promise<string> {
-  const key = await signingKey();
-  const issuedAt = Math.floor(Date.now() / 1000);
-
-  const header = { alg: DEV_NO_AUTH_ALGORITHM, typ: 'JWT', kid: DEV_NO_AUTH_KEY_ID };
-  const payload = {
-    sub: DEV_NO_AUTH_SUBJECT,
-    iss: DEV_NO_AUTH_ISSUER,
-    aud: DEV_NO_AUTH_AUDIENCE,
-    iat: issuedAt,
-    exp: issuedAt + TOKEN_LIFETIME_SECONDS,
-  };
-
-  const signingInput = `${base64UrlText(JSON.stringify(header))}.${base64UrlText(JSON.stringify(payload))}`;
-  const signature = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    key,
-    new TextEncoder().encode(signingInput),
-  );
-  return `${signingInput}.${base64UrlBytes(new Uint8Array(signature))}`;
-}
-
-let cachedSigningKey: Promise<CryptoKey> | null = null;
-
-function signingKey(): Promise<CryptoKey> {
-  if (!cachedSigningKey) cachedSigningKey = importSigningKey();
-  return cachedSigningKey;
-}
-
-async function importSigningKey(): Promise<CryptoKey> {
-  const encoded = process.env.DEV_NO_AUTH_SIGNING_KEY;
-  if (!encoded) {
-    throw new Error(
-      'DEV_NO_AUTH_SIGNING_KEY is not set, so no-auth dev mode cannot produce a ' +
-        'token this deployment will accept. Run `pnpm dev:no-auth-key`.',
-    );
-  }
-  // WebCrypto rather than node:crypto so the one module can be read by the proxy
-  // (edge runtime) and the route handlers (node runtime) alike.
-  return crypto.subtle.importKey(
-    'pkcs8',
-    decodeBase64(encoded),
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    false,
-    ['sign'],
-  );
-}
-
-function decodeBase64(value: string): ArrayBuffer {
-  const binary = atob(value.trim());
-  const buffer = new ArrayBuffer(binary.length);
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return buffer;
-}
-
-function base64UrlBytes(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function base64UrlText(value: string): string {
-  return base64UrlBytes(new TextEncoder().encode(value));
-}
+export { mintDevNoAuthToken } from './dev-auth-token';

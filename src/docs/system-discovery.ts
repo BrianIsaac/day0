@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SYSTEM_CLASSES } from '../agent/charter';
+import { SYSTEM_CLASSES } from '../agent/system-classes';
 
 export interface DiscoveryPage {
   ref: string;

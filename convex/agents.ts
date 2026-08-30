@@ -83,6 +83,7 @@ export const deploy = mutation({
     bossEmail: v.string(),
     name: v.optional(v.string()),
     avatarId: v.optional(v.string()),
+    arm: v.optional(v.union(v.literal('day0'), v.literal('baseline'))),
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
@@ -102,12 +103,13 @@ export const deploy = mutation({
         : undefined,
       userId: identity.subject,
       state: 'deployed',
+      arm: args.arm ?? 'day0',
       createdAt: Date.now(),
     });
     await ctx.db.insert('events', {
       agentId,
       type: 'agent.deployed',
-      payload: { bossEmail: args.bossEmail },
+      payload: { bossEmail: args.bossEmail, arm: args.arm ?? 'day0' },
       createdAt: Date.now(),
     });
     const initialScopes =

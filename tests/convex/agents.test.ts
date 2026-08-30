@@ -102,6 +102,29 @@ describe('agent documentation selection', (): void => {
   });
 });
 
+describe('evaluation arm', (): void => {
+  it('deploys product agents as day0 and persists an explicit baseline arm', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+
+    const day0Id = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'boss@day0.local',
+    });
+    const baselineId = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'boss@day0.local',
+      arm: 'baseline',
+    });
+
+    await expect(owner.query(api.agents.get, { agentId: day0Id })).resolves.toMatchObject({
+      arm: 'day0',
+    });
+    await expect(owner.query(api.agents.get, { agentId: baselineId })).resolves.toMatchObject({
+      arm: 'baseline',
+    });
+  });
+});
+
 describe('agent surface grants', (): void => {
   it('seeds provider grants in mock mode but only baseline grants in real mode', async (): Promise<void> => {
     vi.useFakeTimers();

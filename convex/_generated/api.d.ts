@@ -9,6 +9,7 @@
  */
 
 import type * as agents from "../agents.js";
+import type * as baselineActions from "../baselineActions.js";
 import type * as charters from "../charters.js";
 import type * as config from "../config.js";
 import type * as coworker from "../coworker.js";
@@ -16,10 +17,11 @@ import type * as credentialCryptoActions from "../credentialCryptoActions.js";
 import type * as credentials from "../credentials.js";
 import type * as crons from "../crons.js";
 import type * as devAuth from "../devAuth.js";
-import type * as documentationDiscovery from "../documentationDiscovery.js";
-import type * as documentationDiscoveryActions from "../documentationDiscoveryActions.js";
 import type * as docSources from "../docSources.js";
 import type * as docSyncActions from "../docSyncActions.js";
+import type * as documentationDiscovery from "../documentationDiscovery.js";
+import type * as documentationDiscoveryActions from "../documentationDiscoveryActions.js";
+import type * as evaluation from "../evaluation.js";
 import type * as events from "../events.js";
 import type * as intakeActions from "../intakeActions.js";
 import type * as managerChannelActions from "../managerChannelActions.js";
@@ -51,6 +53,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
+  baselineActions: typeof baselineActions;
   charters: typeof charters;
   config: typeof config;
   coworker: typeof coworker;
@@ -58,10 +61,11 @@ declare const fullApi: ApiFromModules<{
   credentials: typeof credentials;
   crons: typeof crons;
   devAuth: typeof devAuth;
-  documentationDiscovery: typeof documentationDiscovery;
-  documentationDiscoveryActions: typeof documentationDiscoveryActions;
   docSources: typeof docSources;
   docSyncActions: typeof docSyncActions;
+  documentationDiscovery: typeof documentationDiscovery;
+  documentationDiscoveryActions: typeof documentationDiscoveryActions;
+  evaluation: typeof evaluation;
   events: typeof events;
   intakeActions: typeof intakeActions;
   managerChannelActions: typeof managerChannelActions;

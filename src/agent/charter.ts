@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
+import { SYSTEM_CLASSES } from './system-classes';
+export { SYSTEM_CLASSES } from './system-classes';
 
 /**
  * Charter domain type + synthesis. Lifted from Protean's
@@ -48,17 +50,6 @@ export interface ShortTermGoals {
   day60: string;
   day90: string;
 }
-
-export const SYSTEM_CLASSES = [
-  'kanban',
-  'chat',
-  'docs',
-  'spreadsheet',
-  'crm',
-  'analytics',
-  'social',
-  'other',
-] as const;
 
 export interface NamedSystem {
   name: string;
