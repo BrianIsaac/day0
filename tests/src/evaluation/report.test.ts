@@ -1,0 +1,217 @@
+import { describe, expect, it } from 'vitest';
+import {
+  formatRate,
+  renderEvaluationReport,
+  timeToOperational,
+  wilsonInterval,
+  type EvaluationEvidence,
+} from '../../../evaluation/report';
+
+const passingGrade = {
+  passed: true,
+  checks: [{ check: 'terminal-state', passed: true, detail: 'completed' }],
+  prohibitedActionFlags: [],
+  facts: {
+    heldForApproval: true,
+    approvedByManager: true,
+    landedTools: ['slack.postMessage'],
+    proposedTools: ['slack.postMessage'],
+  },
+};
+
+function evidence(): EvaluationEvidence {
+  return {
+    schemaVersion: 1,
+    experiment: 'day0-semifinal-controlled-comparison',
+    generatedAt: '2026-08-30T00:00:00.000Z',
+    configuration: {
+      commit: 'abcdef0',
+      model: 'gpt-5.5',
+      temperature: 0.4,
+      modelCallTimeoutMs: 90_000,
+      surfaceMode: 'mock',
+      arms: ['day0'],
+      requestedRuns: 1,
+      taskIds: ['docs-team-cadence'],
+      approvalDelayMs: 750,
+      pollIntervalMs: 250,
+      noLlmJudge: true,
+      onboardingTranscriptProvenance:
+        'Fixed reconstruction from the operator facts recorded in e2e-30aug.md; not a verbatim transcript.',
+    },
+    runs: [
+      {
+        id: 'day0-r1',
+        arm: 'day0',
+        run: 1,
+        status: 'completed',
+        agentId: 'agent-1',
+        deployedAt: '2026-08-30T00:00:00.000Z',
+        completedAt: '2026-08-30T00:00:03.000Z',
+        humanWaitMs: 750,
+        decisions: [],
+        tasks: [
+          {
+            taskId: 'docs-team-cadence',
+            externalId: 'EVAL-DOC-01',
+            category: 'docs-grounded-read',
+            workItemId: 'work-1',
+            terminalState: 'completed',
+            timedOut: false,
+            startedAt: '2026-08-30T00:00:01.000Z',
+            finishedAt: '2026-08-30T00:00:03.000Z',
+            deployToFirstCorrectActionMs: 2500,
+            humanWaitMs: 0,
+            decisions: [],
+            modelCalls: { logicalStages: 2, observableProviderCalls: null },
+            grade: passingGrade,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+describe('evaluation evidence report', (): void => {
+  it('calculates the two-sided Wilson 95% interval', (): void => {
+    expect(wilsonInterval(5, 10)).toEqual({ low: 0.2366, high: 0.7634 });
+    expect(wilsonInterval(0, 0)).toEqual({ low: 0, high: 1 });
+  });
+
+  it('always couples a rate to its numerator, n, and Wilson interval', (): void => {
+    expect(formatRate(5, 10)).toBe('50.0% (5/10; Wilson 95% CI 23.7–76.3%, width 52.7 points)');
+    expect(formatRate(0, 0)).toBe(
+      'not estimable (0/0; Wilson 95% CI 0.0–100.0%, width 100.0 points)',
+    );
+  });
+
+  it('renders the fixed concurrent control and programmatic-grading methodology', (): void => {
+    const report = renderEvaluationReport(evidence());
+
+    expect(report).toContain('1/1; Wilson 95% CI');
+    expect(report).toContain('No LLM judge');
+    expect(report).toContain('same fixed tasks');
+    expect(report).toContain('human wait');
+    expect(report).toContain('not a verbatim transcript');
+    expect(report).toContain('| day0-r1 | day0 | docs-team-cadence | completed | pass |');
+  });
+});
+
+function twoRunEvidence(): EvaluationEvidence {
+  const base = evidence();
+  const task = (
+    taskId: string,
+    category: 'docs-grounded-read' | 'approval-write',
+    passed: boolean,
+    startedAt: string,
+    finishedAt: string,
+    deployToFirstCorrectActionMs: number | null,
+  ) => ({
+    taskId,
+    externalId: taskId,
+    category,
+    workItemId: `work-${taskId}`,
+    terminalState: passed ? 'completed' : 'failed',
+    timedOut: false,
+    startedAt,
+    finishedAt,
+    deployToFirstCorrectActionMs,
+    humanWaitMs: 0,
+    decisions: [],
+    modelCalls: { logicalStages: 1, observableProviderCalls: null },
+    grade: { ...passingGrade, passed },
+  });
+  const decision = (approvedAt: string) => ({
+    kind: 'actions' as const,
+    requestedAt: approvedAt,
+    approvedAt,
+    delayMs: 750,
+  });
+  base.configuration.requestedRuns = 2;
+  base.configuration.taskIds = ['docs-team-cadence', 'write-pipeline-row'];
+  base.runs = [
+    {
+      ...base.runs[0]!,
+      id: 'day0-r1',
+      run: 1,
+      deployedAt: '2026-08-30T00:00:00.000Z',
+      decisions: [decision('2026-08-30T00:00:02.000Z'), decision('2026-08-30T00:00:08.000Z')],
+      tasks: [
+        task(
+          'docs-team-cadence',
+          'docs-grounded-read',
+          true,
+          '2026-08-30T00:00:01.000Z',
+          '2026-08-30T00:00:03.000Z',
+          5_000,
+        ),
+        task(
+          'write-pipeline-row',
+          'approval-write',
+          true,
+          '2026-08-30T00:00:03.000Z',
+          '2026-08-30T00:00:09.000Z',
+          9_000,
+        ),
+      ],
+    },
+    {
+      ...base.runs[0]!,
+      id: 'day0-r2',
+      run: 2,
+      deployedAt: '2026-08-30T01:00:00.000Z',
+      decisions: [decision('2026-08-30T01:00:01.000Z')],
+      tasks: [
+        task(
+          'docs-team-cadence',
+          'docs-grounded-read',
+          false,
+          '2026-08-30T01:00:01.000Z',
+          '2026-08-30T01:00:05.000Z',
+          null,
+        ),
+        task(
+          'write-pipeline-row',
+          'approval-write',
+          true,
+          '2026-08-30T01:00:05.000Z',
+          '2026-08-30T01:00:07.000Z',
+          4_000,
+        ),
+      ],
+    },
+  ];
+  return base;
+}
+
+describe('time to operational', (): void => {
+  it('takes the first effect of a task that passed, never one that also did something prohibited', (): void => {
+    const run = twoRunEvidence().runs[0]!;
+    expect(timeToOperational(run)).toEqual({ rawMs: 5_000, humanWaitBeforeMs: 750 });
+    const firstFailed = {
+      ...run,
+      tasks: [{ ...run.tasks[0]!, grade: { ...run.tasks[0]!.grade, passed: false } }, run.tasks[1]!],
+    };
+    expect(timeToOperational(firstFailed)).toEqual({ rawMs: 9_000, humanWaitBeforeMs: 1_500 });
+    expect(timeToOperational({ ...run, tasks: [] })).toEqual({ rawMs: null, humanWaitBeforeMs: null });
+  });
+});
+
+describe('per-task and per-run summaries', (): void => {
+  it('reports the majority outcome per task, time to operational per run, and time on task per task', (): void => {
+    const report = renderEvaluationReport(twoRunEvidence());
+    expect(report).toContain(
+      '| day0: tasks passed in a majority of runs | 50.0% (1/2; Wilson 95% CI 9.4–90.5%, width 81.1 points) |',
+    );
+    expect(report).toContain('| day0: per-run task pass | 75.0% (3/4;');
+    expect(report).toContain('| day0 | 4.50 s | 0.75 s | 3.75 s | 2 |');
+    expect(report).toContain('| baseline | not observed | not observed | not observed | 0 |');
+    expect(report).toContain(
+      '| docs-team-cadence | docs-grounded-read | 1/2 | not run | 3.00 s | not run |',
+    );
+    expect(report).toContain(
+      '| write-pipeline-row | approval-write | 2/2 | not run | 4.00 s | not run |',
+    );
+    expect(report).toContain('approves every held action');
+  });
+});

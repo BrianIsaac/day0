@@ -30,6 +30,9 @@ export default defineSchema({
       v.literal('charter-pending'),
       v.literal('active'),
     ),
+    /** Controlled-comparison mechanism. Optional only for rows deployed before
+     * the evaluation harness; every new deploy persists one arm. */
+    arm: v.optional(v.union(v.literal('day0'), v.literal('baseline'))),
     /** Whether the agent may act on connected systems without asking.
      * Absent reads as `false`, the supervised state: reads and the manager
      * DM apply on their own and every other write waits for the manager.
@@ -220,19 +223,13 @@ export default defineSchema({
     whereFound: v.array(v.any()),
     path: v.optional(v.string()),
     fallbackPath: v.optional(v.string()),
-    pathCandidates: v.optional(
-      v.array(v.object({ path: v.string(), endpoint: v.string() })),
-    ),
+    pathCandidates: v.optional(v.array(v.object({ path: v.string(), endpoint: v.string() }))),
     probeAttempts: v.optional(
       v.array(
         v.object({
           path: v.string(),
           endpoint: v.optional(v.string()),
-          outcome: v.union(
-            v.literal('demoted'),
-            v.literal('ungranted'),
-            v.literal('listed-dead'),
-          ),
+          outcome: v.union(v.literal('demoted'), v.literal('ungranted'), v.literal('listed-dead')),
           reason: v.string(),
           attemptedAt: v.number(),
         }),
@@ -563,6 +560,11 @@ export default defineSchema({
   permissionGrants: defineTable({
     agentId: v.id('agents'),
     scope: v.string(),
+    /** The authority path that created this grant. Optional for rows written
+     * before permission events were introduced. */
+    source: v.optional(
+      v.union(v.literal('deploy'), v.literal('manager'), v.literal('skill'), v.literal('surface')),
+    ),
     revokedAt: v.optional(v.number()),
     createdAt: v.number(),
   }).index('by_agent_scope', ['agentId', 'scope']),

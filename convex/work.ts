@@ -13,6 +13,7 @@ import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   actionIntent,
   HELD_NOT_APPROVED,
+  HELD_WRITE,
   normaliseActionVerdict,
   parseSurfaceAction,
   reviewActions,
@@ -33,6 +34,7 @@ import {
   browserComponentRefusal,
   withBrowserComponentState,
 } from '../src/surfaces/browser';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const INTERRUPTED_APPLY_REASON =
@@ -132,21 +134,23 @@ export const transportAuthority = internalQuery({
  *   discovered → skipped | deferred | needs-skill
  *   plan-pending → cancelled
  *
- * Real mode adds the exact-action gate between the skill run and apply:
+ * Day0 adds the exact-action gate between the skill run and apply:
  *   executing → actions-pending → (approve) executing → completed | failed
  *                               → (reject)  failed
  * The run id minted by `claimForExecution` is kept on the row through the
  * gate, so approval applies with the same idempotency keys the run would have
  * used had it not paused.
  *
- * The gate runs in two phases over the same claim and apply path. Rows it
+ * In real mode the gate runs in two phases over the same claim and apply path. Rows it
  * classifies `auto` (reads and the manager DM; every non-refused row once
  * the manager has turned autonomous actions on) are applied straight from
  * the hold while the row is still `executing` (`applyPhase: 'auto'`); when
  * the run also has `held` rows it then parks at `actions-pending` with the
  * auto rows already in the ledger, and the manager's approval runs the
  * second phase (`applyPhase: 'approved'`). A run with no held row never
- * enters `actions-pending`; a run with no auto row parks at once.
+ * enters `actions-pending`; a run with no auto row parks at once. In mock
+ * comparison mode every proposed mock write parks and uses the same approved
+ * apply path, so the control arm can be graded against the same ledger.
  */
 
 /**
@@ -195,48 +199,69 @@ export const getInternal = internalQuery({
   handler: async (ctx, args) => await ctx.db.get(args.workItemId),
 });
 
+export const workItemSeedFields = {
+  sourceCategory: v.string(),
+  sourceSystem: v.string(),
+  externalId: v.string(),
+  title: v.string(),
+  contentSummary: v.string(),
+  contentRefs: v.array(v.string()),
+  priority: v.optional(v.string()),
+  requesterLabel: v.optional(v.string()),
+  replyTarget: v.optional(
+    v.object({
+      channel: v.string(),
+      channelName: v.optional(v.string()),
+      threadTs: v.optional(v.string()),
+    }),
+  ),
+} as const;
+
+export interface WorkItemSeedInput {
+  agentId: Id<'agents'>;
+  sourceCategory: string;
+  sourceSystem: string;
+  externalId: string;
+  title: string;
+  contentSummary: string;
+  contentRefs: string[];
+  priority?: string;
+  requesterLabel?: string;
+  replyTarget?: { channel: string; channelName?: string; threadTs?: string };
+}
+
+/** Share intake's idempotency boundary with fixed evaluation task batches. */
+export async function seedItemInTransaction(
+  ctx: MutationCtx,
+  args: WorkItemSeedInput,
+): Promise<Id<'workItems'>> {
+  const existing = await ctx.db
+    .query('workItems')
+    .withIndex('by_extId', (q) =>
+      q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
+    )
+    .filter((q) => q.eq(q.field('agentId'), args.agentId))
+    .first();
+  if (existing) return existing._id;
+  const id = await ctx.db.insert('workItems', {
+    ...args,
+    state: 'discovered',
+    observedAt: Date.now(),
+    createdAt: Date.now(),
+  });
+  await ctx.db.insert('events', {
+    agentId: args.agentId,
+    type: 'work.discovered',
+    payload: { workItemId: id, title: args.title },
+    createdAt: Date.now(),
+  });
+  return id;
+}
+
 export const seedItem = internalMutation({
-  args: {
-    agentId: v.id('agents'),
-    sourceCategory: v.string(),
-    sourceSystem: v.string(),
-    externalId: v.string(),
-    title: v.string(),
-    contentSummary: v.string(),
-    contentRefs: v.array(v.string()),
-    priority: v.optional(v.string()),
-    requesterLabel: v.optional(v.string()),
-    replyTarget: v.optional(
-      v.object({
-        channel: v.string(),
-        channelName: v.optional(v.string()),
-        threadTs: v.optional(v.string()),
-      }),
-    ),
-  },
-  handler: async (ctx, args): Promise<Id<'workItems'>> => {
-    const existing = await ctx.db
-      .query('workItems')
-      .withIndex('by_extId', (q) =>
-        q.eq('sourceSystem', args.sourceSystem).eq('externalId', args.externalId),
-      )
-      .filter((q) => q.eq(q.field('agentId'), args.agentId))
-      .first();
-    if (existing) return existing._id;
-    const id = await ctx.db.insert('workItems', {
-      ...args,
-      state: 'discovered',
-      observedAt: Date.now(),
-      createdAt: Date.now(),
-    });
-    await ctx.db.insert('events', {
-      agentId: args.agentId,
-      type: 'work.discovered',
-      payload: { workItemId: id, title: args.title },
-      createdAt: Date.now(),
-    });
-    return id;
-  },
+  args: { agentId: v.id('agents'), ...workItemSeedFields },
+  handler: async (ctx, args): Promise<Id<'workItems'>> =>
+    await seedItemInTransaction(ctx, args),
 });
 
 /**
@@ -623,9 +648,7 @@ export const prepareDecisionNotice = internalMutation({
       decision: { ...row.decision, duplicateNoticeClaimedAt: Date.now() },
     });
     const origin =
-      row.decision.decidedVia === 'channel'
-        ? row.decision.surfaceName
-        : 'the day0 dashboard';
+      row.decision.decidedVia === 'channel' ? row.decision.surfaceName : 'the day0 dashboard';
     return {
       prepared: true as const,
       agentId: row.agentId,
@@ -964,9 +987,7 @@ export const claimForExecution = internalMutation({
   handler: async (
     ctx,
     args,
-  ): Promise<
-    { claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }
-  > => {
+  ): Promise<{ claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }> => {
     const { item } = await assertSameAgent(ctx, args.workItemId, args.skillId);
     if (item.state !== 'plan-approved') {
       return {
@@ -986,6 +1007,51 @@ export const claimForExecution = internalMutation({
     await ctx.db.patch(args.workItemId, {
       state: 'executing',
       skillId: args.skillId,
+      executionRunId: runId,
+      pendingRunId: undefined,
+      approvedIndexes: undefined,
+      actionVerdicts: undefined,
+      applyPhase: undefined,
+      applyAttemptId: undefined,
+      applyClaimedAt: undefined,
+    });
+    return { claimed: true, runId };
+  },
+});
+
+/** Atomically claim one discovered comparison task for the ordinary-agent arm. */
+export const claimForBaseline = internalMutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    { claimed: true; runId: Id<'events'> } | { claimed: false; reason: string }
+  > => {
+    const item = await ctx.db.get(args.workItemId);
+    if (!item) throw new Error('workItem not found');
+    const agent = await ctx.db.get(item.agentId);
+    if (!agent) throw new Error('agent not found');
+    if (agent.arm !== 'baseline') {
+      return { claimed: false, reason: 'work item does not belong to the baseline arm' };
+    }
+    if (item.state !== 'discovered') {
+      return {
+        claimed: false,
+        reason:
+          item.state === 'executing'
+            ? 'another baseline execution already claimed this work item'
+            : `workItem state is ${item.state}; expected discovered`,
+      };
+    }
+    const runId = await ctx.db.insert('events', {
+      agentId: item.agentId,
+      type: 'work.execution-claimed',
+      payload: { workItemId: args.workItemId, arm: 'baseline' },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(args.workItemId, {
+      state: 'executing',
       executionRunId: runId,
       pendingRunId: undefined,
       approvedIndexes: undefined,
@@ -1064,8 +1130,7 @@ export const claimDependentAuthoring = internalMutation({
     ctx,
     args,
   ): Promise<
-    | { claimed: true; authoringAttemptId: Id<'events'> }
-    | { claimed: false; reason: string }
+    { claimed: true; authoringAttemptId: Id<'events'> } | { claimed: false; reason: string }
   > => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
@@ -1228,6 +1293,12 @@ async function reviewHeldActions(
       .collect(),
   ]);
   if (!agent) throw new Error('agent not found');
+  if (SURFACE_MODE === 'mock') {
+    return {
+      verdicts: actions.map(() => ({ disposition: 'held', reason: HELD_WRITE })),
+      autonomousActions: false,
+    };
+  }
   const grants = new Set(grantRows.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
   const autonomousActions = autonomousActionsOn(agent);
   const browserRefusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
@@ -1263,7 +1334,10 @@ export function verdictList(
   );
 }
 
-function indexesWith(verdicts: readonly ActionVerdict[], disposition: ActionVerdict['disposition']): number[] {
+function indexesWith(
+  verdicts: readonly ActionVerdict[],
+  disposition: ActionVerdict['disposition'],
+): number[] {
   return verdicts.flatMap((verdict, index) => (verdict.disposition === disposition ? [index] : []));
 }
 
@@ -1281,8 +1355,9 @@ function refusedReasonEntries(
   verdicts: Doc<'workItems'>['actionVerdicts'] | undefined,
   count: number,
 ): Array<[number, string]> {
-  return verdictList(verdicts, count).flatMap((verdict, index): Array<[number, string]> =>
-    verdict.disposition === 'refused' ? [[index, verdict.reason]] : [],
+  return verdictList(verdicts, count).flatMap(
+    (verdict, index): Array<[number, string]> =>
+      verdict.disposition === 'refused' ? [[index, verdict.reason]] : [],
   );
 }
 
@@ -1339,8 +1414,8 @@ async function scheduleApply(
 /**
  * Hold an executing run at the exact-action gate and apply what the gate allows.
  *
- * Called by the action that ran the skill, in real mode, instead of applying
- * anything itself. The draft, notes and literal `actions` are persisted with
+ * Called by the action that ran the day0 skill instead of applying anything
+ * itself. The draft, notes and literal `actions` are persisted with
  * the run id and one verdict per row. Rows the gate classifies `auto` are
  * approved here and applied by the same scheduled path a manager's approval
  * uses, while the row stays `executing`; when nothing is `auto` the row moves
@@ -1356,10 +1431,7 @@ export const setActionsPending = internalMutation({
     output: v.any(),
     authoringAttemptId: v.optional(v.id('events')),
   },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ pending: boolean; phase?: 'auto' | 'manager' }> => {
+  handler: async (ctx, args): Promise<{ pending: boolean; phase?: 'auto' | 'manager' }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'executing') return { pending: false };
@@ -1385,6 +1457,9 @@ export const setActionsPending = internalMutation({
     const autoIndexes = indexesWith(actionVerdicts, 'auto');
     const heldIndexes = indexesWith(actionVerdicts, 'held');
     const refusedIndexes = indexesWith(actionVerdicts, 'refused');
+    const refusals = refusedReasonEntries(actionVerdicts, actions.length).map(
+      ([index, reason]) => ({ index, reason }),
+    );
     const payload = {
       workItemId: args.workItemId,
       runId: args.runId,
@@ -1392,6 +1467,7 @@ export const setActionsPending = internalMutation({
       autoIndexes,
       heldIndexes,
       refusedIndexes,
+      ...(refusals.length > 0 ? { refusals } : {}),
       autonomousActions,
       ...(dependent ? { dependentPhase: true } : {}),
     };
@@ -1464,6 +1540,10 @@ export const setAwaitingApproval = internalMutation({
     }
     const actions = actionsOf(args.output);
     const verdicts = verdictList(row.actionVerdicts, actions.length);
+    const refusals = refusedReasonEntries(verdicts, actions.length).map(([index, reason]) => ({
+      index,
+      reason,
+    }));
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       output: args.output,
@@ -1482,6 +1562,7 @@ export const setAwaitingApproval = internalMutation({
         autoIndexes: indexesWith(verdicts, 'auto'),
         heldIndexes: indexesWith(verdicts, 'held'),
         refusedIndexes: indexesWith(verdicts, 'refused'),
+        ...(refusals.length > 0 ? { refusals } : {}),
         autoApplied: true,
       },
       createdAt: Date.now(),
@@ -1525,56 +1606,56 @@ async function approveActionsInTransaction(
   via: DecisionVia,
   messageTs?: string,
 ): Promise<{ ok: true; approvedIndexes: number[] }> {
-    if (row.state !== 'actions-pending') {
-      throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+  if (row.state !== 'actions-pending') {
+    throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+  }
+  if (!row.pendingRunId) throw new Error('workItem has no pending run');
+  if (row.pendingRunId !== args.pendingRunId) {
+    throw new Error('pending run changed; refresh the action list');
+  }
+  if (row.approvedIndexes !== undefined) {
+    throw new Error('actions have already been approved');
+  }
+  const actions = actionsOf(row.output);
+  const verdicts = verdictList(row.actionVerdicts, actions.length);
+  const approvedIndexes = [...new Set(args.approvedIndexes)].sort((a, b) => a - b);
+  for (const index of approvedIndexes) {
+    if (!Number.isInteger(index) || index < 0 || index >= actions.length) {
+      throw new Error(`action index ${index} is outside the pending list`);
     }
-    if (!row.pendingRunId) throw new Error('workItem has no pending run');
-    if (row.pendingRunId !== args.pendingRunId) {
-      throw new Error('pending run changed; refresh the action list');
+    const verdict = verdicts[index];
+    if (verdict.disposition === 'refused') {
+      throw new Error(
+        `action ${index + 1} is refused (${verdict.reason}); approve the others by selection`,
+      );
     }
-    if (row.approvedIndexes !== undefined) {
-      throw new Error('actions have already been approved');
+    if (verdict.disposition === 'auto') {
+      throw new Error(`action ${index + 1} was applied automatically and cannot be approved again`);
     }
-    const actions = actionsOf(row.output);
-    const verdicts = verdictList(row.actionVerdicts, actions.length);
-    const approvedIndexes = [...new Set(args.approvedIndexes)].sort((a, b) => a - b);
-    for (const index of approvedIndexes) {
-      if (!Number.isInteger(index) || index < 0 || index >= actions.length) {
-        throw new Error(`action index ${index} is outside the pending list`);
-      }
-      const verdict = verdicts[index];
-      if (verdict.disposition === 'refused') {
-        throw new Error(
-          `action ${index + 1} is refused (${verdict.reason}); approve the others by selection`,
-        );
-      }
-      if (verdict.disposition === 'auto') {
-        throw new Error(`action ${index + 1} was applied automatically and cannot be approved again`);
-      }
-    }
-    const heldIndexes = indexesWith(verdicts, 'held');
-    const rejectedIndexes = heldIndexes.filter((index) => !approvedIndexes.includes(index));
-    await ctx.db.patch(args.workItemId, {
+  }
+  const heldIndexes = indexesWith(verdicts, 'held');
+  const rejectedIndexes = heldIndexes.filter((index) => !approvedIndexes.includes(index));
+  await ctx.db.patch(args.workItemId, {
+    approvedIndexes,
+    applyPhase: 'approved',
+    ...decidedPatch(row, 'actions', via, 'approved', messageTs),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.actions-approved',
+    payload: {
+      workItemId: args.workItemId,
+      runId: row.pendingRunId,
       approvedIndexes,
-      applyPhase: 'approved',
-      ...decidedPatch(row, 'actions', via, 'approved', messageTs),
-    });
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.actions-approved',
-      payload: {
-        workItemId: args.workItemId,
-        runId: row.pendingRunId,
-        approvedIndexes,
-        rejectedIndexes,
-        refusedIndexes: indexesWith(verdicts, 'refused'),
-        autoIndexes: indexesWith(verdicts, 'auto'),
-        decidedVia: via,
-      },
-      createdAt: Date.now(),
-    });
-    await scheduleApply(ctx, args.workItemId, row.pendingRunId, 'approved');
-    return { ok: true, approvedIndexes };
+      rejectedIndexes,
+      refusedIndexes: indexesWith(verdicts, 'refused'),
+      autoIndexes: indexesWith(verdicts, 'auto'),
+      decidedVia: via,
+    },
+    createdAt: Date.now(),
+  });
+  await scheduleApply(ctx, args.workItemId, row.pendingRunId, 'approved');
+  return { ok: true, approvedIndexes };
 }
 
 /**
@@ -1598,50 +1679,50 @@ async function rejectActionsInTransaction(
   via: DecisionVia,
   messageTs?: string,
 ): Promise<{ ok: true }> {
-    if (row.state !== 'actions-pending') {
-      throw new Error(`workItem state is ${row.state}; expected actions-pending`);
-    }
-    if (row.approvedIndexes !== undefined) {
-      throw new Error('actions have already been approved');
-    }
-    if (!row.pendingRunId) throw new Error('workItem has no pending run');
-    if (row.pendingRunId !== args.pendingRunId) {
-      throw new Error('pending run changed; refresh the action list');
-    }
-    const reason = args.reason.replace(/\s+/g, ' ').trim().slice(0, 200);
-    const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';
-    const applied = ledgerOf(row.output);
-    const output =
-      applied.length > 0
-        ? {
-            ...(row.output as Record<string, unknown>),
-            applied: applied.map((entry) =>
-              entry?.awaitingApproval
-                ? { ...entry, awaitingApproval: undefined, reason: skipReason }
-                : entry,
-            ),
-          }
-        : undefined;
-    await ctx.db.patch(args.workItemId, {
-      state: 'failed',
-      skipReason,
-      ...(output !== undefined ? { output } : {}),
-      pendingRunId: undefined,
-      approvedIndexes: undefined,
-      actionVerdicts: undefined,
-      applyPhase: undefined,
-      executionRunId: undefined,
-      applyAttemptId: undefined,
-      applyClaimedAt: undefined,
-      ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
-    });
-    await ctx.db.insert('events', {
-      agentId: row.agentId,
-      type: 'work.actions-rejected',
-      payload: { workItemId: args.workItemId, reason: skipReason, decidedVia: via },
-      createdAt: Date.now(),
-    });
-    return { ok: true };
+  if (row.state !== 'actions-pending') {
+    throw new Error(`workItem state is ${row.state}; expected actions-pending`);
+  }
+  if (row.approvedIndexes !== undefined) {
+    throw new Error('actions have already been approved');
+  }
+  if (!row.pendingRunId) throw new Error('workItem has no pending run');
+  if (row.pendingRunId !== args.pendingRunId) {
+    throw new Error('pending run changed; refresh the action list');
+  }
+  const reason = args.reason.replace(/\s+/g, ' ').trim().slice(0, 200);
+  const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';
+  const applied = ledgerOf(row.output);
+  const output =
+    applied.length > 0
+      ? {
+          ...(row.output as Record<string, unknown>),
+          applied: applied.map((entry) =>
+            entry?.awaitingApproval
+              ? { ...entry, awaitingApproval: undefined, reason: skipReason }
+              : entry,
+          ),
+        }
+      : undefined;
+  await ctx.db.patch(args.workItemId, {
+    state: 'failed',
+    skipReason,
+    ...(output !== undefined ? { output } : {}),
+    pendingRunId: undefined,
+    approvedIndexes: undefined,
+    actionVerdicts: undefined,
+    applyPhase: undefined,
+    executionRunId: undefined,
+    applyAttemptId: undefined,
+    applyClaimedAt: undefined,
+    ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
+  });
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.actions-rejected',
+    payload: { workItemId: args.workItemId, reason: skipReason, decidedVia: via },
+    createdAt: Date.now(),
+  });
+  return { ok: true };
 }
 
 /** Resolve one parsed manager reply inside the same transaction as the dashboard controls. */
@@ -1893,11 +1974,7 @@ export const recoverInterruptedApply = internalMutation({
     args,
   ): Promise<{ recovered: 'ignored' | 'rescheduled' | 'outcome-unknown' }> => {
     const row = await ctx.db.get(args.workItemId);
-    if (
-      !row ||
-      row.executionRunId !== args.pendingRunId ||
-      row.applyPhase !== args.phase
-    ) {
+    if (!row || row.executionRunId !== args.pendingRunId || row.applyPhase !== args.phase) {
       return { recovered: 'ignored' };
     }
     const unclaimedAuto =

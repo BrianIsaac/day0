@@ -51,10 +51,7 @@ export interface CharterSystemSeed {
   whereMentioned: string;
 }
 
-function withProbeAttempt(
-  surface: Doc<'surfaces'>,
-  attempt: ProbeAttempt,
-): ProbeAttempt[] {
+function withProbeAttempt(surface: Doc<'surfaces'>, attempt: ProbeAttempt): ProbeAttempt[] {
   return [...(surface.probeAttempts ?? []), attempt].slice(-MAX_PROBE_ATTEMPTS);
 }
 
@@ -290,30 +287,26 @@ export async function reconcileDocumentedSystems(
     );
     const previousByRef = new Map(
       prior
-        .filter(
-          (item): boolean => item.kind === 'documentation' && item.sourceId === args.sourceId,
-        )
+        .filter((item): boolean => item.kind === 'documentation' && item.sourceId === args.sourceId)
         .map((item) => [item.ref, item] as const),
     );
     const discoveryEvidence = [
       ...prior.filter(
         (item): boolean => item.kind !== 'documentation' || item.sourceId !== args.sourceId,
       ),
-      ...[...incoming.values()].map(
-        (item): DiscoveryEvidence => {
-          const previous = previousByRef.get(item.ref);
-          return {
-            kind: 'documentation',
-            sourceId: args.sourceId,
-            ref: item.ref,
-            quote: item.quote,
-            url: item.url,
-            current: true,
-            firstSeenAt: previous?.firstSeenAt ?? args.now,
-            lastSeenAt: args.now,
-          };
-        },
-      ),
+      ...[...incoming.values()].map((item): DiscoveryEvidence => {
+        const previous = previousByRef.get(item.ref);
+        return {
+          kind: 'documentation',
+          sourceId: args.sourceId,
+          ref: item.ref,
+          quote: item.quote,
+          url: item.url,
+          current: true,
+          firstSeenAt: previous?.firstSeenAt ?? args.now,
+          lastSeenAt: args.now,
+        };
+      }),
     ];
     if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
       throw new Error('Surface discovery provenance exceeds 64 sources.');
@@ -330,11 +323,11 @@ export async function reconcileDocumentedSystems(
       class: system.class,
       verdict: 'declared',
       whereFound: (system.evidence ?? [system]).map((item) => ({
-          sourceId: args.sourceId,
-          ref: item.ref,
-          quote: item.quote,
-          url: item.url,
-        })),
+        sourceId: args.sourceId,
+        ref: item.ref,
+        quote: item.quote,
+        url: item.url,
+      })),
       discoveryEvidence,
       credentialLanded: false,
       createdAt: args.now,
@@ -363,9 +356,7 @@ export const propose = internalMutation({
     whereFound: v.array(v.any()),
     path: v.string(),
     fallbackPath: v.string(),
-    pathCandidates: v.optional(
-      v.array(v.object({ path: v.string(), endpoint: v.string() })),
-    ),
+    pathCandidates: v.optional(v.array(v.object({ path: v.string(), endpoint: v.string() }))),
     endpoint: v.optional(v.string()),
     credentialId: v.optional(v.id('credentials')),
     credentialKind: v.optional(credentialKind),
@@ -737,10 +728,7 @@ export const recordInstalledApp = internalMutation({
 /** Reserve the next probe generation for an approved connection candidate. */
 export const beginProbe = internalMutation({
   args: { surfaceId: v.id('surfaces') },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+  handler: async (ctx, args): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (
       !surface ||
@@ -991,7 +979,7 @@ export const recordConnected = internalMutation({
       createdAt: args.verifiedAt,
     });
     if (transitioned) {
-      await grantScopeInTransaction(ctx, surface.agentId, `${surface.slug}:read`);
+      await grantScopeInTransaction(ctx, surface.agentId, `${surface.slug}:read`, 'surface');
       await requeueWorkAwaitingSurface(ctx, surface);
     }
     return true;

@@ -760,6 +760,12 @@ describe('surface probe generations', (): void => {
           .collect(),
     );
     expect(grants.map((grant): string => grant.scope)).toEqual(['linear:read']);
+    expect(grants[0].source).toBe('surface');
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+        .filter((event) => event.type === 'permission.granted')
+        .map((event) => event.payload),
+    ).toEqual([{ scope: 'linear:read', source: 'surface' }]);
     expect((await eventTypes(harness)).filter((type) => type === 'work.requeued')).toHaveLength(2);
   });
 });

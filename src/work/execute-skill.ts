@@ -55,14 +55,14 @@ const DRAFT_DISCIPLINE = [
 ];
 
 /**
- * Only the real path runs a second, result-dependent phase. The mock path
- * applies the whole set in one call, so a mock executor that held actions
- * back would leave the demo run half done with no turn to finish it.
+ * Only the real path runs a second, result-dependent authoring phase. The
+ * mock path proposes one complete set; the action gate may pause that set,
+ * but it never asks the model for another continuation.
  */
 const DEPENDENT_PHASE_REAL =
-  '  - When any later action needs an earlier action\'s result, emit only the prerequisite actions now and set `needsDependentPhase` to true. Do not prewrite the later comment, state change, reply or summary: it will be authored once from the applied ledger.';
+  "  - When any later action needs an earlier action's result, emit only the prerequisite actions now and set `needsDependentPhase` to true. Do not prewrite the later comment, state change, reply or summary: it will be authored once from the applied ledger.";
 const DEPENDENT_PHASE_MOCK =
-  '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment applies the whole set at once and runs no second phase.';
+  '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment treats it as one approval set and runs no second authoring phase.';
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
@@ -71,12 +71,13 @@ const MOCK_PREAMBLE = [
   DEPENDENT_PHASE_MOCK,
   '',
   'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. Available tools:',
-  "  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }",
-  "  - slack.postMessage    — { channelSlug, threadKey?, body }",
-  "  - twitter.reply        — { tweetSlug, body }",
-  "  - ticket.update        — { slug, status?, comment? }",
+  '  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }',
+  '  - slack.postMessage    — { channelSlug, threadKey?, body }',
+  '  - twitter.reply        — { tweetSlug, body }',
+  '  - ticket.update        — { slug, status?, comment? }',
   '',
   'Discipline:',
+  `  - ${actionModeInstruction(false, 'mock')}`,
   '  - Stay inside charter boundaries.',
   '  - Never invent values you do not have. If a cell value is unknown, leave it blank in `cells` and flag the gap in `notes`.',
   '  - Cold-start posture: prefer drafts to manager DM (`channelSlug: "dm-manager"`) over public channel posts. The candidate has already passed the charter quality-fit gate, so it IS in scope — emit the actions the skill calls for.',
@@ -106,11 +107,11 @@ const REAL_PREAMBLE = [
   'Discipline:',
   '  - Stay inside charter boundaries.',
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
-  '  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager\'s approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.',
+  "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
   '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
   '',
   'Closing the loop:',
-  '  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook\'s comment tool, and only after it, if the work is complete, the state change with the runbook\'s state argument. A status change is never the only trace of who acted.',
+  "  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook's comment tool, and only after it, if the work is complete, the state change with the runbook's state argument. A status change is never the only trace of who acted.",
   '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
   '  - When a chat surface is connected, ALSO send the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id: a question or escalation when you have one, else a one-line note of what the actions in this response do. When none is connected, say so in `notes` instead of substituting another channel.',
   '  - Each provider mutation is its own action so it can be decided and applied on its own.',
@@ -282,7 +283,7 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
     '  - http.request - { surface, method, path, headersJson, body }: `path` is relative to the surface endpoint; `headersJson` is a JSON object of headers; `body` is the request body.',
     '  - Write `{{secret}}` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.',
     '  - You may only target a surface listed above. A system without a connected surface gets no action; say so in `notes`.',
-    '  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager\'s approval unless autonomous actions are on.',
+    "  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager's approval unless autonomous actions are on.",
     '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
     '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
   );
@@ -314,7 +315,8 @@ function renderTeamDocs(docs: MockSurfaceSnapshot['teamDocs']): string {
   return docs.map((d) => `--- ${d.title} ---\n${d.body}`).join('\n\n');
 }
 
-function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
+/** The workspace listing every mock-mode executor sees: slugs, tabs, tickets and recent messages, never the docs. */
+export function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   const lines: string[] = [];
   lines.push('## Spreadsheets');
   for (const sh of env.spreadsheets) {
@@ -419,7 +421,9 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Body:`,
     candidate.contentSummary,
     '',
-    ...(mode === 'mock' ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), ''] : []),
+    ...(mode === 'mock'
+      ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), '']
+      : []),
     '--- Team docs (read-only context) ---',
     renderTeamDocs(mockEnv.teamDocs),
     '',
@@ -489,7 +493,7 @@ export async function runDependentSkill(
     base,
     '',
     '--- Result-dependent phase (second and final phase) ---',
-    'The prerequisite actions have finished. This is the run\'s only dependent phase; there is no third turn and no loop.',
+    "The prerequisite actions have finished. This is the run's only dependent phase; there is no third turn and no loop.",
     'The earlier needsDependentPhase instruction no longer applies; this final schema has no continuation flag.',
     `Emit at most ${DEPENDENT_ACTION_CAP} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
     'Treat only the applied ledger below as evidence of what happened. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',

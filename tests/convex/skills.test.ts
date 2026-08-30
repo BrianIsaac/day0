@@ -72,7 +72,11 @@ async function seedSurface(
   });
 }
 
-async function propose(harness: Harness, agentId: Id<'agents'>, workItemId: Id<'workItems'>): Promise<Id<'skills'>> {
+async function propose(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  workItemId: Id<'workItems'>,
+): Promise<Id<'skills'>> {
   return await harness.mutation(internal.skills.propose, {
     agentId,
     workItemId,
@@ -90,13 +94,18 @@ describe('rejecting a proposed skill', (): void => {
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
     const skillId = await propose(harness, agentId, workItemId);
     await harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId });
-    const [skill, work] = await harness.run(async (ctx) => [await ctx.db.get(skillId), await ctx.db.get(workItemId)]);
+    const [skill, work] = await harness.run(async (ctx) => [
+      await ctx.db.get(skillId),
+      await ctx.db.get(workItemId),
+    ]);
     expect(skill?.state).toBe('rejected');
     expect(work).toMatchObject({
       state: 'cancelled',
       skipReason: 'skill proposal "update-linear-ticket" rejected by the manager',
     });
-    await expect(harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId })).resolves.toEqual({ ok: true });
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId }),
+    ).resolves.toEqual({ ok: true });
   });
 
   it('does not cancel source work that moved on before the proposal was rejected', async (): Promise<void> => {
@@ -113,7 +122,9 @@ describe('rejecting a proposed skill', (): void => {
 
     await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId });
 
-    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe('completed');
+    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe(
+      'completed',
+    );
   });
 
   it('does not cancel work that is now waiting for a different proposal', async (): Promise<void> => {
@@ -216,14 +227,12 @@ describe('revising a registered authored skill', (): void => {
     await expect(
       harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
     ).rejects.toThrow('cannot revise a skill after an execution has claimed it');
-    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe(
-      'registered',
-    );
+    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('registered');
   });
 });
 
 describe('skills that target a surface', (): void => {
-  it('refuses to create a proposal against another agent\'s work', async (): Promise<void> => {
+  it("refuses to create a proposal against another agent's work", async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const first = await seedAgentAndWork(harness, 'linear');
@@ -294,7 +303,10 @@ describe('skills that target a surface', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
-    await seedSurface(harness, agentId, 'connected', { credentialLanded: true, lastVerifiedAt: Date.now() });
+    await seedSurface(harness, agentId, 'connected', {
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+    });
     const skillId = await harness.mutation(internal.skills.propose, {
       agentId,
       workItemId,
@@ -315,7 +327,9 @@ describe('skills that target a surface', (): void => {
     const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
     expect(skill?.targetSurface).toBeUndefined();
     expect(skill?.requiredScopes).toEqual(['boss:message', 'linear:read', 'linear:write']);
-    await expect(harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId })).resolves.toEqual({ ok: true });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).resolves.toEqual({ ok: true });
   });
 
   it('targets an unlisted real source so approval cannot bypass connection', async (): Promise<void> => {
@@ -384,12 +398,16 @@ describe('skills that target a surface', (): void => {
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
     await seedSurface(harness, agentId, 'approved', { credentialLanded: false });
     const skillId = await propose(harness, agentId, workItemId);
-    await expect(harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId })).rejects.toThrow(
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).rejects.toThrow(
       'cannot approve "update-linear-ticket": surface linear is ungranted; connect it on the Surfaces tab before approving this skill',
     );
     const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
     expect(skill?.state).toBe('proposed');
-    const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());
+    const grants = await harness.run(
+      async (ctx) => await ctx.db.query('permissionGrants').collect(),
+    );
     expect(grants).toEqual([]);
   });
 
@@ -397,9 +415,14 @@ describe('skills that target a surface', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
-    await seedSurface(harness, agentId, 'connected', { credentialLanded: true, lastVerifiedAt: Date.now() - 7 * 60 * 60 * 1000 });
+    await seedSurface(harness, agentId, 'connected', {
+      credentialLanded: true,
+      lastVerifiedAt: Date.now() - 7 * 60 * 60 * 1000,
+    });
     const skillId = await propose(harness, agentId, workItemId);
-    await expect(harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId })).rejects.toThrow('surface linear is listed-dead');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).rejects.toThrow('surface linear is listed-dead');
   });
 
   it('refuses approval when a connected browser surface has lost its component', async (): Promise<void> => {
@@ -429,19 +452,43 @@ describe('skills that target a surface', (): void => {
       harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
     ).rejects.toThrow('surface looker is ungranted');
     expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('proposed');
-    expect(await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect())).toEqual(
-      [],
-    );
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect()),
+    ).toEqual([]);
   });
 
   it('approves and grants the surface scopes once the surface is connected', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
-    await seedSurface(harness, agentId, 'connected', { credentialLanded: true, lastVerifiedAt: Date.now() });
+    await seedSurface(harness, agentId, 'connected', {
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+    });
     const skillId = await propose(harness, agentId, workItemId);
-    await expect(harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId })).resolves.toEqual({ ok: true });
-    const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());
-    expect(grants.map((grant) => grant.scope).sort()).toEqual(['boss:message', 'linear:read', 'linear:write']);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    const grants = await harness.run(
+      async (ctx) => await ctx.db.query('permissionGrants').collect(),
+    );
+    expect(grants.map((grant) => grant.scope).sort()).toEqual([
+      'boss:message',
+      'linear:read',
+      'linear:write',
+    ]);
+    expect(grants.every((grant) => grant.source === 'skill')).toBe(true);
+    const grantEvents = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'permission.granted',
+      ),
+    );
+    expect(grantEvents.map((event) => event.payload)).toEqual(
+      expect.arrayContaining([
+        { scope: 'boss:message', source: 'skill' },
+        { scope: 'linear:read', source: 'skill' },
+        { scope: 'linear:write', source: 'skill' },
+      ]),
+    );
   });
 });

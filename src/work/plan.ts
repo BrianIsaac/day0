@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
+import type { SurfaceMode } from '../surfaces/types';
 import type { ExecutionPlan, WorkCandidate } from './types';
 
 /**
@@ -26,15 +27,26 @@ const SYSTEM_PROMPT_HEAD = [
 ];
 
 /** The run-context instruction shared by the planner and executor. */
-export function actionModeInstruction(autonomousActions: boolean): string {
+export function actionModeInstruction(
+  autonomousActions: boolean,
+  surfaceMode: SurfaceMode = 'real',
+): string {
+  if (surfaceMode === 'mock') {
+    return "Mock comparison mode: every emitted action is held for the manager's literal approval and only applied after that decision.";
+  }
   return autonomousActions
     ? 'Autonomous actions are ON: every allowed write lands as emitted; do not say an action is queued or awaiting approval.'
-    : 'Autonomous actions are OFF: reads and the manager DM land now; every other write is held for the manager\'s literal approval - say so.';
+    : "Autonomous actions are OFF: reads and the manager DM land now; every other write is held for the manager's literal approval - say so.";
 }
 
 /** Build the plan drafter's system prompt for the switch value read for this run. */
-export function planSystemPrompt(autonomousActions: boolean): string {
-  return [...SYSTEM_PROMPT_HEAD, '', actionModeInstruction(autonomousActions)].join('\n');
+export function planSystemPrompt(
+  autonomousActions: boolean,
+  surfaceMode: SurfaceMode = 'real',
+): string {
+  return [...SYSTEM_PROMPT_HEAD, '', actionModeInstruction(autonomousActions, surfaceMode)].join(
+    '\n',
+  );
 }
 
 const planSchema = z.object({
@@ -56,11 +68,12 @@ export interface DraftPlanArgs {
   candidate: WorkCandidate;
   charter: Charter;
   autonomousActions: boolean;
+  surfaceMode?: SurfaceMode;
 }
 
 export async function draftExecutionPlan(args: DraftPlanArgs): Promise<ExecutionPlan> {
   const { candidate, charter, autonomousActions } = args;
-  const planAgent = makeAgent('day0-plan', planSystemPrompt(autonomousActions));
+  const planAgent = makeAgent('day0-plan', planSystemPrompt(autonomousActions, args.surfaceMode));
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
     '',

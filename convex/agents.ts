@@ -12,6 +12,16 @@ import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
 
+export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
+export type PermissionGrantSource = (typeof PERMISSION_GRANT_SOURCES)[number];
+
+const permissionGrantSource = v.union(
+  v.literal('deploy'),
+  v.literal('manager'),
+  v.literal('skill'),
+  v.literal('surface'),
+);
+
 /**
  * Agent CRUD + state transitions. Each agent is owned by one caller subject —
  * a Clerk user, or the single synthetic user in no-auth dev mode;
@@ -73,10 +83,17 @@ export const deploy = mutation({
     bossEmail: v.string(),
     name: v.optional(v.string()),
     avatarId: v.optional(v.string()),
+    arm: v.optional(v.union(v.literal('day0'), v.literal('baseline'))),
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
+    // The control arm exists only for the mock-mode comparison. Nothing on the
+    // real path reads the arm, so a baseline row there would be a day0 agent
+    // wearing the wrong label in the evidence.
+    if (args.arm === 'baseline' && SURFACE_MODE !== 'mock') {
+      throw new Error('the baseline comparison arm can only be deployed in mock mode');
+    }
     for (const sourceId of args.excludedDocSourceIds ?? []) {
       const source = await ctx.db.get(sourceId);
       if (!source || source.userId !== identity.subject) {
@@ -92,12 +109,13 @@ export const deploy = mutation({
         : undefined,
       userId: identity.subject,
       state: 'deployed',
+      arm: args.arm ?? 'day0',
       createdAt: Date.now(),
     });
     await ctx.db.insert('events', {
       agentId,
       type: 'agent.deployed',
-      payload: { bossEmail: args.bossEmail },
+      payload: { bossEmail: args.bossEmail, arm: args.arm ?? 'day0' },
       createdAt: Date.now(),
     });
     const initialScopes =
@@ -105,10 +123,18 @@ export const deploy = mutation({
         ? ['boss:message', 'docs:read', 'spreadsheet:read', 'social:read', 'ticket:read']
         : ['boss:message', 'docs:read'];
     for (const scope of initialScopes) {
+      const createdAt = Date.now();
       await ctx.db.insert('permissionGrants', {
         agentId,
         scope,
-        createdAt: Date.now(),
+        source: 'deploy',
+        createdAt,
+      });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'permission.granted',
+        payload: { scope, source: 'deploy' },
+        createdAt,
       });
     }
     await ctx.scheduler.runAfter(0, internal.docSyncActions.mirrorForAgent, { agentId });
@@ -122,19 +148,99 @@ export const grantScopes = mutation({
     await assertOwnsAgent(ctx, args.agentId);
     let added = 0;
     for (const scope of args.scopes) {
-      const existing = await ctx.db
-        .query('permissionGrants')
-        .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId).eq('scope', scope))
-        .first();
-      if (existing) continue;
-      await ctx.db.insert('permissionGrants', {
-        agentId: args.agentId,
-        scope,
-        createdAt: Date.now(),
-      });
-      added += 1;
+      if (scope.trim() === '') throw new Error('permission scope must not be empty');
+      const result = await grantScopeInTransaction(ctx, args.agentId, scope, 'manager');
+      if (result.added) added += 1;
     }
     return { added };
+  },
+});
+
+/** Revoke every active copy of one scope and leave its audit history intact. */
+export const revokeScope = mutation({
+  args: {
+    agentId: v.id('agents'),
+    scope: v.string(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{ revoked: number }> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    if (args.scope.trim() === '') throw new Error('permission scope must not be empty');
+    const grants = await ctx.db
+      .query('permissionGrants')
+      .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId).eq('scope', args.scope))
+      .collect();
+    const active = grants.filter((grant) => grant.revokedAt === undefined);
+    if (active.length === 0) return { revoked: 0 };
+    const revokedAt = Date.now();
+    for (const grant of active) await ctx.db.patch(grant._id, { revokedAt });
+    const reason = args.reason?.replace(/\s+/g, ' ').trim().slice(0, 200);
+    await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'permission.revoked',
+      payload: {
+        scope: args.scope,
+        by: 'manager',
+        ...(reason ? { reason } : {}),
+      },
+      createdAt: revokedAt,
+    });
+    return { revoked: active.length };
+  },
+});
+
+/** Active and revoked scopes, collapsed to the latest edge for the dashboard. */
+export const permissionScopes = query({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args) => {
+    await assertOwnsAgent(ctx, args.agentId);
+    const [grants, surfaces, skills] = await Promise.all([
+      ctx.db
+        .query('permissionGrants')
+        .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+      ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+      ctx.db
+        .query('skills')
+        .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
+        .collect(),
+    ]);
+    const baseline = new Set([
+      'boss:message',
+      'docs:read',
+      'spreadsheet:read',
+      'social:read',
+      'ticket:read',
+    ]);
+    const inferredSource = (scope: string): PermissionGrantSource => {
+      if (baseline.has(scope)) return 'deploy';
+      if (surfaces.some((surface) => scope === `${surface.slug}:read`)) return 'surface';
+      if (skills.some((skill) => skill.requiredScopes?.includes(scope))) return 'skill';
+      return 'manager';
+    };
+    const byScope = new Map<string, Doc<'permissionGrants'>[]>();
+    for (const grant of grants) {
+      const rows = byScope.get(grant.scope) ?? [];
+      rows.push(grant);
+      byScope.set(grant.scope, rows);
+    }
+    return [...byScope.entries()]
+      .map(([scope, rows]) => {
+        const newestFirst = [...rows].sort((left, right) => right.createdAt - left.createdAt);
+        const active = newestFirst.find((row) => row.revokedAt === undefined);
+        const latest = active ?? newestFirst[0];
+        return {
+          scope,
+          active: active !== undefined,
+          source: latest.source ?? inferredSource(scope),
+          grantedAt: latest.createdAt,
+          revokedAt: latest.revokedAt ?? null,
+        };
+      })
+      .sort((left, right) => left.scope.localeCompare(right.scope));
   },
 });
 
@@ -196,22 +302,31 @@ export async function grantScopeInTransaction(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   scope: string,
+  source: PermissionGrantSource,
 ): Promise<{ added: boolean }> {
-  const existing = await ctx.db
-    .query('permissionGrants')
-    .withIndex('by_agent_scope', (index) => index.eq('agentId', agentId).eq('scope', scope))
-    .filter((query) => query.eq(query.field('revokedAt'), undefined))
-    .first();
+  const existing = (
+    await ctx.db
+      .query('permissionGrants')
+      .withIndex('by_agent_scope', (index) => index.eq('agentId', agentId).eq('scope', scope))
+      .collect()
+  ).find((grant) => grant.revokedAt === undefined);
   if (existing) return { added: false };
-  await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: Date.now() });
+  const createdAt = Date.now();
+  await ctx.db.insert('permissionGrants', { agentId, scope, source, createdAt });
+  await ctx.db.insert('events', {
+    agentId,
+    type: 'permission.granted',
+    payload: { scope, source },
+    createdAt,
+  });
   return { added: true };
 }
 
 /** Grant one read or write scope idempotently after a provider connection succeeds. */
 export const grantScope = internalMutation({
-  args: { agentId: v.id('agents'), scope: v.string() },
+  args: { agentId: v.id('agents'), scope: v.string(), source: permissionGrantSource },
   handler: async (ctx, args): Promise<{ added: boolean }> =>
-    await grantScopeInTransaction(ctx, args.agentId, args.scope),
+    await grantScopeInTransaction(ctx, args.agentId, args.scope, args.source),
 });
 
 /**

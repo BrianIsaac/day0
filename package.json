@@ -29,6 +29,7 @@
     "start": "next start -p 3000",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "eval:semifinal": "tsx --env-file-if-exists=.env.local scripts/eval-semifinal.ts",
     "probe:model": "tsx --env-file-if-exists=.env.local scripts/probe-model-endpoint.ts",
     "probe:mcp": "tsx --env-file-if-exists=.env.local scripts/probe-mcp.ts",
     "probe:docs-source": "tsx --env-file-if-exists=.env.local scripts/probe-docs-source.ts",

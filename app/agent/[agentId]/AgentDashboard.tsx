@@ -28,6 +28,7 @@ import { verdictFor } from '../../../src/surfaces/verdict';
 import { replyTargetFor } from '../../../src/work/reply-target';
 import type { MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
+import type { AgentMetrics } from '../../../convex/metrics';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -54,6 +55,7 @@ export function AgentDashboard({ agentId }: Props) {
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: 30 });
+  const metrics = useQuery(api.metrics.forAgent, { agentId });
   const voiceSession = useQuery(api.voice.latest, { agentId });
   // Real mode only: the mock has no surfaces table rows, and the hosted app
   // never asks for connection verdicts.
@@ -192,6 +194,8 @@ export function AgentDashboard({ agentId }: Props) {
             authoringFailure={authoringFailure}
             onAuthoringAttempt={setLastAttempt}
           />
+          {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
+          <MetricsCard metrics={metrics} />
           <EventTicker events={events ?? []} />
         </div>
       </div>
@@ -1671,6 +1675,230 @@ function WorkItemCard({
         </div>
       ) : null}
     </div>
+  );
+}
+
+type PermissionSource = 'deploy' | 'manager' | 'skill' | 'surface';
+
+export interface PermissionScopeView {
+  scope: string;
+  active: boolean;
+  source: PermissionSource;
+  grantedAt: number;
+  revokedAt: number | null;
+}
+
+const PERMISSION_SOURCE_LABEL: Record<PermissionSource, string> = {
+  deploy: 'deploy',
+  manager: 'manager',
+  skill: 'skill',
+  surface: 'surface',
+};
+
+export function PermissionRows({
+  scopes,
+  confirmingScope,
+  busyScope,
+  onAskRevoke,
+  onCancelRevoke,
+  onRevoke,
+  onRegrant,
+}: {
+  scopes: PermissionScopeView[];
+  confirmingScope: string | null;
+  busyScope: string | null;
+  onAskRevoke: (scope: string) => void;
+  onCancelRevoke: () => void;
+  onRevoke: (scope: string) => void;
+  onRegrant: (scope: string) => void;
+}) {
+  return (
+    <ul className="space-y-2 text-xs">
+      {scopes.map((row) => {
+        const confirming = confirmingScope === row.scope;
+        const busy = busyScope === row.scope;
+        return (
+          <li key={row.scope} className="rounded-md border border-[var(--color-border)] p-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-mono text-[var(--color-fg)] truncate">{row.scope}</p>
+                <p className="text-[10px] text-[var(--color-muted)]">
+                  {row.active ? 'granted' : 'revoked'} - from{' '}
+                  {PERMISSION_SOURCE_LABEL[row.source]}
+                </p>
+              </div>
+              {row.active ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onAskRevoke(row.scope)}
+                  className="shrink-0 px-2 py-1 rounded border border-[var(--color-danger)]/40 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
+                >
+                  Revoke
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onRegrant(row.scope)}
+                  className="shrink-0 px-2 py-1 rounded border border-[var(--color-accent)]/40 text-[10px] text-[var(--color-accent)] disabled:opacity-50"
+                >
+                  Re-grant
+                </button>
+              )}
+            </div>
+            {confirming ? (
+              <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+                <p className="text-[10px] text-[var(--color-fg)] mb-2">
+                  Revoke {row.scope}? Queued and in-flight work needing it will be stopped.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onRevoke(row.scope)}
+                    className="px-2 py-1 rounded bg-[var(--color-danger)]/20 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
+                  >
+                    Confirm revoke
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onCancelRevoke}
+                    className="px-2 py-1 rounded border border-[var(--color-border)] text-[10px] disabled:opacity-50"
+                  >
+                    Keep grant
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
+  const scopes = useQuery(api.agents.permissionScopes, { agentId });
+  const revokeScope = useMutation(api.agents.revokeScope);
+  const grantScopes = useMutation(api.agents.grantScopes);
+  const [confirmingScope, setConfirmingScope] = useState<string | null>(null);
+  const [busyScope, setBusyScope] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function change(scope: string, kind: 'revoke' | 'grant'): Promise<void> {
+    setBusyScope(scope);
+    setError(null);
+    try {
+      if (kind === 'revoke') {
+        await revokeScope({
+          agentId,
+          scope,
+          reason: 'Revoked by the manager from the agent dashboard.',
+        });
+        setConfirmingScope(null);
+      } else {
+        await grantScopes({ agentId, scopes: [scope] });
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyScope(null);
+    }
+  }
+
+  return (
+    <Card title="Permissions">
+      <p className="text-[10px] text-[var(--color-muted)] mb-3 leading-relaxed">
+        Reads and manager messages stop when their grant is revoked. A literal write you approve
+        remains authorised by that exact approval.
+      </p>
+      {scopes === undefined ? (
+        <p className="text-xs text-[var(--color-muted)]">loading permissions…</p>
+      ) : scopes.length === 0 ? (
+        <p className="text-xs text-[var(--color-muted)]">no permission history yet</p>
+      ) : (
+        <PermissionRows
+          scopes={scopes}
+          confirmingScope={confirmingScope}
+          busyScope={busyScope}
+          onAskRevoke={setConfirmingScope}
+          onCancelRevoke={() => setConfirmingScope(null)}
+          onRevoke={(scope) => void change(scope, 'revoke')}
+          onRegrant={(scope) => void change(scope, 'grant')}
+        />
+      )}
+      {error ? <p className="mt-2 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+    </Card>
+  );
+}
+
+export function formatMetricDuration(milliseconds: number | null): string {
+  if (milliseconds === null) return 'not yet';
+  const totalSeconds = Math.round(milliseconds / 1_000);
+  if (totalSeconds < 60) return `${totalSeconds} s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds === 0 ? `${minutes} min` : `${minutes} min ${seconds} s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours} h` : `${hours} h ${remainingMinutes} min`;
+}
+
+function metricValue(value: string | undefined): string {
+  return value ?? 'loading…';
+}
+
+export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) {
+  const humanDecisions = metrics
+    ? metrics.decisions.requested === 0
+      ? 'not yet'
+      : `${metrics.decisions.approved} / ${metrics.decisions.rejected}`
+    : undefined;
+  const blocked = metrics
+    ? metrics.actions.blockedAfterRevocation === null
+      ? 'not yet'
+      : String(metrics.actions.blockedAfterRevocation)
+    : undefined;
+  const completeness = metrics
+    ? metrics.auditTrail.fraction === null
+      ? 'not yet'
+      : `${Math.round(metrics.auditTrail.fraction * 100)}% (${metrics.auditTrail.complete}/${metrics.auditTrail.total})`
+    : undefined;
+  const rows = [
+    {
+      label: 'time to first approved charter',
+      value: metrics ? formatMetricDuration(metrics.charter.timeToFirstApprovedMs) : undefined,
+    },
+    { label: 'human decisions (approved / rejected)', value: humanDecisions },
+    {
+      label: 'median decision latency',
+      value: metrics ? formatMetricDuration(metrics.decisions.medianLatencyMs) : undefined,
+    },
+    { label: 'actions blocked after revocation', value: blocked },
+    { label: 'audit-trail completeness', value: completeness },
+  ];
+  return (
+    <Card title="Supervision metrics" tone="accent">
+      <dl className="space-y-2">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-start justify-between gap-3 text-xs">
+            <dt className="text-[var(--color-muted)] leading-tight">{row.label}</dt>
+            <dd className="font-mono text-[var(--color-fg)] text-right shrink-0">
+              {metricValue(row.value)}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {metrics ? (
+        <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
+          {metrics.decisions.requested} decisions requested - {metrics.decisions.partiallyApproved}{' '}
+          partial - {metrics.actions.autoApplied} actions automatic - {metrics.actions.held} held -{' '}
+          {metrics.actions.refused} refused
+        </p>
+      ) : null}
+    </Card>
   );
 }
 

@@ -13,10 +13,8 @@ import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import {
-  browserComponentRefusal,
-  withBrowserComponentState,
-} from '../src/surfaces/browser';
+import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
+import { grantScopeInTransaction } from './agents';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -151,15 +149,12 @@ async function surfaceForWork(
     .withIndex('by_agent', (q) => q.eq('agentId', agentId))
     .collect();
   const workTokens = new Set(
-    `${item.title}\n${item.contentSummary}`
-      .toLowerCase()
-      .match(/[a-z0-9]+/g) ?? [],
+    `${item.title}\n${item.contentSummary}`.toLowerCase().match(/[a-z0-9]+/g) ?? [],
   );
   const named = surfaces.filter((surface: Doc<'surfaces'>): boolean => {
     const nameTokens = surface.displayName.toLowerCase().match(/[a-z0-9]+/g) ?? [];
     return (
-      nameTokens.length > 0 &&
-      nameTokens.every((token: string): boolean => workTokens.has(token))
+      nameTokens.length > 0 && nameTokens.every((token: string): boolean => workTokens.has(token))
     );
   });
   const namedSlugs = [...new Set(named.map((surface: Doc<'surfaces'>): string => surface.slug))];
@@ -324,9 +319,7 @@ export const propose = internalMutation({
       : requestedScopes;
     const existing = await ctx.db
       .query('skills')
-      .withIndex('by_agent_name', (q) =>
-        q.eq('agentId', args.agentId).eq('name', args.name),
-      )
+      .withIndex('by_agent_name', (q) => q.eq('agentId', args.agentId).eq('name', args.name))
       .first();
     if (existing && existing.state !== 'rejected' && existing.state !== 'failed') {
       if (existing.state === 'proposed') {
@@ -416,17 +409,7 @@ export const approve = mutation({
     }
     await ctx.db.patch(args.skillId, { state: 'approved' });
     for (const scope of row.requiredScopes ?? []) {
-      const existing = await ctx.db
-        .query('permissionGrants')
-        .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId).eq('scope', scope))
-        .first();
-      if (!existing) {
-        await ctx.db.insert('permissionGrants', {
-          agentId: row.agentId,
-          scope,
-          createdAt: Date.now(),
-        });
-      }
+      await grantScopeInTransaction(ctx, row.agentId, scope, 'skill');
     }
     await ctx.db.insert('events', {
       agentId: row.agentId,

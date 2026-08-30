@@ -248,6 +248,7 @@ export const draftPlan = action({
       candidate: rowToCandidate(item),
       charter: charterRow.body as Charter,
       autonomousActions: autonomousActionsOn(agent),
+      surfaceMode: SURFACE_MODE,
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -333,69 +334,16 @@ async function executeApprovedPlanHandler(
     skillId: pickedSkill._id,
   });
   if (!claim.claimed) return { ok: false, reason: claim.reason };
-  if (SURFACE_MODE === 'real') {
-    return await holdRealActions(ctx, {
-      workItemId: args.workItemId,
-      agentId,
-      runId: claim.runId,
-      skill: pickedSkill,
-      plan,
-      candidate,
-      charter,
-      internalCaller,
-    });
-  }
-  try {
-    const mockEnv = await readSurfaceSnapshot(ctx, agentId, 'mock', []);
-    const output = await runSkill({
-      skill: {
-        name: pickedSkill.name,
-        description: pickedSkill.description,
-        body: pickedSkill.body,
-      },
-      plan,
-      candidate,
-      charter,
-      mockEnv,
-    });
-    const applied = await applySurfaceActions(
-      ctx,
-      'mock',
-      [],
-      {
-        agentId,
-        workItemId: args.workItemId,
-        runId: claim.runId,
-      },
-      output.actions ?? [],
-    );
-    // A run completes only when every action it emitted changed the work
-    // environment. "At least one applied" is not enough: the skills are told
-    // to DM the manager alongside the primary mutation, so a failed primary
-    // action plus a delivered "I did it" DM would report the work as done
-    // when only the claim about it landed.
-    const reason = completionFailure(applied);
-    if (reason) {
-      await ctx.runMutation(internal.work.setFailed, {
-        workItemId: args.workItemId,
-        reason,
-        output: { ...output, applied },
-      });
-      return { ok: false, reason };
-    }
-    await ctx.runMutation(internal.work.setCompleted, {
-      workItemId: args.workItemId,
-      output: { ...output, applied },
-    });
-    return { ok: true };
-  } catch (err) {
-    const reason = (err as Error).message;
-    await ctx.runMutation(internal.work.setFailed, {
-      workItemId: args.workItemId,
-      reason,
-    });
-    return { ok: false, reason };
-  }
+  return await holdDay0Actions(ctx, {
+    workItemId: args.workItemId,
+    agentId,
+    runId: claim.runId,
+    skill: pickedSkill,
+    plan,
+    candidate,
+    charter,
+    internalCaller,
+  });
 }
 
 export const executeApprovedPlan = action({
@@ -415,7 +363,7 @@ export const executeApprovedPlanInternal = internalAction({
 });
 
 /**
- * Run a real-surface skill and stop it at the exact-action gate.
+ * Run a day0 skill and stop its proposed writes at the exact-action gate.
  *
  * Args:
  *   ctx: Convex action context.
@@ -424,7 +372,7 @@ export const executeApprovedPlanInternal = internalAction({
  * Returns:
  *   The pending result, or the fenced failure.
  */
-async function holdRealActions(
+async function holdDay0Actions(
   ctx: ActionCtx,
   args: {
     workItemId: Id<'workItems'>;
@@ -443,6 +391,7 @@ async function holdRealActions(
     const mockEnv = args.internalCaller
       ? await ctx.runQuery(internal.mock.snapshotInternal, { agentId: args.agentId })
       : await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
+    const surfaces = SURFACE_MODE === 'real' ? await loadSurfaces(ctx, args.agentId) : [];
     const output = await runSkill({
       skill: {
         name: args.skill.name,
@@ -453,11 +402,14 @@ async function holdRealActions(
       candidate: args.candidate,
       charter: args.charter,
       mockEnv,
-      surfaces: await loadSurfaces(ctx, args.agentId),
-      mode: 'real',
+      surfaces,
+      mode: SURFACE_MODE,
       autonomousActions: autonomousActionsOn(agent),
     });
-    const stagedOutput = prerequisiteOutput(output, args.plan);
+    const stagedOutput =
+      SURFACE_MODE === 'real'
+        ? prerequisiteOutput(output, args.plan)
+        : { ...output, needsDependentPhase: false };
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
       // Nothing to wait for is not a failed prerequisite: the closing phase
       // authors the whole set and accounts for every plan step, and a step
@@ -524,7 +476,8 @@ function isDependentPendingOutput(
   return (output as { phase?: unknown }).phase === 'dependent';
 }
 
-const RESULT_STEP = /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/i;
+const RESULT_STEP =
+  /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/i;
 const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/i;
 
 /** Whether the approved plan or emitted prerequisites require one result-aware turn. */
@@ -556,12 +509,7 @@ function successfulReadSurfaces(
   actions.forEach((action, index): void => {
     const row = applied[index];
     const parsed = parseSurfaceAction(action);
-    if (
-      row?.ok &&
-      !row.held &&
-      parsed.ok &&
-      actionIntent(parsed.action) === 'read'
-    ) {
+    if (row?.ok && !row.held && parsed.ok && actionIntent(parsed.action) === 'read') {
       surfaces.add(parsed.action.surface.toLowerCase());
     }
   });
@@ -955,6 +903,9 @@ function authorityBeforeTransport(
     if (phase === 'auto' && !isAutomatic(parsed.action, surface, authority.autonomousActions)) {
       return NOT_AUTOMATIC;
     }
+    // Approved writes use the manager's exact-action approval as authority,
+    // even if the generic write grant was revoked after hold. Reads and the
+    // manager DM still require their standing grant at this last checkpoint.
     if (needsStandingGrant(parsed.action, surface) || phase === 'auto') {
       const grant = grantRefusal(
         parsed.action,
@@ -1048,7 +999,10 @@ async function finishRun(
         output: { ...output, applied },
       });
       if (!parked.parked) {
-        return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
+        return {
+          ok: false,
+          reason: 'the run was moved on before its held actions could be parked',
+        };
       }
       return {
         ok: true,
@@ -1083,9 +1037,15 @@ async function finishRun(
         output: { ...output, applied },
       });
       if (!parked.parked) {
-        return { ok: false, reason: 'the run was moved on before its held actions could be parked' };
+        return {
+          ok: false,
+          reason: 'the run was moved on before its held actions could be parked',
+        };
       }
-      return { ok: true, reason: "automatic actions applied; the rest await the manager's approval" };
+      return {
+        ok: true,
+        reason: "automatic actions applied; the rest await the manager's approval",
+      };
     }
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
       workItemId,
