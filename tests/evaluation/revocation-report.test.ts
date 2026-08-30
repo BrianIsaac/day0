@@ -125,6 +125,13 @@ describe('the revocation evidence report', (): void => {
         docSourceId: 'source',
         surfaces: [],
         providerBaseline: { calls: {}, requestLog: [] },
+        providerAfterTrials: {
+          calls: { 'auth.test': 1, 'chat.postMessage': 1 },
+          requestLog: [
+            { sequence: 1, method: 'auth.test', at: 1 },
+            { sequence: 2, method: 'chat.postMessage', at: 2 },
+          ],
+        },
       },
       trials,
       summary,
@@ -138,6 +145,7 @@ describe('the revocation evidence report', (): void => {
     } satisfies RevocationEvidence;
     const report = renderRevocationReport(evidence);
     expect(report).toContain('N attempted=3; N blocked=2; N landed=1');
+    expect(report).toContain('Fake-provider request log: n=2');
     expect(report).toContain('Evaluation block means');
     expect(report).toContain('authority: manager');
     expect(report).toContain('NOT_AUTOMATIC');

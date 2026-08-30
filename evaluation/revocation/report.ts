@@ -85,6 +85,7 @@ export interface RevocationEvidence {
     docSourceId: string;
     surfaces: Array<{ slug: string; verdict: string; path?: string }>;
     providerBaseline: ProviderSnapshot;
+    providerAfterTrials: ProviderSnapshot;
   };
   trials: RevocationTrial[];
   summary: RevocationSummary;
@@ -183,6 +184,9 @@ export function renderRevocationReport(evidence: RevocationEvidence): string {
     `Time to block, all blocked attempts: n=${evidence.summary.all.timeToBlockMs.n}; median=${evidence.summary.all.timeToBlockMs.median} ms; max=${evidence.summary.all.timeToBlockMs.max} ms.`,
     `Time to block after permission.revoked: n=${evidence.summary.revokeThenAttempt.timeToBlockMs.n}; median=${evidence.summary.revokeThenAttempt.timeToBlockMs.median} ms; max=${evidence.summary.revokeThenAttempt.timeToBlockMs.max} ms.`,
     `Time to block after switch off: n=${evidence.summary.switchOff.timeToBlockMs.n}; median=${evidence.summary.switchOff.timeToBlockMs.median} ms; max=${evidence.summary.switchOff.timeToBlockMs.max} ms.`,
+    `Fake-provider request log: n=${evidence.setup.providerAfterTrials.requestLog.length}; ${Object.entries(evidence.setup.providerAfterTrials.calls)
+      .map(([method, count]) => `${method}=${count}`)
+      .join(', ')}.`,
     '',
     'By checkpoint:',
     '',

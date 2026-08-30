@@ -401,6 +401,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
       scope: 'boss:message',
       attempts: [dmAttempt],
     });
+    await ensureScope('boss:message');
 
     const flightNumber = number + 2;
     const flightId = `rev-scope-${String(flightNumber).padStart(2, '0')}`;
@@ -581,6 +582,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
   }
 
   const summary = summariseRevocationTrials(trials);
+  const providerAfterTrials = await provider();
   const metrics = await client.query(api.metrics.forAgent, { agentId });
   const metricsReconciliation = {
     expected: summary.metricsExpected,
@@ -641,6 +643,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
         ...(surface.path ? { path: surface.path } : {}),
       })),
       providerBaseline,
+      providerAfterTrials,
     },
     trials,
     summary,
