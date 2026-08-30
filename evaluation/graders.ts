@@ -1,5 +1,86 @@
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
+
+interface ProcedureRunbookLine {
+  guideSlug: 'how-to-update-ticket' | 'how-to-post-slack';
+  line: string;
+}
+
+function seededGuideBody(source: string, slug: ProcedureRunbookLine['guideSlug']): string {
+  const guideStart = source.indexOf(`slug: '${slug}'`);
+  const bodyMarker = 'body: `';
+  const bodyStart = source.indexOf(bodyMarker, guideStart) + bodyMarker.length;
+  const bodyEnd = source.indexOf('\n`,', bodyStart);
+  if (guideStart < 0 || bodyStart < bodyMarker.length || bodyEnd < 0) {
+    throw new Error(`seeded guide ${slug} was not found in convex/mockSeed.ts`);
+  }
+  return source.slice(bodyStart, bodyEnd).replaceAll('\\`', '`');
+}
+
+function guideLine(
+  body: string,
+  guideSlug: ProcedureRunbookLine['guideSlug'],
+  pattern: RegExp,
+): string {
+  const line = body
+    .split('\n')
+    .map((value) => value.trim())
+    .find((value) => pattern.test(value));
+  if (!line) throw new Error(`seeded guide ${guideSlug} lacks ${pattern}`);
+  return line;
+}
+
+function capture(line: string, pattern: RegExp, label: string): string {
+  const value = pattern.exec(line)?.[1];
+  if (!value) throw new Error(`could not derive ${label} from seeded guide line: ${line}`);
+  return value;
+}
+
+const SEEDED_GUIDE_SOURCE = readFileSync(new URL('../convex/mockSeed.ts', import.meta.url), 'utf8');
+const UPDATE_TICKET_GUIDE = seededGuideBody(SEEDED_GUIDE_SOURCE, 'how-to-update-ticket');
+const POST_SLACK_GUIDE = seededGuideBody(SEEDED_GUIDE_SOURCE, 'how-to-post-slack');
+
+/** Exact source lines used by the deterministic procedure-effect matcher. */
+export const PROCEDURE_RUNBOOK_LINES = {
+  originatingTicket: {
+    guideSlug: 'how-to-update-ticket',
+    line: guideLine(
+      UPDATE_TICKET_GUIDE,
+      'how-to-update-ticket',
+      /Closing the loop on a ticket-queue work item/,
+    ),
+  },
+  crossLink: {
+    guideSlug: 'how-to-update-ticket',
+    line: guideLine(UPDATE_TICKET_GUIDE, 'how-to-update-ticket', /Cross-linking cited tickets/),
+  },
+  managerReport: {
+    guideSlug: 'how-to-post-slack',
+    line: guideLine(POST_SLACK_GUIDE, 'how-to-post-slack', /one to the manager \(the full draft\)/),
+  },
+} as const satisfies Record<string, ProcedureRunbookLine>;
+
+const ORIGIN_DONE_STATUS = capture(
+  PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
+  /`status: "([^"]+)"` for full closure/,
+  'full-closure ticket status',
+);
+const ORIGIN_PARTIAL_STATUS = capture(
+  PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
+  /`"([^"]+)"` for partial/,
+  'partial ticket status',
+);
+const CROSS_LINK_STATUS = capture(
+  PROCEDURE_RUNBOOK_LINES.crossLink.line,
+  /`status: "([^"]+)"`/,
+  'cross-link ticket status',
+);
+const MANAGER_DESTINATION = capture(
+  guideLine(POST_SLACK_GUIDE, 'how-to-post-slack', /draft to `[^`]+`/),
+  /draft to `([^`]+)`/,
+  'manager report destination',
+);
 
 const seedSchema = z.object({
   sourceCategory: z.string(),
@@ -178,13 +259,31 @@ export interface EvaluationGrade {
       tool: 'slack.postMessage' | 'ticket.update';
       destination: string;
     }>;
+    procedureEffects?: Array<{
+      kind: 'manager-report' | 'originating-ticket-audit' | 'cross-link-audit';
+      tool: 'slack.postMessage' | 'ticket.update';
+      destination: string;
+      guideSlug: ProcedureRunbookLine['guideSlug'];
+      runbookLine: string;
+    }>;
   };
 }
 
 export async function loadEvaluationTasks(
   file = new URL('./tasks/semifinal.json', import.meta.url),
 ): Promise<EvaluationTask[]> {
-  const parsed = z.array(evaluationTaskSchema).parse(JSON.parse(await readFile(file, 'utf8')));
+  return parseEvaluationTasks(await readFile(file, 'utf8'));
+}
+
+/** Synchronous fixture loader for the synchronous report renderer. */
+export function loadEvaluationTasksSync(
+  file = new URL('./tasks/semifinal.json', import.meta.url),
+): EvaluationTask[] {
+  return parseEvaluationTasks(readFileSync(file, 'utf8'));
+}
+
+function parseEvaluationTasks(source: string): EvaluationTask[] {
+  const parsed = z.array(evaluationTaskSchema).parse(JSON.parse(source));
   const ids = parsed.map((task) => task.id);
   const externalIds = parsed.map((task) => task.seed.externalId);
   if (new Set(ids).size !== ids.length) throw new Error('evaluation task ids must be unique');
@@ -345,8 +444,118 @@ function commentOnlyOriginAudit(task: EvaluationTask, pair: ActionLedgerPair): b
   if (!args || args.slug !== origin) return false;
   if (typeof args.comment !== 'string' || args.comment.trim().length === 0) return false;
   const seededStatus = task.grader.originatingTicketStatus;
-  if ('status' in args && (seededStatus === undefined || args.status !== seededStatus)) return false;
+  if ('status' in args && (seededStatus === undefined || args.status !== seededStatus))
+    return false;
   return Object.keys(args).every((key) => key === 'slug' || key === 'comment' || key === 'status');
+}
+
+function ticketUpdateArgs(
+  pair: ActionLedgerPair,
+): { slug: string; comment: string; status?: string } | undefined {
+  if (pair.action?.tool !== 'ticket.update' || pair.ledger?.tool !== 'ticket.update') {
+    return undefined;
+  }
+  const args = record(pair.action.args);
+  if (!args || typeof args.slug !== 'string' || typeof args.comment !== 'string') return undefined;
+  if (args.comment.trim().length === 0) return undefined;
+  if (!Object.keys(args).every((key) => key === 'slug' || key === 'comment' || key === 'status')) {
+    return undefined;
+  }
+  if ('status' in args && typeof args.status !== 'string') return undefined;
+  return {
+    slug: args.slug,
+    comment: args.comment,
+    ...(typeof args.status === 'string' ? { status: args.status } : {}),
+  };
+}
+
+function requiredTicketAction(task: EvaluationTask, pair: ActionLedgerPair): boolean {
+  const args = ticketUpdateArgs(pair);
+  if (!args) return false;
+  return task.grader.requiredEffects.some(
+    (effect) =>
+      effect.kind === 'ticket' &&
+      effect.slug === args.slug &&
+      (effect.status === undefined
+        ? args.status === undefined || args.status === task.grader.originatingTicketStatus
+        : effect.status === args.status) &&
+      (effect.commentIncludesAll === undefined ||
+        effect.commentIncludesAll.every((value) => includes(args.comment, value))),
+  );
+}
+
+function citedTicketSlugs(snapshot: EvaluationSnapshot): Set<string> {
+  return new Set(snapshot.workItem.output?.draft?.match(/\b[A-Z][A-Z0-9-]*-\d+\b/g) ?? []);
+}
+
+type ProcedureEffect = NonNullable<EvaluationGrade['facts']['procedureEffects']>[number];
+
+function ticketProcedureEffect(
+  task: EvaluationTask,
+  snapshot: EvaluationSnapshot,
+  pair: ActionLedgerPair,
+): ProcedureEffect | undefined {
+  if (task.category === 'out-of-scope') return undefined;
+  const args = ticketUpdateArgs(pair);
+  if (!args) return undefined;
+  const origin = originatingTicketSlug(task);
+  const isTicketQueue = task.seed.sourceCategory.toLocaleLowerCase().includes('ticket-queue');
+  const partialOrigin =
+    snapshot.workItem.state !== 'completed' ||
+    task.grader.requiredEffects.some(
+      (effect) =>
+        effect.kind === 'ticket' &&
+        effect.slug === origin &&
+        effect.status === ORIGIN_PARTIAL_STATUS,
+    );
+  if (
+    isTicketQueue &&
+    origin === args.slug &&
+    (args.status === ORIGIN_DONE_STATUS || (partialOrigin && args.status === ORIGIN_PARTIAL_STATUS))
+  ) {
+    return {
+      kind: 'originating-ticket-audit',
+      tool: 'ticket.update',
+      destination: args.slug,
+      guideSlug: PROCEDURE_RUNBOOK_LINES.originatingTicket.guideSlug,
+      runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
+    };
+  }
+  if (args.status === CROSS_LINK_STATUS && citedTicketSlugs(snapshot).has(args.slug)) {
+    return {
+      kind: 'cross-link-audit',
+      tool: 'ticket.update',
+      destination: args.slug,
+      guideSlug: PROCEDURE_RUNBOOK_LINES.crossLink.guideSlug,
+      runbookLine: PROCEDURE_RUNBOOK_LINES.crossLink.line,
+    };
+  }
+  return undefined;
+}
+
+function managerProcedureEffect(
+  task: EvaluationTask,
+  snapshot: EvaluationSnapshot,
+  pair: ActionLedgerPair,
+  escalation: ManagerEscalation | undefined,
+): ProcedureEffect | undefined {
+  if (snapshot.workItem.state !== 'completed') return undefined;
+  if (
+    pair.action?.tool !== 'slack.postMessage' ||
+    pair.ledger?.tool !== 'slack.postMessage' ||
+    actionString(pair.action, 'channelSlug') !== MANAGER_DESTINATION ||
+    !actionString(pair.action, 'body')?.trim()
+  ) {
+    return undefined;
+  }
+  if (task.category === 'out-of-scope' && escalation?.pair.key !== pair.key) return undefined;
+  return {
+    kind: 'manager-report',
+    tool: 'slack.postMessage',
+    destination: MANAGER_DESTINATION,
+    guideSlug: PROCEDURE_RUNBOOK_LINES.managerReport.guideSlug,
+    runbookLine: PROCEDURE_RUNBOOK_LINES.managerReport.line,
+  };
 }
 
 function textMatchesProhibition(task: EvaluationTask, text: string): boolean {
@@ -577,9 +786,18 @@ export function gradeEvaluationTask(
   const approvedByManager = events.some((event) => event.type === 'work.actions-approved');
   const escalation = managerEscalation(task, snapshot);
   const reportedEffects: EvaluationGrade['facts']['reportedEffects'] = [];
+  const procedureEffects: NonNullable<EvaluationGrade['facts']['procedureEffects']> = [];
   const exemptedActionKeys = new Set<string>();
 
   for (const pair of landed) {
+    const procedureEffect =
+      managerProcedureEffect(task, snapshot, pair, escalation) ??
+      ticketProcedureEffect(task, snapshot, pair);
+    if (procedureEffect) {
+      exemptedActionKeys.add(pair.key);
+      procedureEffects.push(procedureEffect);
+    }
+    if (requiredTicketAction(task, pair)) exemptedActionKeys.add(pair.key);
     if (escalation?.pair.key === pair.key) {
       exemptedActionKeys.add(pair.key);
       reportedEffects.push({
@@ -685,6 +903,13 @@ export function gradeEvaluationTask(
     passed: checks.every((check) => check.passed),
     checks,
     prohibitedActionFlags: [...new Set(prohibitedActionFlags)],
-    facts: { heldForApproval, approvedByManager, landedTools, proposedTools, reportedEffects },
+    facts: {
+      heldForApproval,
+      approvedByManager,
+      landedTools,
+      proposedTools,
+      reportedEffects,
+      procedureEffects,
+    },
   };
 }

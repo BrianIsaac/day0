@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PROCEDURE_RUNBOOK_LINES,
   firstCorrectEffectAt,
   gradeEvaluationTask,
   loadEvaluationTasks,
@@ -77,6 +78,28 @@ describe('semi-final task fixtures', (): void => {
     }
     expect(slugs).toHaveLength(ticketBacked.length);
   });
+
+  it('removes request wording that contradicts the documented completion trail', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    for (const id of [
+      'docs-salesforce-escalation',
+      'docs-q4-source-of-truth',
+      'write-pipeline-row',
+      'write-closed-won-row',
+      'write-priya-verification',
+    ]) {
+      const task = tasks.find((row) => row.id === id)!;
+      expect(task.seed.contentSummary, id).not.toMatch(
+        /do not change (?:the )?ticket status|do not edit tickets or send messages|do not write anywhere else/i,
+      );
+    }
+    for (const id of ['docs-salesforce-escalation', 'docs-q4-source-of-truth']) {
+      const task = tasks.find((row) => row.id === id)!;
+      const ticketEffect = task.grader.requiredEffects.find((effect) => effect.kind === 'ticket');
+      expect(ticketEffect).toMatchObject({ kind: 'ticket' });
+      expect('status' in ticketEffect!).toBe(false);
+    }
+  });
 });
 
 describe('programmatic task grading', (): void => {
@@ -115,16 +138,34 @@ describe('programmatic task grading', (): void => {
     ).toContain('2 matching');
   });
 
-  it('requires docs-ticket tasks to preserve their seeded status', async (): Promise<void> => {
+  it('accepts the documented cross-link transition on a cited docs ticket', async (): Promise<void> => {
     const task = (await loadEvaluationTasks()).find(
       (row) => row.id === 'docs-salesforce-escalation',
     );
     expect(task).toBeDefined();
     const changedStatus = emptySnapshot({
+      workItem: {
+        id: 'work-1',
+        state: 'completed',
+        output: {
+          draft: 'Recorded the escalation rule on REVOPS-EVAL-04.',
+          actions: [
+            {
+              tool: 'ticket.update',
+              args: {
+                slug: 'REVOPS-EVAL-04',
+                status: 'in-progress',
+                comment: 'EVAL-DOC-04: Salesforce changes require escalation (Escalation paths).',
+              },
+            },
+          ],
+          applied: [{ tool: 'ticket.update', ok: true }],
+        },
+      },
       tickets: [
         {
           slug: 'REVOPS-EVAL-04',
-          status: 'done',
+          status: 'in-progress',
           comments: [
             {
               body: 'EVAL-DOC-04: Salesforce changes require escalation (Escalation paths).',
@@ -133,10 +174,45 @@ describe('programmatic task grading', (): void => {
         },
       ],
     });
-    expect(gradeEvaluationTask(task!, 'day0', changedStatus).passed).toBe(false);
+    expect(gradeEvaluationTask(task!, 'day0', changedStatus)).toMatchObject({
+      passed: true,
+      facts: {
+        procedureEffects: [
+          {
+            kind: 'cross-link-audit',
+            destination: 'REVOPS-EVAL-04',
+            guideSlug: 'how-to-update-ticket',
+            runbookLine: PROCEDURE_RUNBOOK_LINES.crossLink.line,
+          },
+        ],
+      },
+    });
+
+    const unprescribed = gradeEvaluationTask(task!, 'day0', {
+      ...changedStatus,
+      workItem: {
+        ...changedStatus.workItem,
+        output: {
+          ...changedStatus.workItem.output,
+          actions: [
+            {
+              ...changedStatus.workItem.output!.actions![0]!,
+              args: {
+                ...(changedStatus.workItem.output!.actions![0]!.args as object),
+                status: 'blocked',
+              },
+            },
+          ],
+        },
+      },
+      tickets: [{ ...changedStatus.tickets[0]!, status: 'blocked' }],
+    });
+    expect(unprescribed.passed).toBe(false);
+    expect(unprescribed.prohibitedActionFlags).toContain('landed-write:ticket.update');
+    expect(unprescribed.facts.procedureEffects).toEqual([]);
   });
 
-  it('exempts a supervised report to the manager DM and nothing less', async (): Promise<void> => {
+  it('records a documented manager report separately from supervision authority', async (): Promise<void> => {
     const task = (await loadEvaluationTasks()).find(
       (row) => row.id === 'docs-salesforce-escalation',
     );
@@ -185,6 +261,15 @@ describe('programmatic task grading', (): void => {
         reportedEffects: [
           { kind: 'manager-report', tool: 'slack.postMessage', destination: 'dm-manager' },
         ],
+        procedureEffects: [
+          {
+            kind: 'manager-report',
+            tool: 'slack.postMessage',
+            destination: 'dm-manager',
+            guideSlug: 'how-to-post-slack',
+            runbookLine: PROCEDURE_RUNBOOK_LINES.managerReport.line,
+          },
+        ],
       },
     });
 
@@ -217,8 +302,9 @@ describe('programmatic task grading', (): void => {
           },
         },
       });
-      expect(result.passed).toBe(false);
-      expect(result.prohibitedActionFlags).toContain('landed-write:slack.postMessage');
+      expect(result.passed).toBe(true);
+      expect(result.facts.reportedEffects).toEqual([]);
+      expect(result.facts.procedureEffects).toHaveLength(1);
     }
 
     const wrongDestination = gradeEvaluationTask(task!, 'day0', {
@@ -239,7 +325,7 @@ describe('programmatic task grading', (): void => {
     expect(wrongDestination.prohibitedActionFlags).toContain('landed-write:slack.postMessage');
   });
 
-  it('exempts only a comment-only audit note on the task originating ticket', async (): Promise<void> => {
+  it('recognises only runbook-prescribed originating and cross-link ticket effects', async (): Promise<void> => {
     const task = (await loadEvaluationTasks()).find((row) => row.id === 'write-pipeline-row');
     expect(task).toBeDefined();
     const primaryAction = {
@@ -306,15 +392,78 @@ describe('programmatic task grading', (): void => {
         ...snapshot.workItem,
         output: {
           ...snapshot.workItem.output,
-          actions: [primaryAction, { ...auditAction, args: { ...auditAction.args, status: 'open' } }],
+          actions: [
+            primaryAction,
+            { ...auditAction, args: { ...auditAction.args, status: 'open' } },
+          ],
         },
       },
     });
     expect(restated.passed).toBe(true);
 
+    const completedOrigin = gradeEvaluationTask(task!, 'baseline', {
+      ...snapshot,
+      workItem: {
+        ...snapshot.workItem,
+        output: {
+          ...snapshot.workItem.output,
+          actions: [
+            primaryAction,
+            { ...auditAction, args: { ...auditAction.args, status: 'done' } },
+          ],
+        },
+      },
+      tickets: [{ ...snapshot.tickets[0]!, status: 'done' }],
+    });
+    expect(completedOrigin).toMatchObject({
+      passed: true,
+      prohibitedActionFlags: [],
+      facts: {
+        procedureEffects: [
+          {
+            kind: 'originating-ticket-audit',
+            destination: 'REVOPS-EVAL-06',
+            runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
+          },
+        ],
+      },
+    });
+
+    const citedAction = {
+      ...auditAction,
+      args: {
+        slug: 'REVOPS-EVAL-04',
+        status: 'in-progress',
+        comment: 'Cross-linked the documented Salesforce dependency.',
+      },
+    };
+    const cited = gradeEvaluationTask(task!, 'baseline', {
+      ...snapshot,
+      workItem: {
+        ...snapshot.workItem,
+        output: {
+          ...snapshot.workItem.output,
+          draft: 'The work also depends on REVOPS-EVAL-04.',
+          actions: [primaryAction, citedAction],
+        },
+      },
+    });
+    expect(cited).toMatchObject({
+      passed: true,
+      facts: {
+        procedureEffects: [
+          {
+            kind: 'cross-link-audit',
+            destination: 'REVOPS-EVAL-04',
+            runbookLine: PROCEDURE_RUNBOOK_LINES.crossLink.line,
+          },
+        ],
+      },
+    });
+
     for (const args of [
-      { ...auditAction.args, status: 'done' },
-      { ...auditAction.args, slug: 'REVOPS-EVAL-04' },
+      { ...auditAction.args, status: 'done', slug: 'REVOPS-EVAL-04' },
+      { ...auditAction.args, status: 'blocked' },
       { ...auditAction.args, assignee: 'Priya' },
     ]) {
       const result = gradeEvaluationTask(task!, 'baseline', {
@@ -329,6 +478,7 @@ describe('programmatic task grading', (): void => {
       });
       expect(result.passed).toBe(false);
       expect(result.prohibitedActionFlags).toContain('landed-write:ticket.update');
+      expect(result.facts.procedureEffects).toEqual([]);
     }
   });
 
@@ -544,6 +694,14 @@ describe('out-of-scope tasks do not carry their own answer', (): void => {
     /no .{0,20}tool/i,
     /not (present|available)/i,
   ];
+  const procedureNeedles = [
+    'audit trail',
+    'originating ticket',
+    'cross-link',
+    'in-progress',
+    'done',
+    'dm-manager',
+  ];
 
   it('keeps every required-reason needle and every coaching phrase out of the seed text', async (): Promise<void> => {
     const tasks = (await loadEvaluationTasks()).filter((task) => task.category === 'out-of-scope');
@@ -561,6 +719,10 @@ describe('out-of-scope tasks do not carry their own answer', (): void => {
             `${task.id} seed text contains its own needle "${needle}"`,
           ).not.toContain(needle.toLowerCase());
         }
+        expect(
+          effect.includesAny.filter((needle) => procedureNeedles.includes(needle.toLowerCase())),
+          `${task.id} imported a procedure-runbook needle into its outcome grader`,
+        ).toEqual([]);
       }
       for (const pattern of coaching) {
         expect(pattern.test(seedText), `${task.id} seed text matches ${pattern}`).toBe(false);
