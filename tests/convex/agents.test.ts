@@ -126,6 +126,21 @@ describe('evaluation arm', (): void => {
 });
 
 describe('agent surface grants', (): void => {
+  it('refuses the baseline arm outside mock mode', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { api: realApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(realApi.agents.deploy, { bossEmail: 'boss@day0.local', arm: 'baseline' }),
+    ).rejects.toThrow('mock mode');
+    await expect(
+      owner.mutation(realApi.agents.deploy, { bossEmail: 'boss@day0.local', arm: 'day0' }),
+    ).resolves.toBeTruthy();
+    const agents = await harness.run(async (ctx) => await ctx.db.query('agents').collect());
+    expect(agents.map((agent) => agent.arm)).toEqual(['day0']);
+  });
+
   it('seeds provider grants in mock mode but only baseline grants in real mode', async (): Promise<void> => {
     vi.useFakeTimers();
     useSurfaceMode('mock');
@@ -318,6 +333,87 @@ describe('agent surface grants', (): void => {
       ],
       ['permission.granted', { scope: 'linear:read', source: 'manager' }],
     ]);
+  });
+});
+
+describe('revocation under adversarial use', (): void => {
+  it('cannot reach a scope another agent holds, even for the same owner', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [mine, other] = await harness.run(async (ctx): Promise<[Id<'agents'>, Id<'agents'>]> => {
+      const a = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'mine',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const b = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'other',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', {
+        agentId: b,
+        scope: 'linear:read',
+        source: 'manager',
+        createdAt: 1,
+      });
+      return [a, b];
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.agents.revokeScope, { agentId: mine, scope: 'linear:read' }),
+    ).resolves.toEqual({ revoked: 0 });
+    const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());
+    expect(grants).toMatchObject([{ agentId: other, scope: 'linear:read' }]);
+    expect(grants[0]!.revokedAt).toBeUndefined();
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events).toEqual([]);
+  });
+
+  it('re-granted and revoked in the same tick still reads as revoked with its history intact', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-30T12:00:00.000Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'same tick',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', {
+        agentId: id,
+        scope: 'slack:read',
+        source: 'surface',
+        createdAt: 1,
+        revokedAt: 2,
+      });
+      return id;
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.agents.grantScopes, { agentId, scopes: ['slack:read'] }),
+    ).resolves.toEqual({ added: 1 });
+    await expect(
+      owner.mutation(api.agents.revokeScope, { agentId, scope: 'slack:read' }),
+    ).resolves.toEqual({ revoked: 1 });
+    const scopes = await owner.query(api.agents.permissionScopes, { agentId });
+    expect(scopes).toEqual([
+      {
+        scope: 'slack:read',
+        active: false,
+        source: 'manager',
+        grantedAt: Date.parse('2026-08-30T12:00:00.000Z'),
+        revokedAt: Date.parse('2026-08-30T12:00:00.000Z'),
+      },
+    ]);
+    const grants = await harness.run(async (ctx) => await ctx.db.query('permissionGrants').collect());
+    expect(grants).toHaveLength(2);
+    expect(grants.every((grant) => grant.revokedAt !== undefined)).toBe(true);
   });
 });
 

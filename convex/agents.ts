@@ -88,6 +88,12 @@ export const deploy = mutation({
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
+    // The control arm exists only for the mock-mode comparison. Nothing on the
+    // real path reads the arm, so a baseline row there would be a day0 agent
+    // wearing the wrong label in the evidence.
+    if (args.arm === 'baseline' && SURFACE_MODE !== 'mock') {
+      throw new Error('the baseline comparison arm can only be deployed in mock mode');
+    }
     for (const sourceId of args.excludedDocSourceIds ?? []) {
       const source = await ctx.db.get(sourceId);
       if (!source || source.userId !== identity.subject) {
