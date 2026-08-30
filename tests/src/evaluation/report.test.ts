@@ -78,8 +78,10 @@ describe('evaluation evidence report', (): void => {
   });
 
   it('always couples a rate to its numerator, n, and Wilson interval', (): void => {
-    expect(formatRate(5, 10)).toBe('50.0% (5/10; Wilson 95% CI 23.7–76.3%)');
-    expect(formatRate(0, 0)).toBe('not estimable (0/0; Wilson 95% CI 0.0–100.0%)');
+    expect(formatRate(5, 10)).toBe('50.0% (5/10; Wilson 95% CI 23.7–76.3%, width 52.7 points)');
+    expect(formatRate(0, 0)).toBe(
+      'not estimable (0/0; Wilson 95% CI 0.0–100.0%, width 100.0 points)',
+    );
   });
 
   it('renders the fixed concurrent control and programmatic-grading methodology', (): void => {
@@ -91,5 +93,111 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('human wait');
     expect(report).toContain('not a verbatim transcript');
     expect(report).toContain('| day0-r1 | day0 | docs-team-cadence | completed | pass |');
+  });
+});
+
+function twoRunEvidence(): EvaluationEvidence {
+  const base = evidence();
+  const task = (
+    taskId: string,
+    category: 'docs-grounded-read' | 'approval-write',
+    passed: boolean,
+    startedAt: string,
+    finishedAt: string,
+    deployToFirstCorrectActionMs: number | null,
+  ) => ({
+    taskId,
+    externalId: taskId,
+    category,
+    workItemId: `work-${taskId}`,
+    terminalState: passed ? 'completed' : 'failed',
+    timedOut: false,
+    startedAt,
+    finishedAt,
+    deployToFirstCorrectActionMs,
+    humanWaitMs: 0,
+    decisions: [],
+    modelCalls: { logicalStages: 1, observableProviderCalls: null },
+    grade: { ...passingGrade, passed },
+  });
+  const decision = (approvedAt: string) => ({
+    kind: 'actions' as const,
+    requestedAt: approvedAt,
+    approvedAt,
+    delayMs: 750,
+  });
+  base.configuration.requestedRuns = 2;
+  base.configuration.taskIds = ['docs-team-cadence', 'write-pipeline-row'];
+  base.runs = [
+    {
+      ...base.runs[0]!,
+      id: 'day0-r1',
+      run: 1,
+      deployedAt: '2026-08-30T00:00:00.000Z',
+      decisions: [decision('2026-08-30T00:00:02.000Z'), decision('2026-08-30T00:00:08.000Z')],
+      tasks: [
+        task(
+          'docs-team-cadence',
+          'docs-grounded-read',
+          true,
+          '2026-08-30T00:00:01.000Z',
+          '2026-08-30T00:00:03.000Z',
+          5_000,
+        ),
+        task(
+          'write-pipeline-row',
+          'approval-write',
+          true,
+          '2026-08-30T00:00:03.000Z',
+          '2026-08-30T00:00:09.000Z',
+          9_000,
+        ),
+      ],
+    },
+    {
+      ...base.runs[0]!,
+      id: 'day0-r2',
+      run: 2,
+      deployedAt: '2026-08-30T01:00:00.000Z',
+      decisions: [decision('2026-08-30T01:00:01.000Z')],
+      tasks: [
+        task(
+          'docs-team-cadence',
+          'docs-grounded-read',
+          false,
+          '2026-08-30T01:00:01.000Z',
+          '2026-08-30T01:00:05.000Z',
+          null,
+        ),
+        task(
+          'write-pipeline-row',
+          'approval-write',
+          true,
+          '2026-08-30T01:00:05.000Z',
+          '2026-08-30T01:00:07.000Z',
+          4_000,
+        ),
+      ],
+    },
+  ];
+  return base;
+}
+
+describe('per-task and per-run summaries', (): void => {
+  it('reports the majority outcome per task, time to operational per run, and time on task per task', (): void => {
+    const report = renderEvaluationReport(twoRunEvidence());
+    expect(report).toContain(
+      '| day0: tasks passed in a majority of runs | 50.0% (1/2; Wilson 95% CI 9.4–90.5%, width 81.1 points) |',
+    );
+    expect(report).toContain('| day0: per-run task pass | 75.0% (3/4;');
+    expect(report).toContain('| day0 | 4.50 s | 0.75 s | 3.75 s | 2 |');
+    expect(report).toContain('| baseline | not observed | not observed | not observed | 0 |');
+    expect(report).toContain(
+      '| docs-team-cadence | docs-grounded-read | 1/2 | not run | 3.00 s | not run |',
+    );
+    expect(report).toContain(
+      '| write-pipeline-row | approval-write | 2/2 | not run | 4.00 s | not run |',
+    );
+    expect(report).toContain('approves every held action');
   });
 });

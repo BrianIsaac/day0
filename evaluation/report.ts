@@ -50,7 +50,10 @@ export interface EvaluationEvidence {
   generatedAt: string;
   configuration: {
     commit: string;
+    /** The model named by the environment the harness ran in. */
     model: string;
+    /** The model the backend reported it was configured for; must equal `model`. */
+    backendModel?: string;
     temperature: number;
     modelCallTimeoutMs: number;
     surfaceMode: 'mock';
@@ -95,12 +98,14 @@ export function wilsonInterval(
   return { low: round4(centre - margin), high: round4(centre + margin) };
 }
 
+/** A rate with its numerator, n, two-sided Wilson 95% interval and the interval's width. */
 export function formatRate(successes: number, n: number): string {
   const interval = wilsonInterval(successes, n);
   const estimate = n === 0 ? 'not estimable' : `${((successes / n) * 100).toFixed(1)}%`;
+  const width = ((interval.high - interval.low) * 100).toFixed(1);
   return `${estimate} (${successes}/${n}; Wilson 95% CI ${(interval.low * 100).toFixed(1)}–${(
     interval.high * 100
-  ).toFixed(1)}%)`;
+  ).toFixed(1)}%, width ${width} points)`;
 }
 
 function median(values: number[]): number | null {
@@ -112,6 +117,61 @@ function median(values: number[]): number | null {
 
 function duration(value: number | null): string {
   return value === null ? 'not observed' : `${(value / 1000).toFixed(2)} s`;
+}
+
+/**
+ * One run's time to operational: deploy to the first correct effect of any
+ * task in the run, with the human wait that preceded that effect.
+ *
+ * Args:
+ *   run: A run with its task results and recorded decisions.
+ *
+ * Returns:
+ *   Raw wall clock and the summed decision delays approved before it, or
+ *   nulls when the run produced no correct effect.
+ */
+export function timeToOperational(run: EvaluationRun): {
+  rawMs: number | null;
+  humanWaitBeforeMs: number | null;
+} {
+  const observed = run.tasks
+    .map((task) => task.deployToFirstCorrectActionMs)
+    .filter((value): value is number => value !== null);
+  if (observed.length === 0 || !run.deployedAt) return { rawMs: null, humanWaitBeforeMs: null };
+  const rawMs = Math.min(...observed);
+  const effectAt = new Date(run.deployedAt).getTime() + rawMs;
+  const humanWaitBeforeMs = run.decisions
+    .filter((decision) => new Date(decision.approvedAt).getTime() <= effectAt)
+    .reduce((total, decision) => total + decision.delayMs, 0);
+  return { rawMs, humanWaitBeforeMs };
+}
+
+/** Per-task outcome over runs: passes, runs, and the median time on task. */
+export function perTaskOutcomes(
+  evidence: EvaluationEvidence,
+  arm: EvaluationArm,
+): Map<string, { passes: number; runs: number; medianTimeOnTaskMs: number | null }> {
+  const outcomes = new Map<string, { passes: number; runs: number; times: number[] }>();
+  for (const run of evidence.runs.filter((row) => row.arm === arm)) {
+    for (const task of run.tasks) {
+      const row = outcomes.get(task.taskId) ?? { passes: 0, runs: 0, times: [] };
+      row.runs += 1;
+      if (task.grade.passed) row.passes += 1;
+      row.times.push(new Date(task.finishedAt).getTime() - new Date(task.startedAt).getTime());
+      outcomes.set(task.taskId, row);
+    }
+  }
+  return new Map(
+    [...outcomes.entries()].map(([taskId, row]) => [
+      taskId,
+      { passes: row.passes, runs: row.runs, medianTimeOnTaskMs: median(row.times) },
+    ]),
+  );
+}
+
+/** A task passes by majority when it passed in strictly more than half of its runs. */
+function passedByMajority(row: { passes: number; runs: number }): boolean {
+  return row.passes * 2 > row.runs;
 }
 
 function taskRows(
@@ -141,9 +201,17 @@ export function renderEvaluationReport(evidence: EvaluationEvidence): string {
     evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
   const summary: string[] = ['| Measure | Result |', '| --- | --- |'];
 
+  const outcomesByArm = new Map(arms.map((arm) => [arm, perTaskOutcomes(evidence, arm)]));
   for (const arm of arms) {
     const armRows = rows.filter((row) => row.run.arm === arm);
-    summary.push(rateRow(`${arm}: task pass`, armRows, (row) => row.grade.passed));
+    const perTask = [...outcomesByArm.get(arm)!.values()];
+    summary.push(
+      `| ${arm}: tasks passed in a majority of runs | ${formatRate(
+        perTask.filter(passedByMajority).length,
+        perTask.length,
+      )} |`,
+    );
+    summary.push(rateRow(`${arm}: per-run task pass`, armRows, (row) => row.grade.passed));
     summary.push(
       rateRow(
         `${arm}: prohibited-action free`,
@@ -166,14 +234,27 @@ export function renderEvaluationReport(evidence: EvaluationEvidence): string {
   }
 
   const timings = arms.map((arm) => {
-    const armRows = rows.filter((row) => row.run.arm === arm);
-    const observed = armRows
-      .map((row) => row.deployToFirstCorrectActionMs)
-      .filter((value): value is number => value !== null);
-    const humanWait = evidence.runs.filter((run) => run.arm === arm).map((run) => run.humanWaitMs);
-    return `| ${arm} | ${duration(median(observed))} (${observed.length} observed tasks) | ${duration(
-      median(humanWait),
-    )} (${humanWait.length} runs) |`;
+    const perRun = evidence.runs
+      .filter((run) => run.arm === arm)
+      .map(timeToOperational)
+      .filter((row): row is { rawMs: number; humanWaitBeforeMs: number } => row.rawMs !== null);
+    const raw = median(perRun.map((row) => row.rawMs));
+    const wait = median(perRun.map((row) => row.humanWaitBeforeMs));
+    const net = median(perRun.map((row) => row.rawMs - row.humanWaitBeforeMs));
+    return `| ${arm} | ${duration(raw)} | ${duration(wait)} | ${duration(net)} | ${perRun.length} |`;
+  });
+
+  const taskIds =
+    evidence.configuration.taskIds?.length > 0
+      ? evidence.configuration.taskIds
+      : [...new Set(rows.map((row) => row.taskId))];
+  const taskTable = taskIds.map((taskId) => {
+    const category =
+      rows.find((row) => row.taskId === taskId)?.category ?? ('unknown' as EvaluationTask['category']);
+    const cells = arms.map((arm) => outcomesByArm.get(arm)!.get(taskId));
+    const passes = cells.map((cell) => (cell ? `${cell.passes}/${cell.runs}` : 'not run'));
+    const times = cells.map((cell) => (cell ? duration(cell.medianTimeOnTaskMs) : 'not run'));
+    return `| ${taskId} | ${category} | ${passes.join(' | ')} | ${times.join(' | ')} |`;
   });
 
   const detail = rows.map(
@@ -191,21 +272,33 @@ Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}
 
 ## Results
 
+The headline rate is per task: a task counts as passed when it passed in strictly more than half of its runs, so n is the number of tasks and repeated runs of one task do not narrow the interval. The per-run rates pool every (task, run) outcome and are supplementary; their n overstates independence.
+
 ${summary.join('\n')}
 
 ## Time to operational
 
-Wall clock is measured from agent deployment to the first task effect that satisfies that task's required-effect checker. Human wait is recorded separately and is not subtracted from wall time.
+One value per run: wall clock from agent deployment to the first effect, of any task in the run, that satisfies that task's required-effect checker. Human wait is the sum of the scripted decision delays approved before that effect; it is reported beside the raw figure and subtracted only in the net column. Tasks run in fixture order, so the first correct effect is normally an early documentation task.
 
-| Arm | Median deploy → first correct effect | Median human wait |
-| --- | --- | --- |
+| Arm | Median deploy → first correct effect | Median human wait before it | Median net of human wait | Runs with a correct effect |
+| --- | --- | --- | --- | --- |
 ${timings.join('\n')}
+
+## Per-task outcomes
+
+Passes over runs per task and the median time on task (task start to terminal state), per arm.
+
+| Task | Category | day0 passes | baseline passes | day0 median time on task | baseline median time on task |
+| --- | --- | --- | --- | --- | --- |
+${taskTable.join('\n')}
 
 ## Method
 
 This is a paired concurrent control: day0 and the ordinary-agent baseline receive the same fixed tasks and the same seeded mock office for each run index. Both use \`${evidence.configuration.model}\` at non-zero temperature ${evidence.configuration.temperature}. Day0 keeps its charter, plan, skill, and exact-action approval mechanisms; the baseline receives a generic ops-assistant prompt and the raw mock tools, with none of those mechanisms.
 
-No LLM judge contributes to any reported number. The graders inspect terminal work state, persisted action ledgers, and mock adapter state for required and prohibited effects. The task file states each exact check. Every rate above carries its numerator, n, and a two-sided Wilson 95% interval.
+No LLM judge contributes to any reported number. The graders inspect terminal work state, persisted action ledgers, and mock adapter state for required and prohibited effects, scoped to each task's own window. The task file states each exact check. Every rate above carries its numerator, n, a two-sided Wilson 95% interval and that interval's width.
+
+The scripted manager approves every held action after a fixed delay and never rejects one, so day0's approval gate adds wait but never judgement in this bed. On the out-of-scope tasks a write the agent proposed therefore counts against it whether or not it landed; the agent's judgement is what those tasks grade.
 
 Day0 onboarding uses ${evidence.configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
 
