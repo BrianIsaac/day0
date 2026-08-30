@@ -32,7 +32,10 @@ import { isTerminalWorkState } from '../src/evaluation/states';
 
 /** Each invocation writes its own directory; pass `--out` with an earlier path to resume it. */
 function defaultOutPath(now = new Date()): string {
-  const stamp = now.toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/:/g, '-');
+  const stamp = now
+    .toISOString()
+    .replace(/\.\d{3}Z$/, 'Z')
+    .replace(/:/g, '-');
   return `evaluation/results/${stamp}/semifinal.json`;
 }
 const DEFAULT_APPROVAL_DELAY_MS = 750;
@@ -50,6 +53,7 @@ interface CliOptions {
   runs: number;
   taskSelectors: string[];
   out: string;
+  regrade?: string;
   approvalDelayMs: number;
   pollIntervalMs: number;
   help: boolean;
@@ -136,6 +140,8 @@ export function parseCliOptions(argv: string[]): CliOptions {
       if (result.taskSelectors.length === 0) throw new Error('--tasks cannot be empty');
     } else if (flag === '--out') {
       result.out = value;
+    } else if (flag === '--regrade') {
+      result.regrade = value;
     } else if (flag === '--approval-delay-ms') {
       result.approvalDelayMs = positiveInteger(flag, value);
     } else if (flag === '--poll-ms') {
@@ -173,6 +179,7 @@ function usage(): string {
   --tasks id,id            task ids or EVAL external ids (default all 15)
   --out path.json          raw evidence path (default evaluation/results/<timestamp>/semifinal.json);
                            pass an earlier path to resume that run
+  --regrade path.json      re-score a retained run into a new output; makes no model calls
   --approval-delay-ms N    simulated human decision delay (default 750)
   --poll-ms N              state polling interval (default 500)
 `;
@@ -276,6 +283,16 @@ async function atomicWrite(path: string, content: string): Promise<void> {
   const temporary = `${path}.tmp-${process.pid}`;
   await writeFile(temporary, content, 'utf8');
   await rename(temporary, path);
+}
+
+async function requireAbsent(path: string, purpose: string): Promise<void> {
+  try {
+    await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  throw new Error(`${purpose} already exists at ${path}; choose a new --out path`);
 }
 
 async function persist(context: HarnessContext): Promise<void> {
@@ -399,9 +416,11 @@ function graderSnapshot(
   raw: RawSnapshot,
   item: Doc<'workItems'>,
   since: number,
+  until?: number,
 ): EvaluationSnapshot {
   return {
     since,
+    until,
     workItem: {
       id: item._id,
       state: item.state,
@@ -664,9 +683,9 @@ async function runTask(
 
   raw = await context.client.query(api.evaluation.snapshot, { agentId });
   item = workItemForTask(raw, task);
-  const snapshot = graderSnapshot(raw, item, new Date(active.startedAt).getTime());
   const observedAt = Date.now();
   const finishedAt = terminalTimestamp(raw, item) ?? observedAt;
+  const snapshot = graderSnapshot(raw, item, new Date(active.startedAt).getTime(), finishedAt);
   const timedOut = finishedAt > deadline || !isTerminalWorkState(item.state);
   const correctEffectAt = firstCorrectEffectAt(task, snapshot);
   const deployedAt = run.deployedAt ? new Date(run.deployedAt).getTime() : finishedAt;
@@ -764,6 +783,152 @@ async function executeRun(
   await persist(context);
 }
 
+export interface RegradeDependencies {
+  /** A query-only seam for fixtures; production constructs this from CONVEX_SELF_HOSTED_URL. */
+  client?: Pick<ConvexHttpClient, 'query' | 'setAuth'>;
+  authenticate?: () => Promise<void>;
+  commit?: string;
+  now?: Date;
+}
+
+function regradeTask(
+  recorded: EvaluationTaskResult,
+  task: EvaluationTask,
+  arm: EvaluationArm,
+  raw: RawSnapshot,
+  item: Doc<'workItems'>,
+  deployedAt: string | undefined,
+): EvaluationTaskResult {
+  const startedAt = new Date(recorded.startedAt).getTime();
+  const finishedAt = new Date(recorded.finishedAt).getTime();
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt)) {
+    throw new Error(`recorded task ${recorded.taskId} has invalid timestamps`);
+  }
+  const snapshot = graderSnapshot(raw, item, startedAt, finishedAt);
+  const grade = gradeEvaluationTask(task, arm, snapshot);
+  if (recorded.timedOut) {
+    grade.checks.push({
+      check: 'harness-timeout',
+      passed: false,
+      detail: `exceeded the ${task.timeoutMs} ms task timeout`,
+    });
+    grade.passed = false;
+  }
+
+  let deployToFirstCorrectActionMs = recorded.deployToFirstCorrectActionMs;
+  if (!recorded.grade.passed && grade.passed) {
+    const correctEffectAt = firstCorrectEffectAt(task, snapshot);
+    const deployedAtMs = deployedAt ? new Date(deployedAt).getTime() : Number.NaN;
+    deployToFirstCorrectActionMs =
+      correctEffectAt === null || !Number.isFinite(deployedAtMs)
+        ? null
+        : Math.max(0, correctEffectAt - deployedAtMs);
+  }
+
+  return {
+    ...recorded,
+    terminalState: item.state,
+    deployToFirstCorrectActionMs,
+    grade,
+  };
+}
+
+/** Re-score retained backend state without invoking any mutation, action or model-bearing stage. */
+export async function runRegrade(
+  options: CliOptions,
+  dependencies: RegradeDependencies = {},
+): Promise<EvaluationEvidence> {
+  if (!options.regrade) throw new Error('--regrade requires an existing semifinal.json path');
+  const sourcePath = resolve(options.regrade);
+  const outPath = resolve(options.out);
+  if (sourcePath === outPath) {
+    throw new Error('--regrade output must differ from the original evidence path');
+  }
+  await requireAbsent(outPath, 're-grade JSON');
+  await requireAbsent(reportPathFor(outPath), 're-grade report');
+
+  const parsed: unknown = JSON.parse(await readFile(sourcePath, 'utf8'));
+  if (!isEvidence(parsed)) throw new Error('regrade source is not evaluation evidence v1');
+  const allTasks = await loadEvaluationTasks();
+  const tasksById = new Map(allTasks.map((task) => [task.id, task]));
+  for (const run of parsed.runs) {
+    for (const recorded of run.tasks) {
+      if (!tasksById.has(recorded.taskId)) {
+        throw new Error(`current task file does not contain recorded task ${recorded.taskId}`);
+      }
+    }
+  }
+
+  const modeUrl = process.env.CONVEX_SELF_HOSTED_URL;
+  if (!dependencies.client && !modeUrl) throw new Error('CONVEX_SELF_HOSTED_URL is required');
+  const convexClient =
+    dependencies.client ??
+    new ConvexHttpClient(modeUrl!, {
+      skipConvexDeploymentUrlCheck: true,
+      logger: false,
+    });
+  const client: Pick<ConvexHttpClient, 'query' | 'setAuth'> = {
+    query: convexClient.query.bind(convexClient),
+    setAuth: convexClient.setAuth.bind(convexClient),
+  };
+  if (dependencies.authenticate) {
+    await dependencies.authenticate();
+  } else {
+    client.setAuth(await mintDevNoAuthToken());
+  }
+  const mode = await client.query(api.config.surfaceMode, {});
+  if (mode.mode !== 'mock') {
+    throw new Error(`evaluation re-grade requires mock mode; backend reports ${mode.mode}`);
+  }
+
+  const snapshots = new Map<string, RawSnapshot>();
+  for (const run of parsed.runs) {
+    if (run.tasks.length === 0) continue;
+    if (!run.agentId) throw new Error(`recorded run ${run.id} has tasks but no agentId`);
+    const raw = await client.query(api.evaluation.snapshot, {
+      agentId: run.agentId as Id<'agents'>,
+    });
+    for (const recorded of run.tasks) {
+      const item = raw.workItems.find((row) => row._id === recorded.workItemId);
+      if (!item) {
+        throw new Error(
+          `backend does not hold recorded work item ${recorded.workItemId} for ${run.id}`,
+        );
+      }
+      if (item.agentId !== run.agentId) {
+        throw new Error(`recorded work item ${recorded.workItemId} belongs to another agent`);
+      }
+    }
+    snapshots.set(run.id, raw);
+  }
+
+  const sourceGeneratedAt = parsed.generatedAt;
+  const evidence = structuredClone(parsed) as EvidenceWithProgress;
+  for (const run of evidence.runs) {
+    if (run.tasks.length === 0) continue;
+    const raw = snapshots.get(run.id)!;
+    run.tasks = run.tasks.map((recorded) => {
+      const task = tasksById.get(recorded.taskId)!;
+      const item = raw.workItems.find((row) => row._id === recorded.workItemId)!;
+      return regradeTask(recorded, task, run.arm, raw, item, run.deployedAt);
+    });
+  }
+
+  const modelCallsMade = 0;
+  if (modelCallsMade !== 0) throw new Error('re-grade attempted a model call');
+  evidence.generatedAt = (dependencies.now ?? new Date()).toISOString();
+  evidence.regradedFrom = {
+    path: sourcePath,
+    commit: parsed.configuration.commit,
+    gradedAtCommit: dependencies.commit ?? currentCommit(),
+    generatedAt: sourceGeneratedAt,
+    modelCallsMade,
+  };
+  await atomicWrite(outPath, `${JSON.stringify(evidence, null, 2)}\n`);
+  await atomicWrite(reportPathFor(outPath), renderEvaluationReport(evidence));
+  return evidence;
+}
+
 export async function runEvaluation(options: CliOptions): Promise<EvaluationEvidence> {
   const allTasks = await loadEvaluationTasks();
   const tasks = selectEvaluationTasks(allTasks, options.taskSelectors);
@@ -814,6 +979,13 @@ async function main(): Promise<void> {
   const options = parseCliOptions(process.argv.slice(2));
   if (options.help) {
     process.stdout.write(usage());
+    return;
+  }
+  if (options.regrade) {
+    const evidence = await runRegrade(options);
+    console.log(`[eval] re-graded: ${evidence.runs.flatMap((run) => run.tasks).length} tasks`);
+    console.log(`[eval] JSON: ${resolve(options.out)}`);
+    console.log(`[eval] report: ${reportPathFor(resolve(options.out))}`);
     return;
   }
   const evidence = await runEvaluation(options);
