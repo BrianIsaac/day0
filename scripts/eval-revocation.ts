@@ -621,7 +621,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
       model: MODEL,
       composeProject: options.composeProject,
       profiles: ['real', 'test', 'demo', 'browser', 'sandbox'],
-      folderDocumentation: 'docs-local/ mounted read-only at /docs',
+      folderDocumentation: 'docs-fixture/ (copied from docs-local/) mounted read-only at /docs',
       fakeProviders: ['fake-slack', 'looker-tile'],
       daytonaBlanked: true,
       onboardingTranscriptPath: 'evaluation/onboarding/day0.json',
@@ -644,13 +644,19 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     traceFile,
   };
   const trace = await client.query(api.events.exportForAgent, { agentId });
+  const composePrefix = [
+    `COMPOSE_PROJECT_NAME=${options.composeProject}`,
+    `CONVEX_PORT=${process.env.CONVEX_PORT ?? '3210'}`,
+    `CONVEX_SITE_PROXY_PORT=${process.env.CONVEX_SITE_PROXY_PORT ?? '3211'}`,
+    `FAKE_SLACK_HOST_PORT=${process.env.FAKE_SLACK_HOST_PORT ?? '8090'}`,
+  ].join(' ');
   const commands = [
-    `COMPOSE_PROJECT_NAME=${options.composeProject} pnpm convex:up --profile test --profile demo --profile browser --profile sandbox`,
-    'pnpm convex:admin-key  # captured directly into ignored .env.local; value never logged',
+    `${composePrefix} pnpm convex:up --profile test --profile demo --profile browser --profile sandbox`,
+    `${composePrefix} pnpm convex:admin-key  # captured directly into ignored .env.local; value never logged`,
     'pnpm sync:env',
     'pnpm exec convex dev --once --typecheck disable',
     `DAY0_EVAL_COMPOSE_PROJECT=${options.composeProject} FAKE_SLACK_PROOF_URL=${options.fakeSlackUrl} pnpm eval:revocation -- --out ${options.outDirectory}`,
-    `COMPOSE_PROJECT_NAME=${options.composeProject} pnpm convex:down --profile test --profile demo --profile browser --profile sandbox -- -v`,
+    `${composePrefix} pnpm convex:down --profile test --profile demo --profile browser --profile sandbox -- -v`,
   ];
   await Promise.all([
     atomicWrite(`${outDirectory}/trials.json`, `${JSON.stringify(evidence, null, 2)}\n`),
