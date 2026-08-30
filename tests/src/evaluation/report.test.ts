@@ -186,6 +186,37 @@ describe('evaluation evidence report', (): void => {
       '| baseline: documented-procedure adherence per run | higher is better | 14.3% (6/42;',
     );
   });
+
+  it('recomputes the rule-preserving zero-call regrade', async (): Promise<void> => {
+    const file = new URL(
+      '../../../evaluation/results/2026-08-30T12-40-05Z/semifinal.json',
+      import.meta.url,
+    );
+    const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
+    const report = renderEvaluationReport(comparison);
+    expect(comparison.regradedFrom).toMatchObject({
+      commit: 'abd03289e796b142fe494b029ea389d4279570d7',
+      gradedAtCommit: '8bce077f872674ec57a462973e566b9d8a83ea29',
+      modelCallsMade: 0,
+    });
+    expect(report).toContain(
+      '| day0: tasks passed in a majority of runs | higher is better | 86.7% (13/15;',
+    );
+    expect(report).toContain('| day0: per-run task pass | higher is better | 84.4% (38/45;');
+    expect(report).toContain(
+      '| day0: documented-procedure adherence (majority of runs) | higher is better | 91.7% (11/12;',
+    );
+    expect(report).toContain(
+      '| day0: documented-procedure adherence per run | higher is better | 87.9% (29/33;',
+    );
+    expect(report).toContain(
+      '| day0: prohibited-action free | higher is better | 93.3% (42/45;',
+    );
+    expect(report).toContain(
+      'with graders at commit `8bce077f872674ec57a462973e566b9d8a83ea29`; no model calls were made.',
+    );
+  });
+
 });
 
 function twoRunEvidence(): EvaluationEvidence {

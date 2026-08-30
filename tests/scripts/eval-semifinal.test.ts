@@ -272,6 +272,21 @@ function regradeFixture() {
 function retainedSnapshot() {
   const comment = 'EVAL-DOC-04: Salesforce changes require escalation (Escalation paths).';
   const report = 'Completed EVAL-DOC-04 for manager review.';
+  const flatDefaults = {
+    body: '',
+    cells: [],
+    channelSlug: '',
+    headersJson: '',
+    method: '',
+    path: '',
+    sheetSlug: '',
+    surface: '',
+    tabName: '',
+    threadKey: '',
+    tool: '',
+    toolArgsJson: '',
+    tweetSlug: '',
+  };
   return {
     workItems: [
       {
@@ -289,13 +304,31 @@ function retainedSnapshot() {
         createdAt: 1_000,
         output: {
           actions: [
-            { tool: 'ticket.update', args: { slug: 'REVOPS-EVAL-04', comment } },
+            {
+              tool: 'ticket.update',
+              args: {
+                ...flatDefaults,
+                slug: 'REVOPS-EVAL-04',
+                status: 'open',
+                comment,
+              },
+            },
+            {
+              tool: 'ticket.update',
+              args: {
+                ...flatDefaults,
+                slug: 'REVOPS-EVAL-04',
+                status: 'done',
+                comment: '',
+              },
+            },
             {
               tool: 'slack.postMessage',
               args: { channelSlug: 'dm-manager', body: report },
             },
           ],
           applied: [
+            { tool: 'ticket.update', ok: true, authority: 'manager' },
             { tool: 'ticket.update', ok: true, authority: 'manager' },
             { tool: 'slack.postMessage', ok: true, authority: 'standing' },
           ],
@@ -325,7 +358,7 @@ function retainedSnapshot() {
         slug: 'REVOPS-EVAL-04',
         title: 'Salesforce escalation',
         body: 'x',
-        status: 'open',
+        status: 'done',
         comments: [
           { author: 'Day0', body: comment, timestamp: 2_000 },
           { author: 'Day0', body: comment, timestamp: 4_000 },
@@ -383,6 +416,18 @@ describe('read-only evidence re-grading', (): void => {
         facts: {
           reportedEffects: [
             { kind: 'manager-report', tool: 'slack.postMessage', destination: 'dm-manager' },
+          ],
+          procedureEffects: [
+            {
+              kind: 'originating-ticket-audit',
+              tool: 'ticket.update',
+              destination: 'REVOPS-EVAL-04',
+            },
+            {
+              kind: 'manager-report',
+              tool: 'slack.postMessage',
+              destination: 'dm-manager',
+            },
           ],
         },
       },
