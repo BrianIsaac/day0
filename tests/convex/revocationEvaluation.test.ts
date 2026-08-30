@@ -34,6 +34,21 @@ describe('the live revocation evaluation fixture', (): void => {
         source: 'oauth',
         createdAt: 1,
       });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'declared',
+        whereFound: [
+          {
+            ref: 'runbooks/how-to-post-slack.md',
+            quote: 'The approved transport is the Slack Web API.',
+          },
+        ],
+        credentialLanded: false,
+        createdAt: 1,
+      });
       return { agentId, credentialId };
     });
     await harness.mutation(internal.revocationEvaluation.installSurfaceCards, {

@@ -41,86 +41,112 @@ export const installSurfaceCards = internalMutation({
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .collect();
-    if (existing.length > 0) throw new Error('evaluation surface cards already exist');
+    const existingSlack = existing.find((surface) => surface.slug === 'slack');
+    const existingTile = existing.find((surface) => surface.slug === 'looker-pipeline-tile');
+    for (const surface of [existingSlack, existingTile]) {
+      if (surface && surface.verdict !== 'declared') {
+        throw new Error(`evaluation surface ${surface.slug} is already ${surface.verdict}`);
+      }
+    }
     const now = Date.now();
     const slackEvidence = [
       {
-        ref: 'slack-day0-app.md',
+        ref: 'runbooks/how-to-post-slack.md',
         quote: 'The approved transport is the Slack Web API over HTTPS at https://slack.com/api/.',
       },
     ];
-    const slack = await ctx.db.insert('surfaces', {
-      agentId: args.agentId,
-      slug: 'slack',
+    const effectiveSlackEvidence = existingSlack?.whereFound.length
+      ? existingSlack.whereFound
+      : slackEvidence;
+    const slackFields = {
       displayName: 'Slack',
       class: 'chat',
-      verdict: 'proposed',
-      whereFound: slackEvidence,
-      path: 'documented-api',
-      fallbackPath: 'escalate',
-      pathCandidates: [{ path: 'documented-api', endpoint: 'https://slack.com/api/' }],
+      verdict: 'proposed' as const,
+      whereFound: effectiveSlackEvidence,
+      path: 'documented-api' as const,
+      fallbackPath: 'escalate' as const,
+      pathCandidates: [
+        { path: 'documented-api' as const, endpoint: 'https://slack.com/api/' },
+      ],
       endpoint: 'https://slack.com/api/',
       credentialId: args.slackCredentialId,
-      credentialKind: 'oauth',
+      credentialKind: 'oauth' as const,
       credentialLanded: false,
       request: {
         target: {
           system: 'Slack',
           class: 'chat',
-          chosenPath: 'documented-api',
-          fallbackPath: 'escalate',
+          chosenPath: 'documented-api' as const,
+          fallbackPath: 'escalate' as const,
           confidence: 1,
           reasoning: 'The folder runbook names Slack Web API as the approved transport.',
         },
-        evidence: slackEvidence,
+        evidence: effectiveSlackEvidence,
         scopeRequested: ['slack:read', 'slack:write'],
-        credential: { found: 'value', method: 'bot-token' },
+        credential: { found: 'value' as const, method: 'bot-token' },
         blastRadius: 'The isolated fake workspace only.',
         costBand: 'none',
         expiresInDays: 1,
         rollback: 'Revoke the scope and disconnect the fake surface.',
         openQuestions: [],
       },
-      createdAt: now,
-    });
+    };
+    const slack = existingSlack?._id ??
+      (await ctx.db.insert('surfaces', {
+        agentId: args.agentId,
+        slug: 'slack',
+        ...slackFields,
+        createdAt: now,
+      }));
+    if (existingSlack) await ctx.db.patch(existingSlack._id, slackFields);
     const tileEvidence = [
       {
-        ref: 'looker-pipeline-tile.md',
+        ref: 'systems/looker-pipeline-tile.md',
         quote: 'The Looker pipeline tile is reached through its web UI only.',
       },
     ];
-    const tile = await ctx.db.insert('surfaces', {
-      agentId: args.agentId,
-      slug: 'looker-pipeline-tile',
+    const effectiveTileEvidence = existingTile?.whereFound.length
+      ? existingTile.whereFound
+      : tileEvidence;
+    const tileFields = {
       displayName: 'Looker pipeline tile',
       class: 'analytics',
-      verdict: 'proposed',
-      whereFound: tileEvidence,
-      path: 'browser-driven',
-      fallbackPath: 'escalate',
-      pathCandidates: [{ path: 'browser-driven', endpoint: 'http://looker-tile:8080/' }],
+      verdict: 'proposed' as const,
+      whereFound: effectiveTileEvidence,
+      path: 'browser-driven' as const,
+      fallbackPath: 'escalate' as const,
+      pathCandidates: [
+        { path: 'browser-driven' as const, endpoint: 'http://looker-tile:8080/' },
+      ],
       endpoint: 'http://looker-tile:8080/',
       credentialLanded: false,
       request: {
         target: {
           system: 'Looker pipeline tile',
           class: 'analytics',
-          chosenPath: 'browser-driven',
-          fallbackPath: 'escalate',
+          chosenPath: 'browser-driven' as const,
+          fallbackPath: 'escalate' as const,
           confidence: 1,
           reasoning: 'The folder runbook documents a web UI and explicitly denies an API.',
         },
-        evidence: tileEvidence,
+        evidence: effectiveTileEvidence,
         scopeRequested: ['looker-pipeline-tile:read', 'looker-pipeline-tile:write'],
-        credential: { found: 'value', method: 'unknown' },
+        credential: { found: 'value' as const, method: 'unknown' },
         blastRadius: 'One synthetic coverage figure.',
         costBand: 'none',
         expiresInDays: 1,
         rollback: 'Re-run the form with the prior synthetic figure.',
         openQuestions: [],
       },
-      createdAt: now,
-    });
+    };
+    const tile = existingTile?._id ??
+      (await ctx.db.insert('surfaces', {
+        agentId: args.agentId,
+        slug: 'looker-pipeline-tile',
+        ...tileFields,
+        createdAt: now,
+      }));
+    if (existingTile) await ctx.db.patch(existingTile._id, tileFields);
     for (const surfaceId of [slack, tile]) {
       await ctx.db.insert('events', {
         agentId: args.agentId,
