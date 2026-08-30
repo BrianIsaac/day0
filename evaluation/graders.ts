@@ -10,6 +10,15 @@ const seedSchema = z.object({
   contentRefs: z.array(z.string()),
   priority: z.string().optional(),
   requesterLabel: z.string().optional(),
+  originatingTicket: z
+    .object({
+      slug: z.string().min(1),
+      title: z.string().min(1),
+      body: z.string().min(1),
+      status: z.enum(['open', 'in-progress', 'blocked', 'done']),
+      priority: z.string().min(1),
+    })
+    .optional(),
   replyTarget: z
     .object({
       channel: z.string(),

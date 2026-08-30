@@ -25,7 +25,14 @@ const tasks = [
     externalId: 'EVAL-SEED-02',
     title: 'Update REVOPS-202',
     contentSummary: 'Add the approved audit comment.',
-    contentRefs: ['ticket://REVOPS-202'],
+    contentRefs: ['ticket://REVOPS-EVAL-02'],
+    originatingTicket: {
+      slug: 'REVOPS-EVAL-02',
+      title: 'Evaluation audit note',
+      body: 'Record the approved audit note and preserve the current ticket status.',
+      status: 'open' as const,
+      priority: 'P2',
+    },
   },
 ];
 
@@ -50,6 +57,16 @@ describe('evaluation backend boundary', (): void => {
       'EVAL-SEED-02',
     ]);
     expect(snapshot.events.filter((event) => event.type === 'work.discovered')).toHaveLength(2);
+    expect(snapshot.tickets).toMatchObject([
+      {
+        slug: 'REVOPS-EVAL-02',
+        title: 'Evaluation audit note',
+        body: 'Record the approved audit note and preserve the current ticket status.',
+        status: 'open',
+        priority: 'P2',
+        comments: [],
+      },
+    ]);
     await expect(
       harness.withIdentity({ subject: 'stranger' }).query(api.evaluation.snapshot, { agentId }),
     ).rejects.toThrow('forbidden');

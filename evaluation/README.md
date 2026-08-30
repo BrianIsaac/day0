@@ -8,7 +8,8 @@ outcomes.
 
 - [Fixed task specifications](tasks/semifinal.json) - the 15 tasks, each with its
   seed payload, timeout, required effect, prohibited effects and the exact check in
-  plain language.
+  plain language. The four ticket-backed tasks each seed a dedicated
+  `REVOPS-EVAL-*` ticket with the same task payload.
 - [Programmatic graders](graders.ts) - what passes and what fails, read from adapter
   state and the ledger.
 - [Report generator](report.ts) - every number in a report comes from the JSON.
@@ -74,6 +75,12 @@ work state, the persisted applied-action ledger, events, mock Slack messages,
 spreadsheet rows, ticket comments and status, and tweet replies, scoped to each
 task's own window (rows that landed before the task started belong to the seed or
 to an earlier task).
+
+On 30 August 2026 the four ticket-backed tasks stopped reusing the hosted demo's
+`REVOPS-201`–`REVOPS-203` fixtures. Each now owns a neutral `REVOPS-EVAL-*` ticket,
+seeded with its work item, because a demo ticket's independent closure wording can
+otherwise turn an evaluation into a test of fixture history rather than agent
+judgement. The demo tickets and their hosted-demo behaviour are unchanged.
 
 Day0's supervision trail is visible but is not mis-scored as task fan-out: a
 landed `slack.postMessage` is an exempt manager report only when its literal
