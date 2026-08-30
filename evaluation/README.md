@@ -144,6 +144,23 @@ approval delay or polling interval differs, so two configurations can never mix 
 one file. A task in progress when the harness stopped keeps its original start time
 and deadline.
 
+To apply current deterministic graders to an already-run evidence file, keep its
+mock backend and recorded work items available and run:
+
+```bash
+pnpm eval:semifinal -- --regrade evaluation/results/<timestamp>/semifinal.json
+```
+
+Re-grade mode makes only authenticated backend queries: it invokes no mutation,
+action or model-bearing stage, refuses if any recorded work item is absent from its
+recorded agent, and writes a fresh timestamped evidence directory without touching
+the source. Pass `--out <new-directory>/semifinal.json` to choose that new path.
+The new JSON records the source path, source run commit and current grader commit in
+`regradedFrom`, plus `modelCallsMade: 0`; the markdown states the same provenance.
+Recorded human wait and task timing are copied, except that a task newly made
+correct by the current grader gets its deploy-to-effect value from the retained
+effect timestamp inside its original start-to-finish window.
+
 Useful subsets:
 
 ```bash

@@ -68,6 +68,15 @@ export interface EvaluationEvidence {
     onboardingTranscriptPath?: string;
     postCharterApprovalSkipped?: boolean;
   };
+  regradedFrom?: {
+    path: string;
+    /** Commit whose product execution and retained backend state produced the source run. */
+    commit: string;
+    /** Commit whose task definitions and deterministic graders produced this evidence file. */
+    gradedAtCommit: string;
+    generatedAt: string;
+    modelCallsMade: 0;
+  };
   runs: EvaluationRun[];
 }
 
@@ -273,10 +282,13 @@ export function renderEvaluationReport(evidence: EvaluationEvidence): string {
         row.grade.facts.heldForApproval ? 'yes' : 'no'
       } | ${duration(row.deployToFirstCorrectActionMs)} |`,
   );
+  const regradeLine = evidence.regradedFrom
+    ? `\n\nRe-graded from run ${evidence.regradedFrom.generatedAt} (commit \`${evidence.regradedFrom.commit}\`) with graders at commit \`${evidence.regradedFrom.gradedAtCommit}\`; no model calls were made.`
+    : '';
 
   return `# Semi-final controlled comparison
 
-Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\`. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.
+Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\`. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.${regradeLine}
 
 ## Results
 
