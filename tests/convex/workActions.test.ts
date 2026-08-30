@@ -1703,6 +1703,18 @@ describe('executing an approved plan through the gate', (): void => {
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const held = await readItem(harness, workItemId);
     if (!held.pendingRunId) throw new Error('pending run missing');
+    expect(held.output).toMatchObject({
+      actions: [recorded.skillOutput.actions[0]],
+      suppressedDuplicateActions: [
+        {
+          phase: 'initial',
+          index: 1,
+          duplicateOf: 0,
+          tool: 'slack.postMessage',
+          reason: 'duplicate write effect in the same phase',
+        },
+      ],
+    });
     const approvedIndexes = (held.actionVerdicts ?? [])
       .map((verdict, index) => ({ verdict, index }))
       .filter(({ verdict }) => verdict.disposition === 'held')
