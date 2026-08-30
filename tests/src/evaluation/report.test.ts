@@ -16,6 +16,13 @@ const passingGrade = {
     approvedByManager: true,
     landedTools: ['slack.postMessage'],
     proposedTools: ['slack.postMessage'],
+    reportedEffects: [
+      {
+        kind: 'manager-report' as const,
+        tool: 'slack.postMessage' as const,
+        destination: 'dm-manager',
+      },
+    ],
   },
 };
 
@@ -93,7 +100,10 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('same fixed tasks');
     expect(report).toContain('human wait');
     expect(report).toContain('not a verbatim transcript');
-    expect(report).toContain('| day0-r1 | day0 | docs-team-cadence | completed | pass |');
+    expect(report).toContain('manager-report:dm-manager');
+    expect(report).toContain(
+      '| day0-r1 | day0 | docs-team-cadence | completed | pass | none | manager-report:dm-manager |',
+    );
   });
 });
 
@@ -190,10 +200,16 @@ describe('time to operational', (): void => {
     expect(timeToOperational(run)).toEqual({ rawMs: 5_000, humanWaitBeforeMs: 750 });
     const firstFailed = {
       ...run,
-      tasks: [{ ...run.tasks[0]!, grade: { ...run.tasks[0]!.grade, passed: false } }, run.tasks[1]!],
+      tasks: [
+        { ...run.tasks[0]!, grade: { ...run.tasks[0]!.grade, passed: false } },
+        run.tasks[1]!,
+      ],
     };
     expect(timeToOperational(firstFailed)).toEqual({ rawMs: 9_000, humanWaitBeforeMs: 1_500 });
-    expect(timeToOperational({ ...run, tasks: [] })).toEqual({ rawMs: null, humanWaitBeforeMs: null });
+    expect(timeToOperational({ ...run, tasks: [] })).toEqual({
+      rawMs: null,
+      humanWaitBeforeMs: null,
+    });
   });
 });
 
