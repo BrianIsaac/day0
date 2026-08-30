@@ -701,6 +701,10 @@ function flattenedDependentOutput(
   output: DependentPendingOutput,
   applied: AppliedAction[],
 ): ExecutionOutput & { applied: AppliedAction[]; planStepOutcomes: PlanStepOutcome[] } {
+  const suppressedDuplicateActions = [
+    ...(output.initial.suppressedDuplicateActions ?? []),
+    ...(output.suppressedDuplicateActions ?? []),
+  ];
   return {
     draft: output.draft,
     notes: output.notes,
@@ -708,6 +712,7 @@ function flattenedDependentOutput(
     actions: [...output.initial.actions, ...output.actions],
     applied: [...output.initial.applied, ...applied],
     planStepOutcomes: output.planStepOutcomes,
+    ...(suppressedDuplicateActions.length > 0 ? { suppressedDuplicateActions } : {}),
   };
 }
 
