@@ -185,7 +185,12 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
   await client.mutation(api.charters.approve, { charterId: charter._id });
 
   await client.action(api.revocationEvaluationActions.setupSurfaceCards, { agentId });
-  const proposed = await client.query(api.surfaces.listForAgent, { agentId });
+  const proposed = (await client.query(api.surfaces.listForAgent, { agentId })).filter((surface) =>
+    ['slack', 'looker-pipeline-tile'].includes(surface.slug),
+  );
+  if (proposed.length !== 2 || proposed.some((surface) => surface.verdict !== 'proposed')) {
+    throw new Error('the Slack and tile evaluation cards were not both proposed');
+  }
   for (const surface of proposed) {
     await client.mutation(api.surfaces.approve, { surfaceId: surface._id, role: 'manager' });
     await client.mutation(api.surfaces.approve, { surfaceId: surface._id, role: 'it' });
