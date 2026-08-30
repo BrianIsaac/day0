@@ -315,7 +315,8 @@ function renderTeamDocs(docs: MockSurfaceSnapshot['teamDocs']): string {
   return docs.map((d) => `--- ${d.title} ---\n${d.body}`).join('\n\n');
 }
 
-function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
+/** The workspace listing every mock-mode executor sees: slugs, tabs, tickets and recent messages, never the docs. */
+export function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   const lines: string[] = [];
   lines.push('## Spreadsheets');
   for (const sh of env.spreadsheets) {
