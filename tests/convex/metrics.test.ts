@@ -284,3 +284,163 @@ describe('agent evaluation metrics', (): void => {
     expect(metrics.auditTrail.fraction).toBeNull();
   });
 });
+
+describe('metrics under adversarial sequences', (): void => {
+  it('counts a decision requested but never answered without inventing a latency', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Waiting',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: id,
+        sourceCategory: 'inbox',
+        sourceSystem: 'docs',
+        externalId: 'REVOPS-9',
+        title: 'Unanswered',
+        contentSummary: 'A plan nobody decided.',
+        contentRefs: [],
+        state: 'plan-pending',
+        observedAt: 1,
+        createdAt: 1,
+        decision: {
+          id: 'd-open',
+          kind: 'plan',
+          requestedAt: 2_000,
+          channel: 'D123',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+        },
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.decision-requesting',
+        payload: { workItemId, kind: 'plan', decisionId: 'd-open' },
+        createdAt: 2_000,
+      });
+      return id;
+    });
+    const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
+    expect(metrics.decisions).toMatchObject({
+      requested: 1,
+      approved: 0,
+      rejected: 0,
+      medianLatencyMs: null,
+      p90LatencyMs: null,
+    });
+    expect(metrics.decisions.byVia.dashboard.decided).toBe(0);
+    expect(metrics.decisions.byVia.channel.decided).toBe(0);
+  });
+
+  it('pairs each refusal with the latest revocation of its own scope when two scopes were revoked', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Twice revoked',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: id,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-3',
+        title: 'Two reads',
+        contentSummary: 'One Linear read and one Slack DM.',
+        contentRefs: [],
+        state: 'failed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'permission.revoked',
+        payload: { scope: 'linear:read', by: 'manager' },
+        createdAt: 10_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'permission.revoked',
+        payload: { scope: 'slack:read', by: 'manager' },
+        createdAt: 20_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'permission.revoked',
+        payload: { scope: 'linear:read', by: 'manager' },
+        createdAt: 30_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.actions-pending',
+        payload: {
+          workItemId,
+          runId: 'run-3',
+          autoIndexes: [],
+          heldIndexes: [],
+          refusedIndexes: [0, 1],
+          refusals: [
+            { index: 0, reason: 'no grant (linear:read)' },
+            { index: 1, reason: 'no grant (slack:read)' },
+          ],
+        },
+        createdAt: 31_000,
+      });
+      return id;
+    });
+    const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
+    expect(metrics.actions.refused).toBe(2);
+    expect(metrics.actions.blockedAfterRevocation).toBe(2);
+    expect(metrics.actions.firstBlockAfterRevocationMs).toBe(1_000);
+  });
+
+  it('reports the request and the decided count from the row when the events are gone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Row only',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('workItems', {
+        agentId: id,
+        sourceCategory: 'inbox',
+        sourceSystem: 'docs',
+        externalId: 'REVOPS-10',
+        title: 'Decided on the row',
+        contentSummary: 'Events retention has passed.',
+        contentRefs: [],
+        state: 'completed',
+        observedAt: 1,
+        createdAt: 1,
+        decision: {
+          id: 'd-row',
+          kind: 'actions',
+          requestedAt: 5_000,
+          channel: 'D123',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          decidedAt: 8_000,
+          outcome: 'approved',
+          decidedVia: 'channel',
+        },
+      });
+      return id;
+    });
+    const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
+    expect(metrics.decisions).toMatchObject({ requested: 1, approved: 1, medianLatencyMs: 3_000 });
+    expect(metrics.decisions.byVia.channel).toEqual({
+      decided: 1,
+      medianLatencyMs: 3_000,
+      p90LatencyMs: 3_000,
+    });
+  });
+});
