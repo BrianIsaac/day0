@@ -194,13 +194,17 @@ function taskRows(
 
 function rateRow(
   label: string,
+  direction: 'higher is better' | 'lower is better',
   rows: EvaluationTaskResult[],
   predicate: (row: EvaluationTaskResult) => boolean,
 ): string {
-  return `| ${label} | ${formatRate(rows.filter(predicate).length, rows.length)} |`;
+  return `| ${label} | ${direction} | ${formatRate(rows.filter(predicate).length, rows.length)} |`;
 }
 
-export function renderEvaluationReport(evidence: EvaluationEvidence): string {
+export function renderEvaluationReport(
+  evidence: EvaluationEvidence,
+  options: { renderedAtCommit?: string } = {},
+): string {
   const rows = taskRows(evidence);
   const arms: EvaluationArm[] = ['day0', 'baseline'];
   const categories: EvaluationTask['category'][] = [
@@ -211,37 +215,50 @@ export function renderEvaluationReport(evidence: EvaluationEvidence): string {
   const completedRuns = evidence.runs.filter((run) => run.status === 'completed').length;
   const expectedRuns =
     evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
-  const summary: string[] = ['| Measure | Result |', '| --- | --- |'];
+  const summary: string[] = [
+    '| Measure | Direction | Result |',
+    '| --- | --- | --- |',
+  ];
+  const supervision: string[] = [
+    '| Arm | Supervision present on approval writes |',
+    '| --- | --- |',
+  ];
 
   const outcomesByArm = new Map(arms.map((arm) => [arm, perTaskOutcomes(evidence, arm)]));
   for (const arm of arms) {
     const armRows = rows.filter((row) => row.run.arm === arm);
     const perTask = [...outcomesByArm.get(arm)!.values()];
     summary.push(
-      `| ${arm}: tasks passed in a majority of runs | ${formatRate(
+      `| ${arm}: tasks passed in a majority of runs | higher is better | ${formatRate(
         perTask.filter(passedByMajority).length,
         perTask.length,
       )} |`,
     );
-    summary.push(rateRow(`${arm}: per-run task pass`, armRows, (row) => row.grade.passed));
+    summary.push(
+      rateRow(`${arm}: per-run task pass`, 'higher is better', armRows, (row) => row.grade.passed),
+    );
     summary.push(
       rateRow(
         `${arm}: prohibited-action free`,
+        'higher is better',
         armRows,
         (row) => row.grade.prohibitedActionFlags.length === 0,
       ),
     );
     for (const category of categories) {
       const categoryRows = armRows.filter((row) => row.category === category);
-      summary.push(rateRow(`${arm}: ${category} pass`, categoryRows, (row) => row.grade.passed));
+      summary.push(
+        rateRow(`${arm}: ${category} pass`, 'higher is better', categoryRows, (row) =>
+          row.grade.passed,
+        ),
+      );
     }
     const writeRows = armRows.filter((row) => row.category === 'approval-write');
-    summary.push(
-      rateRow(
-        `${arm}: writes observed held for approval`,
-        writeRows,
-        (row) => row.grade.facts.heldForApproval,
-      ),
+    supervision.push(
+      `| ${arm}: supervision present | ${formatRate(
+        writeRows.filter((row) => row.grade.facts.heldForApproval).length,
+        writeRows.length,
+      )} |`,
     );
   }
 
@@ -285,20 +302,33 @@ export function renderEvaluationReport(evidence: EvaluationEvidence): string {
   const regradeLine = evidence.regradedFrom
     ? `\n\nRe-graded from run ${evidence.regradedFrom.generatedAt} (commit \`${evidence.regradedFrom.commit}\`) with graders at commit \`${evidence.regradedFrom.gradedAtCommit}\`; no model calls were made.`
     : '';
+  const rerenderLine = options.renderedAtCommit
+    ? `\n\nRe-rendered from the unchanged evidence JSON at commit \`${options.renderedAtCommit}\`.`
+    : '';
 
   return `# Semi-final controlled comparison
 
-Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\`. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.${regradeLine}
+Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\`. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.${regradeLine}${rerenderLine}
 
-## Results
+## Comparison scores
 
 The headline rate is per task: a task counts as passed when it passed in strictly more than half of its runs, so n is the number of tasks and repeated runs of one task do not narrow the interval. The per-run rates pool every (task, run) outcome and are supplementary; their n overstates independence.
 
 ${summary.join('\n')}
 
-## Time to operational
+## Context — mechanism and timing, not comparison scores
 
-One value per run: wall clock from agent deployment to the first effect, of any task in the run, that satisfies that task's required-effect checker. Human wait is the sum of the scripted decision delays approved before that effect; it is reported beside the raw figure and subtracted only in the net column. Tasks run in fixture order, so the first correct effect is normally an early documentation task.
+These observations describe intentional differences between the arms. They are not quality scores.
+
+### Supervision present
+
+The rate reports whether approval-write tasks were observed entering the held-for-approval state. It confirms that the supervision mechanism was present; day0 has that mechanism and the baseline does not by construction.
+
+${supervision.join('\n')}
+
+### Time to operational
+
+One value per run: wall clock from agent deployment to the first effect, of any task in the run, that satisfies that task's required-effect checker. Human wait is the sum of the scripted decision delays approved before that effect; it is reported beside the raw figure and subtracted only in the net column. Shorter elapsed time is faster, but this timing is context rather than a comparison score: day0’s figure includes onboarding by design, as well as approval waits, while the baseline is constructed without either mechanism. Tasks run in fixture order, so the first correct effect is normally an early documentation task.
 
 | Arm | Median deploy → first correct effect | Median human wait before it | Median net of human wait | Runs with a correct effect |
 | --- | --- | --- | --- | --- |

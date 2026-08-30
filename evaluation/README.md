@@ -12,7 +12,9 @@ outcomes.
   `REVOPS-EVAL-*` ticket with the same task payload.
 - [Programmatic graders](graders.ts) - what passes and what fails, read from adapter
   state and the ledger.
-- [Report generator](report.ts) - every number in a report comes from the JSON.
+- [Report generator](report.ts) - every number in a report comes from the JSON;
+  every comparison score states its direction, while mechanism and timing
+  observations are labelled as context.
 - [Onboarding transcript](onboarding/day0.json) - the fixed 1:1 replayed for day0.
 - `results/<timestamp>/semifinal.json` and `.md` - one directory per invocation.
 
@@ -114,10 +116,13 @@ no prohibited figure or fabricated connection; every exempt effect is retained i
 Every reported rate carries its numerator, n, a two-sided Wilson 95% interval and
 that interval's width. The headline rate is per task by majority over runs (n =
 tasks); the pooled per-run rate is supplementary and its n overstates independence.
-Time to operational is one value per run: wall clock from deployment to the first
-effect of any task that passed, with the human wait before it reported beside it
-and subtracted only in a net column. A task that exceeds its declared timeout is
-terminalised as failed and cannot later apply a delayed model response.
+Every comparison-score row also says whether higher or lower is better. Supervision
+present and time to operational are reported separately as context, not scores:
+the former confirms that day0's held-action mechanism ran, while the latter is one
+value per run from deployment to the first effect of any task that passed. The timing
+table shows human wait beside the raw figure and subtracts it only in a net column;
+day0's raw figure includes onboarding by design. A task that exceeds its declared
+timeout is terminalised as failed and cannot later apply a delayed model response.
 
 ## Reproduce
 
