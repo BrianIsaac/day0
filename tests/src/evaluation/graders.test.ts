@@ -154,7 +154,7 @@ describe('programmatic task grading', (): void => {
     ).toContain('2 matching');
   });
 
-  it('accepts the documented cross-link transition on a cited docs ticket', async (): Promise<void> => {
+  it('classifies the originating ticket before considering cited cross-links', async (): Promise<void> => {
     const task = (await loadEvaluationTasks()).find(
       (row) => row.id === 'docs-salesforce-escalation',
     );
@@ -195,10 +195,10 @@ describe('programmatic task grading', (): void => {
       facts: {
         procedureEffects: [
           {
-            kind: 'cross-link-audit',
+            kind: 'originating-ticket-audit',
             destination: 'REVOPS-EVAL-04',
             guideSlug: 'how-to-update-ticket',
-            runbookLine: PROCEDURE_RUNBOOK_LINES.crossLink.line,
+            runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
           },
         ],
       },

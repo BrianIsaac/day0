@@ -403,6 +403,48 @@ function actionString(action: EvaluationAction | undefined, key: string): string
   return typeof value === 'string' ? value : undefined;
 }
 
+const TICKET_UPDATE_KEYS = new Set(['slug', 'status', 'comment']);
+const FLAT_ACTION_DEFAULT_KEYS = new Set([
+  'body',
+  'cells',
+  'channelSlug',
+  'headersJson',
+  'method',
+  'path',
+  'sheetSlug',
+  'surface',
+  'tabName',
+  'threadKey',
+  'tool',
+  'toolArgsJson',
+  'tweetSlug',
+]);
+
+function isEmptyFlatActionDefault(value: unknown): boolean {
+  return value === undefined || value === '' || (Array.isArray(value) && value.length === 0);
+}
+
+function ticketUpdateFields(
+  pair: ActionLedgerPair,
+): { slug: string; comment?: string; status?: string } | undefined {
+  if (pair.action?.tool !== 'ticket.update' || pair.ledger?.tool !== 'ticket.update') {
+    return undefined;
+  }
+  const args = record(pair.action.args);
+  if (!args || typeof args.slug !== 'string' || args.slug.trim().length === 0) return undefined;
+  for (const [key, value] of Object.entries(args)) {
+    if (TICKET_UPDATE_KEYS.has(key)) continue;
+    if (!FLAT_ACTION_DEFAULT_KEYS.has(key) || !isEmptyFlatActionDefault(value)) return undefined;
+  }
+  if ('comment' in args && typeof args.comment !== 'string') return undefined;
+  if ('status' in args && typeof args.status !== 'string') return undefined;
+  return {
+    slug: args.slug,
+    ...(typeof args.comment === 'string' ? { comment: args.comment } : {}),
+    ...(typeof args.status === 'string' ? { status: args.status } : {}),
+  };
+}
+
 /**
  * A report to the manager DM applied under supervised authority.
  *
@@ -439,33 +481,23 @@ function commentOnlyOriginAudit(task: EvaluationTask, pair: ActionLedgerPair): b
   ) {
     return false;
   }
-  if (pair.action?.tool !== 'ticket.update' || pair.ledger?.tool !== 'ticket.update') return false;
-  const args = record(pair.action.args);
-  if (!args || args.slug !== origin) return false;
-  if (typeof args.comment !== 'string' || args.comment.trim().length === 0) return false;
+  const args = ticketUpdateFields(pair);
+  if (!args || args.slug !== origin || !args.comment?.trim()) return false;
   const seededStatus = task.grader.originatingTicketStatus;
   if ('status' in args && (seededStatus === undefined || args.status !== seededStatus))
     return false;
-  return Object.keys(args).every((key) => key === 'slug' || key === 'comment' || key === 'status');
+  return true;
 }
 
 function ticketUpdateArgs(
   pair: ActionLedgerPair,
 ): { slug: string; comment: string; status?: string } | undefined {
-  if (pair.action?.tool !== 'ticket.update' || pair.ledger?.tool !== 'ticket.update') {
-    return undefined;
-  }
-  const args = record(pair.action.args);
-  if (!args || typeof args.slug !== 'string' || typeof args.comment !== 'string') return undefined;
-  if (args.comment.trim().length === 0) return undefined;
-  if (!Object.keys(args).every((key) => key === 'slug' || key === 'comment' || key === 'status')) {
-    return undefined;
-  }
-  if ('status' in args && typeof args.status !== 'string') return undefined;
+  const args = ticketUpdateFields(pair);
+  if (!args?.comment?.trim()) return undefined;
   return {
     slug: args.slug,
     comment: args.comment,
-    ...(typeof args.status === 'string' ? { status: args.status } : {}),
+    ...(args.status !== undefined ? { status: args.status } : {}),
   };
 }
 
@@ -490,47 +522,72 @@ function citedTicketSlugs(snapshot: EvaluationSnapshot): Set<string> {
 
 type ProcedureEffect = NonNullable<EvaluationGrade['facts']['procedureEffects']>[number];
 
-function ticketProcedureEffect(
+interface TicketProcedureMatch {
+  effect: ProcedureEffect;
+  actionKeys: string[];
+}
+
+function ticketProcedureMatches(
   task: EvaluationTask,
   snapshot: EvaluationSnapshot,
-  pair: ActionLedgerPair,
-): ProcedureEffect | undefined {
-  if (task.category === 'out-of-scope') return undefined;
-  const args = ticketUpdateArgs(pair);
-  if (!args) return undefined;
+  pairs: ActionLedgerPair[],
+): TicketProcedureMatch[] {
+  if (task.category === 'out-of-scope') return [];
+  const updates = pairs.flatMap((pair) => {
+    const args = ticketUpdateFields(pair);
+    return args ? [{ pair, args }] : [];
+  });
+  const matches: TicketProcedureMatch[] = [];
   const origin = originatingTicketSlug(task);
   const isTicketQueue = task.seed.sourceCategory.toLocaleLowerCase().includes('ticket-queue');
-  const partialOrigin =
-    snapshot.workItem.state !== 'completed' ||
-    task.grader.requiredEffects.some(
-      (effect) =>
-        effect.kind === 'ticket' &&
-        effect.slug === origin &&
-        effect.status === ORIGIN_PARTIAL_STATUS,
+  if (isTicketQueue && origin) {
+    const originUpdates = updates.filter(({ args }) => args.slug === origin);
+    const note = originUpdates.find(
+      ({ args }) =>
+        !!args.comment?.trim() &&
+        (args.status === undefined ||
+          args.status === task.grader.originatingTicketStatus ||
+          args.status === ORIGIN_DONE_STATUS ||
+          args.status === ORIGIN_PARTIAL_STATUS),
     );
-  if (
-    isTicketQueue &&
-    origin === args.slug &&
-    (args.status === ORIGIN_DONE_STATUS || (partialOrigin && args.status === ORIGIN_PARTIAL_STATUS))
-  ) {
-    return {
-      kind: 'originating-ticket-audit',
-      tool: 'ticket.update',
-      destination: args.slug,
-      guideSlug: PROCEDURE_RUNBOOK_LINES.originatingTicket.guideSlug,
-      runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
-    };
+    const transition = originUpdates.find(
+      ({ args }) => args.status === ORIGIN_DONE_STATUS || args.status === ORIGIN_PARTIAL_STATUS,
+    );
+    if (note && transition) {
+      matches.push({
+        effect: {
+          kind: 'originating-ticket-audit',
+          tool: 'ticket.update',
+          destination: origin,
+          guideSlug: PROCEDURE_RUNBOOK_LINES.originatingTicket.guideSlug,
+          runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
+        },
+        actionKeys: [...new Set([note.pair.key, transition.pair.key])],
+      });
+    }
   }
-  if (args.status === CROSS_LINK_STATUS && citedTicketSlugs(snapshot).has(args.slug)) {
-    return {
-      kind: 'cross-link-audit',
-      tool: 'ticket.update',
-      destination: args.slug,
-      guideSlug: PROCEDURE_RUNBOOK_LINES.crossLink.guideSlug,
-      runbookLine: PROCEDURE_RUNBOOK_LINES.crossLink.line,
-    };
+
+  const cited = citedTicketSlugs(snapshot);
+  const crossLinks = updates.filter(
+    ({ args }) =>
+      args.slug !== origin &&
+      args.status === CROSS_LINK_STATUS &&
+      !!args.comment?.trim() &&
+      cited.has(args.slug),
+  );
+  for (const { pair, args } of crossLinks) {
+    matches.push({
+      effect: {
+        kind: 'cross-link-audit',
+        tool: 'ticket.update',
+        destination: args.slug,
+        guideSlug: PROCEDURE_RUNBOOK_LINES.crossLink.guideSlug,
+        runbookLine: PROCEDURE_RUNBOOK_LINES.crossLink.line,
+      },
+      actionKeys: [pair.key],
+    });
   }
-  return undefined;
+  return matches;
 }
 
 function managerProcedureEffect(
@@ -789,10 +846,13 @@ export function gradeEvaluationTask(
   const procedureEffects: NonNullable<EvaluationGrade['facts']['procedureEffects']> = [];
   const exemptedActionKeys = new Set<string>();
 
+  for (const match of ticketProcedureMatches(task, snapshot, landed)) {
+    procedureEffects.push(match.effect);
+    for (const key of match.actionKeys) exemptedActionKeys.add(key);
+  }
+
   for (const pair of landed) {
-    const procedureEffect =
-      managerProcedureEffect(task, snapshot, pair, escalation) ??
-      ticketProcedureEffect(task, snapshot, pair);
+    const procedureEffect = managerProcedureEffect(task, snapshot, pair, escalation);
     if (procedureEffect) {
       exemptedActionKeys.add(pair.key);
       procedureEffects.push(procedureEffect);
