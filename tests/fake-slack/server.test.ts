@@ -111,11 +111,38 @@ describe('the isolated Slack provisioning proof', (): void => {
   });
 
   it('exposes counts for proof without exposing any credential', async (): Promise<void> => {
-    const proof = await (await fetch(`${BASE}/proof`)).text();
-    expect(proof).toContain('apps.manifest.create');
-    expect(proof).toContain('oauth.v2.access');
+    const response = await fetch(`${BASE}/proof`);
+    const payload = (await response.json()) as {
+      calls: Record<string, number>;
+      requestLog: Array<{ sequence: number; method: string; at: number }>;
+    };
+    expect(payload.calls).toMatchObject({
+      'apps.manifest.create': 1,
+      'oauth.v2.access': 1,
+      'chat.postMessage': 1,
+    });
+    expect(payload.requestLog).toContainEqual({
+      sequence: expect.any(Number),
+      method: 'chat.postMessage',
+      at: expect.any(Number),
+    });
+    const proof = JSON.stringify(payload);
     expect(proof).not.toContain('xoxe-');
     expect(proof).not.toContain('xoxb-');
     expect(proof).not.toContain('client-secret');
+    expect(proof).not.toContain('isolated proof note');
+  });
+
+  it('resets only count and timing evidence', async (): Promise<void> => {
+    expect((await fetch(`${BASE}/reset`, { method: 'POST' })).ok).toBe(true);
+    await api('auth.test', 'xoxb-day0-fake-dedicated-token');
+    const proof = (await (await fetch(`${BASE}/proof`)).json()) as {
+      calls: Record<string, number>;
+      requestLog: Array<{ sequence: number; method: string }>;
+    };
+    expect(proof.calls).toEqual({ 'auth.test': 1 });
+    expect(proof.requestLog).toEqual([
+      { sequence: 1, method: 'auth.test', at: expect.any(Number) },
+    ]);
   });
 });

@@ -30,6 +30,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "eval:semifinal": "tsx --env-file-if-exists=.env.local scripts/eval-semifinal.ts",
+    "eval:gate": "tsx evaluation/gate/run.ts",
+    "eval:revocation": "tsx --env-file-if-exists=.env.local scripts/eval-revocation.ts",
     "probe:model": "tsx --env-file-if-exists=.env.local scripts/probe-model-endpoint.ts",
     "probe:mcp": "tsx --env-file-if-exists=.env.local scripts/probe-mcp.ts",
     "probe:docs-source": "tsx --env-file-if-exists=.env.local scripts/probe-docs-source.ts",

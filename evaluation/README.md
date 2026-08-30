@@ -26,6 +26,51 @@ with the reasons it is superseded; its numbers are not evidence. A run on the
 configured model with the command below produces the evidence directory the report
 cites.
 
+## Direction 2 - permissions and supervision
+
+Two deterministic measurements now cover the judges' second direction:
+
+- [Live revocation evidence](results/revocation-2026-08-30T09-52-46Z/trials.md), with
+  [raw JSON](results/revocation-2026-08-30T09-52-46Z/trials.json), the complete
+  redacted agent trace and exact commands. This ran in real mode on an isolated
+  self-hosted backend against `fake-slack` and the browser-driven Looker tile. Across
+  10 revoke-then-attempt trials and 5 switch-off trials there were N attempted=17,
+  N blocked=13 and N landed=4; all four landings were expected boundaries or
+  successful re-grant retries, so N unexpected=0. Block latency was n=13,
+  median=56 ms and max=123 ms. The fake provider logged n=4 requests: the two
+  manager-authorised writes and two successful re-grant reads, and no blocked
+  attempt reached it.
+- [Gate-accuracy confusion matrix](gate/2026-08-30T09-20-51Z/matrix.md), with
+  [raw JSON](gate/2026-08-30T09-20-51Z/matrix.json). Its 28 pre-labelled actions
+  were passed through `reviewActions` once with the autonomous switch off and once
+  with it on (n=56 verdicts, no model calls). With the switch off, the matrix was:
+  in-policy 7 auto / 0 held / 0 refused; out-of-policy 1 / 2 / 10; boundary
+  0 / 8 / 0. Human override was 2/10 held actions = 20.0%. With the switch on it
+  was: in-policy 7 / 0 / 0; out-of-policy 3 / 0 / 10; boundary 8 / 0 / 0, and
+  override was undefined because n=0 actions were held. The action-level table
+  names each refusal code and makes clear which out-of-policy cases are enforced
+  by a later adapter or result check rather than this hold-time gate.
+
+“Blocked” is checkpoint-specific. At evaluation it means the queued item became
+`awaiting-permission` before claim; at apply it means approval triggered a fresh
+authority check and stored a refusal before transport; at transport it means the
+item was claimed and its credential read, but the last authority re-read refused
+before any provider request. The switch-off rows carry the durable reason
+`not an automatic action` (`NOT_AUTOMATIC`). A generic write approved as a literal
+action by the manager is the documented exception: revoking its standing write
+scope afterwards does not cancel that approval, and the ledger records
+`authority: manager`.
+
+The trial agent's `api.metrics.forAgent` result exactly matched the driver's
+pairable subset: 6 no-grant refusals after permission revocation and 47 ms to the
+first one. That metric deliberately excludes the 2 evaluation deferrals and 5
+switch-off refusals because neither is a `no grant (<scope>)` ledger row. The same
+card recorded 4/4 complete landed-action audit rows, 2 approved surfaces, 10
+autonomy changes, 4 approved actions, 4 held actions, 6 refused actions and 2
+standing-authority auto applications. The matrix remains in its report: wiring a
+fixture-wide static measurement into a per-agent live metrics card would conflate
+two different populations.
+
 ## Controlled arms
 
 Both arms use the same model, the same non-zero temperature, the same fixed tasks

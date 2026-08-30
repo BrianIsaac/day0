@@ -1406,6 +1406,31 @@ describe('the exact-action gate', (): void => {
     ).rejects.toThrow('reconcile the provider first');
   });
 
+  it('retains a failed action ledger on the terminal event for revocation metrics', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing');
+    const output = {
+      applied: [
+        {
+          tool: 'mcp.call',
+          ok: false,
+          reason: 'no grant (linear:read)',
+          idempotencyKey: `${workItemId}:${runId}:0`,
+        },
+      ],
+    };
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      runId,
+      reason: 'the revoked read was refused',
+      output,
+    });
+    await expect(eventsOfType(harness, agentId, 'work.failed')).resolves.toMatchObject([
+      { payload: { workItemId, output } },
+    ]);
+  });
+
   it('permits retry after only reads landed and every write failed or stayed held', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

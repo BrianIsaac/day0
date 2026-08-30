@@ -4,9 +4,11 @@ const port = Number(process.env.FAKE_SLACK_PORT || 8090);
 const botToken = 'xoxb-day0-fake-dedicated-token';
 const clientSecret = 'day0-fake-client-secret';
 const calls = new Map();
+const requestLog = [];
 
 function count(method) {
   calls.set(method, (calls.get(method) || 0) + 1);
+  requestLog.push({ sequence: requestLog.length + 1, method, at: Date.now() });
 }
 
 function json(response, status, payload) {
@@ -28,7 +30,16 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'fake-slack'}`);
   if (url.pathname === '/healthz') return json(response, 200, { ok: true });
   if (url.pathname === '/proof') {
-    return json(response, 200, { ok: true, calls: Object.fromEntries(calls) });
+    return json(response, 200, {
+      ok: true,
+      calls: Object.fromEntries(calls),
+      requestLog,
+    });
+  }
+  if (url.pathname === '/reset' && request.method === 'POST') {
+    calls.clear();
+    requestLog.length = 0;
+    return json(response, 200, { ok: true });
   }
   if (url.pathname === '/oauth/v2/authorize' && request.method === 'GET') {
     count('oauth.v2.authorize');
@@ -106,7 +117,7 @@ const server = createServer(async (request, response) => {
     } catch {
       return json(response, 200, { ok: false, error: 'invalid_json' });
     }
-    if (payload.channel !== 'D_DAY0_MANAGER') {
+    if (!['D_DAY0_MANAGER', 'C_REVOPS', 'C_REVOPS_ASKS'].includes(payload.channel)) {
       return json(response, 200, { ok: false, error: 'not_in_channel' });
     }
     if (typeof payload.text !== 'string' || payload.text.trim() === '') {
