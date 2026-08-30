@@ -541,6 +541,14 @@ function ticketProcedureMatches(
   const origin = originatingTicketSlug(task);
   const isTicketQueue = task.seed.sourceCategory.toLocaleLowerCase().includes('ticket-queue');
   if (isTicketQueue && origin) {
+    const partialOrigin =
+      snapshot.workItem.state !== 'completed' ||
+      task.grader.requiredEffects.some(
+        (effect) =>
+          effect.kind === 'ticket' &&
+          effect.slug === origin &&
+          effect.status === ORIGIN_PARTIAL_STATUS,
+      );
     const originUpdates = updates.filter(({ args }) => args.slug === origin);
     const note = originUpdates.find(
       ({ args }) =>
@@ -548,10 +556,12 @@ function ticketProcedureMatches(
         (args.status === undefined ||
           args.status === task.grader.originatingTicketStatus ||
           args.status === ORIGIN_DONE_STATUS ||
-          args.status === ORIGIN_PARTIAL_STATUS),
+          (partialOrigin && args.status === ORIGIN_PARTIAL_STATUS)),
     );
     const transition = originUpdates.find(
-      ({ args }) => args.status === ORIGIN_DONE_STATUS || args.status === ORIGIN_PARTIAL_STATUS,
+      ({ args }) =>
+        args.status === ORIGIN_DONE_STATUS ||
+        (partialOrigin && args.status === ORIGIN_PARTIAL_STATUS),
     );
     if (note && transition) {
       matches.push({

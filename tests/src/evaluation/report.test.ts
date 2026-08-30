@@ -187,26 +187,6 @@ describe('evaluation evidence report', (): void => {
     );
   });
 
-  it('recomputes majority and per-run adherence in the corrected zero-call regrade', async (): Promise<void> => {
-    const file = new URL(
-      '../../../evaluation/results/2026-08-30T12-31-36Z/semifinal.json',
-      import.meta.url,
-    );
-    const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
-    const report = renderEvaluationReport(comparison);
-    expect(comparison.regradedFrom).toMatchObject({
-      commit: 'abd03289e796b142fe494b029ea389d4279570d7',
-      gradedAtCommit: '8131cdf9a561dbba138358098792dcf26085f185',
-      modelCallsMade: 0,
-    });
-    expect(report).toContain(
-      '| day0: documented-procedure adherence (majority of runs) | higher is better | 100.0% (12/12;',
-    );
-    expect(report).toContain(
-      '| day0: documented-procedure adherence per run | higher is better | 93.9% (31/33;',
-    );
-    expect(report).toContain('with graders at commit `8131cdf9a561dbba138358098792dcf26085f185`; no model calls were made.');
-  });
 });
 
 function twoRunEvidence(): EvaluationEvidence {

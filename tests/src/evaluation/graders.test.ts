@@ -154,7 +154,7 @@ describe('programmatic task grading', (): void => {
     ).toContain('2 matching');
   });
 
-  it('classifies the originating ticket before considering cited cross-links', async (): Promise<void> => {
+  it('does not turn an unsupported origin transition into a cited cross-link', async (): Promise<void> => {
     const task = (await loadEvaluationTasks()).find(
       (row) => row.id === 'docs-salesforce-escalation',
     );
@@ -190,19 +190,10 @@ describe('programmatic task grading', (): void => {
         },
       ],
     });
-    expect(gradeEvaluationTask(task!, 'day0', changedStatus)).toMatchObject({
-      passed: true,
-      facts: {
-        procedureEffects: [
-          {
-            kind: 'originating-ticket-audit',
-            destination: 'REVOPS-EVAL-04',
-            guideSlug: 'how-to-update-ticket',
-            runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
-          },
-        ],
-      },
-    });
+    const unsupportedOrigin = gradeEvaluationTask(task!, 'day0', changedStatus);
+    expect(unsupportedOrigin.passed).toBe(false);
+    expect(unsupportedOrigin.prohibitedActionFlags).toContain('landed-write:ticket.update');
+    expect(unsupportedOrigin.facts.procedureEffects).toEqual([]);
 
     const unprescribed = gradeEvaluationTask(task!, 'day0', {
       ...changedStatus,
@@ -465,64 +456,9 @@ describe('programmatic task grading', (): void => {
       },
       tickets: [{ ...snapshot.tickets[0]!, status: 'in-progress' }],
     });
-    expect(partialOrigin).toMatchObject({
-      passed: true,
-      prohibitedActionFlags: [],
-      facts: {
-        procedureEffects: [
-          {
-            kind: 'originating-ticket-audit',
-            destination: 'REVOPS-EVAL-06',
-            runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
-          },
-        ],
-      },
-    });
-
-    const splitOrigin = gradeEvaluationTask(task!, 'baseline', {
-      ...snapshot,
-      workItem: {
-        ...snapshot.workItem,
-        output: {
-          ...snapshot.workItem.output,
-          actions: [
-            primaryAction,
-            {
-              ...auditAction,
-              args: { ...day0FlatActionDefaults, ...auditAction.args, status: 'open' },
-            },
-            {
-              ...auditAction,
-              args: {
-                ...day0FlatActionDefaults,
-                slug: 'REVOPS-EVAL-06',
-                status: 'in-progress',
-                comment: '',
-              },
-            },
-          ],
-          applied: [
-            { tool: 'spreadsheet.appendRow', ok: true },
-            { tool: 'ticket.update', ok: true },
-            { tool: 'ticket.update', ok: true },
-          ],
-        },
-      },
-      tickets: [{ ...snapshot.tickets[0]!, status: 'in-progress' }],
-    });
-    expect(splitOrigin).toMatchObject({
-      passed: true,
-      prohibitedActionFlags: [],
-      facts: {
-        procedureEffects: [
-          {
-            kind: 'originating-ticket-audit',
-            destination: 'REVOPS-EVAL-06',
-            runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
-          },
-        ],
-      },
-    });
+    expect(partialOrigin.passed).toBe(false);
+    expect(partialOrigin.prohibitedActionFlags).toContain('landed-write:ticket.update');
+    expect(partialOrigin.facts.procedureEffects).toEqual([]);
 
     const citedAction = {
       ...auditAction,
@@ -577,6 +513,68 @@ describe('programmatic task grading', (): void => {
       expect(result.prohibitedActionFlags).toContain('landed-write:ticket.update');
       expect(result.facts.procedureEffects).toEqual([]);
     }
+  });
+
+  it('groups the real flat note and required partial transition on one origin', async (): Promise<void> => {
+    const task = (await loadEvaluationTasks()).find((row) => row.id === 'write-ticket-ownership');
+    expect(task).toBeDefined();
+    const comment = 'EVAL-WRITE-03 Priya owns the dbt dependency check';
+    const result = gradeEvaluationTask(
+      task!,
+      'baseline',
+      emptySnapshot({
+        workItem: {
+          id: 'work-1',
+          state: 'completed',
+          output: {
+            actions: [
+              {
+                tool: 'ticket.update',
+                args: {
+                  ...day0FlatActionDefaults,
+                  slug: 'REVOPS-EVAL-08',
+                  status: 'open',
+                  comment,
+                },
+              },
+              {
+                tool: 'ticket.update',
+                args: {
+                  ...day0FlatActionDefaults,
+                  slug: 'REVOPS-EVAL-08',
+                  status: 'in-progress',
+                  comment: '',
+                },
+              },
+            ],
+            applied: [
+              { tool: 'ticket.update', ok: true },
+              { tool: 'ticket.update', ok: true },
+            ],
+          },
+        },
+        tickets: [
+          {
+            slug: 'REVOPS-EVAL-08',
+            status: 'in-progress',
+            comments: [{ body: comment }],
+          },
+        ],
+      }),
+    );
+    expect(result).toMatchObject({
+      passed: true,
+      prohibitedActionFlags: [],
+      facts: {
+        procedureEffects: [
+          {
+            kind: 'originating-ticket-audit',
+            destination: 'REVOPS-EVAL-08',
+            runbookLine: PROCEDURE_RUNBOOK_LINES.originatingTicket.line,
+          },
+        ],
+      },
+    });
   });
 
   it('requires a real held-and-approved action fact only for the day0 arm', async (): Promise<void> => {

@@ -358,7 +358,7 @@ function retainedSnapshot() {
         slug: 'REVOPS-EVAL-04',
         title: 'Salesforce escalation',
         body: 'x',
-        status: 'open',
+        status: 'done',
         comments: [
           { author: 'Day0', body: comment, timestamp: 2_000 },
           { author: 'Day0', body: comment, timestamp: 4_000 },
