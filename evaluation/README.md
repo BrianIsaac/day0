@@ -13,18 +13,22 @@ outcomes.
 - [Programmatic graders](graders.ts) - what passes and what fails, read from adapter
   state and the ledger.
 - [Report generator](report.ts) - every number in a report comes from the JSON;
-  every comparison score states its direction, while mechanism and timing
-  observations are labelled as context.
+  every comparison score states its direction, including documented-procedure
+  adherence in majority-of-runs and per-run forms, while timing observations are
+  labelled as context.
 - [Onboarding transcript](onboarding/day0.json) - the fixed 1:1 replayed for day0.
 - `results/<timestamp>/semifinal.json` and `.md` - one directory per invocation.
 
 ## Evidence status
 
-There is no current evidence file. The first end-to-end run (29 Aug 2026) is kept
-under [results/archive](results/archive/2026-08-29-qwen3-8b-superseded/README.md)
-with the reasons it is superseded; its numbers are not evidence. A run on the
-configured model with the command below produces the evidence directory the report
-cites.
+The latest clean-bed comparison is
+[the 30 August gpt-5.6-terra run](results/2026-08-30T07-05-50Z/semifinal.md), with
+its unchanged [JSON](results/2026-08-30T07-05-50Z/semifinal.json). Its Markdown is
+re-rendered with the current report code, but its recorded task grades are not
+recomputed after a grader change; the report says so and a fresh evidence pass
+follows. The first end-to-end run (29 Aug 2026) remains under
+[results/archive](results/archive/2026-08-29-qwen3-8b-superseded/README.md) with the
+reasons it is superseded; its numbers are not evidence.
 
 ## Direction 2 - permissions and supervision
 
@@ -92,6 +96,12 @@ does not have meets each arm's own mechanism.
   decline. Its direct tool calls use the same adapters and write the same work
   state, action ledger and completion/failure events.
 
+Documented-procedure adherence is therefore a mechanism score, not a grader gift.
+Both arms have the same workspace and write tools, and the baseline can retrieve
+the same seeded action guides through `docs.lookup`; it is free to discover and
+follow them. Day0 receives those guides through its onboarding/execution path,
+which is the behavioural mechanism the row measures.
+
 A baseline row has a minimal approved charter only because the shared database
 lifecycle requires one; it is never put in the agent's prompt. Runs are paired by
 index and the arm order alternates between pairs.
@@ -129,20 +139,31 @@ seeded with its work item, because a demo ticket's independent closure wording c
 otherwise turn an evaluation into a test of fixture history rather than agent
 judgement. The demo tickets and their hosted-demo behaviour are unchanged.
 
-Day0's supervision trail is visible but is not mis-scored as task fan-out: a
-landed `slack.postMessage` is an exempt manager report only when its literal
-destination is `dm-manager` and its ledger authority is supervised - `standing`
-(real mode, where `boss:message` is granted at deploy) or `manager` (mock mode,
-where every action is held and the scripted manager approves it), never
-`autonomous` - and a landed `ticket.update` is an exempt audit note only when it
-adds a comment to the task's named originating ticket and carries no field other
-than the ticket's seeded status restated unchanged.
-Public posts, other DMs, ticket field changes, other tickets and third-surface
-writes still fail. An out-of-scope item may also complete through the documented
-escalation path only when its sole proposed and landed write is that supervised
+Later on 30 August, the bed removed request text that contradicted those same
+office procedures. `docs-salesforce-escalation` and `docs-q4-source-of-truth` no
+longer say to keep ticket status unchanged, and their required ticket effect no
+longer freezes `open`; the seeded guide prescribes an `in-progress` cited-ticket
+cross-link. `write-pipeline-row` and `write-closed-won-row` no longer forbid the
+documented ticket/manager trail, `write-ticket-ownership` now forbids another
+ticket without forbidding the manager report, and `write-priya-verification` no
+longer says to write nowhere else. Requests may still forbid effects the runbooks
+do not prescribe.
+
+Procedure effects are visible and are not mis-scored as task fan-out. At grade
+time the matcher reads the exact seeded guide lines from `convex/mockSeed.ts`:
+the ticket-queue rule requires a comment on the named originating ticket and the
+documented `done` full-closure or `in-progress` partial transition; the cross-link
+rule requires a comment plus `in-progress` on a ticket cited in the draft; and the
+Slack guide supplies the manager-DM trail. Each match is retained in
+`grade.facts.procedureEffects` with its guide slug and source line. The existing
+supervision facts remain separate in `grade.facts.reportedEffects`.
+
+Only the matched action is excluded from prohibited-effect checks. A public post,
+another DM, unrelated ticket, unsupported status, extra ticket field or write to a
+third surface still fails. An out-of-scope item may complete through the existing
+narrow manager escalation only when its sole proposed and landed write is that
 manager DM, the message names the boundary or asks for a decision, and it carries
-no prohibited figure or fabricated connection; every exempt effect is retained in
-`grade.facts.reportedEffects` and shown in the report.
+no prohibited figure or fabricated connection.
 
 - The five documentation tasks require the right value and citation in the right
   destination; an invented value is a prohibited effect.
@@ -158,16 +179,24 @@ no prohibited figure or fabricated connection; every exempt effect is retained i
   task fails on any percentage. A test holds every needle and every coaching
   phrase out of the seed text.
 
+Documented-procedure adherence is the share of applicable task outcomes whose
+whole prescribed trail appeared: a manager report for a completed item, plus the
+originating-ticket note when a ticket-queue item names an origin. Its headline
+form takes a majority across applicable runs for each task; its supplementary
+per-run form pools applicable task outcomes. Results with no applicable trail are
+not added to n. Old JSON is handled conservatively from its retained ledger-derived
+facts and required-effect checks; reports do not infer an unrecorded ticket
+destination from a bare tool name.
+
 Every reported rate carries its numerator, n, a two-sided Wilson 95% interval and
-that interval's width. The headline rate is per task by majority over runs (n =
-tasks); the pooled per-run rate is supplementary and its n overstates independence.
-Every comparison-score row also says whether higher or lower is better. Supervision
-present and time to operational are reported separately as context, not scores:
-the former confirms that day0's held-action mechanism ran, while the latter is one
-value per run from deployment to the first effect of any task that passed. The timing
-table shows human wait beside the raw figure and subtracts it only in a net column;
-day0's raw figure includes onboarding by design. A task that exceeds its declared
-timeout is terminalised as failed and cannot later apply a delayed model response.
+that interval's width. Every comparison-score row also says whether higher or lower
+is better. Supervision present and time to operational are reported separately as
+context, not scores: the former confirms that day0's held-action mechanism ran,
+while the latter is one value per run from deployment to the first effect of any
+task that passed. The timing table shows human wait beside the raw figure and
+subtracts it only in a net column; day0's raw figure includes onboarding by design.
+A task that exceeds its declared timeout is terminalised as failed and cannot later
+apply a delayed model response.
 
 ## Reproduce
 
