@@ -41,6 +41,7 @@ export default defineConfig({
             'tests/app/**/*.test.ts',
             'tests/app/**/*.test.tsx',
             'tests/scripts/**/*.test.ts',
+            'evaluation/gate/**/*.test.ts',
           ],
           environment: 'node',
         },
