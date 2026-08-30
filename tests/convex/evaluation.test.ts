@@ -23,7 +23,7 @@ const tasks = [
     sourceCategory: 'ticket-queue',
     sourceSystem: 'ticket',
     externalId: 'EVAL-SEED-02',
-    title: 'Update REVOPS-202',
+    title: 'Update REVOPS-EVAL-02',
     contentSummary: 'Add the approved audit comment.',
     contentRefs: ['ticket://REVOPS-EVAL-02'],
     originatingTicket: {
