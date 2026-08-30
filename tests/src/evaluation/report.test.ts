@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
+  documentedProcedureAdherence,
   formatRate,
   renderEvaluationReport,
   timeToOperational,
@@ -22,6 +23,15 @@ const passingGrade = {
         kind: 'manager-report' as const,
         tool: 'slack.postMessage' as const,
         destination: 'dm-manager',
+      },
+    ],
+    procedureEffects: [
+      {
+        kind: 'manager-report' as const,
+        tool: 'slack.postMessage' as const,
+        destination: 'dm-manager',
+        guideSlug: 'how-to-post-slack' as const,
+        runbookLine: 'one to the manager (the full draft)',
       },
     ],
   },
@@ -103,11 +113,12 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('not a verbatim transcript');
     expect(report).toContain('manager-report:dm-manager');
     expect(report).toContain('| Measure | Direction | Result |');
+    expect(report).toContain(
+      '| day0: documented-procedure adherence (majority of runs) | higher is better |',
+    );
     expect(report).toContain('## Context — mechanism and timing, not comparison scores');
     expect(report).toContain('day0’s figure includes onboarding by design');
-    expect(report).toContain(
-      '| day0-r1 | day0 | docs-team-cadence | completed | pass | none | manager-report:dm-manager |',
-    );
+    expect(report).toContain('manager-report:dm-manager | manager-report:dm-manager | yes');
   });
 
   it('puts a direction on every score row and no direction on context rows', (): void => {
@@ -131,12 +142,17 @@ describe('evaluation evidence report', (): void => {
     expect(contextSection).not.toContain('| Direction |');
   });
 
-  it('re-renders all four committed three-run comparisons from JSON', async (): Promise<void> => {
+  it('re-renders every committed top-level comparison from JSON', async (): Promise<void> => {
     const directories = [
+      '2026-08-30T02-14-46Z',
+      '2026-08-30T02-36-05Z',
+      '2026-08-30T02-46-45Z',
       '2026-08-30T02-47-08Z',
+      '2026-08-30T02-51-40Z',
       '2026-08-30T05-21-02Z',
       '2026-08-30T05-23-16Z',
       '2026-08-30T06-17-57Z',
+      '2026-08-30T07-05-50Z',
     ];
     for (const directory of directories) {
       const file = new URL(
@@ -144,8 +160,31 @@ describe('evaluation evidence report', (): void => {
         import.meta.url,
       );
       const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
-      expect(() => renderEvaluationReport(comparison, { renderedAtCommit: 'test-commit' })).not.toThrow();
+      const report = renderEvaluationReport(comparison, { renderedAtCommit: 'test-commit' });
+      expect(report).toContain('computed from the recorded ledger facts retained in that JSON');
+      expect(report).toContain('Recorded task grades were not recomputed');
     }
+  });
+
+  it('computes the adherence rows from the latest seeded evidence JSON', async (): Promise<void> => {
+    const file = new URL(
+      '../../../evaluation/results/2026-08-30T07-05-50Z/semifinal.json',
+      import.meta.url,
+    );
+    const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
+    const report = renderEvaluationReport(comparison);
+    expect(report).toContain(
+      '| day0: documented-procedure adherence (majority of runs) | higher is better | 90.9% (10/11;',
+    );
+    expect(report).toContain(
+      '| day0: documented-procedure adherence per run | higher is better | 81.8% (27/33;',
+    );
+    expect(report).toContain(
+      '| baseline: documented-procedure adherence (majority of runs) | higher is better | 13.3% (2/15;',
+    );
+    expect(report).toContain(
+      '| baseline: documented-procedure adherence per run | higher is better | 14.3% (6/42;',
+    );
   });
 });
 
@@ -235,6 +274,18 @@ function twoRunEvidence(): EvaluationEvidence {
   ];
   return base;
 }
+
+describe('documented procedure adherence', (): void => {
+  it('requires every applicable trail for a completed ticket-queue task', (): void => {
+    const row = twoRunEvidence().runs[0]!.tasks[1]!;
+    expect(documentedProcedureAdherence(row)).toEqual({
+      applicable: true,
+      satisfied: false,
+      prescribed: ['manager-report', 'originating-ticket-note'],
+      observed: ['manager-report'],
+    });
+  });
+});
 
 describe('time to operational', (): void => {
   it('takes the first effect of a task that passed, never one that also did something prohibited', (): void => {
