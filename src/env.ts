@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import { z } from 'zod';
+import { DEFAULT_MODEL } from './lib/model-name';
 
 /**
  * Lazy env validation. All fields are `.optional()` or have defaults so
@@ -13,7 +14,7 @@ const schema = z.object({
 
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(),
-  OPENAI_MODEL: z.string().default('gpt-5.5'),
+  OPENAI_MODEL: z.string().default(DEFAULT_MODEL),
   OPENAI_IMAGE_MODEL: z.string().default('gpt-image-2'),
   OPENAI_JSON_MODE: z.enum(['auto', 'native', 'prompt']).default('auto'),
 

@@ -1,5 +1,6 @@
 import { query } from './_generated/server';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { modelName } from '../src/lib/model-name';
 import { browserComponent } from '../src/surfaces/browser';
 
 /** Return the non-secret surface mode for consistent UI labels. */
@@ -9,6 +10,19 @@ export const surfaceMode = query({
     mode: SURFACE_MODE,
     label: SURFACE_MODE === 'real' ? 'real (local)' : 'mock',
   }),
+});
+
+/**
+ * The model this deployment's actions are configured to call, by name only.
+ *
+ * The evaluation harness compares it with the model the local environment
+ * names, so that the evidence file records the model that actually ran both
+ * arms rather than whatever the operator's shell happened to say. Nothing
+ * about the provider - key, base URL - is returned.
+ */
+export const modelSettings = query({
+  args: {},
+  handler: (): { model: string } => ({ model: modelName() }),
 });
 
 /** Which optional components this deployment is configured for. */

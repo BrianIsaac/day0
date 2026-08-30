@@ -44,3 +44,20 @@ describe('optional components', (): void => {
     await expect(harness.query(api.config.components, {})).resolves.toEqual({ browser: false });
   });
 });
+
+describe('model settings', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('reports the deployment model name and nothing else about the provider', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    vi.stubEnv('OPENAI_MODEL', '');
+    await expect(harness.query(api.config.modelSettings, {})).resolves.toEqual({ model: 'gpt-5.5' });
+    vi.stubEnv('OPENAI_MODEL', 'qwen3:8b');
+    vi.stubEnv('OPENAI_API_KEY', 'sk-should-never-be-returned');
+    const settings = await harness.query(api.config.modelSettings, {});
+    expect(settings).toEqual({ model: 'qwen3:8b' });
+    expect(JSON.stringify(settings)).not.toContain('sk-');
+  });
+});

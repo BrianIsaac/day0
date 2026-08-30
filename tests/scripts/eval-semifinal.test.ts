@@ -8,14 +8,17 @@ import {
 
 describe('semi-final evaluation CLI', (): void => {
   it('defaults to the full paired three-run comparison', (): void => {
-    expect(parseCliOptions([])).toMatchObject({
+    const options = parseCliOptions([]);
+    expect(options).toMatchObject({
       arms: ['day0', 'baseline'],
       runs: 3,
       taskSelectors: [],
-      out: 'evaluation/results/semifinal.json',
       approvalDelayMs: 750,
       pollIntervalMs: 500,
     });
+    expect(options.out).toMatch(
+      /^evaluation\/results\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\/semifinal\.json$/,
+    );
   });
 
   it('accepts arm, run, task and output subsets', (): void => {
@@ -95,7 +98,20 @@ async function stubContext(
       schemaVersion: 1,
       experiment: 'day0-semifinal-controlled-comparison',
       generatedAt: '',
-      configuration: {} as never,
+      configuration: {
+        commit: 'abc',
+        model: 'gpt-5.5',
+        temperature: 0.4,
+        modelCallTimeoutMs: 90_000,
+        surfaceMode: 'mock',
+        arms: ['day0', 'baseline'],
+        requestedRuns: 1,
+        taskIds: ['docs-team-cadence'],
+        approvalDelayMs: 1,
+        pollIntervalMs: 1,
+        noLlmJudge: true,
+        onboardingTranscriptProvenance: 'fixture',
+      },
       runs: [],
     },
     outPath: join(dir, 'out.json'),

@@ -29,7 +29,11 @@ import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
 import { EVALUATION_SCOPES } from '../src/evaluation/scopes';
 
-const DEFAULT_OUT = 'evaluation/results/semifinal.json';
+/** Each invocation writes its own directory; pass `--out` with an earlier path to resume it. */
+function defaultOutPath(now = new Date()): string {
+  const stamp = now.toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/:/g, '-');
+  return `evaluation/results/${stamp}/semifinal.json`;
+}
 const DEFAULT_APPROVAL_DELAY_MS = 750;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const TOKEN_REFRESH_MS = 45 * 60 * 1000;
@@ -100,7 +104,7 @@ export function parseCliOptions(argv: string[]): CliOptions {
     arms: ['day0', 'baseline'],
     runs: 3,
     taskSelectors: [],
-    out: DEFAULT_OUT,
+    out: defaultOutPath(),
     approvalDelayMs: DEFAULT_APPROVAL_DELAY_MS,
     pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
     help: false,
@@ -167,7 +171,8 @@ function usage(): string {
   --arms day0,baseline     arms to run (default both)
   --runs N                 paired run count per arm (default 3)
   --tasks id,id            task ids or EVAL external ids (default all 15)
-  --out path.json          resumable raw evidence path
+  --out path.json          raw evidence path (default evaluation/results/<timestamp>/semifinal.json);
+                           pass an earlier path to resume that run
   --approval-delay-ms N    simulated human decision delay (default 750)
   --poll-ms N              state polling interval (default 500)
 `;
@@ -781,6 +786,14 @@ export async function runEvaluation(options: CliOptions): Promise<EvaluationEvid
   const mode = await context.client.query(api.config.surfaceMode, {});
   if (mode.mode !== 'mock')
     throw new Error(`evaluation requires mock mode; backend reports ${mode.mode}`);
+  const backend = await context.client.query(api.config.modelSettings, {});
+  if (backend.model !== MODEL) {
+    throw new Error(
+      `the backend is configured for model ${backend.model} but this environment names ${MODEL}; ` +
+        'run ./scripts/sync-convex-env.sh and restart the backend so both arms use one model',
+    );
+  }
+  evidence.configuration.backendModel = backend.model;
   await persist(context);
 
   for (const scheduled of scheduledRuns(options)) {
