@@ -543,9 +543,60 @@ function procedureTrailInventorySchema(contract: ProcedureContract) {
   return z.array(row).length(ids.length);
 }
 
+function requiredActionFloor(
+  contract: ProcedureContract,
+  candidate?: WorkCandidate,
+  plan?: ExecutionPlan,
+): number {
+  if (!candidate || !plan) return 0;
+  const effects = new Set<string>();
+  if (plan.expectedOutputType === 'spreadsheet-update') {
+    effects.add(
+      `spreadsheet.appendRow:sheetSlug:${referencedDestination(candidate, 'sheet://') ?? '(candidate)'}`,
+    );
+  } else if (plan.expectedOutputType === 'ticket-update') {
+    effects.add(
+      `ticket.update:slug:${referencedDestination(candidate, 'ticket://') ?? '(candidate)'}`,
+    );
+  } else if (plan.expectedOutputType === 'message') {
+    const channel = candidate.replyTarget?.channel ?? referencedDestination(candidate, 'slack://');
+    const post = referencedDestination(candidate, 'tweet://');
+    effects.add(
+      channel
+        ? `slack.postMessage:channelSlug:${channel}`
+        : post
+          ? `twitter.reply:tweetSlug:${post}`
+          : 'message:(candidate)',
+    );
+  }
+  for (const trail of contract.trails) {
+    if (!procedureTrailApplies(trail, candidate)) continue;
+    const destination = trail.effect.destination;
+    if (destination.kind === 'originating-reference') {
+      effects.add(
+        `${trail.effect.tool}:slug:${originatingReference(candidate, destination.refPrefix) ?? '(origin)'}`,
+      );
+    } else if (destination.kind === 'manager-channel') {
+      effects.add(`${trail.effect.tool}:${destination.argument}:${destination.value}`);
+    } else {
+      effects.add(
+        `${trail.effect.tool}:${destination.argument}:${candidate.replyTarget?.channel ?? '(reply target)'}`,
+      );
+    }
+  }
+  return effects.size;
+}
+
 /** Bind the runtime-loaded trail ids and exact inventory size into the provider schema. */
-export function executeSchemaForProcedureContract(contract: ProcedureContract) {
-  return executeSchema.extend({ procedureTrails: procedureTrailInventorySchema(contract) });
+export function executeSchemaForProcedureContract(
+  contract: ProcedureContract,
+  candidate?: WorkCandidate,
+  plan?: ExecutionPlan,
+) {
+  return executeSchema.extend({
+    actions: z.array(generatedActionSchema).min(requiredActionFloor(contract, candidate, plan)),
+    procedureTrails: procedureTrailInventorySchema(contract),
+  });
 }
 
 /** Use the same runtime trail inventory contract in the dependent phase. */
@@ -1072,7 +1123,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
-  const runtimeSchema = executeSchemaForProcedureContract(procedureContract);
+  const runtimeSchema = executeSchemaForProcedureContract(procedureContract, candidate, plan);
 
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,

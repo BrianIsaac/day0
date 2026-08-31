@@ -153,6 +153,73 @@ describe('executor output contract', (): void => {
     ).toBe(true);
   });
 
+  it('binds the distinct primary and trailing destination count into the provider schema', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'private-recaps',
+          title: 'Private recaps',
+          body: [
+            'After completing work, send a recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and a non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    });
+    const candidate = {
+      sourceCategory: 'inbox' as const,
+      sourceSystem: 'chat',
+      externalId: 'CASE-20',
+      title: 'Post the handoff',
+      contentSummary: 'Post the supplied handoff in the project room.',
+      contentRefs: ['slack://project-room/case-20'],
+      observedAt: new Date(0),
+    };
+    const plan = {
+      summary: 'Post the supplied handoff.',
+      steps: ['Send the approved message to its requested destination.'],
+      expectedOutputType: 'message' as const,
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 2,
+    };
+    const schema = executeSchemaForProcedureContract(contract, candidate, plan);
+    const base = {
+      draft: 'd',
+      notes: 'n',
+      needsDependentPhase: false,
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+    };
+
+    expect(
+      schema.safeParse({
+        ...base,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'project-room', threadKey: null, body: 'Handoff.' },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...base,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'project-room', threadKey: null, body: 'Handoff.' },
+          },
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'lead-desk', threadKey: null, body: 'Recap.' },
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
   it('derives trailing effects from a renamed and reworded office procedure', (): void => {
     const contract = parseProcedureContract({
       teamDocs: [],
