@@ -8,6 +8,8 @@ import {
   executorInstructions,
   executorPreamble,
   mockActionContractIssues,
+  parseProcedureContract,
+  procedureContractSchema,
   replyTargetLine,
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
@@ -57,9 +59,15 @@ const ticketGuides = [
   {
     slug: 'how-to-update-ticket',
     title: 'How to update a ticket (action guide)',
-    body: 'For the originating ticket, use `status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
+    body: 'For work from the `ticket-queue`, call `ticket.update` on the originating ticket: use `status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
   },
 ];
+
+const emptyProcedureContract = parseProcedureContract({ teamDocs: [], howToGuides: [] });
+const ticketProcedureContract = parseProcedureContract({
+  teamDocs: [],
+  howToGuides: ticketGuides,
+});
 
 const recordedFlatArgs = {
   body: '',
@@ -89,12 +97,194 @@ function recordedArgs(overrides: Partial<MockActionArgs>): MockActionArgs {
 const SYNTHETIC_SLACK_TOKEN = ['xoxb', '1234567890-abcdefghijklmnop'].join('-');
 
 describe('executor output contract', (): void => {
+  it('requires procedure-trail attention in both executor phases', (): void => {
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [],
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: null, inapplicabilityReason: 'Not this category.' },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      dependentExecuteSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        actions: [],
+        planStepOutcomes: [{ step: 1, status: 'blocked', evidence: 'No prerequisite result.' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('derives trailing effects from a renamed and reworded office procedure', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'case-ledger-v4',
+          title: 'Finishing an incoming case',
+          body: [
+            'For work whose Source category is `event-stream`, finish by calling `ticket.update` on the originating `ticket://` reference.',
+            'A completed case sets `status` to `blocked`; unfinished work sets `status` to `open`.',
+            'Always supply a non-empty `comment` explaining the result.',
+          ].join('\n'),
+        },
+        {
+          slug: 'private-recaps-v2',
+          title: 'Private completion recaps',
+          body: [
+            'After completing any work, send a concise recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and the non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    });
+
+    expect(procedureContractSchema.parse(contract)).toEqual(contract);
+    expect(contract.trails).toEqual([
+      expect.objectContaining({
+        appliesTo: { sourceCategories: ['event-stream'] },
+        effect: expect.objectContaining({
+          tool: 'ticket.update',
+          destination: { kind: 'originating-reference', refPrefix: 'ticket://' },
+          requiredPayload: ['comment'],
+          nonEmptyPayload: ['comment'],
+          statusTransition: { argument: 'status', full: 'blocked', partial: 'open' },
+        }),
+      }),
+      expect.objectContaining({
+        appliesTo: { sourceCategories: [] },
+        effect: expect.objectContaining({
+          tool: 'slack.postMessage',
+          destination: {
+            kind: 'manager-channel',
+            argument: 'channelSlug',
+            value: 'lead-desk',
+          },
+          requiredPayload: ['body'],
+          nonEmptyPayload: ['body'],
+          statusTransition: null,
+        }),
+      }),
+    ]);
+
+    expect(
+      mockActionContractIssues(
+        {
+          draft: 'Finished the case.',
+          notes: '',
+          needsDependentPhase: false,
+          procedureTrails: [
+            { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
+            { trailId: 'trail-2', actionIndex: 1, inapplicabilityReason: null },
+          ],
+          actions: [
+            {
+              tool: 'ticket.update',
+              args: { slug: 'CASE-17', status: 'done', comment: 'Finished the case.' },
+            },
+            {
+              tool: 'slack.postMessage',
+              args: { channelSlug: 'lead-desk', body: 'Finished CASE-17.' },
+            },
+          ],
+        },
+        {
+          sourceCategory: 'event-stream',
+          sourceSystem: 'case-desk',
+          externalId: 'CASE-17',
+          title: 'Finish the case',
+          contentSummary: 'Finish the bounded work on CASE-17.',
+          contentRefs: ['ticket://CASE-17'],
+          observedAt: new Date(0),
+        },
+        {
+          summary: 'Finish the bounded work.',
+          steps: ['Complete the case and record the result.'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 2,
+        },
+        contract,
+      ),
+    ).toEqual(['prescribed originating-reference transition does not match the completed work']);
+  });
+
+  it('collapses duplicate seeded procedure wording into one trail per effect', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'how-to-update-spreadsheet',
+          title: 'How to update a spreadsheet',
+          body: [
+            'If work came from the `ticket-queue`, end with `ticket.update` against the originating ticket.',
+            'Set `status: "done"` for full closure, `"in-progress"` for partial.',
+          ].join('\n'),
+        },
+        {
+          slug: 'how-to-update-ticket',
+          title: 'How to update a ticket',
+          body: [
+            'For `ticket-queue` work, call `ticket.update` on the originating ticket.',
+            '`status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
+          ].join('\n'),
+        },
+        {
+          slug: 'how-to-post-slack',
+          title: 'How to post to Slack',
+          body: [
+            'Use `slack.postMessage` with `channelSlug` and `body`.',
+            'For the completion report, send one to the manager (the full draft) by putting the draft in `dm-manager`.',
+          ].join('\n'),
+        },
+      ],
+    });
+
+    expect(contract.trails).toHaveLength(2);
+    expect(contract.trails[0]).toMatchObject({
+      appliesTo: { sourceCategories: ['ticket-queue'] },
+      effect: {
+        tool: 'ticket.update',
+        destination: { kind: 'originating-reference', refPrefix: 'ticket://' },
+        requiredPayload: ['comment'],
+        nonEmptyPayload: ['comment'],
+        statusTransition: { argument: 'status', full: 'done', partial: 'in-progress' },
+      },
+    });
+    expect(contract.trails[1]).toMatchObject({
+      effect: {
+        tool: 'slack.postMessage',
+        destination: {
+          kind: 'manager-channel',
+          argument: 'channelSlug',
+          value: 'dm-manager',
+        },
+      },
+    });
+  });
+
   it('rejects a repeated status-only ticket update after the combined requested update', (): void => {
     const issues = mockActionContractIssues(
       {
         draft: 'Move REVOPS-EVAL-08 to in-progress with the requested ownership note.',
         notes: '',
         needsDependentPhase: false,
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
+        ],
         actions: [
           {
             tool: 'ticket.update',
@@ -140,7 +330,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 3,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([
@@ -155,6 +345,7 @@ describe('executor output contract', (): void => {
           'Cannot append the Wayne Enterprises row until source evidence and a duplicate check are provided.',
         notes: 'The exact requested cells were supplied, but the skill asked for extra prerequisites.',
         needsDependentPhase: false,
+        procedureTrails: [],
         actions: [
           {
             tool: 'slack.postMessage',
@@ -183,7 +374,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 3,
       },
-      [],
+      emptyProcedureContract,
     );
 
     expect(issues).toEqual(['action set omitted the approved primary spreadsheet mutation']);
@@ -196,7 +387,18 @@ describe('executor output contract', (): void => {
           'EVAL-DOC-04 — Before changing a Salesforce record, surface a draft to the manager for review. (Escalation paths)',
         notes: 'No ticket update is included.',
         needsDependentPhase: false,
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
+        ],
         actions: [
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-EVAL-04',
+              status: 'done',
+              comment: '',
+            }),
+          },
           {
             tool: 'slack.postMessage',
             args: recordedArgs({
@@ -224,11 +426,11 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 5,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([
-      'ticket-queue action set omitted its documented originating-ticket audit comment',
+      'the loaded procedure prescribes an originating-reference trail; none is present',
     ]);
   });
 
@@ -238,6 +440,9 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the documented Q4 tracker identifier on REVOPS-EVAL-05.',
         notes: 'The documentation fully covers the tracker slug and rationale.',
         needsDependentPhase: false,
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null },
+        ],
         actions: [
           {
             tool: 'slack.postMessage',
@@ -272,11 +477,11 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 5,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([
-      'originating-ticket transition contradicts the documented closure state',
+      'prescribed originating-reference transition does not match the completed work',
     ]);
   });
 
@@ -286,6 +491,9 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the first reconciliation pass; the second pass remains outstanding.',
         notes: 'The approved work is intentionally incomplete.',
         needsDependentPhase: false,
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
+        ],
         actions: [
           {
             tool: 'ticket.update',
@@ -315,7 +523,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 10,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([]);
@@ -327,6 +535,7 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the requested ticket note.',
         notes: '',
         needsDependentPhase: false,
+        procedureTrails: [],
         actions: [
           {
             tool: 'ticket.update',
@@ -355,7 +564,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 2,
       },
-      [],
+      emptyProcedureContract,
     );
 
     expect(issues).toEqual([]);
@@ -367,6 +576,9 @@ describe('executor output contract', (): void => {
         draft: 'Updated the origin and cross-linked ticket.',
         notes: '',
         needsDependentPhase: false,
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
+        ],
         actions: [
           {
             tool: 'ticket.update',
@@ -404,7 +616,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 3,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([]);
@@ -416,6 +628,9 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the completed work.',
         notes: '',
         needsDependentPhase: false,
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
+        ],
         actions: [
           {
             tool: 'ticket.update',
@@ -444,16 +659,21 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 2,
       },
-      [
-        {
-          slug: 'team-ticket-procedure-v2',
-          title: 'Team ticket procedure',
-          body: 'For the originating ticket, use `status: "done"` for full closure, `"blocked"` for partial; add a one-line `comment` summarising what you did.',
-        },
-      ],
+      parseProcedureContract({
+        teamDocs: [],
+        howToGuides: [
+          {
+            slug: 'team-ticket-procedure-v2',
+            title: 'Team ticket procedure',
+            body: 'For work from the `ticket-queue`, call `ticket.update` on the originating ticket: use `status: "done"` for full closure, `"blocked"` for partial; add a one-line `comment` summarising what you did.',
+          },
+        ],
+      }),
     );
 
-    expect(issues).toEqual(['originating-ticket transition contradicts the documented closure state']);
+    expect(issues).toEqual([
+      'prescribed originating-reference transition does not match the completed work',
+    ]);
   });
 
   it('exposes every verb as one compact tagged action variant', (): void => {
@@ -500,6 +720,7 @@ describe('executor output contract', (): void => {
         notes: 'n',
         needsDependentPhase: false,
         actions: [action],
+        procedureTrails: [],
       });
       expect(parsed.success).toBe(true);
       if (parsed.success) expect(parsed.data.actions[0]).toEqual(action);
@@ -616,6 +837,7 @@ describe('executor output contract', (): void => {
     const base = {
       draft: 'd',
       notes: 'n',
+      procedureTrails: [],
       planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' }],
     };
     const action = {
@@ -640,6 +862,7 @@ describe('executor output contract', (): void => {
     const parsed = dependentExecuteSchema.safeParse({
       draft: 'd',
       notes: 'n',
+      procedureTrails: [],
       actions: [
         {
           tool: 'ticket.update',
@@ -669,6 +892,7 @@ describe('executor output contract', (): void => {
     const validParsed = dependentExecuteSchema.safeParse({
       draft: 'd',
       notes: 'n',
+      procedureTrails: [],
       actions: [valid],
       planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'ledger row 0' }],
     });

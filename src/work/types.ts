@@ -121,10 +121,19 @@ export interface MockAction {
   args: MockActionArgs;
 }
 
+/** One model-authored accounting row for a trail parsed from loaded procedures. */
+export interface ProcedureTrailAttestation {
+  trailId: string;
+  actionIndex: number | null;
+  inapplicabilityReason: string | null;
+}
+
 export interface ExecutionOutput {
   draft: string;
   notes: string;
   actions: MockAction[];
+  /** Required by the current provider schema; optional only for persisted pre-contract rows. */
+  procedureTrails?: ProcedureTrailAttestation[];
   /**
    * The emitted actions are prerequisites only; their actual ledger must be
    * available before the run authors its final, result-dependent actions.
@@ -150,6 +159,8 @@ export interface DependentExecutionOutput {
   draft: string;
   notes: string;
   actions: MockAction[];
+  /** Required by the current provider schema; optional only for persisted pre-contract rows. */
+  procedureTrails?: ProcedureTrailAttestation[];
   planStepOutcomes: PlanStepOutcome[];
 }
 
