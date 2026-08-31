@@ -23,15 +23,19 @@ export interface ActionArgumentAudit {
   }>;
 }
 
-interface AuditableOutput {
-  actions?: EvaluationAction[];
-  initial?: { actions?: EvaluationAction[] };
-}
-
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function actionsOf(value: unknown): EvaluationAction[] {
+  const actions = record(value).actions;
+  if (!Array.isArray(actions)) return [];
+  return actions.flatMap((action) => {
+    const row = record(action);
+    return typeof row.tool === 'string' ? [{ tool: row.tool, args: row.args }] : [];
+  });
 }
 
 function canonicalJson(value: unknown): string {
@@ -77,15 +81,16 @@ function digest(action: EvaluationAction): string {
 }
 
 /** Retain action shape and equality evidence without retaining model-produced values. */
-export function auditActionArguments(output: AuditableOutput | undefined): ActionArgumentAudit {
+export function auditActionArguments(output: unknown): ActionArgumentAudit {
+  const root = record(output);
   const phases: Array<{
     phase: ActionArgumentAuditRow['phase'];
     actions: EvaluationAction[];
   }> = [
-    ...(output?.initial?.actions
-      ? [{ phase: 'initial' as const, actions: output.initial.actions }]
-      : []),
-    { phase: 'output', actions: output?.actions ?? [] },
+    ...(root.initial === undefined
+      ? []
+      : [{ phase: 'initial' as const, actions: actionsOf(root.initial) }]),
+    { phase: 'output', actions: actionsOf(root) },
   ];
   const actions = phases.flatMap(({ phase, actions: rows }) =>
     rows.map((action, index): ActionArgumentAuditRow => {

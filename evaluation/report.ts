@@ -4,6 +4,7 @@ import {
   type EvaluationGrade,
   type EvaluationTask,
 } from './graders';
+import type { ActionArgumentAudit } from './action-audit';
 
 export interface EvaluationDecision {
   kind: 'charter' | 'skill' | 'plan' | 'actions';
@@ -32,6 +33,7 @@ export interface EvaluationTaskResult {
     observableProviderCalls: number | null;
   };
   grade: EvaluationGrade;
+  actionAudit?: ActionArgumentAudit;
   error?: string;
 }
 
@@ -334,6 +336,10 @@ export function renderEvaluationReport(
     '| Arm | Supervision present on approval writes |',
     '| --- | --- |',
   ];
+  const actionBinding: string[] = [
+    '| Arm | Emitted actions | Actions with irrelevant argument fields | Median argument fields per action | Task outcomes with repeated consumed effects |',
+    '| --- | ---: | ---: | ---: | ---: |',
+  ];
 
   const outcomesByArm = new Map(arms.map((arm) => [arm, perTaskOutcomes(evidence, arm)]));
   for (const arm of arms) {
@@ -390,6 +396,27 @@ export function renderEvaluationReport(
         writeRows.length,
       )} |`,
     );
+    const auditedRows = armRows.filter((row) => row.actionAudit !== undefined);
+    if (auditedRows.length === 0) {
+      actionBinding.push(`| ${arm} | not recorded | not recorded | not recorded | not recorded |`);
+    } else {
+      const totalActions = auditedRows.reduce(
+        (total, row) => total + row.actionAudit!.totalActions,
+        0,
+      );
+      const irrelevant = auditedRows.reduce(
+        (total, row) => total + row.actionAudit!.actionsWithIrrelevantArguments,
+        0,
+      );
+      const counts = auditedRows.flatMap((row) => row.actionAudit!.argumentCounts);
+      const medianFields = median(counts);
+      const duplicateRows = auditedRows.filter(
+        (row) => row.actionAudit!.duplicateEffects.length > 0,
+      ).length;
+      actionBinding.push(
+        `| ${arm} | ${totalActions} | ${irrelevant}/${totalActions} (${totalActions === 0 ? 'not applicable' : `${((irrelevant / totalActions) * 100).toFixed(1)}%`}) | ${medianFields === null ? 'not observed' : medianFields} | ${duplicateRows}/${auditedRows.length} |`,
+      );
+    }
   }
 
   const timings = arms.map((arm) => {
@@ -456,6 +483,12 @@ ${summary.join('\n')}
 ## Context — mechanism and timing, not comparison scores
 
 These observations describe intentional differences between the arms. They are not quality scores.
+
+### Action argument binding
+
+The audit retains argument field names and SHA-256 digests of only the payload each selected adapter consumes; it never retains model-produced values. An irrelevant field is present in the flat action bag but unused by that action's adapter. Repeated consumed effects are task outcomes with at least two actions whose selected adapter would receive the same payload. Old evidence without this audit says “not recorded” rather than inferring action shape from a unique tool-name summary.
+
+${actionBinding.join('\n')}
 
 ### Supervision present
 

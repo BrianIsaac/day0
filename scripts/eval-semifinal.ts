@@ -29,6 +29,7 @@ import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
 import { EVALUATION_SCOPES } from '../src/evaluation/scopes';
 import { isTerminalWorkState } from '../src/evaluation/states';
+import { auditActionArguments } from '../evaluation/action-audit';
 
 /** Each invocation writes its own directory; pass `--out` with an earlier path to resume it. */
 function defaultOutPath(now = new Date()): string {
@@ -715,6 +716,7 @@ async function runTask(
       logicalStages: active.logicalStages,
       observableProviderCalls: active.observableProviderCalls,
     },
+    actionAudit: auditActionArguments(item.output),
     grade,
     ...(active.lastError ? { error: active.lastError } : {}),
   };
@@ -829,6 +831,7 @@ function regradeTask(
     ...recorded,
     terminalState: item.state,
     deployToFirstCorrectActionMs,
+    actionAudit: auditActionArguments(item.output),
     grade,
   };
 }
