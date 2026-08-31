@@ -962,6 +962,20 @@ function renderProcedureContract(contract: ProcedureContract): string {
     .join('\n');
 }
 
+function renderProcedureApplicability(
+  contract: ProcedureContract,
+  candidate: WorkCandidate,
+): string {
+  if (contract.trails.length === 0) return '(no runtime trails to account for)';
+  return contract.trails
+    .map((trail) =>
+      procedureTrailApplies(trail, candidate)
+        ? `${trail.id}: applicable; map it to the matching action index and use a null inapplicability reason`
+        : `${trail.id}: not applicable to source category ${candidate.sourceCategory}; use a null action index and give a reason`,
+    )
+    .join('\n');
+}
+
 /** The workspace listing every mock-mode executor sees: slugs, tabs, tickets and recent messages, never the docs. */
 export function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   const lines: string[] = [];
@@ -1078,6 +1092,11 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
     `Body:`,
     candidate.contentSummary,
+    '',
+    'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
+    '',
+    '--- Procedure trail applicability for this candidate ---',
+    renderProcedureApplicability(procedureContract, candidate),
     '',
     ...(mode === 'mock'
       ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), '']
@@ -1221,6 +1240,11 @@ export async function runDependentSkill(
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
     `Body: ${candidate.contentSummary}`,
+    '',
+    'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
+    '',
+    '--- Procedure trail applicability for this candidate ---',
+    renderProcedureApplicability(procedureContract, candidate),
     '',
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),

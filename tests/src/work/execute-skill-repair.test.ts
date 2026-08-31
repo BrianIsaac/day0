@@ -150,6 +150,12 @@ describe('mock executor semantic repair', (): void => {
     });
 
     expect(recorded.calls).toHaveLength(2);
+    expect(recorded.calls[0]!.user).toContain(
+      'trail-1: applicable; map it to the matching action index and use a null inapplicability reason',
+    );
+    expect(recorded.calls[0]!.user).toContain(
+      'Preserve every explicitly requested identifier and quoted string byte-for-byte',
+    );
     const correction = recorded.calls[1]!.user.split(
       '--- Required action-set correction ---',
     )[1]!.split('Previous structured response:')[0]!;
