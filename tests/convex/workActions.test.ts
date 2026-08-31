@@ -1728,6 +1728,43 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
   });
 
+  it('does not hide repeated proposals from the exact-action gate', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    recorded.skillOutput = {
+      draft: 'Escalate the boundary decision.',
+      notes: '',
+      actions: [
+        {
+          tool: 'slack.postMessage',
+          args: {
+            channelSlug: 'dm-manager',
+            body: 'This is outside my charter; please decide.',
+            cells: [{ header: 'Account', value: 'Acme' }],
+          },
+        },
+        {
+          tool: 'slack.postMessage',
+          args: {
+            channelSlug: 'dm-manager',
+            body: 'This is outside my charter; please decide.',
+            cells: [{ header: 'Account', value: 'Beta Corp' }],
+          },
+        },
+      ],
+    };
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'mock');
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const held = await readItem(harness, workItemId);
+
+    expect((held.output as ExecutionOutput).actions).toEqual(recorded.skillOutput.actions);
+    expect(held.actionVerdicts).toEqual([
+      { disposition: 'held', reason: HELD_WRITE },
+      { disposition: 'held', reason: HELD_WRITE },
+    ]);
+  });
+
   it('applies one write when a model repeats the same external effect', async (): Promise<void> => {
     useSurfaceMode('mock');
     recorded.skillOutput = {
