@@ -82,6 +82,21 @@ function evidence(): EvaluationEvidence {
             humanWaitMs: 0,
             decisions: [],
             modelCalls: { logicalStages: 2, observableProviderCalls: null },
+            actionAudit: {
+              totalActions: 3,
+              actionsWithIrrelevantArguments: 2,
+              argumentCounts: [16, 16, 2],
+              actions: [],
+              duplicateEffects: [
+                {
+                  tool: 'slack.postMessage',
+                  actions: [
+                    { phase: 'output', index: 0 },
+                    { phase: 'output', index: 1 },
+                  ],
+                },
+              ],
+            },
             grade: passingGrade,
           },
         ],
@@ -117,6 +132,8 @@ describe('evaluation evidence report', (): void => {
       '| day0: documented-procedure adherence (majority of runs) | higher is better |',
     );
     expect(report).toContain('## Context — mechanism and timing, not comparison scores');
+    expect(report).toContain('### Action argument binding');
+    expect(report).toContain('| day0 | 3 | 2/3 (66.7%) | 16 | 1/1 |');
     expect(report).toContain('day0’s figure includes onboarding by design');
     expect(report).toContain('manager-report:dm-manager | manager-report:dm-manager | yes');
   });

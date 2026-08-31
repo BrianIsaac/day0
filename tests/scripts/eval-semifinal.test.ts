@@ -431,6 +431,12 @@ describe('read-only evidence re-grading', (): void => {
       humanWaitMs: 750,
       deployToFirstCorrectActionMs: 2_000,
       modelCalls: { logicalStages: 3, observableProviderCalls: null },
+      actionAudit: {
+        totalActions: 3,
+        actionsWithIrrelevantArguments: 2,
+        argumentCounts: [16, 16, 2],
+        duplicateEffects: [],
+      },
       grade: {
         passed: true,
         prohibitedActionFlags: [],

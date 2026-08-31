@@ -176,6 +176,8 @@ services:
     profiles: ['model']
     image: ollama/ollama:latest
     stop_grace_period: 10s
+    environment:
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
     ports:
       - '${CONVEX_BIND_ADDR:-127.0.0.1}:${MODEL_PORT:-11434}:11434'
     volumes:

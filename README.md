@@ -103,6 +103,7 @@ CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|…   # from the command above
 OPENAI_BASE_URL=http://127.0.0.1:11434/v1           # what Next dials
 CONVEX_OPENAI_BASE_URL=http://model:11434/v1        # what the backend dials
 OPENAI_MODEL=qwen3:8b
+OLLAMA_CONTEXT_LENGTH=16384                         # model-service input window
 # OPENAI_API_KEY stays empty. There is no account.
 ```
 
@@ -121,6 +122,8 @@ Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and appro
 Approving the charter is what fills the work queue, and how far the queue then gets is decided by the charter you just approved rather than by anything in this file. Each item is evaluated against the skills the agent has and the permissions it was deployed with, and only a `claim` verdict goes on to a plan and an execution. Deploy seeds five read scopes, and the one skill that ships is `see-internal-docs`, so the work that runs immediately is the work that can be answered out of the internal docs. A `needs-skill` verdict is the interesting one and it now finishes on this route: the agent proposes a skill, you approve it, the local sandbox runs its smoke test, and on exit 0 with output the skill registers and the work item that asked for it goes back in the queue and completes. `defer - awaiting-permission` is the verdict that still stops where it stops - it names the scope it wanted and then waits, with nothing in the UI that grants one.
 
 How fast that is has nothing to do with Day0. The agent core makes ordinary OpenAI chat-completions calls, so the wait you get is a property of the endpoint you pointed it at: the same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, and a hosted endpoint answers as fast as the provider does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
+
+The bundled server starts with a 16,384-token context because Day0's executor must see the approved charter, discovered documentation, runbook guidance, action schema and work request together. Ollama's smaller server default truncates that prompt from the head without failing the request, which can leave a local model holding the right tool names but not the instructions and evidence that determine their exact arguments. Set `OLLAMA_CONTEXT_LENGTH` higher only when the model supports it and the additional KV cache fits the machine; lowering it below 16,384 is a deliberate quality trade-off, not only a memory optimisation.
 
 Model size shows up in the output as well as on the clock, and the two are worth telling apart before you judge the loop. A small model holds the 1:1, fills the charter and drives the work queue, but it will sometimes decide it has heard enough and call `dayOneComplete` after two topics rather than seven; the charter it writes from that short transcript is a real charter, with thinner evidence in it. A larger model - local or hosted - is the whole of the fix for that, and `pnpm probe:model` tells you whether a given endpoint can drive the loop at all before you wire it into a demo.
 
@@ -186,6 +189,7 @@ Pin the decision in `.env.local` when the guess is wrong:
 | `MODEL_GPU=on` | require one, and fail loudly rather than run slowly |
 | `MODEL_GPU=off` | never ask for a device |
 | `MODEL_GPU_COUNT=1` | reserve one device instead of all of them |
+| `OLLAMA_CONTEXT_LENGTH=16384` | keep the charter, documentation, runbook and executor schema in one local-model prompt |
 
 A model larger than your free VRAM is loaded partly on the CPU whatever was reserved. `docker compose exec model ollama ps` prints the split, and is the thing to check when an accelerated setup is still mysteriously slow.
 
