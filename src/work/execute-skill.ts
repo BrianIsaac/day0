@@ -532,6 +532,29 @@ export const dependentExecuteSchema = z
   })
   .strict();
 
+function procedureTrailInventorySchema(contract: ProcedureContract) {
+  const ids = contract.trails.map((trail) => trail.id);
+  const row =
+    ids.length === 0
+      ? procedureTrailAttestationSchema
+      : procedureTrailAttestationSchema.extend({
+          trailId: z.enum(ids as [string, ...string[]]),
+        });
+  return z.array(row).length(ids.length);
+}
+
+/** Bind the runtime-loaded trail ids and exact inventory size into the provider schema. */
+export function executeSchemaForProcedureContract(contract: ProcedureContract) {
+  return executeSchema.extend({ procedureTrails: procedureTrailInventorySchema(contract) });
+}
+
+/** Use the same runtime trail inventory contract in the dependent phase. */
+export function dependentExecuteSchemaForProcedureContract(contract: ProcedureContract) {
+  return dependentExecuteSchema.extend({
+    procedureTrails: procedureTrailInventorySchema(contract),
+  });
+}
+
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
 
 function materialiseGeneratedAction(action: GeneratedAction): MockAction {
@@ -637,6 +660,33 @@ function referencedDestination(candidate: WorkCandidate, prefix: string): string
   return originatingReference(candidate, prefix)?.split(/[/?#]/, 1)[0] || undefined;
 }
 
+function candidateRequiredLiterals(candidate: WorkCandidate): string[] {
+  const literals: string[] = [];
+  if (candidate.contentSummary.includes(candidate.externalId)) literals.push(candidate.externalId);
+  for (const match of candidate.contentSummary.matchAll(/(["'])([^"'\n]{2,})\1/g)) {
+    literals.push(match[2]!);
+  }
+  return [...new Set(literals)];
+}
+
+function actionPayload(action: MockAction): string {
+  return action.args.body ?? '';
+}
+
+function payloadIssue(
+  kind: 'message',
+  actions: MockAction[],
+  candidate: WorkCandidate,
+): string | undefined {
+  const required = candidateRequiredLiterals(candidate);
+  if (required.length === 0) return undefined;
+  return actions.some((action) =>
+    required.every((literal) => actionPayload(action).includes(literal)),
+  )
+    ? undefined
+    : `approved primary ${kind} payload omits literal content required by the candidate`;
+}
+
 function primaryActionIssue(
   output: Pick<ExecutionOutput, 'actions'>,
   candidate: WorkCandidate,
@@ -644,37 +694,42 @@ function primaryActionIssue(
 ): string | undefined {
   if (plan.expectedOutputType === 'spreadsheet-update') {
     const sheet = referencedDestination(candidate, 'sheet://');
-    const present = output.actions.some(
+    const actions = output.actions.filter(
       (action) =>
         action.tool === 'spreadsheet.appendRow' && (!sheet || action.args.sheetSlug === sheet),
     );
-    return present ? undefined : 'action set omitted the approved primary spreadsheet mutation';
+    return actions.length === 0
+      ? 'action set omitted the approved primary spreadsheet mutation'
+      : undefined;
   }
   if (plan.expectedOutputType === 'ticket-update') {
     const ticket = referencedDestination(candidate, 'ticket://');
     if (!ticket) return undefined;
-    return output.actions.some(
+    const actions = output.actions.filter(
       (action) => action.tool === 'ticket.update' && action.args.slug === ticket,
-    )
-      ? undefined
-      : 'action set omitted the approved primary ticket mutation';
+    );
+    return actions.length === 0
+      ? 'action set omitted the approved primary ticket mutation'
+      : undefined;
   }
   if (plan.expectedOutputType !== 'message') return undefined;
   const channel = candidate.replyTarget?.channel ?? referencedDestination(candidate, 'slack://');
   if (channel) {
-    return output.actions.some(
+    const actions = output.actions.filter(
       (action) => action.tool === 'slack.postMessage' && action.args.channelSlug === channel,
-    )
-      ? undefined
-      : 'action set omitted the approved primary message mutation';
+    );
+    return actions.length === 0
+      ? 'action set omitted the approved primary message mutation'
+      : payloadIssue('message', actions, candidate);
   }
   const post = referencedDestination(candidate, 'tweet://');
   if (!post) return undefined;
-  return output.actions.some(
+  const actions = output.actions.filter(
     (action) => action.tool === 'twitter.reply' && action.args.tweetSlug === post,
-  )
-    ? undefined
-    : 'action set omitted the approved primary message mutation';
+  );
+  return actions.length === 0
+    ? 'action set omitted the approved primary message mutation'
+    : payloadIssue('message', actions, candidate);
 }
 
 function matchingProcedureActions(
@@ -1003,6 +1058,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
+  const runtimeSchema = executeSchemaForProcedureContract(procedureContract);
 
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
@@ -1034,10 +1090,10 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       : 'Produce the draft, notes, actions, and procedure-trail accounting now.',
   ].join('\n');
 
-  const raw = await agentJson<z.infer<typeof executeSchema>>({
+  const raw = await agentJson<z.infer<typeof runtimeSchema>>({
     agent: skillAgent,
     user: userPrompt,
-    schema: executeSchema,
+    schema: runtimeSchema,
   });
   const output: ExecutionOutput = {
     draft: raw.draft,
@@ -1065,10 +1121,10 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     'Produce the complete corrected draft, notes, actions, and procedure-trail accounting now.',
   ].join('\n');
   args.onAdditionalModelCall?.();
-  const repairedRaw = await agentJson<z.infer<typeof executeSchema>>({
+  const repairedRaw = await agentJson<z.infer<typeof runtimeSchema>>({
     agent: skillAgent,
     user: repairPrompt,
-    schema: executeSchema,
+    schema: runtimeSchema,
   });
   const repaired: ExecutionOutput = {
     draft: repairedRaw.draft,
@@ -1151,6 +1207,7 @@ export async function runDependentSkill(
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
+  const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract);
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
     '',
@@ -1172,10 +1229,10 @@ export async function runDependentSkill(
     'Produce the truthful closing draft, notes, plan-step outcomes, procedure-trail accounting, and at most one bounded set of closing actions now.',
   ].join('\n');
 
-  const raw = await agentJson<z.infer<typeof dependentExecuteSchema>>({
+  const raw = await agentJson<z.infer<typeof runtimeSchema>>({
     agent: skillAgent,
     user: userPrompt,
-    schema: dependentExecuteSchema,
+    schema: runtimeSchema,
   });
   const ordered = [...raw.planStepOutcomes].sort((a, b) => a.step - b.step);
   if (

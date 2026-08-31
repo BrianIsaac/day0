@@ -6,6 +6,7 @@ import {
   appliedLedgerPrompt,
   dependentExecuteSchema,
   executeSchema,
+  executeSchemaForProcedureContract,
   executorInstructions,
   executorPreamble,
   mockActionContractIssues,
@@ -122,6 +123,34 @@ describe('executor output contract', (): void => {
         planStepOutcomes: [{ step: 1, status: 'blocked', evidence: 'No prerequisite result.' }],
       }).success,
     ).toBe(false);
+  });
+
+  it('binds the runtime trail inventory into the provider schema', (): void => {
+    const schema = executeSchemaForProcedureContract(ticketProcedureContract);
+    const base = {
+      draft: 'd',
+      notes: 'n',
+      needsDependentPhase: false,
+      actions: [],
+    };
+
+    expect(schema.safeParse({ ...base, procedureTrails: [] }).success).toBe(false);
+    expect(
+      schema.safeParse({
+        ...base,
+        procedureTrails: [
+          { trailId: 'unknown', actionIndex: null, inapplicabilityReason: 'Not applicable.' },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...base,
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: null, inapplicabilityReason: 'Not applicable.' },
+        ],
+      }).success,
+    ).toBe(true);
   });
 
   it('derives trailing effects from a renamed and reworded office procedure', (): void => {
@@ -653,6 +682,46 @@ describe('executor output contract', (): void => {
     );
 
     expect(issues).toEqual(['action set omitted the approved primary message mutation']);
+  });
+
+  it('rejects primary payloads that drop literals explicitly carried by the candidate', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Prepared the requested message.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'project-room', body: 'Prepared the handoff.' },
+          },
+        ],
+        procedureTrails: [],
+      },
+      {
+        sourceCategory: 'inbox',
+        sourceSystem: 'chat',
+        externalId: 'CASE-19',
+        title: 'Post the handoff',
+        contentSummary:
+          "Post CASE-19 with the exact sentence 'The bounded handoff is ready for review.'",
+        contentRefs: ['slack://project-room/case-19'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Post the supplied handoff.',
+        steps: ['Send the approved message to its requested destination.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      emptyProcedureContract,
+    );
+
+    expect(issues).toEqual([
+      'approved primary message payload omits literal content required by the candidate',
+    ]);
   });
 
   it('accepts the same status transition on two distinct tickets', (): void => {
