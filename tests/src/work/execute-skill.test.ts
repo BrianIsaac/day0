@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
-  actionArgsSchema,
   appliedLedgerPrompt,
   dependentExecuteSchema,
   executeSchema,
@@ -410,32 +410,136 @@ describe('executor output contract', (): void => {
     expect(issues).toEqual([]);
   });
 
-  it('accepts every verb, including the two surface verbs, with flat string args', (): void => {
-    for (const tool of ACTION_TOOLS) {
+  it('exposes every verb as one compact tagged action variant', (): void => {
+    const actions = {
+      'spreadsheet.appendRow': {
+        tool: 'spreadsheet.appendRow',
+        args: {
+          sheetSlug: 'q4-revenue-tracker',
+          tabName: 'pipeline',
+          cells: [{ header: 'Account', value: 'Acme' }],
+        },
+      },
+      'slack.postMessage': {
+        tool: 'slack.postMessage',
+        args: { channelSlug: 'dm-manager', threadKey: null, body: 'Prepared.' },
+      },
+      'twitter.reply': {
+        tool: 'twitter.reply',
+        args: { tweetSlug: 'tweet-1', body: 'Thanks.' },
+      },
+      'ticket.update': {
+        tool: 'ticket.update',
+        args: { slug: 'REVOPS-1', status: 'done', comment: 'Complete.' },
+      },
+      'mcp.call': {
+        tool: 'mcp.call',
+        args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"x"}' },
+      },
+      'http.request': {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'POST',
+          path: '/chat.postMessage',
+          headersJson: null,
+          body: '{"channel":"D0MANAGER","text":"hi"}',
+        },
+      },
+    } satisfies Record<(typeof ACTION_TOOLS)[number], unknown>;
+
+    for (const action of Object.values(actions)) {
       expect(
         executeSchema.safeParse({
           draft: 'd',
           notes: 'n',
           needsDependentPhase: false,
-          actions: [{ tool, args: {} }],
+          actions: [action],
         }).success,
       ).toBe(true);
     }
-    const parsed = actionArgsSchema.safeParse({
-      surface: 'linear',
-      tool: 'save_comment',
-      toolArgsJson: '{"issueId":"x","body":"y"}',
-      method: 'POST',
-      path: '/chat.postMessage',
-      headersJson: '{"Authorization":"Bearer {{secret}}"}',
-      body: '{"channel":"D0MANAGER","text":"hi"}',
-    });
-    expect(parsed.success).toBe(true);
+
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: {
+              channelSlug: 'dm-manager',
+              threadKey: null,
+              body: 'Prepared.',
+              cells: [{ header: 'Account', value: 'Acme' }],
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 
-  it('keeps the flat rule: structured provider arguments must be strings', (): void => {
-    expect(actionArgsSchema.safeParse({ toolArgsJson: { issueId: 'x' } }).success).toBe(false);
-    expect(actionArgsSchema.safeParse({ headersJson: ['a'] }).success).toBe(false);
+  it('serialises the tagged variants as an OpenAI-compatible nested anyOf', (): void => {
+    const schema = z.toJSONSchema(executeSchema, {
+      target: 'draft-7',
+      io: 'input',
+      reused: 'inline',
+    }) as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    const items = properties.actions.items as { anyOf?: Array<Record<string, unknown>> };
+
+    expect(schema.type).toBe('object');
+    expect(schema).not.toHaveProperty('anyOf');
+    expect(items.anyOf).toHaveLength(ACTION_TOOLS.length);
+    expect(
+      items.anyOf?.map((branch) => {
+        const branchProperties = branch.properties as Record<string, Record<string, unknown>>;
+        const args = branchProperties.args.properties as Record<string, unknown>;
+        return [branchProperties.tool.const, Object.keys(args)];
+      }),
+    ).toEqual([
+      ['spreadsheet.appendRow', ['sheetSlug', 'tabName', 'cells']],
+      ['slack.postMessage', ['channelSlug', 'threadKey', 'body']],
+      ['twitter.reply', ['tweetSlug', 'body']],
+      ['ticket.update', ['slug', 'status', 'comment']],
+      ['mcp.call', ['surface', 'tool', 'toolArgsJson']],
+      ['http.request', ['surface', 'method', 'path', 'headersJson', 'body']],
+    ]);
+  });
+
+  it('keeps structured provider arguments as JSON strings', (): void => {
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'mcp.call',
+            args: { surface: 'linear', tool: 'get_issue', toolArgsJson: { issueId: 'x' } },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'http.request',
+            args: {
+              surface: 'slack',
+              method: 'POST',
+              path: '/chat.postMessage',
+              headersJson: ['a'],
+              body: null,
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
     expect(
       executeSchema.safeParse({
         draft: 'd',
@@ -452,7 +556,10 @@ describe('executor output contract', (): void => {
       notes: 'n',
       planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' }],
     };
-    const action = { tool: 'mcp.call' as const, args: {} };
+    const action = {
+      tool: 'mcp.call' as const,
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{}' },
+    };
     expect(
       dependentExecuteSchema.safeParse({
         ...base,
