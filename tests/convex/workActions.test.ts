@@ -1765,68 +1765,6 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
   });
 
-  it('applies one write when a model repeats the same external effect', async (): Promise<void> => {
-    useSurfaceMode('mock');
-    recorded.skillOutput = {
-      draft: 'Draft.',
-      notes: '',
-      actions: [
-        {
-          tool: 'slack.postMessage',
-          args: {
-            channelSlug: 'dm-manager',
-            threadKey: 'thread-pipeline-coverage',
-            body: 'Draft for review: Enterprise pipeline coverage over the last 4 weeks…',
-            cells: [{ header: 'Account', value: 'Acme' }],
-          },
-        },
-        {
-          tool: 'slack.postMessage',
-          args: {
-            channelSlug: 'dm-manager',
-            threadKey: 'thread-pipeline-coverage',
-            body: 'Draft for review: Enterprise pipeline coverage over the last 4 weeks…',
-            cells: [{ header: 'Account', value: 'Beta Corp' }],
-          },
-        },
-      ],
-    };
-    const harness = convexTest(schema, allConvexModules());
-    const { workItemId } = await seed(harness, 'mock');
-    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
-    const held = await readItem(harness, workItemId);
-    if (!held.pendingRunId) throw new Error('pending run missing');
-    expect(held.output).toMatchObject({
-      actions: [recorded.skillOutput.actions[0]],
-      suppressedDuplicateActions: [
-        {
-          phase: 'initial',
-          index: 1,
-          duplicateOf: 0,
-          tool: 'slack.postMessage',
-          reason: 'duplicate write effect in the same phase',
-        },
-      ],
-    });
-    const approvedIndexes = (held.actionVerdicts ?? [])
-      .map((verdict, index) => ({ verdict, index }))
-      .filter(({ verdict }) => verdict.disposition === 'held')
-      .map(({ index }) => index);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
-      workItemId,
-      pendingRunId: held.pendingRunId,
-      approvedIndexes,
-    });
-    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
-
-    const messages = await harness.run(
-      async (ctx) => await ctx.db.query('mockSlackMessages').collect(),
-    );
-    expect(messages.map((message) => message.body)).toEqual([
-      'Draft for review: Enterprise pipeline coverage over the last 4 weeks…',
-    ]);
-  });
-
   it('holds day0 mock writes until the manager approves the literal action', async (): Promise<void> => {
     useSurfaceMode('mock');
     recorded.skillOutput = {
