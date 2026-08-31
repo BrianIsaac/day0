@@ -117,4 +117,24 @@ describe('evaluation action argument audit', (): void => {
     expect(JSON.stringify(result)).not.toContain('iss-1');
     expect(JSON.stringify(result)).not.toContain('Closed.');
   });
+
+  it('does not collapse an explicitly empty selected field into an absent field', (): void => {
+    const result = auditActionArguments({
+      actions: [
+        {
+          tool: 'ticket.update',
+          args: { slug: 'OPS-17', status: 'done', comment: '' },
+        },
+        {
+          tool: 'ticket.update',
+          args: { slug: 'OPS-17', status: 'done' },
+        },
+      ],
+    });
+
+    expect(result.actions[0]!.consumedEffectDigest).not.toBe(
+      result.actions[1]!.consumedEffectDigest,
+    );
+    expect(result.duplicateEffects).toEqual([]);
+  });
 });

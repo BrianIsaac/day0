@@ -9,7 +9,7 @@ const MENTION_TITLE = /#([^\s#]+)/;
  *
  * A Slack mention seeded before `replyTarget` existed still carries the
  * channel and message timestamp in its external id, and the channel name in
- * its title (`Slack mention in #revops-asks`), so the reply can be addressed
+ * its title (`Slack mention in #team-asks`), so the reply can be addressed
  * without re-polling the provider.
  *
  * Args:

@@ -159,7 +159,7 @@ const orientationAgent = makeAgent(
  *
  * "Slack" must not match "Slackbot", and "Linear" must not match "nonlinear":
  * the name has to stand as its own word or words. Punctuation between the
- * words of a multi-word name is tolerated ("Northstar-CRM"), as is a
+ * words of a multi-word name is tolerated ("Atlas-CRM"), as is a
  * possessive or other suffix that is not a letter or digit ("Linear's").
  *
  * Args:
@@ -530,10 +530,10 @@ function hostOf(url: string): string {
  * Decide whether a URL host carries a system slug as whole labels.
  *
  * Labels are the dot- and hyphen-separated parts of the host, so
- * `mcp.linear.app` and `linear-mcp` carry `linear`, while `mcp.slackbot.example`
- * does not carry `slack`. A multi-word slug such as `northstar-crm` matches
- * when every word is a label (`crm.northstar.example`) or when the words
- * appear joined as one label (`northstarcrm.internal`).
+ * `mcp.kanban.app` and `kanban-mcp` carry `kanban`, while `mcp.mailbot.example`
+ * does not carry `mail`. A multi-word slug such as `atlas-crm` matches
+ * when every word is a label (`crm.atlas.example`) or when the words
+ * appear joined as one label (`atlascrm.internal`).
  *
  * Args:
  *   host: Lowercase URL host, possibly with a port.

@@ -410,6 +410,52 @@ describe('executor output contract', (): void => {
     expect(issues).toEqual([]);
   });
 
+  it('derives ticket closure from a loaded procedure without depending on the seed slug', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Recorded the completed work.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: {
+              slug: 'OPS-17',
+              status: 'in-progress',
+              comment: 'Recorded the completed work.',
+            },
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'tickets',
+        externalId: 'OPS-17',
+        title: 'Complete the bounded work',
+        contentSummary: 'Complete the bounded work on OPS-17.',
+        contentRefs: ['ticket://OPS-17'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Complete the bounded work.',
+        steps: ['Do the work and record the result.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      [
+        {
+          slug: 'team-ticket-procedure-v2',
+          title: 'Team ticket procedure',
+          body: 'For the originating ticket, use `status: "done"` for full closure, `"blocked"` for partial; add a one-line `comment` summarising what you did.',
+        },
+      ],
+    );
+
+    expect(issues).toEqual(['originating-ticket transition contradicts the documented closure state']);
+  });
+
   it('exposes every verb as one compact tagged action variant', (): void => {
     const actions = {
       'spreadsheet.appendRow': {
@@ -574,6 +620,27 @@ describe('executor output contract', (): void => {
     ).toBe(false);
   });
 
+  it('uses the same strict tagged branch contract in the dependent phase', (): void => {
+    const parsed = dependentExecuteSchema.safeParse({
+      draft: 'd',
+      notes: 'n',
+      actions: [
+        {
+          tool: 'ticket.update',
+          args: {
+            slug: 'OPS-17',
+            status: 'done',
+            comment: 'Complete.',
+            channelSlug: 'hidden-destination',
+          },
+        },
+      ],
+      planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'ledger row 0' }],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it('renders durable provider evidence for the closing turn', (): void => {
     const text = appliedLedgerPrompt(
       [
@@ -653,14 +720,14 @@ describe('surface guidance in the executor prompt', (): void => {
     expect(text).toContain('http.request - { surface, method, path, headersJson, body }');
     expect(text).toContain('{{secret}}');
     expect(text).toContain('only target a surface listed above');
-    expect(text).toContain('`dm-manager`');
+    expect(text).not.toContain('`dm-manager`');
     expect(text).toContain('Do not add a provenance trailer');
     expect(text).toContain('status change on a ticket must be preceded');
   });
 });
 
 describe('executor preamble by mode', (): void => {
-  it('teaches the four mock verbs and the mock fanout rules in mock mode', (): void => {
+  it('teaches the four mock verbs without embedding the seeded office procedure', (): void => {
     const text = executorPreamble('mock');
     for (const verb of [
       'spreadsheet.appendRow',
@@ -670,7 +737,9 @@ describe('executor preamble by mode', (): void => {
     ]) {
       expect(text).toContain(`  - ${verb}`);
     }
-    expect(text).toContain('`slack.postMessage` to `dm-manager`');
+    expect(text).toContain('Follow the loaded procedures');
+    expect(text).not.toMatch(/dm-manager|REVOPS|revops-asks/);
+    expect(text).not.toContain('BASE actions');
     expect(text).not.toContain('refused');
   });
 

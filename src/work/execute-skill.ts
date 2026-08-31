@@ -79,15 +79,7 @@ const MOCK_PREAMBLE = [
   `  - ${actionModeInstruction(false, 'mock')}`,
   '  - Stay inside charter boundaries.',
   '  - Never invent values you do not have. If a cell value is unknown, leave it blank in `cells` and flag the gap in `notes`.',
-  '  - Cold-start posture: prefer drafts to manager DM (`channelSlug: "dm-manager"`) over public channel posts. The candidate has already passed the charter quality-fit gate, so it IS in scope — emit the actions the skill calls for.',
-  '',
-  'Closing the loop (cross-surface fanout):',
-  '  - Every surface that originated or was named in this work item should see at least one entry showing the work happened. The audit trail is non-negotiable.',
-  '  - BASE actions for any in-charter work are always: (a) the primary mutation(s) — e.g. `spreadsheet.appendRow` for tracker updates, or `twitter.reply` for in-scope social — AND (b) a `slack.postMessage` to `dm-manager` summarising the draft for review. The fanout rules below are appended IN ADDITION to (a) and (b); they never replace either.',
-  '  - If the candidate `Source` line contains `ticket-queue`, follow the loaded `how-to-update-ticket` guide for the originating ticket named in the candidate or surfaced via the `Refs:` line. Do not invent a status policy when that guide and the candidate are silent.',
-  '  - If your draft body cites another ticket slug from the env snapshot (e.g. "REVOPS-202 already covers the Looker refresh"), follow the loaded guide\'s cross-link procedure for that ticket.',
-  '  - If the original ask came from a public Slack channel (look for "in #channel-name" or "asked in #revops-asks" in the candidate body) AND you have drafted to manager DM, ALSO post a threaded `slack.postMessage` to the originating channel — `channelSlug` is that channel, `threadKey` matches the ask thread, body says something like "Drafting for {manager} — will post here when approved."',
-  '  - These extra actions are NOT optional when the conditions hold; they are how the agent demonstrates trustworthy follow-through. NEVER replace the manager DM with a ticket update — both fire.',
+  '  - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy.',
 ].join('\n');
 
 function mockActionContract(guides: MockSurfaceSnapshot['howToGuides']): string {
@@ -101,7 +93,7 @@ function mockActionContract(guides: MockSurfaceSnapshot['howToGuides']): string 
     '  - For an approved spreadsheet-update, the literal destination and values in the approved candidate are sufficient authority. Emit the requested `spreadsheet.appendRow`; do not invent source-evidence or duplicate-check prerequisites that the candidate does not require.',
     ticketRule,
     '  - One `ticket.update` may carry both the comment and status. A split pair is also valid only as comment-only followed by status-only. Never emit the same ticket status twice.',
-    '  - A manager DM is the review trail, not a replacement for the requested primary mutation or originating-ticket audit.',
+    '  - A supplemental trail required by a loaded procedure never replaces the requested primary mutation, and the primary mutation never replaces that trail.',
   ].join('\n');
 }
 
@@ -360,15 +352,16 @@ interface TicketClosureProcedure {
 function documentedTicketClosure(
   guides: MockSurfaceSnapshot['howToGuides'],
 ): TicketClosureProcedure | undefined {
-  const guide = guides.find((row) => row.slug === 'how-to-update-ticket');
-  if (!guide) return undefined;
-  const full = guide.body.match(
-    /status:\s*[`"']*(open|in-progress|blocked|done)[`"']*\s+for full closure/i,
-  )?.[1] as MockAction['args']['status'] | undefined;
-  const partial = guide.body.match(
-    /[`"']*(open|in-progress|blocked|done)[`"']*\s+for partial/i,
-  )?.[1] as MockAction['args']['status'] | undefined;
-  return full && partial ? { full, partial } : undefined;
+  for (const guide of guides) {
+    const full = guide.body.match(
+      /status:\s*[`"']*(open|in-progress|blocked|done)[`"']*\s+for full closure/i,
+    )?.[1] as MockAction['args']['status'] | undefined;
+    const partial = guide.body.match(
+      /[`"']*(open|in-progress|blocked|done)[`"']*\s+for partial/i,
+    )?.[1] as MockAction['args']['status'] | undefined;
+    if (full && partial) return { full, partial };
+  }
+  return undefined;
 }
 
 /**
@@ -452,8 +445,8 @@ export function mockActionContractIssues(
  *
  * Only connected surfaces are listed: a skill may not target anything else,
  * and the executor is told so rather than left to guess from a slug. The
- * `dm-manager` fanout rule from the mock preamble maps to the chat surface's
- * manager DM channel id, which the probe stored on the surface.
+ * The chat surface's manager destination comes from the channel id stored by
+ * its probe rather than from an office-specific alias.
  *
  * Args:
  *   surfaces: Surface rows for the agent.
@@ -487,7 +480,7 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
     '  - http.request - { surface, method, path, headersJson, body }: `path` is relative to the surface endpoint; `headersJson` is a JSON object of headers; `body` is the request body.',
     '  - Write `{{secret}}` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.',
     '  - You may only target a surface listed above. A system without a connected surface gets no action; say so in `notes`.',
-    "  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager's approval unless autonomous actions are on.",
+    "  - A manager DM on a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager's approval unless autonomous actions are on.",
     '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
     '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
   );
@@ -501,7 +494,7 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
  *   target: The work item's reply target.
  *
  * Returns:
- *   `Reply target: channel C0… (#revops-asks), thread_ts 1787…`.
+ *   `Reply target: channel C0… (#team-asks), thread_ts 1787…`.
  */
 export function replyTargetLine(target: ReplyTarget): string {
   const name = target.channelName ? ` (#${target.channelName})` : '';
