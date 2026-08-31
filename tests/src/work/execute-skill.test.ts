@@ -596,6 +596,22 @@ describe('executor output contract', (): void => {
     ).toBe(false);
   });
 
+  it('rejects an empty spreadsheet row like the ordinary-agent tool does', (): void => {
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'spreadsheet.appendRow',
+            args: { sheetSlug: 'sheet', tabName: 'tab', cells: [] },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it('caps the one dependent phase at four actions', (): void => {
     const base = {
       draft: 'd',

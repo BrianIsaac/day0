@@ -72,11 +72,13 @@ export async function runBaselineAgent(args: {
     args.onToolCall();
     return await args.invokeAction(action);
   };
-  const cells = z.array(z.object({ header: z.string(), value: z.string() })).min(1);
+  const cells = z
+    .array(z.object({ header: z.string(), value: z.string() }).strict())
+    .min(1);
   const tools = {
     'docs.lookup': tool({
       description: 'Search the team documentation by query. The documents are not in context.',
-      inputSchema: z.object({ query: z.string() }),
+      inputSchema: z.object({ query: z.string() }).strict(),
       execute: async ({ query }) => {
         args.onToolCall();
         return { documents: docMatches(args.snapshot, query) };
@@ -84,30 +86,34 @@ export async function runBaselineAgent(args: {
     }),
     'spreadsheet.appendRow': tool({
       description: 'Append one row to an existing mock spreadsheet tab.',
-      inputSchema: z.object({ sheetSlug: z.string(), tabName: z.string(), cells }),
+      inputSchema: z.object({ sheetSlug: z.string(), tabName: z.string(), cells }).strict(),
       execute: async (input) => await apply({ tool: 'spreadsheet.appendRow', args: input }),
     }),
     'slack.postMessage': tool({
       description: 'Post one message to an existing mock Slack channel or DM.',
-      inputSchema: z.object({
-        channelSlug: z.string(),
-        threadKey: z.string().optional(),
-        body: z.string(),
-      }),
+      inputSchema: z
+        .object({
+          channelSlug: z.string(),
+          threadKey: z.string().optional(),
+          body: z.string(),
+        })
+        .strict(),
       execute: async (input) => await apply({ tool: 'slack.postMessage', args: input }),
     }),
     'twitter.reply': tool({
       description: 'Draft one reply to an existing mock tweet.',
-      inputSchema: z.object({ tweetSlug: z.string(), body: z.string() }),
+      inputSchema: z.object({ tweetSlug: z.string(), body: z.string() }).strict(),
       execute: async (input) => await apply({ tool: 'twitter.reply', args: input }),
     }),
     'ticket.update': tool({
       description: 'Update one existing mock ticket status and/or add a comment.',
-      inputSchema: z.object({
-        slug: z.string(),
-        status: z.enum(['open', 'in-progress', 'blocked', 'done']).optional(),
-        comment: z.string().optional(),
-      }),
+      inputSchema: z
+        .object({
+          slug: z.string(),
+          status: z.enum(['open', 'in-progress', 'blocked', 'done']).optional(),
+          comment: z.string().optional(),
+        })
+        .strict(),
       execute: async (input) => await apply({ tool: 'ticket.update', args: input }),
     }),
   };

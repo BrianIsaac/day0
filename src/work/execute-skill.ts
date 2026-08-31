@@ -159,7 +159,8 @@ const cellsSchema = z
         value: z.string(),
       })
       .strict(),
-  );
+  )
+  .min(1);
 
 export const generatedActionSchema = z.union([
   z
