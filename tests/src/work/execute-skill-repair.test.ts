@@ -11,6 +11,7 @@ const recorded = vi.hoisted(() => ({
 
 vi.mock('../../../src/lib/mastra', () => ({
   MODEL_CONFIG: 'openai/mock',
+  MODEL_PROVIDER_MAX_RETRIES: 2,
   agentJson: async <T>(args: { user: string }): Promise<T> => {
     recorded.calls.push({ user: args.user });
     const next = recorded.outputs.shift();

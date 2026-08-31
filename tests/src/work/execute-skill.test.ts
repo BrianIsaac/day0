@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
@@ -14,11 +15,7 @@ import {
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
-import {
-  ACTION_TOOLS,
-  DEPENDENT_ACTION_CAP,
-  type MockActionArgs,
-} from '../../../src/work/types';
+import { ACTION_TOOLS, DEPENDENT_ACTION_CAP, type MockActionArgs } from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
 
@@ -276,15 +273,58 @@ describe('executor output contract', (): void => {
     });
   });
 
+  it('extracts the two prescribed trails from the office guides seeded at runtime', (): void => {
+    const source = readFileSync(new URL('../../../convex/mockSeed.ts', import.meta.url), 'utf8');
+    const start = source.indexOf('const HOW_TO_GUIDES');
+    const end = source.indexOf('export const seedMockEnvironment', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const guides: Array<{ slug: string; title: string; body: string }> = [];
+    const pattern = /slug: '([^']+)',\s+title: '([^']+)',\s+body: `([\s\S]*?)\n`,\s+},/g;
+    for (const match of source.slice(start, end).matchAll(pattern)) {
+      guides.push({
+        slug: match[1]!,
+        title: match[2]!,
+        body: match[3]!.replaceAll('\\`', '`'),
+      });
+    }
+
+    expect(guides).toHaveLength(4);
+    expect(parseProcedureContract({ teamDocs: [], howToGuides: guides }).trails).toEqual([
+      expect.objectContaining({
+        appliesTo: { sourceCategories: [] },
+        effect: {
+          tool: 'slack.postMessage',
+          destination: {
+            kind: 'manager-channel',
+            argument: 'channelSlug',
+            value: 'dm-manager',
+          },
+          requiredPayload: ['body'],
+          nonEmptyPayload: ['body'],
+          statusTransition: null,
+        },
+      }),
+      expect.objectContaining({
+        appliesTo: { sourceCategories: ['ticket-queue'] },
+        effect: {
+          tool: 'ticket.update',
+          destination: { kind: 'originating-reference', refPrefix: 'ticket://' },
+          requiredPayload: ['comment'],
+          nonEmptyPayload: ['comment'],
+          statusTransition: { argument: 'status', full: 'done', partial: 'in-progress' },
+        },
+      }),
+    ]);
+  });
+
   it('rejects a repeated status-only ticket update after the combined requested update', (): void => {
     const issues = mockActionContractIssues(
       {
         draft: 'Move REVOPS-EVAL-08 to in-progress with the requested ownership note.',
         notes: '',
         needsDependentPhase: false,
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
@@ -343,7 +383,8 @@ describe('executor output contract', (): void => {
       {
         draft:
           'Cannot append the Wayne Enterprises row until source evidence and a duplicate check are provided.',
-        notes: 'The exact requested cells were supplied, but the skill asked for extra prerequisites.',
+        notes:
+          'The exact requested cells were supplied, but the skill asked for extra prerequisites.',
         needsDependentPhase: false,
         procedureTrails: [],
         actions: [
@@ -387,9 +428,7 @@ describe('executor output contract', (): void => {
           'EVAL-DOC-04 — Before changing a Salesforce record, surface a draft to the manager for review. (Escalation paths)',
         notes: 'No ticket update is included.',
         needsDependentPhase: false,
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
@@ -440,9 +479,7 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the documented Q4 tracker identifier on REVOPS-EVAL-05.',
         notes: 'The documentation fully covers the tracker slug and rationale.',
         needsDependentPhase: false,
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'slack.postMessage',
@@ -453,8 +490,7 @@ describe('executor output contract', (): void => {
             args: recordedArgs({
               slug: 'REVOPS-EVAL-05',
               status: 'in-progress',
-              comment:
-                'EVAL-DOC-05 — q4-revenue-tracker is the source of truth. (Team overview)',
+              comment: 'EVAL-DOC-05 — q4-revenue-tracker is the source of truth. (Team overview)',
             }),
           },
         ],
@@ -491,9 +527,7 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the first reconciliation pass; the second pass remains outstanding.',
         notes: 'The approved work is intentionally incomplete.',
         needsDependentPhase: false,
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
@@ -576,9 +610,7 @@ describe('executor output contract', (): void => {
         draft: 'Updated the origin and cross-linked ticket.',
         notes: '',
         needsDependentPhase: false,
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
@@ -628,9 +660,7 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the completed work.',
         notes: '',
         needsDependentPhase: false,
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',

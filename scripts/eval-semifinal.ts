@@ -28,6 +28,10 @@ import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
 import { EVALUATION_SCOPES } from '../src/evaluation/scopes';
+import {
+  evaluationHarnessParameters,
+  INTENTIONAL_ARM_DIFFERENCES,
+} from '../src/evaluation/harness-parity';
 import { isTerminalWorkState } from '../src/evaluation/states';
 import { auditActionArguments } from '../evaluation/action-audit';
 
@@ -220,6 +224,8 @@ function assertResumeCompatible(
   commit: string,
 ): void {
   const config = evidence.configuration;
+  const taskTimeoutMs = Object.fromEntries(tasks.map((task) => [task.id, task.timeoutMs]));
+  const harnessParameters = evaluationHarnessParameters(taskTimeoutMs);
   if (
     config.commit !== commit ||
     config.model !== MODEL ||
@@ -228,6 +234,9 @@ function assertResumeCompatible(
     config.requestedRuns !== options.runs ||
     config.approvalDelayMs !== options.approvalDelayMs ||
     config.pollIntervalMs !== options.pollIntervalMs ||
+    JSON.stringify(config.harnessParameters) !== JSON.stringify(harnessParameters) ||
+    JSON.stringify(config.intentionalArmDifferences) !==
+      JSON.stringify(INTENTIONAL_ARM_DIFFERENCES) ||
     !sameStrings(config.arms ?? ['day0', 'baseline'], options.arms) ||
     !sameStrings(
       config.taskIds,
@@ -245,6 +254,8 @@ async function loadOrCreateEvidence(
   tasks: EvaluationTask[],
 ): Promise<EvidenceWithProgress> {
   const commit = currentCommit();
+  const taskTimeoutMs = Object.fromEntries(tasks.map((task) => [task.id, task.timeoutMs]));
+  const harnessParameters = evaluationHarnessParameters(taskTimeoutMs);
   try {
     const parsed: unknown = JSON.parse(await readFile(options.out, 'utf8'));
     if (!isEvidence(parsed)) throw new Error('existing output is not evaluation evidence v1');
@@ -267,13 +278,15 @@ async function loadOrCreateEvidence(
       arms: options.arms,
       requestedRuns: options.runs,
       taskIds: tasks.map((task) => task.id),
-      taskTimeoutMs: Object.fromEntries(tasks.map((task) => [task.id, task.timeoutMs])),
+      taskTimeoutMs,
       approvalDelayMs: options.approvalDelayMs,
       pollIntervalMs: options.pollIntervalMs,
       noLlmJudge: true,
       onboardingTranscriptProvenance: fixture.provenance,
       onboardingTranscriptPath: 'evaluation/onboarding/day0.json',
       postCharterApprovalSkipped: true,
+      harnessParameters,
+      intentionalArmDifferences: INTENTIONAL_ARM_DIFFERENCES,
     },
     runs: [],
   };

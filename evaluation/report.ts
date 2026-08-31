@@ -5,6 +5,10 @@ import {
   type EvaluationTask,
 } from './graders';
 import type { ActionArgumentAudit } from './action-audit';
+import type {
+  EvaluationHarnessParameters,
+  IntentionalArmDifferences,
+} from '../src/evaluation/harness-parity';
 
 export interface EvaluationDecision {
   kind: 'charter' | 'skill' | 'plan' | 'actions';
@@ -74,6 +78,8 @@ export interface EvaluationEvidence {
     onboardingTranscriptProvenance: string;
     onboardingTranscriptPath?: string;
     postCharterApprovalSkipped?: boolean;
+    harnessParameters?: EvaluationHarnessParameters;
+    intentionalArmDifferences?: IntentionalArmDifferences;
   };
   regradedFrom?: {
     path: string;
@@ -334,6 +340,51 @@ function rateRow(
   return `| ${label} | ${direction} | ${formatRate(rows.filter(predicate).length, rows.length)} |`;
 }
 
+function displayHarnessValue(value: unknown): string {
+  if (value === null) return 'not set / provider-managed';
+  const rendered =
+    typeof value === 'string' || typeof value === 'number' ? String(value) : JSON.stringify(value);
+  return rendered.replaceAll('|', '\\|').replaceAll('\n', ' ');
+}
+
+function harnessParityTables(evidence: EvaluationEvidence): string {
+  const parameters = evidence.configuration.harnessParameters;
+  const differences = evidence.configuration.intentionalArmDifferences;
+  if (!parameters || !differences) {
+    return 'Harness-parameter capture was not recorded in this evidence schema revision.';
+  }
+  const labels: Record<keyof typeof parameters.day0, string> = {
+    modelId: 'Model id',
+    temperature: 'Temperature',
+    modelCallAbortMs: 'Per-call abort deadline (ms)',
+    taskTimeoutMs: 'Task timeouts by task (ms)',
+    retryPolicy: 'Transient retry policy',
+    providerClient: 'Provider client',
+    providerBaseUrl: 'Provider base URL',
+    contextLimitTokens: 'Context limit (tokens)',
+    structuredOutputMode: 'Configured structured-output mode',
+    modelSeed: 'Model seed',
+  };
+  const parameterRows = (Object.keys(labels) as Array<keyof typeof parameters.day0>).map(
+    (key) =>
+      `| ${labels[key]} | ${displayHarnessValue(parameters.day0[key])} | ${displayHarnessValue(parameters.baseline[key])} |`,
+  );
+  const differenceRows = Object.entries(differences).map(
+    ([name, value]) => `| ${name} | ${value.day0} | ${value.baseline} |`,
+  );
+  return [
+    '| Parameter | day0 | baseline |',
+    '| --- | --- | --- |',
+    ...parameterRows,
+    '',
+    'The following is the complete whitelist of intentional arm differences:',
+    '',
+    '| Difference | day0 | baseline |',
+    '| --- | --- | --- |',
+    ...differenceRows,
+  ].join('\n');
+}
+
 export function renderEvaluationReport(
   evidence: EvaluationEvidence,
   options: { renderedAtCommit?: string } = {},
@@ -520,6 +571,12 @@ ${summary.join('\n')}
 ## Context — mechanism and timing, not comparison scores
 
 These observations describe intentional differences between the arms. They are not quality scores.
+
+### Harness and model parity
+
+Every recorded harness/model parameter below is asserted equal before execution. The structured-output setting is the shared provider configuration; the different interaction protocols are listed separately in the complete intentional-difference whitelist.
+
+${harnessParityTables(evidence)}
 
 ### Action argument binding
 

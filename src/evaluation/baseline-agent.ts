@@ -1,7 +1,13 @@
 import { Agent } from '@mastra/core/agent';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { MODEL_CALL_TIMEOUT_MS, MODEL_CONFIG, MODEL_TEMPERATURE } from '../lib/mastra';
+import {
+  MODEL_CALL_TIMEOUT_MS,
+  MODEL_CONFIG,
+  MODEL_PROVIDER_MAX_RETRIES,
+  MODEL_TEMPERATURE,
+  withModelRetry,
+} from '../lib/mastra';
 import type { AppliedAction } from '../surfaces/types';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { renderEnvSnapshot } from '../work/execute-skill';
@@ -72,9 +78,7 @@ export async function runBaselineAgent(args: {
     args.onToolCall();
     return await args.invokeAction(action);
   };
-  const cells = z
-    .array(z.object({ header: z.string(), value: z.string() }).strict())
-    .min(1);
+  const cells = z.array(z.object({ header: z.string(), value: z.string() }).strict()).min(1);
   const tools = {
     'docs.lookup': tool({
       description: 'Search the team documentation by query. The documents are not in context.',
@@ -122,14 +126,17 @@ export async function runBaselineAgent(args: {
     name: 'ordinary agent',
     instructions: 'You are an ops assistant for this team; here are your tools.',
     model: MODEL_CONFIG,
+    maxRetries: MODEL_PROVIDER_MAX_RETRIES,
     tools,
   });
-  const result = await ordinary.generate(candidatePrompt(args.candidate, args.snapshot), {
-    abortSignal: AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS),
-    maxSteps: 10,
-    modelSettings: { temperature: MODEL_TEMPERATURE },
-    toolChoice: 'auto',
-  });
+  const result = await withModelRetry('baselineAgent', async () =>
+    ordinary.generate(candidatePrompt(args.candidate, args.snapshot), {
+      abortSignal: AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS),
+      maxSteps: 10,
+      modelSettings: { temperature: MODEL_TEMPERATURE },
+      toolChoice: 'auto',
+    }),
+  );
   return {
     draft: result.text.trim(),
     modelCalls: Array.isArray(result.steps) ? result.steps.length : 1,

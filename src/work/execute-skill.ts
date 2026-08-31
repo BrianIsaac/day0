@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
-import { agentJson, MODEL_CONFIG } from '../lib/mastra';
+import { agentJson, MODEL_CONFIG, MODEL_PROVIDER_MAX_RETRIES } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import {
   DEPENDENT_ACTION_CAP,
@@ -182,15 +182,24 @@ function firstCapture(body: string, patterns: RegExp[]): string | undefined {
 
 function documentedFullStatus(body: string): string | undefined {
   return firstCapture(body, [
-    new RegExp(`status\\s*:\\s*[\u0060"']*${STATUS_VALUE}[\u0060"']*\\s+for\\s+(?:full|complete)`, 'i'),
-    new RegExp(`(?:full(?:y)?\\s+(?:closed?|complete)|completed?[^.;\\n]{0,30})[^.;\\n]{0,80}?status[\u0060"']*\\s+(?:to|as)\\s+[\u0060"']*${STATUS_VALUE}`, 'i'),
+    new RegExp(
+      `status\\s*:\\s*[\u0060"']*${STATUS_VALUE}[\u0060"']*\\s+for\\s+(?:full|complete)`,
+      'i',
+    ),
+    new RegExp(
+      `(?:full(?:y)?\\s+(?:closed?|complete)|completed?[^.;\\n]{0,30})[^.;\\n]{0,80}?status[\u0060"']*\\s+(?:to|as)\\s+[\u0060"']*${STATUS_VALUE}`,
+      'i',
+    ),
   ]);
 }
 
 function documentedPartialStatus(body: string): string | undefined {
   return firstCapture(body, [
     new RegExp(`[\u0060"']*${STATUS_VALUE}[\u0060"']*\\s+for\\s+partial`, 'i'),
-    new RegExp(`(?:unfinished|incomplete|partial(?:ly)?)[^.;\\n]{0,80}?status[\u0060"']*\\s+(?:to|as)\\s+[\u0060"']*${STATUS_VALUE}`, 'i'),
+    new RegExp(
+      `(?:unfinished|incomplete|partial(?:ly)?)[^.;\\n]{0,80}?status[\u0060"']*\\s+(?:to|as)\\s+[\u0060"']*${STATUS_VALUE}`,
+      'i',
+    ),
   ]);
 }
 
@@ -709,7 +718,9 @@ export function mockActionContractIssues(
     const hasNonEmptyPayload = trail.effect.nonEmptyPayload.every((argument) =>
       matchingDestination.some((action) => {
         const value = action.args[argument as keyof MockAction['args']];
-        return typeof value === 'string' ? value.trim().length > 0 : Array.isArray(value) && value.length > 0;
+        return typeof value === 'string'
+          ? value.trim().length > 0
+          : Array.isArray(value) && value.length > 0;
       }),
     );
     if (matchingDestination.length === 0 || !hasPayload || !hasNonEmptyPayload) {
@@ -731,9 +742,8 @@ export function mockActionContractIssues(
       if (
         !matchingDestination.some(
           (action) =>
-            action.args[
-              trail.effect.statusTransition!.argument as keyof MockAction['args']
-            ] === expectedStatus,
+            action.args[trail.effect.statusTransition!.argument as keyof MockAction['args']] ===
+            expectedStatus,
         )
       ) {
         issues.push(
@@ -922,12 +932,12 @@ export function executorInstructions(args: {
     ...(args.mode === 'mock'
       ? ['', mockActionContract(procedureContract)]
       : args.mode === 'real'
-      ? [
-          '',
-          '--- Live run context (takes precedence over approval wording in the skill body) ---',
-          actionModeInstruction(args.autonomousActions),
-        ]
-      : []),
+        ? [
+            '',
+            '--- Live run context (takes precedence over approval wording in the skill body) ---',
+            actionModeInstruction(args.autonomousActions),
+          ]
+        : []),
   ].join('\n');
 }
 
@@ -950,6 +960,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     name: `day0-skill-${skill.name}`,
     instructions,
     model: MODEL_CONFIG,
+    maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
 
   const userPrompt = [
@@ -1027,7 +1038,9 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   };
   const remaining = mockActionContractIssues(repaired, candidate, plan, procedureContract);
   if (remaining.length > 0) {
-    throw new Error(`executor action contract remained invalid after one repair: ${remaining.join('; ')}`);
+    throw new Error(
+      `executor action contract remained invalid after one repair: ${remaining.join('; ')}`,
+    );
   }
   return repaired;
 }
@@ -1095,6 +1108,7 @@ export async function runDependentSkill(
     name: `day0-skill-${skill.name}-dependent`,
     instructions,
     model: MODEL_CONFIG,
+    maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
@@ -1138,9 +1152,7 @@ export async function runDependentSkill(
   };
   const trailIssues = procedureTrailAttentionIssues(output, candidate, procedureContract);
   if (trailIssues.length > 0) {
-    throw new Error(
-      `dependent executor procedure contract was invalid: ${trailIssues.join('; ')}`,
-    );
+    throw new Error(`dependent executor procedure contract was invalid: ${trailIssues.join('; ')}`);
   }
   return output;
 }
