@@ -654,7 +654,10 @@ describe('executor output contract', (): void => {
       },
       {
         summary: 'Record the complete cited answer.',
-        steps: ['Post the complete source-cited comment.'],
+        steps: [
+          'If the documentation is incomplete, flag that instead of inferring an answer.',
+          'Post the complete source-cited comment.',
+        ],
         expectedOutputType: 'ticket-update',
         riskNotes: '',
         reversibility: 'reversible',

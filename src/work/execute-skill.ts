@@ -676,10 +676,12 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
 
 const PARTIAL_WORK = /\b(?:partial(?:ly)?|incomplete|outstanding|remainder|remaining)\b/i;
 const NO_PARTIAL_WORK = /\b(?:no|zero|without any)\s+(?:work\s+)?(?:outstanding|remaining)\b/i;
+const HYPOTHETICAL_CLAUSE = /\b(?:if|unless)\b[^.!?\n]*(?:[.!?](?=\s|$)|\n|$)/gi;
 
 function approvedWorkIsPartial(candidate: WorkCandidate, plan: ExecutionPlan): boolean {
   const approvedWork = [candidate.contentSummary, plan.summary, ...plan.steps].join('\n');
-  return PARTIAL_WORK.test(approvedWork) && !NO_PARTIAL_WORK.test(approvedWork);
+  const assertedWork = approvedWork.replace(HYPOTHETICAL_CLAUSE, ' ');
+  return PARTIAL_WORK.test(assertedWork) && !NO_PARTIAL_WORK.test(assertedWork);
 }
 
 /**
