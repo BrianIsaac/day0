@@ -220,6 +220,57 @@ describe('executor output contract', (): void => {
     ).toBe(true);
   });
 
+  it('does not invent a distinct primary effect when the candidate has no structured destination', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'private-recaps',
+          title: 'Private recaps',
+          body: [
+            'After completing work, send a recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and a non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    });
+    const schema = executeSchemaForProcedureContract(
+      contract,
+      {
+        sourceCategory: 'inbox',
+        sourceSystem: 'request-desk',
+        externalId: 'CASE-21',
+        title: 'Answer the request',
+        contentSummary: 'Answer through the appropriate route.',
+        contentRefs: ['request://case-21'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Answer or escalate the request.',
+        steps: ['Use the appropriate documented route.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+    );
+
+    expect(
+      schema.safeParse({
+        draft: 'Escalated safely.',
+        notes: 'The candidate supplied no structured destination.',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'lead-desk', threadKey: null, body: 'Escalation.' },
+          },
+        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      }).success,
+    ).toBe(true);
+  });
+
   it('derives trailing effects from a renamed and reworded office procedure', (): void => {
     const contract = parseProcedureContract({
       teamDocs: [],

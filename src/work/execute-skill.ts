@@ -561,13 +561,8 @@ function requiredActionFloor(
   } else if (plan.expectedOutputType === 'message') {
     const channel = candidate.replyTarget?.channel ?? referencedDestination(candidate, 'slack://');
     const post = referencedDestination(candidate, 'tweet://');
-    effects.add(
-      channel
-        ? `slack.postMessage:channelSlug:${channel}`
-        : post
-          ? `twitter.reply:tweetSlug:${post}`
-          : 'message:(candidate)',
-    );
+    if (channel) effects.add(`slack.postMessage:channelSlug:${channel}`);
+    else if (post) effects.add(`twitter.reply:tweetSlug:${post}`);
   }
   for (const trail of contract.trails) {
     if (!procedureTrailApplies(trail, candidate)) continue;
