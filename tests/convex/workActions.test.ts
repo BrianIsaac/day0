@@ -1672,6 +1672,62 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.mcp).toHaveLength(0);
   });
 
+  it('preserves intentionally repeated append-row effects for exact-action approval', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const repeatedRow = {
+      tool: 'spreadsheet.appendRow' as const,
+      args: {
+        sheetSlug: 'attendance-log',
+        tabName: 'entries',
+        cells: [
+          { header: 'Employee', value: 'Aman' },
+          { header: 'Status', value: 'present' },
+        ],
+      },
+    };
+    recorded.skillOutput = {
+      draft: 'Record both attendance events.',
+      notes: '',
+      actions: [repeatedRow, repeatedRow],
+    };
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'mock');
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('mockSpreadsheets', {
+          agentId,
+          slug: 'attendance-log',
+          title: 'Attendance log',
+          tabs: [
+            {
+              name: 'entries',
+              headers: ['Employee', 'Status'],
+            },
+          ],
+          updatedAt: 1,
+        }),
+    );
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const held = await readItem(harness, workItemId);
+    if (!held.pendingRunId) throw new Error('pending run missing');
+    expect((held.output as ExecutionOutput).actions).toEqual([repeatedRow, repeatedRow]);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId,
+      pendingRunId: held.pendingRunId,
+      approvedIndexes: [0, 1],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const rows = await harness.run(
+      async (ctx) => await ctx.db.query('mockSpreadsheetRows').collect(),
+    );
+    expect(rows.map((row) => row.cells)).toEqual([
+      { Employee: 'Aman', Status: 'present' },
+      { Employee: 'Aman', Status: 'present' },
+    ]);
+  });
+
   it('applies one write when a model repeats the same external effect', async (): Promise<void> => {
     useSurfaceMode('mock');
     recorded.skillOutput = {
