@@ -232,7 +232,7 @@ function productWords(name: string): string[] {
 /**
  * Decide whether one name's words open the other's.
  *
- * "Northstar" opens "Northstar CRM" and "Slack" opens "Slack workspace";
+ * "Atlas" opens "Atlas CRM" and "Chat" opens "Chat workspace";
  * "Microsoft Teams" and "Microsoft Excel" open neither.
  *
  * Args:
@@ -259,7 +259,7 @@ interface ProductRow {
  * Collapse channels, DMs, documentation artefacts, UI objects and spellings to products.
  *
  * Two rows are the same product when their words match, when one name opens
- * the other ("Northstar" and "Northstar CRM"), or when they differ only by a
+ * the other ("Atlas" and "Atlas CRM"), or when they differ only by a
  * domain suffix ("Linear.app" and "Linear"). A prefix merge is limited to rows
  * of the same class, or a row of class `other`, so "Google Sheets" does not
  * swallow "Google Docs". The shorter name is kept, because every page that

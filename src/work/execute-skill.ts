@@ -3,7 +3,6 @@ import { Agent } from '@mastra/core/agent';
 import { agentJson, MODEL_CONFIG } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import {
-  ACTION_TOOLS,
   DEPENDENT_ACTION_CAP,
   type DependentExecutionOutput,
   type ExecutionOutput,
@@ -70,25 +69,17 @@ const MOCK_PREAMBLE = [
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
-  'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. Available tools:',
+  'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:',
   '  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }',
-  '  - slack.postMessage    — { channelSlug, threadKey?, body }',
+  '  - slack.postMessage    — { channelSlug, threadKey: string or null, body }',
   '  - twitter.reply        — { tweetSlug, body }',
-  '  - ticket.update        — { slug, status?, comment? }',
+  '  - ticket.update        — { slug, status: value or null, comment: string or null }',
   '',
   'Discipline:',
   `  - ${actionModeInstruction(false, 'mock')}`,
   '  - Stay inside charter boundaries.',
   '  - Never invent values you do not have. If a cell value is unknown, leave it blank in `cells` and flag the gap in `notes`.',
-  '  - Cold-start posture: prefer drafts to manager DM (`channelSlug: "dm-manager"`) over public channel posts. The candidate has already passed the charter quality-fit gate, so it IS in scope — emit the actions the skill calls for.',
-  '',
-  'Closing the loop (cross-surface fanout):',
-  '  - Every surface that originated or was named in this work item should see at least one entry showing the work happened. The audit trail is non-negotiable.',
-  '  - BASE actions for any in-charter work are always: (a) the primary mutation(s) — e.g. `spreadsheet.appendRow` for tracker updates, or `twitter.reply` for in-scope social — AND (b) a `slack.postMessage` to `dm-manager` summarising the draft for review. The fanout rules below are appended IN ADDITION to (a) and (b); they never replace either.',
-  '  - If the candidate `Source` line contains `ticket-queue`, follow the loaded `how-to-update-ticket` guide for the originating ticket named in the candidate or surfaced via the `Refs:` line. Do not invent a status policy when that guide and the candidate are silent.',
-  '  - If your draft body cites another ticket slug from the env snapshot (e.g. "REVOPS-202 already covers the Looker refresh"), follow the loaded guide\'s cross-link procedure for that ticket.',
-  '  - If the original ask came from a public Slack channel (look for "in #channel-name" or "asked in #revops-asks" in the candidate body) AND you have drafted to manager DM, ALSO post a threaded `slack.postMessage` to the originating channel — `channelSlug` is that channel, `threadKey` matches the ask thread, body says something like "Drafting for {manager} — will post here when approved."',
-  '  - These extra actions are NOT optional when the conditions hold; they are how the agent demonstrates trustworthy follow-through. NEVER replace the manager DM with a ticket update — both fire.',
+  '  - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy.',
 ].join('\n');
 
 function mockActionContract(guides: MockSurfaceSnapshot['howToGuides']): string {
@@ -102,7 +93,7 @@ function mockActionContract(guides: MockSurfaceSnapshot['howToGuides']): string 
     '  - For an approved spreadsheet-update, the literal destination and values in the approved candidate are sufficient authority. Emit the requested `spreadsheet.appendRow`; do not invent source-evidence or duplicate-check prerequisites that the candidate does not require.',
     ticketRule,
     '  - One `ticket.update` may carry both the comment and status. A split pair is also valid only as comment-only followed by status-only. Never emit the same ticket status twice.',
-    '  - A manager DM is the review trail, not a replacement for the requested primary mutation or originating-ticket audit.',
+    '  - A supplemental trail required by a loaded procedure never replaces the requested primary mutation, and the primary mutation never replaces that trail.',
   ].join('\n');
 }
 
@@ -115,7 +106,7 @@ const REAL_PREAMBLE = [
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   '',
-  'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
+  'Action format: each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
   '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
   '',
@@ -154,78 +145,164 @@ export function executorPreamble(mode: SurfaceMode, autonomousActions = false): 
 }
 
 /**
- * The action-args schema is intentionally flat: every action lists its
- * own arg fields as optional at the top level. OpenAI's structured-
- * output strict mode rejects `z.any()`, and discriminatedUnion → oneOf
- * doesn't round-trip cleanly through openai.beta.chat.completions.
- * The flat shape keeps the JSON schema valid and readable.
+ * The model sees one tagged branch per verb. A plain Zod union is deliberate:
+ * Zod serialises it as nested `anyOf`, which OpenAI Structured Outputs accepts,
+ * while `z.discriminatedUnion` serialises as unsupported `oneOf`. Optional
+ * verb fields are required-but-nullable on the wire because strict Structured
+ * Outputs requires every property; they are omitted again before persistence.
  */
-export const actionArgsSchema = z.object({
-  // spreadsheet.appendRow — cells encoded as array of header/value pairs
-  // because OpenAI structured-output strict mode rejects `propertyNames`
-  // (the JSON-schema field z.record produces).
-  sheetSlug: z.string().optional(),
-  tabName: z.string().optional(),
-  cells: z
-    .array(
-      z.object({
+const cellsSchema = z
+  .array(
+    z
+      .object({
         header: z.string(),
         value: z.string(),
-      }),
-    )
-    .optional(),
-  // slack.postMessage
-  channelSlug: z.string().optional(),
-  threadKey: z.string().optional(),
-  // shared body for slack/twitter
-  body: z.string().optional(),
-  // twitter.reply
-  tweetSlug: z.string().optional(),
-  // ticket.update
-  slug: z.string().optional(),
-  status: z.enum(['open', 'in-progress', 'blocked', 'done']).optional(),
-  comment: z.string().optional(),
-  // mcp.call and http.request. Structured provider arguments travel as JSON
-  // strings, parsed and size-capped server-side, so the bag stays flat.
-  surface: z.string().optional(),
-  tool: z.string().optional(),
-  toolArgsJson: z.string().optional(),
-  method: z.string().optional(),
-  path: z.string().optional(),
-  headersJson: z.string().optional(),
-});
+      })
+      .strict(),
+  )
+  .min(1);
 
-export const executeSchema = z.object({
-  draft: z.string(),
-  notes: z.string(),
-  needsDependentPhase: z.boolean(),
-  actions: z.array(
-    z.object({
-      tool: z.enum(ACTION_TOOLS),
-      args: actionArgsSchema,
-    }),
-  ),
-});
+export const generatedActionSchema = z.union([
+  z
+    .object({
+      tool: z.literal('spreadsheet.appendRow'),
+      args: z
+        .object({
+          sheetSlug: z.string(),
+          tabName: z.string(),
+          cells: cellsSchema,
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('slack.postMessage'),
+      args: z
+        .object({
+          channelSlug: z.string(),
+          threadKey: z.string().nullable(),
+          body: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('twitter.reply'),
+      args: z
+        .object({
+          tweetSlug: z.string(),
+          body: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('ticket.update'),
+      args: z
+        .object({
+          slug: z.string(),
+          status: z.enum(['open', 'in-progress', 'blocked', 'done']).nullable(),
+          comment: z.string().nullable(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('mcp.call'),
+      args: z
+        .object({
+          surface: z.string(),
+          tool: z.string(),
+          toolArgsJson: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('http.request'),
+      args: z
+        .object({
+          surface: z.string(),
+          method: z.enum(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']),
+          path: z.string(),
+          headersJson: z.string().nullable(),
+          body: z.string().nullable(),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
 
-export const dependentExecuteSchema = z.object({
-  draft: z.string(),
-  notes: z.string(),
-  actions: z
-    .array(
-      z.object({
-        tool: z.enum(ACTION_TOOLS),
-        args: actionArgsSchema,
-      }),
-    )
-    .max(DEPENDENT_ACTION_CAP),
-  planStepOutcomes: z.array(
-    z.object({
-      step: z.number().int().positive(),
-      status: z.enum(['satisfied', 'blocked']),
-      evidence: z.string().min(1),
-    }),
-  ),
-});
+export const executeSchema = z
+  .object({
+    draft: z.string(),
+    notes: z.string(),
+    needsDependentPhase: z.boolean(),
+    actions: z.array(generatedActionSchema),
+  })
+  .strict();
+
+export const dependentExecuteSchema = z
+  .object({
+    draft: z.string(),
+    notes: z.string(),
+    actions: z.array(generatedActionSchema).max(DEPENDENT_ACTION_CAP),
+    planStepOutcomes: z.array(
+      z
+        .object({
+          step: z.number().int().positive(),
+          status: z.enum(['satisfied', 'blocked']),
+          evidence: z.string().min(1),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+type GeneratedAction = z.infer<typeof generatedActionSchema>;
+
+function materialiseGeneratedAction(action: GeneratedAction): MockAction {
+  switch (action.tool) {
+    case 'spreadsheet.appendRow':
+    case 'twitter.reply':
+    case 'mcp.call':
+      return action;
+    case 'slack.postMessage':
+      return {
+        tool: action.tool,
+        args: {
+          channelSlug: action.args.channelSlug,
+          ...(action.args.threadKey === null ? {} : { threadKey: action.args.threadKey }),
+          body: action.args.body,
+        },
+      };
+    case 'ticket.update':
+      return {
+        tool: action.tool,
+        args: {
+          slug: action.args.slug,
+          ...(action.args.status === null ? {} : { status: action.args.status }),
+          ...(action.args.comment === null ? {} : { comment: action.args.comment }),
+        },
+      };
+    case 'http.request':
+      return {
+        tool: action.tool,
+        args: {
+          surface: action.args.surface,
+          method: action.args.method,
+          path: action.args.path,
+          ...(action.args.headersJson === null ? {} : { headersJson: action.args.headersJson }),
+          ...(action.args.body === null ? {} : { body: action.args.body }),
+        },
+      };
+  }
+}
 
 export interface SelectedSkill {
   name: string;
@@ -276,15 +353,16 @@ interface TicketClosureProcedure {
 function documentedTicketClosure(
   guides: MockSurfaceSnapshot['howToGuides'],
 ): TicketClosureProcedure | undefined {
-  const guide = guides.find((row) => row.slug === 'how-to-update-ticket');
-  if (!guide) return undefined;
-  const full = guide.body.match(
-    /status:\s*[`"']*(open|in-progress|blocked|done)[`"']*\s+for full closure/i,
-  )?.[1] as MockAction['args']['status'] | undefined;
-  const partial = guide.body.match(
-    /[`"']*(open|in-progress|blocked|done)[`"']*\s+for partial/i,
-  )?.[1] as MockAction['args']['status'] | undefined;
-  return full && partial ? { full, partial } : undefined;
+  for (const guide of guides) {
+    const full = guide.body.match(
+      /status:\s*[`"']*(open|in-progress|blocked|done)[`"']*\s+for full closure/i,
+    )?.[1] as MockAction['args']['status'] | undefined;
+    const partial = guide.body.match(
+      /[`"']*(open|in-progress|blocked|done)[`"']*\s+for partial/i,
+    )?.[1] as MockAction['args']['status'] | undefined;
+    if (full && partial) return { full, partial };
+  }
+  return undefined;
 }
 
 /**
@@ -368,8 +446,8 @@ export function mockActionContractIssues(
  *
  * Only connected surfaces are listed: a skill may not target anything else,
  * and the executor is told so rather than left to guess from a slug. The
- * `dm-manager` fanout rule from the mock preamble maps to the chat surface's
- * manager DM channel id, which the probe stored on the surface.
+ * The chat surface's manager destination comes from the channel id stored by
+ * its probe rather than from an office-specific alias.
  *
  * Args:
  *   surfaces: Surface rows for the agent.
@@ -403,7 +481,7 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
     '  - http.request - { surface, method, path, headersJson, body }: `path` is relative to the surface endpoint; `headersJson` is a JSON object of headers; `body` is the request body.',
     '  - Write `{{secret}}` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.',
     '  - You may only target a surface listed above. A system without a connected surface gets no action; say so in `notes`.',
-    "  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager's approval unless autonomous actions are on.",
+    "  - A manager DM on a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager's approval unless autonomous actions are on.",
     '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
     '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
   );
@@ -417,7 +495,7 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
  *   target: The work item's reply target.
  *
  * Returns:
- *   `Reply target: channel C0… (#revops-asks), thread_ts 1787…`.
+ *   `Reply target: channel C0… (#team-asks), thread_ts 1787…`.
  */
 export function replyTargetLine(target: ReplyTarget): string {
   const name = target.channelName ? ` (#${target.channelName})` : '';
@@ -563,7 +641,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     draft: raw.draft,
     notes: raw.notes,
     needsDependentPhase: raw.needsDependentPhase,
-    actions: raw.actions as MockAction[],
+    actions: raw.actions.map(materialiseGeneratedAction),
   };
   if (mode !== 'mock') return output;
 
@@ -593,7 +671,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     draft: repairedRaw.draft,
     notes: repairedRaw.notes,
     needsDependentPhase: repairedRaw.needsDependentPhase,
-    actions: repairedRaw.actions as MockAction[],
+    actions: repairedRaw.actions.map(materialiseGeneratedAction),
   };
   const remaining = mockActionContractIssues(repaired, candidate, plan, mockEnv.howToGuides);
   if (remaining.length > 0) {
@@ -700,7 +778,7 @@ export async function runDependentSkill(
   return {
     draft: raw.draft,
     notes: raw.notes,
-    actions: raw.actions as MockAction[],
+    actions: raw.actions.map(materialiseGeneratedAction),
     planStepOutcomes: ordered,
   };
 }

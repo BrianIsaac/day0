@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
-import type { ExecutionOutput, MockSurfaceSnapshot } from '../../../src/work/types';
+import { auditActionArguments } from '../../../evaluation/action-audit';
+import { reviewPayload } from '../../../src/surfaces/policy';
+import type { MockSurfaceSnapshot } from '../../../src/work/types';
 
 const recorded = vi.hoisted(() => ({
   calls: [] as Array<{ user: string }>,
-  outputs: [] as ExecutionOutput[],
+  outputs: [] as unknown[],
 }));
 
 vi.mock('../../../src/lib/mastra', () => ({
   MODEL_CONFIG: 'openai/mock',
-  agentJson: async (args: { user: string }): Promise<ExecutionOutput> => {
+  agentJson: async <T>(args: { user: string }): Promise<T> => {
     recorded.calls.push({ user: args.user });
     const next = recorded.outputs.shift();
     if (!next) throw new Error('test did not provide another structured executor response');
-    return next;
+    return next as T;
   },
 }));
 
@@ -189,7 +191,6 @@ describe('mock executor semantic repair', (): void => {
       {
         tool: 'ticket.update',
         args: {
-          ...recordedFlatArgs,
           slug: 'REVOPS-EVAL-08',
           status: 'in-progress',
           comment: 'EVAL-WRITE-03 Priya owns the dbt dependency check',
@@ -198,12 +199,84 @@ describe('mock executor semantic repair', (): void => {
       {
         tool: 'slack.postMessage',
         args: {
-          ...recordedFlatArgs,
           channelSlug: 'dm-manager',
+          threadKey: '',
           body: 'Prepared the requested ticket update.',
-          status: 'in-progress',
         },
       },
+    ]);
+  });
+
+  it('omits nullable wire placeholders before actions reach the gate', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Prepared compact actions.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [
+        {
+          tool: 'slack.postMessage',
+          args: { channelSlug: 'dm-manager', threadKey: null, body: 'Prepared.' },
+        },
+        {
+          tool: 'ticket.update',
+          args: { slug: 'REVOPS-1', status: null, comment: 'Audit note.' },
+        },
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'slack',
+            method: 'GET',
+            path: '/auth.test',
+            headersJson: null,
+            body: '',
+          },
+        },
+      ],
+    });
+
+    const output = await runSkill({
+      skill: { name: 'compact-actions', description: 'Emit compact actions.', body: '' },
+      plan: {
+        summary: 'Prepare compact actions.',
+        steps: ['Prepare the requested actions.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 1,
+      },
+      candidate: {
+        sourceCategory: 'inbox',
+        sourceSystem: 'boss',
+        externalId: 'COMPACT-01',
+        title: 'Prepare compact actions',
+        contentSummary: 'Prepare compact actions.',
+        contentRefs: [],
+        observedAt: new Date(0),
+      },
+      charter,
+      mockEnv,
+      mode: 'mock',
+    });
+
+    expect(output.actions).toEqual([
+      {
+        tool: 'slack.postMessage',
+        args: { channelSlug: 'dm-manager', body: 'Prepared.' },
+      },
+      {
+        tool: 'ticket.update',
+        args: { slug: 'REVOPS-1', comment: 'Audit note.' },
+      },
+      {
+        tool: 'http.request',
+        args: { surface: 'slack', method: 'GET', path: '/auth.test', body: '' },
+      },
+    ]);
+    expect(output.actions.map(reviewPayload)).toEqual(output.actions);
+    expect(auditActionArguments(output).actions).toEqual([
+      expect.objectContaining({ argumentKeys: ['body', 'channelSlug'] }),
+      expect.objectContaining({ argumentKeys: ['comment', 'slug'] }),
+      expect.objectContaining({ argumentKeys: ['body', 'method', 'path', 'surface'] }),
     ]);
   });
 });

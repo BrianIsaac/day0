@@ -19,7 +19,7 @@ import type { MockSurfaceSnapshot } from '../work/types';
  *   3. An out-of-scope item — evaluator skips it
  */
 
-const WORK_GEN_SYSTEM = [
+export const WORK_GEN_SYSTEM = [
   'You generate 3 day-one work items for a newly-deployed autonomous agent.',
   'The boss has just approved the agent\'s charter; three realistic inbox-style requests now land in the agent\'s queue — the kind of work a competent new hire would face on their first week.',
   '',
@@ -31,7 +31,7 @@ const WORK_GEN_SYSTEM = [
   '',
   '2. Action item — sourceSystem MUST be one of "spreadsheet" / "ticket" / "social" / "slack" — pick whichever surface best fits the charter\'s role. The task requires a write action (append a row, update a ticket, post a reply, post a message) on a surface that exists in the snapshot. This will trigger the propose-new-skill flow.',
   '',
-  '3. Out-of-scope item — sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear (e.g. ask a marketing-charter agent to triage RevOps tickets, or ask a RevOps-charter agent to draft marketing copy). The evaluator should skip this. May or may not reference an existing surface.',
+  '3. Out-of-scope item — sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter\'s runtime willDo and willNotDo clauses without assuming a particular team or profession. The evaluator should skip this. May or may not reference an existing surface.',
   '',
   'Discipline:',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',

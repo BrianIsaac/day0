@@ -164,7 +164,7 @@ function candidateNamesSurface(text: string, surface: EvaluationSurface): boolea
  *
  * The intake provider itself is required unless the candidate came from the boss.
  * A candidate may also name a second system it expects the agent to operate on,
- * such as a connected Linear issue asking for Northstar CRM work.
+ * such as a connected ticket asking for work in a documented CRM.
  *
  * Args:
  *   candidate: Work candidate being evaluated.

@@ -843,7 +843,7 @@ describe('skill approval and card rendering', (): void => {
 });
 
 describe('review payload for the approval card', (): void => {
-  it('shows only the arguments the verb reads, and only the non-empty ones, verbatim', (): void => {
+  it('shows every selected-verb argument verbatim while excluding other branches', (): void => {
     const flat: MockAction = {
       tool: 'mcp.call',
       args: {
@@ -880,7 +880,7 @@ describe('review payload for the approval card', (): void => {
     });
     expect(reviewPayload({ tool: 'ticket.update', args: { slug: 'REVOPS-5', status: 'done', comment: '', surface: 'linear' } })).toEqual({
       tool: 'ticket.update',
-      args: { slug: 'REVOPS-5', status: 'done' },
+      args: { slug: 'REVOPS-5', status: 'done', comment: '' },
     });
     expect(reviewPayload({ tool: 'spreadsheet.appendRow', args: { sheetSlug: 's', tabName: 't', cells: [{ header: 'h', value: '' }] } })).toEqual({
       tool: 'spreadsheet.appendRow',

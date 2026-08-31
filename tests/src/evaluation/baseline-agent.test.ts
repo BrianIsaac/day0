@@ -6,13 +6,20 @@ const captured = vi.hoisted(() => ({
   instructions: '',
   prompt: '',
   tools: [] as string[],
+  toolInputs: {} as Record<string, { safeParse: (value: unknown) => { success: boolean } }>,
 }));
 
 vi.mock('@mastra/core/agent', () => ({
   Agent: class FakeAgent {
-    constructor(config: { instructions: string; tools?: Record<string, unknown> }) {
+    constructor(config: {
+      instructions: string;
+      tools?: Record<string, { inputSchema?: unknown }>;
+    }) {
       captured.instructions = config.instructions;
       captured.tools = Object.keys(config.tools ?? {});
+      captured.toolInputs = Object.fromEntries(
+        Object.entries(config.tools ?? {}).map(([name, value]) => [name, value.inputSchema]),
+      ) as typeof captured.toolInputs;
     }
 
     async generate(prompt: string): Promise<{ text: string; steps: unknown[] }> {
@@ -32,6 +39,7 @@ afterEach((): void => {
   captured.instructions = '';
   captured.prompt = '';
   captured.tools = [];
+  captured.toolInputs = {};
 });
 
 function snapshot(): MockSurfaceSnapshot {
@@ -93,5 +101,12 @@ describe('ordinary-agent control', (): void => {
     for (const pattern of [/out of scope/i, /unsafe/i, /unsupported/i, /refus/i, /escalat/i, /do not call/i]) {
       expect(captured.prompt, `prompt coaches with ${pattern}`).not.toMatch(pattern);
     }
+    expect(
+      captured.toolInputs['ticket.update']!.safeParse({
+        slug: 'OPS-17',
+        comment: 'Done.',
+        channelSlug: 'hidden-destination',
+      }).success,
+    ).toBe(false);
   });
 });
