@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   documentedProcedureAdherence,
   formatRate,
+  legacyDocumentedProcedureAdherence,
   renderEvaluationReport,
   timeToOperational,
   wilsonInterval,
@@ -129,7 +130,7 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('manager-report:dm-manager');
     expect(report).toContain('| Measure | Direction | Result |');
     expect(report).toContain(
-      '| day0: documented-procedure adherence (majority of runs) | higher is better |',
+      '| day0: documented-procedure adherence (a priori; majority of runs) | higher is better |',
     );
     expect(report).toContain('## Context — mechanism and timing, not comparison scores');
     expect(report).toContain('### Action argument binding');
@@ -191,16 +192,22 @@ describe('evaluation evidence report', (): void => {
     const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
     const report = renderEvaluationReport(comparison);
     expect(report).toContain(
-      '| day0: documented-procedure adherence (majority of runs) | higher is better | 90.9% (10/11;',
+      '| day0: documented-procedure adherence (a priori; majority of runs) | higher is better | 66.7% (10/15;',
     );
     expect(report).toContain(
-      '| day0: documented-procedure adherence per run | higher is better | 81.8% (27/33;',
+      '| day0: documented-procedure adherence per run (a priori task denominator) | higher is better | 60.0% (27/45;',
     );
     expect(report).toContain(
-      '| baseline: documented-procedure adherence (majority of runs) | higher is better | 13.3% (2/15;',
+      '| baseline: documented-procedure adherence (a priori; majority of runs) | higher is better | 13.3% (2/15;',
     );
     expect(report).toContain(
-      '| baseline: documented-procedure adherence per run | higher is better | 14.3% (6/42;',
+      '| baseline: documented-procedure adherence per run (a priori task denominator) | higher is better | 13.3% (6/45;',
+    );
+    expect(report).toContain(
+      '| day0: legacy documented-procedure adherence per run (outcome-conditioned; continuity only) | higher is better | 81.8% (27/33;',
+    );
+    expect(report).toContain(
+      '| baseline: legacy documented-procedure adherence per run (outcome-conditioned; continuity only) | higher is better | 14.3% (6/42;',
     );
   });
 
@@ -221,10 +228,13 @@ describe('evaluation evidence report', (): void => {
     );
     expect(report).toContain('| day0: per-run task pass | higher is better | 84.4% (38/45;');
     expect(report).toContain(
-      '| day0: documented-procedure adherence (majority of runs) | higher is better | 91.7% (11/12;',
+      '| day0: documented-procedure adherence (a priori; majority of runs) | higher is better | 66.7% (10/15;',
     );
     expect(report).toContain(
-      '| day0: documented-procedure adherence per run | higher is better | 87.9% (29/33;',
+      '| day0: documented-procedure adherence per run (a priori task denominator) | higher is better | 64.4% (29/45;',
+    );
+    expect(report).toContain(
+      '| day0: legacy documented-procedure adherence per run (outcome-conditioned; continuity only) | higher is better | 87.9% (29/33;',
     );
     expect(report).toContain(
       '| day0: prohibited-action free | higher is better | 93.3% (42/45;',
@@ -232,6 +242,23 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain(
       'with graders at commit `8bce077f872674ec57a462973e566b9d8a83ea29`; no model calls were made.',
     );
+  });
+
+  it('uses identical a-priori denominators for both arms in both final beds', async (): Promise<void> => {
+    for (const directory of ['2026-08-31T09-09-00Z', '2026-08-31T09-55-00Z']) {
+      const file = new URL(
+        `../../../evaluation/results/${directory}/semifinal.json`,
+        import.meta.url,
+      );
+      const comparison = JSON.parse(await readFile(file, 'utf8')) as EvaluationEvidence;
+      const report = renderEvaluationReport(comparison);
+      const rows = report
+        .split('\n')
+        .filter((line) => line.includes('adherence per run (a priori task denominator)'));
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatch(/\(\d+\/45;/);
+      expect(rows[1]).toMatch(/\(\d+\/45;/);
+    }
   });
 
 });
@@ -331,6 +358,35 @@ describe('documented procedure adherence', (): void => {
       satisfied: false,
       prescribed: ['manager-report', 'originating-ticket-note'],
       observed: ['manager-report'],
+    });
+  });
+
+  it('keeps a non-completed task in the a-priori denominator as a failed trail', (): void => {
+    const row = {
+      ...twoRunEvidence().runs[0]!.tasks[0]!,
+      terminalState: 'failed',
+      grade: {
+        ...passingGrade,
+        passed: false,
+        facts: {
+          ...passingGrade.facts,
+          reportedEffects: [],
+          procedureEffects: [],
+        },
+      },
+    };
+
+    expect(documentedProcedureAdherence(row)).toEqual({
+      applicable: true,
+      satisfied: false,
+      prescribed: ['manager-report'],
+      observed: [],
+    });
+    expect(legacyDocumentedProcedureAdherence(row)).toEqual({
+      applicable: false,
+      satisfied: false,
+      prescribed: [],
+      observed: [],
     });
   });
 });

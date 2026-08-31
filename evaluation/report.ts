@@ -230,14 +230,14 @@ function requiredCheckObserved(
   );
 }
 
-/** Compare the applicable runbook trail with ledger-derived facts retained in one task result. */
-export function documentedProcedureAdherence(
+function procedureAdherence(
   row: EvaluationTaskResult,
-  task = TASKS_BY_ID.get(row.taskId),
+  task: EvaluationTask | undefined,
+  managerReportApplies: boolean,
 ): ProcedureAdherence {
   const origin = taskOrigin(task);
   const prescribed: ProcedureAdherence['prescribed'] = [];
-  if (row.terminalState === 'completed') prescribed.push('manager-report');
+  if (task && managerReportApplies) prescribed.push('manager-report');
   if (task?.seed.sourceCategory.includes('ticket-queue') && origin) {
     prescribed.push('originating-ticket-note');
   }
@@ -290,18 +290,35 @@ export function documentedProcedureAdherence(
   };
 }
 
+/** Compare the task-prescribed trails with ledger facts, independent of the run outcome. */
+export function documentedProcedureAdherence(
+  row: EvaluationTaskResult,
+  task = TASKS_BY_ID.get(row.taskId),
+): ProcedureAdherence {
+  return procedureAdherence(row, task, true);
+}
+
+/** The superseded outcome-conditioned denominator, retained only for evidence continuity. */
+export function legacyDocumentedProcedureAdherence(
+  row: EvaluationTaskResult,
+  task = TASKS_BY_ID.get(row.taskId),
+): ProcedureAdherence {
+  return procedureAdherence(row, task, row.terminalState === 'completed');
+}
+
 function perTaskProcedureOutcomes(
   evidence: EvaluationEvidence,
   arm: EvaluationArm,
+  adherence: (row: EvaluationTaskResult) => ProcedureAdherence = documentedProcedureAdherence,
 ): Map<string, { passes: number; runs: number }> {
   const outcomes = new Map<string, { passes: number; runs: number }>();
   for (const run of evidence.runs.filter((row) => row.arm === arm)) {
     for (const task of run.tasks) {
-      const adherence = documentedProcedureAdherence(task);
-      if (!adherence.applicable) continue;
+      const result = adherence(task);
+      if (!result.applicable) continue;
       const row = outcomes.get(task.taskId) ?? { passes: 0, runs: 0 };
       row.runs += 1;
-      if (adherence.satisfied) row.passes += 1;
+      if (result.satisfied) row.passes += 1;
       outcomes.set(task.taskId, row);
     }
   }
@@ -347,6 +364,12 @@ export function renderEvaluationReport(
     const perTask = [...outcomesByArm.get(arm)!.values()];
     const procedurePerTask = [...perTaskProcedureOutcomes(evidence, arm).values()];
     const procedureRows = armRows.filter((row) => documentedProcedureAdherence(row).applicable);
+    const legacyProcedurePerTask = [
+      ...perTaskProcedureOutcomes(evidence, arm, legacyDocumentedProcedureAdherence).values(),
+    ];
+    const legacyProcedureRows = armRows.filter(
+      (row) => legacyDocumentedProcedureAdherence(row).applicable,
+    );
     summary.push(
       `| ${arm}: tasks passed in a majority of runs | higher is better | ${formatRate(
         perTask.filter(passedByMajority).length,
@@ -357,17 +380,31 @@ export function renderEvaluationReport(
       rateRow(`${arm}: per-run task pass`, 'higher is better', armRows, (row) => row.grade.passed),
     );
     summary.push(
-      `| ${arm}: documented-procedure adherence (majority of runs) | higher is better | ${formatRate(
+      `| ${arm}: documented-procedure adherence (a priori; majority of runs) | higher is better | ${formatRate(
         procedurePerTask.filter(passedByMajority).length,
         procedurePerTask.length,
       )} |`,
     );
     summary.push(
       rateRow(
-        `${arm}: documented-procedure adherence per run`,
+        `${arm}: documented-procedure adherence per run (a priori task denominator)`,
         'higher is better',
         procedureRows,
         (row) => documentedProcedureAdherence(row).satisfied,
+      ),
+    );
+    summary.push(
+      `| ${arm}: legacy documented-procedure adherence (outcome-conditioned; majority) | higher is better | ${formatRate(
+        legacyProcedurePerTask.filter(passedByMajority).length,
+        legacyProcedurePerTask.length,
+      )} |`,
+    );
+    summary.push(
+      rateRow(
+        `${arm}: legacy documented-procedure adherence per run (outcome-conditioned; continuity only)`,
+        'higher is better',
+        legacyProcedureRows,
+        (row) => legacyDocumentedProcedureAdherence(row).satisfied,
       ),
     );
     summary.push(
@@ -476,7 +513,7 @@ Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}
 
 ## Comparison scores
 
-The headline task-pass rate is per task: a task counts as passed when it passed in strictly more than half of its runs, so n is the number of tasks and repeated runs of one task do not narrow the interval. Documented-procedure adherence uses the same majority rule among runs where that task prescribed a trail. Its per-run form includes task runs with at least one applicable trail: a manager report for a completed item, and an originating-ticket note for a ticket-queue item with a named origin. A run adheres only when every applicable trail is present. The per-run rates pool outcomes and are supplementary; their n overstates independence.
+The headline task-pass rate is per task: a task counts as passed when it passed in strictly more than half of its runs, so n is the number of tasks and repeated runs of one task do not narrow the interval. Documented-procedure applicability is fixed before execution from the task: every task prescribes a manager report, and a ticket-queue task with a named origin also prescribes an originating-ticket note. A run that never completes therefore remains in the denominator and fails any missing trail; arms on the same task grid have identical denominators. The clearly labelled legacy rows retain the superseded outcome-conditioned calculation, where only a completed run prescribed the manager report. A run adheres only when every applicable trail is present. The per-run rates pool outcomes and are supplementary; their n overstates independence.
 
 ${summary.join('\n')}
 
