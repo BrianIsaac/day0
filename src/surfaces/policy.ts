@@ -1338,7 +1338,7 @@ function compact(value: unknown, max = 80): string {
 }
 
 /** The argument names each verb reads; everything else in the flat bag is another verb's default. */
-const VERB_ARGUMENTS: Readonly<Record<string, readonly string[]>> = {
+export const ACTION_ARGUMENT_KEYS: Readonly<Record<string, readonly string[]>> = {
   'mcp.call': ['surface', 'tool', 'toolArgsJson'],
   'http.request': ['surface', 'method', 'path', 'headersJson', 'body'],
   'spreadsheet.appendRow': ['sheetSlug', 'tabName', 'cells'],
@@ -1364,7 +1364,7 @@ const VERB_ARGUMENTS: Readonly<Record<string, readonly string[]>> = {
  *   The same verb with the arguments it reads, non-empty ones only.
  */
 export function reviewPayload(action: MockAction): { tool: string; args: JsonObject } {
-  const wanted = VERB_ARGUMENTS[action.tool];
+  const wanted = ACTION_ARGUMENT_KEYS[action.tool];
   const bag = (action.args ?? {}) as JsonObject;
   const args: JsonObject = {};
   for (const key of wanted ?? Object.keys(bag)) {
