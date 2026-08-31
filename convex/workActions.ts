@@ -84,15 +84,7 @@ function canonicalJson(value: unknown): string {
 function writeEffectKey(action: MockAction): string | undefined {
   switch (action.tool) {
     case 'spreadsheet.appendRow':
-      return canonicalJson({
-        tool: action.tool,
-        sheetSlug: action.args.sheetSlug,
-        tabName: action.args.tabName,
-        cells: [...(action.args.cells ?? [])].sort(
-          (left, right) =>
-            left.header.localeCompare(right.header) || left.value.localeCompare(right.value),
-        ),
-      });
+      return undefined;
     case 'slack.postMessage':
       return canonicalJson({
         tool: action.tool,
