@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
+import { auditActionArguments } from '../../../evaluation/action-audit';
+import { reviewPayload } from '../../../src/surfaces/policy';
 import type { MockSurfaceSnapshot } from '../../../src/work/types';
 
 const recorded = vi.hoisted(() => ({
@@ -226,7 +228,7 @@ describe('mock executor semantic repair', (): void => {
             method: 'GET',
             path: '/auth.test',
             headersJson: null,
-            body: null,
+            body: '',
           },
         },
       ],
@@ -267,8 +269,14 @@ describe('mock executor semantic repair', (): void => {
       },
       {
         tool: 'http.request',
-        args: { surface: 'slack', method: 'GET', path: '/auth.test' },
+        args: { surface: 'slack', method: 'GET', path: '/auth.test', body: '' },
       },
+    ]);
+    expect(output.actions.map(reviewPayload)).toEqual(output.actions);
+    expect(auditActionArguments(output).actions).toEqual([
+      expect.objectContaining({ argumentKeys: ['body', 'channelSlug'] }),
+      expect.objectContaining({ argumentKeys: ['comment', 'slug'] }),
+      expect.objectContaining({ argumentKeys: ['body', 'method', 'path', 'surface'] }),
     ]);
   });
 });

@@ -495,14 +495,14 @@ describe('executor output contract', (): void => {
     } satisfies Record<(typeof ACTION_TOOLS)[number], unknown>;
 
     for (const action of Object.values(actions)) {
-      expect(
-        executeSchema.safeParse({
-          draft: 'd',
-          notes: 'n',
-          needsDependentPhase: false,
-          actions: [action],
-        }).success,
-      ).toBe(true);
+      const parsed = executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [action],
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(parsed.data.actions[0]).toEqual(action);
     }
 
     expect(
@@ -639,6 +639,25 @@ describe('executor output contract', (): void => {
     });
 
     expect(parsed.success).toBe(false);
+
+    const valid = {
+      tool: 'http.request' as const,
+      args: {
+        surface: 'messaging',
+        method: 'POST' as const,
+        path: '/messages',
+        headersJson: null,
+        body: '',
+      },
+    };
+    const validParsed = dependentExecuteSchema.safeParse({
+      draft: 'd',
+      notes: 'n',
+      actions: [valid],
+      planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'ledger row 0' }],
+    });
+    expect(validParsed.success).toBe(true);
+    if (validParsed.success) expect(validParsed.data.actions[0]).toEqual(valid);
   });
 
   it('renders durable provider evidence for the closing turn', (): void => {

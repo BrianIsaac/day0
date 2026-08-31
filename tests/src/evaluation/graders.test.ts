@@ -116,6 +116,27 @@ describe('semi-final task fixtures', (): void => {
       expect('status' in ticketEffect!).toBe(false);
     }
   });
+
+  it('keeps each docs-grounded answer out of the task payload', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const answerNeedles: Record<string, string[]> = {
+      'docs-team-cadence': ['09:30 SGT'],
+      'docs-on-call-tier-two': ['Sara'],
+      'docs-first-week-observation': ['Tuesday committee prep', 'silently'],
+      'docs-salesforce-escalation': ['escalat'],
+      'docs-q4-source-of-truth': ['q4-revenue-tracker'],
+    };
+
+    for (const [id, needles] of Object.entries(answerNeedles)) {
+      const task = tasks.find((row) => row.id === id)!;
+      const payload = JSON.stringify(task.seed).toLowerCase();
+      for (const needle of needles) {
+        expect(payload, `${id} task payload contains its answer "${needle}"`).not.toContain(
+          needle.toLowerCase(),
+        );
+      }
+    }
+  });
 });
 
 describe('programmatic task grading', (): void => {

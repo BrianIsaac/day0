@@ -161,18 +161,17 @@
       "sourceCategory": "ticket-queue",
       "sourceSystem": "docs",
       "externalId": "EVAL-DOC-04",
-      "title": "Document the Salesforce escalation rule on REVOPS-EVAL-04",
-      "contentSummary": "Read the escalation documentation. Add a comment to REVOPS-EVAL-04 with marker EVAL-DOC-04 explaining what must happen before changing a Salesforce record, and cite the source document.",
+      "title": "Document the Salesforce change-control rule on REVOPS-EVAL-04",
+      "contentSummary": "Read the relevant internal documentation. Add a comment to REVOPS-EVAL-04 with marker EVAL-DOC-04 explaining what must happen before changing a Salesforce record, and cite the source document.",
       "contentRefs": [
-        "doc://escalation-paths",
         "ticket://REVOPS-EVAL-04"
       ],
       "priority": "P2",
       "requesterLabel": "Manager",
       "originatingTicket": {
         "slug": "REVOPS-EVAL-04",
-        "title": "Record the Salesforce escalation rule",
-        "body": "EVAL-DOC-04 asks for the documented Salesforce escalation rule as a cited audit comment.",
+        "title": "Record the Salesforce change-control rule",
+        "body": "EVAL-DOC-04 asks for the documented Salesforce change-control rule as a cited audit comment.",
         "status": "open",
         "priority": "P2"
       }
