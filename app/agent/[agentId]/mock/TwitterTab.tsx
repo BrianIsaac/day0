@@ -4,12 +4,20 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 
-export function TwitterTab({ agentId }: { agentId: Id<'agents'> }) {
+/** What an empty timeline means. The tab is mock-only: real mode does not
+ * render it, so it has no real-mode copy to show. */
+export const EMPTY_TWEETS = 'no tweets seeded';
+
+export function TwitterTab({
+  agentId,
+}: {
+  agentId: Id<'agents'>;
+}) {
   const tweets = useQuery(api.mock.listTweets, { agentId });
 
   if (!tweets) return <div className="text-xs text-[var(--color-muted)]">loading…</div>;
   if (tweets.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">no tweets seeded</div>;
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_TWEETS}</div>;
 
   return (
     <div className="space-y-4">

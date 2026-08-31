@@ -6,7 +6,7 @@ import { useMutation, useQuery } from 'convex/react';
 import { useUser, Show, SignInButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
   DEFAULT_AGENT_AVATAR,
   SINGAPORE_AI_BUILDER_AVATARS,
@@ -295,6 +295,7 @@ function SurfaceNode({
 function SignedInDashboard({ boss }: { boss: Boss }) {
   const router = useRouter();
   const agents = useQuery(api.agents.listForUser);
+  const docSources = useQuery(api.docSources.listMine);
   const deploy = useMutation(api.agents.deploy);
   const reset = useMutation(api.reset.deleteMyData);
   const [workerName, setWorkerName] = useState('worker 1');
@@ -302,6 +303,8 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
   const [submitting, setSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [excludedSourceIds, setExcludedSourceIds] = useState<Id<'docSources'>[]>([]);
+  const [alsoUnlinkDocumentation, setAlsoUnlinkDocumentation] = useState(false);
   const selectedAvatar = avatarById(selectedAvatarId);
 
   async function onDeploy(ev: FormEvent<HTMLFormElement>) {
@@ -319,6 +322,10 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
         bossEmail,
         name: workerName.trim(),
         avatarId: selectedAvatar.id,
+        // Only the unticked sources travel. Sending the ticked ones as an
+        // explicit list would freeze inheritance at deploy time, so a location
+        // linked later would never reach this agent.
+        excludedDocSourceIds: excludedSourceIds.length > 0 ? excludedSourceIds : undefined,
       });
       fetch(`/api/seed?agentId=${agentId}`, { method: 'POST' }).catch(() => {});
       router.push(`/agent/${agentId}`);
@@ -329,10 +336,14 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
   }
 
   async function onReset() {
-    if (!confirm('Delete all your agents + their data? This cannot be undone.')) return;
+    const documentationNote = alsoUnlinkDocumentation
+      ? ' and unlink every documentation source'
+      : '';
+    if (!confirm(`Delete all your agents + their data${documentationNote}? This cannot be undone.`))
+      return;
     setResetting(true);
     try {
-      await reset({});
+      await reset({ alsoUnlinkDocumentation });
     } finally {
       setResetting(false);
     }
@@ -363,6 +374,34 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
           <div>
             <h2 className="text-sm font-semibold mb-3">Deploy a new Day0 agent</h2>
             <AvatarPicker selectedId={selectedAvatarId} onSelect={setSelectedAvatarId} />
+            {(docSources?.length ?? 0) > 0 ? (
+              <fieldset className="mb-3">
+                <legend className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-1">
+                  Documentation this agent reads
+                </legend>
+                <div className="flex flex-wrap gap-3">
+                  {docSources?.map((source) => (
+                    <label key={source._id} className="text-xs flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={!excludedSourceIds.includes(source._id)}
+                        onChange={(event) =>
+                          setExcludedSourceIds((current) =>
+                            event.target.checked
+                              ? current.filter((id) => id !== source._id)
+                              : [...current, source._id],
+                          )
+                        }
+                      />
+                      {source.label}
+                    </label>
+                  ))}
+                  <Link href="/documentation" className="text-xs text-[var(--color-accent)]">
+                    manage
+                  </Link>
+                </div>
+              </fieldset>
+            ) : null}
             <form onSubmit={onDeploy} className="flex flex-col gap-3 sm:flex-row">
               <input
                 type="text"
@@ -386,7 +425,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
         {error ? <p className="text-xs text-[var(--color-danger)] mt-2">{error}</p> : null}
       </section>
 
-      <OfficeWorld agents={agents} />
+      <OfficeWorld agents={agents} docSourceCount={docSources?.length ?? 0} />
 
       <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5">
         <div className="flex items-center justify-between">
@@ -396,10 +435,22 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
               Wipe every agent + workspace, charter, work item, skill, and mock environment row
               you&apos;ve created. Useful between demos.
             </p>
+            <label className="mt-2 flex items-center gap-2 text-xs text-[var(--color-muted)]">
+              <input
+                type="checkbox"
+                checked={alsoUnlinkDocumentation}
+                onChange={(event) => setAlsoUnlinkDocumentation(event.target.checked)}
+              />
+              Also unlink owner-level documentation locations
+            </label>
           </div>
           <button
             onClick={onReset}
-            disabled={resetting || (agents?.length ?? 0) === 0}
+            disabled={
+              resetting ||
+              ((agents?.length ?? 0) === 0 &&
+                (!alsoUnlinkDocumentation || (docSources?.length ?? 0) === 0))
+            }
             className="px-4 py-2 rounded-lg border border-[var(--color-danger)]/40 text-[var(--color-danger)] text-xs hover:bg-[var(--color-danger)]/10 disabled:opacity-50"
           >
             {resetting ? 'Resetting…' : 'Reset everything'}
@@ -490,7 +541,13 @@ type OfficeStyle = CSSProperties & {
   '--walk-duration'?: string;
 };
 
-function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
+function OfficeWorld({
+  agents,
+  docSourceCount,
+}: {
+  agents: Doc<'agents'>[] | undefined;
+  docSourceCount: number;
+}) {
   const visibleAgents = agents ?? [];
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
@@ -556,6 +613,10 @@ function OfficeWorld({ agents }: { agents: Doc<'agents'>[] | undefined }) {
             key={agent._id}
             agent={agent}
             destination={agentDestinations[agent._id]}
+            docSourceCount={
+              agent.docSourceIds?.length ??
+              Math.max(0, docSourceCount - (agent.excludedDocSourceIds?.length ?? 0))
+            }
             index={index}
           />
         ))}
@@ -643,10 +704,12 @@ function rectStyle(rect: { left: number; top: number; width: number; height: num
 function OfficeAgent({
   agent,
   destination,
+  docSourceCount,
   index,
 }: {
   agent: Doc<'agents'>;
   destination: OfficePoint | undefined;
+  docSourceCount: number;
   index: number;
 }) {
   const openWorkCount = useQuery(api.work.countOpenForAgent, { agentId: agent._id });
@@ -681,6 +744,9 @@ function OfficeAgent({
         />
         <div className="day0-pixel-nameplate mt-1 max-w-28 truncate px-2 py-1 text-center text-[10px] text-[var(--color-fg)]">
           {agent.name}
+        </div>
+        <div className="mt-1 rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-[9px] text-[var(--color-muted)]">
+          reads {docSourceCount} {docSourceCount === 1 ? 'location' : 'locations'}
         </div>
       </div>
     </Link>

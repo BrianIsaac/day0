@@ -2,13 +2,33 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
-import { api } from '@convex/_generated/api';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import { api } from '../../../convex/_generated/api';
+import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { ChatRoom } from './ChatRoom';
 import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
-import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
+import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
+import {
+  type ActionVerdict,
+  normaliseActionVerdict,
+  reviewPayload,
+  skillApprovalRefusal,
+} from '../../../src/surfaces/policy';
+import {
+  AUTONOMY_WARNING,
+  autonomousActionsOn,
+  autonomyLabel,
+  HELD_BEFORE_AUTONOMY_NOTE,
+  HELD_WHILE_SUPERVISED_NOTE,
+} from '../../../src/work/autonomy';
+import { toSurfaceRecord } from '../../../src/surfaces/records';
+import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
+import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
+import { verdictFor } from '../../../src/surfaces/verdict';
+import { replyTargetFor } from '../../../src/work/reply-target';
+import type { MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
+import type { AgentMetrics } from '../../../convex/metrics';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -35,7 +55,19 @@ export function AgentDashboard({ agentId }: Props) {
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: 30 });
+  const metrics = useQuery(api.metrics.forAgent, { agentId });
   const voiceSession = useQuery(api.voice.latest, { agentId });
+  // Real mode only: the mock has no surfaces table rows, and the hosted app
+  // never asks for connection verdicts.
+  const surfaceConfig = useQuery(api.config.surfaceMode);
+  const surfaceRows = useQuery(
+    api.surfaces.listForAgent,
+    surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
+  );
+  const surfaces = useMemo(
+    (): SurfaceRecord[] => (surfaceRows ?? []).map((row) => toSurfaceRecord(row)),
+    [surfaceRows],
+  );
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
   const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
@@ -141,13 +173,16 @@ export function AgentDashboard({ agentId }: Props) {
           <ProposedSkillsPanel
             agentId={agentId}
             skills={proposedSkills ?? []}
+            surfaces={surfaces}
             onAuthoringAttempt={setLastAttempt}
           />
 
           <WorkQueue
             workItems={workItems ?? []}
+            surfaces={surfaces}
             registeredSkillCount={(registeredSkills ?? []).length}
             charterApproved={!!charter?.approved}
+            autonomousActions={agent ? autonomousActionsOn(agent) : false}
           />
         </div>
 
@@ -159,6 +194,8 @@ export function AgentDashboard({ agentId }: Props) {
             authoringFailure={authoringFailure}
             onAuthoringAttempt={setLastAttempt}
           />
+          {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
+          <MetricsCard metrics={metrics} />
           <EventTicker events={events ?? []} />
         </div>
       </div>
@@ -171,6 +208,148 @@ export function AgentDashboard({ agentId }: Props) {
   );
 }
 
+/** What each state of the switch does, for its title. */
+const AUTONOMY_TITLES: Record<'off' | 'on', string> = {
+  off: 'Supervised: reads and the DM to you apply on their own; every other action waits for your approval of the exact payload.',
+  on: 'Autonomous: the agent acts on connected systems without asking, within the connections and skills you have approved.',
+};
+
+/** Whether a key press should take the safe path out of the confirmation. */
+export function cancelsAutonomyConfirm(key: string, busy: boolean): boolean {
+  return key === 'Escape' && !busy;
+}
+
+/**
+ * The confirmation shown before autonomous actions are turned on.
+ *
+ * Args:
+ *   onConfirm: Turn the switch on.
+ *   onCancel: Leave it off.
+ *   busy: Whether the change is in flight.
+ *
+ * Returns:
+ *   The warning in the operator's words with its two buttons.
+ */
+export function AutonomyConfirm({
+  onConfirm,
+  onCancel,
+  busy = false,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-label="Turn on autonomous actions"
+      onKeyDown={(event) => {
+        if (!cancelsAutonomyConfirm(event.key, busy)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+      }}
+      className="absolute right-0 top-full mt-2 w-80 p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
+    >
+      <p className="font-medium text-[var(--color-warn)] mb-1">Turn on autonomous actions?</p>
+      <p className="mb-3 leading-relaxed">{AUTONOMY_WARNING}</p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onConfirm}
+          className="px-3 py-1 rounded-md bg-[var(--color-warn)] text-[var(--color-bg)] font-medium disabled:opacity-60"
+        >
+          Turn on
+        </button>
+        <button
+          type="button"
+          autoFocus
+          disabled={busy}
+          onClick={onCancel}
+          className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The header chip as the manager's autonomous-actions switch, real mode only.
+ *
+ * Turning it on opens the confirmation; turning it off needs none. The chip
+ * names the state plainly ("Supervised" / "Autonomous") beside the switch.
+ *
+ * Args:
+ *   on: Whether autonomous actions are on.
+ *   tone: The chip's colour classes.
+ *   onChange: Persist the manager's choice.
+ *
+ * Returns:
+ *   The labelled switch styled as the chip.
+ */
+export function AutonomyControl({
+  on,
+  tone,
+  onChange,
+}: {
+  on: boolean;
+  tone: string;
+  onChange: (on: boolean) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function persist(next: boolean): void {
+    setBusy(true);
+    setError(null);
+    onChange(next)
+      .then(() => setConfirming(false))
+      .catch((err: unknown) => setError((err as Error).message))
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <div className="relative">
+      <div
+        className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${tone}`}
+        title={AUTONOMY_TITLES[on ? 'on' : 'off']}
+      >
+        <span>Active · {autonomyLabel(on)}</span>
+        <span className="text-[10px] font-normal opacity-80">Autonomous actions</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Autonomous actions"
+          disabled={busy}
+          onClick={() => {
+            if (on) persist(false);
+            else setConfirming(true);
+          }}
+          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors disabled:cursor-wait ${
+            on ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-muted)]/40'
+          }`}
+        >
+          <span
+            className={`inline-block h-3 w-3 rounded-full bg-[var(--color-bg)] transition-transform ${
+              on ? 'translate-x-3.5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+        {error ? <span className="text-[10px] text-[var(--color-danger)]">{error}</span> : null}
+      </div>
+      {confirming && !on ? (
+        <AutonomyConfirm busy={busy} onConfirm={() => persist(true)} onCancel={() => setConfirming(false)} />
+      ) : null}
+    </div>
+  );
+}
+
 function Header({
   agent,
   charter,
@@ -179,6 +358,8 @@ function Header({
   /** What the page is showing, which outranks the row when the two disagree. */
   charter: Doc<'charters'> | null;
 }) {
+  const surfaceConfig = useQuery(api.config.surfaceMode);
+  const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
     'day-one-in-progress': {
@@ -210,7 +391,23 @@ function Header({
             Agent reporting to <span className="font-mono text-[var(--color-accent)]">{agent.bossEmail}</span>
           </h1>
         </div>
-        <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.tone}`}>{s.text}</span>
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">
+            {surfaceConfig?.label || 'loading'}
+          </span>
+          {/* In real mode the chip is the manager's autonomous-actions
+              switch; the hosted mock has no gate for the switch to change, so
+              it keeps the static label. */}
+          {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
+            <AutonomyControl
+              on={autonomousActionsOn(agent)}
+              tone={s.tone}
+              onChange={(on) => setAutonomousActions({ agentId: agent._id, on })}
+            />
+          ) : (
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.tone}`}>{s.text}</span>
+          )}
+        </div>
       </div>
     </header>
   );
@@ -313,6 +510,7 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
     shortTermGoals: { day30: string; day60: string; day90: string };
     proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
     namedCollaborators: Array<{ name: string; topic: string }>;
+    namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
     priorityReading: string[];
     openQuestions: string[];
   };
@@ -349,6 +547,12 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             <BoundaryList label="Will do" items={body.proposedBoundaries.willDo} />
             <BoundaryList label="Will NOT do" items={body.proposedBoundaries.willNotDo} />
             <BoundaryList label="Escalation triggers" items={body.proposedBoundaries.escalationTriggers} />
+            <BoundaryList
+              label="Systems named in the 1:1"
+              items={(body.namedSystems ?? []).map(
+                (system) => `${system.name} (${system.class}) - ${system.whereMentioned}`,
+              )}
+            />
             <BoundaryList
               label="Collaborators"
               items={body.namedCollaborators.map((c) => `${c.name} — ${c.topic}`)}
@@ -407,10 +611,14 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
 function ProposedSkillsPanel({
   agentId,
   skills,
+  surfaces,
   onAuthoringAttempt,
 }: {
   agentId: Id<'agents'>;
   skills: Doc<'skills'>[];
+  /** The agent's surfaces in real mode; a skill targeting one that is not
+   *  connected cannot be approved yet, and the button says why. */
+  surfaces: SurfaceRecord[];
   /** Approving moves the row out of this panel, so its verdict has to be
    *  reported somewhere that survives the unmount. `null` opens an attempt and
    *  retires whatever the last one said. */
@@ -419,11 +627,18 @@ function ProposedSkillsPanel({
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
   const author = useAction(api.skillActions.authorAndRegisterSkill);
+  const now = useNow();
   if (skills.length === 0) return null;
   return (
     <Card title="Proposed skills · awaiting your call" tone="warn">
       <div className="space-y-3">
-        {skills.map((s) => (
+        {skills.map((s) => {
+          const refusal = skillApprovalRefusal(
+            s.targetSurface,
+            surfaces.find((surface) => surface.slug === s.targetSurface),
+            now,
+          );
+          return (
           <div
             key={s._id}
             className="border border-[var(--color-border)] rounded-lg p-3 text-sm"
@@ -433,8 +648,18 @@ function ProposedSkillsPanel({
               <span className="text-[10px] text-[var(--color-muted)]">requires: {(s.requiredScopes ?? []).join(', ')}</span>
             </div>
             <p className="text-[var(--color-muted)] text-xs mb-2">{s.rationale ?? s.description}</p>
+            {refusal ? (
+              <p className="text-[10px] text-[var(--color-warn)] mb-2">
+                Cannot approve yet: {refusal}{' '}
+                <a href="#surfaces" className="underline">
+                  Surfaces tab
+                </a>
+              </p>
+            ) : null}
             <div className="flex gap-2">
               <button
+                disabled={Boolean(refusal)}
+                title={refusal}
                 onClick={async () => {
                   await approve({ skillId: s._id });
                   void agentId;
@@ -456,7 +681,7 @@ function ProposedSkillsPanel({
                     });
                   }
                 }}
-                className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium"
+                className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
               >
                 Approve · author and verify
               </button>
@@ -468,7 +693,8 @@ function ProposedSkillsPanel({
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
@@ -499,6 +725,7 @@ function RegisteredSkillsPanel({
   onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
+  const requestRevision = useMutation(api.skills.requestRevision);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
   const now = useNow();
 
@@ -509,6 +736,26 @@ function RegisteredSkillsPanel({
       const result = await author({ skillId });
       if (!result.ok) {
         onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
+      }
+    } catch (err) {
+      onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
+    } finally {
+      setRetrying(null);
+    }
+  }
+
+  async function onRevise(skillId: Id<'skills'>, name: string) {
+    setRetrying(skillId);
+    onAuthoringAttempt(null);
+    try {
+      await requestRevision({ skillId });
+      const result = await author({ skillId });
+      if (!result.ok) {
+        onAuthoringAttempt({
+          skillId,
+          name,
+          reason: result.reason ?? 'revision did not succeed',
+        });
       }
     } catch (err) {
       onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
@@ -543,6 +790,16 @@ function RegisteredSkillsPanel({
                 <div className="font-medium text-[var(--color-fg)]">{s.name}</div>
                 <div className="text-[var(--color-muted)] text-xs">{s.description}</div>
               </div>
+              {s.sourceType === 'agent-authored' ? (
+                <button
+                  onClick={() => onRevise(s._id, s.name)}
+                  disabled={retrying === s._id}
+                  title="Re-author and verify this skill before its first execution"
+                  className="px-2.5 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-warn)] text-xs disabled:opacity-50 shrink-0"
+                >
+                  {retrying === s._id ? 'Revising…' : 'Revise'}
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -642,12 +899,17 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 
 function WorkQueue({
   workItems,
+  surfaces,
   registeredSkillCount,
   charterApproved,
+  autonomousActions,
 }: {
   workItems: Doc<'workItems'>[];
+  surfaces: SurfaceRecord[];
   registeredSkillCount: number;
   charterApproved: boolean;
+  /** Whether the agent's autonomous-actions switch is on, for the cards' wording. */
+  autonomousActions: boolean;
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -655,11 +917,15 @@ function WorkQueue({
   const approvePlan = useMutation(api.work.approvePlan);
   const cancelPlan = useMutation(api.work.cancelPlan);
   const retryFailed = useMutation(api.work.retryFailed);
+  const approveActions = useMutation(api.work.approveActions);
+  const rejectActions = useMutation(api.work.rejectActions);
 
   const items = useMemo(
     () =>
       [...workItems].sort((a, b) => {
-        const order = ['plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'skipped', 'cancelled', 'failed', 'deferred'];
+        // What needs the manager first: literal actions awaiting approval,
+        // then plans, then skills.
+        const order = ['actions-pending', 'plan-pending', 'needs-skill', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'skipped', 'cancelled', 'failed', 'deferred'];
         return order.indexOf(a.state) - order.indexOf(b.state);
       }),
     [workItems],
@@ -725,9 +991,25 @@ function WorkQueue({
             <WorkItemCard
               key={item._id}
               item={item}
+              surfaces={surfaces}
+              autonomousActions={autonomousActions}
               onApprovePlan={() => approvePlan({ workItemId: item._id })}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={() => retryFailed({ workItemId: item._id })}
+              onApproveActions={(approvedIndexes) =>
+                item.pendingRunId
+                  ? approveActions({
+                      workItemId: item._id,
+                      pendingRunId: item.pendingRunId,
+                      approvedIndexes,
+                    })
+                  : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
+              }
+              onRejectActions={(reason) =>
+                item.pendingRunId
+                  ? rejectActions({ workItemId: item._id, pendingRunId: item.pendingRunId, reason })
+                  : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
+              }
             />
           ))}
         </div>
@@ -738,24 +1020,435 @@ function WorkQueue({
 
 function stateColor(state: string): string {
   if (state === 'completed') return 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]';
-  if (state === 'plan-pending' || state === 'needs-skill') return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
+  if (state === 'plan-pending' || state === 'needs-skill' || state === 'actions-pending') {
+    return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
+  }
   if (state === 'failed' || state === 'cancelled') return 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]';
   if (state === 'skipped' || state === 'deferred') return 'bg-[var(--color-muted)]/15 text-[var(--color-muted)]';
   return 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]';
 }
 
+/** One row of the applied ledger as the card reads it. */
+interface LedgerRow {
+  tool: string;
+  ok: boolean;
+  held?: boolean;
+  awaitingApproval?: boolean;
+  /** What authorised the row: the manager's approval, the toggle, or a standing grant. */
+  authority?: ActionAuthority;
+  effect?: string;
+  reason?: string;
+  providerId?: string;
+}
+
+interface PlanStepOutcomeRow {
+  step: number;
+  status: 'satisfied' | 'blocked';
+  evidence: string;
+}
+
+/** A run's persisted output as the card reads it, in either of its two phases. */
+interface RunOutput {
+  draft: string;
+  notes: string;
+  actions?: MockAction[];
+  applied?: LedgerRow[];
+  initial?: { applied?: LedgerRow[] };
+  planStepOutcomes?: PlanStepOutcomeRow[];
+}
+
+type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
+
+/**
+ * Every applied row of a run, prerequisite phase first, each labelled with the
+ * phase that applied it when the run had two. A single-phase run carries no
+ * label, so the ordinary card is unchanged.
+ */
+export function phasedLedger(output: RunOutput | undefined): PhasedLedgerRow[] {
+  const initial = output?.initial?.applied;
+  const closing = output?.applied ?? [];
+  if (!initial) return closing.map((row): PhasedLedgerRow => ({ ...row }));
+  return [
+    ...initial.map((row): PhasedLedgerRow => ({ ...row, phase: 'prerequisite' })),
+    ...closing.map((row): PhasedLedgerRow => ({ ...row, phase: 'closing' })),
+  ];
+}
+
+function PhaseLabel({ phase }: { phase?: 'prerequisite' | 'closing' }) {
+  if (!phase) return null;
+  return (
+    <span className="ml-1 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+      {phase}
+    </span>
+  );
+}
+
+/**
+ * The draft, with an honest account of when it was written: before anything
+ * was applied for a single-phase run, after the prerequisite ledger for a run
+ * whose closing phase authored it from real results.
+ */
+export function DraftDetails({ output }: { output: RunOutput }) {
+  const closingPhase = output.initial !== undefined || output.planStepOutcomes !== undefined;
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-[var(--color-accent)]">
+        Draft the agent wrote ({output.draft.length} chars)
+      </summary>
+      <pre className="mt-2 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap text-[var(--color-fg)]">
+        {output.draft}
+      </pre>
+      {output.notes ? (
+        <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
+      ) : null}
+      <p className="mt-1 text-[10px] text-[var(--color-muted)]">
+        {closingPhase
+          ? 'The closing draft, written after the prerequisite actions were applied and from their ledger. Only the changes listed above reached the work environment.'
+          : "The agent's own words, written before anything was applied. Only the changes listed above reached the work environment."}
+      </p>
+    </details>
+  );
+}
+
+/** The approved plan's result-aware accounting, including promised work that could not run. */
+export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
+  if (outcomes.length === 0) return null;
+  return (
+    <div className="mt-2 p-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs">
+      <p className="font-medium text-[var(--color-fg)] mb-1">Plan execution ledger</p>
+      <ol className="space-y-0.5 text-[var(--color-muted)]">
+        {outcomes.map((outcome) => (
+          <li key={outcome.step}>
+            Step {outcome.step} · {outcome.status} - {outcome.evidence}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/**
+ * The headline of the landed-changes list, naming how many applied under the toggle.
+ *
+ * Args:
+ *   landed: The ledger rows that reached the work environment.
+ *
+ * Returns:
+ *   `3 changes reached the work environment · 3 applied autonomously`, or without the tail.
+ */
+export function landedHeadline(landed: ReadonlyArray<{ authority?: ActionAuthority }>): string {
+  const autonomous = landed.filter((row) => row.authority === 'autonomous').length;
+  const head = `${landed.length} ${landed.length === 1 ? 'change' : 'changes'} reached the work environment`;
+  return autonomous > 0 ? `${head} · ${autonomous} applied autonomously` : head;
+}
+
+/**
+ * Why a cancelled work item stopped, for the card.
+ *
+ * Rows cancelled since the reason was recorded carry it in `skipReason`; an
+ * older row is read from what it was doing when it was cancelled.
+ *
+ * Args:
+ *   item: The cancelled work item's reason, verdict and plan.
+ *
+ * Returns:
+ *   One sentence in place of the pre-cancel verdict.
+ */
+export function cancelledReason(item: {
+  skipReason?: string;
+  verdict?: { decision?: string; suggestedSkillName?: string };
+  plan?: unknown;
+}): string {
+  if (item.skipReason) return item.skipReason;
+  if (item.verdict?.decision === 'needs-skill') {
+    const name = item.verdict.suggestedSkillName;
+    return name ? `skill proposal "${name}" rejected by the manager` : 'skill proposal rejected by the manager';
+  }
+  if (item.plan) return 'plan cancelled by the manager';
+  return 'cancelled by the manager';
+}
+
+/** Name the winning control for a completed manager decision. */
+export function decisionAttribution(
+  decision:
+    | {
+        decidedAt?: number;
+        outcome?: 'approved' | 'rejected';
+        decidedVia?: 'dashboard' | 'channel';
+        surfaceName: string;
+      }
+    | undefined,
+): string | undefined {
+  if (!decision?.decidedAt || !decision.outcome || !decision.decidedVia) return undefined;
+  const source =
+    decision.decidedVia === 'channel' ? decision.surfaceName : 'the day0 dashboard';
+  return `${decision.outcome} from ${source}`;
+}
+
+/** Whether replay could duplicate an external effect whose outcome is durable or unknown. */
+export function retryRequiresReconciliation(
+  applied: readonly LedgerRow[],
+  skipReason?: string,
+): boolean {
+  return (
+    applied.some((action) => action.ok && !action.held) ||
+    skipReason?.includes('provider outcomes are unknown') === true
+  );
+}
+
+/**
+ * The verdict per action index, as the gate persisted it.
+ *
+ * A row held before verdicts existed has none; it reads as `held`, which is
+ * what the manager's approval meant then, and the server's apply-time checks
+ * still stand behind it.
+ *
+ * Args:
+ *   verdicts: The verdicts persisted when the run was held.
+ *   count: How many actions the run holds.
+ *
+ * Returns:
+ *   A verdict per action index.
+ */
+export function pendingVerdicts(
+  verdicts: Doc<'workItems'>['actionVerdicts'] | undefined,
+  count: number,
+): ActionVerdict[] {
+  return Array.from({ length: count }, (_, index): ActionVerdict =>
+    normaliseActionVerdict(verdicts?.[index] ?? {}),
+  );
+}
+
+/**
+ * The one-line headline of the gate box.
+ *
+ * Args:
+ *   verdicts: The run's verdicts.
+ *
+ * Returns:
+ *   `2 applied automatically · 1 awaiting your approval`, or the no-auto form.
+ */
+export function pendingHeadline(verdicts: readonly ActionVerdict[]): string {
+  const auto = verdicts.filter((verdict) => verdict.disposition === 'auto').length;
+  const held = verdicts.filter((verdict) => verdict.disposition === 'held').length;
+  const refused = verdicts.filter((verdict) => verdict.disposition === 'refused').length;
+  const awaiting = `${held} ${held === 1 ? 'action' : 'actions'} awaiting your approval`;
+  const refusedNote = refused > 0 ? ` · ${refused} refused by the gate` : '';
+  if (auto > 0) {
+    return `${auto} applied automatically · ${awaiting}${refusedNote}`;
+  }
+  return `${awaiting}${refusedNote} · nothing has reached a surface`;
+}
+
+/**
+ * The exact-action gate: every row the ladder did not apply on its own,
+ * verbatim, with a checkbox each. Rows classified `auto` were applied before
+ * the manager saw the card and are listed with the changes that reached the
+ * work environment; nothing else reaches a surface until it is approved here.
+ */
+export function PendingActions({
+  actions,
+  verdicts,
+  surfaces,
+  replyTarget,
+  autonomousActions = false,
+  onApprove,
+  onReject,
+}: {
+  actions: MockAction[];
+  verdicts: ActionVerdict[];
+  surfaces: SurfaceRecord[];
+  replyTarget?: ReplyTarget;
+  /** Whether the agent's switch is on now; the card says why the rows are waiting either way. */
+  autonomousActions?: boolean;
+  onApprove: (approvedIndexes: number[]) => Promise<unknown>;
+  onReject: (reason: string) => Promise<unknown>;
+}) {
+  // The gate decided each row when it held the run: `auto` rows are already
+  // applied and are not shown here; `refused` rows (a missing grant, an
+  // unconnected surface, a forged trailer) cannot be ticked and the server
+  // refuses them at approval; `held` rows are the manager's to approve. The
+  // "Approve all" button is disabled while a refused row exists so it never
+  // promises what the gate will not deliver.
+  const refusedIndexes = useMemo(
+    () => new Set(verdicts.flatMap((verdict, index) => (verdict.disposition === 'refused' ? [index] : []))),
+    [verdicts],
+  );
+  const heldIndexes = useMemo(
+    () => verdicts.flatMap((verdict, index) => (verdict.disposition === 'held' ? [index] : [])),
+    [verdicts],
+  );
+  const shown = useMemo(
+    () => actions.map((action, index) => ({ action, index })).filter(({ index }) => verdicts[index]?.disposition !== 'auto'),
+    [actions, verdicts],
+  );
+  const [selected, setSelected] = useState<Set<number>>(() => new Set(heldIndexes));
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(call: () => Promise<unknown>): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await call();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggle(index: number, on: boolean): void {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (on) next.add(index);
+      else next.delete(index);
+      return next;
+    });
+  }
+
+  const anyRefused = refusedIndexes.size > 0;
+  return (
+    <div className="mt-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
+      <p className="text-[var(--color-warn)] font-medium mb-1">{pendingHeadline(verdicts)}</p>
+      {heldIndexes.length > 0 ? (
+        <p className="text-[var(--color-muted)] mb-1">
+          {autonomousActions ? HELD_BEFORE_AUTONOMY_NOTE : HELD_WHILE_SUPERVISED_NOTE}
+        </p>
+      ) : null}
+      {actions.length === 0 ? (
+        <p className="text-[var(--color-muted)]">
+          The skill emitted no actions. Approving lands nothing; reject to send it back.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {shown.map(({ action, index }) => {
+            const verdict = verdicts[index];
+            const refused = verdict?.disposition === 'refused';
+            const on = selected.has(index);
+            return (
+              <li key={index} className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={on}
+                  disabled={busy || refused}
+                  onChange={(event) => toggle(index, event.target.checked)}
+                  aria-label={`approve action ${index + 1}`}
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-[var(--color-fg)] break-words">
+                    {summariseAction(action, surfaces, { replyTarget })}
+                    {refused ? (
+                      <span className="text-[var(--color-warn)]"> · refused · {verdict.reason}</span>
+                    ) : verdict?.disposition === 'held' ? (
+                      <span className="text-[var(--color-muted)]"> · {verdict.reason}</span>
+                    ) : null}
+                  </p>
+                  <details className="mt-0.5">
+                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                      exact payload
+                    </summary>
+                    <ActionPayload action={action} />
+                  </details>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {!refused && !on ? (
+                      <span className="text-[10px] text-[var(--color-muted)]">held · will not be sent</span>
+                    ) : null}
+                    {refused ? null : on ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => toggle(index, false)}
+                        className="text-[10px] text-[var(--color-danger)] underline"
+                      >
+                        reject this action
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => toggle(index, true)}
+                        className="text-[10px] text-[var(--color-accent)] underline"
+                      >
+                        include
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-2 mt-2">
+        <button
+          type="button"
+          disabled={busy || actions.length === 0}
+          onClick={() => submit(() => onApprove([...selected].sort((a, b) => a - b)))}
+          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
+        >
+          Approve selected ({selected.size})
+        </button>
+        <button
+          type="button"
+          disabled={busy || anyRefused || heldIndexes.length === 0}
+          title={
+            anyRefused
+              ? 'A row in this run is refused by the gate and cannot be approved; approve the rest by selection.'
+              : undefined
+          }
+          onClick={() => submit(() => onApprove(heldIndexes))}
+          className="px-3 py-1 rounded-md border border-[var(--color-ok)]/40 text-[var(--color-ok)] text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Approve all
+        </button>
+        <input
+          type="text"
+          value={reason}
+          disabled={busy}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="reason for rejecting"
+          className="flex-1 min-w-[10rem] px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+        />
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => submit(() => onReject(reason))}
+          className="px-3 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
+        >
+          Reject run
+        </button>
+      </div>
+      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
 function WorkItemCard({
   item,
+  surfaces,
+  autonomousActions,
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
+  onApproveActions,
+  onRejectActions,
 }: {
   item: Doc<'workItems'>;
+  surfaces: SurfaceRecord[];
+  autonomousActions: boolean;
   onApprovePlan: () => void;
   onCancelPlan: () => void;
   onRetryFailed: () => void;
+  onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
+  onRejectActions: (reason: string) => Promise<unknown>;
 }) {
-  const verdict = item.verdict as { decision: string; reason?: string; suggestedSkillName?: string } | undefined;
+  const now = useNow();
+  const verdict = item.verdict as
+    | { decision: string; reason?: string; suggestedSkillName?: string; missingSurface?: string }
+    | undefined;
   const plan = item.plan as
     | {
         summary: string;
@@ -766,16 +1459,18 @@ function WorkItemCard({
         expectedOutputType: string;
       }
     | undefined;
-  const output = item.output as
-    | {
-        draft: string;
-        notes: string;
-        applied?: Array<{ tool: string; ok: boolean; effect?: string; reason?: string }>;
-      }
-    | undefined;
-  const appliedActions = output?.applied ?? [];
-  const failedActions = appliedActions.filter((a) => !a.ok);
-  const landedActions = appliedActions.filter((a) => a.ok);
+  const output = item.output as RunOutput | undefined;
+  const appliedActions = phasedLedger(output);
+  // A row the auto phase deferred is in the gate box above, not in the ledger's held list.
+  const heldActions = appliedActions.filter((a) => a.held && !a.awaitingApproval);
+  const failedActions = appliedActions.filter((a) => !a.ok && !a.held);
+  const landedActions = appliedActions.filter((a) => a.ok && !a.held);
+  const retryBlocked = retryRequiresReconciliation(appliedActions, item.skipReason);
+  const awaitingSurface =
+    verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
+      ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
+      : undefined;
+  const decidedFrom = decisionAttribution(item.decision);
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -798,13 +1493,34 @@ function WorkItemCard({
         </div>
       </div>
 
-      {verdict ? (
+      {decidedFrom ? (
+        <p className="mt-1 text-[10px] text-[var(--color-muted)]">{decidedFrom}</p>
+      ) : null}
+
+      {item.state === 'cancelled' ? (
+        <div className="mt-2 text-xs">
+          <span className="text-[var(--color-muted)]">cancelled:</span>{' '}
+          <span className="text-[var(--color-fg)]">
+            {cancelledReason({ skipReason: item.skipReason, verdict, plan })}
+          </span>
+        </div>
+      ) : verdict ? (
         <div className="mt-2 text-xs">
           <span className="text-[var(--color-muted)]">verdict:</span>{' '}
-          <span className="text-[var(--color-fg)]">
-            {verdict.decision}
-            {verdict.reason ? ` — ${verdict.reason}` : ''}
-          </span>
+          {verdict.decision === 'defer' && verdict.reason === 'awaiting-connection' ? (
+            <span className="text-[var(--color-fg)]">
+              defer - awaiting-connection: {verdict.missingSurface ?? '(unnamed system)'}
+              {awaitingSurface ? ` (${verdictFor(awaitingSurface, now)})` : ' (not listed)'}{' '}
+              <a href="#surfaces" className="text-[var(--color-accent)] underline">
+                Surfaces tab
+              </a>
+            </span>
+          ) : (
+            <span className="text-[var(--color-fg)]">
+              {verdict.decision}
+              {verdict.reason ? ` — ${verdict.reason}` : ''}
+            </span>
+          )}
         </div>
       ) : null}
 
@@ -836,6 +1552,35 @@ function WorkItemCard({
         </div>
       ) : null}
 
+      {item.state === 'executing' && item.applyPhase === 'auto' ? (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">
+          applying {item.approvedIndexes?.length ?? 0}{' '}
+          {(item.approvedIndexes?.length ?? 0) === 1 ? 'action' : 'actions'}{' '}
+          {autonomousActions ? 'autonomously' : 'automatically'}…
+        </p>
+      ) : null}
+
+      {item.state === 'actions-pending' && output?.initial !== undefined ? (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">
+          Closing actions, authored from the prerequisite ledger below.
+        </p>
+      ) : null}
+
+      {item.state === 'actions-pending' && output && item.approvedIndexes === undefined ? (
+        <PendingActions
+          key={`${item._id}:${item.pendingRunId ?? ''}`}
+          actions={output.actions ?? []}
+          verdicts={pendingVerdicts(item.actionVerdicts, output.actions?.length ?? 0)}
+          surfaces={surfaces}
+          replyTarget={replyTargetFor(item)}
+          autonomousActions={autonomousActions}
+          onApprove={onApproveActions}
+          onReject={onRejectActions}
+        />
+      ) : item.state === 'actions-pending' && item.approvedIndexes !== undefined ? (
+        <p className="mt-2 text-xs text-[var(--color-muted)]">applying the approved actions…</p>
+      ) : null}
+
       {/* The record of the run, ahead of the prose that describes it. The draft
           is written before a single action is applied, so it is the agent's
           account of the work; this list is what the work environment actually
@@ -843,38 +1588,48 @@ function WorkItemCard({
           apart, which is the whole of the failure this panel answers. */}
       {landedActions.length > 0 ? (
         <div className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs">
-          <p className="text-[var(--color-ok)] font-medium mb-1">
-            {landedActions.length} {landedActions.length === 1 ? 'change' : 'changes'} reached the
-            work environment
-          </p>
+          <p className="text-[var(--color-ok)] font-medium mb-1">{landedHeadline(landedActions)}</p>
           <ul className="space-y-0.5 text-[var(--color-fg)]">
             {landedActions.map((a, i) => (
               <li key={i}>
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
                 {a.effect ?? '(applied)'}
+                {a.providerId ? (
+                  <span className="ml-1 font-mono text-[10px] text-[var(--color-muted)]">
+                    id {a.providerId}
+                  </span>
+                ) : null}
+                <PhaseLabel phase={a.phase} />
               </li>
             ))}
           </ul>
         </div>
       ) : null}
 
-      {output ? (
-        <details className="mt-2 text-xs">
-          <summary className="cursor-pointer text-[var(--color-accent)]">
-            Draft the agent wrote ({output.draft.length} chars)
-          </summary>
-          <pre className="mt-2 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap text-[var(--color-fg)]">
-            {output.draft}
-          </pre>
-          {output.notes ? (
-            <p className="mt-1 text-[var(--color-muted)] italic">notes: {output.notes}</p>
-          ) : null}
-          <p className="mt-1 text-[10px] text-[var(--color-muted)]">
-            The agent&apos;s own words, written before anything was applied. Only the changes listed
-            above reached the work environment.
+      {/* Held is its own list, not a success and not a failure: the gate or the
+          manager kept it back, and the ledger says so. */}
+      {heldActions.length > 0 ? (
+        <div className="mt-2 p-2 rounded-md bg-[var(--color-muted)]/10 border border-[var(--color-border)] text-xs">
+          <p className="text-[var(--color-muted)] font-medium mb-1">
+            {heldActions.length} {heldActions.length === 1 ? 'action' : 'actions'} held · never sent
           </p>
-        </details>
+          <ul className="space-y-0.5 text-[var(--color-muted)]">
+            {heldActions.map((a, i) => (
+              <li key={i}>
+                <span className="font-mono text-[10px]">{a.tool}</span> - {a.reason ?? 'held'}
+                <PhaseLabel phase={a.phase} />
+                {a.effect ? (
+                  <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">{a.effect}</code>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
+
+      <PlanExecutionLedger outcomes={output?.planStepOutcomes ?? []} />
+
+      {output ? <DraftDetails output={output} /> : null}
 
       {/* Not inside the details element above: an action that never reached the
           work environment is the headline of this card, not a footnote to the
@@ -888,7 +1643,8 @@ function WorkItemCard({
           <ul className="space-y-0.5 text-[var(--color-danger)]">
             {failedActions.map((a, i) => (
               <li key={i}>
-                {a.tool} — {a.reason ?? 'unknown reason'}
+                {a.tool} - {a.reason ?? 'unknown reason'}
+                <PhaseLabel phase={a.phase} />
               </li>
             ))}
           </ul>
@@ -899,27 +1655,250 @@ function WorkItemCard({
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
-              no registered skill, a model error, a mid-run throw. */}
+              no registered skill, a model error, a mid-run throw, a rejection. */}
           {failedActions.length === 0 && item.skipReason ? (
             <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">{item.skipReason}</p>
           ) : null}
           <button
             onClick={onRetryFailed}
-            className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30"
+            disabled={retryBlocked}
+            className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Retry
           </button>
-          {appliedActions.length > failedActions.length ? (
+          {retryBlocked ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry re-runs the whole plan, so the{' '}
-              {appliedActions.length - failedActions.length} action
-              {appliedActions.length - failedActions.length === 1 ? '' : 's'} that already landed
-              will be applied again.
+              Retry is disabled because a provider effect landed or may have landed. Reconcile the
+              provider before starting a new run.
             </p>
           ) : null}
         </div>
       ) : null}
     </div>
+  );
+}
+
+type PermissionSource = 'deploy' | 'manager' | 'skill' | 'surface';
+
+export interface PermissionScopeView {
+  scope: string;
+  active: boolean;
+  source: PermissionSource;
+  grantedAt: number;
+  revokedAt: number | null;
+}
+
+const PERMISSION_SOURCE_LABEL: Record<PermissionSource, string> = {
+  deploy: 'deploy',
+  manager: 'manager',
+  skill: 'skill',
+  surface: 'surface',
+};
+
+export function PermissionRows({
+  scopes,
+  confirmingScope,
+  busyScope,
+  onAskRevoke,
+  onCancelRevoke,
+  onRevoke,
+  onRegrant,
+}: {
+  scopes: PermissionScopeView[];
+  confirmingScope: string | null;
+  busyScope: string | null;
+  onAskRevoke: (scope: string) => void;
+  onCancelRevoke: () => void;
+  onRevoke: (scope: string) => void;
+  onRegrant: (scope: string) => void;
+}) {
+  return (
+    <ul className="space-y-2 text-xs">
+      {scopes.map((row) => {
+        const confirming = confirmingScope === row.scope;
+        const busy = busyScope === row.scope;
+        return (
+          <li key={row.scope} className="rounded-md border border-[var(--color-border)] p-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-mono text-[var(--color-fg)] truncate">{row.scope}</p>
+                <p className="text-[10px] text-[var(--color-muted)]">
+                  {row.active ? 'granted' : 'revoked'} - from{' '}
+                  {PERMISSION_SOURCE_LABEL[row.source]}
+                </p>
+              </div>
+              {row.active ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onAskRevoke(row.scope)}
+                  className="shrink-0 px-2 py-1 rounded border border-[var(--color-danger)]/40 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
+                >
+                  Revoke
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onRegrant(row.scope)}
+                  className="shrink-0 px-2 py-1 rounded border border-[var(--color-accent)]/40 text-[10px] text-[var(--color-accent)] disabled:opacity-50"
+                >
+                  Re-grant
+                </button>
+              )}
+            </div>
+            {confirming ? (
+              <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+                <p className="text-[10px] text-[var(--color-fg)] mb-2">
+                  Revoke {row.scope}? Queued and in-flight work needing it will be stopped.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onRevoke(row.scope)}
+                    className="px-2 py-1 rounded bg-[var(--color-danger)]/20 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
+                  >
+                    Confirm revoke
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onCancelRevoke}
+                    className="px-2 py-1 rounded border border-[var(--color-border)] text-[10px] disabled:opacity-50"
+                  >
+                    Keep grant
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
+  const scopes = useQuery(api.agents.permissionScopes, { agentId });
+  const revokeScope = useMutation(api.agents.revokeScope);
+  const grantScopes = useMutation(api.agents.grantScopes);
+  const [confirmingScope, setConfirmingScope] = useState<string | null>(null);
+  const [busyScope, setBusyScope] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function change(scope: string, kind: 'revoke' | 'grant'): Promise<void> {
+    setBusyScope(scope);
+    setError(null);
+    try {
+      if (kind === 'revoke') {
+        await revokeScope({
+          agentId,
+          scope,
+          reason: 'Revoked by the manager from the agent dashboard.',
+        });
+        setConfirmingScope(null);
+      } else {
+        await grantScopes({ agentId, scopes: [scope] });
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyScope(null);
+    }
+  }
+
+  return (
+    <Card title="Permissions">
+      <p className="text-[10px] text-[var(--color-muted)] mb-3 leading-relaxed">
+        Reads and manager messages stop when their grant is revoked. A literal write you approve
+        remains authorised by that exact approval.
+      </p>
+      {scopes === undefined ? (
+        <p className="text-xs text-[var(--color-muted)]">loading permissions…</p>
+      ) : scopes.length === 0 ? (
+        <p className="text-xs text-[var(--color-muted)]">no permission history yet</p>
+      ) : (
+        <PermissionRows
+          scopes={scopes}
+          confirmingScope={confirmingScope}
+          busyScope={busyScope}
+          onAskRevoke={setConfirmingScope}
+          onCancelRevoke={() => setConfirmingScope(null)}
+          onRevoke={(scope) => void change(scope, 'revoke')}
+          onRegrant={(scope) => void change(scope, 'grant')}
+        />
+      )}
+      {error ? <p className="mt-2 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+    </Card>
+  );
+}
+
+export function formatMetricDuration(milliseconds: number | null): string {
+  if (milliseconds === null) return 'not yet';
+  const totalSeconds = Math.round(milliseconds / 1_000);
+  if (totalSeconds < 60) return `${totalSeconds} s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds === 0 ? `${minutes} min` : `${minutes} min ${seconds} s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours} h` : `${hours} h ${remainingMinutes} min`;
+}
+
+function metricValue(value: string | undefined): string {
+  return value ?? 'loading…';
+}
+
+export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) {
+  const humanDecisions = metrics
+    ? metrics.decisions.requested === 0
+      ? 'not yet'
+      : `${metrics.decisions.approved} / ${metrics.decisions.rejected}`
+    : undefined;
+  const blocked = metrics
+    ? metrics.actions.blockedAfterRevocation === null
+      ? 'not yet'
+      : String(metrics.actions.blockedAfterRevocation)
+    : undefined;
+  const completeness = metrics
+    ? metrics.auditTrail.fraction === null
+      ? 'not yet'
+      : `${Math.round(metrics.auditTrail.fraction * 100)}% (${metrics.auditTrail.complete}/${metrics.auditTrail.total})`
+    : undefined;
+  const rows = [
+    {
+      label: 'time to first approved charter',
+      value: metrics ? formatMetricDuration(metrics.charter.timeToFirstApprovedMs) : undefined,
+    },
+    { label: 'human decisions (approved / rejected)', value: humanDecisions },
+    {
+      label: 'median decision latency',
+      value: metrics ? formatMetricDuration(metrics.decisions.medianLatencyMs) : undefined,
+    },
+    { label: 'actions blocked after revocation', value: blocked },
+    { label: 'audit-trail completeness', value: completeness },
+  ];
+  return (
+    <Card title="Supervision metrics" tone="accent">
+      <dl className="space-y-2">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-start justify-between gap-3 text-xs">
+            <dt className="text-[var(--color-muted)] leading-tight">{row.label}</dt>
+            <dd className="font-mono text-[var(--color-fg)] text-right shrink-0">
+              {metricValue(row.value)}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {metrics ? (
+        <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
+          {metrics.decisions.requested} decisions requested - {metrics.decisions.partiallyApproved}{' '}
+          partial - {metrics.actions.autoApplied} actions automatic - {metrics.actions.held} held -{' '}
+          {metrics.actions.refused} refused
+        </p>
+      ) : null}
+    </Card>
   );
 }
 
@@ -940,5 +1919,22 @@ function EventTicker({ events }: { events: Doc<'events'>[] }) {
         ))}
       </ul>
     </Card>
+  );
+}
+
+/**
+ * The literal payload of one held action, readable.
+ *
+ * Args:
+ *   props: The action as the skill emitted it.
+ *
+ * Returns:
+ *   The verb and the arguments it reads, as JSON.
+ */
+export function ActionPayload({ action }: { action: MockAction }): React.ReactNode {
+  return (
+    <code className="block font-mono text-[10px] text-[var(--color-fg)] whitespace-pre-wrap break-words">
+      {JSON.stringify(reviewPayload(action), null, 2)}
+    </code>
   );
 }

@@ -2,13 +2,21 @@ import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
 import { agentJson, MODEL_CONFIG } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
-import type {
-  ExecutionOutput,
-  ExecutionPlan,
-  MockAction,
-  MockSurfaceSnapshot,
-  WorkCandidate,
+import {
+  ACTION_TOOLS,
+  DEPENDENT_ACTION_CAP,
+  type DependentExecutionOutput,
+  type ExecutionOutput,
+  type ExecutionPlan,
+  type MockAction,
+  type MockSurfaceSnapshot,
+  type ReplyTarget,
+  type WorkCandidate,
 } from './types';
+import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
+import { redactTokenShapes } from '../surfaces/redact';
+import { verdictFor } from '../surfaces/verdict';
+import { actionModeInstruction } from './plan';
 
 /**
  * Skill executor. Lifted from Protean's `src/work/execute-skill.ts`
@@ -30,26 +38,46 @@ import type {
  * into the system prompt below so the schema is documented in-context.
  */
 
-const SYSTEM_PROMPT_PREAMBLE = [
+const PREAMBLE_HEAD = [
   'You are an autonomous workplace agent named Day0.',
-  'A skill body has been loaded as your behavioural prior for this turn. The boss has approved the plan; you are authorised to act.',
+  'A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.',
   'Apply the skill to the candidate. Produce three things:',
   '  1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.',
   '  2. Notes — short assumptions or open questions (single sentence).',
-  '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
+];
+
+const DRAFT_DISCIPLINE = [
   '',
   'The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:',
   '  - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three `spreadsheet.appendRow` actions, not one action and a sentence saying three.',
   '  - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a `slack.postMessage` in this response says it.',
   '  - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in `notes` rather than describing the work as finished.',
+];
+
+/**
+ * Only the real path runs a second, result-dependent authoring phase. The
+ * mock path proposes one complete set; the action gate may pause that set,
+ * but it never asks the model for another continuation.
+ */
+const DEPENDENT_PHASE_REAL =
+  "  - When any later action needs an earlier action's result, emit only the prerequisite actions now and set `needsDependentPhase` to true. Do not prewrite the later comment, state change, reply or summary: it will be authored once from the applied ledger.";
+const DEPENDENT_PHASE_MOCK =
+  '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment treats it as one approval set and runs no second authoring phase.';
+
+const MOCK_PREAMBLE = [
+  ...PREAMBLE_HEAD,
+  '  3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
+  ...DRAFT_DISCIPLINE,
+  DEPENDENT_PHASE_MOCK,
   '',
   'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. Available tools:',
-  "  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }",
-  "  - slack.postMessage    — { channelSlug, threadKey?, body }",
-  "  - twitter.reply        — { tweetSlug, body }",
-  "  - ticket.update        — { slug, status?, comment? }",
+  '  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }',
+  '  - slack.postMessage    — { channelSlug, threadKey?, body }',
+  '  - twitter.reply        — { tweetSlug, body }',
+  '  - ticket.update        — { slug, status?, comment? }',
   '',
   'Discipline:',
+  `  - ${actionModeInstruction(false, 'mock')}`,
   '  - Stay inside charter boundaries.',
   '  - Never invent values you do not have. If a cell value is unknown, leave it blank in `cells` and flag the gap in `notes`.',
   '  - Cold-start posture: prefer drafts to manager DM (`channelSlug: "dm-manager"`) over public channel posts. The candidate has already passed the charter quality-fit gate, so it IS in scope — emit the actions the skill calls for.',
@@ -63,6 +91,53 @@ const SYSTEM_PROMPT_PREAMBLE = [
   '  - These extra actions are NOT optional when the conditions hold; they are how the agent demonstrates trustworthy follow-through. NEVER replace the manager DM with a ticket update — both fire.',
 ].join('\n');
 
+/** The four verbs that exist only for the mock environment. */
+const MOCK_VERBS = 'spreadsheet.appendRow, slack.postMessage, twitter.reply, ticket.update';
+
+const REAL_PREAMBLE = [
+  ...PREAMBLE_HEAD,
+  '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. Write every action as it should land; the live action mode below says whether it lands immediately or waits.',
+  ...DRAFT_DISCIPLINE,
+  DEPENDENT_PHASE_REAL,
+  '',
+  'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
+  `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
+  '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
+  '',
+  'Discipline:',
+  '  - Stay inside charter boundaries.',
+  '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
+  "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
+  '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
+  '',
+  'Closing the loop:',
+  "  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook's comment tool, and only after it, if the work is complete, the state change with the runbook's state argument. A status change is never the only trace of who acted.",
+  '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
+  '  - When a chat surface is connected, ALSO send the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id: a question or escalation when you have one, else a one-line note of what the actions in this response do. When none is connected, say so in `notes` instead of substituting another channel.',
+  '  - Each provider mutation is its own action so it can be decided and applied on its own.',
+].join('\n');
+
+/**
+ * The executor preamble for one surface mode.
+ *
+ * The mock preamble is byte-for-byte the hosted demo's prompt. The real-mode
+ * preamble names only the two surface verbs: the four mock verbs are refused
+ * by the registry in real mode, so telling the model about them would only
+ * produce actions that fail the run.
+ *
+ * Args:
+ *   mode: Deployment surface mode.
+ *   autonomousActions: The switch value read for this execution run.
+ *
+ * Returns:
+ *   The preamble text.
+ */
+export function executorPreamble(mode: SurfaceMode, autonomousActions = false): string {
+  return mode === 'real'
+    ? `${REAL_PREAMBLE}\n\n${actionModeInstruction(autonomousActions)}`
+    : MOCK_PREAMBLE;
+}
+
 /**
  * The action-args schema is intentionally flat: every action lists its
  * own arg fields as optional at the top level. OpenAI's structured-
@@ -70,7 +145,7 @@ const SYSTEM_PROMPT_PREAMBLE = [
  * doesn't round-trip cleanly through openai.beta.chat.completions.
  * The flat shape keeps the JSON schema valid and readable.
  */
-const actionArgsSchema = z.object({
+export const actionArgsSchema = z.object({
   // spreadsheet.appendRow — cells encoded as array of header/value pairs
   // because OpenAI structured-output strict mode rejects `propertyNames`
   // (the JSON-schema field z.record produces).
@@ -95,20 +170,44 @@ const actionArgsSchema = z.object({
   slug: z.string().optional(),
   status: z.enum(['open', 'in-progress', 'blocked', 'done']).optional(),
   comment: z.string().optional(),
+  // mcp.call and http.request. Structured provider arguments travel as JSON
+  // strings, parsed and size-capped server-side, so the bag stays flat.
+  surface: z.string().optional(),
+  tool: z.string().optional(),
+  toolArgsJson: z.string().optional(),
+  method: z.string().optional(),
+  path: z.string().optional(),
+  headersJson: z.string().optional(),
 });
 
-const executeSchema = z.object({
+export const executeSchema = z.object({
   draft: z.string(),
   notes: z.string(),
+  needsDependentPhase: z.boolean(),
   actions: z.array(
     z.object({
-      tool: z.enum([
-        'spreadsheet.appendRow',
-        'slack.postMessage',
-        'twitter.reply',
-        'ticket.update',
-      ]),
+      tool: z.enum(ACTION_TOOLS),
       args: actionArgsSchema,
+    }),
+  ),
+});
+
+export const dependentExecuteSchema = z.object({
+  draft: z.string(),
+  notes: z.string(),
+  actions: z
+    .array(
+      z.object({
+        tool: z.enum(ACTION_TOOLS),
+        args: actionArgsSchema,
+      }),
+    )
+    .max(DEPENDENT_ACTION_CAP),
+  planStepOutcomes: z.array(
+    z.object({
+      step: z.number().int().positive(),
+      status: z.enum(['satisfied', 'blocked']),
+      evidence: z.string().min(1),
     }),
   ),
 });
@@ -125,6 +224,85 @@ export interface RunSkillArgs {
   candidate: WorkCandidate;
   charter: Charter;
   mockEnv: MockSurfaceSnapshot;
+  /**
+   * Discovered surfaces, real mode only. When any is connected the executor is
+   * told about the two surface verbs; in mock mode the prompt is unchanged.
+   */
+  surfaces?: readonly SurfaceRecord[];
+  /** Deployment surface mode; the mock preamble is the default. */
+  mode?: SurfaceMode;
+  /** Switch value read immediately before this execution prompt is built. */
+  autonomousActions?: boolean;
+  /** Clock for the connection verdict; defaults to now. */
+  now?: number;
+}
+
+export interface RunDependentSkillArgs extends RunSkillArgs {
+  initialOutput: ExecutionOutput;
+  initialLedger: AppliedAction[];
+  initialFailure?: string;
+}
+
+/**
+ * Describe the connected surfaces and the two verbs that reach them.
+ *
+ * Only connected surfaces are listed: a skill may not target anything else,
+ * and the executor is told so rather than left to guess from a slug. The
+ * `dm-manager` fanout rule from the mock preamble maps to the chat surface's
+ * manager DM channel id, which the probe stored on the surface.
+ *
+ * Args:
+ *   surfaces: Surface rows for the agent.
+ *   now: Clock used for the liveness verdict.
+ *
+ * Returns:
+ *   Prompt lines, or an empty string when no surface is connected.
+ */
+export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: number): string {
+  const connected = surfaces.filter((surface) => verdictFor(surface, now) === 'connected');
+  if (connected.length === 0) return '';
+  const lines: string[] = [
+    'Connected real surfaces (name each exactly as listed; take the action shape from its runbook):',
+  ];
+  for (const surface of connected) {
+    const detail: string[] = [`class ${surface.class}`];
+    if (surface.path) detail.push(`path ${surface.path}`);
+    if (surface.endpoint) detail.push(`endpoint ${surface.endpoint}`);
+    detail.push(
+      `allowed tools: ${surface.toolAllowlist?.length ? surface.toolAllowlist.join(', ') : '(none)'}`,
+    );
+    if (surface.managerDmChannelId) {
+      detail.push(`manager DM channel id: ${surface.managerDmChannelId}`);
+    }
+    lines.push(`  - ${surface.slug} (${surface.displayName}) - ${detail.join(' · ')}`);
+  }
+  lines.push(
+    '',
+    'Two verbs reach a real surface. Their structured arguments travel as JSON strings:',
+    '  - mcp.call     - { surface, tool, toolArgsJson }: `tool` must be in the surface allowlist; `toolArgsJson` is the JSON object of tool arguments.',
+    '  - http.request - { surface, method, path, headersJson, body }: `path` is relative to the surface endpoint; `headersJson` is a JSON object of headers; `body` is the request body.',
+    '  - Write `{{secret}}` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.',
+    '  - You may only target a surface listed above. A system without a connected surface gets no action; say so in `notes`.',
+    "  - The manager DM rule (`dm-manager`) for a connected chat surface is an `http.request` to `chat.postMessage` with `channel` set to the manager DM channel id above. Posts to any other channel are held for the manager's approval unless autonomous actions are on.",
+    '  - Do not add a provenance trailer or a `username`: the server appends the employee name and run id to every comment or message sent through a shared credential.',
+    '  - A status change on a ticket must be preceded, in the same response, by a comment on that ticket.',
+  );
+  return lines.join('\n');
+}
+
+/**
+ * The prompt line that tells the skill where a public reply belongs.
+ *
+ * Args:
+ *   target: The work item's reply target.
+ *
+ * Returns:
+ *   `Reply target: channel C0… (#revops-asks), thread_ts 1787…`.
+ */
+export function replyTargetLine(target: ReplyTarget): string {
+  const name = target.channelName ? ` (#${target.channelName})` : '';
+  const thread = target.threadTs ? `, thread_ts ${target.threadTs}` : ', top-level post';
+  return `Reply target: channel ${target.channel}${name}${thread}`;
 }
 
 function renderHowTos(guides: MockSurfaceSnapshot['howToGuides']): string {
@@ -137,7 +315,8 @@ function renderTeamDocs(docs: MockSurfaceSnapshot['teamDocs']): string {
   return docs.map((d) => `--- ${d.title} ---\n${d.body}`).join('\n\n');
 }
 
-function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
+/** The workspace listing every mock-mode executor sees: slugs, tabs, tickets and recent messages, never the docs. */
+export function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   const lines: string[] = [];
   lines.push('## Spreadsheets');
   for (const sh of env.spreadsheets) {
@@ -175,17 +354,46 @@ function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   return lines.join('\n');
 }
 
-export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
-  const { skill, plan, candidate, charter, mockEnv } = args;
-  const instructions = [
-    SYSTEM_PROMPT_PREAMBLE,
+/** Build the complete system prompt, including the final live-mode override. */
+export function executorInstructions(args: {
+  mode: SurfaceMode;
+  autonomousActions: boolean;
+  skillBody: string;
+  surfaces: readonly SurfaceRecord[];
+  mockEnv: MockSurfaceSnapshot;
+  now: number;
+}): string {
+  const surfaceGuidance = surfaceInstructions(args.surfaces, args.now);
+  return [
+    executorPreamble(args.mode, args.autonomousActions),
+    ...(surfaceGuidance ? ['', surfaceGuidance] : []),
     '',
     '--- How-to guides (action format reference) ---',
-    renderHowTos(mockEnv.howToGuides),
+    renderHowTos(args.mockEnv.howToGuides),
     '',
     '--- Skill body (apply as your behavioural prior) ---',
-    skill.body,
+    args.skillBody,
+    ...(args.mode === 'real'
+      ? [
+          '',
+          '--- Live run context (takes precedence over approval wording in the skill body) ---',
+          actionModeInstruction(args.autonomousActions),
+        ]
+      : []),
   ].join('\n');
+}
+
+export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
+  const { skill, plan, candidate, charter, mockEnv } = args;
+  const mode: SurfaceMode = args.mode ?? 'mock';
+  const instructions = executorInstructions({
+    mode,
+    autonomousActions: args.autonomousActions ?? false,
+    skillBody: skill.body,
+    surfaces: args.surfaces ?? [],
+    mockEnv,
+    now: args.now ?? Date.now(),
+  });
 
   const skillAgent = new Agent({
     id: `day0-skill-${skill.name}`,
@@ -209,16 +417,19 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `From: ${candidate.requesterLabel ?? '(unknown)'}`,
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
+    ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
     `Body:`,
     candidate.contentSummary,
     '',
-    '--- Current mock work environment ---',
-    renderEnvSnapshot(mockEnv),
-    '',
+    ...(mode === 'mock'
+      ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), '']
+      : []),
     '--- Team docs (read-only context) ---',
     renderTeamDocs(mockEnv.teamDocs),
     '',
-    'Produce the draft, notes, and actions now.',
+    mode === 'real'
+      ? 'Produce the draft, notes, needsDependentPhase flag, and prerequisite actions now.'
+      : 'Produce the draft, notes, and actions now.',
   ].join('\n');
 
   const raw = await agentJson<z.infer<typeof executeSchema>>({
@@ -229,6 +440,110 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   return {
     draft: raw.draft,
     notes: raw.notes,
+    needsDependentPhase: raw.needsDependentPhase,
     actions: raw.actions as MockAction[],
+  };
+}
+
+/**
+ * Render only redacted, durable action outcomes for the dependent authoring turn.
+ *
+ * The adapters redact what they store, and the model wrote the action
+ * arguments itself; the pass here is defence in depth for a provider line or
+ * an argument that still carries a recognisable credential shape, so that
+ * nothing of that shape is echoed into a second model prompt.
+ */
+export function appliedLedgerPrompt(
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+): string {
+  if (applied.length === 0) return '(no action result was recorded)';
+  return applied
+    .map((entry, index): string => {
+      const action = actions[index];
+      const result = entry.ok && !entry.held ? 'landed' : entry.held ? 'held' : 'failed';
+      const detail = entry.effect ?? entry.reason ?? '(no provider detail)';
+      const target = action
+        ? JSON.stringify({ tool: action.tool, args: action.args })
+        : JSON.stringify({ tool: entry.tool });
+      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}`);
+    })
+    .join('\n');
+}
+
+/**
+ * Author the run's one closing phase from action results that already exist.
+ * The returned literals are still proposals: the caller sends the whole set
+ * through the same exact-action gate used by the initial phase.
+ */
+export async function runDependentSkill(
+  args: RunDependentSkillArgs,
+): Promise<DependentExecutionOutput> {
+  const { skill, plan, candidate, charter, mockEnv } = args;
+  const mode: SurfaceMode = args.mode ?? 'mock';
+  const base = executorInstructions({
+    mode,
+    autonomousActions: args.autonomousActions ?? false,
+    skillBody: skill.body,
+    surfaces: args.surfaces ?? [],
+    mockEnv,
+    now: args.now ?? Date.now(),
+  });
+  const instructions = [
+    base,
+    '',
+    '--- Result-dependent phase (second and final phase) ---',
+    "The prerequisite actions have finished. This is the run's only dependent phase; there is no third turn and no loop.",
+    'The earlier needsDependentPhase instruction no longer applies; this final schema has no continuation flag.',
+    `Emit at most ${DEPENDENT_ACTION_CAP} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
+    'Treat only the applied ledger below as evidence of what happened. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
+    'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
+    'Return one planStepOutcomes row for every approved plan step, in order. Mark a step satisfied only when the ledger proves it; otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
+  ].join('\n');
+
+  const skillAgent = new Agent({
+    id: `day0-skill-${skill.name}-dependent`,
+    name: `day0-skill-${skill.name}-dependent`,
+    instructions,
+    model: MODEL_CONFIG,
+  });
+  const userPrompt = [
+    `Role: ${charter.proposedFunction}`,
+    '',
+    `Approved plan: ${plan.summary}`,
+    `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
+    `Expected output type: ${plan.expectedOutputType}`,
+    '',
+    '--- Candidate ---',
+    `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
+    `Title: ${candidate.title}`,
+    `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
+    ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
+    `Body: ${candidate.contentSummary}`,
+    '',
+    '--- Applied prerequisite ledger ---',
+    appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
+    ...(args.initialFailure ? ['', `Prerequisite phase failure: ${args.initialFailure}`] : []),
+    '',
+    'Produce the truthful closing draft, notes, plan-step outcomes, and at most one bounded set of closing actions now.',
+  ].join('\n');
+
+  const raw = await agentJson<z.infer<typeof dependentExecuteSchema>>({
+    agent: skillAgent,
+    user: userPrompt,
+    schema: dependentExecuteSchema,
+  });
+  const ordered = [...raw.planStepOutcomes].sort((a, b) => a.step - b.step);
+  if (
+    ordered.length !== plan.steps.length ||
+    ordered.some((outcome, index) => outcome.step !== index + 1)
+  ) {
+    throw new Error('dependent phase did not account for every approved plan step exactly once');
+  }
+  return {
+    draft: raw.draft,
+    notes: raw.notes,
+    actions: raw.actions as MockAction[],
+    planStepOutcomes: ordered,
   };
 }

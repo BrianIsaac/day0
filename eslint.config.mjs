@@ -16,7 +16,7 @@ const config = [
   {
     files: ['convex/**/*.ts'],
     rules: {
-      // Convex actions annotate their `ctx` params as `any` on purpose —
+      // Convex actions annotate their `ctx` params as `any` on purpose -
       // the generated `api` types otherwise close a circular inference
       // loop through the action that references them. `any` stays an
       // error everywhere outside convex/.
@@ -33,7 +33,15 @@ const config = [
     },
   },
   {
-    ignores: ['.next/**', 'node_modules/**', 'convex/_generated/**'],
+    ignores: [
+      '.next/**',
+      'node_modules/**',
+      'convex/_generated/**',
+      '.claude/**',
+      'docs/**',
+      'docs-fixture/**',
+      'docs-local/**',
+    ],
   },
 ];
 

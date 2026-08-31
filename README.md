@@ -24,7 +24,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
-**Project** · [Credits](#credits) · [Licence](#licence)
+**Project** · [Controlled evaluation](evaluation/README.md) · [Credits](#credits) · [Licence](#licence)
 
 ## What is unusual about it
 
@@ -52,7 +52,7 @@ A work item that matches no registered skill returns `needs-skill` rather than b
 
 ## What this is, and what it is not
 
-Day0 is a working demonstration of the whole loop rather than a product: it has no users, no benchmarks, and it makes no measured claim about how well the agent does the work it takes on. What it shows is that the loop closes.
+Day0 is a working demonstration rather than a product and has no users. Its measured claim is deliberately narrow: the repository ships a [controlled, programmatically graded comparison](evaluation/README.md) of onboarded Day0 versus an ordinary agent on the same 15 unfamiliar mock-office tasks. It does not claim that this benchmark predicts every real team's work.
 
 The agent works inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue, a social feed - seeded per agent. There are no connectors to real corporate systems, and that is deliberate: the mock environment is what makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust. Everything around it is real - the model calls, the sandbox, the state machine, the approval gates.
 
@@ -86,7 +86,7 @@ You need Docker, Node 22+ and pnpm. Run every command from the repository root.
 pnpm install                     # first: everything below is a repo-local binary
 cp .env.example .env.local
 
-pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
+pnpm convex:up                   # day0's backend on 3210/3211 (add --profile dev for the dashboard on 6791)
 pnpm model:up                    # OpenAI-compatible model server on 11434, on the GPU if you have one
 pnpm model:pull qwen3:8b         # ~5 GB, tool-capable, runs the whole loop
 pnpm sandbox:up                  # the sandbox that verifies authored skills; no port, no account
@@ -103,6 +103,7 @@ CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|…   # from the command above
 OPENAI_BASE_URL=http://127.0.0.1:11434/v1           # what Next dials
 CONVEX_OPENAI_BASE_URL=http://model:11434/v1        # what the backend dials
 OPENAI_MODEL=qwen3:8b
+OLLAMA_CONTEXT_LENGTH=16384                         # model-service input window
 # OPENAI_API_KEY stays empty. There is no account.
 ```
 
@@ -121,6 +122,8 @@ Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and appro
 Approving the charter is what fills the work queue, and how far the queue then gets is decided by the charter you just approved rather than by anything in this file. Each item is evaluated against the skills the agent has and the permissions it was deployed with, and only a `claim` verdict goes on to a plan and an execution. Deploy seeds five read scopes, and the one skill that ships is `see-internal-docs`, so the work that runs immediately is the work that can be answered out of the internal docs. A `needs-skill` verdict is the interesting one and it now finishes on this route: the agent proposes a skill, you approve it, the local sandbox runs its smoke test, and on exit 0 with output the skill registers and the work item that asked for it goes back in the queue and completes. `defer - awaiting-permission` is the verdict that still stops where it stops - it names the scope it wanted and then waits, with nothing in the UI that grants one.
 
 How fast that is has nothing to do with Day0. The agent core makes ordinary OpenAI chat-completions calls, so the wait you get is a property of the endpoint you pointed it at: the same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, and a hosted endpoint answers as fast as the provider does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
+
+The bundled server starts with a 16,384-token context because Day0's executor must see the approved charter, discovered documentation, runbook guidance, action schema and work request together. Ollama's smaller server default truncates that prompt from the head without failing the request, which can leave a local model holding the right tool names but not the instructions and evidence that determine their exact arguments. Set `OLLAMA_CONTEXT_LENGTH` higher only when the model supports it and the additional KV cache fits the machine; lowering it below 16,384 is a deliberate quality trade-off, not only a memory optimisation.
 
 Model size shows up in the output as well as on the clock, and the two are worth telling apart before you judge the loop. A small model holds the 1:1, fills the charter and drives the work queue, but it will sometimes decide it has heard enough and call `dayOneComplete` after two topics rather than seven; the charter it writes from that short transcript is a real charter, with thinner evidence in it. A larger model - local or hosted - is the whole of the fix for that, and `pnpm probe:model` tells you whether a given endpoint can drive the loop at all before you wire it into a demo.
 
@@ -186,6 +189,7 @@ Pin the decision in `.env.local` when the guess is wrong:
 | `MODEL_GPU=on` | require one, and fail loudly rather than run slowly |
 | `MODEL_GPU=off` | never ask for a device |
 | `MODEL_GPU_COUNT=1` | reserve one device instead of all of them |
+| `OLLAMA_CONTEXT_LENGTH=16384` | keep the charter, documentation, runbook and executor schema in one local-model prompt |
 
 A model larger than your free VRAM is loaded partly on the CPU whatever was reserved. `docker compose exec model ollama ps` prints the split, and is the thing to check when an accelerated setup is still mysteriously slow.
 
@@ -194,12 +198,14 @@ Every `:up` has a matching `:down`, and `pnpm convex:down` really does mean only
 ```bash
 pnpm model:down                  # the model server; the pulled weights stay
 pnpm sandbox:down                # the verification sandbox; it holds nothing
-pnpm convex:down                 # backend + dashboard; the data volume stays
+pnpm convex:down                 # the backend; the data volume stays
 ```
 
 In that order: `convex:down` removes the compose network on its way out, and cannot while the model container is still attached to it. The sandbox is on no network at all, so it is only in that list to be tidy - it is a few megabytes of idle Python.
 
-To throw the volumes away too, all together: `docker compose --env-file .env.local --profile model --profile sandbox down -v`.
+To throw the volumes away too, all together: `pnpm convex:down --profile model --profile sandbox -- -v`.
+
+Every service in `docker-compose.yml` sits behind a profile, and the profiles are the components: `real` is day0's backend and is added to every `pnpm convex:*` command for you, and each other profile adds one optional component. `pnpm convex:up --help` lists them; what each one is for, when you need it and what it never sees is in `docs/running/components.md`.
 
 ### Without Docker for Convex
 
@@ -225,7 +231,7 @@ Everything the route above runs, minus the model. The same self-hosted Convex ba
 pnpm install
 cp .env.example .env.local
 
-pnpm convex:up                   # backend on 3210/3211, dashboard on 6791
+pnpm convex:up                   # day0's backend on 3210/3211 (add --profile dev for the dashboard on 6791)
 pnpm sandbox:up                  # verifies authored skills; no account, no key
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
 ```
@@ -350,8 +356,8 @@ The [sandbox](#the-local-skill-sandbox) has no entry here because it has no port
 To run two backends side by side, give each its own compose project so the volumes stay separate:
 
 ```bash
-docker compose -p day0-review --env-file .env.local up -d
-docker compose -p day0-review --env-file .env.local down -v
+docker compose -p day0-review --env-file .env.local --profile real up -d
+docker compose -p day0-review --env-file .env.local --profile real down -v
 ```
 
 Override `CONVEX_CLOUD_ORIGIN` or `CONVEX_SITE_ORIGIN` only with an address that resolves *inside* the container. An address only your browser can resolve belongs in `NEXT_PUBLIC_CONVEX_URL` (the app) or `CONVEX_BROWSER_ORIGIN` (the Convex dashboard container) instead.

@@ -6,7 +6,15 @@ import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
 import { clockTime, clockTimeWithSeconds } from '../time';
 
-export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
+/** What an empty channel list means. The tab is mock-only: real mode does not
+ * render it, so it has no real-mode copy to show. */
+export const EMPTY_CHANNELS = 'no channels seeded';
+
+export function SlackTab({
+  agentId,
+}: {
+  agentId: Id<'agents'>;
+}) {
   const channels = useQuery(api.mock.listChannels, { agentId });
   const [pickedSlug, setPickedSlug] = useState<string | null>(null);
   const activeSlug = pickedSlug ?? channels?.[0]?.slug ?? null;
@@ -27,6 +35,8 @@ export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
   }, [sortedMessages.length]);
 
   if (!channels) return <div className="text-xs text-[var(--color-muted)]">loading slack…</div>;
+  if (channels.length === 0)
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_CHANNELS}</div>;
 
   const channelList = channels.filter((c) => c.kind === 'channel');
   const dmList = channels.filter((c) => c.kind === 'dm');

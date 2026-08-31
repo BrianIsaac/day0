@@ -11,12 +11,20 @@ const STATUS_TONE: Record<string, string> = {
   done: 'bg-[var(--color-ok)]/20 text-[var(--color-ok)]',
 };
 
-export function TicketsTab({ agentId }: { agentId: Id<'agents'> }) {
+/** What an empty ticket list means. The tab is mock-only: real mode does not
+ * render it, so it has no real-mode copy to show. */
+export const EMPTY_TICKETS = 'no tickets seeded';
+
+export function TicketsTab({
+  agentId,
+}: {
+  agentId: Id<'agents'>;
+}) {
   const tickets = useQuery(api.mock.listTickets, { agentId });
 
   if (!tickets) return <div className="text-xs text-[var(--color-muted)]">loading…</div>;
   if (tickets.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">no tickets seeded</div>;
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_TICKETS}</div>;
 
   return (
     <div className="space-y-3">

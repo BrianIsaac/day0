@@ -37,7 +37,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 Day0
               </span>
             </Link>
-            <HeaderAccount />
+            <div className="flex items-center gap-4">
+              <Link
+                href="/documentation"
+                className="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+              >
+                Documentation
+              </Link>
+              <HeaderAccount />
+            </div>
           </header>
           {children}
         </Providers>

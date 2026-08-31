@@ -1,9 +1,20 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
+import {
+  mutation,
+  query,
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
-import { applyVerdict } from './work';
+import { applyVerdict, skillRejectedReason } from './work';
 import { AUTHORING_LEASE_MS } from '../src/lib/skill-authoring';
+import { skillApprovalRefusal } from '../src/surfaces/policy';
+import { toSurfaceRecord } from '../src/surfaces/records';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
+import { grantScopeInTransaction } from './agents';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -111,6 +122,55 @@ async function requeueSourceWork(
   await applyVerdict(ctx, skill.proposedFor, verdict);
 }
 
+/**
+ * The target surface named by the work, falling back to its intake source.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   agentId: The agent.
+ *   workItemId: The work item the skill is proposed for.
+ *
+ * Returns:
+ *   The source plus the literal target slug in real mode.
+ */
+async function surfaceForWork(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  workItemId: Id<'workItems'>,
+): Promise<{ sourceSystem: string; targetSurface?: string }> {
+  const item = await ctx.db.get(workItemId);
+  if (!item) throw new Error('work item for skill proposal not found');
+  if (item.agentId !== agentId) {
+    throw new Error('skill and work item belong to different agents');
+  }
+  if (SURFACE_MODE !== 'real') return { sourceSystem: item.sourceSystem };
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .collect();
+  const workTokens = new Set(
+    `${item.title}\n${item.contentSummary}`.toLowerCase().match(/[a-z0-9]+/g) ?? [],
+  );
+  const named = surfaces.filter((surface: Doc<'surfaces'>): boolean => {
+    const nameTokens = surface.displayName.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+    return (
+      nameTokens.length > 0 && nameTokens.every((token: string): boolean => workTokens.has(token))
+    );
+  });
+  const namedSlugs = [...new Set(named.map((surface: Doc<'surfaces'>): string => surface.slug))];
+  if (namedSlugs.length > 1) {
+    throw new Error(`work evidence names more than one target surface: ${namedSlugs.join(', ')}`);
+  }
+  const targetSurface = namedSlugs[0] ?? item.sourceSystem;
+  if (
+    surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.slug === targetSurface).length >
+    1
+  ) {
+    throw new Error(`more than one surface is listed with slug ${targetSurface}`);
+  }
+  return { sourceSystem: item.sourceSystem, targetSurface };
+}
+
 export const registered = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
@@ -120,6 +180,15 @@ export const registered = query({
       .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'registered'))
       .collect();
   },
+});
+
+export const registeredInternal = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<Doc<'skills'>[]> =>
+    await ctx.db
+      .query('skills')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'registered'))
+      .collect(),
 });
 
 /**
@@ -237,15 +306,48 @@ export const propose = internalMutation({
     requiredScopes: v.array(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'skills'>> => {
+    const target = await surfaceForWork(ctx, args.agentId, args.workItemId);
+    const targetSurface = target.targetSurface;
+    const requestedScopes =
+      targetSurface && targetSurface !== target.sourceSystem
+        ? args.requiredScopes.filter(
+            (scope: string): boolean => scope !== `${target.sourceSystem}:write`,
+          )
+        : args.requiredScopes;
+    const proposedScopes = targetSurface
+      ? [...new Set([...requestedScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
+      : requestedScopes;
     const existing = await ctx.db
       .query('skills')
-      .withIndex('by_agent_name', (q) =>
-        q.eq('agentId', args.agentId).eq('name', args.name),
-      )
+      .withIndex('by_agent_name', (q) => q.eq('agentId', args.agentId).eq('name', args.name))
       .first();
     if (existing && existing.state !== 'rejected' && existing.state !== 'failed') {
+      if (existing.state === 'proposed') {
+        if (
+          existing.targetSurface &&
+          targetSurface &&
+          existing.targetSurface !== targetSurface &&
+          existing.proposedFor !== args.workItemId
+        ) {
+          throw new Error(
+            `skill ${args.name} is already proposed for surface ${existing.targetSurface}`,
+          );
+        }
+        const targetChanged =
+          existing.targetSurface !== undefined && existing.targetSurface !== targetSurface;
+        await ctx.db.patch(existing._id, {
+          targetSurface: existing.targetSurface ?? targetSurface,
+          ...(targetChanged ? { targetSurface } : {}),
+          requiredScopes: targetChanged
+            ? proposedScopes
+            : [...new Set([...(existing.requiredScopes ?? []), ...proposedScopes])],
+        });
+      }
       return existing._id;
     }
+    // A skill proposed for work that came in from a discovered surface acts on
+    // that surface: it is named on the row so approval can insist the surface
+    // is connected, and its scopes are the surface's read and write pair.
     const id = await ctx.db.insert('skills', {
       agentId: args.agentId,
       name: args.name,
@@ -255,7 +357,8 @@ export const propose = internalMutation({
       state: 'proposed',
       proposedFor: args.workItemId,
       rationale: args.rationale,
-      requiredScopes: args.requiredScopes,
+      requiredScopes: proposedScopes,
+      targetSurface,
       createdAt: Date.now(),
     });
     await ctx.db.insert('events', {
@@ -280,19 +383,33 @@ export const approve = mutation({
     if (row.state !== 'proposed') {
       throw new Error(`skill state is ${row.state}; expected proposed`);
     }
+    // A skill may only target a connected surface. The sandbox stays offline,
+    // so approval is the first point at which the target is checked, and the
+    // refusal reads the same on the button and in the thrown error.
+    if (row.targetSurface) {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) =>
+          q.eq('agentId', row.agentId).eq('slug', row.targetSurface!),
+        )
+        .unique();
+      const refusal = skillApprovalRefusal(
+        row.targetSurface,
+        surface
+          ? toSurfaceRecord(
+              withBrowserComponentState(
+                surface,
+                browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL),
+              ),
+            )
+          : undefined,
+        Date.now(),
+      );
+      if (refusal) throw new Error(`cannot approve "${row.name}": ${refusal}`);
+    }
     await ctx.db.patch(args.skillId, { state: 'approved' });
     for (const scope of row.requiredScopes ?? []) {
-      const existing = await ctx.db
-        .query('permissionGrants')
-        .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId).eq('scope', scope))
-        .first();
-      if (!existing) {
-        await ctx.db.insert('permissionGrants', {
-          agentId: row.agentId,
-          scope,
-          createdAt: Date.now(),
-        });
-      }
+      await grantScopeInTransaction(ctx, row.agentId, scope, 'skill');
     }
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -324,11 +441,83 @@ export const reject = mutation({
     }
     await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
     if (row.proposedFor) {
-      await ctx.db.patch(row.proposedFor, { state: 'cancelled' });
+      const sourceWork = await ctx.db.get(row.proposedFor);
+      if (sourceWork && sourceWork.agentId !== row.agentId) {
+        throw new Error('skill and work item belong to different agents');
+      }
+      const stillWaitingForThisProposal =
+        sourceWork?.state === 'needs-skill' &&
+        (!sourceWork.proposedSkillId || sourceWork.proposedSkillId === args.skillId);
+      if (stillWaitingForThisProposal) {
+        await ctx.db.patch(row.proposedFor, {
+          state: 'cancelled',
+          skipReason: skillRejectedReason(row.name),
+        });
+      }
     }
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'skill.rejected',
+      payload: { skillId: args.skillId, name: row.name },
+      createdAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+/**
+ * Send an agent-authored skill back through authoring before its first use.
+ *
+ * Registration makes a skill callable, so revision is deliberately narrower
+ * than rejection: the manager may reopen only the proposal's own skill while
+ * its source work is still waiting and no execution has ever claimed it. Once
+ * a work row names the skill under `skillId`, its body is part of a durable run
+ * and this transition is permanently closed.
+ */
+export const requestRevision = mutation({
+  args: { skillId: v.id('skills') },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const row = await assertOwnsSkill(ctx, args.skillId);
+    if (row.sourceType !== 'agent-authored' || row.state !== 'registered') {
+      throw new Error('only a registered agent-authored skill can be revised');
+    }
+    const executed = await ctx.db
+      .query('workItems')
+      .withIndex('by_skill', (q) => q.eq('skillId', args.skillId))
+      .first();
+    if (executed) {
+      throw new Error('cannot revise a skill after an execution has claimed it');
+    }
+    if (!row.proposedFor) {
+      throw new Error('cannot revise an authored skill without its source work');
+    }
+    const sourceWork = await ctx.db.get(row.proposedFor);
+    if (
+      !sourceWork ||
+      sourceWork.agentId !== row.agentId ||
+      !(['discovered', 'needs-skill'] as const).includes(
+        sourceWork.state as 'discovered' | 'needs-skill',
+      )
+    ) {
+      throw new Error('cannot revise while the source work has moved on');
+    }
+
+    await ctx.db.patch(args.skillId, {
+      state: 'approved',
+      body: '',
+      sandboxId: undefined,
+      daytonaSandboxId: undefined,
+      verificationLog: undefined,
+      registeredAt: undefined,
+      ...RELEASED,
+    });
+    await requeueSourceWork(ctx, row, {
+      decision: 'needs-skill',
+      reason: 'registered skill sent back for revision before first execution',
+    });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'skill.revision-requested',
       payload: { skillId: args.skillId, name: row.name },
       createdAt: Date.now(),
     });

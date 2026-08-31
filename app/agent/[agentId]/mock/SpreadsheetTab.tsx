@@ -5,7 +5,15 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
 
-export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
+/** What an empty sheet list means. The tab is mock-only: real mode does not
+ * render it, so it has no real-mode copy to show. */
+export const EMPTY_SPREADSHEETS = 'no spreadsheets seeded';
+
+export function SpreadsheetTab({
+  agentId,
+}: {
+  agentId: Id<'agents'>;
+}) {
   const sheets = useQuery(api.mock.listSpreadsheets, { agentId });
   // Nothing picked yet falls through to the first sheet and its first tab, so
   // the selection is derived rather than back-filled once the query lands.
@@ -33,7 +41,7 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
 
   if (!sheets) return <div className="text-xs text-[var(--color-muted)]">loading spreadsheets…</div>;
   if (sheets.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">no spreadsheets seeded</div>;
+    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_SPREADSHEETS}</div>;
 
   return (
     <div className="space-y-3 h-full flex flex-col">
