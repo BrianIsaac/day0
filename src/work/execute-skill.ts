@@ -85,11 +85,26 @@ const MOCK_PREAMBLE = [
   'Closing the loop (cross-surface fanout):',
   '  - Every surface that originated or was named in this work item should see at least one entry showing the work happened. The audit trail is non-negotiable.',
   '  - BASE actions for any in-charter work are always: (a) the primary mutation(s) — e.g. `spreadsheet.appendRow` for tracker updates, or `twitter.reply` for in-scope social — AND (b) a `slack.postMessage` to `dm-manager` summarising the draft for review. The fanout rules below are appended IN ADDITION to (a) and (b); they never replace either.',
-  '  - If the candidate `Source` line contains `ticket-queue`, ALSO append a `ticket.update` against the originating ticket — usually named in the candidate body (e.g. "Tracking ticket: REVOPS-203") or surfaced via the `Refs:` line. `status: "done"` for full closure, `"in-progress"` otherwise. `comment` summarises what you did in one or two sentences.',
-  '  - If your draft body cites another ticket slug from the env snapshot (e.g. "REVOPS-202 already covers the Looker refresh"), ALSO fire a second `ticket.update` against that cited ticket cross-linking your work — `status: "in-progress"`, one-line `comment`.',
+  '  - If the candidate `Source` line contains `ticket-queue`, follow the loaded `how-to-update-ticket` guide for the originating ticket named in the candidate or surfaced via the `Refs:` line. Do not invent a status policy when that guide and the candidate are silent.',
+  '  - If your draft body cites another ticket slug from the env snapshot (e.g. "REVOPS-202 already covers the Looker refresh"), follow the loaded guide\'s cross-link procedure for that ticket.',
   '  - If the original ask came from a public Slack channel (look for "in #channel-name" or "asked in #revops-asks" in the candidate body) AND you have drafted to manager DM, ALSO post a threaded `slack.postMessage` to the originating channel — `channelSlug` is that channel, `threadKey` matches the ask thread, body says something like "Drafting for {manager} — will post here when approved."',
   '  - These extra actions are NOT optional when the conditions hold; they are how the agent demonstrates trustworthy follow-through. NEVER replace the manager DM with a ticket update — both fire.',
 ].join('\n');
+
+function mockActionContract(guides: MockSurfaceSnapshot['howToGuides']): string {
+  const closure = documentedTicketClosure(guides);
+  const ticketRule = closure
+    ? `  - For ticket-queue work, emit a non-empty audit comment on the exact originating \`ticket://\` reference. Full closure uses \`${closure.full}\`; use \`${closure.partial}\` only when the candidate explicitly requests partial work such as moving that ticket to ${closure.partial}.`
+    : '  - For ticket-queue work, follow the candidate and loaded ticket procedure. Do not invent an originating-ticket status or audit requirement when both are silent.';
+  return [
+    '--- Mock action-set contract (takes precedence over contradictory skill wording) ---',
+    'The approved plan and candidate define the work for this turn. Apply these invariants even when a skill body was authored with broader prerequisites or calls itself read-only:',
+    '  - For an approved spreadsheet-update, the literal destination and values in the approved candidate are sufficient authority. Emit the requested `spreadsheet.appendRow`; do not invent source-evidence or duplicate-check prerequisites that the candidate does not require.',
+    ticketRule,
+    '  - One `ticket.update` may carry both the comment and status. A split pair is also valid only as comment-only followed by status-only. Never emit the same ticket status twice.',
+    '  - A manager DM is the review trail, not a replacement for the requested primary mutation or originating-ticket audit.',
+  ].join('\n');
+}
 
 /** The four verbs that exist only for the mock environment. */
 const MOCK_VERBS = 'spreadsheet.appendRow, slack.postMessage, twitter.reply, ticket.update';
@@ -235,12 +250,117 @@ export interface RunSkillArgs {
   autonomousActions?: boolean;
   /** Clock for the connection verdict; defaults to now. */
   now?: number;
+  /** Evidence hook for deliberate model calls after the initial executor turn. */
+  onAdditionalModelCall?: () => void;
 }
 
 export interface RunDependentSkillArgs extends RunSkillArgs {
   initialOutput: ExecutionOutput;
   initialLedger: AppliedAction[];
   initialFailure?: string;
+}
+
+const PARTIAL_WORK = /\b(?:partial(?:ly)?|incomplete|outstanding|remainder|remaining)\b/i;
+const NO_PARTIAL_WORK = /\b(?:no|zero|without any)\s+(?:work\s+)?(?:outstanding|remaining)\b/i;
+
+function approvedWorkIsPartial(candidate: WorkCandidate, plan: ExecutionPlan): boolean {
+  const approvedWork = [candidate.contentSummary, plan.summary, ...plan.steps].join('\n');
+  return PARTIAL_WORK.test(approvedWork) && !NO_PARTIAL_WORK.test(approvedWork);
+}
+
+interface TicketClosureProcedure {
+  full: MockAction['args']['status'];
+  partial: MockAction['args']['status'];
+}
+
+function documentedTicketClosure(
+  guides: MockSurfaceSnapshot['howToGuides'],
+): TicketClosureProcedure | undefined {
+  const guide = guides.find((row) => row.slug === 'how-to-update-ticket');
+  if (!guide) return undefined;
+  const full = guide.body.match(
+    /status:\s*[`"']*(open|in-progress|blocked|done)[`"']*\s+for full closure/i,
+  )?.[1] as MockAction['args']['status'] | undefined;
+  const partial = guide.body.match(
+    /[`"']*(open|in-progress|blocked|done)[`"']*\s+for partial/i,
+  )?.[1] as MockAction['args']['status'] | undefined;
+  return full && partial ? { full, partial } : undefined;
+}
+
+/**
+ * Validate the semantic action set before any literal reaches the exact-action gate.
+ *
+ * The structured-output schema proves that each row is well formed; this check
+ * proves that rows do not contradict one another or the approved work item.
+ */
+export function mockActionContractIssues(
+  output: ExecutionOutput,
+  candidate: WorkCandidate,
+  plan: ExecutionPlan,
+  howToGuides: MockSurfaceSnapshot['howToGuides'] = [],
+): string[] {
+  const issues: string[] = [];
+  if (
+    plan.expectedOutputType === 'spreadsheet-update' &&
+    !output.actions.some((action) => action.tool === 'spreadsheet.appendRow')
+  ) {
+    issues.push('action set omitted the approved primary spreadsheet mutation');
+  }
+  const origin =
+    candidate.sourceCategory === 'ticket-queue'
+      ? candidate.contentRefs.find((ref) => ref.startsWith('ticket://'))?.slice('ticket://'.length)
+      : undefined;
+  const closureProcedure = documentedTicketClosure(howToGuides);
+  const approvedWork = [candidate.contentSummary, plan.summary, ...plan.steps].join('\n');
+  if (
+    origin &&
+    (closureProcedure || /\b(?:audit|comment|note)\b/i.test(approvedWork)) &&
+    !output.actions.some(
+      (action) =>
+        action.tool === 'ticket.update' &&
+        action.args.slug === origin &&
+        action.args.comment?.trim(),
+    )
+  ) {
+    issues.push('ticket-queue action set omitted its documented originating-ticket audit comment');
+  }
+  if (origin) {
+    const originActions = output.actions.filter(
+      (action) => action.tool === 'ticket.update' && action.args.slug === origin,
+    );
+    const explicitStatus = candidate.contentSummary.match(
+      /\b(?:move|set|change)\b[^.!?\n]{0,100}?\bto\s+[`"']?(open|in-progress|blocked|done)\b/i,
+    )?.[1] as MockAction['args']['status'] | undefined;
+    const requiredStatus =
+      explicitStatus ??
+      (closureProcedure
+        ? approvedWorkIsPartial(candidate, plan)
+          ? closureProcedure.partial
+          : closureProcedure.full
+        : undefined);
+    if (
+      requiredStatus &&
+      originActions.length > 0 &&
+      !originActions.some((action) => action.args.status === requiredStatus)
+    ) {
+      issues.push(
+        explicitStatus
+          ? "originating-ticket transition contradicts the candidate's explicit status request"
+          : 'originating-ticket transition contradicts the documented closure state',
+      );
+    }
+  }
+  const statusesByTicket = new Map<string, Set<string>>();
+  for (const action of output.actions) {
+    if (action.tool !== 'ticket.update' || !action.args.slug || !action.args.status) continue;
+    const statuses = statusesByTicket.get(action.args.slug) ?? new Set<string>();
+    if (statuses.has(action.args.status)) {
+      issues.push('action set repeats a ticket status transition after it was already set');
+    }
+    statuses.add(action.args.status);
+    statusesByTicket.set(action.args.slug, statuses);
+  }
+  return issues;
 }
 
 /**
@@ -373,7 +493,9 @@ export function executorInstructions(args: {
     '',
     '--- Skill body (apply as your behavioural prior) ---',
     args.skillBody,
-    ...(args.mode === 'real'
+    ...(args.mode === 'mock'
+      ? ['', mockActionContract(args.mockEnv.howToGuides)]
+      : args.mode === 'real'
       ? [
           '',
           '--- Live run context (takes precedence over approval wording in the skill body) ---',
@@ -437,12 +559,47 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     user: userPrompt,
     schema: executeSchema,
   });
-  return {
+  const output: ExecutionOutput = {
     draft: raw.draft,
     notes: raw.notes,
     needsDependentPhase: raw.needsDependentPhase,
     actions: raw.actions as MockAction[],
   };
+  if (mode !== 'mock') return output;
+
+  const issues = mockActionContractIssues(output, candidate, plan, mockEnv.howToGuides);
+  if (issues.length === 0) return output;
+
+  const repairPrompt = [
+    userPrompt,
+    '',
+    '--- Required action-set correction ---',
+    'Your previous structured response was not applied and none of its actions reached the gate.',
+    'Return one full replacement response that fixes every issue below. Keep the literal candidate as the authority for requested destinations, values, comments and statuses; do not invent evidence, duplicate-check prerequisites or extra mutations.',
+    ...issues.map((issue) => `- ${issue}`),
+    '',
+    'Previous structured response:',
+    JSON.stringify(output),
+    '',
+    'Produce the complete corrected draft, notes, and actions now.',
+  ].join('\n');
+  args.onAdditionalModelCall?.();
+  const repairedRaw = await agentJson<z.infer<typeof executeSchema>>({
+    agent: skillAgent,
+    user: repairPrompt,
+    schema: executeSchema,
+  });
+  const repaired: ExecutionOutput = {
+    draft: repairedRaw.draft,
+    notes: repairedRaw.notes,
+    needsDependentPhase: repairedRaw.needsDependentPhase,
+    actions: repairedRaw.actions as MockAction[],
+  };
+  const remaining = mockActionContractIssues(repaired, candidate, plan, mockEnv.howToGuides);
+  if (remaining.length > 0) {
+    throw new Error(`executor action contract remained invalid after one repair: ${remaining.join('; ')}`);
+  }
+  return repaired;
 }
 
 /**

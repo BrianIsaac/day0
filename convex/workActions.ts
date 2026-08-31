@@ -271,7 +271,7 @@ async function executeApprovedPlanHandler(
   ctx: ActionCtx,
   args: { workItemId: Id<'workItems'> },
   internalCaller = false,
-): Promise<{ ok: boolean; reason?: string }> {
+): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
   const item: Doc<'workItems'> | null = internalCaller
     ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
     : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
@@ -384,7 +384,12 @@ async function holdDay0Actions(
     charter: Charter;
     internalCaller: boolean;
   },
-): Promise<{ ok: boolean; reason?: string }> {
+): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
+  let additionalModelCalls = 0;
+  const result = (
+    value: { ok: boolean; reason?: string },
+  ): { ok: boolean; reason?: string; additionalModelCalls?: number } =>
+    additionalModelCalls > 0 ? { ...value, additionalModelCalls } : value;
   try {
     const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
     if (!agent) throw new Error('agent not found');
@@ -405,6 +410,9 @@ async function holdDay0Actions(
       surfaces,
       mode: SURFACE_MODE,
       autonomousActions: autonomousActionsOn(agent),
+      onAdditionalModelCall: () => {
+        additionalModelCalls += 1;
+      },
     });
     const stagedOutput =
       SURFACE_MODE === 'real'
@@ -424,9 +432,15 @@ async function holdDay0Actions(
         } satisfies DependentAuthoringOutput,
       });
       if (!prepared.prepared) {
-        return { ok: false, reason: 'the run moved on before its dependent phase was prepared' };
+        return result({
+          ok: false,
+          reason: 'the run moved on before its dependent phase was prepared',
+        });
       }
-      return { ok: true, reason: 'no prerequisite action to apply; dependent actions authoring' };
+      return result({
+        ok: true,
+        reason: 'no prerequisite action to apply; dependent actions authoring',
+      });
     }
     const pending = await ctx.runMutation(internal.work.setActionsPending, {
       workItemId: args.workItemId,
@@ -434,15 +448,18 @@ async function holdDay0Actions(
       output: stagedOutput,
     });
     if (!pending.pending) {
-      return { ok: false, reason: 'the run was moved on before its actions could be held' };
+      return result({
+        ok: false,
+        reason: 'the run was moved on before its actions could be held',
+      });
     }
-    return {
+    return result({
       ok: true,
       reason:
         pending.phase === 'auto'
           ? 'automatic actions applying'
           : "actions pending the manager's approval",
-    };
+    });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     await ctx.runMutation(internal.work.setFailed, {
@@ -450,7 +467,7 @@ async function holdDay0Actions(
       reason,
       runId: args.runId,
     });
-    return { ok: false, reason };
+    return result({ ok: false, reason });
   }
 }
 

@@ -7,11 +7,16 @@ import {
   executeSchema,
   executorInstructions,
   executorPreamble,
+  mockActionContractIssues,
   replyTargetLine,
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
-import { ACTION_TOOLS, DEPENDENT_ACTION_CAP } from '../../../src/work/types';
+import {
+  ACTION_TOOLS,
+  DEPENDENT_ACTION_CAP,
+  type MockActionArgs,
+} from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
 
@@ -48,11 +53,363 @@ const emptyMock = {
   tickets: [],
 };
 
+const ticketGuides = [
+  {
+    slug: 'how-to-update-ticket',
+    title: 'How to update a ticket (action guide)',
+    body: 'For the originating ticket, use `status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
+  },
+];
+
+const recordedFlatArgs = {
+  body: '',
+  cells: [],
+  channelSlug: '',
+  comment: '',
+  headersJson: '',
+  method: '',
+  path: '',
+  sheetSlug: '',
+  slug: '',
+  status: 'open',
+  surface: '',
+  tabName: '',
+  threadKey: '',
+  tool: '',
+  toolArgsJson: '',
+  tweetSlug: '',
+} satisfies MockActionArgs;
+
+function recordedArgs(overrides: Partial<MockActionArgs>): MockActionArgs {
+  return { ...recordedFlatArgs, ...overrides };
+}
+
 // Assembled at runtime so the literal never sits in the source: GitHub push protection
 // flags any string shaped like a Slack token, synthetic or not.
 const SYNTHETIC_SLACK_TOKEN = ['xoxb', '1234567890-abcdefghijklmnop'].join('-');
 
 describe('executor output contract', (): void => {
+  it('rejects a repeated status-only ticket update after the combined requested update', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Move REVOPS-EVAL-08 to in-progress with the requested ownership note.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-EVAL-08',
+              status: 'in-progress',
+              comment: 'EVAL-WRITE-03 Priya owns the dbt dependency check',
+            }),
+          },
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-EVAL-08',
+              status: 'in-progress',
+              comment: '',
+            }),
+          },
+          {
+            tool: 'slack.postMessage',
+            args: recordedArgs({
+              channelSlug: 'dm-manager',
+              body: 'Prepared the requested ticket update.',
+              status: 'in-progress',
+            }),
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: 'EVAL-WRITE-03',
+        title: 'Accept the REVOPS-EVAL-08 dependency check',
+        contentSummary:
+          "Move REVOPS-EVAL-08 to in-progress and add exactly one comment containing EVAL-WRITE-03 and 'Priya owns the dbt dependency check'. Do not touch another ticket.",
+        contentRefs: ['ticket://REVOPS-EVAL-08'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Prepare the literal ticket update.',
+        steps: ['Move the ticket to in-progress and add exactly one comment.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 3,
+      },
+      ticketGuides,
+    );
+
+    expect(issues).toEqual([
+      'action set repeats a ticket status transition after it was already set',
+    ]);
+  });
+
+  it('rejects replacing an approved literal spreadsheet append with invented prerequisites', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft:
+          'Cannot append the Wayne Enterprises row until source evidence and a duplicate check are provided.',
+        notes: 'The exact requested cells were supplied, but the skill asked for extra prerequisites.',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: recordedArgs({
+              channelSlug: 'dm-manager',
+              body: 'Please provide source evidence and a duplicate check before approval.',
+            }),
+          },
+        ],
+      },
+      {
+        sourceCategory: 'inbox',
+        sourceSystem: 'spreadsheet',
+        externalId: 'EVAL-WRITE-02',
+        title: 'Append the approved Wayne Enterprises closed-won row',
+        contentSummary:
+          'Append exactly one row to q4-revenue-tracker / closed-won: Account Wayne Enterprises EVAL-WRITE-02; Amount $88,000; Close date 2026-10-18; Owner Aman; Stage closed-won.',
+        contentRefs: ['sheet://q4-revenue-tracker/closed-won'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Prepare the exact closed-won tracker append.',
+        steps: ['Append the one literal row after exact-action approval.'],
+        expectedOutputType: 'spreadsheet-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 3,
+      },
+      [],
+    );
+
+    expect(issues).toEqual(['action set omitted the approved primary spreadsheet mutation']);
+  });
+
+  it('rejects a ticket-queue result that omits the documented originating-ticket comment', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft:
+          'EVAL-DOC-04 — Before changing a Salesforce record, surface a draft to the manager for review. (Escalation paths)',
+        notes: 'No ticket update is included.',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: recordedArgs({
+              channelSlug: 'dm-manager',
+              body: 'Manager — proposed comment for REVOPS-EVAL-04, pending your approval.',
+            }),
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'docs',
+        externalId: 'EVAL-DOC-04',
+        title: 'Document the Salesforce escalation rule on REVOPS-EVAL-04',
+        contentSummary:
+          'Read the escalation documentation. Add a comment to REVOPS-EVAL-04 with marker EVAL-DOC-04 explaining what must happen before changing a Salesforce record, and cite the source document.',
+        contentRefs: ['doc://escalation-paths', 'ticket://REVOPS-EVAL-04'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Prepare the cited ticket comment.',
+        steps: ['Post the approved cited comment to REVOPS-EVAL-04.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 5,
+      },
+      ticketGuides,
+    );
+
+    expect(issues).toEqual([
+      'ticket-queue action set omitted its documented originating-ticket audit comment',
+    ]);
+  });
+
+  it('rejects an in-progress transition when the literal ticket-queue work is fully closed', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Recorded the documented Q4 tracker identifier on REVOPS-EVAL-05.',
+        notes: 'The documentation fully covers the tracker slug and rationale.',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: recordedArgs({ channelSlug: 'dm-manager', body: 'Draft for review.' }),
+          },
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-EVAL-05',
+              status: 'in-progress',
+              comment:
+                'EVAL-DOC-05 — q4-revenue-tracker is the source of truth. (Team overview)',
+            }),
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'docs',
+        externalId: 'EVAL-DOC-05',
+        title: 'Record the documented Q4 tracker identifier',
+        contentSummary:
+          'Read the team overview and comment on REVOPS-EVAL-05 with marker EVAL-DOC-05, the exact Q4 tracker slug, why the trackers matter, and an inline citation.',
+        contentRefs: ['doc://team-overview', 'ticket://REVOPS-EVAL-05'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Record the complete cited answer.',
+        steps: ['Post the complete source-cited comment.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 5,
+      },
+      ticketGuides,
+    );
+
+    expect(issues).toEqual([
+      'originating-ticket transition contradicts the documented closure state',
+    ]);
+  });
+
+  it('accepts an in-progress transition when the approved plan leaves work outstanding', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Recorded the first reconciliation pass; the second pass remains outstanding.',
+        notes: 'The approved work is intentionally incomplete.',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: {
+              slug: 'REVOPS-PARTIAL-01',
+              status: 'in-progress',
+              comment: 'Finished the first reconciliation pass; the remaining accounts are next.',
+            },
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: 'PARTIAL-01',
+        title: 'Run the first of two reconciliation passes',
+        contentSummary:
+          'Complete the first reconciliation pass on REVOPS-PARTIAL-01, record what was checked, and leave the remaining accounts for tomorrow.',
+        contentRefs: ['ticket://REVOPS-PARTIAL-01'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Complete only the first of two reconciliation passes.',
+        steps: ['Record the first pass; the second pass remains outstanding.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 10,
+      },
+      ticketGuides,
+    );
+
+    expect(issues).toEqual([]);
+  });
+
+  it('does not invent a closure policy when no ticket procedure is loaded', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Recorded the requested ticket note.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: {
+              slug: 'REVOPS-NO-GUIDE-01',
+              status: 'in-progress',
+              comment: 'Recorded the requested note.',
+            },
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: 'NO-GUIDE-01',
+        title: 'Record the note',
+        contentSummary: 'Record the requested note on REVOPS-NO-GUIDE-01.',
+        contentRefs: ['ticket://REVOPS-NO-GUIDE-01'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Record the requested note.',
+        steps: ['Add the note.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      [],
+    );
+
+    expect(issues).toEqual([]);
+  });
+
+  it('accepts the same status transition on two distinct tickets', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Updated the origin and cross-linked ticket.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-ORIGIN-01',
+              status: 'in-progress',
+              comment: 'Origin work remains partial.',
+            }),
+          },
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-CROSS-LINK-02',
+              status: 'in-progress',
+              comment: 'Cross-linked the partial work.',
+            }),
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'ticket',
+        externalId: 'PARTIAL-CROSS-LINK-01',
+        title: 'Record partial work on both related tickets',
+        contentSummary:
+          'Move REVOPS-ORIGIN-01 to in-progress with a note and cross-link the partial work on REVOPS-CROSS-LINK-02.',
+        contentRefs: ['ticket://REVOPS-ORIGIN-01', 'ticket://REVOPS-CROSS-LINK-02'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Record partial progress on the origin and related ticket.',
+        steps: ['Update both distinct tickets to in-progress with separate comments.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 3,
+      },
+      ticketGuides,
+    );
+
+    expect(issues).toEqual([]);
+  });
+
   it('accepts every verb, including the two surface verbs, with flat string args', (): void => {
     for (const tool of ACTION_TOOLS) {
       expect(
@@ -317,6 +674,53 @@ describe('executor preamble by mode', (): void => {
         now,
       }),
     ).not.toContain(header);
+  });
+
+  it('puts the literal mock action contract after a conflicting skill body', (): void => {
+    const conflictingBodies = [
+      [
+        '- Drafts only — never claim an answer was posted to the team.',
+        '- If the question implies needing to *change* something (update a spreadsheet, file a ticket), surface that as a follow-up; this skill is read-only.',
+      ].join('\n'),
+      [
+        '- Check duplication. Require a non-empty dedupeKey before appending.',
+        '- If any check fails, emit no spreadsheet mutation.',
+      ].join('\n'),
+    ];
+    for (const skillBody of conflictingBodies) {
+      const prompt = executorInstructions({
+        mode: 'mock',
+        autonomousActions: false,
+        skillBody,
+        surfaces: [],
+        mockEnv: { ...emptyMock, howToGuides: ticketGuides },
+        now,
+      });
+      const header =
+        '--- Mock action-set contract (takes precedence over contradictory skill wording) ---';
+      expect(prompt.indexOf(header)).toBeGreaterThan(prompt.indexOf(skillBody));
+      expect(prompt).toContain(
+        'the literal destination and values in the approved candidate are sufficient authority',
+      );
+      expect(prompt).toContain(
+        'Full closure uses `done`; use `in-progress` only when the candidate explicitly requests partial work',
+      );
+      expect(prompt).toContain('Never emit the same ticket status twice');
+    }
+  });
+
+  it('does not put an invented closure policy in the prompt when no guide is loaded', (): void => {
+    const prompt = executorInstructions({
+      mode: 'mock',
+      autonomousActions: false,
+      skillBody: 'Record the approved ticket note.',
+      surfaces: [],
+      mockEnv: emptyMock,
+      now,
+    });
+
+    expect(prompt).not.toContain('`status: "done"` for full closure');
+    expect(prompt).not.toContain('Full closure uses `done`');
   });
 
   it('prints the reply target line the preamble refers to', (): void => {

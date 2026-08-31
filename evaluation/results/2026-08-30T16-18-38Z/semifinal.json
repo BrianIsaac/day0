@@ -1,0 +1,2607 @@
+{
+  "schemaVersion": 1,
+  "experiment": "day0-semifinal-controlled-comparison",
+  "generatedAt": "2026-08-30T16:28:39.901Z",
+  "configuration": {
+    "commit": "79d21c6288f6fd8071090911facd52c17a73111e",
+    "model": "gpt-5.6-terra",
+    "temperature": 0.4,
+    "modelCallTimeoutMs": 90000,
+    "surfaceMode": "mock",
+    "arms": [
+      "day0",
+      "baseline"
+    ],
+    "requestedRuns": 3,
+    "taskIds": [
+      "docs-salesforce-escalation",
+      "docs-q4-source-of-truth",
+      "write-pipeline-row",
+      "write-closed-won-row",
+      "write-ticket-ownership"
+    ],
+    "taskTimeoutMs": {
+      "docs-salesforce-escalation": 240000,
+      "docs-q4-source-of-truth": 240000,
+      "write-pipeline-row": 300000,
+      "write-closed-won-row": 300000,
+      "write-ticket-ownership": 300000
+    },
+    "approvalDelayMs": 750,
+    "pollIntervalMs": 500,
+    "noLlmJudge": true,
+    "onboardingTranscriptProvenance": "Fixed reconstruction from the operator facts recorded in docs/plans/progress/e2e-30aug.md; the preserved source does not contain the original seven answer texts, so this is not a verbatim transcript. The boundary answer is stated generically and does not name the systems the out-of-scope tasks probe.",
+    "onboardingTranscriptPath": "evaluation/onboarding/day0.json",
+    "postCharterApprovalSkipped": true,
+    "backendModel": "gpt-5.6-terra"
+  },
+  "runs": [
+    {
+      "id": "day0-r1",
+      "arm": "day0",
+      "run": 1,
+      "status": "completed",
+      "humanWaitMs": 9756,
+      "decisions": [
+        {
+          "kind": "charter",
+          "requestedAt": "2026-08-30T16:18:55.415Z",
+          "approvedAt": "2026-08-30T16:18:56.252Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-08-30T16:19:00.595Z",
+          "approvedAt": "2026-08-30T16:19:01.374Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-08-30T16:19:08.656Z",
+          "approvedAt": "2026-08-30T16:19:09.438Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-q4-source-of-truth",
+          "requestedAt": "2026-08-30T16:19:13.222Z",
+          "approvedAt": "2026-08-30T16:19:14.000Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-q4-source-of-truth",
+          "requestedAt": "2026-08-30T16:19:23.167Z",
+          "approvedAt": "2026-08-30T16:19:23.948Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "skill",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:19:24.579Z",
+          "approvedAt": "2026-08-30T16:19:25.435Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:20:24.393Z",
+          "approvedAt": "2026-08-30T16:20:25.173Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:20:32.913Z",
+          "approvedAt": "2026-08-30T16:20:33.697Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-closed-won-row",
+          "requestedAt": "2026-08-30T16:20:37.614Z",
+          "approvedAt": "2026-08-30T16:20:38.392Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-closed-won-row",
+          "requestedAt": "2026-08-30T16:20:43.186Z",
+          "approvedAt": "2026-08-30T16:20:43.971Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "skill",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:20:44.625Z",
+          "approvedAt": "2026-08-30T16:20:45.494Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:22:26.972Z",
+          "approvedAt": "2026-08-30T16:22:27.751Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:22:33.002Z",
+          "approvedAt": "2026-08-30T16:22:33.782Z",
+          "delayMs": 751
+        }
+      ],
+      "tasks": [
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms783k92q7xjbseygmyef41srn8deqfs",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:18:56.292Z",
+          "finishedAt": "2026-08-30T16:19:09.577Z",
+          "deployToFirstCorrectActionMs": 30851,
+          "humanWaitMs": 1500,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-08-30T16:19:00.595Z",
+              "approvedAt": "2026-08-30T16:19:01.374Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-08-30T16:19:08.656Z",
+              "approvedAt": "2026-08-30T16:19:09.438Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-04 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-04",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "docs-q4-source-of-truth",
+          "externalId": "EVAL-DOC-05",
+          "category": "docs-grounded-read",
+          "workItemId": "ms76138ba698gahg3y77xs0ed18deq81",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:19:10.001Z",
+          "finishedAt": "2026-08-30T16:19:24.045Z",
+          "deployToFirstCorrectActionMs": 45333,
+          "humanWaitMs": 1502,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-q4-source-of-truth",
+              "requestedAt": "2026-08-30T16:19:13.222Z",
+              "approvedAt": "2026-08-30T16:19:14.000Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-q4-source-of-truth",
+              "requestedAt": "2026-08-30T16:19:23.167Z",
+              "approvedAt": "2026-08-30T16:19:23.948Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-05 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-05",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-pipeline-row",
+          "externalId": "EVAL-WRITE-01",
+          "category": "approval-write",
+          "workItemId": "ms7bk5c2f5vjbpdsyjvpbqq53s8df0t6",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:19:24.509Z",
+          "finishedAt": "2026-08-30T16:20:33.824Z",
+          "deployToFirstCorrectActionMs": 115083,
+          "humanWaitMs": 2253,
+          "decisions": [
+            {
+              "kind": "skill",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:19:24.579Z",
+              "approvedAt": "2026-08-30T16:19:25.435Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "plan",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:20:24.393Z",
+              "approvedAt": "2026-08-30T16:20:25.173Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:20:32.913Z",
+              "approvedAt": "2026-08-30T16:20:33.697Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 4,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/pipeline"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage",
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage",
+                "ticket.update"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-06",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          },
+          "error": "skill authored but verification failed - smoke test exited 1"
+        },
+        {
+          "taskId": "write-closed-won-row",
+          "externalId": "EVAL-WRITE-02",
+          "category": "approval-write",
+          "workItemId": "ms7awdhzzsvehfwz2yq78m9ja58de1e2",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:20:34.261Z",
+          "finishedAt": "2026-08-30T16:20:44.093Z",
+          "deployToFirstCorrectActionMs": 125361,
+          "humanWaitMs": 1500,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "write-closed-won-row",
+              "requestedAt": "2026-08-30T16:20:37.614Z",
+              "approvedAt": "2026-08-30T16:20:38.392Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-closed-won-row",
+              "requestedAt": "2026-08-30T16:20:43.186Z",
+              "approvedAt": "2026-08-30T16:20:43.971Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/closed-won"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-ticket-ownership",
+          "externalId": "EVAL-WRITE-03",
+          "category": "approval-write",
+          "workItemId": "ms7bbf0kwc7spdn6sxrnw0kxtn8dfyp5",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:20:44.543Z",
+          "finishedAt": "2026-08-30T16:22:33.952Z",
+          "deployToFirstCorrectActionMs": 235189,
+          "humanWaitMs": 2251,
+          "decisions": [
+            {
+              "kind": "skill",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:20:44.625Z",
+              "approvedAt": "2026-08-30T16:20:45.494Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "plan",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:22:26.972Z",
+              "approvedAt": "2026-08-30T16:22:27.751Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:22:33.002Z",
+              "approvedAt": "2026-08-30T16:22:33.782Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 5,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-08 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-08",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          },
+          "error": "skill authored but verification failed - smoke test exited 1"
+        }
+      ],
+      "agentId": "j5759z5tqakp67bv2c0xc83fvn8dfgms",
+      "deployedAt": "2026-08-30T16:18:38.663Z",
+      "completedAt": "2026-08-30T16:22:34.361Z"
+    },
+    {
+      "id": "baseline-r1",
+      "arm": "baseline",
+      "run": 1,
+      "status": "completed",
+      "humanWaitMs": 0,
+      "decisions": [],
+      "tasks": [
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7cr906jnkxknj4a0m1h2yg218dfyt8",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:22:34.617Z",
+          "finishedAt": "2026-08-30T16:22:47.438Z",
+          "deployToFirstCorrectActionMs": 11231,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-04 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
+        },
+        {
+          "taskId": "docs-q4-source-of-truth",
+          "externalId": "EVAL-DOC-05",
+          "category": "docs-grounded-read",
+          "workItemId": "ms76cx2mkw72a27mwfx02wk9gd8demx6",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:22:47.502Z",
+          "finishedAt": "2026-08-30T16:22:54.343Z",
+          "deployToFirstCorrectActionMs": 17413,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-05 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-05",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-pipeline-row",
+          "externalId": "EVAL-WRITE-01",
+          "category": "approval-write",
+          "workItemId": "ms73pgb2qt8c7w47k8pzw8xc4s8deez2",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:22:54.401Z",
+          "finishedAt": "2026-08-30T16:22:59.995Z",
+          "deployToFirstCorrectActionMs": 22177,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/pipeline"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-06",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-closed-won-row",
+          "externalId": "EVAL-WRITE-02",
+          "category": "approval-write",
+          "workItemId": "ms7d0rn5smss51q4dqgs447hy98dfgad",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:00.052Z",
+          "finishedAt": "2026-08-30T16:23:03.355Z",
+          "deployToFirstCorrectActionMs": 27446,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/closed-won"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
+        },
+        {
+          "taskId": "write-ticket-ownership",
+          "externalId": "EVAL-WRITE-03",
+          "category": "approval-write",
+          "workItemId": "ms7b6gmb7cvz4y3bjyd0gmbkms8df1ep",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:03.405Z",
+          "finishedAt": "2026-08-30T16:23:06.681Z",
+          "deployToFirstCorrectActionMs": 30829,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-08 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-08",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "agentId": "j570snaeaa55792jspveswa4w18dfqh2",
+      "deployedAt": "2026-08-30T16:22:34.368Z",
+      "completedAt": "2026-08-30T16:23:06.757Z"
+    },
+    {
+      "id": "baseline-r2",
+      "arm": "baseline",
+      "run": 2,
+      "status": "completed",
+      "humanWaitMs": 0,
+      "decisions": [],
+      "tasks": [
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7cg8my5pn8yhfgcpk3tw2m6s8df01x",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:06.979Z",
+          "finishedAt": "2026-08-30T16:23:12.432Z",
+          "deployToFirstCorrectActionMs": 3897,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-04 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
+        },
+        {
+          "taskId": "docs-q4-source-of-truth",
+          "externalId": "EVAL-DOC-05",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7388q516egrsa723h2381gvs8dexe9",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:12.486Z",
+          "finishedAt": "2026-08-30T16:23:18.716Z",
+          "deployToFirstCorrectActionMs": 10119,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-05 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-05",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-pipeline-row",
+          "externalId": "EVAL-WRITE-01",
+          "category": "approval-write",
+          "workItemId": "ms78h8zhydnavegtgep534fkjx8dfc4g",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:18.777Z",
+          "finishedAt": "2026-08-30T16:23:22.314Z",
+          "deployToFirstCorrectActionMs": 13788,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/pipeline"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
+        },
+        {
+          "taskId": "write-closed-won-row",
+          "externalId": "EVAL-WRITE-02",
+          "category": "approval-write",
+          "workItemId": "ms7enq1c9b0x8qct684cvv181x8de39j",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:22.369Z",
+          "finishedAt": "2026-08-30T16:23:25.786Z",
+          "deployToFirstCorrectActionMs": 17476,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/closed-won"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
+        },
+        {
+          "taskId": "write-ticket-ownership",
+          "externalId": "EVAL-WRITE-03",
+          "category": "approval-write",
+          "workItemId": "ms75h045mnzyg4f60v5b2yvrbx8dekq4",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:25.835Z",
+          "finishedAt": "2026-08-30T16:23:30.268Z",
+          "deployToFirstCorrectActionMs": 21466,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-08 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-08",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "agentId": "j570rbp84vv6c2992745xmhhen8dettd",
+      "deployedAt": "2026-08-30T16:23:06.768Z",
+      "completedAt": "2026-08-30T16:23:30.327Z"
+    },
+    {
+      "id": "day0-r2",
+      "arm": "day0",
+      "run": 2,
+      "status": "completed",
+      "humanWaitMs": 9754,
+      "decisions": [
+        {
+          "kind": "charter",
+          "requestedAt": "2026-08-30T16:23:46.059Z",
+          "approvedAt": "2026-08-30T16:23:46.897Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-08-30T16:23:50.140Z",
+          "approvedAt": "2026-08-30T16:23:50.915Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-08-30T16:23:56.164Z",
+          "approvedAt": "2026-08-30T16:23:56.949Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-q4-source-of-truth",
+          "requestedAt": "2026-08-30T16:24:00.814Z",
+          "approvedAt": "2026-08-30T16:24:01.588Z",
+          "delayMs": 749
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-q4-source-of-truth",
+          "requestedAt": "2026-08-30T16:24:07.271Z",
+          "approvedAt": "2026-08-30T16:24:08.056Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "skill",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:24:08.705Z",
+          "approvedAt": "2026-08-30T16:24:09.563Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:25:01.616Z",
+          "approvedAt": "2026-08-30T16:25:02.393Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:25:11.399Z",
+          "approvedAt": "2026-08-30T16:25:12.184Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-closed-won-row",
+          "requestedAt": "2026-08-30T16:25:15.832Z",
+          "approvedAt": "2026-08-30T16:25:16.609Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-closed-won-row",
+          "requestedAt": "2026-08-30T16:25:21.430Z",
+          "approvedAt": "2026-08-30T16:25:22.210Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "skill",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:25:22.846Z",
+          "approvedAt": "2026-08-30T16:25:23.703Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:25:54.773Z",
+          "approvedAt": "2026-08-30T16:25:55.554Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:26:00.685Z",
+          "approvedAt": "2026-08-30T16:26:01.467Z",
+          "delayMs": 750
+        }
+      ],
+      "tasks": [
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7841jmf6z3d52fs1rs7k4wt98dekfw",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:46.931Z",
+          "finishedAt": "2026-08-30T16:23:57.062Z",
+          "deployToFirstCorrectActionMs": 26674,
+          "humanWaitMs": 1501,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-08-30T16:23:50.140Z",
+              "approvedAt": "2026-08-30T16:23:50.915Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-08-30T16:23:56.164Z",
+              "approvedAt": "2026-08-30T16:23:56.949Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-04 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-04",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "docs-q4-source-of-truth",
+          "externalId": "EVAL-DOC-05",
+          "category": "docs-grounded-read",
+          "workItemId": "ms79y6g9a3bh78637tyd21c7cx8dee5s",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:23:57.502Z",
+          "finishedAt": "2026-08-30T16:24:08.155Z",
+          "deployToFirstCorrectActionMs": 37768,
+          "humanWaitMs": 1499,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-q4-source-of-truth",
+              "requestedAt": "2026-08-30T16:24:00.814Z",
+              "approvedAt": "2026-08-30T16:24:01.588Z",
+              "delayMs": 749
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-q4-source-of-truth",
+              "requestedAt": "2026-08-30T16:24:07.271Z",
+              "approvedAt": "2026-08-30T16:24:08.056Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-05 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-05",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-pipeline-row",
+          "externalId": "EVAL-WRITE-01",
+          "category": "approval-write",
+          "workItemId": "ms7exd6r7afy0gesqzr58vfpy98dfg0d",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:24:08.615Z",
+          "finishedAt": "2026-08-30T16:25:12.301Z",
+          "deployToFirstCorrectActionMs": 101898,
+          "humanWaitMs": 2251,
+          "decisions": [
+            {
+              "kind": "skill",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:24:08.705Z",
+              "approvedAt": "2026-08-30T16:24:09.563Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "plan",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:25:01.616Z",
+              "approvedAt": "2026-08-30T16:25:02.393Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:25:11.399Z",
+              "approvedAt": "2026-08-30T16:25:12.184Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 4,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/pipeline"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage",
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage",
+                "ticket.update"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-06",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          },
+          "error": "skill authored but verification failed - smoke test exited 1"
+        },
+        {
+          "taskId": "write-closed-won-row",
+          "externalId": "EVAL-WRITE-02",
+          "category": "approval-write",
+          "workItemId": "ms7495bqnjdx0hhfeapc5fta358dfy8z",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:25:12.753Z",
+          "finishedAt": "2026-08-30T16:25:22.311Z",
+          "deployToFirstCorrectActionMs": 111923,
+          "humanWaitMs": 1501,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "write-closed-won-row",
+              "requestedAt": "2026-08-30T16:25:15.832Z",
+              "approvedAt": "2026-08-30T16:25:16.609Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-closed-won-row",
+              "requestedAt": "2026-08-30T16:25:21.430Z",
+              "approvedAt": "2026-08-30T16:25:22.210Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/closed-won"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-ticket-ownership",
+          "externalId": "EVAL-WRITE-03",
+          "category": "approval-write",
+          "workItemId": "ms7781znd2d5pz1vayrsrbxvxx8de74f",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:25:22.776Z",
+          "finishedAt": "2026-08-30T16:26:01.598Z",
+          "deployToFirstCorrectActionMs": 151189,
+          "humanWaitMs": 2252,
+          "decisions": [
+            {
+              "kind": "skill",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:25:22.846Z",
+              "approvedAt": "2026-08-30T16:25:23.703Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "plan",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:25:54.773Z",
+              "approvedAt": "2026-08-30T16:25:55.554Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:26:00.685Z",
+              "approvedAt": "2026-08-30T16:26:01.467Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-08 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-08",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "agentId": "j5710yetzchmrqjdb4sjr2q1f98df6sv",
+      "deployedAt": "2026-08-30T16:23:30.337Z",
+      "completedAt": "2026-08-30T16:26:02.050Z"
+    },
+    {
+      "id": "day0-r3",
+      "arm": "day0",
+      "run": 3,
+      "status": "completed",
+      "humanWaitMs": 9758,
+      "decisions": [
+        {
+          "kind": "charter",
+          "requestedAt": "2026-08-30T16:26:19.512Z",
+          "approvedAt": "2026-08-30T16:26:20.352Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-08-30T16:26:24.245Z",
+          "approvedAt": "2026-08-30T16:26:25.020Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-08-30T16:26:34.428Z",
+          "approvedAt": "2026-08-30T16:26:35.210Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-q4-source-of-truth",
+          "requestedAt": "2026-08-30T16:26:39.787Z",
+          "approvedAt": "2026-08-30T16:26:40.566Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-q4-source-of-truth",
+          "requestedAt": "2026-08-30T16:26:45.313Z",
+          "approvedAt": "2026-08-30T16:26:46.095Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "skill",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:26:46.765Z",
+          "approvedAt": "2026-08-30T16:26:47.622Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:27:11.640Z",
+          "approvedAt": "2026-08-30T16:27:12.419Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-08-30T16:27:17.297Z",
+          "approvedAt": "2026-08-30T16:27:18.077Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-closed-won-row",
+          "requestedAt": "2026-08-30T16:27:21.955Z",
+          "approvedAt": "2026-08-30T16:27:22.732Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-closed-won-row",
+          "requestedAt": "2026-08-30T16:27:28.268Z",
+          "approvedAt": "2026-08-30T16:27:29.045Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "skill",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:27:29.680Z",
+          "approvedAt": "2026-08-30T16:27:30.547Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:28:07.553Z",
+          "approvedAt": "2026-08-30T16:28:08.331Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-ticket-ownership",
+          "requestedAt": "2026-08-30T16:28:14.327Z",
+          "approvedAt": "2026-08-30T16:28:15.111Z",
+          "delayMs": 751
+        }
+      ],
+      "tasks": [
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7av0jny3yvypsnrvrj45dp5x8dfbkj",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:26:20.396Z",
+          "finishedAt": "2026-08-30T16:26:35.325Z",
+          "deployToFirstCorrectActionMs": 33206,
+          "humanWaitMs": 1502,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-08-30T16:26:24.245Z",
+              "approvedAt": "2026-08-30T16:26:25.020Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-08-30T16:26:34.428Z",
+              "approvedAt": "2026-08-30T16:26:35.210Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-04 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-04",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "docs-q4-source-of-truth",
+          "externalId": "EVAL-DOC-05",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7c4mbfygf51x9m4cshzf2z918de00v",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:26:35.762Z",
+          "finishedAt": "2026-08-30T16:26:46.191Z",
+          "deployToFirstCorrectActionMs": 44079,
+          "humanWaitMs": 1501,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-q4-source-of-truth",
+              "requestedAt": "2026-08-30T16:26:39.787Z",
+              "approvedAt": "2026-08-30T16:26:40.566Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-q4-source-of-truth",
+              "requestedAt": "2026-08-30T16:26:45.313Z",
+              "approvedAt": "2026-08-30T16:26:46.095Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-05 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-05",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-pipeline-row",
+          "externalId": "EVAL-WRITE-01",
+          "category": "approval-write",
+          "workItemId": "ms793ms37qjr3887a9a26eqqeh8depws",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:26:46.649Z",
+          "finishedAt": "2026-08-30T16:27:18.191Z",
+          "deployToFirstCorrectActionMs": 76062,
+          "humanWaitMs": 2252,
+          "decisions": [
+            {
+              "kind": "skill",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:26:46.765Z",
+              "approvedAt": "2026-08-30T16:26:47.622Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "plan",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:27:11.640Z",
+              "approvedAt": "2026-08-30T16:27:12.419Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-pipeline-row",
+              "requestedAt": "2026-08-30T16:27:17.297Z",
+              "approvedAt": "2026-08-30T16:27:18.077Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/pipeline"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage",
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage",
+                "ticket.update"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-06",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-closed-won-row",
+          "externalId": "EVAL-WRITE-02",
+          "category": "approval-write",
+          "workItemId": "ms7eemnng9t9vq0ejr5ddq6t9n8dfzz9",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:27:18.641Z",
+          "finishedAt": "2026-08-30T16:27:29.152Z",
+          "deployToFirstCorrectActionMs": 87035,
+          "humanWaitMs": 1500,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "write-closed-won-row",
+              "requestedAt": "2026-08-30T16:27:21.955Z",
+              "approvedAt": "2026-08-30T16:27:22.732Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-closed-won-row",
+              "requestedAt": "2026-08-30T16:27:28.268Z",
+              "approvedAt": "2026-08-30T16:27:29.045Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/closed-won"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-ticket-ownership",
+          "externalId": "EVAL-WRITE-03",
+          "category": "approval-write",
+          "workItemId": "ms7fw2y97wcgyzwt1whcwzkk298devza",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:27:29.608Z",
+          "finishedAt": "2026-08-30T16:28:15.226Z",
+          "deployToFirstCorrectActionMs": 133094,
+          "humanWaitMs": 2252,
+          "decisions": [
+            {
+              "kind": "skill",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:27:29.680Z",
+              "approvedAt": "2026-08-30T16:27:30.547Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "plan",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:28:07.553Z",
+              "approvedAt": "2026-08-30T16:28:08.331Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-ticket-ownership",
+              "requestedAt": "2026-08-30T16:28:14.327Z",
+              "approvedAt": "2026-08-30T16:28:15.111Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-08 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-08",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "agentId": "j575794fyzp1k4870drshz7hgx8df80g",
+      "deployedAt": "2026-08-30T16:26:02.062Z",
+      "completedAt": "2026-08-30T16:28:15.693Z"
+    },
+    {
+      "id": "baseline-r3",
+      "arm": "baseline",
+      "run": 3,
+      "status": "completed",
+      "humanWaitMs": 0,
+      "decisions": [],
+      "tasks": [
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms719yz45h2v2t6j1hhtkw6a758dexeh",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:28:15.916Z",
+          "finishedAt": "2026-08-30T16:28:21.604Z",
+          "deployToFirstCorrectActionMs": 4294,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-04 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
+        },
+        {
+          "taskId": "docs-q4-source-of-truth",
+          "externalId": "EVAL-DOC-05",
+          "category": "docs-grounded-read",
+          "workItemId": "ms701hbsqfwad82d1vc6zy5x718dfr8p",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:28:21.655Z",
+          "finishedAt": "2026-08-30T16:28:26.918Z",
+          "deployToFirstCorrectActionMs": 9254,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-05 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-05",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-pipeline-row",
+          "externalId": "EVAL-WRITE-01",
+          "category": "approval-write",
+          "workItemId": "ms7azc4pr2mx432kh3eq9qtc918dfxj0",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:28:26.965Z",
+          "finishedAt": "2026-08-30T16:28:33.579Z",
+          "deployToFirstCorrectActionMs": 13645,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/pipeline"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-06",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "taskId": "write-closed-won-row",
+          "externalId": "EVAL-WRITE-02",
+          "category": "approval-write",
+          "workItemId": "ms70yhy9dxspe428kf7jzzw69s8dehww",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:28:33.634Z",
+          "finishedAt": "2026-08-30T16:28:36.811Z",
+          "deployToFirstCorrectActionMs": 19629,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/closed-won"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
+        },
+        {
+          "taskId": "write-ticket-ownership",
+          "externalId": "EVAL-WRITE-03",
+          "category": "approval-write",
+          "workItemId": "ms73w0m4qtqjy51zfsdf9f60mh8dfegv",
+          "terminalState": "completed",
+          "timedOut": false,
+          "startedAt": "2026-08-30T16:28:36.867Z",
+          "finishedAt": "2026-08-30T16:28:39.849Z",
+          "deployToFirstCorrectActionMs": 22640,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-08 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-08",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "agentId": "j57akqca10nqj2eqe5kz54c6md8de9j9",
+      "deployedAt": "2026-08-30T16:28:15.704Z",
+      "completedAt": "2026-08-30T16:28:39.901Z"
+    }
+  ]
+}
