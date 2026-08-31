@@ -3,7 +3,6 @@ import { Agent } from '@mastra/core/agent';
 import { agentJson, MODEL_CONFIG } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import {
-  ACTION_TOOLS,
   DEPENDENT_ACTION_CAP,
   type DependentExecutionOutput,
   type ExecutionOutput,
@@ -70,11 +69,11 @@ const MOCK_PREAMBLE = [
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
-  'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. Available tools:',
+  'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:',
   '  - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }',
-  '  - slack.postMessage    — { channelSlug, threadKey?, body }',
+  '  - slack.postMessage    — { channelSlug, threadKey: string or null, body }',
   '  - twitter.reply        — { tweetSlug, body }',
-  '  - ticket.update        — { slug, status?, comment? }',
+  '  - ticket.update        — { slug, status: value or null, comment: string or null }',
   '',
   'Discipline:',
   `  - ${actionModeInstruction(false, 'mock')}`,
@@ -115,7 +114,7 @@ const REAL_PREAMBLE = [
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   '',
-  'Action format: each action is { tool: string, args: object }. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
+  'Action format: each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
   '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
   '',
@@ -154,78 +153,163 @@ export function executorPreamble(mode: SurfaceMode, autonomousActions = false): 
 }
 
 /**
- * The action-args schema is intentionally flat: every action lists its
- * own arg fields as optional at the top level. OpenAI's structured-
- * output strict mode rejects `z.any()`, and discriminatedUnion → oneOf
- * doesn't round-trip cleanly through openai.beta.chat.completions.
- * The flat shape keeps the JSON schema valid and readable.
+ * The model sees one tagged branch per verb. A plain Zod union is deliberate:
+ * Zod serialises it as nested `anyOf`, which OpenAI Structured Outputs accepts,
+ * while `z.discriminatedUnion` serialises as unsupported `oneOf`. Optional
+ * verb fields are required-but-nullable on the wire because strict Structured
+ * Outputs requires every property; they are omitted again before persistence.
  */
-export const actionArgsSchema = z.object({
-  // spreadsheet.appendRow — cells encoded as array of header/value pairs
-  // because OpenAI structured-output strict mode rejects `propertyNames`
-  // (the JSON-schema field z.record produces).
-  sheetSlug: z.string().optional(),
-  tabName: z.string().optional(),
-  cells: z
-    .array(
-      z.object({
+const cellsSchema = z
+  .array(
+    z
+      .object({
         header: z.string(),
         value: z.string(),
-      }),
-    )
-    .optional(),
-  // slack.postMessage
-  channelSlug: z.string().optional(),
-  threadKey: z.string().optional(),
-  // shared body for slack/twitter
-  body: z.string().optional(),
-  // twitter.reply
-  tweetSlug: z.string().optional(),
-  // ticket.update
-  slug: z.string().optional(),
-  status: z.enum(['open', 'in-progress', 'blocked', 'done']).optional(),
-  comment: z.string().optional(),
-  // mcp.call and http.request. Structured provider arguments travel as JSON
-  // strings, parsed and size-capped server-side, so the bag stays flat.
-  surface: z.string().optional(),
-  tool: z.string().optional(),
-  toolArgsJson: z.string().optional(),
-  method: z.string().optional(),
-  path: z.string().optional(),
-  headersJson: z.string().optional(),
-});
+      })
+      .strict(),
+  );
 
-export const executeSchema = z.object({
-  draft: z.string(),
-  notes: z.string(),
-  needsDependentPhase: z.boolean(),
-  actions: z.array(
-    z.object({
-      tool: z.enum(ACTION_TOOLS),
-      args: actionArgsSchema,
-    }),
-  ),
-});
+export const generatedActionSchema = z.union([
+  z
+    .object({
+      tool: z.literal('spreadsheet.appendRow'),
+      args: z
+        .object({
+          sheetSlug: z.string(),
+          tabName: z.string(),
+          cells: cellsSchema,
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('slack.postMessage'),
+      args: z
+        .object({
+          channelSlug: z.string(),
+          threadKey: z.string().nullable(),
+          body: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('twitter.reply'),
+      args: z
+        .object({
+          tweetSlug: z.string(),
+          body: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('ticket.update'),
+      args: z
+        .object({
+          slug: z.string(),
+          status: z.enum(['open', 'in-progress', 'blocked', 'done']).nullable(),
+          comment: z.string().nullable(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('mcp.call'),
+      args: z
+        .object({
+          surface: z.string(),
+          tool: z.string(),
+          toolArgsJson: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      tool: z.literal('http.request'),
+      args: z
+        .object({
+          surface: z.string(),
+          method: z.enum(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']),
+          path: z.string(),
+          headersJson: z.string().nullable(),
+          body: z.string().nullable(),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
 
-export const dependentExecuteSchema = z.object({
-  draft: z.string(),
-  notes: z.string(),
-  actions: z
-    .array(
-      z.object({
-        tool: z.enum(ACTION_TOOLS),
-        args: actionArgsSchema,
-      }),
-    )
-    .max(DEPENDENT_ACTION_CAP),
-  planStepOutcomes: z.array(
-    z.object({
-      step: z.number().int().positive(),
-      status: z.enum(['satisfied', 'blocked']),
-      evidence: z.string().min(1),
-    }),
-  ),
-});
+export const executeSchema = z
+  .object({
+    draft: z.string(),
+    notes: z.string(),
+    needsDependentPhase: z.boolean(),
+    actions: z.array(generatedActionSchema),
+  })
+  .strict();
+
+export const dependentExecuteSchema = z
+  .object({
+    draft: z.string(),
+    notes: z.string(),
+    actions: z.array(generatedActionSchema).max(DEPENDENT_ACTION_CAP),
+    planStepOutcomes: z.array(
+      z
+        .object({
+          step: z.number().int().positive(),
+          status: z.enum(['satisfied', 'blocked']),
+          evidence: z.string().min(1),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+type GeneratedAction = z.infer<typeof generatedActionSchema>;
+
+function materialiseGeneratedAction(action: GeneratedAction): MockAction {
+  switch (action.tool) {
+    case 'spreadsheet.appendRow':
+    case 'twitter.reply':
+    case 'mcp.call':
+      return action;
+    case 'slack.postMessage':
+      return {
+        tool: action.tool,
+        args: {
+          channelSlug: action.args.channelSlug,
+          ...(action.args.threadKey === null ? {} : { threadKey: action.args.threadKey }),
+          body: action.args.body,
+        },
+      };
+    case 'ticket.update':
+      return {
+        tool: action.tool,
+        args: {
+          slug: action.args.slug,
+          ...(action.args.status === null ? {} : { status: action.args.status }),
+          ...(action.args.comment === null ? {} : { comment: action.args.comment }),
+        },
+      };
+    case 'http.request':
+      return {
+        tool: action.tool,
+        args: {
+          surface: action.args.surface,
+          method: action.args.method,
+          path: action.args.path,
+          ...(action.args.headersJson === null ? {} : { headersJson: action.args.headersJson }),
+          ...(action.args.body === null ? {} : { body: action.args.body }),
+        },
+      };
+  }
+}
 
 export interface SelectedSkill {
   name: string;
@@ -563,7 +647,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     draft: raw.draft,
     notes: raw.notes,
     needsDependentPhase: raw.needsDependentPhase,
-    actions: raw.actions as MockAction[],
+    actions: raw.actions.map(materialiseGeneratedAction),
   };
   if (mode !== 'mock') return output;
 
@@ -593,7 +677,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     draft: repairedRaw.draft,
     notes: repairedRaw.notes,
     needsDependentPhase: repairedRaw.needsDependentPhase,
-    actions: repairedRaw.actions as MockAction[],
+    actions: repairedRaw.actions.map(materialiseGeneratedAction),
   };
   const remaining = mockActionContractIssues(repaired, candidate, plan, mockEnv.howToGuides);
   if (remaining.length > 0) {
@@ -700,7 +784,7 @@ export async function runDependentSkill(
   return {
     draft: raw.draft,
     notes: raw.notes,
-    actions: raw.actions as MockAction[],
+    actions: raw.actions.map(materialiseGeneratedAction),
     planStepOutcomes: ordered,
   };
 }
