@@ -350,6 +350,7 @@ function mockActionContract(contract: ProcedureContract): string {
     ticketRule,
     '  - One `ticket.update` may carry both the comment and status. A split pair is also valid only as comment-only followed by status-only. Never emit the same ticket status twice.',
     '  - A supplemental trail required by a loaded procedure never replaces the requested primary mutation, and the primary mutation never replaces that trail.',
+    '  - Construct the action set in this order: candidate-requested primary effects, applicable loaded trails, then procedureTrails indexes. Reuse one action only when its destination and payload satisfy both roles.',
   ].join('\n');
 }
 
@@ -632,6 +633,50 @@ function originatingReference(candidate: WorkCandidate, prefix: string): string 
   return candidate.contentRefs.find((ref) => ref.startsWith(prefix))?.slice(prefix.length);
 }
 
+function referencedDestination(candidate: WorkCandidate, prefix: string): string | undefined {
+  return originatingReference(candidate, prefix)?.split(/[/?#]/, 1)[0] || undefined;
+}
+
+function primaryActionIssue(
+  output: Pick<ExecutionOutput, 'actions'>,
+  candidate: WorkCandidate,
+  plan: ExecutionPlan,
+): string | undefined {
+  if (plan.expectedOutputType === 'spreadsheet-update') {
+    const sheet = referencedDestination(candidate, 'sheet://');
+    const present = output.actions.some(
+      (action) =>
+        action.tool === 'spreadsheet.appendRow' && (!sheet || action.args.sheetSlug === sheet),
+    );
+    return present ? undefined : 'action set omitted the approved primary spreadsheet mutation';
+  }
+  if (plan.expectedOutputType === 'ticket-update') {
+    const ticket = referencedDestination(candidate, 'ticket://');
+    if (!ticket) return undefined;
+    return output.actions.some(
+      (action) => action.tool === 'ticket.update' && action.args.slug === ticket,
+    )
+      ? undefined
+      : 'action set omitted the approved primary ticket mutation';
+  }
+  if (plan.expectedOutputType !== 'message') return undefined;
+  const channel = candidate.replyTarget?.channel ?? referencedDestination(candidate, 'slack://');
+  if (channel) {
+    return output.actions.some(
+      (action) => action.tool === 'slack.postMessage' && action.args.channelSlug === channel,
+    )
+      ? undefined
+      : 'action set omitted the approved primary message mutation';
+  }
+  const post = referencedDestination(candidate, 'tweet://');
+  if (!post) return undefined;
+  return output.actions.some(
+    (action) => action.tool === 'twitter.reply' && action.args.tweetSlug === post,
+  )
+    ? undefined
+    : 'action set omitted the approved primary message mutation';
+}
+
 function matchingProcedureActions(
   trail: ProcedureContract['trails'][number],
   output: Pick<ExecutionOutput, 'actions'>,
@@ -698,12 +743,8 @@ export function mockActionContractIssues(
   contract: ProcedureContract = { trails: [] },
 ): string[] {
   const issues = procedureTrailAttentionIssues(output, candidate, contract);
-  if (
-    plan.expectedOutputType === 'spreadsheet-update' &&
-    !output.actions.some((action) => action.tool === 'spreadsheet.appendRow')
-  ) {
-    issues.push('action set omitted the approved primary spreadsheet mutation');
-  }
+  const primaryIssue = primaryActionIssue(output, candidate, plan);
+  if (primaryIssue) issues.push(primaryIssue);
   const explicitStatus = candidate.contentSummary.match(
     /\b(?:move|set|change)\b[^.!?\n]{0,100}?\bto\s+[`"']?(open|in-progress|blocked|done)\b/i,
   )?.[1];
@@ -924,11 +965,11 @@ export function executorInstructions(args: {
     '--- How-to guides (action format reference) ---',
     renderHowTos(args.mockEnv.howToGuides),
     '',
-    '--- Parsed runtime procedure contract ---',
-    renderProcedureContract(procedureContract),
-    '',
     '--- Skill body (apply as your behavioural prior) ---',
     args.skillBody,
+    '',
+    '--- Parsed runtime procedure contract ---',
+    renderProcedureContract(procedureContract),
     ...(args.mode === 'mock'
       ? ['', mockActionContract(procedureContract)]
       : args.mode === 'real'
@@ -1015,7 +1056,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     '',
     '--- Required action-set correction ---',
     'Your previous structured response was not applied and none of its actions reached the gate.',
-    'Return one full replacement response that fixes every issue below. Keep the literal candidate as the authority for requested destinations, values, comments and statuses; do not invent evidence, duplicate-check prerequisites or extra mutations.',
+    'Return one full replacement response that fixes every issue below. Preserve every previous action not implicated by an issue. Keep the literal candidate as the authority for requested destinations, values, comments and statuses; do not invent evidence, duplicate-check prerequisites or extra mutations.',
     ...issues.map((issue) => `- ${issue}`),
     '',
     'Previous structured response:',

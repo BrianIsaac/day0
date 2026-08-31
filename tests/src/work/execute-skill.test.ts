@@ -604,6 +604,57 @@ describe('executor output contract', (): void => {
     expect(issues).toEqual([]);
   });
 
+  it('rejects a procedure trail that displaced the candidate-requested primary message', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'private-recaps',
+          title: 'Private recaps',
+          body: [
+            'After completing work, send a recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and a non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    });
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Prepared the requested message.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'lead-desk', body: 'Completed the work.' },
+          },
+        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      },
+      {
+        sourceCategory: 'inbox',
+        sourceSystem: 'chat',
+        externalId: 'CASE-18',
+        title: 'Post the handoff',
+        contentSummary: 'Post the supplied handoff in the project room.',
+        contentRefs: ['slack://project-room/case-18'],
+        replyTarget: { channel: 'project-room', threadTs: 'case-18' },
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Post the supplied handoff.',
+        steps: ['Send the approved message to its requested destination.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      contract,
+    );
+
+    expect(issues).toEqual(['action set omitted the approved primary message mutation']);
+  });
+
   it('accepts the same status transition on two distinct tickets', (): void => {
     const issues = mockActionContractIssues(
       {

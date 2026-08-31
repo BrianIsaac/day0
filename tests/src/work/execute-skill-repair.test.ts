@@ -121,9 +121,7 @@ describe('mock executor semantic repair', (): void => {
             args: { channelSlug: 'lead-desk', threadKey: null, body: 'The answer is prepared.' },
           },
         ],
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
       },
     );
 
@@ -152,10 +150,11 @@ describe('mock executor semantic repair', (): void => {
     });
 
     expect(recorded.calls).toHaveLength(2);
-    const correction = recorded.calls[1]!.user
-      .split('--- Required action-set correction ---')[1]!
-      .split('Previous structured response:')[0]!;
+    const correction = recorded.calls[1]!.user.split(
+      '--- Required action-set correction ---',
+    )[1]!.split('Previous structured response:')[0]!;
     expect(correction).toContain('loaded procedure prescribes a completion report');
+    expect(correction).toContain('Preserve every previous action not implicated by an issue');
     expect(correction).not.toContain('lead-desk');
     expect(output.procedureTrails).toEqual([
       { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
@@ -175,9 +174,7 @@ describe('mock executor semantic repair', (): void => {
         draft: 'Move REVOPS-EVAL-08 to in-progress with the requested ownership note.',
         notes: '',
         needsDependentPhase: false,
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
@@ -212,9 +209,7 @@ describe('mock executor semantic repair', (): void => {
         draft: 'Move REVOPS-EVAL-08 to in-progress with the requested ownership note.',
         notes: '',
         needsDependentPhase: false,
-        procedureTrails: [
-          { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
-        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
