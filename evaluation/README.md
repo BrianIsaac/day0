@@ -16,6 +16,10 @@ outcomes.
   every comparison score states its direction, including documented-procedure
   adherence in majority-of-runs and per-run forms, while timing observations are
   labelled as context.
+- Each task result retains a value-free action audit: argument field names, the
+  count of fields unused by the selected adapter, and SHA-256 digests of the
+  adapter-consumed payload. This makes action-binding and repeated-effect claims
+  reproducible without retaining model-produced values.
 - [Onboarding transcript](onboarding/day0.json) - the fixed 1:1 replayed for day0.
 - `results/<timestamp>/semifinal.json` and `.md` - one directory per invocation.
 
@@ -204,13 +208,20 @@ Use Node 22+, pnpm and the self-hosted backend in mock mode. The model is whatev
 `OPENAI_MODEL` (and `OPENAI_BASE_URL`, when set) name in `.env.local`; the backend
 must be configured for the same model, and the harness refuses to start when the
 two disagree. Both arms always run on the one model the evidence file records. The
-local sandbox is required, because day0 authors a skill for the write tasks.
+local sandbox is required, because day0 authors a skill for the write tasks. For
+the bundled qwen3:8b bed, keep `OLLAMA_CONTEXT_LENGTH=16384`: Ollama's smaller
+server default truncates day0's executor prompt from the head without rejecting
+the request. The setting is read when the model service starts, so recreate that
+service after changing it and confirm the loaded context in its startup log.
 
 ```bash
 pnpm install
 
 # .env.local: self-hosted URL/admin key, no-auth keys, model settings,
-# DAY0_SURFACE_MODE=mock. Then push the same settings to the deployment.
+# DAY0_SURFACE_MODE=mock. For bundled qwen3:8b, also set:
+# OPENAI_MODEL=qwen3:8b
+# OLLAMA_CONTEXT_LENGTH=16384
+# Then push the same settings to the deployment.
 pnpm convex:up
 pnpm sandbox:up
 pnpm sync:env
