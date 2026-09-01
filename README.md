@@ -4,7 +4,7 @@ An autonomous teammate that joins with no role, no skills and no scope.
 
 [![Live demo](https://img.shields.io/badge/Live%20demo-day0--olive.vercel.app-2ea043)](https://day0-olive.vercel.app) [![Runs with no accounts](https://img.shields.io/badge/Runs%20with-no%20accounts-1f6feb)](#run-it-with-no-accounts) [![Licence Apache-2.0](https://img.shields.io/badge/Licence-Apache--2.0-blue)](LICENSE)
 
-[**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
+[**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
 
 ![The Day0 agent dashboard: an approved charter, a skill the agent proposed for itself, a three-item work queue, the eight-file workspace and the live event feed](.github/images/agent-dashboard.webp)
 
@@ -526,6 +526,257 @@ It resolves values the way the running app does, which matters more than it soun
 | `src/work/quality-fit.ts` | `qualityFit` — short-circuits if `AGENTS.md` has no good-habits section |
 | `src/work/plan.ts` | `draftExecutionPlan` |
 | `src/work/execute-skill.ts` | `runSkill` — per-invocation Mastra agent with skill body as behavioural prior |
+
+## 中文说明
+
+本节为评审提供与上述英文说明并行的简体中文版本，涵盖项目定位、目录、两条最短运行路径和受控评测入口。命令、环境变量、路径与技术标识均保持原样。
+
+### 项目简介
+
+Day0 是一名自主工作的团队成员；刚加入时，它没有预设角色、技能或权限范围。
+
+将一个 Agent 引入真实团队通常是一项工程项目：需要有人定义角色、接入工具、编写提示词，并把“怎样才算做好工作”编码进去；每个希望采用 Agent 的团队和组织都要重复这项工作。这也是许多 Agent 停留在试点阶段的主要原因。
+
+Day0 从更早的一步开始。它在空白状态下部署，之后形成的一切都来自与雇用它的人的一次对话。
+
+### 目录
+
+**从这里开始** · [它的特别之处](#它的特别之处) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
+
+**运行** · [无需任何账户](#无需任何账户运行) · [使用 OpenAI key](#使用-openai-key-运行) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
+
+**配置** · [环境变量](#environment) · [端口](#ports-host-side-and-container-side) · [手机与隧道](#testing-from-a-phone-and-tunnels) · [ElevenLabs 语音](#elevenlabs-agent-setup) · [本地技能沙箱](#本地技能沙箱) · [GPU](#gpu-默认启用而非默认停用)
+
+**工作原理** · [运行流程](#runtime-flow) · [技术栈](#stack) · [路由](#routes) · [Convex 后端](#convex-backend-convex) · [数据结构](#schema-convexschemats) · [领域逻辑](#domain-logic-src)
+
+**项目** · [受控评测](evaluation/README.md) · [评测快速开始](#评测快速开始) · [致谢](#credits) · [许可证](#licence)
+
+### 它的特别之处
+
+#### 它通过入职形成能力，而不是靠配置
+
+Day-1 一对一通过语音或文字依次讨论七个主题：为什么招聘这个角色、角色职责、需要与谁协作、应该阅读什么、工作由哪些工具承载、首先接手什么，以及还有哪些问题未确定。角色的任何部分都不是写在配置文件里的。
+
+#### 它起草自己的章程，并等待人工确认
+
+Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围和一组范围受限且可撤销的能力授权。
+
+#### 它自行发现工作
+
+系统不会直接给它一条预置队列。Agent 读取工作环境并提出应当接手的事项。每个候选事项按七项标准评估：资格、权限、归属、质量匹配、价值、风险和容量；随后进入一个十一状态的生命周期，任何执行都要先由人工批准计划。
+
+#### 缺少技能时，它会编写并验证技能
+
+如果工作项与任何已注册技能都不匹配，结果是 `needs-skill`，而不是直接丢弃。Agent 会提出技能、编写技能，并在隔离沙箱中运行冒烟测试。只有沙箱验证通过后，技能才会注册；验证失败或从未验证的技能会保持为清晰可见的不可调用状态。这样可以在不要求开发者介入的情况下扩展能力。
+
+### 它是什么，以及不是什么
+
+Day0 是一个可运行的演示，而不是已投入生产的产品，目前没有用户。它的量化结论刻意限定在很窄的范围内：仓库提供一项[受控且由程序评分的比较](evaluation/README.md)，让完成入职的 Day0 与普通 Agent 在相同的 15 项陌生 mock-office 任务上运行。该基准不用于预测所有真实团队的工作表现。
+
+可复现演示和受控评测在一个自包含的 mock office 中运行，其中包括团队文档、表格、聊天频道、工单队列和社交信息流，并为每个 Agent 单独生成种子数据。这样，评审可以在自己的机器上复现结果，而不必依赖无法核验的截图。模型调用、沙箱、状态机和审批门均按真实路径运行。
+
+Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 可以把整个模型层指向任何兼容 OpenAI 的 endpoint，因此无需任何账户、也不产生托管模型计费，就能在本机模型上运行完整流程。用于验证 Agent 自行编写技能的沙箱也随项目提供，因此该路径可以完成技能创建，而不会停在“尚不可调用”的中间状态。语音和网络检索是可选的第三方服务；缺少相应 key 时，系统会明确降级，而不会静默失败。下文给出[三种运行方式](#local-dev)，`pnpm check:setup` 会报告当前机器已经满足哪一种配置。
+
+### 无需任何账户运行
+
+该路径使用 Docker 内的自托管 Convex 后端、本地模型和本地验证沙箱，并启用无认证开发模式。整个过程无需注册任何服务。后端使用与云服务相同的开源二进制；无认证模式以一个固定的合成用户替代 Clerk，因此所有权校验和按用户划分的数据模型不变，只是系统中始终只有一个用户。模型层接受任何兼容 OpenAI 的 endpoint，因此本地 runtime 是完整配置，而不是降级配置；本地沙箱则保证 Agent 编写的技能能够经过验证并实际变为可调用状态。
+
+需要 Docker、Node 22+ 和 pnpm。所有命令都在仓库根目录执行。
+
+```bash
+pnpm install                     # first: everything below is a repo-local binary
+cp .env.example .env.local
+
+pnpm convex:up                   # day0's backend on 3210/3211 (add --profile dev for the dashboard on 6791)
+pnpm model:up                    # OpenAI-compatible model server on 11434, on the GPU if you have one
+pnpm model:pull qwen3:8b         # ~5 GB, tool-capable, runs the whole loop
+pnpm sandbox:up                  # the sandbox that verifies authored skills; no port, no account
+pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
+```
+
+然后在 `.env.local` 中设置：
+
+```bash
+NEXT_PUBLIC_DEV_NO_AUTH=true
+NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
+CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
+CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|…   # from the command above
+OPENAI_BASE_URL=http://127.0.0.1:11434/v1           # what Next dials
+CONVEX_OPENAI_BASE_URL=http://model:11434/v1        # what the backend dials
+OPENAI_MODEL=qwen3:8b
+OLLAMA_CONTEXT_LENGTH=16384                         # model-service input window
+# OPENAI_API_KEY stays empty. There is no account.
+```
+
+最后执行：
+
+```bash
+pnpm dev:no-auth-key             # generates the three DEV_NO_AUTH_* values
+./scripts/sync-convex-env.sh     # pushes DEV_NO_AUTH_JWKS + model settings to the backend
+npx convex dev --once            # push functions
+pnpm check:setup                 # confirms all four setups before you open a browser
+pnpm dev                         # prints an unlock URL - open that, not localhost:3000
+```
+
+打开命令输出的 unlock URL，部署一个 Agent，以文字模式完成 Day-1 一对一，然后批准它起草的章程。此路径不会调用托管模型，也不需要任何服务账户。
+
+批准章程后，系统才会填充工作队列。队列能推进到哪一步取决于刚刚批准的章程，而不是本说明中的固定答案。每个工作项都会依据 Agent 已有技能和部署时授予的权限进行评估，只有 `claim` 判定才会进入计划与执行阶段。部署时会生成五项读取范围；随项目提供的唯一技能是 `see-internal-docs`，因此可以立即执行的是能够从内部文档回答的工作。`needs-skill` 是这条路径最值得检查的判定：Agent 提出技能，人工批准后由本地沙箱运行冒烟测试；测试以退出码 0 结束且有输出时，技能才注册，请求该技能的工作项随后返回队列并完成。`defer - awaiting-permission` 会按设计停下，明确显示所需权限范围并继续等待；界面不会自行授予权限。
+
+响应速度取决于所连接的模型 endpoint 和硬件，而不是 Day0。Agent 核心执行普通的 OpenAI chat-completions 调用；同一个 `qwen3:8b` 在现代 GPU 上可能数秒返回，在 CPU 上可能需要数分钟，托管 endpoint 则取决于服务商。`pnpm model:up` 在检测到 NVIDIA GPU 时会默认使用它。
+
+内置模型服务以 16,384-token context 启动，因为执行器需要在同一提示中看到已批准章程、发现的文档、runbook 指引、action schema 和工作请求。Ollama 较小的服务端默认值会从提示开头静默截断，而不会让请求失败；这可能使本地模型仍知道正确的工具名，却丢失决定精确参数的指令和证据。只有在模型支持更大 context、且额外 KV cache 能装入机器时，才应把 `OLLAMA_CONTEXT_LENGTH` 调高；把它降到 16,384 以下是明确的质量取舍，不只是内存优化。
+
+模型大小同时影响延迟和输出质量。小模型可以完成一对一、生成章程并驱动工作队列，但有时会在七个主题尚未完成时提前调用 `dayOneComplete`；由较短对话生成的章程仍然有效，但证据更少。更大的本地或托管模型可以改善这一点，`pnpm probe:model` 可在接入演示前确认 endpoint 是否能驱动完整流程。
+
+`failed` 工作项也可能是小模型能力限制，而不是系统故障。批准后的计划会以命名 action 的形式在 mock environment 上执行，每个 action 都用 slug 指向既有记录。小模型可能生成看似合理但并不存在的 slug；有效 action 会落地，虚构目标会被拒绝，工作项进入 `failed`，卡片会列出所有未到达环境的 action 及原因。系统不会静默接受部分成功。`Retry` 会重新执行整个计划，因此已经落地的 action 会再次执行。
+
+本地模型过慢则可能触发明确超时。章程生成中的单次模型调用在 **300 s** 内未收到响应 header 会停止，整个 Convex action 在 **600 s** 被终止。用 `npx convex logs` 区分两类相似症状：地址错误会立即产生连接错误；模型落到 CPU 时，日志会在等待后报告 `UND_ERR_HEADERS_TIMEOUT`、重试以及 `execution timed out (maximum duration 600s)`。
+
+是否落到 CPU 取决于当前可用 VRAM，而不是模型文件标称大小。`docker compose exec model ollama ps` 会显示 CPU/GPU 分配；例如 `45%/55% CPU/GPU` 表明模型已拆分加载。`qwen3:8b` 常驻大约需要 6 GB；如果当前空闲显存不足，可改用能够完整装入 GPU 的模型：
+
+```bash
+pnpm model:pull qwen3:4b         # ~2.5 GB, same loop, fits a smaller gap
+```
+
+以下六点不可省略：
+
+- `pnpm install` 必须最先执行。后续 `tsx`、`convex`、`next` 都是 `node_modules` 中的仓库本地二进制。
+- 模型需要两个地址。Day-1 chat 由本机上的 Next 流式调用 `OPENAI_BASE_URL`；章程由后端容器中的 Convex Node action 生成，必须调用容器内可解析的 `CONVEX_OPENAI_BASE_URL`。`./scripts/sync-convex-env.sh` 会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在错误指向 loopback 时发出警告。地址配错时，常见症状是一对一正常完成但章程不出现。
+- key 由 `pnpm dev:no-auth-key` 生成，而不是手工选择。命令写入 `DEV_NO_AUTH_SECRET`、`DEV_NO_AUTH_SIGNING_KEY` 和 `DEV_NO_AUTH_JWKS`。`pnpm dev:no-auth-key --force` 会轮换 key、使所有已解锁浏览器失效，并要求再次同步。
+- 必须先把 JWKS 和模型设置同步到后端，再推送 functions。`convex/auth.config.ts` 会在 deployment env 中缺少 key 时拒绝无认证模式的 push。deployment module 还会保留首次求值时的 env，因此后续更改需要执行 `pnpm convex:restart`。
+- `pnpm dev` 会输出只使用一次 secret 的 unlock URL；之后 secret 保存在 httpOnly cookie 中。直接打开 `http://localhost:3000` 会得到 403，这是边界生效，不是故障。
+- `pnpm sandbox:up` 会按设计重启后端。两者通过共享 volume 上的 socket 通信，因此启动沙箱时会协调更新这两个服务。
+
+当环境中存在 `NEXT_PUBLIC_DEV_NO_AUTH=true` 时，`pnpm build` 会拒绝生产构建。构建前必须取消该值；如果它进入 Vercel 配置，构建失败是预期的安全保护。
+
+#### 本地技能沙箱
+
+Agent 编写的技能在被实际运行验证之前不可调用。`pnpm sandbox:up` 启动运行冒烟测试的容器，使无需账户的路径能够完成 `needs-skill` → propose → approve → author → **verify** → register → 返回队列并完成工作项的完整闭环。
+
+```bash
+pnpm sandbox:up                  # start it (this also restarts the backend - see below)
+pnpm sandbox:down                # stop it; skills then stop at `authoring`, visibly
+```
+
+这是一个验证隔离边界：容器使用 `network_mode: none`，模型编写的 Python 无法访问后端、模型服务器、宿主机或互联网；服务仅在绑定 socket 时以 root 启动，随后永久降权为 `nobody`；root filesystem 为只读，工作目录是每次运行清空的 64 MB tmpfs；每次测试最多运行 60 秒，并有 CPU、地址空间、文件大小、进程数、内存和 pid 限制。
+
+它不是针对主动攻击者的完整防线。容器逃逸仍然是容器逃逸；冒烟测试与启动它的轻量 supervisor 共用用户，因此恶意代码仍可能停止服务并迫使操作者重启。它用于提高模型生成代码自检的安全下限，不应用来执行明确不受信任的代码。实现也不会把 `/var/run/docker.sock` 挂载到后端，因为那会把 root 等价能力交给模型生成代码。
+
+沙箱没有端口，也无需额外配置；后端通过共享 volume 上的 unix socket 访问它。匿名 Convex deployment 作为宿主机普通进程运行，无法看到 Docker volume，因此如需本地技能验证，应使用 compose backend。若同时设置 `DAYTONA_API_KEY` 且本地沙箱正在运行，系统会优先选择 Daytona；清空该 key 才会使用本地沙箱。
+
+#### GPU 默认启用，而非默认停用
+
+`pnpm model:up` 会检查宿主机上的 NVIDIA driver；如果存在，就叠加 `docker-compose.gpu.yml` 并为容器预留 GPU。若 Docker 无法提供 GPU，命令会说明原因并改用 CPU 启动同一服务。可在 `.env.local` 中固定选择：
+
+| 设置 | 含义 |
+|---|---|
+| `MODEL_GPU=auto` | 默认值；检测到 GPU 时使用，Docker 拒绝时回退 CPU |
+| `MODEL_GPU=on` | 必须使用 GPU，否则明确失败 |
+| `MODEL_GPU=off` | 不请求 GPU |
+| `MODEL_GPU_COUNT=1` | 只预留一个设备，而不是全部设备 |
+| `OLLAMA_CONTEXT_LENGTH=16384` | 让章程、文档、runbook 与执行器 schema 保持在同一个本地模型提示中 |
+
+模型大于当前空闲 VRAM 时，即使已经预留 GPU，仍会有部分层落到 CPU。用 `docker compose exec model ollama ps` 检查实际分配。
+
+停止服务时按以下顺序执行：
+
+```bash
+pnpm model:down                  # the model server; the pulled weights stay
+pnpm sandbox:down                # the verification sandbox; it holds nothing
+pnpm convex:down                 # the backend; the data volume stays
+```
+
+`convex:down` 会尝试删除 compose network，因此仍有 model container 连接时无法完成。若要同时删除 volumes，执行 `pnpm convex:down --profile model --profile sandbox -- -v`。
+
+#### 不使用 Docker 运行 Convex
+
+`pnpm convex:dev` 在无人登录时不会要求注册，而是建立本机匿名 deployment。它不需要 compose project、admin key 或第二个模型地址，因为后端与 Next 都从宿主机访问 `127.0.0.1`：
+
+```bash
+pnpm install
+cp .env.example .env.local
+# NEXT_PUBLIC_DEV_NO_AUTH=true, OPENAI_BASE_URL=http://127.0.0.1:11434/v1, OPENAI_MODEL=qwen3:8b
+pnpm convex:dev                  # anonymous local deployment; writes the Convex keys itself
+pnpm dev:no-auth-key
+./scripts/sync-convex-env.sh
+pnpm dev
+```
+
+仍然需要一个模型，可以使用在 11434 上运行的原生 `ollama serve`，也可以通过 `pnpm model:up` 和 `MODEL_PORT` 使用内置服务。与自托管 compose stack 相比，这种方式适合快速查看系统运行，但 deployment 不由你独立持有；匿名 deployment 也无法使用 Docker volume 中的本地技能沙箱。
+
+### 使用 OpenAI key 运行
+
+该路径运行与上面相同的自托管 Convex backend 和无认证开发模式，但不运行本地模型；`api.openai.com` 替代本机 model server。如果已经有 key，这是最短运行路径：无需下载模型权重，也不涉及 GPU；除模型外的组件仍在本机运行，OpenAI 按 token 计费。
+
+```bash
+pnpm install
+cp .env.example .env.local
+
+pnpm convex:up                   # day0's backend on 3210/3211 (add --profile dev for the dashboard on 6791)
+pnpm sandbox:up                  # verifies authored skills; no account, no key
+pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY
+```
+
+然后在 `.env.local` 中设置：
+
+```bash
+NEXT_PUBLIC_DEV_NO_AUTH=true
+NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
+CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
+CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|…   # from the command above
+OPENAI_API_KEY=sk-…
+OPENAI_MODEL=gpt-5.5
+# OPENAI_BASE_URL and CONVEX_OPENAI_BASE_URL both stay empty - see below.
+```
+
+最后执行与无需账户路径相同的步骤：
+
+```bash
+pnpm dev:no-auth-key             # generates the three DEV_NO_AUTH_* values
+./scripts/sync-convex-env.sh     # pushes DEV_NO_AUTH_JWKS + the key to the backend
+npx convex dev --once            # push functions
+pnpm check:setup
+pnpm dev                         # prints an unlock URL - open that, not localhost:3000
+```
+
+这里两个模型地址归并为同一个默认值。变量留空表示 `https://api.openai.com/v1`，从 Next 和后端容器访问时含义相同。不要把默认 URL 手工写入变量。
+
+从本地模型路径切换过来时，应清空 `OPENAI_BASE_URL` 和 `CONVEX_OPENAI_BASE_URL`，再运行 `./scripts/sync-convex-env.sh`；两者都为空时，脚本会清除 deployment 中此前保存的地址。随后执行 `pnpm convex:restart`，因为已运行过 action 的 module 会保留首次读取的 env。
+
+这条路径会产生模型费用。完整流程包括一对一的七个主题、章程生成、good-habits 检索、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
+
+无需运行 `pnpm model:up`；完整清理命令为 `pnpm sandbox:down && pnpm convex:down`。也可以把该路径与[匿名 deployment](#without-docker-for-convex)组合，从而不使用 Docker 运行 backend；但本地 sandbox 依赖 Docker，这种组合若要验证技能，需要设置 `DAYTONA_API_KEY`。
+
+### 评测快速开始
+
+受控比较使用同一模型、同一非零 temperature、相同的 15 项固定任务和相同的 seeded mock office，分别运行完成入职的 `day0` arm 与普通 `baseline` arm。默认配置为每项任务在每个 arm 上运行三次，共 90 个 task outcomes；所有指标均由程序读取持久化状态评分，不使用 LLM judge。完整方法、最终证据和限制见 [`evaluation/README.md`](evaluation/README.md)。
+
+使用 Node 22+、pnpm、自托管 mock-mode backend 和本地 sandbox。模型由 `.env.local` 中的 `OPENAI_MODEL` 指定；使用内置 `qwen3:8b` 时必须保留 `OLLAMA_CONTEXT_LENGTH=16384`，修改后需重建 model service，并在启动日志中确认 context。
+
+```bash
+pnpm install
+
+# .env.local: self-hosted URL/admin key, no-auth keys, model settings,
+# DAY0_SURFACE_MODE=mock. For bundled qwen3:8b, also set:
+# OPENAI_MODEL=qwen3:8b
+# OLLAMA_CONTEXT_LENGTH=16384
+# Then push the same settings to the deployment.
+pnpm convex:up
+pnpm sandbox:up
+pnpm sync:env
+pnpm convex:restart
+pnpm exec convex dev --once --typecheck disable
+
+pnpm eval:semifinal
+```
+
+运行过程会把 `evaluation/results/<timestamp>/semifinal.json` 原子写入磁盘，并在同一目录持续生成 `semifinal.md`。若运行中断，可从原 JSON 恢复；当 commit、model、temperature、arms、task set、run count、approval delay 或 polling interval 不一致时，恢复会被拒绝：
+
+```bash
+pnpm eval:semifinal -- --out evaluation/results/<timestamp>/semifinal.json
+```
+
+最终提交所引用的三个冻结证据目录及其数字列在 [`evaluation/README.md`](evaluation/README.md)；更早的目录仅保留为 superseded audit history，不用于最终结论。
 
 ## Credits
 
