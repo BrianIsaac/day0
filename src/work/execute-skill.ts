@@ -13,7 +13,12 @@ import {
   type WorkCandidate,
 } from './types';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
-import { isManagerDm, parseSurfaceAction } from '../surfaces/policy';
+import {
+  isAuditComment,
+  isManagerDm,
+  parseSurfaceAction,
+  targetIssue,
+} from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction } from './plan';
@@ -802,6 +807,19 @@ function matchingProcedureActions(
         isManagerDm(parsed.action, surface)
       ) {
         return [{ action, index }];
+      }
+      if (trail.effect.destination.kind === 'originating-reference' && surface) {
+        const origin = originatingReference(
+          candidate,
+          trail.effect.destination.refPrefix,
+        );
+        if (
+          origin &&
+          targetIssue(parsed.action) === origin &&
+          isAuditComment(parsed.action)
+        ) {
+          return [{ action, index }];
+        }
       }
       return [];
     }
