@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import { auditActionArguments } from '../../../evaluation/action-audit';
 import { reviewPayload } from '../../../src/surfaces/policy';
+import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockSurfaceSnapshot } from '../../../src/work/types';
 
 const recorded = vi.hoisted(() => ({
@@ -20,7 +21,11 @@ vi.mock('../../../src/lib/mastra', () => ({
   },
 }));
 
-import { runSkill } from '../../../src/work/execute-skill';
+import {
+  runDependentSkill,
+  runSkill,
+  type RunDependentSkillArgs,
+} from '../../../src/work/execute-skill';
 
 const recordedFlatArgs = {
   body: '',
@@ -54,6 +59,33 @@ const mockEnv: MockSurfaceSnapshot = {
   slackChannels: [],
   tweets: [],
   tickets: [],
+};
+
+const managerTrailEnv: MockSurfaceSnapshot = {
+  ...mockEnv,
+  howToGuides: [
+    {
+      slug: 'private-recaps-v2',
+      title: 'Private completion recaps',
+      body: [
+        'After completing any work, send a concise recap to the supervisor private channel with `slack.postMessage`.',
+        'Put `lead-desk` in `channelSlug` and the non-empty recap in `body`.',
+      ].join('\n'),
+    },
+  ],
+};
+
+const managerChatSurface: SurfaceRecord = {
+  slug: 'team-chat',
+  displayName: 'Team chat',
+  class: 'chat',
+  verdict: 'connected',
+  credentialLanded: true,
+  lastVerifiedAt: 1,
+  path: 'documented-api',
+  endpoint: 'https://chat.example.test/api/',
+  toolAllowlist: ['chat.postMessage'],
+  managerDmChannelId: 'D-MANAGER-42',
 };
 
 const charter = {
@@ -374,5 +406,313 @@ describe('mock executor semantic repair', (): void => {
       expect.objectContaining({ argumentKeys: ['comment', 'slug'] }),
       expect.objectContaining({ argumentKeys: ['body', 'method', 'path', 'surface'] }),
     ]);
+  });
+});
+
+describe('real dependent procedure trails', (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('recognises a manager report carried by an HTTP chat transport', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Prepared the requested coverage response and reported completion.',
+      notes: '',
+      actions: [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'team-chat',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: null,
+            body: JSON.stringify({
+              channel: 'D-MANAGER-42',
+              text: 'The coverage response is ready.',
+            }),
+          },
+        },
+      ],
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The manager report is action 0.' },
+      ],
+    });
+
+    const output = await runDependentSkill({
+      skill: { name: 'coverage-response', description: 'Prepare the response.', body: '' },
+      plan: {
+        summary: 'Prepare the requested coverage response.',
+        steps: ['Report the completed response to the manager.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      candidate: {
+        sourceCategory: 'inbox',
+        sourceSystem: 'team-chat',
+        externalId: 'CHAT-42',
+        title: 'Draft a coverage response',
+        contentSummary: 'Prepare a concise response to the coverage mention.',
+        contentRefs: ['slack://C-ASKS/1710000000.000042'],
+        replyTarget: { channel: 'C-ASKS', threadTs: '1710000000.000042' },
+        observedAt: new Date(0),
+      },
+      charter,
+      mockEnv: managerTrailEnv,
+      surfaces: [managerChatSurface],
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: 'Prepared the response.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+
+    expect(output.procedureTrails).toEqual([
+      { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
+    ]);
+  });
+
+  it('rejects a manager-report transport that names the wrong channel', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Reported completion.',
+      notes: '',
+      actions: [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'team-chat',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: null,
+            body: JSON.stringify({ channel: 'C-PUBLIC-42', text: 'The response is ready.' }),
+          },
+        },
+      ],
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
+      ],
+    });
+
+    await expect(
+      runDependentSkill({
+        skill: { name: 'coverage-response', description: 'Prepare the response.', body: '' },
+        plan: {
+          summary: 'Prepare the requested coverage response.',
+          steps: ['Report the completed response to the manager.'],
+          expectedOutputType: 'message',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 2,
+        },
+        candidate: {
+          sourceCategory: 'inbox',
+          sourceSystem: 'team-chat',
+          externalId: 'CHAT-43',
+          title: 'Draft a coverage response',
+          contentSummary: 'Prepare a concise response to the coverage mention.',
+          contentRefs: ['slack://C-ASKS/1710000000.000043'],
+          observedAt: new Date(0),
+        },
+        charter,
+        mockEnv: managerTrailEnv,
+        surfaces: [managerChatSurface],
+        mode: 'real',
+        now: 1,
+        initialOutput: {
+          draft: 'Prepared the response.',
+          notes: '',
+          needsDependentPhase: true,
+          actions: [],
+          procedureTrails: [],
+        },
+        initialLedger: [],
+      }),
+    ).rejects.toThrow('procedure-trail transport payload contradicts the prescribed effect');
+  });
+
+  it('records an uninterpretable transport payload without rejecting its trail index', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Reported completion through the documented chat transport.',
+      notes: '',
+      actions: [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'team-chat',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: null,
+            body: 'channel=D-MANAGER-42&text=The%20response%20is%20ready',
+          },
+        },
+      ],
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
+      ],
+    });
+
+    const output = await runDependentSkill({
+      skill: { name: 'coverage-response', description: 'Prepare the response.', body: '' },
+      plan: {
+        summary: 'Prepare the requested coverage response.',
+        steps: ['Report the completed response to the manager.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      candidate: {
+        sourceCategory: 'inbox',
+        sourceSystem: 'team-chat',
+        externalId: 'CHAT-44',
+        title: 'Draft a coverage response',
+        contentSummary: 'Prepare a concise response to the coverage mention.',
+        contentRefs: ['slack://C-ASKS/1710000000.000044'],
+        observedAt: new Date(0),
+      },
+      charter,
+      mockEnv: managerTrailEnv,
+      surfaces: [managerChatSurface],
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: 'Prepared the response.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+
+    expect(output.procedureTrailLimitations).toEqual([
+      {
+        trailId: 'trail-1',
+        actionIndex: 0,
+        kind: 'unresolved-transport-payload',
+        transport: 'http.request',
+        surface: 'team-chat',
+        detail: 'the HTTP body is not a JSON object',
+      },
+    ]);
+  });
+
+  it('recognises an originating-ticket note beside a browser session', async (): Promise<void> => {
+    const surfaces: SurfaceRecord[] = [
+      {
+        slug: 'pipeline-tile',
+        displayName: 'Pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        credentialLanded: true,
+        lastVerifiedAt: 1,
+        path: 'browser-driven',
+        endpoint: 'http://pipeline-tile.example.test/',
+        toolAllowlist: ['browser_snapshot'],
+      },
+      {
+        slug: 'work-queue',
+        displayName: 'Work queue',
+        class: 'kanban',
+        verdict: 'connected',
+        credentialLanded: true,
+        lastVerifiedAt: 1,
+        path: 'mcp',
+        endpoint: 'https://work-queue.example.test/mcp',
+        toolAllowlist: ['save_comment'],
+      },
+    ];
+    const dependentOutput = {
+      draft: 'The refreshed tile was read back and recorded on the originating item.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'pipeline-tile',
+            tool: 'browser_snapshot',
+            toolArgsJson: '{}',
+          },
+        },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'work-queue',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({
+              issueId: 'CASE-REFRESH-7',
+              body: 'Verified the refreshed figure and audit line.',
+            }),
+          },
+        },
+      ],
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'Action 0 read the tile back.' },
+        { step: 2, status: 'satisfied', evidence: 'Action 1 records the audit note.' },
+      ],
+    };
+    recorded.outputs.push(dependentOutput);
+
+    const runArgs = {
+      skill: { name: 'refresh-tile', description: 'Refresh the tile.', body: '' },
+      plan: {
+        summary: 'Read the refreshed tile and record the result.',
+        steps: ['Read back the refreshed tile.', 'Record the audit note on the source item.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 5,
+      },
+      candidate: {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'work-queue',
+        externalId: 'CASE-REFRESH-7',
+        title: 'Refresh the pipeline tile',
+        contentSummary: 'Refresh the pipeline tile and record the read-back on the source item.',
+        contentRefs: ['ticket://CASE-REFRESH-7'],
+        observedAt: new Date(0),
+      },
+      charter,
+      mockEnv,
+      surfaces,
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: 'Refreshing the tile.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    } satisfies RunDependentSkillArgs;
+    const output = await runDependentSkill(runArgs);
+
+    expect(output.actions.map((action) => action.args.tool)).toEqual([
+      'browser_snapshot',
+      'save_comment',
+    ]);
+    expect(output.procedureTrails).toEqual([
+      { trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null },
+    ]);
+
+    recorded.outputs.push({
+      ...dependentOutput,
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+    });
+    await expect(runDependentSkill(runArgs)).rejects.toThrow(
+      'procedure-trail transport payload contradicts the prescribed effect',
+    );
   });
 });

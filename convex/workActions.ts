@@ -624,6 +624,14 @@ function flattenedDependentOutput(
       actionIndex:
         trail.actionIndex === null ? null : trail.actionIndex + output.actionIndexOffset,
     })),
+    ...(output.procedureTrailLimitations
+      ? {
+          procedureTrailLimitations: output.procedureTrailLimitations.map((limitation) => ({
+            ...limitation,
+            actionIndex: limitation.actionIndex + output.actionIndexOffset,
+          })),
+        }
+      : {}),
     applied: [...output.initial.applied, ...applied],
     planStepOutcomes: output.planStepOutcomes,
   };
