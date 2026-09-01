@@ -9,6 +9,7 @@ import {
   type ExecutionPlan,
   type MockAction,
   type MockSurfaceSnapshot,
+  type ProcedureTrailLimitation,
   type ReplyTarget,
   type WorkCandidate,
 } from './types';
@@ -16,7 +17,9 @@ import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/type
 import {
   isAuditComment,
   isManagerDm,
+  isSurfaceTool,
   parseSurfaceAction,
+  targetChannel,
   targetIssue,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
@@ -786,69 +789,192 @@ function primaryActionIssue(
     : payloadIssue('message', actions, candidate);
 }
 
+interface ProcedureTrailMatchContext {
+  mode: SurfaceMode;
+  surfaces: readonly SurfaceRecord[];
+}
+
+type ProcedureActionResolution =
+  | { kind: 'match' }
+  | { kind: 'contradiction' }
+  | { kind: 'unknown'; detail: string };
+
+const DEFAULT_TRAIL_MATCH_CONTEXT: ProcedureTrailMatchContext = {
+  mode: 'mock',
+  surfaces: [],
+};
+
+function mockProcedureActionMatches(
+  trail: ProcedureContract['trails'][number],
+  action: MockAction,
+  candidate: WorkCandidate,
+): boolean {
+  if (action.tool !== trail.effect.tool) return false;
+  const destination = trail.effect.destination;
+  if (destination.kind === 'originating-reference') {
+    const origin = originatingReference(candidate, destination.refPrefix);
+    return !!origin && action.args.slug === origin;
+  }
+  if (destination.kind === 'manager-channel') {
+    return action.args[destination.argument as keyof MockAction['args']] === destination.value;
+  }
+  return !!candidate.replyTarget && action.args.channelSlug === candidate.replyTarget.channel;
+}
+
+function normalisedOperation(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function nonEmptyField(record: Record<string, unknown>, key: string): boolean {
+  const value = record[key];
+  return typeof value === 'string'
+    ? value.trim().length > 0
+    : Array.isArray(value) && value.length > 0;
+}
+
+function browserProcedureResolution(
+  trail: ProcedureContract['trails'][number],
+  candidate: WorkCandidate,
+  surface: SurfaceRecord,
+  operation: string,
+  payload: Record<string, unknown>,
+): ProcedureActionResolution {
+  if (
+    surface.path !== 'browser-driven' ||
+    normalisedOperation(operation) !== normalisedOperation(trail.effect.tool)
+  ) {
+    return { kind: 'contradiction' };
+  }
+  const destination = trail.effect.destination;
+  if (destination.kind !== 'originating-reference') return { kind: 'contradiction' };
+  const prescribedSurface = referencedDestination(candidate, destination.refPrefix);
+  if (!prescribedSurface || prescribedSurface !== surface.slug) return { kind: 'contradiction' };
+  if (trail.effect.requiredPayload.some((field) => !(field in payload))) {
+    return { kind: 'contradiction' };
+  }
+  if (trail.effect.nonEmptyPayload.some((field) => !nonEmptyField(payload, field))) {
+    return { kind: 'contradiction' };
+  }
+  return { kind: 'match' };
+}
+
+function realProcedureActionResolution(
+  trail: ProcedureContract['trails'][number],
+  action: MockAction,
+  candidate: WorkCandidate,
+  surfaces: readonly SurfaceRecord[],
+): ProcedureActionResolution {
+  if (!isSurfaceTool(action.tool)) return { kind: 'contradiction' };
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok) {
+    return { kind: 'unknown', detail: 'the transport arguments are not structurally interpretable' };
+  }
+  const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+  if (!surface) {
+    return { kind: 'unknown', detail: 'the transport surface is absent from the runtime registry' };
+  }
+  if (parsed.action.kind === 'mcp.call' && /^browser(?:[._-]|$)/i.test(parsed.action.tool)) {
+    return browserProcedureResolution(
+      trail,
+      candidate,
+      surface,
+      parsed.action.tool,
+      parsed.action.toolArgs,
+    );
+  }
+
+  const destination = trail.effect.destination;
+  if (destination.kind === 'manager-channel') {
+    if (surface.class !== 'chat') return { kind: 'contradiction' };
+    if (!surface.managerDmChannelId) {
+      return {
+        kind: 'unknown',
+        detail: 'the runtime chat surface has no resolved manager destination',
+      };
+    }
+    if (parsed.action.kind === 'http.request' && !parsed.action.bodyJson) {
+      return { kind: 'unknown', detail: 'the HTTP body is not a JSON object' };
+    }
+    const channel = targetChannel(parsed.action);
+    if (channel && channel !== surface.managerDmChannelId) return { kind: 'contradiction' };
+    if (isManagerDm(parsed.action, surface)) return { kind: 'match' };
+    return channel
+      ? { kind: 'contradiction' }
+      : { kind: 'unknown', detail: 'the transport payload exposes no resolvable destination' };
+  }
+
+  if (destination.kind === 'reply-target') {
+    if (!candidate.replyTarget || surface.class !== 'chat') return { kind: 'contradiction' };
+    if (parsed.action.kind === 'http.request' && !parsed.action.bodyJson) {
+      return { kind: 'unknown', detail: 'the HTTP body is not a JSON object' };
+    }
+    const channel = targetChannel(parsed.action);
+    if (!channel) {
+      return { kind: 'unknown', detail: 'the transport payload exposes no resolvable destination' };
+    }
+    return channel === candidate.replyTarget.channel
+      ? { kind: 'match' }
+      : { kind: 'contradiction' };
+  }
+
+  const origin = originatingReference(candidate, destination.refPrefix);
+  if (!origin) return { kind: 'contradiction' };
+  if (parsed.action.kind === 'http.request' && !parsed.action.bodyJson) {
+    return { kind: 'unknown', detail: 'the HTTP body is not a JSON object' };
+  }
+  const issue = targetIssue(parsed.action);
+  if (!issue) {
+    return {
+      kind: 'unknown',
+      detail: 'the transport payload exposes no resolvable originating reference',
+    };
+  }
+  if (issue !== origin) return { kind: 'contradiction' };
+  if (!isAuditComment(parsed.action)) return { kind: 'contradiction' };
+  if (
+    trail.effect.nonEmptyPayload.includes('comment') &&
+    (parsed.action.kind !== 'mcp.call' || !nonEmptyField(parsed.action.toolArgs, 'body'))
+  ) {
+    return { kind: 'contradiction' };
+  }
+  return { kind: 'match' };
+}
+
+function procedureActionResolution(
+  trail: ProcedureContract['trails'][number],
+  action: MockAction,
+  candidate: WorkCandidate,
+  context: ProcedureTrailMatchContext,
+): ProcedureActionResolution {
+  if (context.mode === 'mock') {
+    return mockProcedureActionMatches(trail, action, candidate)
+      ? { kind: 'match' }
+      : { kind: 'contradiction' };
+  }
+  return realProcedureActionResolution(trail, action, candidate, context.surfaces);
+}
+
 function matchingProcedureActions(
   trail: ProcedureContract['trails'][number],
   output: Pick<ExecutionOutput, 'actions'>,
   candidate: WorkCandidate,
-  context: { mode: SurfaceMode; surfaces: readonly SurfaceRecord[] } = {
-    mode: 'mock',
-    surfaces: [],
-  },
+  context: ProcedureTrailMatchContext = DEFAULT_TRAIL_MATCH_CONTEXT,
 ): Array<{ action: MockAction; index: number }> {
-  return output.actions.flatMap((action, index) => {
-    if (action.tool !== trail.effect.tool) {
-      if (context.mode !== 'real') return [];
-      const parsed = parseSurfaceAction(action);
-      if (!parsed.ok) return [];
-      const surface = context.surfaces.find((row) => row.slug === parsed.action.surface);
-      if (
-        trail.effect.destination.kind === 'manager-channel' &&
-        surface &&
-        isManagerDm(parsed.action, surface)
-      ) {
-        return [{ action, index }];
-      }
-      if (trail.effect.destination.kind === 'originating-reference' && surface) {
-        const origin = originatingReference(
-          candidate,
-          trail.effect.destination.refPrefix,
-        );
-        if (
-          origin &&
-          targetIssue(parsed.action) === origin &&
-          isAuditComment(parsed.action)
-        ) {
-          return [{ action, index }];
-        }
-      }
-      return [];
-    }
-    const destination = trail.effect.destination;
-    if (destination.kind === 'originating-reference') {
-      const origin = originatingReference(candidate, destination.refPrefix);
-      return origin && action.args.slug === origin ? [{ action, index }] : [];
-    }
-    if (destination.kind === 'manager-channel') {
-      return action.args[destination.argument as keyof MockAction['args']] === destination.value
-        ? [{ action, index }]
-        : [];
-    }
-    return candidate.replyTarget && action.args.channelSlug === candidate.replyTarget.channel
+  return output.actions.flatMap((action, index) =>
+    procedureActionResolution(trail, action, candidate, context).kind === 'match'
       ? [{ action, index }]
-      : [];
-  });
+      : [],
+  );
 }
 
 function procedureTrailAttentionIssues(
   output: Pick<ExecutionOutput, 'actions' | 'procedureTrails'>,
   candidate: WorkCandidate,
   contract: ProcedureContract,
-  context: { mode: SurfaceMode; surfaces: readonly SurfaceRecord[] } = {
-    mode: 'mock',
-    surfaces: [],
-  },
-): string[] {
+  context: ProcedureTrailMatchContext = DEFAULT_TRAIL_MATCH_CONTEXT,
+): { issues: string[]; limitations: ProcedureTrailLimitation[] } {
   const issues: string[] = [];
+  const limitations: ProcedureTrailLimitation[] = [];
   const attestations = output.procedureTrails ?? [];
   const knownIds = new Set(contract.trails.map((trail) => trail.id));
   if (attestations.some((row) => !knownIds.has(row.trailId))) {
@@ -871,12 +997,26 @@ function procedureTrailAttentionIssues(
       issues.push('an applicable loaded procedure trail is not mapped to an action');
       continue;
     }
-    const matches = matchingProcedureActions(trail, output, candidate, context);
-    if (!matches.some(({ index }) => index === row.actionIndex)) {
+    const action = output.actions[row.actionIndex];
+    if (!action) {
       issues.push('procedure-trail action index does not identify the prescribed effect');
+      continue;
+    }
+    const resolution = procedureActionResolution(trail, action, candidate, context);
+    if (resolution.kind === 'contradiction') {
+      issues.push('procedure-trail action index does not identify the prescribed effect');
+    } else if (resolution.kind === 'unknown' && isSurfaceTool(action.tool)) {
+      limitations.push({
+        trailId: trail.id,
+        actionIndex: row.actionIndex,
+        kind: 'unresolved-transport-payload',
+        transport: action.tool,
+        surface: action.args.surface ?? '(unresolved)',
+        detail: resolution.detail,
+      });
     }
   }
-  return issues;
+  return { issues, limitations };
 }
 
 export function mockActionContractIssues(
@@ -885,7 +1025,7 @@ export function mockActionContractIssues(
   plan: ExecutionPlan,
   contract: ProcedureContract = { trails: [] },
 ): string[] {
-  const issues = procedureTrailAttentionIssues(output, candidate, contract);
+  const { issues } = procedureTrailAttentionIssues(output, candidate, contract);
   const primaryIssue = primaryActionIssue(output, candidate, plan);
   if (primaryIssue) issues.push(primaryIssue);
   const explicitStatus = candidate.contentSummary.match(
@@ -1360,12 +1500,16 @@ export async function runDependentSkill(
     procedureTrails: raw.procedureTrails,
     planStepOutcomes: ordered,
   };
-  const trailIssues = procedureTrailAttentionIssues(output, candidate, procedureContract, {
+  const trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
     mode,
     surfaces: args.surfaces ?? [],
   });
-  if (trailIssues.length > 0) {
-    throw new Error(`dependent executor procedure contract was invalid: ${trailIssues.join('; ')}`);
+  if (trailAttention.issues.length > 0) {
+    throw new Error(
+      `dependent executor procedure contract was invalid: ${trailAttention.issues.join('; ')}`,
+    );
   }
-  return output;
+  return trailAttention.limitations.length > 0
+    ? { ...output, procedureTrailLimitations: trailAttention.limitations }
+    : output;
 }

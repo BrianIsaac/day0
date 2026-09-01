@@ -128,12 +128,24 @@ export interface ProcedureTrailAttestation {
   inapplicabilityReason: string | null;
 }
 
+/** A matcher boundary that could not prove or disprove one real transport effect. */
+export interface ProcedureTrailLimitation {
+  trailId: string;
+  actionIndex: number;
+  kind: 'unresolved-transport-payload';
+  transport: SurfaceActionTool;
+  surface: string;
+  detail: string;
+}
+
 export interface ExecutionOutput {
   draft: string;
   notes: string;
   actions: MockAction[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */
   procedureTrails?: ProcedureTrailAttestation[];
+  /** Server-derived real-transport ambiguities; absent from model-authored schemas. */
+  procedureTrailLimitations?: ProcedureTrailLimitation[];
   /**
    * The emitted actions are prerequisites only; their actual ledger must be
    * available before the run authors its final, result-dependent actions.
@@ -161,6 +173,8 @@ export interface DependentExecutionOutput {
   actions: MockAction[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */
   procedureTrails?: ProcedureTrailAttestation[];
+  /** Server-derived real-transport ambiguities; absent from model-authored schemas. */
+  procedureTrailLimitations?: ProcedureTrailLimitation[];
   planStepOutcomes: PlanStepOutcome[];
 }
 
