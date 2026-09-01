@@ -712,7 +712,7 @@ describe('real dependent procedure trails', (): void => {
       procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
     });
     await expect(runDependentSkill(runArgs)).rejects.toThrow(
-      'procedure-trail action index does not identify the prescribed effect',
+      'procedure-trail transport payload contradicts the prescribed effect',
     );
   });
 });

@@ -1004,7 +1004,11 @@ function procedureTrailAttentionIssues(
     }
     const resolution = procedureActionResolution(trail, action, candidate, context);
     if (resolution.kind === 'contradiction') {
-      issues.push('procedure-trail action index does not identify the prescribed effect');
+      issues.push(
+        context.mode === 'real'
+          ? 'procedure-trail transport payload contradicts the prescribed effect'
+          : 'procedure-trail action index does not identify the prescribed effect',
+      );
     } else if (resolution.kind === 'unknown' && isSurfaceTool(action.tool)) {
       limitations.push({
         trailId: trail.id,
