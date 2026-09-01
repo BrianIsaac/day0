@@ -1,7 +1,13 @@
 import { Agent } from '@mastra/core/agent';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { MODEL_CALL_TIMEOUT_MS, MODEL_CONFIG, MODEL_TEMPERATURE } from '../lib/mastra';
+import {
+  MODEL_CALL_TIMEOUT_MS,
+  MODEL_CONFIG,
+  MODEL_PROVIDER_MAX_RETRIES,
+  MODEL_TEMPERATURE,
+  withModelRetry,
+} from '../lib/mastra';
 import type { AppliedAction } from '../surfaces/types';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { renderEnvSnapshot } from '../work/execute-skill';
@@ -72,11 +78,11 @@ export async function runBaselineAgent(args: {
     args.onToolCall();
     return await args.invokeAction(action);
   };
-  const cells = z.array(z.object({ header: z.string(), value: z.string() })).min(1);
+  const cells = z.array(z.object({ header: z.string(), value: z.string() }).strict()).min(1);
   const tools = {
     'docs.lookup': tool({
       description: 'Search the team documentation by query. The documents are not in context.',
-      inputSchema: z.object({ query: z.string() }),
+      inputSchema: z.object({ query: z.string() }).strict(),
       execute: async ({ query }) => {
         args.onToolCall();
         return { documents: docMatches(args.snapshot, query) };
@@ -84,30 +90,34 @@ export async function runBaselineAgent(args: {
     }),
     'spreadsheet.appendRow': tool({
       description: 'Append one row to an existing mock spreadsheet tab.',
-      inputSchema: z.object({ sheetSlug: z.string(), tabName: z.string(), cells }),
+      inputSchema: z.object({ sheetSlug: z.string(), tabName: z.string(), cells }).strict(),
       execute: async (input) => await apply({ tool: 'spreadsheet.appendRow', args: input }),
     }),
     'slack.postMessage': tool({
       description: 'Post one message to an existing mock Slack channel or DM.',
-      inputSchema: z.object({
-        channelSlug: z.string(),
-        threadKey: z.string().optional(),
-        body: z.string(),
-      }),
+      inputSchema: z
+        .object({
+          channelSlug: z.string(),
+          threadKey: z.string().optional(),
+          body: z.string(),
+        })
+        .strict(),
       execute: async (input) => await apply({ tool: 'slack.postMessage', args: input }),
     }),
     'twitter.reply': tool({
       description: 'Draft one reply to an existing mock tweet.',
-      inputSchema: z.object({ tweetSlug: z.string(), body: z.string() }),
+      inputSchema: z.object({ tweetSlug: z.string(), body: z.string() }).strict(),
       execute: async (input) => await apply({ tool: 'twitter.reply', args: input }),
     }),
     'ticket.update': tool({
       description: 'Update one existing mock ticket status and/or add a comment.',
-      inputSchema: z.object({
-        slug: z.string(),
-        status: z.enum(['open', 'in-progress', 'blocked', 'done']).optional(),
-        comment: z.string().optional(),
-      }),
+      inputSchema: z
+        .object({
+          slug: z.string(),
+          status: z.enum(['open', 'in-progress', 'blocked', 'done']).optional(),
+          comment: z.string().optional(),
+        })
+        .strict(),
       execute: async (input) => await apply({ tool: 'ticket.update', args: input }),
     }),
   };
@@ -116,14 +126,17 @@ export async function runBaselineAgent(args: {
     name: 'ordinary agent',
     instructions: 'You are an ops assistant for this team; here are your tools.',
     model: MODEL_CONFIG,
+    maxRetries: MODEL_PROVIDER_MAX_RETRIES,
     tools,
   });
-  const result = await ordinary.generate(candidatePrompt(args.candidate, args.snapshot), {
-    abortSignal: AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS),
-    maxSteps: 10,
-    modelSettings: { temperature: MODEL_TEMPERATURE },
-    toolChoice: 'auto',
-  });
+  const result = await withModelRetry('baselineAgent', async () =>
+    ordinary.generate(candidatePrompt(args.candidate, args.snapshot), {
+      abortSignal: AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS),
+      maxSteps: 10,
+      modelSettings: { temperature: MODEL_TEMPERATURE },
+      toolChoice: 'auto',
+    }),
+  );
   return {
     draft: result.text.trim(),
     modelCalls: Array.isArray(result.steps) ? result.steps.length : 1,

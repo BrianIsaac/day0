@@ -26,7 +26,7 @@ async function seedAsOwner(): Promise<{
   tickets: number;
   tweets: number;
   spreadsheets: number;
-  docs: number;
+  docs: Array<{ slug: string; title: string; body: string }>;
   skills: string[];
 }> {
   const { api } = await import('../../convex/_generated/api');
@@ -49,7 +49,11 @@ async function seedAsOwner(): Promise<{
     tickets: (await ctx.db.query('mockTickets').collect()).length,
     tweets: (await ctx.db.query('mockTweets').collect()).length,
     spreadsheets: (await ctx.db.query('mockSpreadsheets').collect()).length,
-    docs: (await ctx.db.query('mockDocs').collect()).length,
+    docs: (await ctx.db.query('mockDocs').collect()).map(({ slug, title, body }) => ({
+      slug,
+      title,
+      body,
+    })),
     skills: (await ctx.db.query('skills').collect()).map((skill): string => skill.name),
   }));
   return { result, ...counts };
@@ -65,7 +69,29 @@ describe('demo seed', (): void => {
     expect(seeded.tickets).toBeGreaterThan(0);
     expect(seeded.tweets).toBeGreaterThan(0);
     expect(seeded.spreadsheets).toBeGreaterThan(0);
-    expect(seeded.docs).toBeGreaterThan(0);
+    expect(seeded.docs.length).toBeGreaterThan(0);
+  });
+
+  it('puts docs-task answers and work procedures in runtime onboarding documents', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { docs } = await seedAsOwner();
+    const bySlug = Object.fromEntries(docs.map((doc) => [doc.slug, `${doc.title}\n${doc.body}`]));
+
+    expect(bySlug['team-overview']).toContain('09:30 SGT');
+    expect(bySlug['team-overview']).toContain('q4-revenue-tracker');
+    expect(bySlug['on-call']).toContain('Tier-2 (this week): Sara');
+    expect(bySlug['onboarding']).toContain('Tuesday committee prep silently');
+    expect(bySlug['escalation-paths']).toContain('touch a Salesforce record');
+    expect(bySlug['escalation-paths']).toContain('surface a draft to the manager for review');
+
+    const procedures = docs
+      .filter((doc) => doc.slug.startsWith('how-to-'))
+      .map((doc) => doc.body)
+      .join('\n');
+    expect(procedures).toContain('spreadsheet.appendRow');
+    expect(procedures).toContain('slack.postMessage');
+    expect(procedures).toContain('ticket.update');
+    expect(procedures).toContain('twitter.reply');
   });
 
   it('installs only the builtin skill in real mode, leaving every mock table empty', async (): Promise<void> => {
@@ -73,7 +99,7 @@ describe('demo seed', (): void => {
     const seeded = await seedAsOwner();
     expect(seeded.result).toEqual({ skillsInstalled: 1, mockEnvSeeded: false, mode: 'real' });
     expect(seeded.skills).toEqual(['see-internal-docs']);
-    expect([seeded.channels, seeded.tickets, seeded.tweets, seeded.spreadsheets, seeded.docs]).toEqual([
+    expect([seeded.channels, seeded.tickets, seeded.tweets, seeded.spreadsheets, seeded.docs.length]).toEqual([
       0, 0, 0, 0, 0,
     ]);
   });

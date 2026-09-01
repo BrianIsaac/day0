@@ -44,6 +44,10 @@ describe('skill author prompts', (): void => {
     expect(AUTHOR_SYSTEM).not.toContain(
       'If the skill drafts text for human review, ALSO emit a `slack.postMessage` to `dm-manager`',
     );
+    expect(AUTHOR_SYSTEM).not.toContain('`dm-manager`');
+    expect(AUTHOR_SYSTEM).toContain(
+      'Take destinations, recipients and supplemental audit actions from the runtime candidate and loaded procedures',
+    );
     expect(AUTHOR_SYSTEM).toContain(
       'A public reply draft is never copied into the manager DM',
     );

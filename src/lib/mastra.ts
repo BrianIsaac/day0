@@ -43,33 +43,46 @@ export const MODEL_CONFIG: MastraModelConfig = env.OPENAI_BASE_URL
 /** Shared sampling setting for the shipped agent and the evaluation control. */
 export const MODEL_TEMPERATURE = 0.4;
 export const MODEL_CALL_TIMEOUT_MS = 90_000;
+export const MODEL_PROVIDER_MAX_RETRIES = 2;
 
 function modelAbortSignal(): AbortSignal {
   return AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS);
 }
 
-const MAX_ATTEMPTS = 5;
-const BASE_DELAY_MS = 2000;
-const MAX_DELAY_MS = 30000;
+export const MODEL_RETRY_POLICY = {
+  maxAttempts: 5,
+  baseDelayMs: 2000,
+  maxDelayMs: 30000,
+  retryableStatusCodes: [429, 503],
+  retryableMessagePattern: 'overload|service_unavailable|503|temporar|rate.?limit',
+} as const;
 
 function isTransientApiError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const e = err as { isRetryable?: boolean; message?: unknown; statusCode?: number };
   if (e.isRetryable === true) return true;
-  if (e.statusCode === 503 || e.statusCode === 429) return true;
+  if (
+    typeof e.statusCode === 'number' &&
+    (MODEL_RETRY_POLICY.retryableStatusCodes as readonly number[]).includes(e.statusCode)
+  ) {
+    return true;
+  }
   const msg = String(e.message ?? '');
-  return /overload|service_unavailable|503|temporar|rate.?limit/i.test(msg);
+  return new RegExp(MODEL_RETRY_POLICY.retryableMessagePattern, 'i').test(msg);
 }
 
 async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
   let lastErr: unknown;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < MODEL_RETRY_POLICY.maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
-      if (!isTransientApiError(err) || attempt === MAX_ATTEMPTS - 1) throw err;
-      const delay = Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+      if (!isTransientApiError(err) || attempt === MODEL_RETRY_POLICY.maxAttempts - 1) throw err;
+      const delay = Math.min(
+        MODEL_RETRY_POLICY.baseDelayMs * 2 ** attempt,
+        MODEL_RETRY_POLICY.maxDelayMs,
+      );
       console.warn(
         `[mastra] ${label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`,
         err,
@@ -80,12 +93,18 @@ async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
   throw lastErr;
 }
 
+/** Apply the same transient provider retry policy to any Mastra generation shape. */
+export async function withModelRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  return await withRetry(label, fn);
+}
+
 export function makeAgent(name: string, instructions: string): Agent {
   return new Agent({
     id: name,
     name,
     instructions,
     model: MODEL_CONFIG,
+    maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
 }
 

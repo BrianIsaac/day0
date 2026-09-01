@@ -38,7 +38,9 @@ vi.mock('@mastra/core/agent', () => ({
 vi.mock('../../src/lib/mastra', () => ({
   MODEL_CONFIG: 'openai/mock-model',
   MODEL_CALL_TIMEOUT_MS: 90_000,
+  MODEL_PROVIDER_MAX_RETRIES: 2,
   MODEL_TEMPERATURE: 0.4,
+  withModelRetry: async <T>(_label: string, run: () => Promise<T>): Promise<T> => await run(),
   makeAgent: (): never => {
     throw new Error('unexpected makeAgent call');
   },

@@ -619,6 +619,11 @@ function flattenedDependentOutput(
     notes: output.notes,
     needsDependentPhase: false,
     actions: [...output.initial.actions, ...output.actions],
+    procedureTrails: (output.procedureTrails ?? []).map((trail) => ({
+      ...trail,
+      actionIndex:
+        trail.actionIndex === null ? null : trail.actionIndex + output.actionIndexOffset,
+    })),
     applied: [...output.initial.applied, ...applied],
     planStepOutcomes: output.planStepOutcomes,
   };

@@ -1,22 +1,22 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
-  actionArgsSchema,
   appliedLedgerPrompt,
   dependentExecuteSchema,
   executeSchema,
+  executeSchemaForProcedureContract,
   executorInstructions,
   executorPreamble,
   mockActionContractIssues,
+  parseProcedureContract,
+  procedureContractSchema,
   replyTargetLine,
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
-import {
-  ACTION_TOOLS,
-  DEPENDENT_ACTION_CAP,
-  type MockActionArgs,
-} from '../../../src/work/types';
+import { ACTION_TOOLS, DEPENDENT_ACTION_CAP, type MockActionArgs } from '../../../src/work/types';
 
 const now = Date.UTC(2026, 7, 29, 9);
 
@@ -57,9 +57,15 @@ const ticketGuides = [
   {
     slug: 'how-to-update-ticket',
     title: 'How to update a ticket (action guide)',
-    body: 'For the originating ticket, use `status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
+    body: 'For work from the `ticket-queue`, call `ticket.update` on the originating ticket: use `status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
   },
 ];
+
+const emptyProcedureContract = parseProcedureContract({ teamDocs: [], howToGuides: [] });
+const ticketProcedureContract = parseProcedureContract({
+  teamDocs: [],
+  howToGuides: ticketGuides,
+});
 
 const recordedFlatArgs = {
   body: '',
@@ -89,12 +95,383 @@ function recordedArgs(overrides: Partial<MockActionArgs>): MockActionArgs {
 const SYNTHETIC_SLACK_TOKEN = ['xoxb', '1234567890-abcdefghijklmnop'].join('-');
 
 describe('executor output contract', (): void => {
+  it('requires procedure-trail attention in both executor phases', (): void => {
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [],
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: null, inapplicabilityReason: 'Not this category.' },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      dependentExecuteSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        actions: [],
+        planStepOutcomes: [{ step: 1, status: 'blocked', evidence: 'No prerequisite result.' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('binds the runtime trail inventory into the provider schema', (): void => {
+    const schema = executeSchemaForProcedureContract(ticketProcedureContract);
+    const base = {
+      draft: 'd',
+      notes: 'n',
+      needsDependentPhase: false,
+      actions: [],
+    };
+
+    expect(schema.safeParse({ ...base, procedureTrails: [] }).success).toBe(false);
+    expect(
+      schema.safeParse({
+        ...base,
+        procedureTrails: [
+          { trailId: 'unknown', actionIndex: null, inapplicabilityReason: 'Not applicable.' },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...base,
+        procedureTrails: [
+          { trailId: 'trail-1', actionIndex: null, inapplicabilityReason: 'Not applicable.' },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('binds the distinct primary and trailing destination count into the provider schema', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'private-recaps',
+          title: 'Private recaps',
+          body: [
+            'After completing work, send a recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and a non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    });
+    const candidate = {
+      sourceCategory: 'inbox' as const,
+      sourceSystem: 'chat',
+      externalId: 'CASE-20',
+      title: 'Post the handoff',
+      contentSummary: 'Post the supplied handoff in the project room.',
+      contentRefs: ['slack://project-room/case-20'],
+      observedAt: new Date(0),
+    };
+    const plan = {
+      summary: 'Post the supplied handoff.',
+      steps: ['Send the approved message to its requested destination.'],
+      expectedOutputType: 'message' as const,
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 2,
+    };
+    const schema = executeSchemaForProcedureContract(contract, candidate, plan);
+    const base = {
+      draft: 'd',
+      notes: 'n',
+      needsDependentPhase: false,
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+    };
+
+    expect(
+      schema.safeParse({
+        ...base,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'project-room', threadKey: null, body: 'Handoff.' },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...base,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'project-room', threadKey: null, body: 'Handoff.' },
+          },
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'lead-desk', threadKey: null, body: 'Recap.' },
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('does not invent a distinct primary effect when the candidate has no structured destination', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'private-recaps',
+          title: 'Private recaps',
+          body: [
+            'After completing work, send a recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and a non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    });
+    const schema = executeSchemaForProcedureContract(
+      contract,
+      {
+        sourceCategory: 'inbox',
+        sourceSystem: 'request-desk',
+        externalId: 'CASE-21',
+        title: 'Answer the request',
+        contentSummary: 'Answer through the appropriate route.',
+        contentRefs: ['request://case-21'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Answer or escalate the request.',
+        steps: ['Use the appropriate documented route.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+    );
+
+    expect(
+      schema.safeParse({
+        draft: 'Escalated safely.',
+        notes: 'The candidate supplied no structured destination.',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'lead-desk', threadKey: null, body: 'Escalation.' },
+          },
+        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('derives trailing effects from a renamed and reworded office procedure', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'case-ledger-v4',
+          title: 'Finishing an incoming case',
+          body: [
+            'For work whose Source category is `event-stream`, finish by calling `ticket.update` on the originating `ticket://` reference.',
+            'A completed case sets `status` to `blocked`; unfinished work sets `status` to `open`.',
+            'Always supply a non-empty `comment` explaining the result.',
+          ].join('\n'),
+        },
+        {
+          slug: 'private-recaps-v2',
+          title: 'Private completion recaps',
+          body: [
+            'After completing any work, send a concise recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and the non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    });
+
+    expect(procedureContractSchema.parse(contract)).toEqual(contract);
+    expect(contract.trails).toEqual([
+      expect.objectContaining({
+        appliesTo: { sourceCategories: ['event-stream'] },
+        effect: expect.objectContaining({
+          tool: 'ticket.update',
+          destination: { kind: 'originating-reference', refPrefix: 'ticket://' },
+          requiredPayload: ['comment'],
+          nonEmptyPayload: ['comment'],
+          statusTransition: { argument: 'status', full: 'blocked', partial: 'open' },
+        }),
+      }),
+      expect.objectContaining({
+        appliesTo: { sourceCategories: [] },
+        effect: expect.objectContaining({
+          tool: 'slack.postMessage',
+          destination: {
+            kind: 'manager-channel',
+            argument: 'channelSlug',
+            value: 'lead-desk',
+          },
+          requiredPayload: ['body'],
+          nonEmptyPayload: ['body'],
+          statusTransition: null,
+        }),
+      }),
+    ]);
+
+    expect(
+      mockActionContractIssues(
+        {
+          draft: 'Finished the case.',
+          notes: '',
+          needsDependentPhase: false,
+          procedureTrails: [
+            { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
+            { trailId: 'trail-2', actionIndex: 1, inapplicabilityReason: null },
+          ],
+          actions: [
+            {
+              tool: 'ticket.update',
+              args: { slug: 'CASE-17', status: 'done', comment: 'Finished the case.' },
+            },
+            {
+              tool: 'slack.postMessage',
+              args: { channelSlug: 'lead-desk', body: 'Finished CASE-17.' },
+            },
+          ],
+        },
+        {
+          sourceCategory: 'event-stream',
+          sourceSystem: 'case-desk',
+          externalId: 'CASE-17',
+          title: 'Finish the case',
+          contentSummary: 'Finish the bounded work on CASE-17.',
+          contentRefs: ['ticket://CASE-17'],
+          observedAt: new Date(0),
+        },
+        {
+          summary: 'Finish the bounded work.',
+          steps: ['Complete the case and record the result.'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 2,
+        },
+        contract,
+      ),
+    ).toEqual(['prescribed originating-reference transition does not match the completed work']);
+  });
+
+  it('collapses duplicate seeded procedure wording into one trail per effect', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'how-to-update-spreadsheet',
+          title: 'How to update a spreadsheet',
+          body: [
+            'If work came from the `ticket-queue`, end with `ticket.update` against the originating ticket.',
+            'Set `status: "done"` for full closure, `"in-progress"` for partial.',
+          ].join('\n'),
+        },
+        {
+          slug: 'how-to-update-ticket',
+          title: 'How to update a ticket',
+          body: [
+            'For `ticket-queue` work, call `ticket.update` on the originating ticket.',
+            '`status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
+          ].join('\n'),
+        },
+        {
+          slug: 'how-to-post-slack',
+          title: 'How to post to Slack',
+          body: [
+            'Use `slack.postMessage` with `channelSlug` and `body`.',
+            'For the completion report, send one to the manager (the full draft) by putting the draft in `dm-manager`.',
+          ].join('\n'),
+        },
+      ],
+    });
+
+    expect(contract.trails).toHaveLength(2);
+    expect(contract.trails[0]).toMatchObject({
+      appliesTo: { sourceCategories: ['ticket-queue'] },
+      effect: {
+        tool: 'ticket.update',
+        destination: { kind: 'originating-reference', refPrefix: 'ticket://' },
+        requiredPayload: ['comment'],
+        nonEmptyPayload: ['comment'],
+        statusTransition: { argument: 'status', full: 'done', partial: 'in-progress' },
+      },
+    });
+    expect(contract.trails[1]).toMatchObject({
+      effect: {
+        tool: 'slack.postMessage',
+        destination: {
+          kind: 'manager-channel',
+          argument: 'channelSlug',
+          value: 'dm-manager',
+        },
+      },
+    });
+  });
+
+  it('extracts the two prescribed trails from the office guides seeded at runtime', (): void => {
+    const source = readFileSync(new URL('../../../convex/mockSeed.ts', import.meta.url), 'utf8');
+    const start = source.indexOf('const HOW_TO_GUIDES');
+    const end = source.indexOf('export const seedMockEnvironment', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const guides: Array<{ slug: string; title: string; body: string }> = [];
+    const pattern = /slug: '([^']+)',\s+title: '([^']+)',\s+body: `([\s\S]*?)\n`,\s+},/g;
+    for (const match of source.slice(start, end).matchAll(pattern)) {
+      guides.push({
+        slug: match[1]!,
+        title: match[2]!,
+        body: match[3]!.replaceAll('\\`', '`'),
+      });
+    }
+
+    expect(guides).toHaveLength(4);
+    expect(parseProcedureContract({ teamDocs: [], howToGuides: guides }).trails).toEqual([
+      expect.objectContaining({
+        appliesTo: { sourceCategories: [] },
+        effect: {
+          tool: 'slack.postMessage',
+          destination: {
+            kind: 'manager-channel',
+            argument: 'channelSlug',
+            value: 'dm-manager',
+          },
+          requiredPayload: ['body'],
+          nonEmptyPayload: ['body'],
+          statusTransition: null,
+        },
+      }),
+      expect.objectContaining({
+        appliesTo: { sourceCategories: ['ticket-queue'] },
+        effect: {
+          tool: 'ticket.update',
+          destination: { kind: 'originating-reference', refPrefix: 'ticket://' },
+          requiredPayload: ['comment'],
+          nonEmptyPayload: ['comment'],
+          statusTransition: { argument: 'status', full: 'done', partial: 'in-progress' },
+        },
+      }),
+    ]);
+  });
+
   it('rejects a repeated status-only ticket update after the combined requested update', (): void => {
     const issues = mockActionContractIssues(
       {
         draft: 'Move REVOPS-EVAL-08 to in-progress with the requested ownership note.',
         notes: '',
         needsDependentPhase: false,
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
@@ -140,7 +517,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 3,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([
@@ -153,8 +530,10 @@ describe('executor output contract', (): void => {
       {
         draft:
           'Cannot append the Wayne Enterprises row until source evidence and a duplicate check are provided.',
-        notes: 'The exact requested cells were supplied, but the skill asked for extra prerequisites.',
+        notes:
+          'The exact requested cells were supplied, but the skill asked for extra prerequisites.',
         needsDependentPhase: false,
+        procedureTrails: [],
         actions: [
           {
             tool: 'slack.postMessage',
@@ -183,7 +562,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 3,
       },
-      [],
+      emptyProcedureContract,
     );
 
     expect(issues).toEqual(['action set omitted the approved primary spreadsheet mutation']);
@@ -196,7 +575,16 @@ describe('executor output contract', (): void => {
           'EVAL-DOC-04 — Before changing a Salesforce record, surface a draft to the manager for review. (Escalation paths)',
         notes: 'No ticket update is included.',
         needsDependentPhase: false,
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
+          {
+            tool: 'ticket.update',
+            args: recordedArgs({
+              slug: 'REVOPS-EVAL-04',
+              status: 'done',
+              comment: '',
+            }),
+          },
           {
             tool: 'slack.postMessage',
             args: recordedArgs({
@@ -224,11 +612,11 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 5,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([
-      'ticket-queue action set omitted its documented originating-ticket audit comment',
+      'the loaded procedure prescribes an originating-reference trail; none is present',
     ]);
   });
 
@@ -238,6 +626,7 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the documented Q4 tracker identifier on REVOPS-EVAL-05.',
         notes: 'The documentation fully covers the tracker slug and rationale.',
         needsDependentPhase: false,
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'slack.postMessage',
@@ -248,8 +637,7 @@ describe('executor output contract', (): void => {
             args: recordedArgs({
               slug: 'REVOPS-EVAL-05',
               status: 'in-progress',
-              comment:
-                'EVAL-DOC-05 — q4-revenue-tracker is the source of truth. (Team overview)',
+              comment: 'EVAL-DOC-05 — q4-revenue-tracker is the source of truth. (Team overview)',
             }),
           },
         ],
@@ -266,17 +654,20 @@ describe('executor output contract', (): void => {
       },
       {
         summary: 'Record the complete cited answer.',
-        steps: ['Post the complete source-cited comment.'],
+        steps: [
+          'If the documentation is incomplete, flag that instead of inferring an answer.',
+          'Post the complete source-cited comment.',
+        ],
         expectedOutputType: 'ticket-update',
         riskNotes: '',
         reversibility: 'reversible',
         estimatedMinutes: 5,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([
-      'originating-ticket transition contradicts the documented closure state',
+      'prescribed originating-reference transition does not match the completed work',
     ]);
   });
 
@@ -286,6 +677,7 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the first reconciliation pass; the second pass remains outstanding.',
         notes: 'The approved work is intentionally incomplete.',
         needsDependentPhase: false,
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
@@ -315,7 +707,7 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 10,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([]);
@@ -327,6 +719,7 @@ describe('executor output contract', (): void => {
         draft: 'Recorded the requested ticket note.',
         notes: '',
         needsDependentPhase: false,
+        procedureTrails: [],
         actions: [
           {
             tool: 'ticket.update',
@@ -355,10 +748,101 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 2,
       },
-      [],
+      emptyProcedureContract,
     );
 
     expect(issues).toEqual([]);
+  });
+
+  it('rejects a procedure trail that displaced the candidate-requested primary message', (): void => {
+    const contract = parseProcedureContract({
+      teamDocs: [],
+      howToGuides: [
+        {
+          slug: 'private-recaps',
+          title: 'Private recaps',
+          body: [
+            'After completing work, send a recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and a non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    });
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Prepared the requested message.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'lead-desk', body: 'Completed the work.' },
+          },
+        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      },
+      {
+        sourceCategory: 'inbox',
+        sourceSystem: 'chat',
+        externalId: 'CASE-18',
+        title: 'Post the handoff',
+        contentSummary: 'Post the supplied handoff in the project room.',
+        contentRefs: ['slack://project-room/case-18'],
+        replyTarget: { channel: 'project-room', threadTs: 'case-18' },
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Post the supplied handoff.',
+        steps: ['Send the approved message to its requested destination.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      contract,
+    );
+
+    expect(issues).toEqual(['action set omitted the approved primary message mutation']);
+  });
+
+  it('rejects primary payloads that drop literals explicitly carried by the candidate', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Prepared the requested message.',
+        notes: '',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: { channelSlug: 'project-room', body: 'Prepared the handoff.' },
+          },
+        ],
+        procedureTrails: [],
+      },
+      {
+        sourceCategory: 'inbox',
+        sourceSystem: 'chat',
+        externalId: 'CASE-19',
+        title: 'Post the handoff',
+        contentSummary:
+          "Post CASE-19 with the exact sentence 'The bounded handoff is ready for review.'",
+        contentRefs: ['slack://project-room/case-19'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Post the supplied handoff.',
+        steps: ['Send the approved message to its requested destination.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      emptyProcedureContract,
+    );
+
+    expect(issues).toEqual([
+      'approved primary message payload omits literal content required by the candidate',
+    ]);
   });
 
   it('accepts the same status transition on two distinct tickets', (): void => {
@@ -367,6 +851,7 @@ describe('executor output contract', (): void => {
         draft: 'Updated the origin and cross-linked ticket.',
         notes: '',
         needsDependentPhase: false,
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
         actions: [
           {
             tool: 'ticket.update',
@@ -404,38 +889,195 @@ describe('executor output contract', (): void => {
         reversibility: 'reversible',
         estimatedMinutes: 3,
       },
-      ticketGuides,
+      ticketProcedureContract,
     );
 
     expect(issues).toEqual([]);
   });
 
-  it('accepts every verb, including the two surface verbs, with flat string args', (): void => {
-    for (const tool of ACTION_TOOLS) {
-      expect(
-        executeSchema.safeParse({
-          draft: 'd',
-          notes: 'n',
-          needsDependentPhase: false,
-          actions: [{ tool, args: {} }],
-        }).success,
-      ).toBe(true);
-    }
-    const parsed = actionArgsSchema.safeParse({
-      surface: 'linear',
-      tool: 'save_comment',
-      toolArgsJson: '{"issueId":"x","body":"y"}',
-      method: 'POST',
-      path: '/chat.postMessage',
-      headersJson: '{"Authorization":"Bearer {{secret}}"}',
-      body: '{"channel":"D0MANAGER","text":"hi"}',
-    });
-    expect(parsed.success).toBe(true);
+  it('derives ticket closure from a loaded procedure without depending on the seed slug', (): void => {
+    const issues = mockActionContractIssues(
+      {
+        draft: 'Recorded the completed work.',
+        notes: '',
+        needsDependentPhase: false,
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: {
+              slug: 'OPS-17',
+              status: 'in-progress',
+              comment: 'Recorded the completed work.',
+            },
+          },
+        ],
+      },
+      {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'tickets',
+        externalId: 'OPS-17',
+        title: 'Complete the bounded work',
+        contentSummary: 'Complete the bounded work on OPS-17.',
+        contentRefs: ['ticket://OPS-17'],
+        observedAt: new Date(0),
+      },
+      {
+        summary: 'Complete the bounded work.',
+        steps: ['Do the work and record the result.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      parseProcedureContract({
+        teamDocs: [],
+        howToGuides: [
+          {
+            slug: 'team-ticket-procedure-v2',
+            title: 'Team ticket procedure',
+            body: 'For work from the `ticket-queue`, call `ticket.update` on the originating ticket: use `status: "done"` for full closure, `"blocked"` for partial; add a one-line `comment` summarising what you did.',
+          },
+        ],
+      }),
+    );
+
+    expect(issues).toEqual([
+      'prescribed originating-reference transition does not match the completed work',
+    ]);
   });
 
-  it('keeps the flat rule: structured provider arguments must be strings', (): void => {
-    expect(actionArgsSchema.safeParse({ toolArgsJson: { issueId: 'x' } }).success).toBe(false);
-    expect(actionArgsSchema.safeParse({ headersJson: ['a'] }).success).toBe(false);
+  it('exposes every verb as one compact tagged action variant', (): void => {
+    const actions = {
+      'spreadsheet.appendRow': {
+        tool: 'spreadsheet.appendRow',
+        args: {
+          sheetSlug: 'q4-revenue-tracker',
+          tabName: 'pipeline',
+          cells: [{ header: 'Account', value: 'Acme' }],
+        },
+      },
+      'slack.postMessage': {
+        tool: 'slack.postMessage',
+        args: { channelSlug: 'dm-manager', threadKey: null, body: 'Prepared.' },
+      },
+      'twitter.reply': {
+        tool: 'twitter.reply',
+        args: { tweetSlug: 'tweet-1', body: 'Thanks.' },
+      },
+      'ticket.update': {
+        tool: 'ticket.update',
+        args: { slug: 'REVOPS-1', status: 'done', comment: 'Complete.' },
+      },
+      'mcp.call': {
+        tool: 'mcp.call',
+        args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"x"}' },
+      },
+      'http.request': {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'POST',
+          path: '/chat.postMessage',
+          headersJson: null,
+          body: '{"channel":"D0MANAGER","text":"hi"}',
+        },
+      },
+    } satisfies Record<(typeof ACTION_TOOLS)[number], unknown>;
+
+    for (const action of Object.values(actions)) {
+      const parsed = executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [action],
+        procedureTrails: [],
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(parsed.data.actions[0]).toEqual(action);
+    }
+
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'slack.postMessage',
+            args: {
+              channelSlug: 'dm-manager',
+              threadKey: null,
+              body: 'Prepared.',
+              cells: [{ header: 'Account', value: 'Acme' }],
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('serialises the tagged variants as an OpenAI-compatible nested anyOf', (): void => {
+    const schema = z.toJSONSchema(executeSchema, {
+      target: 'draft-7',
+      io: 'input',
+      reused: 'inline',
+    }) as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>>;
+    const items = properties.actions.items as { anyOf?: Array<Record<string, unknown>> };
+
+    expect(schema.type).toBe('object');
+    expect(schema).not.toHaveProperty('anyOf');
+    expect(items.anyOf).toHaveLength(ACTION_TOOLS.length);
+    expect(
+      items.anyOf?.map((branch) => {
+        const branchProperties = branch.properties as Record<string, Record<string, unknown>>;
+        const args = branchProperties.args.properties as Record<string, unknown>;
+        return [branchProperties.tool.const, Object.keys(args)];
+      }),
+    ).toEqual([
+      ['spreadsheet.appendRow', ['sheetSlug', 'tabName', 'cells']],
+      ['slack.postMessage', ['channelSlug', 'threadKey', 'body']],
+      ['twitter.reply', ['tweetSlug', 'body']],
+      ['ticket.update', ['slug', 'status', 'comment']],
+      ['mcp.call', ['surface', 'tool', 'toolArgsJson']],
+      ['http.request', ['surface', 'method', 'path', 'headersJson', 'body']],
+    ]);
+  });
+
+  it('keeps structured provider arguments as JSON strings', (): void => {
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'mcp.call',
+            args: { surface: 'linear', tool: 'get_issue', toolArgsJson: { issueId: 'x' } },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'http.request',
+            args: {
+              surface: 'slack',
+              method: 'POST',
+              path: '/chat.postMessage',
+              headersJson: ['a'],
+              body: null,
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
     expect(
       executeSchema.safeParse({
         draft: 'd',
@@ -446,13 +1088,33 @@ describe('executor output contract', (): void => {
     ).toBe(false);
   });
 
+  it('rejects an empty spreadsheet row like the ordinary-agent tool does', (): void => {
+    expect(
+      executeSchema.safeParse({
+        draft: 'd',
+        notes: 'n',
+        needsDependentPhase: false,
+        actions: [
+          {
+            tool: 'spreadsheet.appendRow',
+            args: { sheetSlug: 'sheet', tabName: 'tab', cells: [] },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it('caps the one dependent phase at four actions', (): void => {
     const base = {
       draft: 'd',
       notes: 'n',
+      procedureTrails: [],
       planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' }],
     };
-    const action = { tool: 'mcp.call' as const, args: {} };
+    const action = {
+      tool: 'mcp.call' as const,
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{}' },
+    };
     expect(
       dependentExecuteSchema.safeParse({
         ...base,
@@ -465,6 +1127,48 @@ describe('executor output contract', (): void => {
         actions: Array.from({ length: DEPENDENT_ACTION_CAP + 1 }, () => action),
       }).success,
     ).toBe(false);
+  });
+
+  it('uses the same strict tagged branch contract in the dependent phase', (): void => {
+    const parsed = dependentExecuteSchema.safeParse({
+      draft: 'd',
+      notes: 'n',
+      procedureTrails: [],
+      actions: [
+        {
+          tool: 'ticket.update',
+          args: {
+            slug: 'OPS-17',
+            status: 'done',
+            comment: 'Complete.',
+            channelSlug: 'hidden-destination',
+          },
+        },
+      ],
+      planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'ledger row 0' }],
+    });
+
+    expect(parsed.success).toBe(false);
+
+    const valid = {
+      tool: 'http.request' as const,
+      args: {
+        surface: 'messaging',
+        method: 'POST' as const,
+        path: '/messages',
+        headersJson: null,
+        body: '',
+      },
+    };
+    const validParsed = dependentExecuteSchema.safeParse({
+      draft: 'd',
+      notes: 'n',
+      procedureTrails: [],
+      actions: [valid],
+      planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'ledger row 0' }],
+    });
+    expect(validParsed.success).toBe(true);
+    if (validParsed.success) expect(validParsed.data.actions[0]).toEqual(valid);
   });
 
   it('renders durable provider evidence for the closing turn', (): void => {
@@ -546,14 +1250,14 @@ describe('surface guidance in the executor prompt', (): void => {
     expect(text).toContain('http.request - { surface, method, path, headersJson, body }');
     expect(text).toContain('{{secret}}');
     expect(text).toContain('only target a surface listed above');
-    expect(text).toContain('`dm-manager`');
+    expect(text).not.toContain('`dm-manager`');
     expect(text).toContain('Do not add a provenance trailer');
     expect(text).toContain('status change on a ticket must be preceded');
   });
 });
 
 describe('executor preamble by mode', (): void => {
-  it('teaches the four mock verbs and the mock fanout rules in mock mode', (): void => {
+  it('teaches the four mock verbs without embedding the seeded office procedure', (): void => {
     const text = executorPreamble('mock');
     for (const verb of [
       'spreadsheet.appendRow',
@@ -563,7 +1267,9 @@ describe('executor preamble by mode', (): void => {
     ]) {
       expect(text).toContain(`  - ${verb}`);
     }
-    expect(text).toContain('`slack.postMessage` to `dm-manager`');
+    expect(text).toContain('Follow the loaded procedures');
+    expect(text).not.toMatch(/dm-manager|REVOPS|revops-asks/);
+    expect(text).not.toContain('BASE actions');
     expect(text).not.toContain('refused');
   });
 
