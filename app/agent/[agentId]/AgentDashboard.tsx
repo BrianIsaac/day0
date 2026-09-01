@@ -26,6 +26,11 @@ import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary
 import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
 import { replyTargetFor } from '../../../src/work/reply-target';
+import {
+  providerReconciliationEntries,
+  retryRequiresProviderReconciliation,
+  type ReconciliationEntry,
+} from '../../../src/work/reconciliation';
 import type { MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import type { AgentMetrics } from '../../../convex/metrics';
@@ -917,6 +922,7 @@ function WorkQueue({
   const approvePlan = useMutation(api.work.approvePlan);
   const cancelPlan = useMutation(api.work.cancelPlan);
   const retryFailed = useMutation(api.work.retryFailed);
+  const reconcileFailed = useMutation(api.work.reconcileFailed);
   const approveActions = useMutation(api.work.approveActions);
   const rejectActions = useMutation(api.work.rejectActions);
 
@@ -996,6 +1002,9 @@ function WorkQueue({
               onApprovePlan={() => approvePlan({ workItemId: item._id })}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={() => retryFailed({ workItemId: item._id })}
+              onReconcileFailed={(confirmed) =>
+                reconcileFailed({ workItemId: item._id, confirmed })
+              }
               onApproveActions={(approvedIndexes) =>
                 item.pendingRunId
                   ? approveActions({
@@ -1039,6 +1048,8 @@ interface LedgerRow {
   effect?: string;
   reason?: string;
   providerId?: string;
+  outcomeUnknown?: boolean;
+  idempotencyKey?: string;
 }
 
 interface PlanStepOutcomeRow {
@@ -1183,17 +1194,6 @@ export function decisionAttribution(
   const source =
     decision.decidedVia === 'channel' ? decision.surfaceName : 'the day0 dashboard';
   return `${decision.outcome} from ${source}`;
-}
-
-/** Whether replay could duplicate an external effect whose outcome is durable or unknown. */
-export function retryRequiresReconciliation(
-  applied: readonly LedgerRow[],
-  skipReason?: string,
-): boolean {
-  return (
-    applied.some((action) => action.ok && !action.held) ||
-    skipReason?.includes('provider outcomes are unknown') === true
-  );
 }
 
 /**
@@ -1433,6 +1433,7 @@ function WorkItemCard({
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
+  onReconcileFailed,
   onApproveActions,
   onRejectActions,
 }: {
@@ -1442,6 +1443,7 @@ function WorkItemCard({
   onApprovePlan: () => void;
   onCancelPlan: () => void;
   onRetryFailed: () => void;
+  onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
   onRejectActions: (reason: string) => Promise<unknown>;
 }) {
@@ -1465,7 +1467,13 @@ function WorkItemCard({
   const heldActions = appliedActions.filter((a) => a.held && !a.awaitingApproval);
   const failedActions = appliedActions.filter((a) => !a.ok && !a.held);
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
-  const retryBlocked = retryRequiresReconciliation(appliedActions, item.skipReason);
+  const reconciliationEntries = item.providerReconciliation?.entries ??
+    providerReconciliationEntries(output);
+  const needsProviderReconciliation = retryRequiresProviderReconciliation(
+    output,
+    item.skipReason,
+  );
+  const retryBlocked = needsProviderReconciliation && !item.providerReconciliation;
   const awaitingSurface =
     verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
@@ -1659,6 +1667,13 @@ function WorkItemCard({
           {failedActions.length === 0 && item.skipReason ? (
             <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">{item.skipReason}</p>
           ) : null}
+          {needsProviderReconciliation || item.providerReconciliation ? (
+            <ProviderReconciliationControl
+              entries={reconciliationEntries}
+              reconciliation={item.providerReconciliation}
+              onConfirm={onReconcileFailed}
+            />
+          ) : null}
           <button
             onClick={onRetryFailed}
             disabled={retryBlocked}
@@ -1668,12 +1683,104 @@ function WorkItemCard({
           </button>
           {retryBlocked ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry is disabled because a provider effect landed or may have landed. Reconcile the
-              provider before starting a new run.
+              Retry remains disabled until provider reconciliation is recorded.
             </p>
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+export function ProviderReconciliationControl({
+  entries,
+  reconciliation,
+  onConfirm,
+}: {
+  entries: readonly ReconciliationEntry[];
+  reconciliation?: { actor: string; confirmedAt: number };
+  onConfirm: (confirmed: boolean) => Promise<unknown>;
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (): Promise<void> => {
+    if (!confirmed || busy || reconciliation) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onConfirm(confirmed);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not record reconciliation.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mb-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
+      <p className="font-medium text-[var(--color-warn)]">
+        {reconciliation ? 'Provider state reconciled' : 'Provider reconciliation required'}
+      </p>
+      {entries.length > 0 ? (
+        <ul className="mt-1 space-y-1 text-[var(--color-fg)]">
+          {entries.map((entry) => (
+            <li key={`${entry.phase}:${entry.actionIndex}:${entry.idempotencyKey ?? ''}`}>
+              <span className="font-mono text-[10px]">
+                {entry.phase} action {entry.actionIndex} · {entry.tool} ·{' '}
+                {entry.outcome === 'outcome-unknown' ? 'outcome unknown' : 'landed'}
+              </span>
+              {entry.effect ? <span className="block">{entry.effect}</span> : null}
+              {entry.reason ? <span className="block">{entry.reason}</span> : null}
+              {entry.providerId ? (
+                <span className="block font-mono text-[10px] text-[var(--color-muted)]">
+                  provider id {entry.providerId}
+                </span>
+              ) : null}
+              {entry.idempotencyKey ? (
+                <span className="block font-mono text-[10px] text-[var(--color-muted)]">
+                  idempotency key {entry.idempotencyKey}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-[var(--color-danger)]">
+          The applied ledger does not identify the affected entries. Retry remains disabled.
+        </p>
+      )}
+      {reconciliation ? (
+        <p className="mt-1 text-[var(--color-muted)]">
+          Verified by <span className="font-mono">{reconciliation.actor}</span> at{' '}
+          <time dateTime={new Date(reconciliation.confirmedAt).toISOString()}>
+            {new Date(reconciliation.confirmedAt).toISOString()}
+          </time>
+          . Retry is enabled.
+        </p>
+      ) : (
+        <>
+          <label className="mt-2 flex items-start gap-2 text-[var(--color-fg)]">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              disabled={busy || entries.length === 0}
+              onChange={(event) => setConfirmed(event.target.checked)}
+            />
+            I verified these entries against the provider state.
+          </label>
+          <button
+            type="button"
+            disabled={!confirmed || busy || entries.length === 0}
+            onClick={() => void submit()}
+            className="mt-2 px-3 py-1 rounded-md border border-[var(--color-warn)]/40 text-[var(--color-warn)] text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Confirm reconciliation
+          </button>
+          {error ? <p className="mt-1 text-[var(--color-danger)]">{error}</p> : null}
+        </>
+      )}
     </div>
   );
 }
