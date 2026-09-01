@@ -21,7 +21,11 @@ vi.mock('../../../src/lib/mastra', () => ({
   },
 }));
 
-import { runDependentSkill, runSkill } from '../../../src/work/execute-skill';
+import {
+  runDependentSkill,
+  runSkill,
+  type RunDependentSkillArgs,
+} from '../../../src/work/execute-skill';
 
 const recordedFlatArgs = {
   body: '',
@@ -628,7 +632,7 @@ describe('real dependent procedure trails', (): void => {
         toolAllowlist: ['save_comment'],
       },
     ];
-    recorded.outputs.push({
+    const dependentOutput = {
       draft: 'The refreshed tile was read back and recorded on the originating item.',
       notes: '',
       actions: [
@@ -657,9 +661,10 @@ describe('real dependent procedure trails', (): void => {
         { step: 1, status: 'satisfied', evidence: 'Action 0 read the tile back.' },
         { step: 2, status: 'satisfied', evidence: 'Action 1 records the audit note.' },
       ],
-    });
+    };
+    recorded.outputs.push(dependentOutput);
 
-    const output = await runDependentSkill({
+    const runArgs = {
       skill: { name: 'refresh-tile', description: 'Refresh the tile.', body: '' },
       plan: {
         summary: 'Read the refreshed tile and record the result.',
@@ -691,7 +696,8 @@ describe('real dependent procedure trails', (): void => {
         procedureTrails: [],
       },
       initialLedger: [],
-    });
+    } satisfies RunDependentSkillArgs;
+    const output = await runDependentSkill(runArgs);
 
     expect(output.actions.map((action) => action.args.tool)).toEqual([
       'browser_snapshot',
@@ -700,5 +706,13 @@ describe('real dependent procedure trails', (): void => {
     expect(output.procedureTrails).toEqual([
       { trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null },
     ]);
+
+    recorded.outputs.push({
+      ...dependentOutput,
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+    });
+    await expect(runDependentSkill(runArgs)).rejects.toThrow(
+      'procedure-trail action index does not identify the prescribed effect',
+    );
   });
 });
