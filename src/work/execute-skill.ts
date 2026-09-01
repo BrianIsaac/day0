@@ -828,18 +828,21 @@ function normaliseOriginReference(value: string, prefix: string): string | undef
 }
 
 function prescribedOriginReferences(candidate: WorkCandidate, prefix: string): Set<string> {
-  const values = [candidate.externalId, ...candidate.contentRefs]
+  const references = candidate.contentRefs
     .map((value) => normaliseOriginReference(value, prefix))
     .filter((value): value is string => value !== undefined);
-  return new Set(values);
+  if (references.length > 0) return new Set(references);
+  const externalId = normaliseOriginReference(candidate.externalId, prefix);
+  return new Set(externalId ? [externalId] : []);
 }
 
 function transportOriginResolution(
   references: readonly string[],
   prescribed: ReadonlySet<string>,
+  prefix: string,
 ): 'match' | 'contradiction' | 'unknown' {
   if (references.length === 0 || prescribed.size === 0) return 'unknown';
-  const normalised = references.map((value) => normaliseOriginReference(value, 'ticket://'));
+  const normalised = references.map((value) => normaliseOriginReference(value, prefix));
   if (normalised.some((value) => value === undefined)) return 'unknown';
   return normalised.every((value) => prescribed.has(value!)) ? 'match' : 'contradiction';
 }
@@ -1050,7 +1053,11 @@ function realProcedureActionResolution(
   if (parsed.action.kind === 'http.request' && !parsed.action.bodyJson) {
     return { kind: 'unknown', detail: 'the HTTP body is not a JSON object' };
   }
-  const identity = transportOriginResolution(targetIssueReferences(parsed.action), origins);
+  const identity = transportOriginResolution(
+    targetIssueReferences(parsed.action),
+    origins,
+    destination.refPrefix,
+  );
   if (identity === 'unknown') {
     return {
       kind: 'unknown',
@@ -1117,7 +1124,11 @@ function procedureTrailAttentionIssues(
     const row = rows[0]!;
     const state = procedureTrailState(row);
     if (state.state === 'mapped' && !output.actions[state.actionIndex]) {
-      issues.push('a procedure-trail row maps to an action index that does not exist');
+      issues.push(
+        context.mode === 'real'
+          ? 'a procedure-trail row maps to an action index that does not exist'
+          : 'procedure-trail action index does not identify the prescribed effect',
+      );
       continue;
     }
     if (!procedureTrailApplies(trail, candidate)) {

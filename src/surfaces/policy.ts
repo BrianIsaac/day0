@@ -1066,7 +1066,6 @@ export function targetIssue(parsed: ParsedSurfaceAction): string | undefined {
   return parsed.kind === 'mcp.call' ? firstString(parsed.toolArgs, ISSUE_KEYS) : undefined;
 }
 
-/** Every non-empty provider field variant that may identify a target issue. */
 export function targetIssueReferences(parsed: ParsedSurfaceAction): string[] {
   if (parsed.kind !== 'mcp.call') return [];
   return [
