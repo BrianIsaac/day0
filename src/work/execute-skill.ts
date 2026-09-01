@@ -13,6 +13,7 @@ import {
   type WorkCandidate,
 } from './types';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
+import { isManagerDm, parseSurfaceAction } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction } from './plan';
@@ -784,9 +785,26 @@ function matchingProcedureActions(
   trail: ProcedureContract['trails'][number],
   output: Pick<ExecutionOutput, 'actions'>,
   candidate: WorkCandidate,
+  context: { mode: SurfaceMode; surfaces: readonly SurfaceRecord[] } = {
+    mode: 'mock',
+    surfaces: [],
+  },
 ): Array<{ action: MockAction; index: number }> {
   return output.actions.flatMap((action, index) => {
-    if (action.tool !== trail.effect.tool) return [];
+    if (action.tool !== trail.effect.tool) {
+      if (context.mode !== 'real') return [];
+      const parsed = parseSurfaceAction(action);
+      if (!parsed.ok) return [];
+      const surface = context.surfaces.find((row) => row.slug === parsed.action.surface);
+      if (
+        trail.effect.destination.kind === 'manager-channel' &&
+        surface &&
+        isManagerDm(parsed.action, surface)
+      ) {
+        return [{ action, index }];
+      }
+      return [];
+    }
     const destination = trail.effect.destination;
     if (destination.kind === 'originating-reference') {
       const origin = originatingReference(candidate, destination.refPrefix);
@@ -807,6 +825,10 @@ function procedureTrailAttentionIssues(
   output: Pick<ExecutionOutput, 'actions' | 'procedureTrails'>,
   candidate: WorkCandidate,
   contract: ProcedureContract,
+  context: { mode: SurfaceMode; surfaces: readonly SurfaceRecord[] } = {
+    mode: 'mock',
+    surfaces: [],
+  },
 ): string[] {
   const issues: string[] = [];
   const attestations = output.procedureTrails ?? [];
@@ -831,7 +853,7 @@ function procedureTrailAttentionIssues(
       issues.push('an applicable loaded procedure trail is not mapped to an action');
       continue;
     }
-    const matches = matchingProcedureActions(trail, output, candidate);
+    const matches = matchingProcedureActions(trail, output, candidate, context);
     if (!matches.some(({ index }) => index === row.actionIndex)) {
       issues.push('procedure-trail action index does not identify the prescribed effect');
     }
@@ -1320,7 +1342,10 @@ export async function runDependentSkill(
     procedureTrails: raw.procedureTrails,
     planStepOutcomes: ordered,
   };
-  const trailIssues = procedureTrailAttentionIssues(output, candidate, procedureContract);
+  const trailIssues = procedureTrailAttentionIssues(output, candidate, procedureContract, {
+    mode,
+    surfaces: args.surfaces ?? [],
+  });
   if (trailIssues.length > 0) {
     throw new Error(`dependent executor procedure contract was invalid: ${trailIssues.join('; ')}`);
   }
