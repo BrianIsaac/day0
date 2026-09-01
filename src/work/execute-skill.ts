@@ -1697,34 +1697,67 @@ export async function runDependentSkill(
     'Produce the truthful closing draft, notes, plan-step outcomes, procedure-trail accounting, and at most one bounded set of closing actions now.',
   ].join('\n');
 
+  function materialiseDependent(
+    raw: z.infer<typeof runtimeSchema>,
+  ): DependentExecutionOutput {
+    const ordered = [...raw.planStepOutcomes].sort((a, b) => a.step - b.step);
+    if (
+      ordered.length !== plan.steps.length ||
+      ordered.some((outcome, index) => outcome.step !== index + 1)
+    ) {
+      throw new Error('dependent phase did not account for every approved plan step exactly once');
+    }
+    return {
+      draft: raw.draft,
+      notes: raw.notes,
+      actions: raw.actions.map(materialiseGeneratedAction),
+      procedureTrails: raw.procedureTrails,
+      planStepOutcomes: ordered,
+    };
+  }
+
   const raw = await agentJson<z.infer<typeof runtimeSchema>>({
     agent: skillAgent,
     user: userPrompt,
     schema: runtimeSchema,
   });
-  const ordered = [...raw.planStepOutcomes].sort((a, b) => a.step - b.step);
-  if (
-    ordered.length !== plan.steps.length ||
-    ordered.some((outcome, index) => outcome.step !== index + 1)
-  ) {
-    throw new Error('dependent phase did not account for every approved plan step exactly once');
-  }
-  const output: DependentExecutionOutput = {
-    draft: raw.draft,
-    notes: raw.notes,
-    actions: raw.actions.map(materialiseGeneratedAction),
-    procedureTrails: raw.procedureTrails,
-    planStepOutcomes: ordered,
-  };
-  const trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
+  let output = materialiseDependent(raw);
+  let trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
     mode,
     surfaces: args.surfaces ?? [],
     phase: 'dependent',
   });
   if (trailAttention.issues.length > 0) {
-    throw new Error(
-      `dependent executor procedure contract was invalid: ${trailAttention.issues.join('; ')}`,
-    );
+    const repairPrompt = [
+      userPrompt,
+      '',
+      '--- Required procedure-trail correction ---',
+      'Your previous structured response was not applied and none of its actions reached the gate.',
+      'Return one full replacement response that fixes every invariant below.',
+      ...trailAttention.issues.map((issue) => `- ${issue}`),
+      '',
+      'Previous structured response:',
+      JSON.stringify(output),
+      '',
+      'Produce the complete replacement response now.',
+    ].join('\n');
+    args.onAdditionalModelCall?.();
+    const repairedRaw = await agentJson<z.infer<typeof runtimeSchema>>({
+      agent: skillAgent,
+      user: repairPrompt,
+      schema: runtimeSchema,
+    });
+    output = materialiseDependent(repairedRaw);
+    trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
+      mode,
+      surfaces: args.surfaces ?? [],
+      phase: 'dependent',
+    });
+    if (trailAttention.issues.length > 0) {
+      throw new Error(
+        `dependent executor procedure contract remained invalid after one repair: ${trailAttention.issues.join('; ')}`,
+      );
+    }
   }
   return trailAttention.limitations.length > 0
     ? { ...output, procedureTrailLimitations: trailAttention.limitations }

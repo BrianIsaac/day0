@@ -491,7 +491,7 @@ describe('real dependent procedure trails', (): void => {
   });
 
   it('rejects a manager-report transport that names the wrong channel', async (): Promise<void> => {
-    recorded.outputs.push({
+    const wrong = {
       draft: 'Reported completion.',
       notes: '',
       actions: [
@@ -510,7 +510,8 @@ describe('real dependent procedure trails', (): void => {
       planStepOutcomes: [
         { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
       ],
-    });
+    };
+    recorded.outputs.push(wrong, wrong);
 
     await expect(
       runDependentSkill({
@@ -804,10 +805,11 @@ describe('real dependent procedure trails', (): void => {
       { trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null },
     ]);
 
-    recorded.outputs.push({
+    const wrongBrowserMapping = {
       ...dependentOutput,
       procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
-    });
+    };
+    recorded.outputs.push(wrongBrowserMapping, wrongBrowserMapping);
     await expect(runDependentSkill(runArgs)).rejects.toThrow(
       'procedure-trail transport payload contradicts the prescribed effect',
     );
@@ -905,7 +907,7 @@ describe('real dependent procedure trails', (): void => {
       { trailId: 'trail-2', state: 'mapped', actionIndex: 0 },
     ]);
 
-    recorded.outputs.push({
+    const wrongIssue = {
       ...dependentOutput,
       actions: [
         {
@@ -921,7 +923,8 @@ describe('real dependent procedure trails', (): void => {
         },
         dependentOutput.actions[1],
       ],
-    });
+    };
+    recorded.outputs.push(wrongIssue, wrongIssue);
     await expect(
       runDependentSkill({
         skill: { name: 'bounded-work', description: 'Perform bounded work.', body: '' },
