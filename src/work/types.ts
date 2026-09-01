@@ -121,12 +121,22 @@ export interface MockAction {
   args: MockActionArgs;
 }
 
-/** One model-authored accounting row for a trail parsed from loaded procedures. */
-export interface ProcedureTrailAttestation {
+/** Legacy mock-mode accounting row retained byte-for-byte for the hosted comparison. */
+export interface MockProcedureTrailAttestation {
   trailId: string;
   actionIndex: number | null;
   inapplicabilityReason: string | null;
 }
+
+/** Real-mode accounting states for one trail parsed from loaded procedures. */
+export type RealProcedureTrailAttestation =
+  | { trailId: string; state: 'mapped'; actionIndex: number }
+  | { trailId: string; state: 'inapplicable'; reason: string }
+  | { trailId: string; state: 'deferred'; reason: string };
+
+export type ProcedureTrailAttestation =
+  | MockProcedureTrailAttestation
+  | RealProcedureTrailAttestation;
 
 /** A matcher boundary that could not prove or disprove one real transport effect. */
 export interface ProcedureTrailLimitation {

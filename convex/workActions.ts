@@ -619,11 +619,18 @@ function flattenedDependentOutput(
     notes: output.notes,
     needsDependentPhase: false,
     actions: [...output.initial.actions, ...output.actions],
-    procedureTrails: (output.procedureTrails ?? []).map((trail) => ({
-      ...trail,
-      actionIndex:
-        trail.actionIndex === null ? null : trail.actionIndex + output.actionIndexOffset,
-    })),
+    procedureTrails: (output.procedureTrails ?? []).map((trail) => {
+      if ('state' in trail) {
+        return trail.state === 'mapped'
+          ? { ...trail, actionIndex: trail.actionIndex + output.actionIndexOffset }
+          : trail;
+      }
+      return {
+        ...trail,
+        actionIndex:
+          trail.actionIndex === null ? null : trail.actionIndex + output.actionIndexOffset,
+      };
+    }),
     ...(output.procedureTrailLimitations
       ? {
           procedureTrailLimitations: output.procedureTrailLimitations.map((limitation) => ({
