@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import { auditActionArguments } from '../../../evaluation/action-audit';
 import { reviewPayload } from '../../../src/surfaces/policy';
+import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockSurfaceSnapshot } from '../../../src/work/types';
 
 const recorded = vi.hoisted(() => ({
@@ -20,7 +21,7 @@ vi.mock('../../../src/lib/mastra', () => ({
   },
 }));
 
-import { runSkill } from '../../../src/work/execute-skill';
+import { runDependentSkill, runSkill } from '../../../src/work/execute-skill';
 
 const recordedFlatArgs = {
   body: '',
@@ -373,6 +374,103 @@ describe('mock executor semantic repair', (): void => {
       expect.objectContaining({ argumentKeys: ['body', 'channelSlug'] }),
       expect.objectContaining({ argumentKeys: ['comment', 'slug'] }),
       expect.objectContaining({ argumentKeys: ['body', 'method', 'path', 'surface'] }),
+    ]);
+  });
+});
+
+describe('real dependent procedure trails', (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('recognises a manager report carried by an HTTP chat transport', async (): Promise<void> => {
+    const managerTrailEnv: MockSurfaceSnapshot = {
+      ...mockEnv,
+      howToGuides: [
+        {
+          slug: 'private-recaps-v2',
+          title: 'Private completion recaps',
+          body: [
+            'After completing any work, send a concise recap to the supervisor private channel with `slack.postMessage`.',
+            'Put `lead-desk` in `channelSlug` and the non-empty recap in `body`.',
+          ].join('\n'),
+        },
+      ],
+    };
+    const slack: SurfaceRecord = {
+      slug: 'team-chat',
+      displayName: 'Team chat',
+      class: 'chat',
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: 1,
+      path: 'documented-api',
+      endpoint: 'https://chat.example.test/api/',
+      toolAllowlist: ['chat.postMessage'],
+      managerDmChannelId: 'D-MANAGER-42',
+    };
+    recorded.outputs.push({
+      draft: 'Prepared the requested coverage response and reported completion.',
+      notes: '',
+      actions: [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'team-chat',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: null,
+            body: JSON.stringify({
+              channel: 'D-MANAGER-42',
+              text: 'The coverage response is ready.',
+            }),
+          },
+        },
+      ],
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The manager report is action 0.' },
+      ],
+    });
+
+    const output = await runDependentSkill({
+      skill: { name: 'coverage-response', description: 'Prepare the response.', body: '' },
+      plan: {
+        summary: 'Prepare the requested coverage response.',
+        steps: ['Report the completed response to the manager.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      candidate: {
+        sourceCategory: 'inbox',
+        sourceSystem: 'team-chat',
+        externalId: 'CHAT-42',
+        title: 'Draft a coverage response',
+        contentSummary: 'Prepare a concise response to the coverage mention.',
+        contentRefs: ['slack://C-ASKS/1710000000.000042'],
+        replyTarget: { channel: 'C-ASKS', threadTs: '1710000000.000042' },
+        observedAt: new Date(0),
+      },
+      charter,
+      mockEnv: managerTrailEnv,
+      surfaces: [slack],
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: 'Prepared the response.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+
+    expect(output.procedureTrails).toEqual([
+      { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
     ]);
   });
 });
