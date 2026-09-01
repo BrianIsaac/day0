@@ -549,6 +549,93 @@ describe('real dependent procedure trails', (): void => {
     ).rejects.toThrow('procedure-trail transport payload contradicts the prescribed effect');
   });
 
+  it('repairs a wrong dependent mapping from invariant text alone', async (): Promise<void> => {
+    const base = {
+      draft: 'Reported completion.',
+      notes: '',
+      procedureTrails: [{ trailId: 'trail-1', state: 'mapped', actionIndex: 0 }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
+      ],
+    } as const;
+    recorded.outputs.push(
+      {
+        ...base,
+        actions: [
+          {
+            tool: 'http.request',
+            args: {
+              surface: 'team-chat',
+              method: 'POST',
+              path: '/chat.postMessage',
+              headersJson: null,
+              body: JSON.stringify({ channel: 'C-PUBLIC-42', text: 'The response is ready.' }),
+            },
+          },
+        ],
+      },
+      {
+        ...base,
+        actions: [
+          {
+            tool: 'http.request',
+            args: {
+              surface: 'team-chat',
+              method: 'POST',
+              path: '/chat.postMessage',
+              headersJson: null,
+              body: JSON.stringify({ channel: 'D-MANAGER-42', text: 'The response is ready.' }),
+            },
+          },
+        ],
+      },
+    );
+
+    const output = await runDependentSkill({
+      skill: { name: 'coverage-response', description: 'Prepare the response.', body: '' },
+      plan: {
+        summary: 'Prepare the requested coverage response.',
+        steps: ['Report the completed response to the manager.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      candidate: {
+        sourceCategory: 'inbox',
+        sourceSystem: 'team-chat',
+        externalId: 'CHAT-45',
+        title: 'Draft a coverage response',
+        contentSummary: 'Prepare a concise response to the coverage mention.',
+        contentRefs: ['slack://C-ASKS/1710000000.000045'],
+        observedAt: new Date(0),
+      },
+      charter,
+      mockEnv: managerTrailEnv,
+      surfaces: [managerChatSurface],
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: 'Prepared the response.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+
+    expect(recorded.calls).toHaveLength(2);
+    const correction = recorded.calls[1]!.user.split(
+      '--- Required procedure-trail correction ---',
+    )[1]!.split('Previous structured response:')[0]!;
+    expect(correction).toContain(
+      'procedure-trail transport payload contradicts the prescribed effect',
+    );
+    expect(correction).not.toMatch(/C-PUBLIC|D-MANAGER|team-chat|chat\.postMessage|channel|payload:/);
+    expect(output.actions[0]!.args.body).toContain('D-MANAGER-42');
+  });
+
   it('records an uninterpretable transport payload without rejecting its trail index', async (): Promise<void> => {
     recorded.outputs.push({
       draft: 'Reported completion through the documented chat transport.',
