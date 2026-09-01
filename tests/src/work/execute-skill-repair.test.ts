@@ -3,7 +3,12 @@ import type { Charter } from '../../../src/agent/charter';
 import { auditActionArguments } from '../../../evaluation/action-audit';
 import { reviewPayload } from '../../../src/surfaces/policy';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
-import type { MockSurfaceSnapshot } from '../../../src/work/types';
+import type {
+  ExecutionPlan,
+  MockSurfaceSnapshot,
+  WorkCandidate,
+} from '../../../src/work/types';
+import liveFailures from '../../fixtures/work/procedure-trail-live-failures.json';
 
 const recorded = vi.hoisted(() => ({
   calls: [] as Array<{ user: string }>,
@@ -73,6 +78,11 @@ const managerTrailEnv: MockSurfaceSnapshot = {
       ].join('\n'),
     },
   ],
+};
+
+const phasedTrailEnv: MockSurfaceSnapshot = {
+  ...mockEnv,
+  howToGuides: [...managerTrailEnv.howToGuides, ...mockEnv.howToGuides],
 };
 
 const managerChatSurface: SurfaceRecord = {
@@ -714,5 +724,72 @@ describe('real dependent procedure trails', (): void => {
     await expect(runDependentSkill(runArgs)).rejects.toThrow(
       'procedure-trail transport payload contradicts the prescribed effect',
     );
+  });
+});
+
+describe('real initial procedure trails', (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('repairs fixture 3 phantom indexes in the phase that emitted them', async (): Promise<void> => {
+    const fixture = liveFailures.items.find(
+      (item) => item.title === 'Add the close-summary audit note',
+    )!;
+    recorded.outputs.push(fixture.output, {
+      draft: fixture.output.draft,
+      notes: fixture.output.notes,
+      needsDependentPhase: true,
+      actions: fixture.output.actions,
+      procedureTrails: [
+        {
+          trailId: 'trail-1',
+          state: 'deferred',
+          reason: 'This trail depends on the result of prerequisite actions.',
+        },
+        {
+          trailId: 'trail-2',
+          state: 'deferred',
+          reason: 'This trail depends on the result of prerequisite actions.',
+        },
+      ],
+    });
+
+    const output = await runSkill({
+      skill: { name: 'bounded-work', description: 'Perform bounded work.', body: '' },
+      plan: fixture.plan as ExecutionPlan,
+      candidate: {
+        ...fixture.candidate,
+        observedAt: new Date(fixture.candidate.observedAt),
+        replyTarget: undefined,
+      } as WorkCandidate,
+      charter,
+      mockEnv: phasedTrailEnv,
+      surfaces: [managerChatSurface],
+      mode: 'real',
+      now: 1,
+    });
+
+    expect(recorded.calls).toHaveLength(2);
+    const correction = recorded.calls[1]!.user.split(
+      '--- Required procedure-trail correction ---',
+    )[1]!.split('Previous structured response:')[0]!;
+    expect(correction).toContain(
+      'a procedure-trail row maps to an action index that does not exist',
+    );
+    expect(correction).not.toMatch(/REVOPS|Linear|Slack|ticket|comment|manager/);
+    expect(output.procedureTrails).toEqual([
+      {
+        trailId: 'trail-1',
+        state: 'deferred',
+        reason: 'This trail depends on the result of prerequisite actions.',
+      },
+      {
+        trailId: 'trail-2',
+        state: 'deferred',
+        reason: 'This trail depends on the result of prerequisite actions.',
+      },
+    ]);
   });
 });
