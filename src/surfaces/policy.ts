@@ -1066,6 +1066,19 @@ export function targetIssue(parsed: ParsedSurfaceAction): string | undefined {
   return parsed.kind === 'mcp.call' ? firstString(parsed.toolArgs, ISSUE_KEYS) : undefined;
 }
 
+/** Every non-empty provider field variant that may identify a target issue. */
+export function targetIssueReferences(parsed: ParsedSurfaceAction): string[] {
+  if (parsed.kind !== 'mcp.call') return [];
+  return [
+    ...new Set(
+      ISSUE_KEYS.flatMap((key) => {
+        const value = parsed.toolArgs[key];
+        return typeof value === 'string' && value.trim() !== '' ? [value.trim()] : [];
+      }),
+    ),
+  ];
+}
+
 /**
  * Whether a status change lacks a landed audit comment earlier in the run.
  *

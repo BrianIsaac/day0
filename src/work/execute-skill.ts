@@ -21,7 +21,7 @@ import {
   isSurfaceTool,
   parseSurfaceAction,
   targetChannel,
-  targetIssue,
+  targetIssueReferences,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
@@ -797,6 +797,53 @@ function referencedDestination(candidate: WorkCandidate, prefix: string): string
   return originatingReference(candidate, prefix)?.split(/[/?#]/, 1)[0] || undefined;
 }
 
+function decodeReference(value: string): string {
+  let decoded = value.trim();
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded;
+}
+
+function normaliseOriginReference(value: string, prefix: string): string | undefined {
+  const decoded = decodeReference(value);
+  if (!decoded) return undefined;
+  if (decoded.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return decoded.slice(prefix.length).split(/[/?#]/, 1)[0] || undefined;
+  }
+  try {
+    const url = new URL(decoded);
+    const segments = url.pathname.split('/').filter(Boolean);
+    const marker = segments.findIndex((segment) => /^(?:issue|ticket)$/i.test(segment));
+    return marker >= 0 && segments[marker + 1] ? segments[marker + 1] : undefined;
+  } catch {
+    return decoded.includes('://') ? undefined : decoded.split(/[/?#]/, 1)[0] || undefined;
+  }
+}
+
+function prescribedOriginReferences(candidate: WorkCandidate, prefix: string): Set<string> {
+  const values = [candidate.externalId, ...candidate.contentRefs]
+    .map((value) => normaliseOriginReference(value, prefix))
+    .filter((value): value is string => value !== undefined);
+  return new Set(values);
+}
+
+function transportOriginResolution(
+  references: readonly string[],
+  prescribed: ReadonlySet<string>,
+): 'match' | 'contradiction' | 'unknown' {
+  if (references.length === 0 || prescribed.size === 0) return 'unknown';
+  const normalised = references.map((value) => normaliseOriginReference(value, 'ticket://'));
+  if (normalised.some((value) => value === undefined)) return 'unknown';
+  return normalised.every((value) => prescribed.has(value!)) ? 'match' : 'contradiction';
+}
+
 function candidateRequiredLiterals(candidate: WorkCandidate): string[] {
   const literals: string[] = [];
   if (candidate.contentSummary.includes(candidate.externalId)) literals.push(candidate.externalId);
@@ -999,19 +1046,18 @@ function realProcedureActionResolution(
       : { kind: 'contradiction' };
   }
 
-  const origin = originatingReference(candidate, destination.refPrefix);
-  if (!origin) return { kind: 'contradiction' };
+  const origins = prescribedOriginReferences(candidate, destination.refPrefix);
   if (parsed.action.kind === 'http.request' && !parsed.action.bodyJson) {
     return { kind: 'unknown', detail: 'the HTTP body is not a JSON object' };
   }
-  const issue = targetIssue(parsed.action);
-  if (!issue) {
+  const identity = transportOriginResolution(targetIssueReferences(parsed.action), origins);
+  if (identity === 'unknown') {
     return {
       kind: 'unknown',
       detail: 'the transport payload exposes no resolvable originating reference',
     };
   }
-  if (issue !== origin) return { kind: 'contradiction' };
+  if (identity === 'contradiction') return { kind: 'contradiction' };
   if (!isAuditComment(parsed.action)) return { kind: 'contradiction' };
   if (
     trail.effect.nonEmptyPayload.includes('comment') &&

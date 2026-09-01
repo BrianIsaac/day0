@@ -747,7 +747,7 @@ describe('real dependent procedure trails', (): void => {
         slug: 'slack',
       },
     ];
-    recorded.outputs.push({
+    const dependentOutput = {
       draft: 'The dependent actions record the result.',
       notes: '',
       actions: [
@@ -786,7 +786,8 @@ describe('real dependent procedure trails', (): void => {
         status: 'satisfied',
         evidence: `Ledger evidence ${index + 1}.`,
       })),
-    });
+    };
+    recorded.outputs.push(dependentOutput);
 
     const output = await runDependentSkill({
       skill: { name: 'bounded-work', description: 'Perform bounded work.', body: '' },
@@ -815,6 +816,97 @@ describe('real dependent procedure trails', (): void => {
     expect(output.procedureTrails).toEqual([
       { trailId: 'trail-1', state: 'mapped', actionIndex: 1 },
       { trailId: 'trail-2', state: 'mapped', actionIndex: 0 },
+    ]);
+
+    recorded.outputs.push({
+      ...dependentOutput,
+      actions: [
+        {
+          ...dependentOutput.actions[0],
+          args: {
+            ...dependentOutput.actions[0]!.args,
+            toolArgsJson: JSON.stringify({
+              id: 'REVOPS-6',
+              issueId: 'ticket://REVOPS-6',
+              body: 'The completed checks are recorded.',
+            }),
+          },
+        },
+        dependentOutput.actions[1],
+      ],
+    });
+    await expect(
+      runDependentSkill({
+        skill: { name: 'bounded-work', description: 'Perform bounded work.', body: '' },
+        plan: fixture.plan as ExecutionPlan,
+        candidate: {
+          ...fixture.candidate,
+          observedAt: new Date(fixture.candidate.observedAt),
+          replyTarget: undefined,
+        } as WorkCandidate,
+        charter,
+        mockEnv: phasedTrailEnv,
+        surfaces,
+        mode: 'real',
+        now: 1,
+        initialOutput: {
+          draft: fixture.output.draft,
+          notes: fixture.output.notes,
+          needsDependentPhase: true,
+          actions: fixture.output.actions as never,
+          procedureTrails: [],
+        },
+        initialLedger: fixture.output.applied as never,
+      }),
+    ).rejects.toThrow('procedure-trail transport payload contradicts the prescribed effect');
+
+    recorded.outputs.push({
+      ...dependentOutput,
+      actions: [
+        {
+          ...dependentOutput.actions[0],
+          args: {
+            ...dependentOutput.actions[0]!.args,
+            toolArgsJson: JSON.stringify({
+              issueId: { opaque: 'provider-reference' },
+              body: 'The completed checks are recorded.',
+            }),
+          },
+        },
+        dependentOutput.actions[1],
+      ],
+    });
+    const unknown = await runDependentSkill({
+      skill: { name: 'bounded-work', description: 'Perform bounded work.', body: '' },
+      plan: fixture.plan as ExecutionPlan,
+      candidate: {
+        ...fixture.candidate,
+        observedAt: new Date(fixture.candidate.observedAt),
+        replyTarget: undefined,
+      } as WorkCandidate,
+      charter,
+      mockEnv: phasedTrailEnv,
+      surfaces,
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: fixture.output.draft,
+        notes: fixture.output.notes,
+        needsDependentPhase: true,
+        actions: fixture.output.actions as never,
+        procedureTrails: [],
+      },
+      initialLedger: fixture.output.applied as never,
+    });
+    expect(unknown.procedureTrailLimitations).toEqual([
+      {
+        trailId: 'trail-2',
+        actionIndex: 0,
+        kind: 'unresolved-transport-payload',
+        transport: 'mcp.call',
+        surface: 'linear',
+        detail: 'the transport payload exposes no resolvable originating reference',
+      },
     ]);
   });
 });
