@@ -86,7 +86,7 @@ export function providerReconciliationEntries(output: unknown): ReconciliationEn
       const tool = optionalString(entry.tool) ?? actions[actionIndex]?.tool ?? 'unknown';
       const outcomeUnknown =
         entry.outcomeUnknown === true || optionalString(entry.reason) === OUTCOME_UNKNOWN_REASON;
-      if (outcomeUnknown && entry.held !== true) {
+      if (outcomeUnknown) {
         return [
           {
             phase,
