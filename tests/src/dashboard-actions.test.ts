@@ -21,7 +21,7 @@ import {
   pendingHeadline,
   pendingVerdicts,
   PermissionRows,
-  retryRequiresReconciliation,
+  ProviderReconciliationControl,
 } from '../../app/agent/[agentId]/AgentDashboard';
 import type { AgentMetrics } from '../../convex/metrics';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
@@ -243,15 +243,56 @@ describe('dashboard exact-action gate', (): void => {
     ).toBeUndefined();
   });
 
-  it('requires reconciliation for landed or interrupted provider effects', (): void => {
-    expect(retryRequiresReconciliation([{ tool: 'mcp.call', ok: true }])).toBe(true);
-    expect(
-      retryRequiresReconciliation(
-        [{ tool: 'mcp.call', ok: false, reason: 'unknown' }],
-        'apply was interrupted; provider outcomes are unknown',
-      ),
-    ).toBe(true);
-    expect(retryRequiresReconciliation([{ tool: 'mcp.call', ok: false }])).toBe(false);
+  it('shows every fenced provider entry and requires explicit verification', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(ProviderReconciliationControl, {
+        entries: [
+          {
+            phase: 'prerequisite',
+            actionIndex: 1,
+            tool: 'mcp.call',
+            outcome: 'landed',
+            effect: 'comment created',
+            providerId: 'comment-17',
+            idempotencyKey: 'run:1',
+          },
+          {
+            phase: 'closing',
+            actionIndex: 0,
+            tool: 'http.request',
+            outcome: 'outcome-unknown',
+            reason: 'response lost',
+            idempotencyKey: 'run:2',
+          },
+        ],
+        onConfirm: vi.fn(async (): Promise<void> => {}),
+      }),
+    );
+    expect(html).toContain('Provider reconciliation required');
+    expect(html).toContain('prerequisite action 1');
+    expect(html).toContain('landed');
+    expect(html).toContain('comment created');
+    expect(html).toContain('provider id comment-17');
+    expect(html).toContain('idempotency key run:1');
+    expect(html).toContain('closing action 0');
+    expect(html).toContain('outcome unknown');
+    expect(html).toContain('response lost');
+    expect(html).toMatch(/<input[^>]*type="checkbox"/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Confirm reconciliation<\/button>/);
+  });
+
+  it('shows the durable actor and timestamp after provider reconciliation', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(ProviderReconciliationControl, {
+        entries: [],
+        reconciliation: { actor: 'operator-7', confirmedAt: 1_788_190_200_000 },
+        onConfirm: vi.fn(async (): Promise<void> => {}),
+      }),
+    );
+    expect(html).toContain('Provider state reconciled');
+    expect(html).toContain('operator-7');
+    expect(html).toContain('Retry is enabled');
+    expect(html).not.toContain('Confirm reconciliation');
   });
 });
 
