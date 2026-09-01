@@ -1347,7 +1347,6 @@ function renderProcedureApplicability(
   contract: ProcedureContract,
   candidate: WorkCandidate,
   mode: SurfaceMode = 'mock',
-  phase: 'initial' | 'dependent' = 'initial',
 ): string {
   if (contract.trails.length === 0) return '(no runtime trails to account for)';
   return contract.trails
@@ -1357,15 +1356,7 @@ function renderProcedureApplicability(
           ? `${trail.id}: applicable; map it to the matching action index and use a null inapplicability reason`
           : `${trail.id}: not applicable to source category ${candidate.sourceCategory}; use a null action index and give a reason`;
       }
-      if (!procedureTrailApplies(trail, candidate)) {
-        return `${trail.id}: not applicable to this source category; use INAPPLICABLE with a reason`;
-      }
-      if (phase === 'dependent') {
-        return `${trail.id}: applicable in the final dependent phase; use MAPPED with an emitted action index`;
-      }
-      return completionConditionedTrail(trail)
-        ? `${trail.id}: applicable and completion-conditioned; use DEFERRED when this response emits prerequisite actions and requests the dependent phase, otherwise use MAPPED with an emitted action index`
-        : `${trail.id}: applicable in this phase; use MAPPED with an emitted action index`;
+      return `${trail.id}: choose exactly one procedure-trail state for this response`;
     })
     .join('\n');
 }
@@ -1490,7 +1481,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
     '',
     '--- Procedure trail applicability for this candidate ---',
-    renderProcedureApplicability(procedureContract, candidate, mode, 'initial'),
+    renderProcedureApplicability(procedureContract, candidate, mode),
     '',
     ...(mode === 'mock'
       ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), '']
@@ -1688,7 +1679,7 @@ export async function runDependentSkill(
     'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
     '',
     '--- Procedure trail applicability for this candidate ---',
-    renderProcedureApplicability(procedureContract, candidate, mode, 'dependent'),
+    renderProcedureApplicability(procedureContract, candidate, mode),
     '',
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
