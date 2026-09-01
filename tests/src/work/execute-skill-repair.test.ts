@@ -535,6 +535,74 @@ describe('real dependent procedure trails', (): void => {
     ).rejects.toThrow('procedure-trail action index does not identify the prescribed effect');
   });
 
+  it('records an uninterpretable transport payload without rejecting its trail index', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Reported completion through the documented chat transport.',
+      notes: '',
+      actions: [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'team-chat',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: null,
+            body: 'channel=D-MANAGER-42&text=The%20response%20is%20ready',
+          },
+        },
+      ],
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
+      ],
+    });
+
+    const output = await runDependentSkill({
+      skill: { name: 'coverage-response', description: 'Prepare the response.', body: '' },
+      plan: {
+        summary: 'Prepare the requested coverage response.',
+        steps: ['Report the completed response to the manager.'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 2,
+      },
+      candidate: {
+        sourceCategory: 'inbox',
+        sourceSystem: 'team-chat',
+        externalId: 'CHAT-44',
+        title: 'Draft a coverage response',
+        contentSummary: 'Prepare a concise response to the coverage mention.',
+        contentRefs: ['slack://C-ASKS/1710000000.000044'],
+        observedAt: new Date(0),
+      },
+      charter,
+      mockEnv: managerTrailEnv,
+      surfaces: [managerChatSurface],
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: 'Prepared the response.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+
+    expect(output.procedureTrailLimitations).toEqual([
+      {
+        trailId: 'trail-1',
+        actionIndex: 0,
+        kind: 'unresolved-transport-payload',
+        transport: 'http.request',
+        surface: 'team-chat',
+        detail: 'the HTTP body is not a JSON object',
+      },
+    ]);
+  });
+
   it('recognises an originating-ticket note beside a browser session', async (): Promise<void> => {
     const surfaces: SurfaceRecord[] = [
       {
