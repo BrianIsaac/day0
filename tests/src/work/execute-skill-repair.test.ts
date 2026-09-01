@@ -725,6 +725,98 @@ describe('real dependent procedure trails', (): void => {
       'procedure-trail transport payload contradicts the prescribed effect',
     );
   });
+
+  it('recognises fixture 3 originating identity across provider field variants', async (): Promise<void> => {
+    const fixture = liveFailures.items.find(
+      (item) => item.title === 'Add the close-summary audit note',
+    )!;
+    const surfaces: SurfaceRecord[] = [
+      {
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        credentialLanded: true,
+        lastVerifiedAt: 1,
+        path: 'mcp',
+        endpoint: 'https://work-queue.example.test/mcp',
+        toolAllowlist: ['save_comment'],
+      },
+      {
+        ...managerChatSurface,
+        slug: 'slack',
+      },
+    ];
+    recorded.outputs.push({
+      draft: 'The dependent actions record the result.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({
+              id: 'REVOPS-5',
+              issueId: 'ticket://REVOPS-5',
+              body: 'The completed checks are recorded.',
+            }),
+          },
+        },
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'slack',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: null,
+            body: JSON.stringify({
+              channel: 'D-MANAGER-42',
+              text: 'The dependent actions are ready.',
+            }),
+          },
+        },
+      ],
+      procedureTrails: [
+        { trailId: 'trail-1', state: 'mapped', actionIndex: 1 },
+        { trailId: 'trail-2', state: 'mapped', actionIndex: 0 },
+      ],
+      planStepOutcomes: fixture.plan.steps.map((_, index) => ({
+        step: index + 1,
+        status: 'satisfied',
+        evidence: `Ledger evidence ${index + 1}.`,
+      })),
+    });
+
+    const output = await runDependentSkill({
+      skill: { name: 'bounded-work', description: 'Perform bounded work.', body: '' },
+      plan: fixture.plan as ExecutionPlan,
+      candidate: {
+        ...fixture.candidate,
+        observedAt: new Date(fixture.candidate.observedAt),
+        replyTarget: undefined,
+      } as WorkCandidate,
+      charter,
+      mockEnv: phasedTrailEnv,
+      surfaces,
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: fixture.output.draft,
+        notes: fixture.output.notes,
+        needsDependentPhase: true,
+        actions: fixture.output.actions as never,
+        procedureTrails: [],
+      },
+      initialLedger: fixture.output.applied as never,
+    });
+
+    expect(recorded.calls).toHaveLength(1);
+    expect(output.procedureTrails).toEqual([
+      { trailId: 'trail-1', state: 'mapped', actionIndex: 1 },
+      { trailId: 'trail-2', state: 'mapped', actionIndex: 0 },
+    ]);
+  });
 });
 
 describe('real initial procedure trails', (): void => {
