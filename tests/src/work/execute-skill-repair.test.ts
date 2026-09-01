@@ -57,6 +57,33 @@ const mockEnv: MockSurfaceSnapshot = {
   tickets: [],
 };
 
+const managerTrailEnv: MockSurfaceSnapshot = {
+  ...mockEnv,
+  howToGuides: [
+    {
+      slug: 'private-recaps-v2',
+      title: 'Private completion recaps',
+      body: [
+        'After completing any work, send a concise recap to the supervisor private channel with `slack.postMessage`.',
+        'Put `lead-desk` in `channelSlug` and the non-empty recap in `body`.',
+      ].join('\n'),
+    },
+  ],
+};
+
+const managerChatSurface: SurfaceRecord = {
+  slug: 'team-chat',
+  displayName: 'Team chat',
+  class: 'chat',
+  verdict: 'connected',
+  credentialLanded: true,
+  lastVerifiedAt: 1,
+  path: 'documented-api',
+  endpoint: 'https://chat.example.test/api/',
+  toolAllowlist: ['chat.postMessage'],
+  managerDmChannelId: 'D-MANAGER-42',
+};
+
 const charter = {
   version: '0.0',
   source: 'test',
@@ -385,31 +412,6 @@ describe('real dependent procedure trails', (): void => {
   });
 
   it('recognises a manager report carried by an HTTP chat transport', async (): Promise<void> => {
-    const managerTrailEnv: MockSurfaceSnapshot = {
-      ...mockEnv,
-      howToGuides: [
-        {
-          slug: 'private-recaps-v2',
-          title: 'Private completion recaps',
-          body: [
-            'After completing any work, send a concise recap to the supervisor private channel with `slack.postMessage`.',
-            'Put `lead-desk` in `channelSlug` and the non-empty recap in `body`.',
-          ].join('\n'),
-        },
-      ],
-    };
-    const slack: SurfaceRecord = {
-      slug: 'team-chat',
-      displayName: 'Team chat',
-      class: 'chat',
-      verdict: 'connected',
-      credentialLanded: true,
-      lastVerifiedAt: 1,
-      path: 'documented-api',
-      endpoint: 'https://chat.example.test/api/',
-      toolAllowlist: ['chat.postMessage'],
-      managerDmChannelId: 'D-MANAGER-42',
-    };
     recorded.outputs.push({
       draft: 'Prepared the requested coverage response and reported completion.',
       notes: '',
@@ -456,7 +458,7 @@ describe('real dependent procedure trails', (): void => {
       },
       charter,
       mockEnv: managerTrailEnv,
-      surfaces: [slack],
+      surfaces: [managerChatSurface],
       mode: 'real',
       now: 1,
       initialOutput: {
@@ -472,6 +474,65 @@ describe('real dependent procedure trails', (): void => {
     expect(output.procedureTrails).toEqual([
       { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
     ]);
+  });
+
+  it('rejects a manager-report transport that names the wrong channel', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Reported completion.',
+      notes: '',
+      actions: [
+        {
+          tool: 'http.request',
+          args: {
+            surface: 'team-chat',
+            method: 'POST',
+            path: '/chat.postMessage',
+            headersJson: null,
+            body: JSON.stringify({ channel: 'C-PUBLIC-42', text: 'The response is ready.' }),
+          },
+        },
+      ],
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'The report is action 0.' },
+      ],
+    });
+
+    await expect(
+      runDependentSkill({
+        skill: { name: 'coverage-response', description: 'Prepare the response.', body: '' },
+        plan: {
+          summary: 'Prepare the requested coverage response.',
+          steps: ['Report the completed response to the manager.'],
+          expectedOutputType: 'message',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 2,
+        },
+        candidate: {
+          sourceCategory: 'inbox',
+          sourceSystem: 'team-chat',
+          externalId: 'CHAT-43',
+          title: 'Draft a coverage response',
+          contentSummary: 'Prepare a concise response to the coverage mention.',
+          contentRefs: ['slack://C-ASKS/1710000000.000043'],
+          observedAt: new Date(0),
+        },
+        charter,
+        mockEnv: managerTrailEnv,
+        surfaces: [managerChatSurface],
+        mode: 'real',
+        now: 1,
+        initialOutput: {
+          draft: 'Prepared the response.',
+          notes: '',
+          needsDependentPhase: true,
+          actions: [],
+          procedureTrails: [],
+        },
+        initialLedger: [],
+      }),
+    ).rejects.toThrow('procedure-trail action index does not identify the prescribed effect');
   });
 
   it('recognises an originating-ticket note beside a browser session', async (): Promise<void> => {
