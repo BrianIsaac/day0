@@ -473,4 +473,103 @@ describe('real dependent procedure trails', (): void => {
       { trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null },
     ]);
   });
+
+  it('recognises an originating-ticket note beside a browser session', async (): Promise<void> => {
+    const surfaces: SurfaceRecord[] = [
+      {
+        slug: 'pipeline-tile',
+        displayName: 'Pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        credentialLanded: true,
+        lastVerifiedAt: 1,
+        path: 'browser-driven',
+        endpoint: 'http://pipeline-tile.example.test/',
+        toolAllowlist: ['browser_snapshot'],
+      },
+      {
+        slug: 'work-queue',
+        displayName: 'Work queue',
+        class: 'kanban',
+        verdict: 'connected',
+        credentialLanded: true,
+        lastVerifiedAt: 1,
+        path: 'mcp',
+        endpoint: 'https://work-queue.example.test/mcp',
+        toolAllowlist: ['save_comment'],
+      },
+    ];
+    recorded.outputs.push({
+      draft: 'The refreshed tile was read back and recorded on the originating item.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'pipeline-tile',
+            tool: 'browser_snapshot',
+            toolArgsJson: '{}',
+          },
+        },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'work-queue',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({
+              issueId: 'CASE-REFRESH-7',
+              body: 'Verified the refreshed figure and audit line.',
+            }),
+          },
+        },
+      ],
+      procedureTrails: [{ trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null }],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'Action 0 read the tile back.' },
+        { step: 2, status: 'satisfied', evidence: 'Action 1 records the audit note.' },
+      ],
+    });
+
+    const output = await runDependentSkill({
+      skill: { name: 'refresh-tile', description: 'Refresh the tile.', body: '' },
+      plan: {
+        summary: 'Read the refreshed tile and record the result.',
+        steps: ['Read back the refreshed tile.', 'Record the audit note on the source item.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: 'reversible',
+        estimatedMinutes: 5,
+      },
+      candidate: {
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'work-queue',
+        externalId: 'CASE-REFRESH-7',
+        title: 'Refresh the pipeline tile',
+        contentSummary: 'Refresh the pipeline tile and record the read-back on the source item.',
+        contentRefs: ['ticket://CASE-REFRESH-7'],
+        observedAt: new Date(0),
+      },
+      charter,
+      mockEnv,
+      surfaces,
+      mode: 'real',
+      now: 1,
+      initialOutput: {
+        draft: 'Refreshing the tile.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+
+    expect(output.actions.map((action) => action.args.tool)).toEqual([
+      'browser_snapshot',
+      'save_comment',
+    ]);
+    expect(output.procedureTrails).toEqual([
+      { trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null },
+    ]);
+  });
 });
