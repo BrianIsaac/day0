@@ -1066,4 +1066,156 @@ describe('real initial procedure trails', (): void => {
       },
     ]);
   });
+
+  it('adapts to different field spellings and valid trail-state choices without answers', async (): Promise<void> => {
+    const valid = {
+      draft: 'The prerequisite reads are emitted.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'records-surface',
+            tool: 'get_record',
+            toolArgsJson: JSON.stringify({ id: 'CASE-ALPHA' }),
+          },
+        },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'records-surface',
+            tool: 'list_notes',
+            toolArgsJson: JSON.stringify({ issueId: 'case://CASE-ALPHA' }),
+          },
+        },
+      ],
+      procedureTrails: [
+        {
+          trailId: 'trail-1',
+          state: 'deferred',
+          reason: 'A result-dependent phase is required.',
+        },
+        {
+          trailId: 'trail-2',
+          state: 'inapplicable',
+          reason: 'The source category does not select this trail.',
+        },
+      ],
+    } as const;
+    const candidate = {
+      sourceCategory: 'event-stream',
+      sourceSystem: 'records-surface',
+      externalId: 'CASE-ALPHA',
+      title: 'Process a bounded record',
+      contentSummary: 'Read the record before producing the final effect.',
+      contentRefs: ['case://CASE-ALPHA'],
+      observedAt: new Date(0),
+    } satisfies WorkCandidate;
+    const plan = {
+      summary: 'Read the record, then produce the final effect.',
+      steps: ['Read the record.', 'Produce the final effect.'],
+      expectedOutputType: 'message',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 2,
+    } satisfies ExecutionPlan;
+
+    recorded.outputs.push(valid);
+    const direct = await runSkill({
+      skill: { name: 'bounded-record', description: 'Process a bounded record.', body: '' },
+      plan,
+      candidate,
+      charter,
+      mockEnv: phasedTrailEnv,
+      surfaces: [managerChatSurface],
+      mode: 'real',
+      now: 1,
+    });
+    expect(recorded.calls).toHaveLength(1);
+    expect(direct.procedureTrails).toEqual(valid.procedureTrails);
+
+    recorded.calls.length = 0;
+    recorded.outputs.push(
+      {
+        ...valid,
+        procedureTrails: [
+          { trailId: 'trail-1', state: 'mapped', actionIndex: 2 },
+          valid.procedureTrails[1],
+        ],
+      },
+      valid,
+    );
+    const recovered = await runSkill({
+      skill: { name: 'bounded-record', description: 'Process a bounded record.', body: '' },
+      plan,
+      candidate,
+      charter,
+      mockEnv: phasedTrailEnv,
+      surfaces: [managerChatSurface],
+      mode: 'real',
+      now: 1,
+    });
+    expect(recorded.calls).toHaveLength(2);
+    const correction = recorded.calls[1]!.user.split(
+      '--- Required procedure-trail correction ---',
+    )[1]!.split('Previous structured response:')[0]!;
+    expect(correction.trim().split('\n')).toEqual([
+      'Your previous structured response was not applied and none of its actions reached the gate.',
+      'Return one full replacement response that fixes every invariant below.',
+      '- a procedure-trail row maps to an action index that does not exist',
+    ]);
+    expect(recovered.procedureTrails).toEqual(valid.procedureTrails);
+  });
+
+  it('re-judges all three recorded initial outputs at the phase boundary', async (): Promise<void> => {
+    for (const fixture of liveFailures.items) {
+      recorded.calls.length = 0;
+      recorded.outputs.length = 0;
+      const ticketSource = fixture.candidate.sourceCategory === 'ticket-queue';
+      const replacement = {
+        draft: fixture.output.draft,
+        notes: fixture.output.notes,
+        needsDependentPhase: true,
+        actions: fixture.output.actions,
+        procedureTrails: [
+          {
+            trailId: 'trail-1',
+            state: 'deferred',
+            reason: 'A result-dependent phase is required.',
+          },
+          ticketSource
+            ? {
+                trailId: 'trail-2',
+                state: 'deferred',
+                reason: 'A result-dependent phase is required.',
+              }
+            : {
+                trailId: 'trail-2',
+                state: 'inapplicable',
+                reason: 'The source category does not select this trail.',
+              },
+        ],
+      } as const;
+      recorded.outputs.push(fixture.output, replacement);
+
+      const output = await runSkill({
+        skill: { name: 'bounded-work', description: 'Perform bounded work.', body: '' },
+        plan: fixture.plan as ExecutionPlan,
+        candidate: {
+          ...fixture.candidate,
+          observedAt: new Date(fixture.candidate.observedAt),
+          replyTarget: fixture.candidate.replyTarget ?? undefined,
+        } as WorkCandidate,
+        charter,
+        mockEnv: phasedTrailEnv,
+        surfaces: [managerChatSurface],
+        mode: 'real',
+        now: 1,
+      });
+
+      expect(recorded.calls, fixture.title).toHaveLength(2);
+      expect(output.procedureTrails, fixture.title).toEqual(replacement.procedureTrails);
+    }
+  });
 });
