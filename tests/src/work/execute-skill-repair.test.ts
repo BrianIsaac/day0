@@ -1134,6 +1134,16 @@ describe('real initial procedure trails', (): void => {
     });
     expect(recorded.calls).toHaveLength(1);
     expect(direct.procedureTrails).toEqual(valid.procedureTrails);
+    const applicability = recorded.calls[0]!.user
+      .split('--- Procedure trail applicability for this candidate ---')[1]!
+      .split('--- Team docs (read-only context) ---')[0]!;
+    expect(applicability.trim().split('\n')).toEqual([
+      'trail-1: choose exactly one procedure-trail state for this response',
+      'trail-2: choose exactly one procedure-trail state for this response',
+    ]);
+    expect(applicability).not.toMatch(
+      /CASE-ALPHA|event-stream|applicable|completion-conditioned|use (?:MAPPED|INAPPLICABLE|DEFERRED)/i,
+    );
 
     recorded.calls.length = 0;
     recorded.outputs.push(
