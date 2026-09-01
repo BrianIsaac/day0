@@ -536,7 +536,7 @@ describe('real dependent procedure trails', (): void => {
         },
         initialLedger: [],
       }),
-    ).rejects.toThrow('procedure-trail action index does not identify the prescribed effect');
+    ).rejects.toThrow('procedure-trail transport payload contradicts the prescribed effect');
   });
 
   it('records an uninterpretable transport payload without rejecting its trail index', async (): Promise<void> => {
