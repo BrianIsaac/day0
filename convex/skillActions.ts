@@ -191,10 +191,15 @@ function smokeTestPreflightReason(source: string): string | undefined {
       return 'smoke test is not valid Python 3.12 source: its syntax does not parse';
     }
   } while (cursor.next());
-  if (!/^\s*def\s+run\s*\(\s*inputs\s*:\s*dict\s*\)\s*->\s*dict\s*:/m.test(source)) {
+  const dictAnnotation = String.raw`dict(?:\s*\[[^\]]*\])?`;
+  const runSignature = new RegExp(
+    String.raw`^\s*(?:async\s+)?def\s+run\s*\(\s*inputs\s*:\s*${dictAnnotation}\s*\)\s*->\s*${dictAnnotation}\s*:`,
+    'm',
+  );
+  if (!runSignature.test(source)) {
     return 'smoke test is not valid Python 3.12 source: it must define run(inputs: dict) -> dict';
   }
-  if (!/\bprint\s*\(/.test(source)) {
+  if (!/\bprint\s*\(|\bsys\.stdout\.write\s*\(/.test(source)) {
     return 'smoke test is not valid Python 3.12 source: it must print a success line';
   }
   return undefined;

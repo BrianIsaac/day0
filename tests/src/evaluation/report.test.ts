@@ -165,6 +165,9 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('| Model id |');
     expect(report).toContain('| Per-call abort deadline (ms) | 300000 | 300000 |');
     expect(report).toContain('| Skill sandbox backend | local | local |');
+    expect(report).toContain('| Effective temperature after provider warnings |');
+    expect(report).toContain('| Provider warnings |');
+    expect(report).toContain('| Ollama version | not set / provider-managed | not set / provider-managed |');
     expect(report).toContain('| onboardingPipeline | runtime charter, loaded documents');
     expect(report).toContain('| executionTurn | one governed structured executor turn');
     expect(report).toContain('overload\\|service_unavailable');

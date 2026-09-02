@@ -134,6 +134,55 @@ describe('skill selection surface boundary', (): void => {
   });
 });
 
+describe('skill selection for real-mode target surfaces', (): void => {
+  const slackMention = {
+    sourceSystem: 'slack',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Please refresh the Looker pipeline tile and confirm in the thread.',
+  };
+
+  it('keeps a skill proposed for a foreign target surface when the source read scope is declared', (): void => {
+    const proposedByEvaluator = {
+      name: 'slack-action-c0abc123',
+      description: 'Skill proposed to handle slack work like "Refresh the Looker pipeline tile".',
+      targetSurface: 'looker',
+      requiredScopes: ['boss:message', 'slack:read', 'looker:read', 'looker:write'],
+    };
+    expect(findMatchingSkillForCandidate(slackMention, [proposedByEvaluator])).toBe(
+      proposedByEvaluator,
+    );
+  });
+
+  it('refuses a row that declares only a foreign surface, even when its name matches the source', (): void => {
+    const foreignOnly = {
+      name: 'slack-action-c0abc123',
+      description: 'Skill proposed to handle slack work.',
+      targetSurface: 'looker',
+      requiredScopes: ['looker:read', 'looker:write'],
+    };
+    expect(findMatchingSkillForCandidate(slackMention, [foreignOnly])).toBeUndefined();
+  });
+
+  it('matches a builtin or legacy row without surface metadata by the source name alone', (): void => {
+    const builtinDocs = {
+      name: 'see-internal-docs',
+      description: 'Look up and cite internal documentation.',
+    };
+    expect(
+      findMatchingSkillForCandidate(
+        { sourceSystem: 'docs', title: 'Team cadence', contentSummary: 'When is standup?' },
+        [builtinDocs],
+      ),
+    ).toBe(builtinDocs);
+    expect(
+      findMatchingSkillForCandidate(
+        { sourceSystem: 'linear', title: 'Close REVOPS-5', contentSummary: 'Close the issue.' },
+        [builtinDocs],
+      ),
+    ).toBeUndefined();
+  });
+});
+
 describe('browser authority at provider transport', (): void => {
   it('refuses an absent or changed component after the adapter claim', (): void => {
     const claimed = 'http://playwright-mcp:8931/mcp';

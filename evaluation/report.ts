@@ -373,8 +373,15 @@ function harnessParityTables(evidence: EvaluationEvidence): string {
     structuredOutputMode: 'Configured structured-output mode',
     modelSeed: 'Model seed',
   };
-  if ('skillSandboxBackend' in parameters.day0 || 'skillSandboxBackend' in parameters.baseline) {
-    labels.skillSandboxBackend = 'Skill sandbox backend';
+  const optionalLabels: Record<string, string> = {
+    skillSandboxBackend: 'Skill sandbox backend',
+    effectiveTemperature: 'Effective temperature after provider warnings',
+    providerWarnings: 'Provider warnings',
+    ollamaVersion: 'Ollama version',
+    ollamaModelDigest: 'Ollama model digest',
+  };
+  for (const [key, label] of Object.entries(optionalLabels)) {
+    if (key in parameters.day0 || key in parameters.baseline) labels[key] = label;
   }
   const day0Parameters = parameters.day0 as unknown as Record<string, unknown>;
   const baselineParameters = parameters.baseline as unknown as Record<string, unknown>;

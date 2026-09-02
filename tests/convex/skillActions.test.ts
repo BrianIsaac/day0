@@ -199,6 +199,66 @@ describe('skill author prompts', (): void => {
     expect(verify).toHaveBeenCalledOnce();
   });
 
+  it('accepts Python 3.12 syntax and subscripted dict annotations on the run landmark', async (): Promise<void> => {
+    const sandboxResult: SkillSandboxRun = {
+      backend: 'local',
+      sandboxId: 'local:run-2',
+      stdout: 'ok\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+    const verify = vi.fn(async (): Promise<SkillSandboxRun> => sandboxResult);
+    const smokeTest = [
+      'import sys',
+      'type Cells = list[dict[str, str]]',
+      'def first[T](xs: list[T]) -> T:',
+      '    return xs[0]',
+      'def run(inputs: dict[str, object]) -> dict[str, object]:',
+      '    cells: Cells = [{"header": k, "value": str(v)} for k, v in inputs.items()]',
+      '    if (n := len(cells)) > 0:',
+      '        label = f"{n} cells: {", ".join(c["header"] for c in cells)}"',
+      '    else:',
+      '        label = "empty"',
+      '    match inputs.get("kind"):',
+      '        case "append":',
+      '            action = {"tool": "spreadsheet.appendRow", "args": {"cells": cells}}',
+      '        case _:',
+      '            action = {"tool": "noop", "args": {}}',
+      '    return {"label": label, "actions": [action]}',
+      'out = run({"kind": "append", "a": 1})',
+      'sys.stdout.write(f"ok {first(out["actions"])["tool"]}\\n")',
+    ].join('\n');
+
+    await expect(
+      verifyAuthoredSkill(
+        { skillName: 'update-spreadsheet', skillBody: '# Update spreadsheet', smokeTest },
+        verify,
+      ),
+    ).resolves.toEqual({ ok: true, result: sandboxResult });
+    expect(verify).toHaveBeenCalledOnce();
+  });
+
+  it('names the missing landmark when a parsable program lacks the contract', async (): Promise<void> => {
+    const verify = vi.fn<() => Promise<SkillSandboxRun>>();
+    const noRun = 'def main(inputs: dict) -> dict:\n    return {}\nprint(main({}))\n';
+    const noPrint = 'def run(inputs: dict) -> dict:\n    return {}\nrun({})\n';
+
+    await expect(
+      verifyAuthoredSkill({ skillName: 's', skillBody: '# s', smokeTest: noRun }, verify),
+    ).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining('must define run(inputs: dict) -> dict'),
+    });
+    await expect(
+      verifyAuthoredSkill({ skillName: 's', skillBody: '# s', smokeTest: noPrint }, verify),
+    ).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining('must print a success line'),
+    });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it('tells the next authoring attempt why the prior smoke source was rejected', (): void => {
     const prompt = buildAuthorPrompt(
       {

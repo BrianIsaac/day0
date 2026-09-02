@@ -417,8 +417,21 @@ async function generateObject<T>(
       `agentJson(${args.agent.name}): ${mode} generation failed: ${String(resultError)}`,
     );
   }
-  if ((response as { finishReason?: unknown }).finishReason === 'error') {
+  const finishReason = (response as { finishReason?: unknown }).finishReason;
+  if (finishReason === 'error') {
     throw new Error(`agentJson(${args.agent.name}): ${mode} generation finished with an error`);
+  }
+  // Mastra reports a withdrawn call as a tripwire with no object; observed
+  // shape for an aborted native call: finishReason 'tripwire', no error, no
+  // text. The abort wall is handled above; any other tripwire is Mastra's own
+  // processor stopping the run, which is not a server refusing the schema.
+  if (finishReason === 'tripwire') {
+    const tripwire = (response as { tripwire?: unknown }).tripwire;
+    const reason =
+      tripwire && typeof tripwire === 'object' && 'reason' in tripwire
+        ? String((tripwire as { reason?: unknown }).reason)
+        : 'no reason given';
+    throw new Error(`agentJson(${args.agent.name}): ${mode} generation was stopped by a tripwire (${reason})`);
   }
   const object = response.object as T | undefined;
   if (object === undefined || object === null) {

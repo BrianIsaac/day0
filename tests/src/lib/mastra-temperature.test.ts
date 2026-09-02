@@ -96,12 +96,22 @@ describe('shared model sampling', (): void => {
 
   it('classifies a native call that reaches the abort wall as transport and keeps native mode', async (): Promise<void> => {
     vi.useFakeTimers();
+    // Mastra's observed shape for an aborted structured call: no object, no
+    // error, finishReason 'tripwire' with a tripwire object and empty text.
     const generate = vi
       .fn()
       .mockImplementationOnce(
-        async (): Promise<{ object?: { ok: boolean }; finishReason: string }> =>
+        async (): Promise<{
+          object?: { ok: boolean };
+          finishReason: string;
+          tripwire?: object;
+          text: string;
+        }> =>
           await new Promise((resolve) =>
-            setTimeout(() => resolve({ finishReason: 'error' }), MODEL_CALL_TIMEOUT_MS),
+            setTimeout(
+              () => resolve({ finishReason: 'tripwire', tripwire: { reason: 'aborted' }, text: '' }),
+              MODEL_CALL_TIMEOUT_MS,
+            ),
           ),
       )
       .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
@@ -124,5 +134,33 @@ describe('shared model sampling', (): void => {
     });
     expect(generate).toHaveBeenCalledTimes(1);
     expect(structuredModeFor(agent.name)).toBe('native');
+  });
+
+  it('does not read a fast tripwire with no object as a schema refusal', async (): Promise<void> => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({ finishReason: 'tripwire', tripwire: { reason: 'processor stop' }, text: '' })
+      .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
+    const agent = { name: 'tripwire-regression', generate } as unknown as Agent;
+
+    await expect(
+      agentJsonWithMode<{ ok: boolean }>({ agent, user: 'structured', schema: {} }),
+    ).rejects.toThrow('stopped by a tripwire (processor stop)');
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(structuredModeFor(agent.name)).toBe('native');
+  });
+
+  it('still treats a completed reply with no object as a refusal that the prompt rung settles', async (): Promise<void> => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({ finishReason: 'stop', text: 'Sure! Here is prose.' })
+      .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
+    const agent = { name: 'refusal-regression', generate } as unknown as Agent;
+
+    const result = await agentJsonWithMode<{ ok: boolean }>({ agent, user: 'structured', schema: {} });
+
+    expect(result).toMatchObject({ mode: 'prompt', fellBack: true, value: { ok: true } });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(structuredModeFor(agent.name)).toBe('prompt');
   });
 });
