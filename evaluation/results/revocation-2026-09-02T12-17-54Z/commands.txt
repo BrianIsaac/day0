@@ -1,0 +1,6 @@
+COMPOSE_PROJECT_NAME=day0-revoc-cf6879 CONVEX_PORT=3210 CONVEX_SITE_PROXY_PORT=3211 FAKE_SLACK_HOST_PORT=8090 pnpm convex:up --profile test --profile demo --profile browser --profile sandbox
+COMPOSE_PROJECT_NAME=day0-revoc-cf6879 CONVEX_PORT=3210 CONVEX_SITE_PROXY_PORT=3211 FAKE_SLACK_HOST_PORT=8090 pnpm convex:admin-key  # captured directly into ignored .env.local; value never logged
+pnpm sync:env
+pnpm exec convex dev --once --typecheck disable
+DAY0_EVAL_COMPOSE_PROJECT=day0-revoc-cf6879 FAKE_SLACK_PROOF_URL=http://127.0.0.1:8090 pnpm eval:revocation -- --out evaluation/results/revocation-2026-09-02T12-17-54Z
+COMPOSE_PROJECT_NAME=day0-revoc-cf6879 CONVEX_PORT=3210 CONVEX_SITE_PROXY_PORT=3211 FAKE_SLACK_HOST_PORT=8090 pnpm convex:down --profile test --profile demo --profile browser --profile sandbox -- -v
