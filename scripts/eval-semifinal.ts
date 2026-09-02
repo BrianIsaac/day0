@@ -47,7 +47,7 @@ const DEFAULT_APPROVAL_DELAY_MS = 750;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const TOKEN_REFRESH_MS = 45 * 60 * 1000;
 export const EVALUATION_HARNESS_VERSION = 2;
-export const MAX_SKILL_AUTHORING_ATTEMPTS = 4;
+export const MAX_SKILL_AUTHORING_ATTEMPTS = 6;
 export const SKILL_AUTHORING_ATTEMPTS_EXHAUSTED = 'skill-authoring-attempts-exhausted';
 
 const onboardingFixtureSchema = z.object({

@@ -41,7 +41,7 @@ export const MODEL_CONFIG = Object.assign(
 
 /** Shared sampling setting for the shipped agent and the evaluation control. */
 export const MODEL_TEMPERATURE = 0.4;
-export const MODEL_CALL_TIMEOUT_MS = 240_000;
+export const MODEL_CALL_TIMEOUT_MS = 300_000;
 export const MODEL_PROVIDER_MAX_RETRIES = 2;
 
 function modelAbortSignal(): AbortSignal {

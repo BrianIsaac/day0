@@ -27,8 +27,8 @@ outcomes.
 
 ## Harness v2
 
-Harness v2 standardises both routes and both arms on a 240-second model-call abort,
-12-minute task deadlines, at most four skill-authoring attempts per task-run, and the
+Harness v2 standardises both routes and both arms on a 300-second model-call abort,
+15-minute task deadlines, at most six skill-authoring attempts per task-run, and the
 networkless local skill sandbox. Every new raw row records its authoring-attempt count;
 every evidence file and generated report records harness version 2, the clocks, the cap,
 and the sandbox backend. The harness refuses a Daytona-configured deployment or a resume

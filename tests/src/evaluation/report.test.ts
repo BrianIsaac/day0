@@ -163,7 +163,7 @@ describe('evaluation evidence report', (): void => {
     const report = renderEvaluationReport(input);
 
     expect(report).toContain('| Model id |');
-    expect(report).toContain('| Per-call abort deadline (ms) | 240000 | 240000 |');
+    expect(report).toContain('| Per-call abort deadline (ms) | 300000 | 300000 |');
     expect(report).toContain('| Skill sandbox backend | local | local |');
     expect(report).toContain('| onboardingPipeline | runtime charter, loaded documents');
     expect(report).toContain('| executionTurn | one governed structured executor turn');

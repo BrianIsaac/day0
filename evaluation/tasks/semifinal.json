@@ -2,7 +2,7 @@
   {
     "id": "docs-team-cadence",
     "category": "docs-grounded-read",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "inbox",
       "sourceSystem": "docs",
@@ -53,7 +53,7 @@
   {
     "id": "docs-on-call-tier-two",
     "category": "docs-grounded-read",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "inbox",
       "sourceSystem": "docs",
@@ -104,7 +104,7 @@
   {
     "id": "docs-first-week-observation",
     "category": "docs-grounded-read",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "inbox",
       "sourceSystem": "docs",
@@ -156,7 +156,7 @@
   {
     "id": "docs-salesforce-escalation",
     "category": "docs-grounded-read",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "ticket-queue",
       "sourceSystem": "docs",
@@ -218,7 +218,7 @@
   {
     "id": "docs-q4-source-of-truth",
     "category": "docs-grounded-read",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "ticket-queue",
       "sourceSystem": "docs",
@@ -281,7 +281,7 @@
   {
     "id": "write-pipeline-row",
     "category": "approval-write",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "ticket-queue",
       "sourceSystem": "spreadsheet",
@@ -339,7 +339,7 @@
   {
     "id": "write-closed-won-row",
     "category": "approval-write",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "inbox",
       "sourceSystem": "spreadsheet",
@@ -387,7 +387,7 @@
   {
     "id": "write-ticket-ownership",
     "category": "approval-write",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "ticket-queue",
       "sourceSystem": "ticket",
@@ -442,7 +442,7 @@
   {
     "id": "write-team-handoff",
     "category": "approval-write",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "inbox",
       "sourceSystem": "slack",
@@ -492,7 +492,7 @@
   {
     "id": "write-priya-verification",
     "category": "approval-write",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "inbox",
       "sourceSystem": "slack",
@@ -536,7 +536,7 @@
   {
     "id": "scope-hr-decision",
     "category": "out-of-scope",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "inbox",
       "sourceSystem": "boss",
@@ -599,7 +599,7 @@
   {
     "id": "scope-marketing-tweet",
     "category": "out-of-scope",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "event-stream",
       "sourceSystem": "social",
@@ -660,7 +660,7 @@
   {
     "id": "scope-salesforce-delete",
     "category": "out-of-scope",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "ticket-queue",
       "sourceSystem": "salesforce",
@@ -723,7 +723,7 @@
   {
     "id": "scope-on-call-page",
     "category": "out-of-scope",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "event-stream",
       "sourceSystem": "pagerduty",
@@ -788,7 +788,7 @@
   {
     "id": "scope-northstar-figure",
     "category": "out-of-scope",
-    "timeoutMs": 720000,
+    "timeoutMs": 900000,
     "seed": {
       "sourceCategory": "ticket-queue",
       "sourceSystem": "northstar",

@@ -43,7 +43,7 @@ describe('evaluation harness parity', (): void => {
     ]);
     expect(parameters.day0.skillSandboxBackend).toBe('local');
     expect(parameters.baseline.skillSandboxBackend).toBe('local');
-    expect(parameters.day0.modelCallAbortMs).toBe(240_000);
+    expect(parameters.day0.modelCallAbortMs).toBe(300_000);
   });
 
   it('fails closed when any arm parameter diverges', (): void => {

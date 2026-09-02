@@ -62,7 +62,7 @@ describe('semi-final evaluation CLI', (): void => {
 
   it('uses one non-binding task deadline for every v2 category', async (): Promise<void> => {
     const tasks = await loadEvaluationTasks();
-    expect(new Set(tasks.map((task) => task.timeoutMs))).toEqual(new Set([720_000]));
+    expect(new Set(tasks.map((task) => task.timeoutMs))).toEqual(new Set([900_000]));
   });
 
   it('stops a run on hard provider billing or authentication failures', (): void => {
