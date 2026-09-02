@@ -16,7 +16,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 ## Live demo
 
-[`day0-olive.vercel.app`](https://day0-olive.vercel.app) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It uses the deployment's `OPENAI_MODEL`; the code default is `gpt-5.5`, and the operator can override it in the deployment environment, for example to `gpt-5.6`. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
+[`day0-olive.vercel.app`](https://day0-olive.vercel.app) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It uses the deployment's `OPENAI_MODEL`; the code default is `gpt-5.6-terra`, and the operator can override it in the deployment environment, for example to `gpt-5.6`. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
 
 - Sign in with Clerk and deploy an agent.
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
@@ -256,7 +256,7 @@ NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
 CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
 CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|…   # from the command above
 OPENAI_API_KEY=sk-…
-OPENAI_MODEL=gpt-5.5
+OPENAI_MODEL=gpt-5.6-terra
 # OPENAI_BASE_URL and CONVEX_OPENAI_BASE_URL both stay empty - see below.
 ```
 
@@ -275,7 +275,7 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 Two things to know:
 
 - **Coming from the local-model route, clear `OPENAI_BASE_URL` and `CONVEX_OPENAI_BASE_URL` and re-sync.** `./scripts/sync-convex-env.sh` clears the deployment's copy when both are empty, which is the one case where "unset" is a value rather than an omission: a deployment still holding `http://model:11434/v1` would call a model server you have since stopped, and only the actions would fail. Restart the backend afterwards - `pnpm convex:restart` - because a module keeps whatever env it was first evaluated with.
-- **This route meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, good-habits research, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.5` a demo run is cents rather than dollars, but it is not zero, which the account-free route is.
+- **This route meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, good-habits research, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.6-terra` a demo run is cents rather than dollars, but it is not zero, which the account-free route is.
 
 No `pnpm model:up` here, so `pnpm sandbox:down && pnpm convex:down` is the whole teardown. And combined with the [anonymous deployment](#without-docker-for-convex) above, this route needs no Docker either: a key, `pnpm convex:dev`, and nothing else running on your machine - at the cost of the local sandbox, which lives in Docker, so skill verification on that combination means a `DAYTONA_API_KEY`.
 
@@ -316,7 +316,7 @@ NEXT_PUBLIC_DEV_NO_AUTH=true
 NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
 CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
 OPENAI_API_KEY=sk-…
-OPENAI_MODEL=gpt-5.5
+OPENAI_MODEL=gpt-5.6-terra
 
 DAY0_SURFACE_MODE=real
 DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
@@ -431,7 +431,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `NEXT_PUBLIC_CONVEX_URL`, `CONVEX_DEPLOYMENT` | Set by `pnpm convex:dev` on first run |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | Clerk dashboard keys |
 | `CLERK_JWT_ISSUER_DOMAIN` | Issuer URL of the Clerk JWT template named `convex` (also push to Convex env) |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | The model. Default model `gpt-5.5` on OpenAI. A key is needed only when you use OpenAI |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | The model. Default model `gpt-5.6-terra` on OpenAI. A key is needed only when you use OpenAI |
 | `OPENAI_BASE_URL` | Set this to use any OpenAI-compatible chat-completions endpoint, which is what makes the account-free path work. Leave it unset to use `api.openai.com` through the OpenAI Responses API. This is the address **Next** dials when set |
 | `CONVEX_OPENAI_BASE_URL` | The same endpoint as the **Convex deployment** must dial it, when that differs. It does with a self-hosted backend, whose Node actions run inside a container. Empty pushes `OPENAI_BASE_URL` unchanged |
 | `OPENAI_JSON_MODE` | `auto` (default), `native` or `prompt`. `auto` starts on `response_format` and falls back to prompt injection only when dropping the parameter is what fixed it |
@@ -571,7 +571,7 @@ It resolves values the way the running app does, which matters more than it soun
 3. **Charter synthesis** — `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
 4. **Approval** — boss approves; `api.charters.approve` flips state to `active` and triggers `postCharterApproval` (Exa + the configured model → `## Good-habits memory` block in `AGENTS.md`).
 5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item. Claimed items get a plan (`draftPlan`), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Run it in real mode](#run-it-in-real-mode). **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
-6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.5` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** non-empty stdout, whichever ran. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
+6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** non-empty stdout, whichever ran. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
 7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 16 explicitly enumerated related tables. Owner-level documentation locations remain unless the reset request sets `alsoUnlinkDocumentation`.
 
 ## Stack
@@ -581,7 +581,7 @@ It resolves values the way the running app does, which matters more than it soun
 | Frontend | Next.js 16 App Router, React 19, Tailwind v4, TypeScript 6 |
 | Realtime backend | Convex 1.37 — DB, queries, mutations, Node actions, scheduler |
 | Auth | Clerk (`@clerk/nextjs` 7) with `ConvexProviderWithClerk` |
-| LLMs | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.5`. Hosted OpenAI uses Responses; custom base URLs use chat completions. Streaming chat via AI SDK 6; raw OpenAI SDK 6 available. |
+| LLMs | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.6-terra`. Hosted OpenAI uses Responses; custom base URLs use chat completions. Streaming chat via AI SDK 6; raw OpenAI SDK 6 available. |
 | Voice | ElevenLabs Conversational AI (`@elevenlabs/elevenlabs-js` 2.46, `@elevenlabs/react` 1.5) |
 | Search | Exa (`exa-js` 2) for good-habits role research |
 | Sandboxes | `python:3.12-slim` for skill smoke tests, in a [bundled local sandbox](#the-local-skill-sandbox) or in Daytona (`@daytona/sdk`) |
@@ -787,7 +787,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 ### 在线演示
 
-[`day0-olive.vercel.app`](https://day0-olive.vercel.app) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它使用 deployment 中配置的 `OPENAI_MODEL`；代码默认值是 `gpt-5.5`，operator 也可以在 deployment environment 中覆盖为例如 `gpt-5.6`。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
+[`day0-olive.vercel.app`](https://day0-olive.vercel.app) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它使用 deployment 中配置的 `OPENAI_MODEL`；代码默认值是 `gpt-5.6-terra`，operator 也可以在 deployment environment 中覆盖为例如 `gpt-5.6`。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
 
 - 使用 Clerk 登录并部署一个 Agent。
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
@@ -987,7 +987,7 @@ NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
 CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
 CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|…   # from the command above
 OPENAI_API_KEY=sk-…
-OPENAI_MODEL=gpt-5.5
+OPENAI_MODEL=gpt-5.6-terra
 # OPENAI_BASE_URL and CONVEX_OPENAI_BASE_URL both stay empty - see below.
 ```
 
@@ -1046,7 +1046,7 @@ NEXT_PUBLIC_DEV_NO_AUTH=true
 NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
 CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
 OPENAI_API_KEY=sk-…
-OPENAI_MODEL=gpt-5.5
+OPENAI_MODEL=gpt-5.6-terra
 
 DAY0_SURFACE_MODE=real
 DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
