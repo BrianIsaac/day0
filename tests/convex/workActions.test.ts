@@ -9,6 +9,7 @@ import {
   browserTransportRefusal,
   completionFailure,
   dependentTransitionRefusal,
+  findMatchingSkillForCandidate,
   prerequisiteOutput,
   validatePlanStepOutcomes,
 } from '../../convex/workActions';
@@ -91,6 +92,47 @@ const skillOutput: ExecutionOutput = {
     },
   ],
 };
+
+describe('skill selection surface boundary', (): void => {
+  const spreadsheetSkill = {
+    name: 'update-spreadsheet-eval-write-01',
+    description: 'Update a spreadsheet and prepare a team handoff.',
+    targetSurface: 'spreadsheet',
+    requiredScopes: ['spreadsheet:read', 'spreadsheet:write'],
+  };
+
+  it('refuses a content-overlap match on a different source surface', (): void => {
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'slack',
+          title: 'Post the team handoff',
+          contentSummary: 'Write the team handoff for the next shift.',
+        },
+        [spreadsheetSkill],
+      ),
+    ).toBeUndefined();
+  });
+
+  it('selects only a source-compatible skill before scoring content overlap', (): void => {
+    const slackSkill = {
+      name: 'slack-action-eval-write-04',
+      description: 'Post a team handoff in Slack.',
+      targetSurface: 'slack',
+      requiredScopes: ['slack:read', 'slack:write'],
+    };
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'slack',
+          title: 'Post the team handoff',
+          contentSummary: 'Write the team handoff for the next shift.',
+        },
+        [spreadsheetSkill, slackSkill],
+      ),
+    ).toBe(slackSkill);
+  });
+});
 
 describe('browser authority at provider transport', (): void => {
   it('refuses an absent or changed component after the adapter claim', (): void => {
@@ -1124,13 +1166,25 @@ describe('executing an approved plan through the gate', (): void => {
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(
+    const { agentId, workItemId } = await seed(
       harness,
       'real',
       ['linear:read', 'slack:read', 'slack:write'],
       { autonomousActions: true },
     );
     await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('skills', {
+        agentId,
+        name: 'answer-slack-from-linear',
+        description: 'Read Linear evidence and answer the originating Slack message.',
+        body: 'Read the evidence before replying.',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        requiredScopes: ['linear:read', 'slack:read', 'slack:write'],
+        targetSurface: 'slack',
+        createdAt: 1,
+        registeredAt: 1,
+      });
       await ctx.db.patch(workItemId, {
         sourceCategory: 'event-stream',
         sourceSystem: 'slack',
@@ -2308,10 +2362,22 @@ describe('the autonomous-actions switch through the gate', (): void => {
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(harness, 'real', ['slack:read'], {
+    const { agentId, workItemId } = await seed(harness, 'real', ['slack:read'], {
       autonomousActions: true,
     });
     await harness.run(async (ctx) => {
+      await ctx.db.insert('skills', {
+        agentId,
+        name: 'answer-slack-message',
+        description: 'Answer the originating Slack message.',
+        body: 'Reply only to the originating message.',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        requiredScopes: ['slack:read', 'slack:write'],
+        targetSurface: 'slack',
+        createdAt: 1,
+        registeredAt: 1,
+      });
       await ctx.db.patch(workItemId, {
         sourceCategory: 'event-stream',
         sourceSystem: 'slack',

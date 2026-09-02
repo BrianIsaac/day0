@@ -738,6 +738,24 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
   initialFailure?: string;
 }
 
+function agentIdentityPart(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
+}
+
+export function skillAgentName(
+  skillName: string,
+  candidate: Pick<WorkCandidate, 'sourceSystem' | 'externalId'>,
+  phase: 'initial' | 'dependent' = 'initial',
+): string {
+  return [
+    'day0-skill',
+    agentIdentityPart(skillName),
+    agentIdentityPart(candidate.sourceSystem),
+    agentIdentityPart(candidate.externalId),
+    phase,
+  ].join('-');
+}
+
 const PARTIAL_WORK = /\b(?:partial(?:ly)?|incomplete|outstanding|remainder|remaining)\b/i;
 const NO_PARTIAL_WORK = /\b(?:no|zero|without any)\s+(?:work\s+)?(?:outstanding|remaining)\b/i;
 const HYPOTHETICAL_CLAUSE = /\b(?:if|unless)\b[^.!?\n]*(?:[.!?](?=\s|$)|\n|$)/gi;
@@ -1461,9 +1479,10 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     procedureContract,
   });
 
+  const agentName = skillAgentName(skill.name, candidate);
   const skillAgent = new Agent({
-    id: `day0-skill-${skill.name}`,
-    name: `day0-skill-${skill.name}`,
+    id: agentName,
+    name: agentName,
     instructions,
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
@@ -1665,9 +1684,10 @@ export async function runDependentSkill(
     'Return one planStepOutcomes row for every approved plan step, in order. Mark a step satisfied only when the ledger proves it; otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
   ].join('\n');
 
+  const agentName = skillAgentName(skill.name, candidate, 'dependent');
   const skillAgent = new Agent({
-    id: `day0-skill-${skill.name}-dependent`,
-    name: `day0-skill-${skill.name}-dependent`,
+    id: agentName,
+    name: agentName,
     instructions,
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
