@@ -361,7 +361,7 @@ function mockActionContract(contract: ProcedureContract): string {
   return [
     '--- Mock action-set contract (takes precedence over contradictory skill wording) ---',
     'The approved plan and candidate define the work for this turn. Apply these invariants even when a skill body was authored with broader prerequisites or calls itself read-only:',
-    '  - For an approved spreadsheet-update, the literal destination and values in the approved candidate are sufficient authority. Emit the requested `spreadsheet.appendRow`; do not invent source-evidence or duplicate-check prerequisites that the candidate does not require.',
+    '  - The literal destination and values in an approved candidate are sufficient authority for its requested primary effect. Emit the matching typed action; do not invent source-evidence or duplicate-check prerequisites that the candidate does not require.',
     ticketRule,
     '  - One `ticket.update` may carry both the comment and status. A split pair is also valid only as comment-only followed by status-only. Never emit the same ticket status twice.',
     '  - A supplemental trail required by a loaded procedure never replaces the requested primary mutation, and the primary mutation never replaces that trail.',
@@ -736,6 +736,24 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
   initialOutput: ExecutionOutput;
   initialLedger: AppliedAction[];
   initialFailure?: string;
+}
+
+function agentIdentityPart(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
+}
+
+export function skillAgentName(
+  skillName: string,
+  candidate: Pick<WorkCandidate, 'sourceSystem' | 'externalId'>,
+  phase: 'initial' | 'dependent' = 'initial',
+): string {
+  return [
+    'day0-skill',
+    agentIdentityPart(skillName),
+    agentIdentityPart(candidate.sourceSystem),
+    agentIdentityPart(candidate.externalId),
+    phase,
+  ].join('-');
 }
 
 const PARTIAL_WORK = /\b(?:partial(?:ly)?|incomplete|outstanding|remainder|remaining)\b/i;
@@ -1461,9 +1479,10 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     procedureContract,
   });
 
+  const agentName = skillAgentName(skill.name, candidate);
   const skillAgent = new Agent({
-    id: `day0-skill-${skill.name}`,
-    name: `day0-skill-${skill.name}`,
+    id: agentName,
+    name: agentName,
     instructions,
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
@@ -1665,9 +1684,10 @@ export async function runDependentSkill(
     'Return one planStepOutcomes row for every approved plan step, in order. Mark a step satisfied only when the ledger proves it; otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
   ].join('\n');
 
+  const agentName = skillAgentName(skill.name, candidate, 'dependent');
   const skillAgent = new Agent({
-    id: `day0-skill-${skill.name}-dependent`,
-    name: `day0-skill-${skill.name}-dependent`,
+    id: agentName,
+    name: agentName,
     instructions,
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,

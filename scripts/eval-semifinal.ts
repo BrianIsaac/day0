@@ -46,6 +46,9 @@ function defaultOutPath(now = new Date()): string {
 const DEFAULT_APPROVAL_DELAY_MS = 750;
 const DEFAULT_POLL_INTERVAL_MS = 500;
 const TOKEN_REFRESH_MS = 45 * 60 * 1000;
+export const EVALUATION_HARNESS_VERSION = 2;
+export const MAX_SKILL_AUTHORING_ATTEMPTS = 6;
+export const SKILL_AUTHORING_ATTEMPTS_EXHAUSTED = 'skill-authoring-attempts-exhausted';
 
 const onboardingFixtureSchema = z.object({
   bossLabel: z.string().min(1),
@@ -71,6 +74,7 @@ export interface ActiveTask {
   decisions: EvaluationDecision[];
   logicalStages: number;
   observableProviderCalls: number | null;
+  skillAuthoringAttempts: number;
   lastError?: string;
 }
 
@@ -97,6 +101,15 @@ export function isFatalEvaluationInfrastructureError(value: unknown): boolean {
   const message = value instanceof Error ? value.message : typeof value === 'string' ? value : '';
   return /no credits remaining|insufficient_quota|invalid api key|incorrect api key|billing.*(?:disabled|required)|account.*(?:deactivated|disabled)/i.test(
     message,
+  );
+}
+
+export function assertLocalEvaluationSandbox(backend: string): asserts backend is 'local' {
+  if (backend === 'local') return;
+  throw new Error(
+    `evaluation harness v${EVALUATION_HARNESS_VERSION} requires the local skill sandbox; ` +
+      `the deployment would select ${backend}. Remove DAYTONA_API_KEY from the deployment, ` +
+      'restart it, and try again',
   );
 }
 
@@ -227,6 +240,7 @@ function assertResumeCompatible(
   const taskTimeoutMs = Object.fromEntries(tasks.map((task) => [task.id, task.timeoutMs]));
   const harnessParameters = evaluationHarnessParameters(taskTimeoutMs);
   if (
+    config.harnessVersion !== EVALUATION_HARNESS_VERSION ||
     config.commit !== commit ||
     config.model !== MODEL ||
     config.temperature !== MODEL_TEMPERATURE ||
@@ -234,6 +248,8 @@ function assertResumeCompatible(
     config.requestedRuns !== options.runs ||
     config.approvalDelayMs !== options.approvalDelayMs ||
     config.pollIntervalMs !== options.pollIntervalMs ||
+    config.skillAuthoringMaxAttempts !== MAX_SKILL_AUTHORING_ATTEMPTS ||
+    config.skillSandboxBackend !== 'local' ||
     JSON.stringify(config.harnessParameters) !== JSON.stringify(harnessParameters) ||
     JSON.stringify(config.intentionalArmDifferences) !==
       JSON.stringify(INTENTIONAL_ARM_DIFFERENCES) ||
@@ -270,6 +286,7 @@ async function loadOrCreateEvidence(
     experiment: 'day0-semifinal-controlled-comparison',
     generatedAt: new Date().toISOString(),
     configuration: {
+      harnessVersion: EVALUATION_HARNESS_VERSION,
       commit,
       model: MODEL,
       temperature: MODEL_TEMPERATURE,
@@ -281,6 +298,7 @@ async function loadOrCreateEvidence(
       taskTimeoutMs,
       approvalDelayMs: options.approvalDelayMs,
       pollIntervalMs: options.pollIntervalMs,
+      skillAuthoringMaxAttempts: MAX_SKILL_AUTHORING_ATTEMPTS,
       noLlmJudge: true,
       onboardingTranscriptProvenance: fixture.provenance,
       onboardingTranscriptPath: 'evaluation/onboarding/day0.json',
@@ -530,6 +548,15 @@ async function driveSkillApproval(
     return;
   }
   if (skill.state === 'rejected') throw new Error(`skill ${skill.name} was rejected`);
+  if (active.skillAuthoringAttempts >= MAX_SKILL_AUTHORING_ATTEMPTS) {
+    active.lastError = SKILL_AUTHORING_ATTEMPTS_EXHAUSTED;
+    await context.client.mutation(api.evaluation.failSkillAuthoringAttempts, {
+      workItemId: item._id,
+    });
+    await persist(context);
+    return;
+  }
+  active.skillAuthoringAttempts += 1;
   await incrementModelStage(context, active);
   const result = await context.client.action(api.skillActions.authorAndRegisterSkill, { skillId });
   if (!result.ok) {
@@ -667,6 +694,7 @@ async function runTask(
           decisions: [],
           logicalStages: 0,
           observableProviderCalls: null,
+          skillAuthoringAttempts: 0,
         };
   run.activeTask = active;
   await persist(context);
@@ -730,6 +758,7 @@ async function runTask(
       logicalStages: active.logicalStages,
       observableProviderCalls: active.observableProviderCalls,
     },
+    skillAuthoringAttempts: active.skillAuthoringAttempts,
     actionAudit: auditActionArguments(item.output),
     grade,
     ...(active.lastError ? { error: active.lastError } : {}),
@@ -975,7 +1004,9 @@ export async function runEvaluation(options: CliOptions): Promise<EvaluationEvid
         'run ./scripts/sync-convex-env.sh and restart the backend so both arms use one model',
     );
   }
+  assertLocalEvaluationSandbox(backend.skillSandboxBackend);
   evidence.configuration.backendModel = backend.model;
+  evidence.configuration.skillSandboxBackend = backend.skillSandboxBackend;
   await persist(context);
 
   for (const scheduled of scheduledRuns(options)) {

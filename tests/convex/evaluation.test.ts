@@ -120,4 +120,35 @@ describe('evaluation backend boundary', (): void => {
     const snapshot = await owner.query(api.evaluation.snapshot, { agentId });
     expect(snapshot.events.some((event) => event.type === 'work.failed')).toBe(true);
   });
+
+  it('terminalises a benchmark row when the harness exhausts skill authoring', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'boss@day0.local',
+      arm: 'day0',
+    });
+    const [workItemId] = await owner.mutation(api.evaluation.seedTasks, {
+      agentId,
+      tasks: [tasks[0]!],
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { state: 'needs-skill' });
+    });
+
+    await expect(
+      owner.mutation(api.evaluation.failSkillAuthoringAttempts, { workItemId }),
+    ).resolves.toEqual({ failed: true });
+    const row = await owner.query(api.work.get, { workItemId });
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toBe('skill-authoring-attempts-exhausted');
+    const snapshot = await owner.query(api.evaluation.snapshot, { agentId });
+    expect(snapshot.events).toContainEqual(
+      expect.objectContaining({
+        type: 'work.failed',
+        payload: expect.objectContaining({ reason: 'skill-authoring-attempts-exhausted' }),
+      }),
+    );
+  });
 });

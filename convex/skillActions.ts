@@ -2,11 +2,16 @@
 
 import { v } from 'convex/values';
 import { z } from 'zod';
+import { parser as pythonParser } from '@lezer/python';
 import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
-import { authorAndVerifySkill } from '../src/lib/skill-sandbox';
+import {
+  authorAndVerifySkill,
+  type AuthorSkillArgs,
+  type SkillSandboxRun,
+} from '../src/lib/skill-sandbox';
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import type { SurfaceRecord } from '../src/surfaces/types';
@@ -42,7 +47,7 @@ export const AUTHOR_SYSTEM = [
   '  - ticket.update        — { slug, status?, comment? }',
   '  - mcp.call             — { surface, tool, toolArgsJson } - one tool call on a connected MCP surface; `toolArgsJson` is the JSON object of tool arguments as a string',
   '  - http.request         — { surface, method, path, headersJson, body } - one request to a connected documented-API surface; `headersJson` is a JSON object as a string, `path` is relative to the surface endpoint',
-  'If the skill\'s purpose is "draft a tweet reply", SKILL.md must state that it emits `{ tool: "twitter.reply", args: { tweetSlug, body } }`. If "update the spreadsheet", emit `spreadsheet.appendRow`. Take destinations, recipients and supplemental audit actions from the runtime candidate and loaded procedures; never bake one team\'s routing into the skill. A public reply draft is never copied into the manager DM: emit it to its source channel or thread under the real-surface rule below. A skill that produces only prose with no actions is broken.',
+  'Choose exactly one available action schema whose operation matches the runtime candidate and loaded procedure. Take the action verb and every argument from the candidate, connected-surface schema and loaded procedures; never bake one team\'s routing into the skill. A public reply draft is never copied into the manager DM: emit it to its source channel or thread under the real-surface rule below. A skill that produces only prose with no actions is broken.',
   '',
   'Real surfaces: name the surface exactly as the Surfaces list does; take the action shape (tool names, argument names, paths) from the runbook for that system; write `{{secret}}` where the runbook shows the credential and never include a token or key; you may only target a connected surface, and the list of connected surfaces with their allowed tools, when any exist, follows below. Do not add a provenance trailer or a `username` to a message: the server appends the employee name and run id. A ticket status change must be preceded in the same response by a comment on that ticket. The first real call is the gated execution: the smoke test verifies shape and exit status offline and never contacts a surface.',
   'A registered skill runs under either live action mode. Never hardcode approval-state language into the skill body or into comments and messages: do not say a write is queued, pending, awaiting approval or "for your approval". At execution time read the current mode from the run context and describe effects accordingly; the executor tells you whether allowed writes land as emitted or wait for literal approval.',
@@ -69,6 +74,7 @@ export interface AuthorPromptSkill {
   rationale?: string;
   requiredScopes?: string[];
   targetSurface?: string;
+  previousAuthoringFailure?: string;
 }
 
 /** Redacted documentation evidence that may ground one authored skill. */
@@ -153,6 +159,14 @@ export function buildAuthorPrompt(
     ...(skill.targetSurface ? [`Target surface: ${skill.targetSurface}`] : []),
     ...(surfaceGuidance ? ['', surfaceGuidance] : []),
     ...(runbookGuidance ? ['', runbookGuidance] : []),
+    ...(skill.previousAuthoringFailure
+      ? [
+          '',
+          'Previous authoring attempt failed before registration:',
+          skill.previousAuthoringFailure,
+          'Correct that failure in this attempt; do not repeat the rejected output.',
+        ]
+      : []),
     '',
     'Author SKILL.md and smoke.py now.',
   ].join('\n');
@@ -160,8 +174,46 @@ export function buildAuthorPrompt(
 
 const authorSchema = z.object({
   body: z.string(),
-  smokeTest: z.string(),
+  smokeTest: z
+    .string()
+    .describe(
+      'Complete Python 3.12 source of smoke.py: define run(inputs: dict) -> dict, call it with representative input, and print a concise success line from its output.',
+    ),
 });
+
+type SkillVerifier = (args: AuthorSkillArgs) => Promise<SkillSandboxRun>;
+
+function smokeTestPreflightReason(source: string): string | undefined {
+  const tree = pythonParser.parse(source);
+  const cursor = tree.cursor();
+  do {
+    if (cursor.type.isError) {
+      return 'smoke test is not valid Python 3.12 source: its syntax does not parse';
+    }
+  } while (cursor.next());
+  const dictAnnotation = String.raw`dict(?:\s*\[[^\]]*\])?`;
+  const runSignature = new RegExp(
+    String.raw`^\s*(?:async\s+)?def\s+run\s*\(\s*inputs\s*:\s*${dictAnnotation}\s*\)\s*->\s*${dictAnnotation}\s*:`,
+    'm',
+  );
+  if (!runSignature.test(source)) {
+    return 'smoke test is not valid Python 3.12 source: it must define run(inputs: dict) -> dict';
+  }
+  if (!/\bprint\s*\(|\bsys\.stdout\.write\s*\(/.test(source)) {
+    return 'smoke test is not valid Python 3.12 source: it must print a success line';
+  }
+  return undefined;
+}
+
+/** Reject malformed model output before either verification backend spends a run. */
+export async function verifyAuthoredSkill(
+  args: AuthorSkillArgs,
+  verify: SkillVerifier = authorAndVerifySkill,
+): Promise<{ ok: true; result: SkillSandboxRun } | { ok: false; reason: string }> {
+  const reason = smokeTestPreflightReason(args.smokeTest);
+  if (reason) return { ok: false, reason: `smoke test rejected before sandbox: ${reason}` };
+  return { ok: true, result: await verify(args) };
+}
 
 /**
  * What a run reports when the skill it was authoring is no longer its own. The
@@ -221,7 +273,10 @@ export const authorAndRegisterSkill = action({
       { agentId: skill.agentId },
     );
     const userPrompt = buildAuthorPrompt(
-      skill,
+      {
+        ...skill,
+        previousAuthoringFailure: skill.verificationLog,
+      },
       surfaceRows.map(toSurfaceRecord),
       Date.now(),
       pageRows,
@@ -272,11 +327,19 @@ export const authorAndRegisterSkill = action({
     // different things to a boss depending on which sandbox said so.
     let backend = 'the sandbox';
     try {
-      const result = await authorAndVerifySkill({
+      const verification = await verifyAuthoredSkill({
         skillName: skill.name,
         skillBody: body,
         smokeTest,
       });
+      if (!verification.ok) {
+        return await recordAuthoringFailure(ctx, args.skillId, runId, {
+          rowReason: verification.reason,
+          reason: verification.reason,
+          eventType: 'skill.author-failed',
+        });
+      }
+      const result = verification.result;
       if (result.skipped) {
         skipReason = result.skipReason ?? 'no sandbox available';
         verificationLog = `sandbox verification skipped - ${skipReason}`;

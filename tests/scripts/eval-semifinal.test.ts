@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadEvaluationTasks } from '../../evaluation/graders';
 import {
+  assertLocalEvaluationSandbox,
   isFatalEvaluationInfrastructureError,
   parseCliOptions,
   selectEvaluationTasks,
@@ -59,12 +60,24 @@ describe('semi-final evaluation CLI', (): void => {
     expect(() => selectEvaluationTasks(tasks, ['missing-task'])).toThrow('unknown evaluation task');
   });
 
+  it('uses one non-binding task deadline for every v2 category', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    expect(new Set(tasks.map((task) => task.timeoutMs))).toEqual(new Set([900_000]));
+  });
+
   it('stops a run on hard provider billing or authentication failures', (): void => {
     expect(isFatalEvaluationInfrastructureError('You have no credits remaining.')).toBe(true);
     expect(isFatalEvaluationInfrastructureError('insufficient_quota')).toBe(true);
     expect(isFatalEvaluationInfrastructureError('invalid api key')).toBe(true);
     expect(isFatalEvaluationInfrastructureError('rate limit: retry later')).toBe(false);
     expect(isFatalEvaluationInfrastructureError(undefined)).toBe(false);
+  });
+
+  it('refuses every evaluation deployment that would select Daytona', (): void => {
+    expect(() => assertLocalEvaluationSandbox('daytona')).toThrow(
+      'requires the local skill sandbox',
+    );
+    expect(() => assertLocalEvaluationSandbox('local')).not.toThrow();
   });
 });
 
@@ -76,7 +89,10 @@ import type { Doc } from '../../convex/_generated/dataModel';
 import {
   driveBaselineState,
   driveDay0State,
+  MAX_SKILL_AUTHORING_ATTEMPTS,
   runRegrade,
+  SKILL_AUTHORING_ATTEMPTS_EXHAUSTED,
+  type ActiveTask,
   type HarnessContext,
 } from '../../scripts/eval-semifinal';
 
@@ -152,7 +168,7 @@ function workItem(overrides: Partial<Doc<'workItems'>>): Doc<'workItems'> {
   } as Doc<'workItems'>;
 }
 
-function activeTask() {
+function activeTask(): ActiveTask {
   return {
     taskId: 'docs-team-cadence',
     startedAt: new Date().toISOString(),
@@ -160,6 +176,7 @@ function activeTask() {
     decisions: [],
     logicalStages: 0,
     observableProviderCalls: null,
+    skillAuthoringAttempts: 0,
   };
 }
 
@@ -209,6 +226,80 @@ describe('headless day0 driver', (): void => {
     await driveDay0State(context, run, active, { ...pending, approvedIndexes: [0] });
     expect(calls.map((call) => call.name)).toEqual(['work:approveActions']);
     expect(active.decisions).toHaveLength(1);
+  });
+
+  it('fails with a recorded reason after the shared authoring-attempt cap', async (): Promise<void> => {
+    const { context, calls } = await stubContext({
+      'skills:get': {
+        _id: 'skill-1',
+        name: 'generic-skill',
+        state: 'failed',
+        createdAt: 1,
+      },
+      'evaluation:failSkillAuthoringAttempts': { failed: true },
+    });
+    const run = {
+      id: 'day0-r1',
+      arm: 'day0',
+      run: 1,
+      status: 'running',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    } as never;
+    const active = activeTask();
+    active.skillAuthoringAttempts = MAX_SKILL_AUTHORING_ATTEMPTS;
+
+    await driveDay0State(
+      context,
+      run,
+      active,
+      workItem({ state: 'needs-skill', proposedSkillId: 'skill-1' as never }),
+    );
+
+    expect(calls.map((call) => call.name)).toEqual([
+      'skills:get',
+      'evaluation:failSkillAuthoringAttempts',
+    ]);
+    expect(active.lastError).toBe(SKILL_AUTHORING_ATTEMPTS_EXHAUSTED);
+    expect(active.skillAuthoringAttempts).toBe(MAX_SKILL_AUTHORING_ATTEMPTS);
+  });
+
+  it('records each authoring invocation before another retry can be considered', async (): Promise<void> => {
+    const { context, calls } = await stubContext({
+      'skills:get': {
+        _id: 'skill-1',
+        name: 'generic-skill',
+        state: 'failed',
+        createdAt: 1,
+      },
+      'skillActions:authorAndRegisterSkill': { ok: false, reason: 'verification failed' },
+    });
+    const run = {
+      id: 'day0-r1',
+      arm: 'day0',
+      run: 1,
+      status: 'running',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    } as never;
+    const active = activeTask();
+
+    await driveDay0State(
+      context,
+      run,
+      active,
+      workItem({ state: 'needs-skill', proposedSkillId: 'skill-1' as never }),
+    );
+
+    expect(calls.map((call) => call.name)).toEqual([
+      'skills:get',
+      'skillActions:authorAndRegisterSkill',
+    ]);
+    expect(active.skillAuthoringAttempts).toBe(1);
+    expect(active.logicalStages).toBe(1);
+    expect(active.lastError).toBe('verification failed');
   });
 });
 

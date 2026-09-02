@@ -66,6 +66,71 @@ interface SimpleSkillRow {
   name: string;
   description: string;
   body: string;
+  requiredScopes?: string[];
+  targetSurface?: string;
+}
+
+interface MatchableSkill {
+  name: string;
+  description: string;
+  requiredScopes?: readonly string[];
+  targetSurface?: string;
+}
+
+interface SkillMatchCandidate {
+  sourceSystem: string;
+  title: string;
+  contentSummary: string;
+}
+
+function tokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/\W+/)
+    .filter(Boolean);
+}
+
+function declaredSurfaces(skill: MatchableSkill): Set<string> {
+  const surfaces = new Set<string>();
+  if (skill.targetSurface) surfaces.add(skill.targetSurface.toLowerCase());
+  for (const scope of skill.requiredScopes ?? []) {
+    const match = /^([^:]+):(?:read|write)$/.exec(scope.toLowerCase());
+    if (match) surfaces.add(match[1]);
+  }
+  return surfaces;
+}
+
+export function findMatchingSkillForCandidate<T extends MatchableSkill>(
+  candidate: SkillMatchCandidate,
+  skills: readonly T[],
+): T | undefined {
+  const source = candidate.sourceSystem.toLowerCase();
+  const sourceTokens = tokens(candidate.sourceSystem);
+  const candidateTokens = new Set(
+    tokens(`${candidate.title} ${candidate.contentSummary}`).filter((token) => token.length >= 4),
+  );
+  let best: T | undefined;
+  let bestScore = 0;
+
+  for (const skill of skills) {
+    const surfaces = declaredSurfaces(skill);
+    const skillTokens = new Set(tokens(`${skill.name} ${skill.description}`));
+    const sourceCompatible =
+      surfaces.size > 0
+        ? surfaces.has(source)
+        : sourceTokens.some((token) => skillTokens.has(token));
+    if (!sourceCompatible) continue;
+
+    let score = 0;
+    for (const token of candidateTokens) if (skillTokens.has(token)) score += 1;
+    for (const token of sourceTokens) if (skillTokens.has(token)) score += 4;
+    if (score > bestScore) {
+      best = skill;
+      bestScore = score;
+    }
+  }
+
+  return bestScore >= 3 ? best : undefined;
 }
 
 function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
@@ -103,30 +168,8 @@ function buildLookups(args: {
     },
     findMatchingSkill: async (candidate, charter) => {
       void charter;
-      const tokenise = (s: string) =>
-        new Set(
-          s
-            .toLowerCase()
-            .split(/\W+/)
-            .filter((t) => t.length >= 4),
-        );
-      const candidateTokens = tokenise(`${candidate.title} ${candidate.contentSummary}`);
-      const sourceTokens = candidate.sourceSystem.toLowerCase().split(/\W+/).filter(Boolean);
-      let best: SimpleSkillRow | null = null;
-      let bestScore = 0;
-      for (const skill of args.registeredSkills) {
-        const skillTokens = tokenise(`${skill.name} ${skill.description}`);
-        let score = 0;
-        for (const t of candidateTokens) if (skillTokens.has(t)) score += 1;
-        for (const t of sourceTokens) if (skillTokens.has(t)) score += 4;
-        if (score > bestScore) {
-          best = skill;
-          bestScore = score;
-        }
-      }
-      // Require either a sourceSystem hit (4 pts) or several content overlaps.
-      if (!best || bestScore < 3) return null;
-      return { name: best.name, description: best.description };
+      const skill = findMatchingSkillForCandidate(candidate, args.registeredSkills);
+      return skill ? { name: skill.name, description: skill.description } : null;
     },
   };
 }
@@ -172,6 +215,8 @@ export const evaluateWorkItem = action({
       name: s.name,
       description: s.description,
       body: s.body,
+      requiredScopes: s.requiredScopes,
+      targetSurface: s.targetSurface,
     }));
     const grantedScopes = new Set<string>(grantRows.map((g) => g.scope));
 
@@ -294,38 +339,14 @@ async function executeApprovedPlanHandler(
   const skills: Doc<'skills'>[] = internalCaller
     ? await ctx.runQuery(internal.skills.registeredInternal, { agentId })
     : await ctx.runQuery(api.skills.registered, { agentId });
-  // Use the same token-scoring as the evaluator's findMatchingSkill so
-  // the executor picks the matched skill rather than blindly falling
-  // back to skills[0]. Source-system tokens count 4× content tokens.
-  const tokenise = (s: string): Set<string> =>
-    new Set(
-      s
-        .toLowerCase()
-        .split(/\W+/)
-        .filter((t) => t.length >= 4),
-    );
-  const candidateTokens = tokenise(`${candidate.title} ${candidate.contentSummary}`);
-  const sourceTokens = candidate.sourceSystem.toLowerCase().split(/\W+/).filter(Boolean);
-  let pickedSkill: Doc<'skills'> | undefined;
-  let pickedScore = 0;
-  for (const skill of skills) {
-    const skillTokens = tokenise(`${skill.name} ${skill.description}`);
-    let score = 0;
-    for (const t of candidateTokens) if (skillTokens.has(t)) score += 1;
-    for (const t of sourceTokens) if (skillTokens.has(t)) score += 4;
-    if (score > pickedScore) {
-      pickedSkill = skill;
-      pickedScore = score;
-    }
-  }
-  // Last-resort fallback only if nothing scored at all.
-  if (!pickedSkill) pickedSkill = skills[0];
+  const pickedSkill = findMatchingSkillForCandidate(candidate, skills);
   if (!pickedSkill) {
+    const reason = `no registered skill matches source surface ${candidate.sourceSystem}`;
     await ctx.runMutation(internal.work.setFailed, {
       workItemId: args.workItemId,
-      reason: 'no registered skill available',
+      reason,
     });
-    return { ok: false, reason: 'no registered skill available' };
+    return { ok: false, reason };
   }
   // Nothing above this line touches a model or an adapter, so a caller that
   // loses the claim costs a handful of reads and stops here.

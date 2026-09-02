@@ -53,6 +53,7 @@
     "@elevenlabs/elevenlabs-js": "^2.46.0",
     "@elevenlabs/react": "^1.5.0",
     "@google/genai": "^2.0.0",
+    "@lezer/python": "^1.1.19",
     "@mastra/core": "^1.32.1",
     "@mastra/mcp": "^1.17",
     "@t3-oss/env-nextjs": "^0.13.11",

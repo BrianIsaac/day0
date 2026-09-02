@@ -9,6 +9,7 @@ import {
   browserTransportRefusal,
   completionFailure,
   dependentTransitionRefusal,
+  findMatchingSkillForCandidate,
   prerequisiteOutput,
   validatePlanStepOutcomes,
 } from '../../convex/workActions';
@@ -91,6 +92,96 @@ const skillOutput: ExecutionOutput = {
     },
   ],
 };
+
+describe('skill selection surface boundary', (): void => {
+  const spreadsheetSkill = {
+    name: 'update-spreadsheet-eval-write-01',
+    description: 'Update a spreadsheet and prepare a team handoff.',
+    targetSurface: 'spreadsheet',
+    requiredScopes: ['spreadsheet:read', 'spreadsheet:write'],
+  };
+
+  it('refuses a content-overlap match on a different source surface', (): void => {
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'slack',
+          title: 'Post the team handoff',
+          contentSummary: 'Write the team handoff for the next shift.',
+        },
+        [spreadsheetSkill],
+      ),
+    ).toBeUndefined();
+  });
+
+  it('selects only a source-compatible skill before scoring content overlap', (): void => {
+    const slackSkill = {
+      name: 'slack-action-eval-write-04',
+      description: 'Post a team handoff in Slack.',
+      targetSurface: 'slack',
+      requiredScopes: ['slack:read', 'slack:write'],
+    };
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'slack',
+          title: 'Post the team handoff',
+          contentSummary: 'Write the team handoff for the next shift.',
+        },
+        [spreadsheetSkill, slackSkill],
+      ),
+    ).toBe(slackSkill);
+  });
+});
+
+describe('skill selection for real-mode target surfaces', (): void => {
+  const slackMention = {
+    sourceSystem: 'slack',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Please refresh the Looker pipeline tile and confirm in the thread.',
+  };
+
+  it('keeps a skill proposed for a foreign target surface when the source read scope is declared', (): void => {
+    const proposedByEvaluator = {
+      name: 'slack-action-c0abc123',
+      description: 'Skill proposed to handle slack work like "Refresh the Looker pipeline tile".',
+      targetSurface: 'looker',
+      requiredScopes: ['boss:message', 'slack:read', 'looker:read', 'looker:write'],
+    };
+    expect(findMatchingSkillForCandidate(slackMention, [proposedByEvaluator])).toBe(
+      proposedByEvaluator,
+    );
+  });
+
+  it('refuses a row that declares only a foreign surface, even when its name matches the source', (): void => {
+    const foreignOnly = {
+      name: 'slack-action-c0abc123',
+      description: 'Skill proposed to handle slack work.',
+      targetSurface: 'looker',
+      requiredScopes: ['looker:read', 'looker:write'],
+    };
+    expect(findMatchingSkillForCandidate(slackMention, [foreignOnly])).toBeUndefined();
+  });
+
+  it('matches a builtin or legacy row without surface metadata by the source name alone', (): void => {
+    const builtinDocs = {
+      name: 'see-internal-docs',
+      description: 'Look up and cite internal documentation.',
+    };
+    expect(
+      findMatchingSkillForCandidate(
+        { sourceSystem: 'docs', title: 'Team cadence', contentSummary: 'When is standup?' },
+        [builtinDocs],
+      ),
+    ).toBe(builtinDocs);
+    expect(
+      findMatchingSkillForCandidate(
+        { sourceSystem: 'linear', title: 'Close REVOPS-5', contentSummary: 'Close the issue.' },
+        [builtinDocs],
+      ),
+    ).toBeUndefined();
+  });
+});
 
 describe('browser authority at provider transport', (): void => {
   it('refuses an absent or changed component after the adapter claim', (): void => {
@@ -1124,13 +1215,25 @@ describe('executing an approved plan through the gate', (): void => {
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(
+    const { agentId, workItemId } = await seed(
       harness,
       'real',
       ['linear:read', 'slack:read', 'slack:write'],
       { autonomousActions: true },
     );
     await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('skills', {
+        agentId,
+        name: 'answer-slack-from-linear',
+        description: 'Read Linear evidence and answer the originating Slack message.',
+        body: 'Read the evidence before replying.',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        requiredScopes: ['linear:read', 'slack:read', 'slack:write'],
+        targetSurface: 'slack',
+        createdAt: 1,
+        registeredAt: 1,
+      });
       await ctx.db.patch(workItemId, {
         sourceCategory: 'event-stream',
         sourceSystem: 'slack',
@@ -2308,10 +2411,22 @@ describe('the autonomous-actions switch through the gate', (): void => {
       ],
     };
     const harness = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(harness, 'real', ['slack:read'], {
+    const { agentId, workItemId } = await seed(harness, 'real', ['slack:read'], {
       autonomousActions: true,
     });
     await harness.run(async (ctx) => {
+      await ctx.db.insert('skills', {
+        agentId,
+        name: 'answer-slack-message',
+        description: 'Answer the originating Slack message.',
+        body: 'Reply only to the originating message.',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        requiredScopes: ['slack:read', 'slack:write'],
+        targetSurface: 'slack',
+        createdAt: 1,
+        registeredAt: 1,
+      });
       await ctx.db.patch(workItemId, {
         sourceCategory: 'event-stream',
         sourceSystem: 'slack',

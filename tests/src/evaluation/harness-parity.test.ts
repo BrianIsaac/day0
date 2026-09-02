@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertEvaluationHarnessParity,
   evaluationHarnessParameters,
+  harnessDiagnostics,
   INTENTIONAL_ARM_DIFFERENCES,
   type EvaluationHarnessParameters,
 } from '../../../src/evaluation/harness-parity';
@@ -25,16 +26,24 @@ describe('evaluation harness parity', (): void => {
     expect(() => assertEvaluationHarnessParity(parameters)).not.toThrow();
     expect(Object.keys(parameters.day0).sort()).toEqual([
       'contextLimitTokens',
+      'effectiveTemperature',
       'modelCallAbortMs',
       'modelId',
       'modelSeed',
+      'ollamaModelDigest',
+      'ollamaVersion',
       'providerBaseUrl',
       'providerClient',
+      'providerWarnings',
       'retryPolicy',
+      'skillSandboxBackend',
       'structuredOutputMode',
       'taskTimeoutMs',
       'temperature',
     ]);
+    expect(parameters.day0.skillSandboxBackend).toBe('local');
+    expect(parameters.baseline.skillSandboxBackend).toBe('local');
+    expect(parameters.day0.modelCallAbortMs).toBe(300_000);
   });
 
   it('fails closed when any arm parameter diverges', (): void => {
@@ -52,10 +61,34 @@ describe('evaluation harness parity', (): void => {
   it('records the provider endpoint used inside the evaluation backend', (): void => {
     vi.stubEnv('CONVEX_OPENAI_BASE_URL', 'http://model:11434/v1');
 
-    const parameters = evaluationHarnessParameters(taskTimeoutMs);
+    const parameters = evaluationHarnessParameters(taskTimeoutMs, {
+      readOllamaMetadata: () => ({ version: '0.32.9', modelDigest: 'sha256:bed-model' }),
+    });
 
     expect(parameters.day0.providerBaseUrl).toBe('http://model:11434/v1');
     expect(parameters.baseline.providerBaseUrl).toBe('http://model:11434/v1');
+    expect(harnessDiagnostics(parameters.day0)).toMatchObject({
+      ollamaVersion: '0.32.9',
+      ollamaModelDigest: 'sha256:bed-model',
+    });
+  });
+
+  it('normalises an empty backend base URL and ignores host Ollama context for hosted OpenAI', (): void => {
+    vi.stubEnv('CONVEX_OPENAI_BASE_URL', '');
+    vi.stubEnv('OLLAMA_CONTEXT_LENGTH', '16384');
+
+    const parameters = evaluationHarnessParameters(taskTimeoutMs);
+    const diagnostics = harnessDiagnostics(parameters.day0);
+
+    expect(parameters.day0.providerBaseUrl).toBe('https://api.openai.com/v1');
+    expect(parameters.day0.providerClient).toBe(
+      '@ai-sdk/openai chat-completions through Mastra',
+    );
+    expect(parameters.day0.contextLimitTokens).toBeNull();
+    expect(diagnostics.effectiveTemperature).toBeNull();
+    expect(diagnostics.providerWarnings).toContain(
+      'unsupported (temperature): temperature is not supported for reasoning models',
+    );
   });
 
   it('whitelists only the two intentional onboarding-mechanism differences', (): void => {

@@ -48,8 +48,11 @@ function evidence(): EvaluationEvidence {
     experiment: 'day0-semifinal-controlled-comparison',
     generatedAt: '2026-08-30T00:00:00.000Z',
     configuration: {
+      harnessVersion: 2,
       commit: 'abcdef0',
       model: 'gpt-5.5',
+      skillSandboxBackend: 'local',
+      skillAuthoringMaxAttempts: 4,
       temperature: 0.4,
       modelCallTimeoutMs: 90_000,
       surfaceMode: 'mock',
@@ -87,6 +90,7 @@ function evidence(): EvaluationEvidence {
             humanWaitMs: 0,
             decisions: [],
             modelCalls: { logicalStages: 2, observableProviderCalls: null },
+            skillAuthoringAttempts: 3,
             actionAudit: {
               totalActions: 3,
               actionsWithIrrelevantArguments: 2,
@@ -127,6 +131,11 @@ describe('evaluation evidence report', (): void => {
     const report = renderEvaluationReport(evidence());
 
     expect(report).toContain('1/1; Wilson 95% CI');
+    expect(report).toContain('with harness v2');
+    expect(report).toContain('Skill verification uses `local`');
+    expect(report).toContain('shared skill-authoring cap is 4 attempts');
+    expect(report).toContain('| day0-r1 | day0 | docs-team-cadence | completed | pass');
+    expect(report).toContain('| yes (manager-report / manager-report) | 3 | yes |');
     expect(report).toContain('No LLM judge');
     expect(report).toContain('same fixed tasks');
     expect(report).toContain('human wait');
@@ -145,15 +154,20 @@ describe('evaluation evidence report', (): void => {
 
   it('renders the asserted harness parity and complete intentional-difference whitelist', (): void => {
     const input = evidence();
-    input.configuration.harnessParameters = evaluationHarnessParameters({
+    const parameters = evaluationHarnessParameters({
       'docs-team-cadence': 240_000,
     });
+    input.configuration.harnessParameters = parameters;
     input.configuration.intentionalArmDifferences = INTENTIONAL_ARM_DIFFERENCES;
 
     const report = renderEvaluationReport(input);
 
     expect(report).toContain('| Model id |');
-    expect(report).toContain('| Per-call abort deadline (ms) | 90000 | 90000 |');
+    expect(report).toContain('| Per-call abort deadline (ms) | 300000 | 300000 |');
+    expect(report).toContain('| Skill sandbox backend | local | local |');
+    expect(report).toContain('| Effective temperature after provider warnings |');
+    expect(report).toContain('| Provider warnings |');
+    expect(report).toContain('| Ollama version | not set / provider-managed | not set / provider-managed |');
     expect(report).toContain('| onboardingPipeline | runtime charter, loaded documents');
     expect(report).toContain('| executionTurn | one governed structured executor turn');
     expect(report).toContain('overload\\|service_unavailable');

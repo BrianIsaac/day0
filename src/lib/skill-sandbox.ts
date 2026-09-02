@@ -65,6 +65,11 @@ export interface SmokeTestOutcome {
   timedOut?: boolean;
 }
 
+/** The backend this process will attempt; reachability is checked only for the local service. */
+export function configuredSkillSandboxBackend(): Exclude<SkillSandboxBackend, 'none'> {
+  return isDaytonaConfigured() ? 'daytona' : 'local';
+}
+
 /**
  * The one place that decides whether a smoke test verified anything.
  *
@@ -127,7 +132,7 @@ function skipped(reason: string): SkillSandboxRun {
  * visibly uncallable, and the caller records the skip in the event log.
  */
 export async function authorAndVerifySkill(args: AuthorSkillArgs): Promise<SkillSandboxRun> {
-  if (isDaytonaConfigured()) {
+  if (configuredSkillSandboxBackend() === 'daytona') {
     return verdictFor('daytona', await authorAndVerifySkillOnDaytona(args));
   }
 

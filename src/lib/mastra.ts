@@ -29,20 +29,19 @@ import {
 /**
  * Model handed to every Mastra Agent.
  *
- * Hosted OpenAI keeps the model-router string so Mastra resolves the
- * model through its own provider registry (capability metadata, strict
- * structured-output mode, observability labels). A custom
- * OPENAI_BASE_URL swaps in an explicit AI-SDK chat-completions model,
- * because the router would otherwise resolve `openai/*` against
- * api.openai.com and ignore the base URL entirely.
+ * Every provider uses the explicit AI-SDK chat-completions model. Chat
+ * completions with `json_schema` is the common structured-output route across
+ * OpenAI and the supported local runtimes; using Mastra's Responses router for
+ * only the hosted bed would change both provider and protocol at once.
  */
-export const MODEL_CONFIG: MastraModelConfig = env.OPENAI_BASE_URL
-  ? (languageModel() as MastraModelConfig)
-  : (`openai/${MODEL}` as MastraModelConfig);
+export const MODEL_CONFIG = Object.assign(
+  (): MastraModelConfig => languageModel() as MastraModelConfig,
+  { provider: 'openai.chat' as const },
+);
 
 /** Shared sampling setting for the shipped agent and the evaluation control. */
 export const MODEL_TEMPERATURE = 0.4;
-export const MODEL_CALL_TIMEOUT_MS = 90_000;
+export const MODEL_CALL_TIMEOUT_MS = 300_000;
 export const MODEL_PROVIDER_MAX_RETRIES = 2;
 
 function modelAbortSignal(): AbortSignal {
@@ -219,6 +218,31 @@ export interface AgentJsonResult<T> {
   mode: StructuredMode;
   /** True when `native` was attempted first and had to be abandoned. */
   fellBack: boolean;
+  /** Provider call warnings returned with the generation that produced the value. */
+  providerWarnings: string[];
+}
+
+interface GeneratedObject<T> {
+  value: T;
+  providerWarnings: string[];
+}
+
+/** Flatten provider warning objects into stable, evidence-safe text. */
+export function providerWarningTexts(warnings: unknown): string[] {
+  if (!Array.isArray(warnings)) return [];
+  const rendered = warnings
+    .map((warning): string | null => {
+      if (typeof warning === 'string') return warning.trim() || null;
+      if (!warning || typeof warning !== 'object') return String(warning);
+      const row = warning as { type?: unknown; feature?: unknown; details?: unknown };
+      const type = typeof row.type === 'string' ? row.type.trim() : 'provider warning';
+      const feature = typeof row.feature === 'string' ? row.feature.trim() : '';
+      const details = typeof row.details === 'string' ? row.details.trim() : '';
+      const heading = feature ? `${type} (${feature})` : type;
+      return details ? `${heading}: ${details}` : heading;
+    })
+    .filter((warning): warning is string => Boolean(warning));
+  return [...new Set(rendered)];
 }
 
 /**
@@ -237,24 +261,28 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
   const label = `agentJson(${args.agent.name})`;
   const pinned = pinnedStructuredMode(args.mode);
   if (pinned) {
+    const generated = await withRetry(label, () => generateObject<T>(args, pinned));
     return {
-      value: await withRetry(label, () => generateObject<T>(args, pinned)),
+      value: generated.value,
       mode: pinned,
       fellBack: false,
+      providerWarnings: generated.providerWarnings,
     };
   }
 
   const key = structuredModeKey(args.agent.name);
   const endpoint = env.OPENAI_BASE_URL ?? 'api.openai.com';
   if (structuredModeMemo.begin(key) === 'prompt') {
+    const generated = await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt'));
     return {
-      value: await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt')),
+      value: generated.value,
       mode: 'prompt',
       fellBack: false,
+      providerWarnings: generated.providerWarnings,
     };
   }
 
-  let native: T;
+  let native: GeneratedObject<T>;
   try {
     native = await withRetry(label, () => generateObject<T>(args, 'native'));
   } catch (err) {
@@ -271,9 +299,9 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
       });
       throw err;
     }
-    let value: T;
+    let generated: GeneratedObject<T>;
     try {
-      value = await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt'));
+      generated = await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt'));
     } catch (withoutParameter) {
       structuredModeMemo.inconclusive(key);
       log.warn(
@@ -305,7 +333,12 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
           cause: (err as Error).message,
         },
       );
-      return { value, mode: 'prompt', fellBack: true };
+      return {
+        value: generated.value,
+        mode: 'prompt',
+        fellBack: true,
+        providerWarnings: generated.providerWarnings,
+      };
     }
     structuredModeMemo.refused(key);
     log.warn(
@@ -319,10 +352,20 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
         retriesNativeInMs: structuredModeMemo.retriesNativeIn(key),
       },
     );
-    return { value, mode: 'prompt', fellBack: true };
+    return {
+      value: generated.value,
+      mode: 'prompt',
+      fellBack: true,
+      providerWarnings: generated.providerWarnings,
+    };
   }
   structuredModeMemo.worked(key);
-  return { value: native, mode: 'native', fellBack: false };
+  return {
+    value: native.value,
+    mode: 'native',
+    fellBack: false,
+    providerWarnings: native.providerWarnings,
+  };
 }
 
 export async function agentJson<T>(args: AgentJsonArgs): Promise<T> {
@@ -332,11 +375,23 @@ export async function agentJson<T>(args: AgentJsonArgs): Promise<T> {
 async function generateObject<T>(
   args: { agent: Agent; user: string; schema: unknown },
   mode: StructuredMode,
-): Promise<T> {
+): Promise<GeneratedObject<T>> {
+  const signal = modelAbortSignal();
+  const startedAt = Date.now();
+  const timedOut = (): boolean =>
+    signal.aborted || Date.now() - startedAt >= MODEL_CALL_TIMEOUT_MS;
+  const timeoutError = (cause?: unknown): Error => {
+    const error = new Error(
+      `agentJson(${args.agent.name}): ${mode} model call reached the ${MODEL_CALL_TIMEOUT_MS}ms timeout`,
+      cause === undefined ? undefined : { cause },
+    );
+    error.name = 'TimeoutError';
+    return error;
+  };
   let response;
   try {
     response = await args.agent.generate(args.user, {
-      abortSignal: modelAbortSignal(),
+      abortSignal: signal,
       modelSettings: { temperature: MODEL_TEMPERATURE },
       // Zod 4 schemas pass through Mastra's PublicSchema bridge; the cast
       // sidesteps the v4-vs-v3 peer-dep nuance without losing the
@@ -348,16 +403,44 @@ async function generateObject<T>(
       },
     });
   } catch (err) {
+    if (timedOut()) throw timeoutError(err);
     if (isMastraSchemaViolation(err)) {
       throw new StructuredOutputInvalidError(args.agent.name, mode, err);
     }
     throw err;
   }
+  const resultError = (response as { error?: unknown }).error;
+  if (timedOut()) throw timeoutError(resultError);
+  if (resultError !== undefined && resultError !== null) {
+    if (resultError instanceof Error) throw resultError;
+    throw new Error(
+      `agentJson(${args.agent.name}): ${mode} generation failed: ${String(resultError)}`,
+    );
+  }
+  const finishReason = (response as { finishReason?: unknown }).finishReason;
+  if (finishReason === 'error') {
+    throw new Error(`agentJson(${args.agent.name}): ${mode} generation finished with an error`);
+  }
+  // Mastra reports a withdrawn call as a tripwire with no object; observed
+  // shape for an aborted native call: finishReason 'tripwire', no error, no
+  // text. The abort wall is handled above; any other tripwire is Mastra's own
+  // processor stopping the run, which is not a server refusing the schema.
+  if (finishReason === 'tripwire') {
+    const tripwire = (response as { tripwire?: unknown }).tripwire;
+    const reason =
+      tripwire && typeof tripwire === 'object' && 'reason' in tripwire
+        ? String((tripwire as { reason?: unknown }).reason)
+        : 'no reason given';
+    throw new Error(`agentJson(${args.agent.name}): ${mode} generation was stopped by a tripwire (${reason})`);
+  }
   const object = response.object as T | undefined;
   if (object === undefined || object === null) {
     throw new StructuredOutputMissingError(args.agent.name, mode);
   }
-  return object;
+  return {
+    value: object,
+    providerWarnings: providerWarningTexts((response as { warnings?: unknown }).warnings),
+  };
 }
 
 export async function agentText(args: { agent: Agent; user: string }): Promise<string> {

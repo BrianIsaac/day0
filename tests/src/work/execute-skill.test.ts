@@ -13,6 +13,7 @@ import {
   parseProcedureContract,
   procedureContractSchema,
   replyTargetLine,
+  skillAgentName,
   surfaceInstructions,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
@@ -95,6 +96,29 @@ function recordedArgs(overrides: Partial<MockActionArgs>): MockActionArgs {
 const SYNTHETIC_SLACK_TOKEN = ['xoxb', '1234567890-abcdefghijklmnop'].join('-');
 
 describe('executor output contract', (): void => {
+  it('isolates structured-mode state between tasks that use the same skill', (): void => {
+    const skill = 'slack-action-eval-write-04';
+    const first = skillAgentName(skill, {
+      sourceSystem: 'slack',
+      externalId: 'write-team-handoff',
+    });
+    const second = skillAgentName(skill, {
+      sourceSystem: 'slack',
+      externalId: 'write-priya-verification',
+    });
+
+    expect(first).not.toBe(second);
+    expect(skillAgentName(skill, { sourceSystem: 'slack', externalId: 'write-team-handoff' }))
+      .toBe(first);
+    expect(
+      skillAgentName(
+        skill,
+        { sourceSystem: 'slack', externalId: 'write-team-handoff' },
+        'dependent',
+      ),
+    ).not.toBe(first);
+  });
+
   it('requires procedure-trail attention in both executor phases', (): void => {
     expect(
       executeSchema.safeParse({
@@ -1453,8 +1477,9 @@ describe('executor preamble by mode', (): void => {
         '--- Mock action-set contract (takes precedence over contradictory skill wording) ---';
       expect(prompt.indexOf(header)).toBeGreaterThan(prompt.indexOf(skillBody));
       expect(prompt).toContain(
-        'the literal destination and values in the approved candidate are sufficient authority',
+        'The literal destination and values in an approved candidate are sufficient authority for its requested primary effect.',
       );
+      expect(prompt).not.toContain('For an approved spreadsheet-update');
       expect(prompt).toContain(
         'Full closure uses `done`; use `in-progress` only when the candidate explicitly requests partial work',
       );
