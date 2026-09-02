@@ -1713,7 +1713,7 @@ export async function runDependentSkill(
     `Emit at most ${DEPENDENT_ACTION_CAP} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
-    'Return one planStepOutcomes row for every approved plan step, in order. Mark a step satisfied only when the ledger proves it; otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
+    'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
   ].join('\n');
 
   const agentName = skillAgentName(skill.name, candidate, 'dependent');

@@ -114,4 +114,27 @@ describe('documentation grounding in the executor prompts', (): void => {
     expect(recorded.users[0]).toContain('Close checklist: reconcile the ledger, confirm the owner, file the summary.');
     expect(recorded.instructions[0]).toContain('citable');
   });
+
+  it('tells the closing phase that a step it fulfils by an action emitted now is satisfied', async (): Promise<void> => {
+    await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: {
+        summary: 'Comment, then close.',
+        steps: ['Comment on the ticket.', 'Move the ticket to Done.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    }).catch((): undefined => undefined);
+
+    expect(recorded.instructions[0]).toContain('emitted in this response is satisfied');
+  });
 });
