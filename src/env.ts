@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import { z } from 'zod';
+import { DEFAULT_MODEL } from './lib/model-name';
 
 /**
  * Lazy env validation. All fields are `.optional()` or have defaults so
@@ -13,7 +14,7 @@ const schema = z.object({
 
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(),
-  OPENAI_MODEL: z.string().default('gpt-5.5'),
+  OPENAI_MODEL: z.string().default(DEFAULT_MODEL),
   OPENAI_IMAGE_MODEL: z.string().default('gpt-image-2'),
   OPENAI_JSON_MODE: z.enum(['auto', 'native', 'prompt']).default('auto'),
 
@@ -54,6 +55,16 @@ const schema = z.object({
   // `true` skips Clerk entirely and runs as one synthetic local user. Refused
   // outside `next dev` — see src/lib/dev-auth.ts.
   NEXT_PUBLIC_DEV_NO_AUTH: z.string().optional(),
+  DAY0_SURFACE_MODE: z.enum(['mock', 'real']).default('mock'),
+  DAY0_DOCS_ROOT: z.string().default('/docs'),
+  DAY0_CREDENTIAL_KEY: z.string().optional(),
+  DAY0_NOTION_MCP_AUTH_TOKEN: z.string().optional(),
+  // The public origin a provider redirects an OAuth install back to. Absent on
+  // the hosted mock and on any run that never provisions a dedicated app.
+  DAY0_PUBLIC_URL: z.string().optional(),
+  // The bundled browser driver, used only by a `browser-driven` surface. Like
+  // the bundled documentation reader, it is configuration, not discovery.
+  DAY0_BROWSER_MCP_URL: z.string().optional(),
 });
 
 /**
@@ -91,6 +102,12 @@ const OPTIONAL_STRINGS = [
   'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
   'NEXT_PUBLIC_DEMO_TENANT_SLUG',
   'NEXT_PUBLIC_DEV_NO_AUTH',
+  'DAY0_SURFACE_MODE',
+  'DAY0_DOCS_ROOT',
+  'DAY0_CREDENTIAL_KEY',
+  'DAY0_NOTION_MCP_AUTH_TOKEN',
+  'DAY0_PUBLIC_URL',
+  'DAY0_BROWSER_MCP_URL',
 ] as const;
 
 /**
@@ -141,5 +158,11 @@ export const env = schema.parse(
     NEXT_PUBLIC_DEMO_BOSS_EMAIL: process.env.NEXT_PUBLIC_DEMO_BOSS_EMAIL,
     NEXT_PUBLIC_DEMO_TENANT_SLUG: process.env.NEXT_PUBLIC_DEMO_TENANT_SLUG,
     NEXT_PUBLIC_DEV_NO_AUTH: process.env.NEXT_PUBLIC_DEV_NO_AUTH,
+    DAY0_SURFACE_MODE: process.env.DAY0_SURFACE_MODE,
+    DAY0_DOCS_ROOT: process.env.DAY0_DOCS_ROOT,
+    DAY0_CREDENTIAL_KEY: process.env.DAY0_CREDENTIAL_KEY,
+    DAY0_NOTION_MCP_AUTH_TOKEN: process.env.DAY0_NOTION_MCP_AUTH_TOKEN,
+    DAY0_PUBLIC_URL: process.env.DAY0_PUBLIC_URL,
+    DAY0_BROWSER_MCP_URL: process.env.DAY0_BROWSER_MCP_URL,
   }),
 );

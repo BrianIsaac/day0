@@ -32,6 +32,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/voice/elevenlabs/webhook(.*)',
+  '/api/oauth/slack(.*)',
   '/api/seed(.*)',
   '/api/onboarding/synthesise(.*)',
 ]);
@@ -57,16 +58,31 @@ const clerkProxy = clerkMiddleware(async (auth, req) => {
 });
 
 /**
- * The one route that is meant to be reached from off this machine even in
- * no-auth mode. ElevenLabs posts call transcripts to it and it carries no
- * caller identity, so the route authenticates the delivery itself: it verifies
- * the elevenlabs-signature HMAC over the raw body and refuses every request
- * when ELEVENLABS_WEBHOOK_SECRET is unset. Behind it, the Convex action binds
- * the transcript to a voice session by a per-session token minted by
- * `voice.start` - the agent id alone proves nothing. A tunnel pointed at it
- * grants nothing that the deployed Vercel app does not already expose.
+ * The two routes that are meant to be reached from off this machine even in
+ * no-auth mode. Both carry no caller identity and both authenticate the
+ * delivery itself rather than the caller, so neither is exempt from a boundary -
+ * each simply has a different one from the unlock cookie.
+ *
+ * ElevenLabs posts call transcripts to the first: it verifies the
+ * elevenlabs-signature HMAC over the raw body and refuses every request when
+ * ELEVENLABS_WEBHOOK_SECRET is unset, and behind it the Convex action binds the
+ * transcript to a voice session by a per-session token minted by `voice.start`.
+ *
+ * Slack redirects a completed app install to the second. The administrator who
+ * clicks the install link is not signed in to Day0 and often is not the
+ * manager, so requiring the unlock cookie or a loopback host would make the
+ * documented install procedure impossible rather than safer. What the route
+ * requires instead is the `state` this deployment signed: bound to one surface,
+ * expiring in fifteen minutes, and single-use because the surface holds the
+ * nonce. Without one it exchanges nothing and writes nothing.
+ *
+ * A tunnel pointed at either grants nothing that the deployed Vercel app does
+ * not already expose.
  */
-const isExternallyCalledRoute = createRouteMatcher(['/api/voice/elevenlabs/webhook(.*)']);
+const isExternallyCalledRoute = createRouteMatcher([
+  '/api/voice/elevenlabs/webhook(.*)',
+  '/api/oauth/slack(.*)',
+]);
 
 export default function proxy(...args: Parameters<typeof clerkProxy>) {
   if (DEV_NO_AUTH) {

@@ -1,11 +1,19 @@
 import { qualityFit } from './quality-fit';
 import {
+  AUTONOMOUS_WIP_LIMIT,
   COLD_START_WIP_LIMIT,
   VALUE_THRESHOLD,
   type AgentContext,
   type WorkCandidate,
   type WorkVerdict,
 } from './types';
+import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
+import type { SurfaceMode } from '../surfaces/types';
+import {
+  documentedSystemIdentity,
+  sameSystemForHostlessMention,
+  type SurfaceDiscoveryEvidence,
+} from '../docs/system-discovery';
 
 /**
  * Layer-2 evaluator. Lifted from Protean's `src/work/evaluate.ts`.
@@ -24,13 +32,14 @@ import {
  *      unmatched candidate is a gap to fill rather than a dead end.
  */
 
-const WIP_REASON_AT_CAP = 'WIP cap reached for cold-start posture';
-
 export interface EvaluateLookups {
   /** Returns true if the agent has a live grant for this scope. */
   hasGrantForScope: (scope: string) => Promise<boolean>;
   /** Returns the state of an existing claim or null. */
-  findExistingClaim: (sourceSystem: string, externalId: string) => Promise<{ state: string } | null>;
+  findExistingClaim: (
+    sourceSystem: string,
+    externalId: string,
+  ) => Promise<{ state: string } | null>;
   /** Returns the count of open claims for the agent. */
   countOpenClaims: () => Promise<number>;
   /** Returns the matching registered skill or null. */
@@ -43,6 +52,25 @@ export interface EvaluateLookups {
 export interface EvaluateOptions {
   wipLimit?: number;
 }
+
+export interface EvaluationSurface extends SurfaceLiveness {
+  displayName: string;
+  slug: string;
+  class: string;
+  endpoint?: string;
+  discoveryEvidence?: readonly SurfaceDiscoveryEvidence[];
+}
+
+export interface EvalContext extends AgentContext {
+  autonomousActions: boolean;
+  surfaceMode: SurfaceMode;
+  surfaces: readonly EvaluationSurface[];
+  now?: number;
+}
+
+export type EvaluationVerdict =
+  | WorkVerdict
+  | { decision: 'defer'; reason: 'awaiting-connection'; missingSurface: string };
 
 export function inferRequiredPermissions(candidate: WorkCandidate): string[] {
   const required = new Set<string>();
@@ -65,11 +93,11 @@ function tokenise(text: string): Set<string> {
   return out;
 }
 
-function isEligible(candidate: WorkCandidate, charter: AgentContext['charter']): boolean {
+function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
   const bodyTokens = tokenise(`${candidate.title}\n${candidate.contentSummary}`);
   const charterTokens = new Set<string>();
-  for (const w of tokenise(charter.proposedFunction)) charterTokens.add(w);
-  for (const clause of charter.proposedBoundaries.willDo) {
+  for (const w of tokenise(ctx.charter.proposedFunction)) charterTokens.add(w);
+  for (const clause of ctx.charter.proposedBoundaries.willDo) {
     for (const w of tokenise(clause)) charterTokens.add(w);
   }
   for (const stop of ['will', 'their', 'them', 'with', 'from', 'this', 'that', 'when', 'where']) {
@@ -78,7 +106,155 @@ function isEligible(candidate: WorkCandidate, charter: AgentContext['charter']):
   for (const t of charterTokens) {
     if (bodyTokens.has(t)) return true;
   }
-  return false;
+  const candidateText = `${candidate.title}\n${candidate.contentSummary}`;
+  return ctx.surfaces.some((surface): boolean => {
+    const currentlyNamed = surface.discoveryEvidence?.some((evidence): boolean => evidence.current);
+    if (!currentlyNamed) return false;
+    return candidateNamesSurface(candidateText, surface);
+  });
+}
+
+/**
+ * Convert a provider or candidate label to the surface slug convention.
+ *
+ * Args:
+ *   value: Provider or candidate label.
+ *
+ * Returns:
+ *   A lowercase URL-safe surface slug.
+ */
+export function evaluationSurfaceSlug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'system'
+  );
+}
+
+/**
+ * Normalise prose for whole-phrase surface matching.
+ *
+ * Args:
+ *   value: Candidate prose or a surface label.
+ *
+ * Returns:
+ *   Lowercase alphanumeric words separated by one space.
+ */
+function comparableSurfaceText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Check whether candidate prose names a declared surface as a whole phrase.
+ *
+ * Args:
+ *   text: Candidate title and summary.
+ *   surface: Declared surface metadata.
+ *
+ * Returns:
+ *   True when the display name or slug is present as a complete phrase.
+ */
+function candidateNamesSurface(text: string, surface: EvaluationSurface): boolean {
+  const haystack = ` ${comparableSurfaceText(text)} `;
+  const names = [surface.displayName, surface.slug].map(comparableSurfaceText).filter(Boolean);
+  return names.some((name: string): boolean => haystack.includes(` ${name} `));
+}
+
+function evaluationSurfaceIdentity(surface: EvaluationSurface) {
+  return documentedSystemIdentity({
+    name: surface.displayName,
+    quotes: (surface.discoveryEvidence ?? []).map((evidence) => evidence.quote),
+    endpoints: surface.endpoint ? [surface.endpoint] : [],
+  });
+}
+
+function sameEvaluationSystem(
+  left: EvaluationSurface,
+  right: EvaluationSurface,
+): boolean {
+  const leftIdentity = evaluationSurfaceIdentity(left);
+  const rightIdentity = evaluationSurfaceIdentity(right);
+  return (
+    sameSystemForHostlessMention(left.class, leftIdentity, right.class, rightIdentity) ||
+    sameSystemForHostlessMention(right.class, rightIdentity, left.class, leftIdentity)
+  );
+}
+
+function surfaceForSource(
+  sourceSystem: string,
+  surfaces: readonly EvaluationSurface[],
+  now: number,
+): EvaluationSurface | undefined {
+  const sourceSlug = evaluationSurfaceSlug(sourceSystem);
+  const direct = surfaces.find((surface) => surface.slug === sourceSlug);
+  if (direct) {
+    const aliases = surfaces.filter((surface) => sameEvaluationSystem(direct, surface));
+    return aliases.find((surface) => verdictFor(surface, now) === 'connected') ?? direct;
+  }
+
+  const mention = documentedSystemIdentity({ name: sourceSystem });
+  const aliases = surfaces.filter((surface) =>
+    sameSystemForHostlessMention(
+      surface.class,
+      mention,
+      surface.class,
+      evaluationSurfaceIdentity(surface),
+    ),
+  );
+  return aliases.length === 1 ? aliases[0] : undefined;
+}
+
+/**
+ * Resolve the first connection required by a real-mode candidate that is not live.
+ *
+ * The intake provider itself is required unless the candidate came from the boss.
+ * A candidate may also name a second system it expects the agent to operate on,
+ * such as a connected ticket asking for work in a documented CRM.
+ *
+ * Args:
+ *   candidate: Work candidate being evaluated.
+ *   ctx: Evaluation mode and declared surfaces.
+ *
+ * Returns:
+ *   Missing or non-live surface slug, or undefined when every target is connected.
+ */
+export function missingConnectionSurface(
+  candidate: WorkCandidate,
+  ctx: Pick<EvalContext, 'surfaceMode' | 'surfaces' | 'now'>,
+): string | undefined {
+  if (ctx.surfaceMode === 'mock') return undefined;
+
+  const sourceSlug = evaluationSurfaceSlug(candidate.sourceSystem);
+  const now = ctx.now ?? Date.now();
+  const sourceSurface = surfaceForSource(candidate.sourceSystem, ctx.surfaces, now);
+  const targets: EvaluationSurface[] = [];
+  if (candidate.sourceSystem !== 'boss') {
+    if (!sourceSurface) return sourceSlug;
+    targets.push(sourceSurface);
+  }
+
+  const candidateText = `${candidate.title}\n${candidate.contentSummary}`;
+  for (const surface of ctx.surfaces) {
+    if (targets.some((target: EvaluationSurface): boolean => target.slug === surface.slug))
+      continue;
+    if (candidateNamesSurface(candidateText, surface)) targets.push(surface);
+  }
+
+  // A disconnected alias is covered by any connected surface that is the same
+  // system, named by the item or not: "Update the Looker number" names only the
+  // rejected charter alias, and the connected tile still satisfies it.
+  const connected = ctx.surfaces.filter(
+    (surface: EvaluationSurface): boolean => verdictFor(surface, now) === 'connected',
+  );
+  return targets.find((surface: EvaluationSurface): boolean => {
+    if (verdictFor(surface, now) === 'connected') return false;
+    return !connected.some((live) => sameEvaluationSystem(surface, live));
+  })?.slug;
 }
 
 export function scoreValue(candidate: WorkCandidate): number {
@@ -110,12 +286,16 @@ function inferSkillRationale(
   candidate: WorkCandidate,
   charter: AgentContext['charter'],
 ): { name: string; rationale: string } {
-  const verb = candidate.sourceSystem === 'spreadsheet'
-    ? 'update-spreadsheet'
-    : candidate.sourceSystem === 'ticket'
-      ? 'update-ticket'
-      : `${candidate.sourceSystem}-action`;
-  const name = `${verb}-${candidate.externalId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 60);
+  const verb =
+    candidate.sourceSystem === 'spreadsheet'
+      ? 'update-spreadsheet'
+      : candidate.sourceSystem === 'ticket'
+        ? 'update-ticket'
+        : `${candidate.sourceSystem}-action`;
+  const name = `${verb}-${candidate.externalId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(
+    0,
+    60,
+  );
   const rationale = [
     `Charter places me on ${charter.proposedFunction.replace(/\.\s*$/, '')}.`,
     `This candidate ("${candidate.title}") needs me to operate on ${candidate.sourceSystem} but I don't have a registered skill for it.`,
@@ -126,12 +306,20 @@ function inferSkillRationale(
 
 export async function evaluateCandidate(
   candidate: WorkCandidate,
-  ctx: AgentContext,
+  ctx: EvalContext,
   lookups: EvaluateLookups,
   opts: EvaluateOptions = {},
-): Promise<WorkVerdict> {
-  if (!isEligible(candidate, ctx.charter)) {
-    return { decision: 'skip', reason: 'out-of-scope: no charter overlap' };
+): Promise<EvaluationVerdict> {
+  if (!isEligible(candidate, ctx)) {
+    return {
+      decision: 'skip',
+      reason: 'out-of-scope: no charter or current documented-system overlap',
+    };
+  }
+
+  const missingSurface = missingConnectionSurface(candidate, ctx);
+  if (missingSurface) {
+    return { decision: 'defer', reason: 'awaiting-connection', missingSurface };
   }
 
   const requiredPermissions = inferRequiredPermissions(candidate);
@@ -165,10 +353,16 @@ export async function evaluateCandidate(
 
   const risk = scoreRisk(candidate);
 
-  const wipCap = opts.wipLimit ?? COLD_START_WIP_LIMIT;
+  const wipCap =
+    opts.wipLimit ?? (ctx.autonomousActions ? AUTONOMOUS_WIP_LIMIT : COLD_START_WIP_LIMIT);
   const open = await lookups.countOpenClaims();
   if (open >= wipCap) {
-    return { decision: 'queue', reason: WIP_REASON_AT_CAP, openClaims: open };
+    const posture = ctx.autonomousActions ? 'autonomous concurrency' : 'supervised cold-start';
+    return {
+      decision: 'queue',
+      reason: `WIP cap reached: ${posture} limit is ${wipCap}`,
+      openClaims: open,
+    };
   }
 
   const matchingSkill = await lookups.findMatchingSkill(candidate, ctx.charter);
