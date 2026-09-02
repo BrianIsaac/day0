@@ -524,13 +524,25 @@ const RESULT_STEP =
 const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/gi;
 const CLAUSE_BOUNDARY = /\b(?:after|before|but|once|then|until)\b|[.;\n]/gi;
 const NEGATED_INSTRUCTION = /\b(?:defer|do not|don't|hold|never|not|wait for|without|withhold)\b/i;
+/** A term that names a period is a noun phrase ("close week", "close of quarter"), not a verb. */
+const PERIOD_NOUN = /^\s*(?:of\s+(?:the\s+)?)?(?:day|week|month|quarter|year|period|cycle|date)s?\b/i;
+/** A term after a determiner or "end" is a noun ("the close", "month-end close"), not a verb. */
+const NOUN_MARKER = /\b(?:the|a|an|our|its|their|this|that|each|every|end|of)\s+$/i;
 
-/** Whether at least one occurrence is an instruction to act rather than to withhold. */
+/**
+ * Whether at least one occurrence is an instruction to act rather than to
+ * withhold. A term inside a hyphenated compound on either side ("read-back",
+ * "close-week"), after a determiner or "end", or followed by a period noun is
+ * vocabulary, not an instruction.
+ */
 function affirmedStepTerm(step: string, terms: RegExp): boolean {
   terms.lastIndex = 0;
   for (let match = terms.exec(step); match; match = terms.exec(step)) {
     if (step[match.index - 1] === '-') continue;
+    const after = step.slice(match.index + match[0].length);
+    if (after.startsWith('-') || PERIOD_NOUN.test(after)) continue;
     const prefix = step.slice(0, match.index);
+    if (NOUN_MARKER.test(prefix)) continue;
     CLAUSE_BOUNDARY.lastIndex = 0;
     let boundary = 0;
     for (

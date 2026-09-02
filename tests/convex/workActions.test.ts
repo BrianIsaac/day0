@@ -608,6 +608,50 @@ describe('work action completion evidence', (): void => {
     ).toThrow('promised a Looker pipeline tile read');
   });
 
+  it('does not read a compound noun such as close-week as a promise to close the ticket', (): void => {
+    const comment = skillOutput.actions[0];
+    const satisfied = [
+      { step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' },
+      { step: 2, status: 'satisfied' as const, evidence: 'DM auto-applied' },
+    ];
+    for (const wording of [
+      'Draft a manager DM summarising any Sales-Finance or close-week impact; hold it for approval.',
+      'Draft a manager DM flagging close week risks; hold it for approval.',
+      'Note the month-end close status in the DM.',
+    ]) {
+      const plan = {
+        summary: 'Comment, then brief the manager.',
+        steps: ['Comment on the ticket with the triage notes.', wording],
+        expectedOutputType: 'ticket-update' as const,
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      };
+      expect(
+        dependentTransitionRefusal({ plan, actions: [comment], planStepOutcomes: satisfied }),
+        wording,
+      ).toBeUndefined();
+      expect(
+        blockedPlanReason(
+          [{ step: 1, status: 'blocked', evidence: 'No ticket read landed before the comment.' }],
+          { plan, actions: [comment], applied: [{ tool: 'mcp.call', ok: true, effect: 'commented', idempotencyKey: 'run:0' }] },
+        ),
+        wording,
+      ).toBeUndefined();
+    }
+    const closing = {
+      summary: 'Comment, then close.',
+      steps: ['Comment on the ticket.', 'Close the ticket once the comment lands.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    expect(
+      dependentTransitionRefusal({ plan: closing, actions: [comment], planStepOutcomes: satisfied }),
+    ).toContain('omitted the approved ticket state transition');
+  });
+
   it('lets a closing phase withhold the transition it accounted for as blocked', (): void => {
     const plan = {
       summary: 'Read then close.',
