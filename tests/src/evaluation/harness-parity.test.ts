@@ -36,11 +36,14 @@ describe('evaluation harness parity', (): void => {
       'providerClient',
       'providerWarnings',
       'retryPolicy',
-      'skillVerificationSandboxBackend',
+      'skillSandboxBackend',
       'structuredOutputMode',
       'taskTimeoutMs',
       'temperature',
     ]);
+    expect(parameters.day0.skillSandboxBackend).toBe('local');
+    expect(parameters.baseline.skillSandboxBackend).toBe('local');
+    expect(parameters.day0.modelCallAbortMs).toBe(240_000);
   });
 
   it('fails closed when any arm parameter diverges', (): void => {

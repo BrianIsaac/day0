@@ -1477,8 +1477,9 @@ describe('executor preamble by mode', (): void => {
         '--- Mock action-set contract (takes precedence over contradictory skill wording) ---';
       expect(prompt.indexOf(header)).toBeGreaterThan(prompt.indexOf(skillBody));
       expect(prompt).toContain(
-        'the literal destination and values in the approved candidate are sufficient authority',
+        'The literal destination and values in an approved candidate are sufficient authority for its requested primary effect.',
       );
+      expect(prompt).not.toContain('For an approved spreadsheet-update');
       expect(prompt).toContain(
         'Full closure uses `done`; use `in-progress` only when the candidate explicitly requests partial work',
       );

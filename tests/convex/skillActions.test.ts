@@ -51,8 +51,13 @@ describe('skill author prompts', (): void => {
     );
     expect(AUTHOR_SYSTEM).not.toContain('`dm-manager`');
     expect(AUTHOR_SYSTEM).toContain(
-      'Take destinations, recipients and supplemental audit actions from the runtime candidate and loaded procedures',
+      'Choose exactly one available action schema whose operation matches the runtime candidate and loaded procedure.',
     );
+    expect(AUTHOR_SYSTEM).toContain(
+      'Take the action verb and every argument from the candidate, connected-surface schema and loaded procedures',
+    );
+    expect(AUTHOR_SYSTEM).not.toContain('If the skill\'s purpose is "draft a tweet reply"');
+    expect(AUTHOR_SYSTEM).not.toContain('If "update the spreadsheet"');
     expect(AUTHOR_SYSTEM).toContain(
       'A public reply draft is never copied into the manager DM',
     );

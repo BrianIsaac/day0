@@ -37,7 +37,7 @@ describe('shared model sampling', (): void => {
     await agentText({ agent, user: 'text' });
 
     expect(MODEL_TEMPERATURE).toBeGreaterThan(0);
-    expect(MODEL_CALL_TIMEOUT_MS).toBe(90_000);
+    expect(MODEL_CALL_TIMEOUT_MS).toBe(240_000);
     expect(MODEL_PROVIDER_MAX_RETRIES).toBe(2);
     expect(makeAgent('retry-test', 'test').maxRetries).toBe(MODEL_PROVIDER_MAX_RETRIES);
     expect(generate.mock.calls[0]?.[1]).toMatchObject({

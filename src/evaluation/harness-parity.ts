@@ -8,10 +8,21 @@ import {
   MODEL_TEMPERATURE,
   providerWarningTexts,
 } from '../lib/mastra';
-import { isDaytonaConfigured } from '../lib/daytona';
 import { MODEL } from '../lib/openai';
 
-export interface ArmHarnessParameters {
+/**
+ * Provider facts recorded alongside the knobs. They describe the bed rather
+ * than configure it, so they are diagnostics, but they live on the same record
+ * so the per-arm table proves both arms saw the same provider.
+ */
+export interface ArmHarnessDiagnostics {
+  effectiveTemperature: number | null;
+  providerWarnings: string[];
+  ollamaVersion: string | null;
+  ollamaModelDigest: string | null;
+}
+
+export interface ArmHarnessParameters extends ArmHarnessDiagnostics {
   modelId: string;
   temperature: number;
   modelCallAbortMs: number;
@@ -25,19 +36,18 @@ export interface ArmHarnessParameters {
   contextLimitTokens: number | null;
   structuredOutputMode: 'auto' | 'native' | 'prompt';
   modelSeed: null;
+  /**
+   * Harness v2 is a single fixed bed contract: the harness preflight proves
+   * the deployment selects the local sandbox before any evidence is written,
+   * so the record carries the literal it enforces rather than a value read
+   * from the operator shell.
+   */
+  skillSandboxBackend: 'local';
 }
 
 export interface EvaluationHarnessParameters {
   day0: ArmHarnessParameters;
   baseline: ArmHarnessParameters;
-}
-
-export interface ArmHarnessDiagnostics {
-  effectiveTemperature: number | null;
-  providerWarnings: string[];
-  skillVerificationSandboxBackend: 'daytona' | 'local';
-  ollamaVersion: string | null;
-  ollamaModelDigest: string | null;
 }
 
 export interface OllamaMetadata {
@@ -150,7 +160,7 @@ function armParameters(
   const ollama = customBaseUrl
     ? (dependencies.readOllamaMetadata ?? readOllamaMetadata)(providerBaseUrl(), MODEL)
     : { version: null, modelDigest: null };
-  const parameters = {
+  const parameters: ArmHarnessParameters = {
     modelId: MODEL,
     temperature: MODEL_TEMPERATURE,
     modelCallAbortMs: MODEL_CALL_TIMEOUT_MS,
@@ -167,19 +177,20 @@ function armParameters(
     contextLimitTokens: configuredContextLimit(customBaseUrl),
     structuredOutputMode: env.OPENAI_JSON_MODE,
     modelSeed: null,
+    skillSandboxBackend: 'local',
     effectiveTemperature: warnings.some((warning) => warning.includes('(temperature)'))
       ? null
       : MODEL_TEMPERATURE,
     providerWarnings: warnings,
-    skillVerificationSandboxBackend: isDaytonaConfigured() ? 'daytona' : 'local',
     ollamaVersion: ollama.version,
     ollamaModelDigest: ollama.modelDigest,
   };
-  return parameters as ArmHarnessParameters;
+  return parameters;
 }
 
 export function harnessDiagnostics(parameters: ArmHarnessParameters): ArmHarnessDiagnostics {
-  return parameters as ArmHarnessParameters & ArmHarnessDiagnostics;
+  const { effectiveTemperature, providerWarnings, ollamaVersion, ollamaModelDigest } = parameters;
+  return { effectiveTemperature, providerWarnings, ollamaVersion, ollamaModelDigest };
 }
 
 /** Snapshot provider facts once, copy them to both arms, then assert parity. */

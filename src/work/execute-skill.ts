@@ -361,7 +361,7 @@ function mockActionContract(contract: ProcedureContract): string {
   return [
     '--- Mock action-set contract (takes precedence over contradictory skill wording) ---',
     'The approved plan and candidate define the work for this turn. Apply these invariants even when a skill body was authored with broader prerequisites or calls itself read-only:',
-    '  - For an approved spreadsheet-update, the literal destination and values in the approved candidate are sufficient authority. Emit the requested `spreadsheet.appendRow`; do not invent source-evidence or duplicate-check prerequisites that the candidate does not require.',
+    '  - The literal destination and values in an approved candidate are sufficient authority for its requested primary effect. Emit the matching typed action; do not invent source-evidence or duplicate-check prerequisites that the candidate does not require.',
     ticketRule,
     '  - One `ticket.update` may carry both the comment and status. A split pair is also valid only as comment-only followed by status-only. Never emit the same ticket status twice.',
     '  - A supplemental trail required by a loaded procedure never replaces the requested primary mutation, and the primary mutation never replaces that trail.',

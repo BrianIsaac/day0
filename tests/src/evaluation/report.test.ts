@@ -157,16 +157,13 @@ describe('evaluation evidence report', (): void => {
     const parameters = evaluationHarnessParameters({
       'docs-team-cadence': 240_000,
     });
-    input.configuration.harnessParameters = {
-      day0: { ...parameters.day0, skillSandboxBackend: 'local' },
-      baseline: { ...parameters.baseline, skillSandboxBackend: 'local' },
-    } as typeof parameters;
+    input.configuration.harnessParameters = parameters;
     input.configuration.intentionalArmDifferences = INTENTIONAL_ARM_DIFFERENCES;
 
     const report = renderEvaluationReport(input);
 
     expect(report).toContain('| Model id |');
-    expect(report).toContain('| Per-call abort deadline (ms) | 90000 | 90000 |');
+    expect(report).toContain('| Per-call abort deadline (ms) | 240000 | 240000 |');
     expect(report).toContain('| Skill sandbox backend | local | local |');
     expect(report).toContain('| onboardingPipeline | runtime charter, loaded documents');
     expect(report).toContain('| executionTurn | one governed structured executor turn');
