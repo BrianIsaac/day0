@@ -20,8 +20,14 @@ function daytona(): Daytona {
   return client;
 }
 
+/**
+ * Whether a Daytona key is present. Trimmed, so a whitespace-only value is
+ * "not configured" here exactly as the deployment reports it to the
+ * evaluation preflight (`convex/config.ts`); otherwise the preflight would say
+ * `local` while this process tried Daytona with a blank key.
+ */
 export function isDaytonaConfigured(): boolean {
-  return !!env.DAYTONA_API_KEY;
+  return Boolean(env.DAYTONA_API_KEY?.trim());
 }
 
 /** How long a smoke test may run. The local sandbox is held to the same cap. */
