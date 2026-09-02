@@ -6,9 +6,9 @@ An autonomous teammate that joins with no role, no skills and no scope.
 
 [**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
 
-![The Day0 agent dashboard: an approved charter, a skill the agent proposed for itself, a three-item work queue, the eight-file workspace and the live event feed](.github/images/agent-dashboard.webp)
+![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
-<p align="center"><i>One agent, seventeen minutes after it was deployed: the charter it wrote from its Day-1 1:1 and had approved, a skill it proposed because none of its registered skills matched the work, and the three items it found for itself. Captured on the account-free local route against <code>qwen3:8b</code> on one consumer GPU.</i></p>
+<p align="center"><i>One agent after a clean real-mode run: the charter it wrote and had approved, three skills it authored and registered, the work it discovered, and the supervision trail for actions that landed or were refused. Captured locally on 2 September 2026.</i></p>
 
 Putting an agent into a real team is an engineering project. Someone defines the role, wires the tools, writes the prompts and encodes what counts as good work, and that work is done again for every team and every organisation that wants one. It is the main reason agents stall at the pilot.
 
@@ -32,23 +32,25 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 A Day-1 one-to-one, held over voice or chat, walks its new boss through seven topics: why the hire was made, what the role is, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. No part of the role is written into a config file.
 
-![The Day-1 1:1 in chat mode: the agent opens the conversation and asks why the hire was made](.github/images/day-one-chat.webp)
+![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/day-one-chat.webp)
 
 ### It writes its own charter, and waits for a human
 
 From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes, and a set of scoped, revocable capability grants.
 
-![The drafted charter awaiting approval, showing the proposed function, 30/60/90-day goals and the boundaries the agent set itself](.github/images/charter-card.webp)
+![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 ### It finds its own work
 
 Nothing hands it a queue. The agent reads its work environment and proposes what to pick up. Each candidate is scored against seven criteria - eligibility, permission, ownership, quality fit, value, risk and capacity - and then moves through an eleven-state lifecycle in which a human approves the plan before anything executes.
 
-![The work queue, with items the agent discovered from its own charter and the verdict it reached on each](.github/images/work-queue.webp)
+![The real-mode work queue after intake, showing seven discovered items and the completed plan for a close-week reminder](.github/images/work-queue.webp)
 
 ### It writes the skill it is missing
 
 A work item that matches no registered skill returns `needs-skill` rather than being dropped. The agent proposes a skill, authors it, then verifies it by running a smoke test in an isolated sandbox. It registers the skill only if the sandbox agrees; one that fails verification, or that was never verified at all, stays visibly uncallable. Capability grows in place, without a developer.
+
+![The skills panel after sandbox verification, showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/skills-registered.webp)
 
 ## What this is, and what it is not
 
@@ -341,9 +343,22 @@ Nothing in this repository is your team's documentation, and `docs-local/` is no
 Then, in the browser:
 
 1. **Link documentation first**, on the documentation page, before you deploy: the deploy form lists the linked sources and the agent reads only the ones ticked. A folder source takes a path *relative to the mount* - `.` is the whole of `DAY0_DOCS_HOST_DIR`. A Notion source takes the component's locator, `http://docs-notion-mcp:3000/mcp`, and your own Notion integration token in the secret field; the token is passed through to Notion and never stored in the clear. Each source shows `synced` and a page count when it has been read.
+
+   ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
+
 2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
 3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each needs *both* the manager and IT approval buttons - in a single-user run that is you twice. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the second approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
-4. **Decide the work.** Skills the agent proposes, plans and held actions arrive in the dashboard and, once Slack is connected, in your DM as a short code - `approve <code>` or `reject <code> <reason>` from the manager's own Slack account, which is the only author the poller accepts. A held action can be approved, or the whole run rejected with a reason; rejecting stops the run, and a retry after anything landed first asks you to confirm the provider state. Turning autonomous actions on (the header switch, with a confirmation) raises the work-in-progress cap and lets in-policy writes apply without a code. Revoking a read or the DM grant stops queued and in-flight work that needs it and records the block; a write you approved literally stays authorised by that approval, and under the switch a write is authorised by the switch itself.
+
+   ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
+
+   ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
+
+4. **Decide the work.** Skills the agent proposes, plans and held actions arrive in the dashboard and, once Slack is connected, in your DM as a short code - `approve <code>` or `reject <code> <reason>` from the manager's own Slack account, which is the only author the poller accepts. A held action can be approved, or the whole run rejected with a reason; rejecting stops the run, and a retry after anything landed first asks you to confirm the provider state. Turning autonomous actions on (the header switch, with a confirmation) raises the work-in-progress cap and lets in-policy writes apply without a code. Revoking a read or the DM grant stops queued and in-flight work that needs it and records the block. A write you approved literally stays authorised by that exact approval; a write authorised only by the autonomous switch is refused if its matching `<surface>:write` scope is revoked.
+
+   ![Five visible browser-operation rows from the seven-action held batch, beginning with the first browser_fill_form row and ending at browser_snapshot, with the batch decision controls](.github/images/browser-batch-held.webp)
+
+   ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
+
 5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one query, and because every per-agent query checks the caller, the CLI has to present the local owner's identity to run it:
 
    ```bash
@@ -351,6 +366,8 @@ Then, in the browser:
    ```
 
    Without `--identity` the call is refused as not authenticated - that is the no-auth boundary, not a broken export. The agent id is the last segment of the dashboard URL.
+
+   ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
 ### Teardown
 
@@ -698,6 +715,8 @@ Day0 是一名自主工作的团队成员；刚加入时，它没有预设角色
 
 Day0 从更早的一步开始。它在空白状态下部署，之后形成的一切都来自与雇用它的人的一次对话。
 
+![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
+
 ### 目录
 
 **从这里开始** · [它的特别之处](#它的特别之处) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
@@ -716,17 +735,25 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 Day-1 一对一通过语音或文字依次讨论七个主题：为什么招聘这个角色、角色职责、需要与谁协作、应该阅读什么、工作由哪些工具承载、首先接手什么，以及还有哪些问题未确定。角色的任何部分都不是写在配置文件里的。
 
+![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/day-one-chat.webp)
+
 #### 它起草自己的章程，并等待人工确认
 
 Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围和一组范围受限且可撤销的能力授权。
+
+![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 #### 它自行发现工作
 
 系统不会直接给它一条预置队列。Agent 读取工作环境并提出应当接手的事项。每个候选事项按七项标准评估：资格、权限、归属、质量匹配、价值、风险和容量；随后进入一个十一状态的生命周期，任何执行都要先由人工批准计划。
 
+![The real-mode work queue after intake, showing seven discovered items and the completed plan for a close-week reminder](.github/images/work-queue.webp)
+
 #### 缺少技能时，它会编写并验证技能
 
 如果工作项与任何已注册技能都不匹配，结果是 `needs-skill`，而不是直接丢弃。Agent 会提出技能、编写技能，并在隔离沙箱中运行冒烟测试。只有沙箱验证通过后，技能才会注册；验证失败或从未验证的技能会保持为清晰可见的不可调用状态。这样可以在不要求开发者介入的情况下扩展能力。
+
+![The skills panel after sandbox verification, showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/skills-registered.webp)
 
 ### 它是什么，以及不是什么
 
@@ -978,9 +1005,22 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 随后在浏览器中：
 
 1. **先链接文档**，在文档页面完成，且在部署之前：部署表单会列出已链接的来源，Agent 只读取被勾选的来源。文件夹来源使用相对于挂载点的路径，`.` 表示整个 `DAY0_DOCS_HOST_DIR`。Notion 来源使用组件地址 `http://docs-notion-mcp:3000/mcp`，并在 secret 字段中填入你自己的 Notion integration token；该 token 透传给 Notion，不会以明文存储。每个来源读取完成后会显示 `synced` 和页数。
+
+   ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
+
 2. **部署一个 Agent**，然后**完成 Day-1 一对一**并批准它起草的章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。Agent 会询问文档已经回答过的工具和阅读材料问题，照常回答即可；章程记录的是你的回答。
 3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片都需要 manager 和 IT *两个*批准按钮，在单用户运行中就是你点两次。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为第二次批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
-4. **对工作做决策。** Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断；你逐字批准过的写入仍由该批准授权，而在开关打开时写入由开关本身授权。
+
+   ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
+
+   ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
+
+4. **对工作做决策。** Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断。你逐字批准过的写入仍由该次精确批准授权；仅由自主执行开关授权的写入，在对应的 `<surface>:write` 范围被撤销后会被拒绝。
+
+   ![Five visible browser-operation rows from the seven-action held batch, beginning with the first browser_fill_form row and ending at browser_snapshot, with the batch decision controls](.github/images/browser-batch-held.webp)
+
+   ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
+
 5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量。同一条轨迹可以用一条查询导出为 JSON；由于每个按 Agent 划分的查询都会校验调用者，CLI 必须以本机 owner 的身份运行：
 
    ```bash
@@ -988,6 +1028,8 @@ pnpm dev                         # prints an unlock URL - open that, not localho
    ```
 
    不带 `--identity` 时调用会以未认证被拒绝，这是无认证边界在起作用，而不是导出损坏。Agent id 是 dashboard URL 的最后一段。
+
+   ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
 #### 停止
 
