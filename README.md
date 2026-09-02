@@ -6,7 +6,7 @@ An autonomous teammate that joins with no role, no skills and no scope.
 
 [**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
 
-![The current Day0 agent dashboard after a clean real-mode run: its approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
+![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
 <p align="center"><i>One agent after a clean real-mode run: the charter it wrote and had approved, three skills it authored and registered, the work it discovered, and the supervision trail for actions that landed or were refused. Captured locally on 2 September 2026.</i></p>
 
@@ -32,13 +32,13 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 A Day-1 one-to-one, held over voice or chat, walks its new boss through seven topics: why the hire was made, what the role is, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. No part of the role is written into a config file.
 
-![The Day-1 1:1 mode chooser on a newly deployed real-mode agent, offering ElevenLabs voice or chat](.github/images/day-one-chat.webp)
+![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/day-one-chat.webp)
 
 ### It writes its own charter, and waits for a human
 
 From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes, and a set of scoped, revocable capability grants.
 
-![The charter drafted from the clean real-mode 1:1, awaiting approval with its purpose, proposed function, 30/60/90-day goals and operating boundaries](.github/images/charter-card.webp)
+![The upper charter approval card drafted from the real-mode 1:1, showing its purpose, proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 ### It finds its own work
 
@@ -349,13 +349,13 @@ Then, in the browser:
 2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
 3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each needs *both* the manager and IT approval buttons - in a single-user run that is you twice. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the second approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
 
-   ![The Surfaces tab immediately after orientation, reporting four connection cards and showing the proposed Linear and Slack paths](.github/images/connection-cards.webp)
+   ![The Surfaces tab reporting four connections, paired with the proposed Slack path and its documented API ladder](.github/images/connection-cards.webp)
 
-   ![The lower two connection cards after approval, with the browser-driven Looker pipeline tile connected and Northstar CRM kept absent because no path was approved](.github/images/connection-statuses.webp)
+   ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
 
 4. **Decide the work.** Skills the agent proposes, plans and held actions arrive in the dashboard and, once Slack is connected, in your DM as a short code - `approve <code>` or `reject <code> <reason>` from the manager's own Slack account, which is the only author the poller accepts. A held action can be approved, or the whole run rejected with a reason; rejecting stops the run, and a retry after anything landed first asks you to confirm the provider state. Turning autonomous actions on (the header switch, with a confirmation) raises the work-in-progress cap and lets in-policy writes apply without a code. Revoking a read or the DM grant stops queued and in-flight work that needs it and records the block. A write you approved literally stays authorised by that exact approval; a write authorised only by the autonomous switch is refused if its matching `<surface>:write` scope is revoked.
 
-   ![Six browser actions in a seven-action held batch, kept together for one exact-action decision before the Looker-style tile is changed](.github/images/browser-batch-held.webp)
+   ![Five complete browser-operation rows from the held exact-action batch, with the batch decision controls](.github/images/browser-batch-held.webp)
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
@@ -367,7 +367,7 @@ Then, in the browser:
 
    Without `--identity` the call is refused as not authenticated - that is the no-auth boundary, not a broken export. The agent id is the last segment of the dashboard URL.
 
-   ![The final revocation evidence: linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
+   ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
 ### Teardown
 
@@ -715,7 +715,7 @@ Day0 是一名自主工作的团队成员；刚加入时，它没有预设角色
 
 Day0 从更早的一步开始。它在空白状态下部署，之后形成的一切都来自与雇用它的人的一次对话。
 
-![The current Day0 agent dashboard after a clean real-mode run: its approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
+![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
 ### 目录
 
@@ -735,13 +735,13 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 Day-1 一对一通过语音或文字依次讨论七个主题：为什么招聘这个角色、角色职责、需要与谁协作、应该阅读什么、工作由哪些工具承载、首先接手什么，以及还有哪些问题未确定。角色的任何部分都不是写在配置文件里的。
 
-![The Day-1 1:1 mode chooser on a newly deployed real-mode agent, offering ElevenLabs voice or chat](.github/images/day-one-chat.webp)
+![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/day-one-chat.webp)
 
 #### 它起草自己的章程，并等待人工确认
 
 Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围和一组范围受限且可撤销的能力授权。
 
-![The charter drafted from the clean real-mode 1:1, awaiting approval with its purpose, proposed function, 30/60/90-day goals and operating boundaries](.github/images/charter-card.webp)
+![The upper charter approval card drafted from the real-mode 1:1, showing its purpose, proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 #### 它自行发现工作
 
@@ -1011,13 +1011,13 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 2. **部署一个 Agent**，然后**完成 Day-1 一对一**并批准它起草的章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。Agent 会询问文档已经回答过的工具和阅读材料问题，照常回答即可；章程记录的是你的回答。
 3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片都需要 manager 和 IT *两个*批准按钮，在单用户运行中就是你点两次。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为第二次批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
 
-   ![The Surfaces tab immediately after orientation, reporting four connection cards and showing the proposed Linear and Slack paths](.github/images/connection-cards.webp)
+   ![The Surfaces tab reporting four connections, paired with the proposed Slack path and its documented API ladder](.github/images/connection-cards.webp)
 
-   ![The lower two connection cards after approval, with the browser-driven Looker pipeline tile connected and Northstar CRM kept absent because no path was approved](.github/images/connection-statuses.webp)
+   ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
 
 4. **对工作做决策。** Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断。你逐字批准过的写入仍由该次精确批准授权；仅由自主执行开关授权的写入，在对应的 `<surface>:write` 范围被撤销后会被拒绝。
 
-   ![Six browser actions in a seven-action held batch, kept together for one exact-action decision before the Looker-style tile is changed](.github/images/browser-batch-held.webp)
+   ![Five complete browser-operation rows from the held exact-action batch, with the batch decision controls](.github/images/browser-batch-held.webp)
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
@@ -1029,7 +1029,7 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
    不带 `--identity` 时调用会以未认证被拒绝，这是无认证边界在起作用，而不是导出损坏。Agent id 是 dashboard URL 的最后一段。
 
-   ![The final revocation evidence: linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
+   ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
 #### 停止
 
