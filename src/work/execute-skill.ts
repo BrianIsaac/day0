@@ -9,6 +9,7 @@ import {
   type ExecutionPlan,
   type MockAction,
   type MockSurfaceSnapshot,
+  type ProcedureTrailAttestation,
   type ProcedureTrailLimitation,
   type ReplyTarget,
   type WorkCandidate,
@@ -20,7 +21,7 @@ import {
   isSurfaceTool,
   parseSurfaceAction,
   targetChannel,
-  targetIssue,
+  targetIssueReferences,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
@@ -64,6 +65,11 @@ const DRAFT_DISCIPLINE = [
 
 const PROCEDURE_TRAIL_OUTPUT =
   '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.';
+
+const REAL_PROCEDURE_TRAIL_OUTPUT =
+  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a reason when a result-dependent phase is required.';
+const REAL_PROCEDURE_TRAIL_INDEX =
+  '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 
 /**
  * Only the real path runs a second, result-dependent authoring phase. The
@@ -369,9 +375,10 @@ const MOCK_VERBS = 'spreadsheet.appendRow, slack.postMessage, twitter.reply, tic
 const REAL_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions - typed calls against the connected real surfaces listed below. These are the only things that reach the work environment. Write every action as it should land; the live action mode below says whether it lands immediately or waits.',
-  PROCEDURE_TRAIL_OUTPUT,
+  REAL_PROCEDURE_TRAIL_OUTPUT,
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
+  REAL_PROCEDURE_TRAIL_INDEX,
   '',
   'Action format: each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
@@ -513,6 +520,30 @@ const procedureTrailAttestationSchema = z
   })
   .strict();
 
+const mappedProcedureTrailSchema = z
+  .object({
+    trailId: z.string().min(1),
+    state: z.literal('mapped'),
+    actionIndex: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const inapplicableProcedureTrailSchema = z
+  .object({
+    trailId: z.string().min(1),
+    state: z.literal('inapplicable'),
+    reason: z.string().min(1),
+  })
+  .strict();
+
+const deferredProcedureTrailSchema = z
+  .object({
+    trailId: z.string().min(1),
+    state: z.literal('deferred'),
+    reason: z.string().min(1),
+  })
+  .strict();
+
 export const executeSchema = z
   .object({
     draft: z.string(),
@@ -549,6 +580,17 @@ function procedureTrailInventorySchema(contract: ProcedureContract) {
       : procedureTrailAttestationSchema.extend({
           trailId: z.enum(ids as [string, ...string[]]),
         });
+  return z.array(row).length(ids.length);
+}
+
+function realProcedureTrailInventorySchema(contract: ProcedureContract) {
+  const ids = contract.trails.map((trail) => trail.id);
+  const trailId = ids.length === 0 ? z.string().min(1) : z.enum(ids as [string, ...string[]]);
+  const row = z.discriminatedUnion('state', [
+    mappedProcedureTrailSchema.extend({ trailId }),
+    inapplicableProcedureTrailSchema.extend({ trailId }),
+    deferredProcedureTrailSchema.extend({ trailId }),
+  ]);
   return z.array(row).length(ids.length);
 }
 
@@ -596,17 +638,30 @@ export function executeSchemaForProcedureContract(
   contract: ProcedureContract,
   candidate?: WorkCandidate,
   plan?: ExecutionPlan,
+  mode: SurfaceMode = 'mock',
 ) {
   return executeSchema.extend({
-    actions: z.array(generatedActionSchema).min(requiredActionFloor(contract, candidate, plan)),
-    procedureTrails: procedureTrailInventorySchema(contract),
+    actions:
+      mode === 'mock'
+        ? z.array(generatedActionSchema).min(requiredActionFloor(contract, candidate, plan))
+        : z.array(generatedActionSchema),
+    procedureTrails:
+      mode === 'mock'
+        ? procedureTrailInventorySchema(contract)
+        : realProcedureTrailInventorySchema(contract),
   });
 }
 
 /** Use the same runtime trail inventory contract in the dependent phase. */
-export function dependentExecuteSchemaForProcedureContract(contract: ProcedureContract) {
+export function dependentExecuteSchemaForProcedureContract(
+  contract: ProcedureContract,
+  mode: SurfaceMode = 'mock',
+) {
   return dependentExecuteSchema.extend({
-    procedureTrails: procedureTrailInventorySchema(contract),
+    procedureTrails:
+      mode === 'mock'
+        ? procedureTrailInventorySchema(contract)
+        : realProcedureTrailInventorySchema(contract),
   });
 }
 
@@ -709,12 +764,87 @@ function procedureTrailApplies(
   );
 }
 
+function completionConditionedTrail(trail: ProcedureContract['trails'][number]): boolean {
+  return (
+    trail.effect.statusTransition !== null ||
+    trail.effect.destination.kind === 'manager-channel'
+  );
+}
+
+type ProcedureTrailState =
+  | { state: 'mapped'; actionIndex: number }
+  | { state: 'inapplicable'; reason: string }
+  | { state: 'deferred'; reason: string }
+  | { state: 'invalid' };
+
+function procedureTrailState(row: ProcedureTrailAttestation): ProcedureTrailState {
+  if ('state' in row) {
+    if (row.state === 'mapped') return { state: row.state, actionIndex: row.actionIndex };
+    return { state: row.state, reason: row.reason };
+  }
+  if (row.actionIndex !== null) return { state: 'mapped', actionIndex: row.actionIndex };
+  if (row.inapplicabilityReason?.trim()) {
+    return { state: 'inapplicable', reason: row.inapplicabilityReason };
+  }
+  return { state: 'invalid' };
+}
+
 function originatingReference(candidate: WorkCandidate, prefix: string): string | undefined {
   return candidate.contentRefs.find((ref) => ref.startsWith(prefix))?.slice(prefix.length);
 }
 
 function referencedDestination(candidate: WorkCandidate, prefix: string): string | undefined {
   return originatingReference(candidate, prefix)?.split(/[/?#]/, 1)[0] || undefined;
+}
+
+function decodeReference(value: string): string {
+  let decoded = value.trim();
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded;
+}
+
+function normaliseOriginReference(value: string, prefix: string): string | undefined {
+  const decoded = decodeReference(value);
+  if (!decoded) return undefined;
+  if (decoded.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return decoded.slice(prefix.length).split(/[/?#]/, 1)[0] || undefined;
+  }
+  try {
+    const url = new URL(decoded);
+    const segments = url.pathname.split('/').filter(Boolean);
+    const marker = segments.findIndex((segment) => /^(?:issue|ticket)$/i.test(segment));
+    return marker >= 0 && segments[marker + 1] ? segments[marker + 1] : undefined;
+  } catch {
+    return decoded.includes('://') ? undefined : decoded.split(/[/?#]/, 1)[0] || undefined;
+  }
+}
+
+function prescribedOriginReferences(candidate: WorkCandidate, prefix: string): Set<string> {
+  const references = candidate.contentRefs
+    .map((value) => normaliseOriginReference(value, prefix))
+    .filter((value): value is string => value !== undefined);
+  if (references.length > 0) return new Set(references);
+  const externalId = normaliseOriginReference(candidate.externalId, prefix);
+  return new Set(externalId ? [externalId] : []);
+}
+
+function transportOriginResolution(
+  references: readonly string[],
+  prescribed: ReadonlySet<string>,
+  prefix: string,
+): 'match' | 'contradiction' | 'unknown' {
+  if (references.length === 0 || prescribed.size === 0) return 'unknown';
+  const normalised = references.map((value) => normaliseOriginReference(value, prefix));
+  if (normalised.some((value) => value === undefined)) return 'unknown';
+  return normalised.every((value) => prescribed.has(value!)) ? 'match' : 'contradiction';
 }
 
 function candidateRequiredLiterals(candidate: WorkCandidate): string[] {
@@ -792,6 +922,7 @@ function primaryActionIssue(
 interface ProcedureTrailMatchContext {
   mode: SurfaceMode;
   surfaces: readonly SurfaceRecord[];
+  phase: 'single' | 'initial' | 'dependent';
 }
 
 type ProcedureActionResolution =
@@ -802,6 +933,7 @@ type ProcedureActionResolution =
 const DEFAULT_TRAIL_MATCH_CONTEXT: ProcedureTrailMatchContext = {
   mode: 'mock',
   surfaces: [],
+  phase: 'single',
 };
 
 function mockProcedureActionMatches(
@@ -917,19 +1049,22 @@ function realProcedureActionResolution(
       : { kind: 'contradiction' };
   }
 
-  const origin = originatingReference(candidate, destination.refPrefix);
-  if (!origin) return { kind: 'contradiction' };
+  const origins = prescribedOriginReferences(candidate, destination.refPrefix);
   if (parsed.action.kind === 'http.request' && !parsed.action.bodyJson) {
     return { kind: 'unknown', detail: 'the HTTP body is not a JSON object' };
   }
-  const issue = targetIssue(parsed.action);
-  if (!issue) {
+  const identity = transportOriginResolution(
+    targetIssueReferences(parsed.action),
+    origins,
+    destination.refPrefix,
+  );
+  if (identity === 'unknown') {
     return {
       kind: 'unknown',
       detail: 'the transport payload exposes no resolvable originating reference',
     };
   }
-  if (issue !== origin) return { kind: 'contradiction' };
+  if (identity === 'contradiction') return { kind: 'contradiction' };
   if (!isAuditComment(parsed.action)) return { kind: 'contradiction' };
   if (
     trail.effect.nonEmptyPayload.includes('comment') &&
@@ -968,7 +1103,7 @@ function matchingProcedureActions(
 }
 
 function procedureTrailAttentionIssues(
-  output: Pick<ExecutionOutput, 'actions' | 'procedureTrails'>,
+  output: Pick<ExecutionOutput, 'actions' | 'procedureTrails' | 'needsDependentPhase'>,
   candidate: WorkCandidate,
   contract: ProcedureContract,
   context: ProcedureTrailMatchContext = DEFAULT_TRAIL_MATCH_CONTEXT,
@@ -987,21 +1122,46 @@ function procedureTrailAttentionIssues(
       continue;
     }
     const row = rows[0]!;
+    const state = procedureTrailState(row);
+    if (state.state === 'mapped' && !output.actions[state.actionIndex]) {
+      issues.push(
+        context.mode === 'real'
+          ? 'a procedure-trail row maps to an action index that does not exist'
+          : 'procedure-trail action index does not identify the prescribed effect',
+      );
+      continue;
+    }
     if (!procedureTrailApplies(trail, candidate)) {
-      if (row.actionIndex !== null || !row.inapplicabilityReason?.trim()) {
+      if (state.state !== 'inapplicable') {
         issues.push('an inapplicable procedure trail requires a reason and no action index');
       }
       continue;
     }
-    if (row.actionIndex === null) {
+    if (
+      context.phase === 'initial' &&
+      output.needsDependentPhase === true &&
+      completionConditionedTrail(trail)
+    ) {
+      if (state.state !== 'deferred') {
+        issues.push(
+          'a completion-conditioned procedure trail must be deferred during a prerequisite phase',
+        );
+      }
+      continue;
+    }
+    if (state.state === 'deferred') {
+      issues.push(
+        context.phase === 'dependent'
+          ? 'a procedure-trail row is deferred when no dependent phase remains'
+          : 'a procedure-trail row is deferred without a dependent phase',
+      );
+      continue;
+    }
+    if (state.state !== 'mapped') {
       issues.push('an applicable loaded procedure trail is not mapped to an action');
       continue;
     }
-    const action = output.actions[row.actionIndex];
-    if (!action) {
-      issues.push('procedure-trail action index does not identify the prescribed effect');
-      continue;
-    }
+    const action = output.actions[state.actionIndex]!;
     const resolution = procedureActionResolution(trail, action, candidate, context);
     if (resolution.kind === 'contradiction') {
       issues.push(
@@ -1012,7 +1172,7 @@ function procedureTrailAttentionIssues(
     } else if (resolution.kind === 'unknown' && isSurfaceTool(action.tool)) {
       limitations.push({
         trailId: trail.id,
-        actionIndex: row.actionIndex,
+        actionIndex: state.actionIndex,
         kind: 'unresolved-transport-payload',
         transport: action.tool,
         surface: action.args.surface ?? '(unresolved)',
@@ -1197,14 +1357,18 @@ function renderProcedureContract(contract: ProcedureContract): string {
 function renderProcedureApplicability(
   contract: ProcedureContract,
   candidate: WorkCandidate,
+  mode: SurfaceMode = 'mock',
 ): string {
   if (contract.trails.length === 0) return '(no runtime trails to account for)';
   return contract.trails
-    .map((trail) =>
-      procedureTrailApplies(trail, candidate)
-        ? `${trail.id}: applicable; map it to the matching action index and use a null inapplicability reason`
-        : `${trail.id}: not applicable to source category ${candidate.sourceCategory}; use a null action index and give a reason`,
-    )
+    .map((trail) => {
+      if (mode === 'mock') {
+        return procedureTrailApplies(trail, candidate)
+          ? `${trail.id}: applicable; map it to the matching action index and use a null inapplicability reason`
+          : `${trail.id}: not applicable to source category ${candidate.sourceCategory}; use a null action index and give a reason`;
+      }
+      return `${trail.id}: choose exactly one procedure-trail state for this response`;
+    })
     .join('\n');
 }
 
@@ -1304,7 +1468,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
-  const runtimeSchema = executeSchemaForProcedureContract(procedureContract, candidate, plan);
+  const runtimeSchema = executeSchemaForProcedureContract(procedureContract, candidate, plan, mode);
 
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
@@ -1328,7 +1492,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
     '',
     '--- Procedure trail applicability for this candidate ---',
-    renderProcedureApplicability(procedureContract, candidate),
+    renderProcedureApplicability(procedureContract, candidate, mode),
     '',
     ...(mode === 'mock'
       ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), '']
@@ -1353,7 +1517,57 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     actions: raw.actions.map(materialiseGeneratedAction),
     procedureTrails: raw.procedureTrails,
   };
-  if (mode !== 'mock') return output;
+  if (mode !== 'mock') {
+    const trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
+      mode,
+      surfaces: args.surfaces ?? [],
+      phase: 'initial',
+    });
+    if (trailAttention.issues.length === 0) {
+      return trailAttention.limitations.length > 0
+        ? { ...output, procedureTrailLimitations: trailAttention.limitations }
+        : output;
+    }
+    const repairPrompt = [
+      userPrompt,
+      '',
+      '--- Required procedure-trail correction ---',
+      'Your previous structured response was not applied and none of its actions reached the gate.',
+      'Return one full replacement response that fixes every invariant below.',
+      ...trailAttention.issues.map((issue) => `- ${issue}`),
+      '',
+      'Previous structured response:',
+      JSON.stringify(output),
+      '',
+      'Produce the complete replacement response now.',
+    ].join('\n');
+    args.onAdditionalModelCall?.();
+    const repairedRaw = await agentJson<z.infer<typeof runtimeSchema>>({
+      agent: skillAgent,
+      user: repairPrompt,
+      schema: runtimeSchema,
+    });
+    const repaired: ExecutionOutput = {
+      draft: repairedRaw.draft,
+      notes: repairedRaw.notes,
+      needsDependentPhase: repairedRaw.needsDependentPhase,
+      actions: repairedRaw.actions.map(materialiseGeneratedAction),
+      procedureTrails: repairedRaw.procedureTrails,
+    };
+    const remaining = procedureTrailAttentionIssues(repaired, candidate, procedureContract, {
+      mode,
+      surfaces: args.surfaces ?? [],
+      phase: 'initial',
+    });
+    if (remaining.issues.length > 0) {
+      throw new Error(
+        `executor procedure contract remained invalid after one repair: ${remaining.issues.join('; ')}`,
+      );
+    }
+    return remaining.limitations.length > 0
+      ? { ...repaired, procedureTrailLimitations: remaining.limitations }
+      : repaired;
+  }
 
   const issues = mockActionContractIssues(output, candidate, plan, procedureContract);
   if (issues.length === 0) return output;
@@ -1458,7 +1672,7 @@ export async function runDependentSkill(
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
-  const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract);
+  const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode);
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
     '',
@@ -1476,7 +1690,7 @@ export async function runDependentSkill(
     'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
     '',
     '--- Procedure trail applicability for this candidate ---',
-    renderProcedureApplicability(procedureContract, candidate),
+    renderProcedureApplicability(procedureContract, candidate, mode),
     '',
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
@@ -1485,33 +1699,67 @@ export async function runDependentSkill(
     'Produce the truthful closing draft, notes, plan-step outcomes, procedure-trail accounting, and at most one bounded set of closing actions now.',
   ].join('\n');
 
+  function materialiseDependent(
+    raw: z.infer<typeof runtimeSchema>,
+  ): DependentExecutionOutput {
+    const ordered = [...raw.planStepOutcomes].sort((a, b) => a.step - b.step);
+    if (
+      ordered.length !== plan.steps.length ||
+      ordered.some((outcome, index) => outcome.step !== index + 1)
+    ) {
+      throw new Error('dependent phase did not account for every approved plan step exactly once');
+    }
+    return {
+      draft: raw.draft,
+      notes: raw.notes,
+      actions: raw.actions.map(materialiseGeneratedAction),
+      procedureTrails: raw.procedureTrails,
+      planStepOutcomes: ordered,
+    };
+  }
+
   const raw = await agentJson<z.infer<typeof runtimeSchema>>({
     agent: skillAgent,
     user: userPrompt,
     schema: runtimeSchema,
   });
-  const ordered = [...raw.planStepOutcomes].sort((a, b) => a.step - b.step);
-  if (
-    ordered.length !== plan.steps.length ||
-    ordered.some((outcome, index) => outcome.step !== index + 1)
-  ) {
-    throw new Error('dependent phase did not account for every approved plan step exactly once');
-  }
-  const output: DependentExecutionOutput = {
-    draft: raw.draft,
-    notes: raw.notes,
-    actions: raw.actions.map(materialiseGeneratedAction),
-    procedureTrails: raw.procedureTrails,
-    planStepOutcomes: ordered,
-  };
-  const trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
+  let output = materialiseDependent(raw);
+  let trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
     mode,
     surfaces: args.surfaces ?? [],
+    phase: 'dependent',
   });
   if (trailAttention.issues.length > 0) {
-    throw new Error(
-      `dependent executor procedure contract was invalid: ${trailAttention.issues.join('; ')}`,
-    );
+    const repairPrompt = [
+      userPrompt,
+      '',
+      '--- Required procedure-trail correction ---',
+      'Your previous structured response was not applied and none of its actions reached the gate.',
+      'Return one full replacement response that fixes every invariant below.',
+      ...trailAttention.issues.map((issue) => `- ${issue}`),
+      '',
+      'Previous structured response:',
+      JSON.stringify(output),
+      '',
+      'Produce the complete replacement response now.',
+    ].join('\n');
+    args.onAdditionalModelCall?.();
+    const repairedRaw = await agentJson<z.infer<typeof runtimeSchema>>({
+      agent: skillAgent,
+      user: repairPrompt,
+      schema: runtimeSchema,
+    });
+    output = materialiseDependent(repairedRaw);
+    trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
+      mode,
+      surfaces: args.surfaces ?? [],
+      phase: 'dependent',
+    });
+    if (trailAttention.issues.length > 0) {
+      throw new Error(
+        `dependent executor procedure contract remained invalid after one repair: ${trailAttention.issues.join('; ')}`,
+      );
+    }
   }
   return trailAttention.limitations.length > 0
     ? { ...output, procedureTrailLimitations: trailAttention.limitations }

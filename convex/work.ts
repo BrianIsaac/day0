@@ -8,14 +8,12 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
+import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
-  actionIntent,
   HELD_NOT_APPROVED,
   HELD_WRITE,
   normaliseActionVerdict,
-  parseSurfaceAction,
   reviewActions,
   type ActionVerdict,
 } from '../src/surfaces/policy';
@@ -35,10 +33,15 @@ import {
   withBrowserComponentState,
 } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import {
+  INTERRUPTED_APPLY_REASON,
+  OUTCOME_UNKNOWN_REASON,
+  providerReconciliationEntries,
+  retryRequiresProviderReconciliation,
+} from '../src/work/reconciliation';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
-export const INTERRUPTED_APPLY_REASON =
-  'apply was interrupted after its claim; provider outcomes are unknown and must be reconciled before retry';
+export { INTERRUPTED_APPLY_REASON };
 
 /**
  * A connected chat surface the manager can be asked through and answered from.
@@ -868,23 +871,10 @@ export const retryFailed = mutation({
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
     }
-    // A run with a dependent phase carries two ledgers: the prerequisite
-    // phase's under `initial` and the closing phase's at the top. A write
-    // that landed in either fences the retry.
-    const phases = ledgerPhases(row.output);
-    const landed = phases.some(({ actions, applied }) =>
-      applied.some((entry, index) => {
-        if (entry.ok !== true || entry.held === true) return false;
-        const action = actions[index];
-        if (!action) return true;
-        const parsed = parseSurfaceAction(action);
-        return !parsed.ok || actionIntent(parsed.action) === 'write';
-      }),
-    );
-    const outcomeUnknown = phases.some(({ applied }) =>
-      applied.some((entry) => entry.outcomeUnknown === true),
-    );
-    if (row.skipReason === INTERRUPTED_APPLY_REASON || landed || outcomeUnknown) {
+    if (
+      retryRequiresProviderReconciliation(row.output, row.skipReason) &&
+      !row.providerReconciliation
+    ) {
       throw new Error(
         'retry refused because an external effect may already have landed; reconcile the provider first',
       );
@@ -901,6 +891,7 @@ export const retryFailed = mutation({
       applyPhase: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
+      providerReconciliation: undefined,
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -909,6 +900,43 @@ export const retryFailed = mutation({
       createdAt: Date.now(),
     });
     return { ok: true, resumeState: next };
+  },
+});
+
+export const reconcileFailed = mutation({
+  args: { workItemId: v.id('workItems'), confirmed: v.boolean() },
+  handler: async (ctx, args) => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    if (row.state !== 'failed') {
+      throw new Error(`workItem state is ${row.state}; expected failed`);
+    }
+    if (!args.confirmed) throw new Error('explicit provider verification is required');
+    if (row.providerReconciliation) {
+      return { ok: true, reconciledEntries: row.providerReconciliation.entries.length };
+    }
+    const entries = providerReconciliationEntries(row.output);
+    if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) {
+      throw new Error('no provider effects require reconciliation');
+    }
+    if (entries.length === 0) {
+      throw new Error('the applied ledger does not identify provider effects to reconcile');
+    }
+    const identity = await getCallerOrThrow(ctx);
+    const confirmedAt = Date.now();
+    const providerReconciliation = { actor: identity.subject, confirmedAt, entries };
+    await ctx.db.patch(args.workItemId, { providerReconciliation });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.provider-reconciled',
+      payload: {
+        workItemId: args.workItemId,
+        actor: identity.subject,
+        confirmedAt,
+        entries,
+      },
+      createdAt: confirmedAt,
+    });
+    return { ok: true, reconciledEntries: entries.length };
   },
 });
 
@@ -2021,7 +2049,7 @@ export const recoverInterruptedApply = internalMutation({
         tool: typeof action.tool === 'string' ? action.tool : 'unknown',
         ok: !approved.has(index),
         ...(approved.has(index)
-          ? { reason: 'outcome unknown after interrupted apply - verify provider before retry' }
+          ? { reason: OUTCOME_UNKNOWN_REASON }
           : { held: true, reason: heldReasonFor(index) }),
         idempotencyKey: actionIdempotencyKey({
           workItemId: args.workItemId,

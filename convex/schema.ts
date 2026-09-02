@@ -412,6 +412,28 @@ export default defineSchema({
     proposedSkillId: v.optional(v.id('skills')),
     output: v.optional(v.any()),
     skipReason: v.optional(v.string()),
+    providerReconciliation: v.optional(
+      v.object({
+        actor: v.string(),
+        confirmedAt: v.number(),
+        entries: v.array(
+          v.object({
+            phase: v.union(
+              v.literal('single'),
+              v.literal('prerequisite'),
+              v.literal('closing'),
+            ),
+            actionIndex: v.number(),
+            tool: v.string(),
+            outcome: v.union(v.literal('landed'), v.literal('outcome-unknown')),
+            effect: v.optional(v.string()),
+            reason: v.optional(v.string()),
+            providerId: v.optional(v.string()),
+            idempotencyKey: v.optional(v.string()),
+          }),
+        ),
+      }),
+    ),
     /** A single-use decision requested through the manager's main chat surface. */
     decision: v.optional(
       v.object({

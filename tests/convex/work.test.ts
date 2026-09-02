@@ -1406,6 +1406,95 @@ describe('the exact-action gate', (): void => {
     ).rejects.toThrow('reconcile the provider first');
   });
 
+  it('requires the owning operator to record provider reconciliation before retry', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing');
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      runId,
+      reason: 'provider outcome needs review',
+      output: {
+        actions: [readIssue, workingComment, pendingOutput.actions[1]],
+        applied: [
+          { tool: 'mcp.call', ok: true, effect: 'read issue', idempotencyKey: 'read' },
+          {
+            tool: 'mcp.call',
+            ok: true,
+            effect: 'added audit note',
+            providerId: 'comment-17',
+            idempotencyKey: 'comment',
+          },
+          {
+            tool: 'mcp.call',
+            ok: false,
+            outcomeUnknown: true,
+            reason: 'provider accepted the request but the response was lost',
+            idempotencyKey: 'transition',
+          },
+        ],
+      },
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, {
+        workItemId,
+        confirmed: false,
+      }),
+    ).rejects.toThrow('explicit provider verification is required');
+    await expect(
+      harness.withIdentity({ subject: 'intruder' }).mutation(api.work.reconcileFailed, {
+        workItemId,
+        confirmed: true,
+      }),
+    ).rejects.toThrow('forbidden');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, {
+        workItemId,
+        confirmed: true,
+      }),
+    ).resolves.toEqual({ ok: true, reconciledEntries: 2 });
+
+    const reconciled = await readItem(harness, workItemId);
+    expect(reconciled.providerReconciliation).toEqual({
+      actor: 'owner',
+      confirmedAt: expect.any(Number),
+      entries: [
+        {
+          phase: 'single',
+          actionIndex: 1,
+          tool: 'mcp.call',
+          outcome: 'landed',
+          effect: 'added audit note',
+          providerId: 'comment-17',
+          idempotencyKey: 'comment',
+        },
+        {
+          phase: 'single',
+          actionIndex: 2,
+          tool: 'mcp.call',
+          outcome: 'outcome-unknown',
+          reason: 'provider accepted the request but the response was lost',
+          idempotencyKey: 'transition',
+        },
+      ],
+    });
+    const events = await eventsOfType(harness, agentId, 'work.provider-reconciled');
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toEqual({
+      workItemId,
+      actor: 'owner',
+      confirmedAt: reconciled.providerReconciliation?.confirmedAt,
+      entries: reconciled.providerReconciliation?.entries,
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
+    expect((await readItem(harness, workItemId)).providerReconciliation).toBeUndefined();
+  });
+
   it('retains a failed action ledger on the terminal event for revocation metrics', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

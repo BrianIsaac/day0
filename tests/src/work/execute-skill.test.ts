@@ -153,6 +153,42 @@ describe('executor output contract', (): void => {
     ).toBe(true);
   });
 
+  it('gives real trail rows three exclusive structural states', (): void => {
+    const schema = executeSchemaForProcedureContract(
+      ticketProcedureContract,
+      undefined,
+      undefined,
+      'real',
+    );
+    const base = {
+      draft: 'd',
+      notes: 'n',
+      needsDependentPhase: true,
+      actions: [],
+    };
+
+    for (const row of [
+      { trailId: 'trail-1', state: 'mapped', actionIndex: 0 },
+      { trailId: 'trail-1', state: 'inapplicable', reason: 'Not applicable here.' },
+      { trailId: 'trail-1', state: 'deferred', reason: 'A later phase is required.' },
+    ]) {
+      expect(schema.safeParse({ ...base, procedureTrails: [row] }).success).toBe(true);
+    }
+    expect(
+      schema.safeParse({
+        ...base,
+        procedureTrails: [
+          {
+            trailId: 'trail-1',
+            state: 'deferred',
+            reason: 'A later phase is required.',
+            actionIndex: 0,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it('binds the distinct primary and trailing destination count into the provider schema', (): void => {
     const contract = parseProcedureContract({
       teamDocs: [],
@@ -1293,6 +1329,17 @@ describe('executor preamble by mode', (): void => {
     expect(text).not.toContain('`dm-manager`');
     expect(text).toContain('A draft (human-readable)');
     expect(text).toContain('set `needsDependentPhase` to true');
+    expect(text).toContain(
+      'Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a reason when a result-dependent phase is required.',
+    );
+    expect(text).toContain(
+      'A MAPPED actionIndex must reference an action emitted in the same response.',
+    );
+    const structuralLines = text
+      .split('\n')
+      .filter((line) => /MAPPED|INAPPLICABLE|DEFERRED/.test(line))
+      .join('\n');
+    expect(structuralLines).not.toMatch(/REVOPS|revops-asks|Linear|Slack|Looker|Northstar/);
   });
 
   it('emits a public reply as its own threaded chat.postMessage and keeps the DM for questions', (): void => {
