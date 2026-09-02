@@ -310,6 +310,59 @@ describe('surface persistence', (): void => {
     );
   });
 
+  it('mints a qualified charter mention beside the bare documented product', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const tileId = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'declared',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        }),
+    );
+
+    const seeded = await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: [
+        {
+          name: 'Looker Studio',
+          class: 'analytics',
+          whereMentioned: 'The board deck charts are built in Looker Studio.',
+        },
+      ],
+    });
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0]).not.toBe(tileId);
+    expect(rows.map((row) => row.slug).sort()).toEqual(['looker-pipeline-tile', 'looker-studio']);
+    expect(rows.find((row) => row._id === tileId)?.discoveryEvidence).toHaveLength(1);
+    expect(await eventTypes(harness)).not.toContain('surface.charter-match-ambiguous');
+  });
+
   it('records an ambiguous hostless charter mention without minting or attaching', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
@@ -956,6 +1009,93 @@ describe('surface probe generations', (): void => {
     expect((await eventTypes(harness)).filter((type) => type === 'work.requeued')).toHaveLength(2);
   });
 
+  it('leaves work waiting on a distinct qualified product when the tile connects', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const [tileId, workItemId] = await harness.run(
+      async (ctx): Promise<[Id<'surfaces'>, Id<'workItems'>]> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-studio',
+          displayName: 'Looker Studio',
+          class: 'analytics',
+          verdict: 'declared',
+          whereFound: [],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'The board deck charts are built in Looker Studio.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'approved',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          managerApprovedAt: 1,
+          itApprovedAt: 1,
+          createdAt: 1,
+        });
+        const itemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-9',
+          title: 'Rebuild the board deck chart in Looker Studio',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker-studio',
+          },
+          createdAt: 1,
+        });
+        return [surfaceId, itemId];
+      },
+    );
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: tileId });
+    if (!probe) throw new Error('probe was not reserved');
+
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: tileId,
+      generation: probe.generation,
+      toolAllowlist: ['browser_navigate'],
+      toolArguments: [],
+      verifiedAt: 100,
+    });
+
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(item).toMatchObject({
+      state: 'deferred',
+      verdict: { reason: 'awaiting-connection', missingSurface: 'looker-studio' },
+    });
+    expect(await eventTypes(harness)).not.toContain('work.requeued');
+  });
+
   it('requeues work whose missing slug is a legacy alias of the connecting surface', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
@@ -1326,6 +1466,86 @@ describe('surface approval state machine', (): void => {
     expect((await eventTypes(harness)).filter((type) => type === 'surface.approved')).toHaveLength(
       1,
     );
+  });
+
+  it('keeps work parked on a rejected distinct product beside the connected tile', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const [studioId, workItemId] = await harness.run(
+      async (ctx): Promise<[Id<'surfaces'>, Id<'workItems'>]> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'connected',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: true,
+          lastVerifiedAt: Date.now(),
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-studio',
+          displayName: 'Looker Studio',
+          class: 'analytics',
+          verdict: 'proposed',
+          whereFound: [],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'The board deck charts are built in Looker Studio.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        const itemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-9',
+          title: 'Rebuild the board deck chart in Looker Studio',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker-studio',
+          },
+          createdAt: 1,
+        });
+        return [surfaceId, itemId];
+      },
+    );
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.reject, { surfaceId: studioId, reason: 'Not this quarter.' });
+
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(item).toMatchObject({
+      state: 'deferred',
+      verdict: { reason: 'awaiting-connection', missingSurface: 'looker-studio' },
+    });
+    expect(await eventTypes(harness)).not.toContain('work.requeued');
   });
 
   it('requeues work parked on a rejected duplicate when the documented surface exists', async (): Promise<void> => {

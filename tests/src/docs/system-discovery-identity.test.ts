@@ -41,6 +41,70 @@ describe('documentation system identity convergence', (): void => {
     ).toBe(false);
   });
 
+  it('keeps a qualified manager mention apart from a bare documented product', (): void => {
+    const tile = documentedSystemIdentity({
+      name: 'Looker pipeline tile',
+      endpoints: ['http://looker-tile:8080/'],
+    });
+    const hostedLooker = documentedSystemIdentity({
+      name: 'Looker',
+      endpoints: ['https://acme.cloud.looker.com/'],
+    });
+    const studio = documentedSystemIdentity({
+      name: 'Looker Studio',
+      quotes: ['Dashboards are built in Looker Studio.'],
+    });
+
+    expect(sameSystemForHostlessMention('analytics', studio, 'analytics', tile)).toBe(false);
+    expect(sameSystemForHostlessMention('analytics', studio, 'analytics', hostedLooker)).toBe(false);
+    expect(
+      sameSystemForHostlessMention(
+        'crm',
+        documentedSystemIdentity({ name: 'Salesforce Marketing Cloud' }),
+        'crm',
+        documentedSystemIdentity({
+          name: 'Salesforce',
+          endpoints: ['https://acme.my.salesforce.com/'],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      sameSystemForHostlessMention(
+        'kanban',
+        documentedSystemIdentity({ name: 'Jira Service Management' }),
+        'kanban',
+        documentedSystemIdentity({ name: 'Jira' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('merges a mention whose extra words are only generic qualifiers', (): void => {
+    expect(
+      sameSystemForHostlessMention(
+        'crm',
+        documentedSystemIdentity({ name: 'Northstar CRM' }),
+        'crm',
+        documentedSystemIdentity({ name: 'Northstar' }),
+      ),
+    ).toBe(true);
+    expect(
+      sameSystemForHostlessMention(
+        'chat',
+        documentedSystemIdentity({ name: 'Slack workspace' }),
+        'chat',
+        documentedSystemIdentity({ name: 'Slack' }),
+      ),
+    ).toBe(true);
+    expect(
+      sameSystemForHostlessMention(
+        'crm',
+        documentedSystemIdentity({ name: 'Northstar' }),
+        'crm',
+        documentedSystemIdentity({ name: 'Northstar CRM' }),
+      ),
+    ).toBe(true);
+  });
+
   it('attaches a transport description and its page to the named system', (): void => {
     const systems = convergeDiscoveryCandidates([
       candidate(

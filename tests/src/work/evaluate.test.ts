@@ -197,6 +197,36 @@ describe('work surface enablement', (): void => {
     ).resolves.toMatchObject({ decision: 'claim' });
   });
 
+  it('defers on a pending qualified product beside the connected tile', (): void => {
+    const work = candidate('linear', '');
+    work.title = 'Copy the Looker pipeline tile figure into the Looker Studio report';
+    const documentedTile = surface('looker-pipeline-tile', 'connected', {
+      displayName: 'Looker pipeline tile',
+      class: 'analytics',
+      endpoint: 'http://looker-tile:8080/',
+    });
+    const studio = surface('looker-studio', 'declared', {
+      displayName: 'Looker Studio',
+      class: 'analytics',
+      credentialLanded: false,
+      lastVerifiedAt: undefined,
+      discoveryEvidence: [
+        {
+          kind: 'charter',
+          ref: 'manager 1:1',
+          quote: 'The board deck charts are built in Looker Studio.',
+          current: true,
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        },
+      ],
+    });
+
+    expect(
+      missingConnectionSurface(work, context('real', [surface('linear'), documentedTile, studio])),
+    ).toBe('looker-studio');
+  });
+
   it('still defers a distinct same-class surface named by the item', (): void => {
     const work = candidate('linear', 'Move the confirmed issue into Jira.');
     work.title = 'Copy the Linear issue into Jira';
