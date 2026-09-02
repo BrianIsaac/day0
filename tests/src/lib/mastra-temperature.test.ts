@@ -64,9 +64,9 @@ describe('shared model sampling', (): void => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it('uses the chat-completions client for the hosted route too', (): void => {
+  it('uses the Responses client for the hosted route', (): void => {
     expect(typeof MODEL_CONFIG).toBe('function');
-    expect((MODEL_CONFIG() as { provider?: string }).provider).toBe('openai.chat');
+    expect((MODEL_CONFIG() as { provider?: string }).provider).toBe('openai.responses');
   });
 
   it('surfaces provider warnings from a structured generate result', async (): Promise<void> => {

@@ -2,13 +2,12 @@ import { execFileSync } from 'node:child_process';
 import { env } from '../env';
 import {
   MODEL_CALL_TIMEOUT_MS,
-  MODEL_CONFIG,
   MODEL_PROVIDER_MAX_RETRIES,
   MODEL_RETRY_POLICY,
   MODEL_TEMPERATURE,
   providerWarningTexts,
 } from '../lib/mastra';
-import { MODEL } from '../lib/openai';
+import { MODEL, modelProviderClient } from '../lib/openai';
 
 /**
  * Provider facts recorded alongside the knobs. They describe the bed rather
@@ -156,6 +155,7 @@ function armParameters(
   dependencies: HarnessParityDependencies,
 ): ArmHarnessParameters {
   const customBaseUrl = configuredBaseUrl();
+  const provider = modelProviderClient(customBaseUrl);
   const warnings = expectedProviderWarnings();
   const ollama = customBaseUrl
     ? (dependencies.readOllamaMetadata ?? readOllamaMetadata)(providerBaseUrl(), MODEL)
@@ -170,9 +170,9 @@ function armParameters(
       outer: MODEL_RETRY_POLICY,
     },
     providerClient:
-      MODEL_CONFIG.provider === 'openai.chat'
-        ? '@ai-sdk/openai chat-completions through Mastra'
-        : MODEL_CONFIG.provider,
+      provider === 'openai.responses'
+        ? '@ai-sdk/openai Responses API through Mastra'
+        : '@ai-sdk/openai chat-completions through Mastra',
     providerBaseUrl: providerBaseUrl(),
     contextLimitTokens: configuredContextLimit(customBaseUrl),
     structuredOutputMode: env.OPENAI_JSON_MODE,

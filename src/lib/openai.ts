@@ -23,7 +23,9 @@ import {
 export const MODEL = env.OPENAI_MODEL;
 
 /** The AI-SDK model instance shape, without depending on `@ai-sdk/provider` directly. */
-export type SdkLanguageModel = ReturnType<OpenAIProvider['chat']>;
+export type SdkLanguageModel = ReturnType<OpenAIProvider['languageModel']>;
+
+export type ModelProviderClient = 'openai.responses' | 'openai.chat';
 
 let client: OpenAI | null = null;
 let provider: OpenAIProvider | null = null;
@@ -60,12 +62,19 @@ function openaiProvider(): OpenAIProvider {
 /**
  * AI-SDK language model for the Mastra + `streamText` paths.
  *
- * Every endpoint gets the chat-completions surface explicitly. It is the
- * common route implemented by OpenAI and the supported local runtimes, so a
- * bed changes provider and model rather than changing the API contract too.
+ * Hosted OpenAI uses Responses so reasoning models can use function tools.
+ * Custom OpenAI-compatible endpoints use chat completions, the route
+ * implemented by the supported local runtimes.
  */
 export function languageModel(modelId: string = MODEL): SdkLanguageModel {
-  return openaiProvider().chat(modelId);
+  const resolvedProvider = openaiProvider();
+  return env.OPENAI_BASE_URL ? resolvedProvider.chat(modelId) : resolvedProvider.responses(modelId);
+}
+
+export function modelProviderClient(
+  baseUrl: string | undefined = env.OPENAI_BASE_URL,
+): ModelProviderClient {
+  return baseUrl?.trim() ? 'openai.chat' : 'openai.responses';
 }
 
 /** How a JSON completion coerced the model into emitting an object. */

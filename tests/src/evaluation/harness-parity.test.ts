@@ -67,6 +67,10 @@ describe('evaluation harness parity', (): void => {
 
     expect(parameters.day0.providerBaseUrl).toBe('http://model:11434/v1');
     expect(parameters.baseline.providerBaseUrl).toBe('http://model:11434/v1');
+    expect(parameters.day0.providerClient).toBe(
+      '@ai-sdk/openai chat-completions through Mastra',
+    );
+    expect(parameters.baseline.providerClient).toBe(parameters.day0.providerClient);
     expect(harnessDiagnostics(parameters.day0)).toMatchObject({
       ollamaVersion: '0.32.9',
       ollamaModelDigest: 'sha256:bed-model',
@@ -82,7 +86,7 @@ describe('evaluation harness parity', (): void => {
 
     expect(parameters.day0.providerBaseUrl).toBe('https://api.openai.com/v1');
     expect(parameters.day0.providerClient).toBe(
-      '@ai-sdk/openai chat-completions through Mastra',
+      '@ai-sdk/openai Responses API through Mastra',
     );
     expect(parameters.day0.contextLimitTokens).toBeNull();
     expect(diagnostics.effectiveTemperature).toBeNull();
