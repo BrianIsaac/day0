@@ -1082,3 +1082,15 @@ describe('a browser sequence is reviewed as one session', (): void => {
     expect(verdicts.map((v) => v.disposition)).toEqual(['auto', 'auto']);
   });
 });
+
+describe('revoked write scopes under the autonomous-actions switch', (): void => {
+  it('refuses a write whose scope the manager revoked, and nothing else', (): void => {
+    const grants = new Set(['boss:message', 'linear:read', 'slack:read']);
+    const revoked = new Set(['linear:write']);
+    expect(grantRefusal(parsed(comment()), linear, grants, true, revoked)).toBe('no grant (linear:write)');
+    expect(grantRefusal(parsed(comment()), linear, grants, true)).toBeUndefined();
+    expect(grantRefusal(parsed(chatPost('C0PUBLIC')), slack, grants, true, revoked)).toBeUndefined();
+    expect(grantRefusal(parsed(chatPost('D0MANAGER')), slack, grants, true, revoked)).toBeUndefined();
+    expect(grantRefusal(parsed(comment()), linear, new Set(['linear:write']), false, revoked)).toBeUndefined();
+  });
+});

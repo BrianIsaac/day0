@@ -730,6 +730,31 @@ export interface RunSkillArgs {
   now?: number;
   /** Evidence hook for deliberate model calls after the initial executor turn. */
   onAdditionalModelCall?: () => void;
+  /**
+   * The manager's written reason for rejecting the previous attempt at this
+   * work item. A retry that ignored it would repeat the rejected draft.
+   */
+  managerFeedback?: string;
+}
+
+/**
+ * The prompt lines that put the manager's rejection reason in front of a retry.
+ *
+ * Args:
+ *   feedback: The reason as the manager wrote it, or undefined on a first attempt.
+ *
+ * Returns:
+ *   Prompt lines, empty when there is no feedback.
+ */
+export function managerFeedbackLines(feedback: string | undefined): string[] {
+  const reason = feedback?.trim();
+  if (!reason) return [];
+  return [
+    '',
+    '--- Manager feedback on the previous attempt ---',
+    reason,
+    'The manager rejected the previous action set for this reason. Address it before anything else: where it states a fact, treat that fact as approved evidence for this work item; where it asks for a change, make that change. Do not repeat the rejected draft.',
+  ];
 }
 
 export interface RunDependentSkillArgs extends RunSkillArgs {
@@ -1498,6 +1523,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
     `Expected output type: ${plan.expectedOutputType}`,
+    ...managerFeedbackLines(args.managerFeedback),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -1699,6 +1725,7 @@ export async function runDependentSkill(
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
     `Expected output type: ${plan.expectedOutputType}`,
+    ...managerFeedbackLines(args.managerFeedback),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,

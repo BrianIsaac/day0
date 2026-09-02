@@ -6,6 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  blockedPlanReason,
   browserTransportRefusal,
   completionFailure,
   dependentTransitionRefusal,
@@ -2761,4 +2762,86 @@ describe('work action surface enablement', (): void => {
       });
     },
   );
+});
+
+describe('plan-step accounting after the loop ran live', (): void => {
+  it('does not read a hold instruction as a promised surface read', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: {
+          summary: 'Hold writes.',
+          steps: [
+            'Hold all non-read writes, including any #revops-asks reply or Linear audit/status update, until the manager gives literal approval because autonomous actions are OFF.',
+          ],
+          expectedOutputType: 'message',
+          riskNotes: '',
+          reversibility: '',
+          estimatedMinutes: 1,
+        },
+        outcomes: [{ step: 1, status: 'satisfied', evidence: 'Every write was held.' }],
+        initialActions: [],
+        initialLedger: [],
+        surfaces: [
+          { slug: 'linear', displayName: 'Linear' },
+          { slug: 'slack', displayName: 'Slack' },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it('completes a run whose every action landed even though the closing phase marked steps blocked', (): void => {
+    const outcomes: PlanStepOutcome[] = [
+      { step: 1, status: 'blocked', evidence: 'No Linear read in the ledger.' },
+      { step: 2, status: 'satisfied', evidence: 'The comment landed.' },
+    ];
+    const comment = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'REVOPS-7', body: 'Refreshed the tile.' }),
+      },
+    } as const;
+    const transition = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'REVOPS-7', state: 'Done' }),
+      },
+    } as const;
+    const landed: AppliedAction = {
+      tool: 'mcp.call',
+      ok: true,
+      effect: 'save_comment on linear',
+      idempotencyKey: 'item:run:0',
+    };
+    const plan = {
+      summary: 'Refresh the tile.',
+      steps: ['Open the originating ticket', 'Post the audit comment'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    expect(blockedPlanReason(outcomes, { plan, actions: [comment], applied: [landed] })).toBeUndefined();
+    expect(blockedPlanReason(outcomes)).toContain('1 approved plan step(s) remained blocked');
+    expect(blockedPlanReason(outcomes, { plan, actions: [], applied: [] })).toContain(
+      '1 approved plan step(s) remained blocked',
+    );
+    expect(
+      blockedPlanReason(outcomes, { plan, actions: [comment], applied: [{ ...landed, held: true }] }),
+    ).toContain('remained blocked');
+    const closing = { ...plan, steps: ['Post the audit comment', 'Move the ticket to Done'] };
+    expect(
+      blockedPlanReason(outcomes, { plan: closing, actions: [comment], applied: [landed] }),
+    ).toContain('remained blocked');
+    expect(
+      blockedPlanReason(outcomes, {
+        plan: closing,
+        actions: [comment, transition],
+        applied: [landed, { ...landed, effect: 'save_issue on linear', idempotencyKey: 'item:run:1' }],
+      }),
+    ).toBeUndefined();
+  });
 });

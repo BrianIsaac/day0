@@ -2002,3 +2002,21 @@ describe('the exact-action gate', (): void => {
     expect(stored.filter((verdict): boolean => verdict.decision === 'queue')).toHaveLength(1);
   });
 });
+
+describe('manager feedback kept for the retry', (): void => {
+  afterEach(restoreSurfaceMode);
+
+  it('stores the full rejection reason beside the truncated skip reason and keeps it through a retry', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await pend(harness);
+    const reason = `Do not post a blocker note. ${'The close checks are complete. '.repeat(12)}Rewrite the comment as a close summary.`;
+    expect(reason.length).toBeGreaterThan(200);
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.skipReason).toBe(`rejected by the manager: ${reason.slice(0, 200)}`);
+    expect(failed.managerFeedback).toMatchObject({ reason, runId });
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    expect((await readItem(harness, workItemId)).managerFeedback?.reason).toBe(reason);
+  });
+});
