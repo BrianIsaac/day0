@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useCursorPreference } from './CursorToggle';
 
 interface Point {
   x: number;
@@ -16,6 +17,7 @@ const DAMPING = 0.96;
 const GRAVITY = 0.32;
 const ITERATIONS = 6;
 const HANDLE_FRACTION = 0.18;
+const SUPPRESS_STYLE_ID = 'day0-whip-cursor-suppress';
 
 /**
  * Sitewide custom cursor — a Verlet-integrated rope that trails the mouse
@@ -27,12 +29,19 @@ const HANDLE_FRACTION = 0.18;
  * still applies if JavaScript fails to load.
  */
 export function WhipCursor() {
+  const preference = useCursorPreference({ keyboardShortcut: true });
+  const enabled = preference === 'on';
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mouseRef = useRef({ x: -200, y: -200 });
   const pointsRef = useRef<Point[]>([]);
   const rafRef = useRef<number>(0);
 
   useEffect(() => {
+    if (!enabled) {
+      document.getElementById(SUPPRESS_STYLE_ID)?.remove();
+      return;
+    }
+
     if (
       window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
       window.matchMedia('(pointer: coarse)').matches
@@ -75,7 +84,7 @@ export function WhipCursor() {
     // covers everything, and unmount removes the tag so the no-JS /
     // reduced-motion fallback is unaffected.
     const styleEl = document.createElement('style');
-    styleEl.id = 'day0-whip-cursor-suppress';
+    styleEl.id = SUPPRESS_STYLE_ID;
     styleEl.textContent = `*, *::before, *::after { cursor: none !important; }`;
     document.head.appendChild(styleEl);
 
@@ -205,7 +214,9 @@ export function WhipCursor() {
       window.removeEventListener('resize', resize);
       styleEl.remove();
     };
-  }, []);
+  }, [enabled]);
+
+  if (!enabled) return null;
 
   return (
     <canvas
