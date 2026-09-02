@@ -137,7 +137,7 @@ async function stubContext(
       generatedAt: '',
       configuration: {
         commit: 'abc',
-        model: 'gpt-5.5',
+        model: 'gpt-5.6-terra',
         temperature: 0.4,
         modelCallTimeoutMs: 90_000,
         surfaceMode: 'mock',
@@ -342,7 +342,7 @@ function regradeFixture() {
     generatedAt: '2026-08-30T02:14:46.000Z',
     configuration: {
       commit: 'run-commit',
-      model: 'gpt-5.5',
+      model: 'gpt-5.6-terra',
       temperature: 0.4,
       modelCallTimeoutMs: 90_000,
       surfaceMode: 'mock',

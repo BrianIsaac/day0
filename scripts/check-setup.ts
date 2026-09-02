@@ -733,11 +733,11 @@ function modelSection(v: Values, selfHosted: boolean): Section {
 
   if (v.OPENAI_BASE_URL) {
     lines.push(
-      `Next calls ${v.OPENAI_BASE_URL}${v.OPENAI_API_KEY ? ' with a key' : ' with no key'}, model ${v.OPENAI_MODEL || 'gpt-5.5 (default)'}.`,
+      `Next calls ${v.OPENAI_BASE_URL}${v.OPENAI_API_KEY ? ' with a key' : ' with no key'}, model ${v.OPENAI_MODEL || 'gpt-5.6-terra (default)'}.`,
     );
   } else {
     lines.push(
-      `Next calls api.openai.com with OPENAI_API_KEY, model ${v.OPENAI_MODEL || 'gpt-5.5 (default)'}.`,
+      `Next calls api.openai.com with OPENAI_API_KEY, model ${v.OPENAI_MODEL || 'gpt-5.6-terra (default)'}.`,
     );
   }
 

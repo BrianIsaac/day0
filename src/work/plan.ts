@@ -6,7 +6,7 @@ import type { ExecutionPlan, WorkCandidate } from './types';
 
 /**
  * Layer-3 plan drafter. Lifted from Protean's `src/work/plan.ts` and
- * adapted to Mastra Agent + GPT-5.5 with structured output.
+ * adapted to Mastra Agent + GPT-5.6 Terra with structured output.
  *
  * Output discipline:
  *   - 2-5 short steps. Long plans inflate boss cognitive load.

@@ -4,7 +4,7 @@ import type { WorkCandidate } from './types';
 
 /**
  * Layer-2 quality-fit check. Lifted from Protean's
- * `src/work/quality-fit.ts` and adapted to Mastra Agent + GPT-5.5
+ * `src/work/quality-fit.ts` and adapted to Mastra Agent + GPT-5.6 Terra
  * with structured output.
  *
  * Heuristic short-circuit: if AGENTS.md has no `## Good-habits memory`

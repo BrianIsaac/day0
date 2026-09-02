@@ -29,7 +29,7 @@ import { actionModeInstruction } from './plan';
 
 /**
  * Skill executor. Lifted from Protean's `src/work/execute-skill.ts`
- * and adapted to Mastra Agent + GPT-5.5 with structured output.
+ * and adapted to Mastra Agent + GPT-5.6 Terra with structured output.
  *
  * The skill body is prepended to the system prompt as a behavioural
  * prior. The executor returns:

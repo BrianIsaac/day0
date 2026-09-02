@@ -1,5 +1,5 @@
 /** The model every arm of the evaluation and every shipped agent run uses unless configured. */
-export const DEFAULT_MODEL = 'gpt-5.5';
+export const DEFAULT_MODEL = 'gpt-5.6-terra';
 
 /**
  * Resolve the configured model name the way the app does, from a plain
