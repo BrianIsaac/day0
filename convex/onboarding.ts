@@ -132,7 +132,7 @@ const QUESTION_LABELLING_SYSTEM = [
 
 const questionLabellerAgent = makeAgent('day0-question-labeller', QUESTION_LABELLING_SYSTEM);
 
-const questionLabelSchema = z.object({
+export const questionLabelSchema = z.object({
   labels: z.array(
     z.object({
       question: z.number(),

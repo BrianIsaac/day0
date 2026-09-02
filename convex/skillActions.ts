@@ -172,7 +172,7 @@ export function buildAuthorPrompt(
   ].join('\n');
 }
 
-const authorSchema = z.object({
+export const authorSchema = z.object({
   body: z.string(),
   smokeTest: z
     .string()

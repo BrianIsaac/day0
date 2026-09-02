@@ -49,7 +49,7 @@ export function planSystemPrompt(
   );
 }
 
-const planSchema = z.object({
+export const planSchema = z.object({
   summary: z.string(),
   steps: z.array(z.string()),
   expectedOutputType: z.enum([

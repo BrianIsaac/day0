@@ -586,7 +586,11 @@ function procedureTrailInventorySchema(contract: ProcedureContract) {
 function realProcedureTrailInventorySchema(contract: ProcedureContract) {
   const ids = contract.trails.map((trail) => trail.id);
   const trailId = ids.length === 0 ? z.string().min(1) : z.enum(ids as [string, ...string[]]);
-  const row = z.discriminatedUnion('state', [
+  // A plain union, for the same reason as `generatedActionSchema`: strict
+  // Structured Outputs accepts the nested `anyOf` it serialises to and refuses
+  // the `oneOf` a discriminated union becomes. The `state` literals still
+  // select exactly one branch on parse.
+  const row = z.union([
     mappedProcedureTrailSchema.extend({ trailId }),
     inapplicableProcedureTrailSchema.extend({ trailId }),
     deferredProcedureTrailSchema.extend({ trailId }),
