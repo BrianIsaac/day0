@@ -494,7 +494,7 @@ export function sameSystemForHostlessMention(
 ): boolean {
   if (sameDocumentedSystem(mentionClass, mention, documentedClass, documented)) return true;
   return (
-    mentionClass === documentedClass &&
+    classesCompatible(mentionClass, documentedClass) &&
     mention.endpoints.length === 0 &&
     mention.hosts.length === 0 &&
     bareMentionOfQualifiedName(mention.nameKeys, documented.nameKeys)
@@ -514,6 +514,15 @@ export function sameSystemForHostlessMention(
  * name with or without a qualifier. Last, the transport-normalised name key
  * merges "Slack" with "Slack Web API".
  */
+/**
+ * Whether two class labels can describe one system. `other` is the catch-all a
+ * classifier or the charter falls back to when it cannot tell, so it carries
+ * no evidence against any class.
+ */
+function classesCompatible(left: string, right: string): boolean {
+  return left === right || left === 'other' || right === 'other';
+}
+
 export function sameDocumentedSystem(
   leftClass: string,
   left: DocumentedSystemIdentity,
@@ -524,7 +533,7 @@ export function sameDocumentedSystem(
     return false;
   }
   if (intersects(left.slugs, right.slugs)) return true;
-  if (leftClass !== rightClass) return false;
+  if (!classesCompatible(leftClass, rightClass)) return false;
   if (intersects(left.endpoints, right.endpoints)) return true;
   if (intersects(left.hosts, right.hosts) && compatibleNameKeys(left.nameKeys, right.nameKeys)) {
     return true;

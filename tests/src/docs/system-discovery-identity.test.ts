@@ -28,7 +28,7 @@ describe('documentation system identity convergence', (): void => {
     });
 
     expect(sameSystemForHostlessMention('analytics', mention, 'analytics', documented)).toBe(true);
-    expect(sameSystemForHostlessMention('other', mention, 'analytics', documented)).toBe(false);
+    expect(sameSystemForHostlessMention('chat', mention, 'analytics', documented)).toBe(false);
     expect(
       sameSystemForHostlessMention(
         'analytics',
@@ -40,6 +40,20 @@ describe('documentation system identity convergence', (): void => {
         documented,
       ),
     ).toBe(false);
+  });
+
+  it('lets a bare mention the charter could not classify join the qualified documented system', (): void => {
+    const mention = documentedSystemIdentity({
+      name: 'Northstar',
+      quotes: ["Northstar has the accounts but we've got no approved way in yet."],
+    });
+    const documented = documentedSystemIdentity({
+      name: 'Northstar CRM',
+      quotes: ['Internal account and opportunity records used during close.'],
+    });
+
+    expect(sameSystemForHostlessMention('other', mention, 'crm', documented)).toBe(true);
+    expect(sameSystemForHostlessMention('chat', mention, 'crm', documented)).toBe(false);
   });
 
   it('keeps a qualified manager mention apart from a bare documented product', (): void => {
