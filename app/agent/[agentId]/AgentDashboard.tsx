@@ -1,5 +1,6 @@
 'use client';
 
+import { QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
@@ -1485,6 +1486,12 @@ function WorkItemCard({
     item.skipReason,
   );
   const retryBlocked = needsProviderReconciliation && !item.providerReconciliation;
+  // The quality-fit filter's skip is the agent's judgement, not the manager's;
+  // Retry hands the item back with that filter waived.
+  const qualityFitSkipped =
+    item.state === 'skipped' &&
+    typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string' &&
+    ((verdict as { reason: string }).reason).startsWith(QUALITY_FIT_SKIP_PREFIX);
   const awaitingSurface =
     verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
@@ -1670,7 +1677,7 @@ function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' ? (
+      {item.state === 'failed' || qualityFitSkipped ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
@@ -1697,6 +1704,12 @@ function WorkItemCard({
           {retryBlocked ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry remains disabled until provider reconciliation is recorded.
+            </p>
+          ) : null}
+          {qualityFitSkipped ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry re-evaluates this item without the quality-fit filter; its plan still needs
+              your approval.
             </p>
           ) : null}
         </div>

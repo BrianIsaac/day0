@@ -238,6 +238,7 @@ export const evaluateWorkItem = action({
         autonomousActions: autonomousActionsOn(agent),
         surfaceMode: surfaceConfig.mode,
         surfaces,
+        qualityFitWaived: item.qualityFitWaivedAt !== undefined,
       },
       lookups,
     );

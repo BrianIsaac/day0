@@ -26,6 +26,7 @@ import {
   COLD_START_WIP_LIMIT,
   type MockAction,
   type ReplyTarget,
+  QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
 import type { DecisionKind } from '../src/work/manager-channel';
 import {
@@ -892,11 +893,18 @@ export const retryFailed = mutation({
         'retry refused because an external effect may already have landed; reconcile the provider first',
       );
     }
+    const verdict = row.verdict as { decision?: string; reason?: unknown } | undefined;
     const next: Doc<'workItems'>['state'] = row.plan
       ? 'plan-approved'
-      : (row.verdict as { decision?: string } | undefined)?.decision === 'claim'
+      : verdict?.decision === 'claim'
         ? 'claimed'
         : 'discovered';
+    // Retrying an item the quality-fit filter skipped is the manager saying the
+    // work is worth doing; the re-evaluation leaves that filter out.
+    const waivesQualityFit =
+      row.state === 'skipped' &&
+      typeof verdict?.reason === 'string' &&
+      verdict.reason.startsWith(QUALITY_FIT_SKIP_PREFIX);
     await ctx.db.patch(args.workItemId, {
       state: next,
       skipReason: undefined,
@@ -905,11 +913,17 @@ export const retryFailed = mutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
+      ...(waivesQualityFit ? { qualityFitWaivedAt: Date.now() } : {}),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.retry',
-      payload: { workItemId: args.workItemId, resumeState: next, fromState: row.state },
+      payload: {
+        workItemId: args.workItemId,
+        resumeState: next,
+        fromState: row.state,
+        ...(waivesQualityFit ? { waived: 'quality-fit' } : {}),
+      },
       createdAt: Date.now(),
     });
     return { ok: true, resumeState: next };

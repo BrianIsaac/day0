@@ -911,6 +911,52 @@ describe('cancelling a pending plan', (): void => {
   });
 });
 
+describe('retrying an item the quality-fit filter skipped', (): void => {
+  it('records the manager waiver on the item and in the ledger', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'skipped');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        plan: undefined,
+        verdict: { decision: 'skip', reason: 'quality-fit-fail: the request is too thin' },
+        skipReason: 'quality-fit-fail: the request is too thin',
+      });
+    });
+
+    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    expect(result).toEqual({ ok: true, resumeState: 'discovered' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('discovered');
+    expect(row.skipReason).toBeUndefined();
+    expect(typeof row.qualityFitWaivedAt).toBe('number');
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    expect(retries.map((event) => event.payload)).toEqual([
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'quality-fit' },
+    ]);
+  });
+
+  it('does not waive the filter for a run that failed for another reason', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { plan: undefined, skipReason: 'the model returned no plan' });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.qualityFitWaivedAt).toBeUndefined();
+  });
+});
+
 describe('the exact-action gate', (): void => {
   it('holds an executing run with its literal actions and run id', async (): Promise<void> => {
     useSurfaceMode('real');

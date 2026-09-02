@@ -420,6 +420,12 @@ export default defineSchema({
     managerFeedback: v.optional(
       v.object({ reason: v.string(), at: v.number(), runId: v.optional(v.id('events')) }),
     ),
+    /**
+     * When the manager retried this item after the quality-fit filter skipped
+     * it. The retry is the manager's decision that the work is worth doing, so
+     * the next evaluation leaves that filter out; plan approval still applies.
+     */
+    qualityFitWaivedAt: v.optional(v.number()),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),
