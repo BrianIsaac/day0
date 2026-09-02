@@ -1181,6 +1181,14 @@ export function cancelledReason(item: {
 }
 
 /** Show a manager's full rejection while keeping later failure reasons current. */
+/** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
+export function clipLedgerRow(text: string | undefined): string | undefined {
+  if (text === undefined || text.length <= LEDGER_ROW_LENGTH) return text;
+  return `${text.slice(0, LEDGER_ROW_LENGTH - 1)}…`;
+}
+
+const LEDGER_ROW_LENGTH = 180;
+
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
@@ -1619,7 +1627,7 @@ function WorkItemCard({
             {landedActions.map((a, i) => (
               <li key={i}>
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
-                {a.effect ?? '(applied)'}
+                {clipLedgerRow(a.effect) ?? '(applied)'}
                 {a.providerId ? (
                   <span className="ml-1 font-mono text-[10px] text-[var(--color-muted)]">
                     id {a.providerId}
@@ -1757,7 +1765,7 @@ export function ProviderReconciliationControl({
                 {entry.phase} action {entry.actionIndex} · {entry.tool} ·{' '}
                 {entry.outcome === 'outcome-unknown' ? 'outcome unknown' : 'landed'}
               </span>
-              {entry.effect ? <span className="block">{entry.effect}</span> : null}
+              {entry.effect ? <span className="block">{clipLedgerRow(entry.effect)}</span> : null}
               {entry.reason ? <span className="block">{entry.reason}</span> : null}
               {entry.providerId ? (
                 <span className="block font-mono text-[10px] text-[var(--color-muted)]">

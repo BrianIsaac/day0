@@ -3,11 +3,13 @@ import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
   createMastraMcpClient,
+  EFFECT_LENGTH,
   interpretToolResult,
   McpAdapter,
   type McpClientLike,
   type McpClientOptions,
 } from '../../../src/surfaces/mcp';
+import { READ_EFFECT_LENGTH } from '../../../src/surfaces/mock';
 import {
   BROWSER_DRIVER_ABSENT,
   BROWSER_TOOLS,
@@ -119,6 +121,34 @@ function adapter(
 }
 
 describe('MCP adapter', (): void => {
+  it('keeps a read result whole for the closing phase and clips a write to the short effect', async (): Promise<void> => {
+    const long = JSON.stringify({
+      issues: Array.from({ length: 40 }, (_, index) => ({
+        id: `T-${index}`,
+        title: `Ticket ${index} with a title long enough to matter`,
+        state: 'Todo',
+      })),
+    });
+    const client = fakeClient({
+      linear_list_issues: async (): Promise<unknown> => ({ content: [{ type: 'text', text: long }] }),
+      linear_save_comment: async (): Promise<unknown> => ({ content: [{ type: 'text', text: long }] }),
+    });
+    const listCall: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'list_issues', toolArgsJson: JSON.stringify({ team: 'T' }) },
+    };
+
+    const read = await adapter(client).apply(ctx, run, listCall, 0, 'wi:run:0');
+    const write = await adapter(client).apply(ctx, run, commentCall, 1, 'wi:run:1');
+
+    expect(read.ok).toBe(true);
+    expect(read.effect?.length).toBeGreaterThan(EFFECT_LENGTH);
+    expect(read.effect?.length).toBeLessThanOrEqual(READ_EFFECT_LENGTH);
+    expect(read.effect).toContain('"state":"Todo"}]}');
+    expect(write.ok).toBe(true);
+    expect(write.effect?.length).toBeLessThanOrEqual(EFFECT_LENGTH);
+  });
+
   it('calls the allowlisted tool with the bearer from decrypt and disconnects', async (): Promise<void> => {
     const client = fakeClient({
       linear_save_comment: async (): Promise<unknown> => ({

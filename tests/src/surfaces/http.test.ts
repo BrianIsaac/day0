@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
-import { HttpAdapter, HTTP_TIMEOUT_MS, providerIdFrom, resolveRequestUrl } from '../../../src/surfaces/http';
+import {
+  EFFECT_LENGTH,
+  HttpAdapter,
+  HTTP_TIMEOUT_MS,
+  providerIdFrom,
+  resolveRequestUrl,
+} from '../../../src/surfaces/http';
+import { READ_EFFECT_LENGTH } from '../../../src/surfaces/mock';
 import type {
   AdapterRun,
   BeforeSurfaceTransport,
@@ -78,6 +85,33 @@ function adapter(
 }
 
 describe('HTTP adapter', (): void => {
+  it('keeps a read response whole for the closing phase and clips a write to the short effect', async (): Promise<void> => {
+    const long = JSON.stringify({
+      ok: true,
+      members: Array.from({ length: 60 }, (_, index) => ({ id: `U${index}`, name: `member ${index}` })),
+    });
+    const get: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'GET',
+        path: '/auth.test',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+      },
+    };
+    const respond = (): Response => new Response(long, { status: 200 });
+
+    const read = await adapter(fakeFetch(respond)).apply(ctx, run, get, 0, 'wi:run:0');
+    const write = await adapter(fakeFetch(respond)).apply(ctx, run, post, 1, 'wi:run:1');
+
+    expect(read.ok).toBe(true);
+    expect(read.effect?.length).toBeGreaterThan(EFFECT_LENGTH);
+    expect(read.effect?.length).toBeLessThanOrEqual(READ_EFFECT_LENGTH);
+    expect(read.effect).toContain('"name":"member 59"}]}');
+    expect(write.ok).toBe(true);
+    expect(write.effect?.length).toBeLessThanOrEqual(EFFECT_LENGTH);
+  });
+
   it('injects the secret, posts to the endpoint path and records the provider ts', async (): Promise<void> => {
     const fetchImpl = fakeFetch(
       (): Response =>

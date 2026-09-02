@@ -22,6 +22,15 @@ export const MOCK_TOOLS = [
  * Returns:
  *   Flattened and clipped effect text.
  */
+/**
+ * How much of a read's provider result the ledger keeps. A read exists for the
+ * closing phase to author from, so its result must survive the ledger whole
+ * enough to be quoted: a ticket read cut before its state field, or a comment
+ * list cut after its first entry, leaves that phase nothing to work with.
+ * Writes keep the short effect line; their result is the provider id.
+ */
+export const READ_EFFECT_LENGTH = 4_000;
+
 export function clipEffect(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
