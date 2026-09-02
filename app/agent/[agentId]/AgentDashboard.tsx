@@ -1002,7 +1002,9 @@ function WorkQueue({
               autonomousActions={autonomousActions}
               onApprovePlan={() => approvePlan({ workItemId: item._id })}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
-              onRetryFailed={() => retryFailed({ workItemId: item._id })}
+              onRetryFailed={(feedback) =>
+                retryFailed({ workItemId: item._id, ...(feedback?.trim() ? { feedback } : {}) })
+              }
               onReconcileFailed={(confirmed) =>
                 reconcileFailed({ workItemId: item._id, confirmed })
               }
@@ -1462,7 +1464,7 @@ function WorkItemCard({
   autonomousActions: boolean;
   onApprovePlan: () => void;
   onCancelPlan: () => void;
-  onRetryFailed: () => void;
+  onRetryFailed: (feedback?: string) => void;
   onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
   onRejectActions: (reason: string) => Promise<unknown>;
@@ -1500,6 +1502,7 @@ function WorkItemCard({
     item.state === 'skipped' &&
     typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string' &&
     ((verdict as { reason: string }).reason).startsWith(QUALITY_FIT_SKIP_PREFIX);
+  const [retryNote, setRetryNote] = useState('');
   const awaitingSurface =
     verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
@@ -1702,8 +1705,18 @@ function WorkItemCard({
               onConfirm={onReconcileFailed}
             />
           ) : null}
+          {item.state === 'failed' ? (
+            <input
+              type="text"
+              value={retryNote}
+              onChange={(event) => setRetryNote(event.target.value)}
+              placeholder="note for the retry (optional): answer what the agent asked, or say what to change"
+              aria-label="note for the retry"
+              className="w-full mb-1.5 px-2 py-1 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
+            />
+          ) : null}
           <button
-            onClick={onRetryFailed}
+            onClick={() => onRetryFailed(retryNote)}
             disabled={retryBlocked}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >

@@ -942,6 +942,32 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
     ]);
   });
 
+  it('carries a note given with Retry to the retried run as manager feedback', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { skipReason: 'the closing phase asked the manager for evidence' });
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: '  The three checks are done;   propose Done.  ' });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.managerFeedback?.reason).toBe('The three checks are done; propose Done.');
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    expect(retries.map((event) => event.payload)).toEqual([
+      { workItemId, resumeState: 'plan-approved', fromState: 'failed', feedback: true },
+    ]);
+  });
+
   it('does not waive the filter for a run that failed for another reason', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

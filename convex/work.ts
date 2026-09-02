@@ -878,9 +878,13 @@ export const approvePlan = mutation({
 });
 
 export const retryFailed = mutation({
-  args: { workItemId: v.id('workItems') },
+  args: { workItemId: v.id('workItems'), feedback: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    // A note given with Retry is the manager's answer to what the last run
+    // asked, or a direction for the next one; it reaches the retried run the
+    // way a rejection reason does.
+    const feedback = args.feedback?.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
     const recoverable = ['failed', 'skipped', 'cancelled'];
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
@@ -914,6 +918,7 @@ export const retryFailed = mutation({
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
       ...(waivesQualityFit ? { qualityFitWaivedAt: Date.now() } : {}),
+      ...(feedback ? { managerFeedback: { reason: feedback, at: Date.now() } } : {}),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -923,6 +928,7 @@ export const retryFailed = mutation({
         resumeState: next,
         fromState: row.state,
         ...(waivesQualityFit ? { waived: 'quality-fit' } : {}),
+        ...(feedback ? { feedback: true } : {}),
       },
       createdAt: Date.now(),
     });
