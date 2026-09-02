@@ -361,21 +361,38 @@ function transportNameKey(name: string): string {
   return productWords.length > 0 ? productWords.join('-') : words.join('-');
 }
 
+/**
+ * Reduce a documented URL to the origin and path that identify a system.
+ *
+ * Credentials, query and fragment are dropped by rebuilding the string from
+ * the parsed parts rather than by assigning the URL setters: the Convex
+ * isolate runtime does not implement `username`, `password` or `search`
+ * assignment, and this helper runs inside mutations there.
+ *
+ * Args:
+ *   raw: A URL as it appeared in documentation.
+ *
+ * Returns:
+ *   `protocol//host/path` with no trailing slash, or undefined when the
+ *   string does not parse as a URL.
+ */
+function canonicalEndpoint(raw: string): string | undefined {
+  try {
+    const endpoint = new URL(raw);
+    const pathname = endpoint.pathname.replace(/\/+$/, '') || '/';
+    return `${endpoint.protocol}//${endpoint.host}${pathname}`.replace(/\/$/, '');
+  } catch {
+    // A malformed string is not an identity signal.
+    return undefined;
+  }
+}
+
 function documentedEndpoints(values: readonly string[]): string[] {
   const endpoints = new Set<string>();
   for (const value of values) {
     for (const raw of value.match(DOCUMENTED_URL) ?? []) {
-      try {
-        const endpoint = new URL(raw);
-        endpoint.username = '';
-        endpoint.password = '';
-        endpoint.search = '';
-        endpoint.hash = '';
-        endpoint.pathname = endpoint.pathname.replace(/\/+$/, '') || '/';
-        endpoints.add(endpoint.toString().replace(/\/$/, ''));
-      } catch {
-        // A malformed string is not an identity signal.
-      }
+      const endpoint = canonicalEndpoint(raw);
+      if (endpoint !== undefined) endpoints.add(endpoint);
     }
   }
   return [...endpoints].sort();

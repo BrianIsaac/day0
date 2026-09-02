@@ -272,3 +272,42 @@ describe('documentation system identity convergence', (): void => {
     ).toMatchObject({ transportOnly: true });
   });
 });
+
+describe('documented endpoint canonicalisation', (): void => {
+  it('drops credentials, query and fragment from a documented URL', (): void => {
+    const identity = documentedSystemIdentity({
+      name: 'Linear',
+      quotes: [
+        'Endpoint: https://svc:secret@mcp.linear.app/mcp/?x=1#frag and the tile at http://looker-tile:8080/',
+      ],
+    });
+    expect(identity.endpoints).toEqual(['http://looker-tile:8080', 'https://mcp.linear.app/mcp']);
+    expect(identity.hosts).toEqual(['looker-tile:8080', 'mcp.linear.app']);
+  });
+
+  it('runs where the URL credential setters are not implemented, as in the Convex isolate', (): void => {
+    const RealURL = globalThis.URL;
+    class IsolateURL extends RealURL {
+      override set username(_value: string) {
+        throw new Error('Not implemented: set username for URL');
+      }
+      override set password(_value: string) {
+        throw new Error('Not implemented: set password for URL');
+      }
+      override set search(_value: string) {
+        throw new Error('Not implemented: set search for URL');
+      }
+      override set hash(_value: string) {
+        throw new Error('Not implemented: set hash for URL');
+      }
+    }
+    globalThis.URL = IsolateURL as typeof URL;
+    try {
+      expect(
+        documentedSystemIdentity({ name: 'Slack', quotes: ['https://slack.com/api/'] }).endpoints,
+      ).toEqual(['https://slack.com/api']);
+    } finally {
+      globalThis.URL = RealURL;
+    }
+  });
+});
