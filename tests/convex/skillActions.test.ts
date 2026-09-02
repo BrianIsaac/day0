@@ -1,7 +1,12 @@
 /** @vitest-environment node */
 
 import { describe, expect, it, vi } from 'vitest';
-import { AUTHOR_SYSTEM, buildAuthorPrompt } from '../../convex/skillActions';
+import {
+  AUTHOR_SYSTEM,
+  buildAuthorPrompt,
+  verifyAuthoredSkill,
+} from '../../convex/skillActions';
+import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -141,5 +146,67 @@ describe('skill author prompts', (): void => {
     expect(prompt).toContain('preserve its tool name, argument names and literal values exactly');
     expect(prompt).toContain('never invent a selector, driver reference or path');
     expect(prompt).not.toContain('runbooks/how-to-post-slack.md');
+  });
+
+  it('rejects a non-program smoke test before invoking a sandbox', async (): Promise<void> => {
+    const verify = vi.fn<() => Promise<SkillSandboxRun>>();
+
+    const result = await verifyAuthoredSkill(
+      {
+        skillName: 'update-spreadsheet',
+        skillBody: '# Update spreadsheet',
+        smokeTest: 'Success: Row appended to spreadsheet',
+      },
+      verify,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('not valid Python 3.12 source'),
+    });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it('passes a valid Python smoke program to verification', async (): Promise<void> => {
+    const sandboxResult: SkillSandboxRun = {
+      backend: 'local',
+      sandboxId: 'local:run-1',
+      stdout: 'success actions\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+    const verify = vi.fn(async (): Promise<SkillSandboxRun> => sandboxResult);
+    const smokeTest = [
+      'def run(inputs: dict) -> dict:',
+      '    return {"actions": inputs["actions"]}',
+      '',
+      'result = run({"actions": []})',
+      'print("success", result["actions"])',
+    ].join('\n');
+
+    await expect(
+      verifyAuthoredSkill(
+        { skillName: 'update-spreadsheet', skillBody: '# Update spreadsheet', smokeTest },
+        verify,
+      ),
+    ).resolves.toEqual({ ok: true, result: sandboxResult });
+    expect(verify).toHaveBeenCalledOnce();
+  });
+
+  it('tells the next authoring attempt why the prior smoke source was rejected', (): void => {
+    const prompt = buildAuthorPrompt(
+      {
+        ...skill,
+        previousAuthoringFailure:
+          'smoke test rejected before sandbox: not valid Python 3.12 source',
+      },
+      [],
+      now,
+    );
+
+    expect(prompt).toContain('Previous authoring attempt failed before registration');
+    expect(prompt).toContain('not valid Python 3.12 source');
+    expect(prompt).toContain('Correct that failure in this attempt');
   });
 });

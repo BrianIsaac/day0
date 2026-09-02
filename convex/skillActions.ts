@@ -2,11 +2,16 @@
 
 import { v } from 'convex/values';
 import { z } from 'zod';
+import { parser as pythonParser } from '@lezer/python';
 import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
-import { authorAndVerifySkill } from '../src/lib/skill-sandbox';
+import {
+  authorAndVerifySkill,
+  type AuthorSkillArgs,
+  type SkillSandboxRun,
+} from '../src/lib/skill-sandbox';
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import type { SurfaceRecord } from '../src/surfaces/types';
@@ -69,6 +74,7 @@ export interface AuthorPromptSkill {
   rationale?: string;
   requiredScopes?: string[];
   targetSurface?: string;
+  previousAuthoringFailure?: string;
 }
 
 /** Redacted documentation evidence that may ground one authored skill. */
@@ -153,6 +159,14 @@ export function buildAuthorPrompt(
     ...(skill.targetSurface ? [`Target surface: ${skill.targetSurface}`] : []),
     ...(surfaceGuidance ? ['', surfaceGuidance] : []),
     ...(runbookGuidance ? ['', runbookGuidance] : []),
+    ...(skill.previousAuthoringFailure
+      ? [
+          '',
+          'Previous authoring attempt failed before registration:',
+          skill.previousAuthoringFailure,
+          'Correct that failure in this attempt; do not repeat the rejected output.',
+        ]
+      : []),
     '',
     'Author SKILL.md and smoke.py now.',
   ].join('\n');
@@ -160,8 +174,41 @@ export function buildAuthorPrompt(
 
 const authorSchema = z.object({
   body: z.string(),
-  smokeTest: z.string(),
+  smokeTest: z
+    .string()
+    .describe(
+      'Complete Python 3.12 source of smoke.py: define run(inputs: dict) -> dict, call it with representative input, and print a concise success line from its output.',
+    ),
 });
+
+type SkillVerifier = (args: AuthorSkillArgs) => Promise<SkillSandboxRun>;
+
+function smokeTestPreflightReason(source: string): string | undefined {
+  const tree = pythonParser.parse(source);
+  const cursor = tree.cursor();
+  do {
+    if (cursor.type.isError) {
+      return 'smoke test is not valid Python 3.12 source: its syntax does not parse';
+    }
+  } while (cursor.next());
+  if (!/^\s*def\s+run\s*\(\s*inputs\s*:\s*dict\s*\)\s*->\s*dict\s*:/m.test(source)) {
+    return 'smoke test is not valid Python 3.12 source: it must define run(inputs: dict) -> dict';
+  }
+  if (!/\bprint\s*\(/.test(source)) {
+    return 'smoke test is not valid Python 3.12 source: it must print a success line';
+  }
+  return undefined;
+}
+
+/** Reject malformed model output before either verification backend spends a run. */
+export async function verifyAuthoredSkill(
+  args: AuthorSkillArgs,
+  verify: SkillVerifier = authorAndVerifySkill,
+): Promise<{ ok: true; result: SkillSandboxRun } | { ok: false; reason: string }> {
+  const reason = smokeTestPreflightReason(args.smokeTest);
+  if (reason) return { ok: false, reason: `smoke test rejected before sandbox: ${reason}` };
+  return { ok: true, result: await verify(args) };
+}
 
 /**
  * What a run reports when the skill it was authoring is no longer its own. The
@@ -221,7 +268,10 @@ export const authorAndRegisterSkill = action({
       { agentId: skill.agentId },
     );
     const userPrompt = buildAuthorPrompt(
-      skill,
+      {
+        ...skill,
+        previousAuthoringFailure: skill.verificationLog,
+      },
       surfaceRows.map(toSurfaceRecord),
       Date.now(),
       pageRows,
@@ -272,11 +322,19 @@ export const authorAndRegisterSkill = action({
     // different things to a boss depending on which sandbox said so.
     let backend = 'the sandbox';
     try {
-      const result = await authorAndVerifySkill({
+      const verification = await verifyAuthoredSkill({
         skillName: skill.name,
         skillBody: body,
         smokeTest,
       });
+      if (!verification.ok) {
+        return await recordAuthoringFailure(ctx, args.skillId, runId, {
+          rowReason: verification.reason,
+          reason: verification.reason,
+          eventType: 'skill.author-failed',
+        });
+      }
+      const result = verification.result;
       if (result.skipped) {
         skipReason = result.skipReason ?? 'no sandbox available';
         verificationLog = `sandbox verification skipped - ${skipReason}`;
