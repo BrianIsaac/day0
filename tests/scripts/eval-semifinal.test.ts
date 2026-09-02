@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { loadEvaluationTasks } from '../../evaluation/graders';
 import {
   assertLocalEvaluationSandbox,
+  evaluationTaskTiming,
   isFatalEvaluationInfrastructureError,
   parseCliOptions,
   selectEvaluationTasks,
@@ -78,6 +79,21 @@ describe('semi-final evaluation CLI', (): void => {
       'requires the local skill sandbox',
     );
     expect(() => assertLocalEvaluationSandbox('local')).not.toThrow();
+  });
+
+  it('counts a completed step after the deadline and records its overrun separately', (): void => {
+    expect(evaluationTaskTiming('completed', 1_000, 900)).toEqual({
+      timedOut: false,
+      deadlineOverrunMs: 100,
+    });
+    expect(evaluationTaskTiming('executing', 1_001, 900)).toEqual({
+      timedOut: true,
+      deadlineOverrunMs: 101,
+    });
+    expect(evaluationTaskTiming('failed', 850, 900)).toEqual({
+      timedOut: false,
+      deadlineOverrunMs: 0,
+    });
   });
 });
 
