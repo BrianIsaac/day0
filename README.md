@@ -14,9 +14,17 @@ Putting an agent into a real team is an engineering project. Someone defines the
 
 Day0 starts a step earlier. It is deployed empty. Everything it becomes comes out of a conversation with the person who hired it.
 
+## Live demo
+
+[`day0-olive.vercel.app`](https://day0-olive.vercel.app) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It uses the deployment's `OPENAI_MODEL`; the code default is `gpt-5.5`, and the operator can override it in the deployment environment, for example to `gpt-5.6`. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
+
+- Sign in with Clerk and deploy an agent.
+- Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
+- Watch the work queue advance and the Skills panel show the capabilities it proposes, verifies and registers.
+
 ## Contents
 
-**Start here** · [What is unusual about it](#what-is-unusual-about-it) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
+**Start here** · [Live demo](#live-demo) · [What is unusual about it](#what-is-unusual-about-it) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
 
 **Run it** · [No accounts](#run-it-with-no-accounts) · [With an OpenAI key](#run-it-with-an-openai-key) · [On your own systems](#run-it-in-real-mode) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
 
@@ -42,7 +50,7 @@ From that conversation the agent drafts a charter - its scope, its boundaries, t
 
 ### It finds its own work
 
-Nothing hands it a queue. The agent reads its work environment and proposes what to pick up. Each candidate is scored against seven criteria - eligibility, permission, ownership, quality fit, value, risk and capacity - and then moves through an eleven-state lifecycle in which a human approves the plan before anything executes.
+Nothing hands it a queue. The agent reads its work environment and proposes what to pick up. Each candidate is scored against seven criteria - eligibility, permission, ownership, quality fit, value, risk and capacity - and then moves through a twelve-state lifecycle in which a human approves the plan before anything executes.
 
 ![The real-mode work queue after intake, showing seven discovered items and the completed plan for a close-week reminder](.github/images/work-queue.webp)
 
@@ -56,7 +64,7 @@ A work item that matches no registered skill returns `needs-skill` rather than b
 
 Day0 is a working demonstration rather than a product and has no users. Its measured claim is deliberately narrow: the repository ships a [controlled, programmatically graded comparison](evaluation/README.md) of onboarded Day0 versus an ordinary agent on the same 15 unfamiliar mock-office tasks. It does not claim that this benchmark predicts every real team's work.
 
-The agent works inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue, a social feed - seeded per agent. There are no connectors to real corporate systems, and that is deliberate: the mock environment is what makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust. Everything around it is real - the model calls, the sandbox, the state machine, the approval gates.
+The reproducible demo and controlled evaluation work inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue and a social feed - seeded per agent. That environment makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust; the model calls, sandbox, state machine and approval gates are still real. A separate local-only real mode reads linked team documentation, discovers the systems it names and connects to them only through visible approval gates. It is documented in [Run it in real mode](#run-it-in-real-mode).
 
 The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible endpoint, so the full loop runs against a model on your own machine with no account anywhere and nothing metered. The sandbox that verifies an authored skill is bundled too, so skill creation finishes on that route rather than stopping one step short of a callable skill. Voice and web research are optional third-party services; without their keys the loop degrades visibly rather than failing silently. [Three ways to run it](#local-dev) are set out below, and `pnpm check:setup` reports which of them the machine you are on is currently set up for.
 
@@ -72,7 +80,7 @@ Three ways to run it. They disagree about two things only: who runs the model, a
 
 The first two are the same stack, and differ only in where the model lives: a self-hosted Convex backend in Docker and no-auth dev mode, where one fixed local user owns every row and a request from any other machine is refused by design. The third replaces both halves with hosted ones and gives you a user per Clerk sign-in.
 
-All three need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible chat-completions endpoint - keyless local runtimes included - which is what the first route rests on and what lets the other two point anywhere else.
+All three need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. With `OPENAI_BASE_URL` unset, the shared model route uses the OpenAI Responses API at `api.openai.com`; setting a custom `OPENAI_BASE_URL` switches it to that endpoint's OpenAI-compatible chat-completions API, including keyless local runtimes. Both arms of an evaluation bed use the same selected route.
 
 All three also need somewhere to verify an authored skill, and that is bundled as well: `pnpm sandbox:up` starts a local sandbox on any of them, and Daytona is the hosted alternative. Only Exa is genuinely account-only, and its absence costs the good-habits research rather than the loop.
 
@@ -125,7 +133,7 @@ Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and appro
 
 Approving the charter is what fills the work queue, and how far the queue then gets is decided by the charter you just approved rather than by anything in this file. Each item is evaluated against the skills the agent has and the permissions it was deployed with, and only a `claim` verdict goes on to a plan and an execution. Deploy seeds five read scopes, and the one skill that ships is `see-internal-docs`, so the work that runs immediately is the work that can be answered out of the internal docs. A `needs-skill` verdict is the interesting one and it now finishes on this route: the agent proposes a skill, you approve it, the local sandbox runs its smoke test, and on exit 0 with output the skill registers and the work item that asked for it goes back in the queue and completes. `defer - awaiting-permission` is the verdict that still stops where it stops - it names the scope it wanted and then waits, with nothing in the UI that grants one.
 
-How fast that is has nothing to do with Day0. The agent core makes ordinary OpenAI chat-completions calls, so the wait you get is a property of the endpoint you pointed it at: the same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, and a hosted endpoint answers as fast as the provider does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
+How fast that is has nothing to do with Day0. This route sets a custom `OPENAI_BASE_URL`, so the agent core makes ordinary OpenAI-compatible chat-completions calls; the wait is a property of the endpoint you pointed it at. The same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, while the OpenAI-key route uses the Responses API and answers as fast as OpenAI does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
 
 The bundled server starts with a 16,384-token context because Day0's executor must see the approved charter, discovered documentation, runbook guidance, action schema and work request together. Ollama's smaller server default truncates that prompt from the head without failing the request, which can leave a local model holding the right tool names but not the instructions and evidence that determine their exact arguments. Set `OLLAMA_CONTEXT_LENGTH` higher only when the model supports it and the additional KV cache fits the machine; lowering it below 16,384 is a deliberate quality trade-off, not only a memory optimisation.
 
@@ -424,7 +432,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | Clerk dashboard keys |
 | `CLERK_JWT_ISSUER_DOMAIN` | Issuer URL of the Clerk JWT template named `convex` (also push to Convex env) |
 | `OPENAI_API_KEY`, `OPENAI_MODEL` | The model. Default model `gpt-5.5` on OpenAI. A key is needed only when you use OpenAI |
-| `OPENAI_BASE_URL` | Any OpenAI-compatible chat-completions endpoint, which is what makes the account-free path work. Unset means `https://api.openai.com/v1`. This is the address **Next** dials |
+| `OPENAI_BASE_URL` | Set this to use any OpenAI-compatible chat-completions endpoint, which is what makes the account-free path work. Leave it unset to use `api.openai.com` through the OpenAI Responses API. This is the address **Next** dials when set |
 | `CONVEX_OPENAI_BASE_URL` | The same endpoint as the **Convex deployment** must dial it, when that differs. It does with a self-hosted backend, whose Node actions run inside a container. Empty pushes `OPENAI_BASE_URL` unchanged |
 | `OPENAI_JSON_MODE` | `auto` (default), `native` or `prompt`. `auto` starts on `response_format` and falls back to prompt injection only when dropping the parameter is what fixed it |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | ElevenLabs Conversational AI. Optional - without them the mode picker greys voice out and chat runs the identical 1:1 |
@@ -537,7 +545,7 @@ Discipline:
 - Voice: friendly, direct, low-affect. Speak the way a competent new hire would on day one.
 ```
 
-The chat-mode prompt for GPT-5.5 streaming lives in code at `app/api/voice/chat/route.ts` and pulls the same seven topics from `src/agent/day-one-prompts.ts`. If you change the topics in one place, change them in the other.
+The configured-model chat prompt lives in `app/api/voice/chat/route.ts` and pulls the same seven topics from `src/agent/day-one-prompts.ts`. If you change the topics in one place, change them in the other.
 
 ### Two setups, not one
 
@@ -556,15 +564,15 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Runtime flow
 
-1. **Sign in** (Clerk modal, or nothing at all in no-auth dev mode) and **deploy** on `/`. `api.agents.deploy` inserts the agent and seeds five read-only permission grants. `POST /api/seed` (non-blocking) installs the builtin `see-internal-docs` skill and the mock environment. Work items are not seeded here - they are generated from the approved charter, so the queue reflects the role the boss actually described.
+1. **Sign in** (Clerk modal, or nothing at all in no-auth dev mode) and **deploy** on `/`. `api.agents.deploy` inserts the agent and seeds five read-only permission grants. `POST /api/seed` (non-blocking) installs the builtin `see-internal-docs` skill and, in mock mode only, the mock environment. Work items are not seeded here - mock work is generated from the approved charter, while real work arrives from connected surfaces.
 2. **Mode picker** on `/agent/[agentId]` — voice or chat.
    - Voice: `GET /api/voice/elevenlabs/start` returns a signed URL; ElevenLabs's post-call webhook hits `POST /api/voice/elevenlabs/webhook`.
-   - Chat: `POST /api/voice/chat` streams GPT-5.5 until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
+   - Chat: `POST /api/voice/chat` streams the configured model until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
 3. **Charter synthesis** — `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
-4. **Approval** — boss approves; `api.charters.approve` flips state to `active` and triggers `postCharterApproval` (Exa + GPT-5.5 → `## Good-habits memory` block in `AGENTS.md`).
-5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item. Claimed items get a plan (`draftPlan`), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. **Those three calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
-6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs GPT-5.5 to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** non-empty stdout, whichever ran. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
-7. **Reset** — `api.reset.deleteMyData` wipes every row across the 15 per-agent tables.
+4. **Approval** — boss approves; `api.charters.approve` flips state to `active` and triggers `postCharterApproval` (Exa + the configured model → `## Good-habits memory` block in `AGENTS.md`).
+5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item. Claimed items get a plan (`draftPlan`), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Run it in real mode](#run-it-in-real-mode). **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
+6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.5` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** non-empty stdout, whichever ran. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
+7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 16 explicitly enumerated related tables. Owner-level documentation locations remain unless the reset request sets `alsoUnlinkDocumentation`.
 
 ## Stack
 
@@ -573,7 +581,7 @@ It resolves values the way the running app does, which matters more than it soun
 | Frontend | Next.js 16 App Router, React 19, Tailwind v4, TypeScript 6 |
 | Realtime backend | Convex 1.37 — DB, queries, mutations, Node actions, scheduler |
 | Auth | Clerk (`@clerk/nextjs` 7) with `ConvexProviderWithClerk` |
-| LLMs | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.5`. Streaming chat via AI SDK 6. Raw OpenAI SDK 6 available. |
+| LLMs | Mastra (`@mastra/core` 1.32) + `@ai-sdk/openai` 3, default model `gpt-5.5`. Hosted OpenAI uses Responses; custom base URLs use chat completions. Streaming chat via AI SDK 6; raw OpenAI SDK 6 available. |
 | Voice | ElevenLabs Conversational AI (`@elevenlabs/elevenlabs-js` 2.46, `@elevenlabs/react` 1.5) |
 | Search | Exa (`exa-js` 2) for good-habits role research |
 | Sandboxes | `python:3.12-slim` for skill smoke tests, in a [bundled local sandbox](#the-local-skill-sandbox) or in Daytona (`@daytona/sdk`) |
@@ -586,18 +594,21 @@ It resolves values the way the running app does, which matters more than it soun
 | Route | File | Purpose |
 |---|---|---|
 | `/` | `app/page.tsx` | Landing (signed-out) + deploy/list/reset dashboard (signed-in) |
-| `/agent/[agentId]` | `app/agent/[agentId]/page.tsx` | Agent dashboard — charter card, mode picker, work queue, mock environment |
+| `/documentation` | `app/documentation/page.tsx` | Owner-level documentation locations: link, sync, rotate credentials, revoke and unlink; linking is local real mode only |
+| `/agent/[agentId]` | `app/agent/[agentId]/page.tsx` | Agent dashboard — charter, mode picker, work queue, skills, supervision and mock/real work surfaces |
 | `/sign-in/[[...sign-in]]`, `/sign-up/[[...sign-up]]` | Clerk catch-all routes | Sign-in / sign-up |
 
 ### API
 
 | Route | What it does |
 |---|---|
-| `POST /api/seed` | Calls `api.seed.seedDemo` — installs builtin skill, 3 work items, mock environment for an agent |
+| `POST /api/dev-auth/token` | Exchanges the local unlock cookie for a short-lived Convex JWT in no-auth development mode |
+| `GET /api/oauth/slack` | Validates the signed, expiring, single-use Slack install state, exchanges the code and returns to the Surfaces tab |
+| `POST /api/seed` | Calls `api.seed.seedDemo` — installs the builtin skill and, in mock mode only, the mock environment; it never seeds work items |
 | `GET /api/voice/elevenlabs/start` | Returns ElevenLabs signed URL for the Day-1 1:1 |
 | `POST /api/voice/elevenlabs/webhook` | ElevenLabs post-call webhook → `api.onboarding.synthesiseFromTranscript` |
 | `POST /api/onboarding/synthesise` | Browser-side charter-synthesis trigger (chat mode) |
-| `POST /api/voice/chat` | Streaming GPT-5.5 chat for Day-1 1:1 in chat mode; stops on `dayOneComplete` tool call |
+| `POST /api/voice/chat` | Streaming configured-model chat for the Day-1 1:1; stops on the `dayOneComplete` tool call |
 
 ## Convex backend (`convex/`)
 
@@ -608,27 +619,59 @@ It resolves values the way the running app does, which matters more than it soun
 | `workspace.ts` | 8-file workspace storage (`AGENTS`, `SOUL`, `IDENTITY`, `USER`, `TOOLS`, `BOOTSTRAP`, `MEMORY`, `HEARTBEAT`) |
 | `voice.ts` | Voice/chat session lifecycle |
 | `events.ts` | Append-only event log |
-| `work.ts` | Work-item state machine (11 states: `discovered → claimed → plan-pending → plan-approved → executing → completed | failed`, plus `cancelled / skipped / deferred / needs-skill / failed`) |
-| `workActions.ts` (Node) | `evaluateWorkItem`, `draftPlan`, `executeApprovedPlan` |
-| `skills.ts` | Skill registry — 7-state lifecycle (`proposed → approved → authoring → verified → registered`) |
-| `skillActions.ts` (Node) | `authorAndRegisterSkill` — GPT-5.5 author + sandbox verify + register |
+| `config.ts` | Non-secret deployment configuration for the UI and harness: surface-mode label, model name, sandbox backend and browser-component presence |
+| `devAuth.ts` | Local no-auth issuer constants and the guarded custom-JWT provider built from `DEV_NO_AUTH_JWKS` |
+| `docSources.ts` | Owner-level documentation locations: link, rotate, resync, unlink, inheritance and fenced sync-generation persistence |
+| `docSyncActions.ts` (Node) | Reads sources in 25-page batches, redacts and seals credentials, mirrors safe pages to agents and schedules system discovery |
+| `documentationDiscovery.ts` | Reconciles one completed source generation into durable system discoveries and each inheriting agent's surface set |
+| `documentationDiscoveryActions.ts` (Node) | Fingerprints pages, combines structural and model-derived system candidates, then applies the fenced discovery generation |
+| `credentials.ts` | Encrypted credential metadata plus internal store/decrypt/touch and owner-visible summary/revocation operations |
+| `credentialCryptoActions.ts` (Node) | AES-256 seal/open actions isolated behind `DAY0_CREDENTIAL_KEY` |
+| `surfaces.ts` | Per-agent system discovery provenance, connection-card lifecycle, two-role approvals, credential attachment, probe state and work requeueing |
+| `orientationData.ts` | Bounded internal reads for orientation, intake and re-probe candidates |
+| `orientationActions.ts` (Node) | Reads documentation evidence, selects the MCP/API/browser/escalate ladder and files an exact connect request or absent verdict |
+| `probeActions.ts` (Node) | Local documentation-source probes for MCP and folder readers |
+| `surfaceActions.ts` (Node) | Probes approved system paths, discovers safe tool catalogues, lands credentials and periodically re-verifies connections |
+| `slackProvisionActions.ts` (Node) | Registers a dedicated Slack app from the documented manifest and completes its signed OAuth installation |
+| `intakeActions.ts` (Node) | Polls connected real surfaces in documentation-derived waterfall order and polls manager decision replies on a separate checkpoint |
+| `managerChannelActions.ts` (Node) | Sends exact plan/action decision requests and idempotent acknowledgements through the approved manager chat surface |
+| `work.ts` | Twelve-state work-item machine, including `actions-pending`, channel decisions, grants, retries and transition fencing |
+| `workActions.ts` (Node) | Evaluates, plans and executes work; real-mode output crosses the exact-action gate before provider apply |
+| `skills.ts` | Seven-state skill registry, including rejected/failed states and fenced authoring claims |
+| `skillActions.ts` (Node) | `authorAndRegisterSkill` — configured-model authoring, sandbox verification and registration |
 | `onboarding.ts` (Node) | `synthesiseFromAnswers`, `synthesiseFromTranscript`, `postCharterApproval` (Exa research + good-habits merge) |
 | `mock.ts` | Mock environment CRUD (docs, spreadsheets, slack, twitter, tickets) |
 | `mockSeed.ts` | Idempotent demo seed (4 team docs, 4 how-to guides, Q4 spreadsheet, 5 channels, 1 tweet, 3 tickets) |
 | `coworker.ts` | Auto-reply mutation scheduled 3.5–6 s after the agent posts to Slack |
-| `seed.ts` (Node) | `seedDemo` action — called by `/api/seed` |
-| `reset.ts` | `deleteMyData` — wipes all rows across all 15 per-agent tables |
-| `auth.config.ts` | Clerk JWT bridge — reads `CLERK_JWT_ISSUER_DOMAIN` from Convex env |
+| `seed.ts` (Node) | Installs the builtin docs skill; seeds the synthetic office only in mock mode and never seeds work items |
+| `evaluation.ts` | Mock-only harness mutations for task seed, timeout and authoring-cap failure, plus persisted-state snapshots |
+| `baselineActions.ts` (Node) | Deploys and runs the ordinary-agent control arm directly against the same mock adapters |
+| `revocationEvaluation.ts` | Builds deterministic real-mode containment trials and persists their transport checkpoints and outcomes |
+| `revocationEvaluationActions.ts` (Node) | Drives the live revocation trials across the credential-access and authority-recheck boundary |
+| `metrics.ts` | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger |
+| `ownership.ts` | Shared caller and per-agent ownership guards for queries, mutations and actions |
+| `crons.ts` | Recovery, documentation sync, surface re-probe, work intake and manager-decision schedules |
+| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 16 enumerated related tables; documentation unlinking is optional |
+| `auth.config.ts` | Chooses the Clerk JWT bridge or the guarded local no-auth JWT provider from deployment env |
 
 ## Schema (`convex/schema.ts`)
+
+The schema contains 23 tables: 18 carry per-agent or agent-owned runtime state, and five hold owner-level documentation and credential state.
 
 | Table | Purpose |
 |---|---|
 | `agents` | One row per deployed agent; lifecycle state |
 | `charters` | Versioned charters with approval state |
 | `workspace` | 8-file workspace storage |
+| `credentials` | Owner-scoped encrypted values, locations and OAuth grants with source, use and revocation metadata |
+| `docSources` | Linked MCP, folder, git and URL documentation locations with sync/discovery status |
+| `docSyncRuns` | Fenced source generations, safe continuation cursors and page/redaction totals |
+| `docPages` | Normalised, credential-redacted pages keyed by source and stable reference |
+| `docSystemDiscoveries` | Current and retired evidence-backed system candidates derived from each source |
+| `surfaces` | Per-agent system connection cards, approvals, paths, probe results, tool catalogues and intake checkpoints |
 | `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |
-| `workItems` | Work items in the 11-state lifecycle |
+| `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions and provider reconciliation |
+| `managerDecisionNotices` | Idempotent received/unknown acknowledgements for parsed manager-channel replies |
 | `skills` | Skill registry — `builtin` or `agent-authored` |
 | `permissionGrants` | Scoped capability grants (revocable) |
 | `events` | Event ticker |
@@ -636,27 +679,38 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Domain logic (`src/`)
 
-| File | What it exports |
+| Path | What it exports |
 |---|---|
 | `src/env.ts` | Zod env contract; lazy/optional so Convex bundles cleanly |
-| `src/lib/mastra.ts` | `makeAgent`, `agentJson<T>`, `agentText` (with 5-attempt exponential-backoff retry) |
-| `src/lib/openai.ts` | Raw OpenAI singleton (`jsonCompleteWithMode`, `textComplete`, `jsonModeFor`) |
+| `src/lib/mastra.ts` | Shared configured-model agents, structured-output ladder, 300-second call abort and five-attempt transient retry |
+| `src/lib/openai.ts` | Shared model resolver: hosted OpenAI through Responses, custom base URLs through chat completions, plus raw JSON/text helpers |
 | `src/lib/structured-fallback.ts` | Classifies a structured-output failure and decides whether the native `response_format` rung may be demoted to the prompt rung |
 | `src/lib/exa.ts` | `searchRole(role)` — fixed query for role best-practices, 8 results × 1200-char snippets |
 | `src/lib/skill-sandbox.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — picks a sandbox backend, and owns the rule that verification means exit 0 **and** non-empty stdout |
 | `src/lib/local-sandbox.ts` | Client for the bundled sandbox service, over a unix socket because that container has no network |
 | `src/lib/daytona.ts` | The Daytona backend — `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout |
+| `src/lib/credential-crypto.ts` | AES-256-GCM credential encryption/decryption with strict key and payload validation |
+| `src/lib/dev-auth*.ts` | Local unlock-cookie, JWT minting and Convex auth-provider integration for the one no-auth development identity |
+| `src/lib/model-name.ts`, `src/lib/oauth-state.ts`, `src/lib/surface-mode.ts` | Model default resolution, signed single-use OAuth state and the local-only real-mode guard |
+| `src/lib/plain-error.ts`, `src/lib/skill-authoring.ts`, `src/lib/transport-error.ts` | Safe UI errors, authoring-lease checks and transport-unreachable classification |
 | `src/lib/ids.ts` | Branded id helpers (zero runtime cost) |
 | `src/lib/logger.ts` | JSON logger |
+| `src/agent/avatar-pets.ts`, `src/agent/system-classes.ts` | Agent-avatar catalogue and the shared taxonomy used to classify documented systems |
 | `src/agent/charter.ts` | `synthesiseCharter`, `renderCharter`, `identityFromCharter`, `toolsFromCharter`, `extractRole` |
 | `src/agent/day-one-prompts.ts` | `DAY_ONE_TOPIC_SPECS`, `DAY_ONE_WELCOME`, `defaultSoul`, `day1Script` |
 | `src/agent/good-habits.ts` | `researchAndDistil(role)`, `mergeGoodHabits(existing, fragment)` |
+| `src/agent/work-generator.ts` | Schema and prompt that turn an approved charter into mock-mode work candidates |
+| `src/docs/` | Documentation component checks, folder/git/MCP/URL readers, page normalisation, credential redaction and evidence-backed system discovery |
+| `src/evaluation/` | Ordinary-agent control loop, arm-parity checks, shared mock-office scopes and terminal-state definitions |
 | `src/memory/workspace.ts` | `WORKSPACE_FILES` (8-file slot table), `buildSystemPrompt` |
+| `src/surfaces/` | Real/mock adapter registry, exact-action policy, MCP/HTTP/browser transports, secret injection/redaction, Slack identity and connection presentation |
 | `src/work/types.ts` | Domain types; constants `COLD_START_WIP_LIMIT = 1`, `VALUE_THRESHOLD = 30` |
 | `src/work/evaluate.ts` | `evaluateCandidate` — 7-criterion sequential evaluator |
 | `src/work/quality-fit.ts` | `qualityFit` — short-circuits if `AGENTS.md` has no good-habits section |
 | `src/work/plan.ts` | `draftExecutionPlan` |
-| `src/work/execute-skill.ts` | `runSkill` — per-invocation Mastra agent with skill body as behavioural prior |
+| `src/work/execute-skill.ts` | Per-invocation skill agents, procedure contracts and mock/real action schemas, including dependent closing actions |
+| `src/work/autonomy.ts`, `src/work/idempotency.ts` | Supervised/autonomous policy labels and stable provider-action idempotency keys |
+| `src/work/manager-channel.ts`, `src/work/reconciliation.ts`, `src/work/reply-target.ts` | Manager decision parsing/requests, interrupted-provider reconciliation and exact chat-thread targeting |
 
 ## Evaluation quick start
 
@@ -705,7 +759,7 @@ The three frozen evidence directories the submission quotes, and their numbers, 
 
 ## 中文说明
 
-本节为评审提供与上述英文说明并行的简体中文版本，涵盖项目定位、目录、两条最短运行路径和受控评测入口。命令、环境变量、路径与技术标识均保持原样。
+本节为评审提供与上述英文说明并行的简体中文版本，涵盖项目定位、目录、三条运行路径、真实模式和受控评测入口。命令、环境变量、路径与技术标识均保持原样。
 
 ### 项目简介
 
@@ -717,9 +771,17 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 ![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
+### 在线演示
+
+[`day0-olive.vercel.app`](https://day0-olive.vercel.app) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它使用 deployment 中配置的 `OPENAI_MODEL`；代码默认值是 `gpt-5.5`，operator 也可以在 deployment environment 中覆盖为例如 `gpt-5.6`。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
+
+- 使用 Clerk 登录并部署一个 Agent。
+- 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
+- 查看工作队列推进，并在 Skills 面板中看到 Agent 提出、验证和注册能力。
+
 ### 目录
 
-**从这里开始** · [它的特别之处](#它的特别之处) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
+**从这里开始** · [在线演示](#在线演示) · [它的特别之处](#它的特别之处) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
 
 **运行** · [无需任何账户](#无需任何账户运行) · [使用 OpenAI key](#使用-openai-key-运行) · [在真实系统上运行](#在真实模式下运行) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
 
@@ -745,7 +807,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 #### 它自行发现工作
 
-系统不会直接给它一条预置队列。Agent 读取工作环境并提出应当接手的事项。每个候选事项按七项标准评估：资格、权限、归属、质量匹配、价值、风险和容量；随后进入一个十一状态的生命周期，任何执行都要先由人工批准计划。
+系统不会直接给它一条预置队列。Agent 读取工作环境并提出应当接手的事项。每个候选事项按七项标准评估：资格、权限、归属、质量匹配、价值、风险和容量；随后进入一个十二状态的生命周期，任何执行都要先由人工批准计划。
 
 ![The real-mode work queue after intake, showing seven discovered items and the completed plan for a close-week reminder](.github/images/work-queue.webp)
 
@@ -759,9 +821,9 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 Day0 是一个可运行的演示，而不是已投入生产的产品，目前没有用户。它的量化结论刻意限定在很窄的范围内：仓库提供一项[受控且由程序评分的比较](evaluation/README.md)，让完成入职的 Day0 与普通 Agent 在相同的 15 项陌生 mock-office 任务上运行。该基准不用于预测所有真实团队的工作表现。
 
-可复现演示和受控评测在一个自包含的 mock office 中运行，其中包括团队文档、表格、聊天频道、工单队列和社交信息流，并为每个 Agent 单独生成种子数据。这样，评审可以在自己的机器上复现结果，而不必依赖无法核验的截图。模型调用、沙箱、状态机和审批门均按真实路径运行。
+可复现演示和受控评测在一个自包含的 mock office 中运行，其中包括团队文档、表格、聊天频道、工单队列和社交信息流，并为每个 Agent 单独生成种子数据。这样，评审可以在自己的机器上复现结果，而不必依赖无法核验的截图；模型调用、沙箱、状态机和审批门仍按真实路径运行。另有一条仅限本机的 real mode：它读取链接的团队文档、发现其中记录的系统，并只在可见审批门之后建立连接。详见[在真实模式下运行](#在真实模式下运行)。
 
-Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 可以把整个模型层指向任何兼容 OpenAI 的 endpoint，因此无需任何账户、也不产生托管模型计费，就能在本机模型上运行完整流程。用于验证 Agent 自行编写技能的沙箱也随项目提供，因此该路径可以完成技能创建，而不会停在“尚不可调用”的中间状态。语音和网络检索是可选的第三方服务；缺少相应 key 时，系统会明确降级，而不会静默失败。下文给出[三种运行方式](#local-dev)，`pnpm check:setup` 会报告当前机器已经满足哪一种配置。
+Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 留空时，共享模型路径通过 OpenAI Responses API 调用 `api.openai.com`；设置自定义 `OPENAI_BASE_URL` 时，则改用该 endpoint 的 OpenAI-compatible chat-completions API，因此无需任何账户也能在本机模型上运行完整流程。一个 evaluation bed 的两个 arm 始终使用同一条已选择路径。用于验证 Agent 自行编写技能的沙箱也随项目提供，因此该路径可以完成技能创建，而不会停在“尚不可调用”的中间状态。语音和网络检索是可选的第三方服务；缺少相应 key 时，系统会明确降级，而不会静默失败。下文给出[三种运行方式](#local-dev)，`pnpm check:setup` 会报告当前机器已经满足哪一种配置。
 
 ### 无需任何账户运行
 
@@ -808,7 +870,7 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
 批准章程后，系统才会填充工作队列。队列能推进到哪一步取决于刚刚批准的章程，而不是本说明中的固定答案。每个工作项都会依据 Agent 已有技能和部署时授予的权限进行评估，只有 `claim` 判定才会进入计划与执行阶段。部署时会生成五项读取范围；随项目提供的唯一技能是 `see-internal-docs`，因此可以立即执行的是能够从内部文档回答的工作。`needs-skill` 是这条路径最值得检查的判定：Agent 提出技能，人工批准后由本地沙箱运行冒烟测试；测试以退出码 0 结束且有输出时，技能才注册，请求该技能的工作项随后返回队列并完成。`defer - awaiting-permission` 会按设计停下，明确显示所需权限范围并继续等待；界面不会自行授予权限。
 
-响应速度取决于所连接的模型 endpoint 和硬件，而不是 Day0。Agent 核心执行普通的 OpenAI chat-completions 调用；同一个 `qwen3:8b` 在现代 GPU 上可能数秒返回，在 CPU 上可能需要数分钟，托管 endpoint 则取决于服务商。`pnpm model:up` 在检测到 NVIDIA GPU 时会默认使用它。
+响应速度取决于所连接的模型 endpoint 和硬件，而不是 Day0。本路径设置了自定义 `OPENAI_BASE_URL`，因此 Agent 核心执行普通的 OpenAI-compatible chat-completions 调用；同一个 `qwen3:8b` 在现代 GPU 上可能数秒返回，在 CPU 上可能需要数分钟。使用 OpenAI key 的路径则通过 Responses API 调用 OpenAI，延迟取决于 OpenAI。`pnpm model:up` 在检测到 NVIDIA GPU 时会默认使用它。
 
 内置模型服务以 16,384-token context 启动，因为执行器需要在同一提示中看到已批准章程、发现的文档、runbook 指引、action schema 和工作请求。Ollama 较小的服务端默认值会从提示开头静默截断，而不会让请求失败；这可能使本地模型仍知道正确的工具名，却丢失决定精确参数的指令和证据。只有在模型支持更大 context、且额外 KV cache 能装入机器时，才应把 `OLLAMA_CONTEXT_LENGTH` 调高；把它降到 16,384 以下是明确的质量取舍，不只是内存优化。
 
