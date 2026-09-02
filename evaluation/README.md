@@ -37,7 +37,7 @@ deadline keeps that result; `deadlineOverrunMs` records the lateness separately,
 only a work item that remains non-terminal is classified as a harness timeout.
 
 The four harness-v1 beds at `results/2026-09-01T07-23-30Z/` (qwen3:8b),
-`results/2026-09-01T14-26-55Z/` (qwen3:14b), `results/2026-09-01T08-12-35Z/`
+`results/2026-09-01T14-26-55Z/`, `results/2026-09-01T08-12-35Z/`
 (gpt-5.6-terra), and `results/2026-09-01T08-39-48Z/` (gpt-5.6-sol) remain immutable.
 They are superseded for submission claims by the operator-selected harness-v2 evidence
 below and remain audit history only.
