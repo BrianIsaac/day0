@@ -245,7 +245,10 @@ export function missingConnectionSurface(
     if (candidateNamesSurface(candidateText, surface)) targets.push(surface);
   }
 
-  const connected = targets.filter(
+  // A disconnected alias is covered by any connected surface that is the same
+  // system, named by the item or not: "Update the Looker number" names only the
+  // rejected charter alias, and the connected tile still satisfies it.
+  const connected = ctx.surfaces.filter(
     (surface: EvaluationSurface): boolean => verdictFor(surface, now) === 'connected',
   );
   return targets.find((surface: EvaluationSurface): boolean => {

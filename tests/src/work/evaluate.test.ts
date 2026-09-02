@@ -227,6 +227,39 @@ describe('work surface enablement', (): void => {
     ).toBe('looker-studio');
   });
 
+  it('ignores a rejected alias covered by a connected surface the item does not name', (): void => {
+    const work = candidate('linear', '');
+    work.title = 'Update the Looker number';
+    const charterAlias = surface('looker', 'declared', {
+      displayName: 'Looker',
+      class: 'analytics',
+      credentialLanded: false,
+      lastVerifiedAt: undefined,
+      discoveryEvidence: [
+        {
+          kind: 'charter',
+          ref: 'manager 1:1',
+          quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+          current: true,
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        },
+      ],
+    });
+    const documentedTile = surface('looker-pipeline-tile', 'connected', {
+      displayName: 'Looker pipeline tile',
+      class: 'analytics',
+      endpoint: 'http://looker-tile:8080/',
+    });
+
+    expect(
+      missingConnectionSurface(
+        work,
+        context('real', [surface('linear'), charterAlias, documentedTile]),
+      ),
+    ).toBeUndefined();
+  });
+
   it('still defers a distinct same-class surface named by the item', (): void => {
     const work = candidate('linear', 'Move the confirmed issue into Jira.');
     work.title = 'Copy the Linear issue into Jira';
