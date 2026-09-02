@@ -59,6 +59,7 @@ function surface(
   return {
     slug,
     displayName: slug === 'northstar-crm' ? 'Northstar CRM' : 'Linear',
+    class: slug === 'northstar-crm' ? 'crm' : 'kanban',
     verdict,
     discoveryEvidence: [
       {
@@ -159,6 +160,60 @@ describe('work surface enablement', (): void => {
         lookups(),
       ),
     ).resolves.toMatchObject({ decision: 'claim' });
+  });
+
+  it('does not defer the live Looker item on a rejected charter alias', async (): Promise<void> => {
+    const work = candidate('linear', '');
+    work.externalId = 'REVOPS-7';
+    work.title = 'Refresh the Looker pipeline tile';
+    const charterAlias = surface('looker', 'declared', {
+      displayName: 'Looker',
+      class: 'analytics',
+      credentialLanded: false,
+      lastVerifiedAt: undefined,
+      discoveryEvidence: [
+        {
+          kind: 'charter',
+          ref: 'manager 1:1',
+          quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+          current: true,
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        },
+      ],
+    });
+    const documentedTile = surface('looker-pipeline-tile', 'connected', {
+      displayName: 'Looker pipeline tile',
+      class: 'analytics',
+      endpoint: 'http://looker-tile:8080/',
+    });
+
+    await expect(
+      evaluateCandidate(
+        work,
+        context('real', [surface('linear'), charterAlias, documentedTile]),
+        lookups(),
+      ),
+    ).resolves.toMatchObject({ decision: 'claim' });
+  });
+
+  it('still defers a distinct same-class surface named by the item', (): void => {
+    const work = candidate('linear', 'Move the confirmed issue into Jira.');
+    work.title = 'Copy the Linear issue into Jira';
+    expect(
+      missingConnectionSurface(
+        work,
+        context('real', [
+          surface('linear'),
+          surface('jira', 'declared', {
+            displayName: 'Jira',
+            class: 'kanban',
+            credentialLanded: false,
+            lastVerifiedAt: undefined,
+          }),
+        ]),
+      ),
+    ).toBe('jira');
   });
 
   it('does not use retired documentation evidence to widen charter scope', async (): Promise<void> => {

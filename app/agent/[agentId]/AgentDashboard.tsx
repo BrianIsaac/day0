@@ -2009,6 +2009,15 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
   );
 }
 
+export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): string {
+  if (event.type !== 'surface.charter-match-ambiguous') return event.type;
+  const candidateSlugs = (event.payload as { candidateSlugs?: unknown }).candidateSlugs;
+  if (!Array.isArray(candidateSlugs) || !candidateSlugs.every((slug) => typeof slug === 'string')) {
+    return event.type;
+  }
+  return `${event.type}: ${candidateSlugs.join(', ')}`;
+}
+
 function EventTicker({ events }: { events: Doc<'events'>[] }) {
   const now = useNow();
   return (
@@ -2021,7 +2030,7 @@ function EventTicker({ events }: { events: Doc<'events'>[] }) {
             <span className="shrink-0 tabular-nums" title={clockTimeWithSeconds(e.createdAt)}>
               {relativeTime(e.createdAt, now)}
             </span>
-            <span className="text-[var(--color-accent)]">{e.type}</span>
+            <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
           </li>
         ))}
       </ul>

@@ -253,6 +253,26 @@ describe('surface persistence', (): void => {
       if (!tile) throw new Error('tile surface missing');
       return tile;
     });
+    const deferredItemId = await harness.run(
+      async (ctx): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Refresh the Looker pipeline tile',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker',
+          },
+          createdAt: 1,
+        }),
+    );
 
     await expect(
       harness.mutation(internal.surfaces.seedFromCharter, {
@@ -285,6 +305,9 @@ describe('surface persistence', (): void => {
         current: true,
       }),
     ]);
+    await expect(harness.run(async (ctx) => await ctx.db.get(deferredItemId))).resolves.toMatchObject(
+      { state: 'discovered' },
+    );
   });
 
   it('records an ambiguous hostless charter mention without minting or attaching', async (): Promise<void> => {
@@ -932,6 +955,108 @@ describe('surface probe generations', (): void => {
     ).toEqual([{ scope: 'linear:read', source: 'surface' }]);
     expect((await eventTypes(harness)).filter((type) => type === 'work.requeued')).toHaveLength(2);
   });
+
+  it('requeues work whose missing slug is a legacy alias of the connecting surface', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const [tileId, workItemId] = await harness.run(
+      async (ctx): Promise<[Id<'surfaces'>, Id<'workItems'>]> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker',
+          displayName: 'Looker',
+          class: 'analytics',
+          verdict: 'declared',
+          whereFound: [
+            {
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+            },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'approved',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [
+            { ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          managerApprovedAt: 1,
+          itApprovedAt: 1,
+          createdAt: 1,
+        });
+        const itemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Refresh the Looker pipeline tile',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker',
+          },
+          createdAt: 1,
+        });
+        return [surfaceId, itemId];
+      },
+    );
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: tileId });
+    if (!probe) throw new Error('probe was not reserved');
+
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: tileId,
+      generation: probe.generation,
+      toolAllowlist: ['browser_navigate'],
+      toolArguments: [],
+      verifiedAt: 100,
+    });
+
+    const result = await harness.run(async (ctx) => ({
+      item: await ctx.db.get(workItemId),
+      events: await ctx.db
+        .query('events')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect(),
+    }));
+    expect(result.item).toMatchObject({ state: 'discovered' });
+    expect(result.item).not.toHaveProperty('verdict');
+    expect(result.events.find((event) => event.type === 'work.requeued')?.payload).toMatchObject({
+      surfaceId: tileId,
+      slug: 'looker-pipeline-tile',
+      previousMissingSurface: 'looker',
+    });
+  });
 });
 
 describe('surface connection lifecycle metadata', (): void => {
@@ -1201,6 +1326,99 @@ describe('surface approval state machine', (): void => {
     expect((await eventTypes(harness)).filter((type) => type === 'surface.approved')).toHaveLength(
       1,
     );
+  });
+
+  it('requeues work parked on a rejected duplicate when the documented surface exists', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const [duplicateId, workItemId] = await harness.run(
+      async (ctx): Promise<[Id<'surfaces'>, Id<'workItems'>]> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'connected',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [
+            { ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: true,
+          lastVerifiedAt: Date.now(),
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker',
+          displayName: 'Looker',
+          class: 'analytics',
+          verdict: 'declared',
+          whereFound: [
+            {
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+            },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        const itemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Refresh the Looker pipeline tile',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker',
+          },
+          createdAt: 1,
+        });
+        return [surfaceId, itemId];
+      },
+    );
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId: duplicateId,
+      request: { target: { system: 'Looker' } },
+      whereFound: [{ ref: 'looker.md', quote: 'Open the pipeline tile.' }],
+      path: 'browser-driven',
+      fallbackPath: 'escalate',
+      endpoint: 'http://looker-tile:8080/',
+      expiresInDays: 30,
+    });
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.reject, { surfaceId: duplicateId, reason: 'Duplicate surface.' });
+
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(item).toMatchObject({ state: 'discovered' });
+    expect(item).not.toHaveProperty('verdict');
   });
 
   it('allows rejection of an approved surface and refuses it elsewhere', async (): Promise<void> => {

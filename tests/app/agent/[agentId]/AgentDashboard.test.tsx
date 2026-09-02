@@ -11,8 +11,26 @@ import {
   ActionPayload,
   DraftDetails,
   PlanExecutionLedger,
+  eventLabel,
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
+
+describe('live event labels', (): void => {
+  it('shows every candidate slug when a charter surface match is ambiguous', (): void => {
+    expect(
+      eventLabel({
+        type: 'surface.charter-match-ambiguous',
+        payload: {
+          namedSystem: 'Looker',
+          class: 'analytics',
+          candidateSlugs: ['looker-finance-tile', 'looker-sales-tile'],
+        },
+      }),
+    ).toBe(
+      'surface.charter-match-ambiguous: looker-finance-tile, looker-sales-tile',
+    );
+  });
+});
 
 describe('held action payload', (): void => {
   it('renders the verb with the arguments it reads and none of the empty flat-bag defaults', (): void => {

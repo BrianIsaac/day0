@@ -121,6 +121,7 @@ async function attachCharterEvidence(
   surface: Doc<'surfaces'>,
   system: CharterSystemSeed,
   now: number,
+  firstSeenAt = now,
 ): Promise<DiscoveryEvidence[]> {
   const prior = surface.discoveryEvidence ?? [];
   const charterEvidence = prior.find((item): boolean => item.kind === 'charter');
@@ -129,7 +130,7 @@ async function attachCharterEvidence(
     ref: 'manager 1:1',
     quote: system.whereMentioned,
     current: true,
-    firstSeenAt: charterEvidence?.firstSeenAt ?? now,
+    firstSeenAt: charterEvidence?.firstSeenAt ?? firstSeenAt,
     lastSeenAt: now,
   };
   const discoveryEvidence = charterEvidence
@@ -139,6 +140,7 @@ async function attachCharterEvidence(
     throw new Error('Surface discovery provenance exceeds 64 sources.');
   }
   await ctx.db.patch(surface._id, { discoveryEvidence });
+  await requeueWorkAwaitingAlias(ctx, surface, surfaceSlug(system.name), now);
   return discoveryEvidence;
 }
 
@@ -172,7 +174,13 @@ export async function backfillCharterProvenance(
     if (!surface) continue;
     const prior = surface.discoveryEvidence ?? [];
     if (prior.some((item): boolean => item.kind === 'charter')) continue;
-    const discoveryEvidence = await attachCharterEvidence(ctx, surface, system, args.now);
+    const discoveryEvidence = await attachCharterEvidence(
+      ctx,
+      surface,
+      system,
+      args.now,
+      surface.createdAt,
+    );
     surface.discoveryEvidence = discoveryEvidence;
     updated += 1;
   }
@@ -952,11 +960,27 @@ export const demoteAfterProbeFailure = internalMutation({
  * Returns:
  *   Ids of the work items requeued.
  */
-async function requeueWorkAwaitingSurface(
+type DeferredSurfaceVerdict = {
+  reason?: string;
+  missingSurface?: string;
+  missingPermissions?: string[];
+};
+
+function sameSurfaceSystem(left: Doc<'surfaces'>, right: Doc<'surfaces'>): boolean {
+  const leftIdentity = surfaceIdentity(left);
+  const rightIdentity = surfaceIdentity(right);
+  return (
+    sameSystemForHostlessMention(left.class, leftIdentity, right.class, rightIdentity) ||
+    sameSystemForHostlessMention(right.class, rightIdentity, left.class, leftIdentity)
+  );
+}
+
+async function requeueDeferredWork(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
+  shouldRequeue: (verdict: DeferredSurfaceVerdict) => boolean,
+  now: number,
 ): Promise<Id<'workItems'>[]> {
-  const readScope = `${surface.slug}:read`;
   const deferred = await ctx.db
     .query('workItems')
     .withIndex('by_agent_state', (index) =>
@@ -965,24 +989,101 @@ async function requeueWorkAwaitingSurface(
     .collect();
   const requeued: Id<'workItems'>[] = [];
   for (const item of deferred) {
-    const verdict = item.verdict as
-      | { reason?: string; missingSurface?: string; missingPermissions?: string[] }
-      | undefined;
-    const waitingOnThisSurface =
-      (verdict?.reason === 'awaiting-connection' && verdict.missingSurface === surface.slug) ||
-      (verdict?.reason === 'awaiting-permission' &&
-        (verdict.missingPermissions ?? []).includes(readScope));
-    if (!waitingOnThisSurface) continue;
+    const verdict = item.verdict as DeferredSurfaceVerdict | undefined;
+    if (!verdict || !shouldRequeue(verdict)) continue;
     await ctx.db.patch(item._id, { state: 'discovered', verdict: undefined });
     await ctx.db.insert('events', {
       agentId: surface.agentId,
       type: 'work.requeued',
-      payload: { workItemId: item._id, surfaceId: surface._id, slug: surface.slug },
-      createdAt: Date.now(),
+      payload: {
+        workItemId: item._id,
+        surfaceId: surface._id,
+        slug: surface.slug,
+        ...(verdict.missingSurface
+          ? { previousMissingSurface: verdict.missingSurface }
+          : {}),
+      },
+      createdAt: now,
     });
     requeued.push(item._id);
   }
   return requeued;
+}
+
+async function requeueWorkAwaitingAlias(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  aliasSlug: string,
+  now: number,
+): Promise<Id<'workItems'>[]> {
+  if (aliasSlug === surface.slug) return [];
+  return await requeueDeferredWork(
+    ctx,
+    surface,
+    (verdict) =>
+      verdict.reason === 'awaiting-connection' && verdict.missingSurface === aliasSlug,
+    now,
+  );
+}
+
+async function requeueWorkAfterRejection(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<Id<'workItems'>[]> {
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (index) => index.eq('agentId', surface.agentId))
+    .collect();
+  if (
+    !surfaces.some(
+      (candidate) => candidate._id !== surface._id && sameSurfaceSystem(surface, candidate),
+    )
+  ) {
+    return [];
+  }
+  return await requeueDeferredWork(
+    ctx,
+    surface,
+    (verdict) =>
+      verdict.reason === 'awaiting-connection' && verdict.missingSurface === surface.slug,
+    now,
+  );
+}
+
+async function requeueWorkAwaitingSurface(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<Id<'workItems'>[]> {
+  const readScope = `${surface.slug}:read`;
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (index) => index.eq('agentId', surface.agentId))
+    .collect();
+  const missingSurfaceResolvesHere = (missingSlug: string): boolean => {
+    if (missingSlug === surface.slug) return true;
+    const persisted = surfaces.find((candidate) => candidate.slug === missingSlug);
+    if (persisted) return sameSurfaceSystem(persisted, surface);
+    const mention = documentedSystemIdentity({ name: missingSlug.replace(/-/g, ' ') });
+    return sameSystemForHostlessMention(
+      surface.class,
+      mention,
+      surface.class,
+      surfaceIdentity(surface),
+    );
+  };
+  return await requeueDeferredWork(
+    ctx,
+    surface,
+    (verdict) =>
+      (verdict.reason === 'awaiting-connection' &&
+        verdict.missingSurface !== undefined &&
+        missingSurfaceResolvesHere(verdict.missingSurface)) ||
+      (verdict.reason === 'awaiting-permission' &&
+        (verdict.missingPermissions ?? []).includes(readScope)),
+    now,
+  );
 }
 
 /**
@@ -1046,7 +1147,7 @@ export const recordConnected = internalMutation({
     });
     if (transitioned) {
       await grantScopeInTransaction(ctx, surface.agentId, `${surface.slug}:read`, 'surface');
-      await requeueWorkAwaitingSurface(ctx, surface);
+      await requeueWorkAwaitingSurface(ctx, surface, args.verifiedAt);
     }
     return true;
   },
@@ -1162,6 +1263,7 @@ export const reject = mutation({
         `Only a proposed or approved surface can be rejected; this one is ${surface.verdict}.`,
       );
     }
+    const now = Date.now();
     await ctx.db.patch(surface._id, {
       verdict: 'declared',
       reason: args.reason,
@@ -1201,8 +1303,9 @@ export const reject = mutation({
       agentId: surface.agentId,
       type: 'surface.rejected',
       payload: { surfaceId: surface._id, reason: args.reason },
-      createdAt: Date.now(),
+      createdAt: now,
     });
+    await requeueWorkAfterRejection(ctx, surface, now);
   },
 });
 
