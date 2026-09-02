@@ -103,6 +103,38 @@ export const timeoutTask = mutation({
   },
 });
 
+export const failSkillAuthoringAttempts = mutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ failed: boolean }> => {
+    requireMockMode();
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    await assertOwnsAgent(ctx, row.agentId);
+    if (!row.externalId.startsWith('EVAL-')) {
+      throw new Error('only evaluation work items may be failed by the harness');
+    }
+    if (isTerminalWorkState(row.state)) return { failed: false };
+    const reason = 'skill-authoring-attempts-exhausted';
+    await ctx.db.patch(args.workItemId, {
+      state: 'failed',
+      skipReason: reason,
+      executionRunId: undefined,
+      pendingRunId: undefined,
+      applyAttemptId: undefined,
+      applyClaimedAt: undefined,
+      approvedIndexes: undefined,
+      applyPhase: undefined,
+    });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.failed',
+      payload: { workItemId: args.workItemId, reason, source: 'evaluation-harness' },
+      createdAt: Date.now(),
+    });
+    return { failed: true };
+  },
+});
+
 export const snapshot = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {

@@ -124,6 +124,9 @@ describe('ordinary-agent control', (): void => {
       'twitter.reply',
     ]);
     expect(captured.prompt).toContain('EVAL-SCOPE-02');
+    expect(captured.prompt).toContain(
+      'Preserve every explicitly requested identifier and quoted string byte-for-byte',
+    );
     expect(captured.prompt).toContain('slug: dm-manager');
     expect(captured.prompt).toContain('REVOPS-201');
     expect(captured.prompt).not.toContain('SECRET-DOC-BODY');
