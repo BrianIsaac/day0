@@ -38,7 +38,7 @@ A Day-1 one-to-one, held over voice or chat, walks its new boss through seven to
 
 From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes, and a set of scoped, revocable capability grants.
 
-![The upper charter approval card drafted from the real-mode 1:1, showing its purpose, proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
+![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 ### It finds its own work
 
@@ -349,13 +349,13 @@ Then, in the browser:
 2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
 3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each needs *both* the manager and IT approval buttons - in a single-user run that is you twice. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the second approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
 
-   ![The Surfaces tab reporting four connections, paired with the proposed Slack path and its documented API ladder](.github/images/connection-cards.webp)
+   ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
 
    ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
 
 4. **Decide the work.** Skills the agent proposes, plans and held actions arrive in the dashboard and, once Slack is connected, in your DM as a short code - `approve <code>` or `reject <code> <reason>` from the manager's own Slack account, which is the only author the poller accepts. A held action can be approved, or the whole run rejected with a reason; rejecting stops the run, and a retry after anything landed first asks you to confirm the provider state. Turning autonomous actions on (the header switch, with a confirmation) raises the work-in-progress cap and lets in-policy writes apply without a code. Revoking a read or the DM grant stops queued and in-flight work that needs it and records the block. A write you approved literally stays authorised by that exact approval; a write authorised only by the autonomous switch is refused if its matching `<surface>:write` scope is revoked.
 
-   ![Five complete browser-operation rows from the held exact-action batch, with the batch decision controls](.github/images/browser-batch-held.webp)
+   ![Five visible browser-operation rows from the seven-action held batch, beginning with the first browser_fill_form row and ending at browser_snapshot, with the batch decision controls](.github/images/browser-batch-held.webp)
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
@@ -741,7 +741,7 @@ Day-1 一对一通过语音或文字依次讨论七个主题：为什么招聘�
 
 Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围和一组范围受限且可撤销的能力授权。
 
-![The upper charter approval card drafted from the real-mode 1:1, showing its purpose, proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
+![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 #### 它自行发现工作
 
@@ -1011,13 +1011,13 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 2. **部署一个 Agent**，然后**完成 Day-1 一对一**并批准它起草的章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。Agent 会询问文档已经回答过的工具和阅读材料问题，照常回答即可；章程记录的是你的回答。
 3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片都需要 manager 和 IT *两个*批准按钮，在单用户运行中就是你点两次。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为第二次批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
 
-   ![The Surfaces tab reporting four connections, paired with the proposed Slack path and its documented API ladder](.github/images/connection-cards.webp)
+   ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
 
    ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
 
 4. **对工作做决策。** Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断。你逐字批准过的写入仍由该次精确批准授权；仅由自主执行开关授权的写入，在对应的 `<surface>:write` 范围被撤销后会被拒绝。
 
-   ![Five complete browser-operation rows from the held exact-action batch, with the batch decision controls](.github/images/browser-batch-held.webp)
+   ![Five visible browser-operation rows from the seven-action held batch, beginning with the first browser_fill_form row and ending at browser_snapshot, with the batch decision controls](.github/images/browser-batch-held.webp)
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
