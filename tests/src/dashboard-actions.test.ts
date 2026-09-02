@@ -14,6 +14,7 @@ import {
   cancelsAutonomyConfirm,
   cancelledReason,
   decisionAttribution,
+  failedItemReason,
   formatMetricDuration,
   landedHeadline,
   MetricsCard,
@@ -221,6 +222,22 @@ describe('dashboard exact-action gate', (): void => {
     expect(cancelledReason({})).toBe('cancelled by the manager');
   });
 
+  it('shows the full manager rejection without masking a later failure', (): void => {
+    const reason = `Rewrite this as a close summary. ${'Preserve the evidence. '.repeat(12)}`;
+    expect(
+      failedItemReason({
+        skipReason: `rejected by the manager: ${reason.slice(0, 200)}`,
+        managerFeedback: { reason },
+      }),
+    ).toBe(`rejected by the manager: ${reason}`);
+    expect(
+      failedItemReason({
+        skipReason: 'provider reconciliation failed',
+        managerFeedback: { reason },
+      }),
+    ).toBe('provider reconciliation failed');
+  });
+
   it('names whether the dashboard or company chat won the decision', (): void => {
     expect(
       decisionAttribution({
@@ -391,6 +408,8 @@ describe('judge-facing dashboard evidence', (): void => {
     expect(html).toContain('Confirm revoke');
     expect(html).toContain('Keep grant');
     expect(html).toContain('Re-grant');
+    expect(html).toContain('at its final authority check');
+    expect(html).toContain('Actions already approved by you keep their exact approval');
     expect(html).not.toContain('role="dialog"');
   });
 });

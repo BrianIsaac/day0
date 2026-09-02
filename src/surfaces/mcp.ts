@@ -495,6 +495,10 @@ export class McpAdapter implements SurfaceAdapter {
           }
           toolArgs = resolved.toolArgs;
         }
+        const finalAuthorityRefusal = await this.deps.beforeTransport?.(action, surface);
+        if (finalAuthorityRefusal) {
+          return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
+        }
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
         const text = redactValue(result.text, bearer);
         if (result.isError) {

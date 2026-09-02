@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canonicalEndpoint,
   convergeDiscoveryCandidates,
   documentedSystemIdentity,
   sameSystemForHostlessMention,
@@ -270,5 +271,68 @@ describe('documentation system identity convergence', (): void => {
         ),
       ])[0],
     ).toMatchObject({ transportOnly: true });
+  });
+});
+
+describe('documented endpoint canonicalisation', (): void => {
+  it('is byte-identical to the setter-based normalisation for every identity shape', (): void => {
+    const legacyNormalise = (raw: string): string => {
+      const endpoint = new URL(raw);
+      endpoint.username = '';
+      endpoint.password = '';
+      endpoint.search = '';
+      endpoint.hash = '';
+      endpoint.pathname = endpoint.pathname.replace(/\/+$/, '') || '/';
+      return endpoint.toString().replace(/\/$/, '');
+    };
+    const endpoints = [
+      'https://reader:p%40ss@EXAMPLE.COM:443/team///?view=active#today',
+      'http://EXAMPLE.COM:80/',
+      'https://EXAMPLE.COM:8443/api/',
+      'http://[2001:DB8::1]:80/path///?query=yes#fragment',
+      'https://[2001:db8::2]:9443/',
+      'https://Example.COM/path?query=yes#fragment',
+    ];
+
+    for (const endpoint of endpoints) {
+      expect(canonicalEndpoint(endpoint)).toBe(legacyNormalise(endpoint));
+    }
+  });
+
+  it('drops credentials, query and fragment from a documented URL', (): void => {
+    const identity = documentedSystemIdentity({
+      name: 'Linear',
+      quotes: [
+        'Endpoint: https://svc:secret@mcp.linear.app/mcp/?x=1#frag and the tile at http://looker-tile:8080/',
+      ],
+    });
+    expect(identity.endpoints).toEqual(['http://looker-tile:8080', 'https://mcp.linear.app/mcp']);
+    expect(identity.hosts).toEqual(['looker-tile:8080', 'mcp.linear.app']);
+  });
+
+  it('runs where the URL credential setters are not implemented, as in the Convex isolate', (): void => {
+    const RealURL = globalThis.URL;
+    class IsolateURL extends RealURL {
+      override set username(_value: string) {
+        throw new Error('Not implemented: set username for URL');
+      }
+      override set password(_value: string) {
+        throw new Error('Not implemented: set password for URL');
+      }
+      override set search(_value: string) {
+        throw new Error('Not implemented: set search for URL');
+      }
+      override set hash(_value: string) {
+        throw new Error('Not implemented: set hash for URL');
+      }
+    }
+    globalThis.URL = IsolateURL as typeof URL;
+    try {
+      expect(
+        documentedSystemIdentity({ name: 'Slack', quotes: ['https://slack.com/api/'] }).endpoints,
+      ).toEqual(['https://slack.com/api']);
+    } finally {
+      globalThis.URL = RealURL;
+    }
   });
 });

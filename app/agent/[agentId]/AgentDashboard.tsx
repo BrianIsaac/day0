@@ -1179,6 +1179,17 @@ export function cancelledReason(item: {
   return 'cancelled by the manager';
 }
 
+/** Show a manager's full rejection while keeping later failure reasons current. */
+export function failedItemReason(item: {
+  skipReason?: string;
+  managerFeedback?: { reason: string };
+}): string | undefined {
+  if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
+    return `rejected by the manager: ${item.managerFeedback.reason}`;
+  }
+  return item.skipReason;
+}
+
 /** Name the winning control for a completed manager decision. */
 export function decisionAttribution(
   decision:
@@ -1664,8 +1675,10 @@ function WorkItemCard({
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
               no registered skill, a model error, a mid-run throw, a rejection. */}
-          {failedActions.length === 0 && item.skipReason ? (
-            <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">{item.skipReason}</p>
+          {failedActions.length === 0 && failedItemReason(item) ? (
+            <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">
+              {failedItemReason(item)}
+            </p>
           ) : null}
           {needsProviderReconciliation || item.providerReconciliation ? (
             <ProviderReconciliationControl
@@ -1857,7 +1870,9 @@ export function PermissionRows({
             {confirming ? (
               <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
                 <p className="text-[10px] text-[var(--color-fg)] mb-2">
-                  Revoke {row.scope}? Queued and in-flight work needing it will be stopped.
+                  Revoke {row.scope}? Day0 will stop queued and in-flight work that still needs this
+                  standing scope at its final authority check. Actions already approved by you keep
+                  their exact approval; a provider call past its final authority check may still finish.
                 </p>
                 <div className="flex gap-2">
                   <button

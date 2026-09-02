@@ -347,7 +347,7 @@ export const actionContext = internalQuery({
 
 /** Mark the exact point after credential access and before the authority re-read. */
 export const markTransportReady = internalMutation({
-  args: { workItemId: v.id('workItems'), checkpoint: v.string() },
+  args: { workItemId: v.id('workItems'), checkpoint: v.string(), scope: v.string() },
   handler: async (ctx, args): Promise<void> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('work item not found');
@@ -357,7 +357,7 @@ export const markTransportReady = internalMutation({
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'evaluation.transport-ready',
-      payload: { workItemId: row._id, checkpoint: args.checkpoint },
+      payload: { workItemId: row._id, checkpoint: args.checkpoint, scope: args.scope },
       createdAt: Date.now(),
     });
   },
@@ -368,6 +368,7 @@ export const containmentReached = internalQuery({
   args: {
     workItemId: v.id('workItems'),
     checkpoint: v.union(v.literal('scope-revoked'), v.literal('autonomy-off')),
+    scope: v.string(),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const row = await ctx.db.get(args.workItemId);
@@ -378,7 +379,7 @@ export const containmentReached = internalQuery({
     if (args.checkpoint === 'autonomy-off') return agent.autonomousActions !== true;
     const grants = await ctx.db
       .query('permissionGrants')
-      .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId).eq('scope', 'slack:read'))
+      .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId).eq('scope', args.scope))
       .collect();
     return grants.every((grant) => grant.revokedAt !== undefined);
   },

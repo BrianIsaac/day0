@@ -41,6 +41,8 @@ import {
 } from '../src/work/reconciliation';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
+/** The longest rejection reason kept in full for the retry to read. */
+export const MANAGER_FEEDBACK_MAX_CHARS = 1000;
 export { INTERRUPTED_APPLY_REASON };
 
 /**
@@ -98,6 +100,8 @@ export const transportAuthority = internalQuery({
         agentExists: true;
         autonomousActions: boolean;
         grants: string[];
+        /** Scopes the manager revoked that no later grant restored. */
+        revokedScopes?: string[];
         surface?: ReturnType<typeof toSurfaceRecord>;
       }
   > => {
@@ -115,10 +119,19 @@ export const transportAuthority = internalQuery({
         .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId))
         .collect(),
     ]);
+    const active = new Set(grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
+    const revoked = [
+      ...new Set(
+        grants
+          .filter((grant) => grant.revokedAt !== undefined && !active.has(grant.scope))
+          .map((grant) => grant.scope),
+      ),
+    ];
     return {
       agentExists: true,
       autonomousActions: autonomousActionsOn(agent),
-      grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      grants: [...active],
+      revokedScopes: revoked,
       ...(surface ? { surface: toSurfaceRecord(surface) } : {}),
     };
   },
@@ -1239,6 +1252,7 @@ export const setCompleted = internalMutation({
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
+      managerFeedback: undefined,
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1721,7 +1735,8 @@ async function rejectActionsInTransaction(
   if (row.pendingRunId !== args.pendingRunId) {
     throw new Error('pending run changed; refresh the action list');
   }
-  const reason = args.reason.replace(/\s+/g, ' ').trim().slice(0, 200);
+  const feedback = args.reason.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
+  const reason = feedback.slice(0, 200);
   const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';
   const applied = ledgerOf(row.output);
   const output =
@@ -1739,6 +1754,9 @@ async function rejectActionsInTransaction(
     state: 'failed',
     skipReason,
     ...(output !== undefined ? { output } : {}),
+    ...(feedback
+      ? { managerFeedback: { reason: feedback, at: Date.now(), runId: args.pendingRunId } }
+      : {}),
     pendingRunId: undefined,
     approvedIndexes: undefined,
     actionVerdicts: undefined,

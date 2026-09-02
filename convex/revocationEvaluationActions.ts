@@ -18,6 +18,7 @@ import {
   NOT_AUTOMATIC,
   parseSurfaceAction,
   pathRefusal,
+  requiredScope,
   surfaceRefusal,
   toolRefusal,
   UNKNOWN_SURFACE,
@@ -78,6 +79,7 @@ function finalAuthority(ctx: ActionCtx, agentId: Id<'agents'>): BeforeSurfaceTra
       surface,
       new Set(authority.grants),
       authority.autonomousActions,
+      new Set(authority.revokedScopes ?? []),
     );
     if (grant) return grant;
     return undefined;
@@ -88,10 +90,12 @@ async function waitForContainment(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
   expected: Exclude<Checkpoint, 'none'>,
+  scope: string,
 ): Promise<void> {
   await ctx.runMutation(internal.revocationEvaluation.markTransportReady, {
     workItemId,
     checkpoint: expected,
+    scope,
   });
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
@@ -99,6 +103,7 @@ async function waitForContainment(
       await ctx.runQuery(internal.revocationEvaluation.containmentReached, {
         workItemId,
         checkpoint: expected,
+        scope,
       })
     ) {
       return;
@@ -151,6 +156,9 @@ export const runTrialAction = action({
     if (!context.row.pendingRunId || !output.actions?.length) {
       throw new Error('evaluation work item has no staged action');
     }
+    const parsed = parseSurfaceAction(output.actions[0]);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const scope = requiredScope(parsed.action);
     let paused = false;
     const applied = await applySurfaceActions(
       ctx,
@@ -169,7 +177,7 @@ export const runTrialAction = action({
             const secret = await decryptCredential(actionCtx, credentialId);
             if (args.checkpoint !== 'none' && !paused) {
               paused = true;
-              await waitForContainment(actionCtx, context.row._id, args.checkpoint);
+              await waitForContainment(actionCtx, context.row._id, args.checkpoint, scope);
             }
             return secret;
           },

@@ -39,6 +39,7 @@ import {
   grantRefusal,
   actionIntent,
   isAutomatic,
+  isAuditComment,
   isStatusChange,
   needsStandingGrant,
   NOT_AUTOMATIC,
@@ -364,6 +365,7 @@ async function executeApprovedPlanHandler(
     candidate,
     charter,
     internalCaller,
+    managerFeedback: item.managerFeedback?.reason,
   });
 }
 
@@ -404,6 +406,8 @@ async function holdDay0Actions(
     candidate: WorkCandidate;
     charter: Charter;
     internalCaller: boolean;
+    /** The manager's reason for rejecting the previous attempt, if this is a retry. */
+    managerFeedback?: string;
   },
 ): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
   let additionalModelCalls = 0;
@@ -431,6 +435,7 @@ async function holdDay0Actions(
       surfaces,
       mode: SURFACE_MODE,
       autonomousActions: autonomousActionsOn(agent),
+      managerFeedback: args.managerFeedback,
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
@@ -515,12 +520,42 @@ function isDependentPendingOutput(
 }
 
 const RESULT_STEP =
-  /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/i;
-const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/i;
+  /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/gi;
+const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/gi;
+const CLAUSE_BOUNDARY = /\b(?:after|before|but|once|then|until)\b|[.;\n]/gi;
+const NEGATED_INSTRUCTION = /\b(?:defer|do not|don't|hold|never|not|wait for|without|withhold)\b/i;
+
+/** Whether at least one occurrence is an instruction to act rather than to withhold. */
+function affirmedStepTerm(step: string, terms: RegExp): boolean {
+  terms.lastIndex = 0;
+  for (let match = terms.exec(step); match; match = terms.exec(step)) {
+    if (step[match.index - 1] === '-') continue;
+    const prefix = step.slice(0, match.index);
+    CLAUSE_BOUNDARY.lastIndex = 0;
+    let boundary = 0;
+    for (
+      let separator = CLAUSE_BOUNDARY.exec(prefix);
+      separator;
+      separator = CLAUSE_BOUNDARY.exec(prefix)
+    ) {
+      boundary = CLAUSE_BOUNDARY.lastIndex;
+    }
+    if (!NEGATED_INSTRUCTION.test(prefix.slice(boundary))) return true;
+  }
+  return false;
+}
+
+function promisesResult(step: string): boolean {
+  return affirmedStepTerm(step, RESULT_STEP);
+}
+
+function promisesClose(step: string): boolean {
+  return affirmedStepTerm(step, CLOSE_STEP);
+}
 
 /** Whether the approved plan or emitted prerequisites require one result-aware turn. */
 export function needsDependentPhase(output: ExecutionOutput, plan: ExecutionPlan): boolean {
-  return output.needsDependentPhase === true || plan.steps.some((step) => RESULT_STEP.test(step));
+  return output.needsDependentPhase === true || plan.steps.some(promisesResult);
 }
 
 /** Keep result-independent prerequisites; every later literal is re-authored from the ledger. */
@@ -580,7 +615,7 @@ export function validatePlanStepOutcomes(args: {
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
   for (const [index, step] of args.plan.steps.entries()) {
-    if (!RESULT_STEP.test(step)) continue;
+    if (!promisesResult(step)) continue;
     const named = args.surfaces.filter(
       (surface) => namedInStep(step, surface.slug) || namedInStep(step, surface.displayName),
     );
@@ -622,7 +657,7 @@ export function dependentTransitionRefusal(args: {
   }
   if (
     args.plan.expectedOutputType !== 'ticket-update' ||
-    !args.plan.steps.some((step) => CLOSE_STEP.test(step)) ||
+    !args.plan.steps.some(promisesClose) ||
     statusChange ||
     args.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
   ) {
@@ -665,13 +700,63 @@ function flattenedDependentOutput(
   };
 }
 
-function blockedPlanReason(outcomes: readonly PlanStepOutcome[]): string | undefined {
+/**
+ * Why blocked plan steps fail a run, if they do.
+ *
+ * A blocked step is the closing phase's honest account of something it
+ * could not prove, and that account is kept on the item either way. It fails
+ * the run only when the work did not land: no action was emitted, an emitted
+ * action did not reach its surface, or the plan promised a ticket close and
+ * no state transition landed. A run whose every action landed is completed,
+ * with the blocked steps recorded beside it, rather than reported as failed
+ * against a provider that shows the change.
+ *
+ * Args:
+ *   outcomes: The closing phase's plan-step accounting.
+ *   run: The run's whole action set with its ledger, and the plan it closed.
+ *
+ * Returns:
+ *   The failure reason, or undefined when the run may complete.
+ */
+export function blockedPlanReason(
+  outcomes: readonly PlanStepOutcome[],
+  run?: {
+    plan: ExecutionPlan;
+    actions: readonly ExecutionOutput['actions'][number][];
+    applied: readonly (AppliedAction | undefined)[];
+  },
+): string | undefined {
   const blocked = outcomes.filter((outcome) => outcome.status === 'blocked');
-  return blocked.length > 0
-    ? `${blocked.length} approved plan step(s) remained blocked: ${blocked
-        .map((outcome) => `step ${outcome.step} (${outcome.evidence})`)
-        .join('; ')}`
-    : undefined;
+  if (blocked.length === 0) return undefined;
+  if (run && run.actions.length > 0) {
+    const landed = (index: number): boolean => {
+      const row = run.applied[index];
+      return row?.ok === true && row.held !== true;
+    };
+    const everyActionLanded = run.actions.every((_action, index) => landed(index));
+    const closePromised =
+      run.plan.expectedOutputType === 'ticket-update' && run.plan.steps.some(promisesClose);
+    const transitionLanded = run.actions.some((action, index): boolean => {
+      const parsed = parseSurfaceAction(action);
+      return parsed.ok && isStatusChange(parsed.action) && landed(index);
+    });
+    const ticketEffectLanded = run.actions.some((action, index): boolean => {
+      const parsed = parseSurfaceAction(action);
+      return (
+        parsed.ok &&
+        (isAuditComment(parsed.action) || isStatusChange(parsed.action)) &&
+        landed(index)
+      );
+    });
+    const primaryEffectLanded =
+      run.plan.expectedOutputType !== 'ticket-update' || ticketEffectLanded;
+    if (everyActionLanded && primaryEffectLanded && (!closePromised || transitionLanded)) {
+      return undefined;
+    }
+  }
+  return `${blocked.length} approved plan step(s) remained blocked: ${blocked
+    .map((outcome) => `step ${outcome.step} (${outcome.evidence})`)
+    .join('; ')}`;
 }
 
 /** Author the one bounded closing action set from the persisted prerequisite ledger. */
@@ -711,6 +796,7 @@ export const authorDependentActions = internalAction({
         surfaces,
         mode: 'real',
         autonomousActions: autonomousActionsOn(agent),
+        managerFeedback: item.managerFeedback?.reason,
         initialOutput: initial,
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,
@@ -970,6 +1056,7 @@ function authorityBeforeTransport(
         surface,
         new Set(authority.grants),
         phase === 'auto' && authority.autonomousActions,
+        new Set(authority.revokedScopes ?? []),
       );
       if (grant) return grant;
     }
@@ -1069,7 +1156,13 @@ async function finishRun(
     }
     const finalOutput = flattenedDependentOutput(output, settled);
     const finalReason =
-      output.initial.initialFailure ?? reason ?? blockedPlanReason(output.planStepOutcomes);
+      output.initial.initialFailure ??
+      reason ??
+      blockedPlanReason(output.planStepOutcomes, {
+        plan: (await ctx.runQuery(internal.work.getInternal, { workItemId }))?.plan as ExecutionPlan,
+        actions: finalOutput.actions,
+        applied: finalOutput.applied,
+      });
     if (finalReason) {
       await ctx.runMutation(internal.work.setFailed, {
         workItemId,
