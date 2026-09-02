@@ -14,6 +14,7 @@ import {
   type AgentAvatarPet,
 } from '@/agent/avatar-pets';
 import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
+import { CursorToggle } from './CursorToggle';
 
 /** Whoever the dashboard is acting for — a Clerk user, or the local dev boss. */
 interface Boss {
@@ -24,6 +25,7 @@ interface Boss {
 export default function LandingPage() {
   return (
     <main className="min-h-[calc(100vh-3.25rem)] flex flex-col">
+      <CursorToggle />
       {DEV_NO_AUTH ? (
         <SignedInDashboard boss={{ email: DEV_BOSS_EMAIL, firstName: DEV_BOSS_FIRST_NAME }} />
       ) : (
