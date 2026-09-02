@@ -146,7 +146,7 @@ Six things about that sequence are load-bearing:
 - **The key is generated, not chosen.** `pnpm dev:no-auth-key` writes `DEV_NO_AUTH_SECRET` (unlocks a browser), `DEV_NO_AUTH_SIGNING_KEY` (signs the token Convex accepts, never leaves the machine) and `DEV_NO_AUTH_JWKS` (its public half). Rotate with `pnpm dev:no-auth-key --force`, which invalidates every unlocked browser and needs a re-sync.
 - **The JWKS must reach the backend before the functions do.** `convex/auth.config.ts` is evaluated against the *deployment's* env when you push, and refuses the push if no-auth is on without a key. `./scripts/sync-convex-env.sh` pushes them in that order and says so if the key is missing. The same ordering matters for the model settings, for a different reason: a module keeps whatever env it was first evaluated with, so a value changed after the backend has run an action needs `pnpm convex:restart`.
 - **`pnpm dev` prints an unlock URL.** It carries the secret once; after that it lives in an httpOnly cookie. Open `http://localhost:3000` directly and every route answers 403 - that is the boundary working, not a fault.
-- **`pnpm sandbox:up` restarts the backend, on purpose.** The two meet over a socket on a shared volume, so the backend container has to be the one that carries the mount. Starting the sandbox reconciles both rather than leaving you with a sandbox that is running and a backend that cannot see it - the half-done state that would otherwise look like a skill failing verification.
+- **`pnpm sandbox:up` needs nothing from you and touches nothing else.** The two meet over a socket on a shared volume that the backend container mounts whether or not the sandbox is running, so starting the sandbox later needs no restart and no setting: an empty volume reads as "no local sandbox" until the service fills it, and `pnpm check:setup` says which of the two states you are in.
 
 `pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
 
@@ -155,7 +155,7 @@ Six things about that sequence are load-bearing:
 A skill the agent wrote is not a callable skill until something has run it, and that is the step that used to need an account. `pnpm sandbox:up` starts a container that runs the smoke test, so the account-free route finishes the loop it advertises: `needs-skill` → propose → approve → author → **verify** → register → the work item that asked for the skill goes back in the queue and completes.
 
 ```bash
-pnpm sandbox:up                  # start it (this also restarts the backend - see below)
+pnpm sandbox:up                  # start it; the backend already mounts its socket volume
 pnpm sandbox:down                # stop it; skills then stop at `authoring`, visibly
 ```
 
@@ -172,7 +172,7 @@ pnpm sandbox:down                # stop it; skills then stop at `authoring`, vis
 
 Two practical notes:
 
-- **`pnpm sandbox:up` restarts the backend.** The socket lives on a volume both containers mount, so the backend has to carry that mount. Bringing the sandbox up reconciles both, rather than leaving a running sandbox the backend cannot see.
+- **`pnpm sandbox:up` does not restart the backend.** The socket lives on a volume both containers mount, and the backend mounts it from its first `up`, so a sandbox started later is seen at once. Compose reports the backend as `Running` and leaves it alone.
 - **Nothing needs configuring.** There is no port and no address to keep in step - the one place a local model costs you an afternoon on this stack. `SKILL_SANDBOX_SOCKET` exists for a Convex backend running somewhere other than the bundled container, which is also the case it does not cover: an [anonymous deployment](#without-docker-for-convex) runs as an ordinary process on this machine and cannot see inside a Docker volume, so use the compose backend if you want local skill verification.
 
 With both a `DAYTONA_API_KEY` and a running local sandbox, **Daytona wins**: an API key in the environment is a deliberate act, and the local sandbox is there to be the answer when there is no key. Clear the key to use the local one.
@@ -317,7 +317,7 @@ and bring the stack up:
 
 ```bash
 pnpm convex:up --profile docs-notion --profile browser --profile demo
-pnpm sandbox:up                  # verifies authored skills; also restarts the backend
+pnpm sandbox:up                  # verifies authored skills; no port, no account
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY in .env.local
 
 pnpm sync:env                    # pushes the no-auth JWKS, the key and every DAY0_* value
@@ -331,7 +331,7 @@ Four things in that sequence are the ones that cost you an afternoon:
 
 - **`pnpm dev:no-auth-key` comes before the first `pnpm convex:up`, not after it.** It writes two real-mode values as well as the three no-auth ones: `DAY0_CREDENTIAL_KEY`, which encrypts every stored credential and which `pnpm sync:env` refuses real mode without, and `DAY0_NOTION_MCP_AUTH_TOKEN`, which authenticates the private hop to the Notion component. `--profile docs-notion` exits immediately without the second - `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion` - so on the account-free and OpenAI-key routes above the order is a preference and here it is a requirement.
 - **The admin key belongs to the volume, not to the project.** `pnpm convex:admin-key` generates it inside the backend container, and a backend on a fresh data volume issues a fresh key. Coming to real mode from an earlier stack, the key already in `.env.local` is the *old* backend's: `pnpm sync:env` then fails to authenticate against the new one. Regenerate it whenever the volume is new.
-- **Push the env before the functions, and restart after.** `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key, so `pnpm sync:env` has to be first. A module then keeps whatever env it was first evaluated with, so anything already running - `pnpm sandbox:up` restarts the backend, which is enough to evaluate one - needs `pnpm convex:restart` before it sees the values you just pushed.
+- **Push the env before the functions, and restart after.** `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key, so `pnpm sync:env` has to be first. A module then keeps whatever env it was first evaluated with, and the backend has been up since the first `up`, so `pnpm convex:restart` after the push is what makes it read the values you just pushed. One push is enough; nothing needs pushing twice.
 - **`pnpm check:setup` guesses the Compose project.** It looks for one called `day0` unless `COMPOSE_PROJECT_NAME` says otherwise, and Compose names the project after your directory. In a clone called anything else, an unset name is a checker that reports every component as absent while `docker ps` shows them running. Set it in `.env.local`; both read that file. And read the whole output rather than the summary lines - the component notes underneath them are where the real gaps are.
 
 ### The documentation is yours
@@ -340,11 +340,17 @@ Nothing in this repository is your team's documentation, and `docs-local/` is no
 
 Then, in the browser:
 
-1. **Link documentation** on the documentation page. A folder source takes a path *relative to the mount* - `.` is the whole of `DAY0_DOCS_HOST_DIR`. A Notion source takes the component's locator, `http://docs-notion-mcp:3000/mcp`, and your own Notion integration token in the secret field; the token is passed through to Notion and never stored in the clear.
-2. **Hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics.
-3. **Approve the connection cards.** Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
-4. **Decide the work.** Plans and held actions arrive in the dashboard and, once Slack is connected, in your DM as a short code you can approve from a phone. Turning autonomous actions on raises the work-in-progress cap and lets in-policy actions apply without a code; revoking a grant blocks a queued action and records the block.
-5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked; `npx convex run events:exportForAgent '{"agentId":"<id>"}'` is the same trail as JSON.
+1. **Link documentation first**, on the documentation page, before you deploy: the deploy form lists the linked sources and the agent reads only the ones ticked. A folder source takes a path *relative to the mount* - `.` is the whole of `DAY0_DOCS_HOST_DIR`. A Notion source takes the component's locator, `http://docs-notion-mcp:3000/mcp`, and your own Notion integration token in the secret field; the token is passed through to Notion and never stored in the clear. Each source shows `synced` and a page count when it has been read.
+2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
+3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each needs *both* the manager and IT approval buttons - in a single-user run that is you twice. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the second approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
+4. **Decide the work.** Skills the agent proposes, plans and held actions arrive in the dashboard and, once Slack is connected, in your DM as a short code - `approve <code>` or `reject <code> <reason>` from the manager's own Slack account, which is the only author the poller accepts. A held action can be approved, or the whole run rejected with a reason; rejecting stops the run, and a retry after anything landed first asks you to confirm the provider state. Turning autonomous actions on (the header switch, with a confirmation) raises the work-in-progress cap and lets in-policy writes apply without a code. Revoking a read or the DM grant stops queued and in-flight work that needs it and records the block; a write you approved literally stays authorised by that approval, and under the switch a write is authorised by the switch itself.
+5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one query, and because every per-agent query checks the caller, the CLI has to present the local owner's identity to run it:
+
+   ```bash
+   npx convex run events:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
+   ```
+
+   Without `--identity` the call is refused as not authenticated - that is the no-auth boundary, not a broken export. The agent id is the last segment of the dashboard URL.
 
 ### Teardown
 
@@ -676,7 +682,7 @@ pnpm eval:semifinal -- --regrade evaluation/results/<timestamp>/semifinal.json  
 pnpm eval:semifinal -- --arms day0 --runs 1 --tasks EVAL-WRITE-01               # a subset
 ```
 
-`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run events:exportForAgent '{"agentId":"<id>"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts.
+`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run events:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
 
 The three frozen evidence directories the submission quotes, and their numbers, are listed in [`evaluation/README.md`](evaluation/README.md); earlier directories are kept as superseded audit history and are not used for any conclusion.
 
@@ -798,7 +804,7 @@ pnpm model:pull qwen3:4b         # ~2.5 GB, same loop, fits a smaller gap
 - key 由 `pnpm dev:no-auth-key` 生成，而不是手工选择。命令写入 `DEV_NO_AUTH_SECRET`、`DEV_NO_AUTH_SIGNING_KEY` 和 `DEV_NO_AUTH_JWKS`。`pnpm dev:no-auth-key --force` 会轮换 key、使所有已解锁浏览器失效，并要求再次同步。
 - 必须先把 JWKS 和模型设置同步到后端，再推送 functions。`convex/auth.config.ts` 会在 deployment env 中缺少 key 时拒绝无认证模式的 push。deployment module 还会保留首次求值时的 env，因此后续更改需要执行 `pnpm convex:restart`。
 - `pnpm dev` 会输出只使用一次 secret 的 unlock URL；之后 secret 保存在 httpOnly cookie 中。直接打开 `http://localhost:3000` 会得到 403，这是边界生效，不是故障。
-- `pnpm sandbox:up` 会按设计重启后端。两者通过共享 volume 上的 socket 通信，因此启动沙箱时会协调更新这两个服务。
+- `pnpm sandbox:up` 不需要任何配置，也不会重启后端。两者通过共享 volume 上的 socket 通信，backend 容器从第一次 `up` 起就挂载了该 volume，因此之后启动的沙箱会立即被识别；`pnpm check:setup` 会说明当前处于哪种状态。
 
 当环境中存在 `NEXT_PUBLIC_DEV_NO_AUTH=true` 时，`pnpm build` 会拒绝生产构建。构建前必须取消该值；如果它进入 Vercel 配置，构建失败是预期的安全保护。
 
@@ -807,7 +813,7 @@ pnpm model:pull qwen3:4b         # ~2.5 GB, same loop, fits a smaller gap
 Agent 编写的技能在被实际运行验证之前不可调用。`pnpm sandbox:up` 启动运行冒烟测试的容器，使无需账户的路径能够完成 `needs-skill` → propose → approve → author → **verify** → register → 返回队列并完成工作项的完整闭环。
 
 ```bash
-pnpm sandbox:up                  # start it (this also restarts the backend - see below)
+pnpm sandbox:up                  # start it; the backend already mounts its socket volume
 pnpm sandbox:down                # stop it; skills then stop at `authoring`, visibly
 ```
 
@@ -948,7 +954,7 @@ DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile brow
 
 ```bash
 pnpm convex:up --profile docs-notion --profile browser --profile demo
-pnpm sandbox:up                  # verifies authored skills; also restarts the backend
+pnpm sandbox:up                  # verifies authored skills; no port, no account
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY in .env.local
 
 pnpm sync:env                    # pushes the no-auth JWKS, the key and every DAY0_* value
@@ -962,7 +968,7 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
 - **`pnpm dev:no-auth-key` 必须在第一次 `pnpm convex:up` 之前执行。** 除三个无认证 key 外，它还写入两个真实模式变量：加密所有已存凭据的 `DAY0_CREDENTIAL_KEY`（缺少它时 `pnpm sync:env` 会拒绝真实模式），以及用于认证到 Notion 组件私有链路的 `DAY0_NOTION_MCP_AUTH_TOKEN`。缺少后者时 `--profile docs-notion` 会立即退出并输出 `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion`。因此在上面两条路径中顺序只是习惯，在这里是硬性要求。
 - **admin key 属于数据卷，而不属于 compose project。** `pnpm convex:admin-key` 在 backend 容器内生成 key，使用全新数据卷的 backend 会签发全新的 key。从旧的 stack 切换到真实模式时，`.env.local` 中保存的是旧 backend 的 key，`pnpm sync:env` 会认证失败。只要数据卷是新的，就重新生成一次。
-- **先推送 env，再推送 functions，之后重启。** `convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push，因此 `pnpm sync:env` 必须在前。module 会保留首次求值时的 env，因此已经运行过的 backend（`pnpm sandbox:up` 的重启就足以触发一次求值）需要 `pnpm convex:restart` 才能看到新推送的值。
+- **先推送 env，再推送 functions，之后重启。** `convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push，因此 `pnpm sync:env` 必须在前。module 会保留首次求值时的 env，而 backend 从第一次 `up` 起就一直在运行，因此 push 之后执行 `pnpm convex:restart` 才能让它读到刚推送的值。push 一次即可，不需要重复 push。
 - **`pnpm check:setup` 会猜测 Compose project 名称。** 除非 `COMPOSE_PROJECT_NAME` 另有说明，它按 `day0` 查找，而 Compose 按目录名命名 project。目录名不同又没有设置该变量时，症状是 `docker ps` 显示组件全部运行，而 check:setup 报告组件全部缺失。在 `.env.local` 中设置一次即可，两边读的是同一个文件。另外要读完整输出，而不只是摘要行：真正的缺口写在摘要行下方的组件说明里。
 
 #### 文档由你提供
@@ -971,11 +977,17 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
 随后在浏览器中：
 
-1. **链接文档。** 文件夹来源使用相对于挂载点的路径，`.` 表示整个 `DAY0_DOCS_HOST_DIR`。Notion 来源使用组件地址 `http://docs-notion-mcp:3000/mcp`，并在 secret 字段中填入你自己的 Notion integration token；该 token 透传给 Notion，不会以明文存储。
-2. **完成 Day-1 一对一**，并批准它起草的章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。
-3. **批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
-4. **对工作做决策。** 计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，可在手机上批准。打开自主执行会提高在制品上限，并让符合策略的 action 无需短码即可执行；撤销授权会阻断已排队的 action 并记录该阻断。
-5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量；`npx convex run events:exportForAgent '{"agentId":"<id>"}'` 导出同一条轨迹的 JSON。
+1. **先链接文档**，在文档页面完成，且在部署之前：部署表单会列出已链接的来源，Agent 只读取被勾选的来源。文件夹来源使用相对于挂载点的路径，`.` 表示整个 `DAY0_DOCS_HOST_DIR`。Notion 来源使用组件地址 `http://docs-notion-mcp:3000/mcp`，并在 secret 字段中填入你自己的 Notion integration token；该 token 透传给 Notion，不会以明文存储。每个来源读取完成后会显示 `synced` 和页数。
+2. **部署一个 Agent**，然后**完成 Day-1 一对一**并批准它起草的章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。Agent 会询问文档已经回答过的工具和阅读材料问题，照常回答即可；章程记录的是你的回答。
+3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片都需要 manager 和 IT *两个*批准按钮，在单用户运行中就是你点两次。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为第二次批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
+4. **对工作做决策。** Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断；你逐字批准过的写入仍由该批准授权，而在开关打开时写入由开关本身授权。
+5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量。同一条轨迹可以用一条查询导出为 JSON；由于每个按 Agent 划分的查询都会校验调用者，CLI 必须以本机 owner 的身份运行：
+
+   ```bash
+   npx convex run events:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
+   ```
+
+   不带 `--identity` 时调用会以未认证被拒绝，这是无认证边界在起作用，而不是导出损坏。Agent id 是 dashboard URL 的最后一段。
 
 #### 停止
 
@@ -1027,7 +1039,7 @@ pnpm eval:semifinal -- --regrade evaluation/results/<timestamp>/semifinal.json  
 pnpm eval:semifinal -- --arms day0 --runs 1 --tasks EVAL-WRITE-01               # a subset
 ```
 
-`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断，结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run events:exportForAgent '{"agentId":"<id>"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹。
+`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断，结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run events:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
 
 最终提交所引用的三个冻结证据目录及其数字列在 [`evaluation/README.md`](evaluation/README.md)；更早的目录仅保留为 superseded audit history，不用于最终结论。
 
