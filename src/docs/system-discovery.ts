@@ -505,11 +505,14 @@ export function sameSystemForHostlessMention(
  * Decide whether two documented identities name one system.
  *
  * A conflicting documented host is a hard difference. After that, an exact
- * slug or an exact documented endpoint is decisive. A shared host is not: an
- * enterprise gateway fronts many products on one host, so a host match only
- * merges names that are the same product name with or without a qualifier.
- * Last, the transport-normalised name key merges "Slack" with "Slack Web
- * API". Every signal requires the same system class.
+ * slug is decisive on its own: the documented name is the identity, and the
+ * class is a label the classifier attaches to it, so one product read from
+ * two pages can arrive labelled two ways and is still one system. Every
+ * weaker signal requires the same class. An exact documented endpoint is then
+ * decisive. A shared host is not: an enterprise gateway fronts many products
+ * on one host, so a host match only merges names that are the same product
+ * name with or without a qualifier. Last, the transport-normalised name key
+ * merges "Slack" with "Slack Web API".
  */
 export function sameDocumentedSystem(
   leftClass: string,
@@ -517,11 +520,11 @@ export function sameDocumentedSystem(
   rightClass: string,
   right: DocumentedSystemIdentity,
 ): boolean {
-  if (leftClass !== rightClass) return false;
   if (left.hosts.length > 0 && right.hosts.length > 0 && !intersects(left.hosts, right.hosts)) {
     return false;
   }
   if (intersects(left.slugs, right.slugs)) return true;
+  if (leftClass !== rightClass) return false;
   if (intersects(left.endpoints, right.endpoints)) return true;
   if (intersects(left.hosts, right.hosts) && compatibleNameKeys(left.nameKeys, right.nameKeys)) {
     return true;

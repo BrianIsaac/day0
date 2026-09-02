@@ -219,6 +219,22 @@ describe('documentation system identity convergence', (): void => {
     ).toHaveLength(1);
   });
 
+  it('merges one named system whose class the classifier labelled two ways', (): void => {
+    const systems = convergeDiscoveryCandidates([
+      candidate(
+        'Slack',
+        'chat',
+        'onboarding.md',
+        '| Slack | Inbound asks arrive in one channel; the manager DM is the only outbound destination. | Messaging administrator |',
+      ),
+      candidate('Slack', 'social', 'policy-page', '# Slack automation policy'),
+    ]);
+
+    expect(systems).toHaveLength(1);
+    expect(systems[0]).toMatchObject({ name: 'Slack', class: 'chat', mergedNames: [] });
+    expect(systems[0]?.evidence.map((item) => item.ref)).toEqual(['onboarding.md', 'policy-page']);
+  });
+
   it('keeps two Slack workspaces with conflicting documented hosts distinct', (): void => {
     const systems = convergeDiscoveryCandidates([
       candidate(
