@@ -50,7 +50,7 @@ function evidence(): EvaluationEvidence {
     configuration: {
       harnessVersion: 2,
       commit: 'abcdef0',
-      model: 'gpt-5.5',
+      model: 'gpt-5.6-terra',
       skillSandboxBackend: 'local',
       skillAuthoringMaxAttempts: 4,
       temperature: 0.4,

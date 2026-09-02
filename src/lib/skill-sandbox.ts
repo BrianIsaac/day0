@@ -49,7 +49,7 @@ export interface SkillSandboxRun {
 
 export interface AuthorSkillArgs {
   skillName: string;
-  /** Authored SKILL.md body (the GPT-5.5 output that we want to verify). */
+  /** Authored SKILL.md body (the GPT-5.6 Terra output that we want to verify). */
   skillBody: string;
   /** Ad-hoc Python smoke test the agent constructs to verify the skill behaves. */
   smokeTest: string;

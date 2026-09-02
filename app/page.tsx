@@ -108,7 +108,7 @@ function SignedOutHero() {
             <LoopStep
               n="02"
               title="Charter"
-              body="GPT-5.5 distils the conversation into a typed charter. Boss approves before anything ships."
+              body="GPT-5.6 Terra distils the conversation into a typed charter. Boss approves before anything ships."
             />
             <LoopStep
               n="03"
@@ -126,7 +126,7 @@ function SignedOutHero() {
 
       <footer className="px-6 py-10 border-t border-[var(--color-border)] mt-auto">
         <p className="text-xs text-[var(--color-muted)] text-center">
-          Built on OpenAI GPT-5.5 · ElevenLabs Conversational AI · Convex · Mastra · Exa · Daytona ·
+          Built on OpenAI GPT-5.6 Terra · ElevenLabs Conversational AI · Convex · Mastra · Exa · Daytona ·
           Vercel · Cloudflare · Clerk
         </p>
       </footer>

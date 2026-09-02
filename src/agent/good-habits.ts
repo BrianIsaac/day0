@@ -4,7 +4,7 @@ import { searchRole, type ExaResult } from '../lib/exa';
 /**
  * Good-habits memory pipeline. Adapted from Protean's
  * `src/agent/good-habits.ts`: Tavily → Exa, Anthropic Opus → Mastra
- * Agent on GPT-5.5. The merge logic is identical (idempotent regex on
+ * Agent on GPT-5.6 Terra. The merge logic is identical (idempotent regex on
  * the `## Good-habits memory` header so quarterly refreshes don't
  * duplicate).
  */

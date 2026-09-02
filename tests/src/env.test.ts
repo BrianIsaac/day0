@@ -24,7 +24,7 @@ describe('environment contract', (): void => {
     const env = await loadEnv();
     expect(env.DAY0_SURFACE_MODE).toBe('mock');
     expect(env.DAY0_DOCS_ROOT).toBe('/docs');
-    expect(env.OPENAI_MODEL).toBe('gpt-5.5');
+    expect(env.OPENAI_MODEL).toBe('gpt-5.6-terra');
     expect(env.SKILL_SANDBOX_SOCKET).toBe('/run/day0-sandbox/skill-sandbox.sock');
   });
 

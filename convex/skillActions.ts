@@ -20,7 +20,7 @@ import type { SurfaceRecord } from '../src/surfaces/types';
  * Autonomous skill authoring action. Demo headline:
  *
  *   1. Boss has approved the proposed skill row.
- *   2. Mastra Agent (GPT-5.5) authors the SKILL.md body from
+ *   2. Mastra Agent (GPT-5.6 Terra) authors the SKILL.md body from
  *      name/description/rationale + a short Python smoke test that
  *      exercises the skill behaviour.
  *   3. A sandbox runs the smoke test — Daytona where a key is configured,
