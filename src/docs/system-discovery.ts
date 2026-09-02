@@ -376,7 +376,7 @@ function transportNameKey(name: string): string {
  *   `protocol//host/path` with no trailing slash, or undefined when the
  *   string does not parse as a URL.
  */
-function canonicalEndpoint(raw: string): string | undefined {
+export function canonicalEndpoint(raw: string): string | undefined {
   try {
     const endpoint = new URL(raw);
     const pathname = endpoint.pathname.replace(/\/+$/, '') || '/';

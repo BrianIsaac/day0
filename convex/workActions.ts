@@ -39,6 +39,7 @@ import {
   grantRefusal,
   actionIntent,
   isAutomatic,
+  isAuditComment,
   isStatusChange,
   needsStandingGrant,
   NOT_AUTOMATIC,
@@ -519,14 +520,42 @@ function isDependentPendingOutput(
 }
 
 const RESULT_STEP =
-  /\b(?<!-)(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/i;
-const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/i;
-/** A step whose whole purpose is to withhold writes promises no read of its own. */
-const HOLD_STEP = /^\s*(?:hold|withhold|do not|don't|never|defer|wait for)\b/i;
+  /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/gi;
+const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/gi;
+const CLAUSE_BOUNDARY = /\b(?:after|before|but|once|then|until)\b|[.;\n]/gi;
+const NEGATED_INSTRUCTION = /\b(?:defer|do not|don't|hold|never|not|wait for|without|withhold)\b/i;
+
+/** Whether at least one occurrence is an instruction to act rather than to withhold. */
+function affirmedStepTerm(step: string, terms: RegExp): boolean {
+  terms.lastIndex = 0;
+  for (let match = terms.exec(step); match; match = terms.exec(step)) {
+    if (step[match.index - 1] === '-') continue;
+    const prefix = step.slice(0, match.index);
+    CLAUSE_BOUNDARY.lastIndex = 0;
+    let boundary = 0;
+    for (
+      let separator = CLAUSE_BOUNDARY.exec(prefix);
+      separator;
+      separator = CLAUSE_BOUNDARY.exec(prefix)
+    ) {
+      boundary = CLAUSE_BOUNDARY.lastIndex;
+    }
+    if (!NEGATED_INSTRUCTION.test(prefix.slice(boundary))) return true;
+  }
+  return false;
+}
+
+function promisesResult(step: string): boolean {
+  return affirmedStepTerm(step, RESULT_STEP);
+}
+
+function promisesClose(step: string): boolean {
+  return affirmedStepTerm(step, CLOSE_STEP);
+}
 
 /** Whether the approved plan or emitted prerequisites require one result-aware turn. */
 export function needsDependentPhase(output: ExecutionOutput, plan: ExecutionPlan): boolean {
-  return output.needsDependentPhase === true || plan.steps.some((step) => RESULT_STEP.test(step));
+  return output.needsDependentPhase === true || plan.steps.some(promisesResult);
 }
 
 /** Keep result-independent prerequisites; every later literal is re-authored from the ledger. */
@@ -586,7 +615,7 @@ export function validatePlanStepOutcomes(args: {
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
   for (const [index, step] of args.plan.steps.entries()) {
-    if (!RESULT_STEP.test(step) || HOLD_STEP.test(step)) continue;
+    if (!promisesResult(step)) continue;
     const named = args.surfaces.filter(
       (surface) => namedInStep(step, surface.slug) || namedInStep(step, surface.displayName),
     );
@@ -628,7 +657,7 @@ export function dependentTransitionRefusal(args: {
   }
   if (
     args.plan.expectedOutputType !== 'ticket-update' ||
-    !args.plan.steps.some((step) => CLOSE_STEP.test(step)) ||
+    !args.plan.steps.some(promisesClose) ||
     statusChange ||
     args.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
   ) {
@@ -706,13 +735,24 @@ export function blockedPlanReason(
     };
     const everyActionLanded = run.actions.every((_action, index) => landed(index));
     const closePromised =
-      run.plan.expectedOutputType === 'ticket-update' &&
-      run.plan.steps.some((step) => CLOSE_STEP.test(step));
+      run.plan.expectedOutputType === 'ticket-update' && run.plan.steps.some(promisesClose);
     const transitionLanded = run.actions.some((action, index): boolean => {
       const parsed = parseSurfaceAction(action);
       return parsed.ok && isStatusChange(parsed.action) && landed(index);
     });
-    if (everyActionLanded && (!closePromised || transitionLanded)) return undefined;
+    const ticketEffectLanded = run.actions.some((action, index): boolean => {
+      const parsed = parseSurfaceAction(action);
+      return (
+        parsed.ok &&
+        (isAuditComment(parsed.action) || isStatusChange(parsed.action)) &&
+        landed(index)
+      );
+    });
+    const primaryEffectLanded =
+      run.plan.expectedOutputType !== 'ticket-update' || ticketEffectLanded;
+    if (everyActionLanded && primaryEffectLanded && (!closePromised || transitionLanded)) {
+      return undefined;
+    }
   }
   return `${blocked.length} approved plan step(s) remained blocked: ${blocked
     .map((outcome) => `step ${outcome.step} (${outcome.evidence})`)

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canonicalEndpoint,
   convergeDiscoveryCandidates,
   documentedSystemIdentity,
   sameSystemForHostlessMention,
@@ -274,6 +275,30 @@ describe('documentation system identity convergence', (): void => {
 });
 
 describe('documented endpoint canonicalisation', (): void => {
+  it('is byte-identical to the setter-based normalisation for every identity shape', (): void => {
+    const legacyNormalise = (raw: string): string => {
+      const endpoint = new URL(raw);
+      endpoint.username = '';
+      endpoint.password = '';
+      endpoint.search = '';
+      endpoint.hash = '';
+      endpoint.pathname = endpoint.pathname.replace(/\/+$/, '') || '/';
+      return endpoint.toString().replace(/\/$/, '');
+    };
+    const endpoints = [
+      'https://reader:p%40ss@EXAMPLE.COM:443/team///?view=active#today',
+      'http://EXAMPLE.COM:80/',
+      'https://EXAMPLE.COM:8443/api/',
+      'http://[2001:DB8::1]:80/path///?query=yes#fragment',
+      'https://[2001:db8::2]:9443/',
+      'https://Example.COM/path?query=yes#fragment',
+    ];
+
+    for (const endpoint of endpoints) {
+      expect(canonicalEndpoint(endpoint)).toBe(legacyNormalise(endpoint));
+    }
+  });
+
   it('drops credentials, query and fragment from a documented URL', (): void => {
     const identity = documentedSystemIdentity({
       name: 'Linear',

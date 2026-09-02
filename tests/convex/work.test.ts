@@ -2019,4 +2019,25 @@ describe('manager feedback kept for the retry', (): void => {
     await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
     expect((await readItem(harness, workItemId)).managerFeedback?.reason).toBe(reason);
   });
+
+  it('clears the previous rejection feedback when the retried run completes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        managerFeedback: { reason: 'Rewrite this as a close summary.', at: 2, runId },
+      });
+    });
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId,
+      runId,
+      output: {
+        ...pendingOutput,
+        applied: [{ tool: 'mcp.call', ok: true, effect: 'landed', idempotencyKey: 'k0' }],
+      },
+    });
+
+    expect((await readItem(harness, workItemId)).managerFeedback).toBeUndefined();
+  });
 });

@@ -1252,6 +1252,7 @@ export const setCompleted = internalMutation({
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
+      managerFeedback: undefined,
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,

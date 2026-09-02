@@ -82,6 +82,12 @@ describe('the live revocation evaluation fixture', (): void => {
         source: 'manager',
         createdAt: 1,
       });
+      await ctx.db.insert('permissionGrants', {
+        agentId: id,
+        scope: 'slack:write',
+        source: 'manager',
+        createdAt: 1,
+      });
       await ctx.db.insert('surfaces', {
         agentId: id,
         slug: 'slack',
@@ -108,6 +114,7 @@ describe('the live revocation evaluation fixture', (): void => {
       harness.query(internal.revocationEvaluation.containmentReached, {
         workItemId: seeded.workItemId,
         checkpoint: 'scope-revoked',
+        scope: 'slack:read',
       }),
     ).resolves.toBe(false);
     await owner.mutation(api.agents.revokeScope, { agentId, scope: 'slack:read' });
@@ -115,6 +122,22 @@ describe('the live revocation evaluation fixture', (): void => {
       harness.query(internal.revocationEvaluation.containmentReached, {
         workItemId: seeded.workItemId,
         checkpoint: 'scope-revoked',
+        scope: 'slack:read',
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      harness.query(internal.revocationEvaluation.containmentReached, {
+        workItemId: seeded.workItemId,
+        checkpoint: 'scope-revoked',
+        scope: 'slack:write',
+      }),
+    ).resolves.toBe(false);
+    await owner.mutation(api.agents.revokeScope, { agentId, scope: 'slack:write' });
+    await expect(
+      harness.query(internal.revocationEvaluation.containmentReached, {
+        workItemId: seeded.workItemId,
+        checkpoint: 'scope-revoked',
+        scope: 'slack:write',
       }),
     ).resolves.toBe(true);
   });
