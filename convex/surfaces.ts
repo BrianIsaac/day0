@@ -13,6 +13,7 @@ import {
 import {
   documentedSystemIdentity,
   sameDocumentedSystem,
+  sameSystemForHostlessMention,
   stableSlug,
   type DocumentedSystemIdentity,
 } from '../src/docs/system-discovery';
@@ -73,6 +74,74 @@ export function surfaceSlug(name: string): string {
   );
 }
 
+function surfaceIdentity(surface: Doc<'surfaces'>): DocumentedSystemIdentity {
+  return documentedSystemIdentity({
+    name: surface.displayName,
+    quotes: (surface.discoveryEvidence ?? []).map((item) => item.quote),
+    endpoints: surface.endpoint ? [surface.endpoint] : [],
+  });
+}
+
+function charterMatches(
+  surfaces: readonly Doc<'surfaces'>[],
+  system: CharterSystemSeed,
+): Doc<'surfaces'>[] {
+  const mention = documentedSystemIdentity({
+    name: system.name,
+    quotes: [system.whereMentioned],
+  });
+  return surfaces.filter((surface) =>
+    sameSystemForHostlessMention(system.class, mention, surface.class, surfaceIdentity(surface)),
+  );
+}
+
+async function recordCharterMatchAmbiguity(
+  ctx: MutationCtx,
+  args: {
+    agentId: Id<'agents'>;
+    system: CharterSystemSeed;
+    matches: readonly Doc<'surfaces'>[];
+    now: number;
+  },
+): Promise<void> {
+  await ctx.db.insert('events', {
+    agentId: args.agentId,
+    type: 'surface.charter-match-ambiguous',
+    payload: {
+      namedSystem: args.system.name,
+      class: args.system.class,
+      candidateSlugs: [...new Set(args.matches.map((surface) => surface.slug))].sort(),
+    },
+    createdAt: args.now,
+  });
+}
+
+async function attachCharterEvidence(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  system: CharterSystemSeed,
+  now: number,
+): Promise<DiscoveryEvidence[]> {
+  const prior = surface.discoveryEvidence ?? [];
+  const charterEvidence = prior.find((item): boolean => item.kind === 'charter');
+  const evidence: DiscoveryEvidence = {
+    kind: 'charter',
+    ref: 'manager 1:1',
+    quote: system.whereMentioned,
+    current: true,
+    firstSeenAt: charterEvidence?.firstSeenAt ?? now,
+    lastSeenAt: now,
+  };
+  const discoveryEvidence = charterEvidence
+    ? prior.map((item): DiscoveryEvidence => (item.kind === 'charter' ? evidence : item))
+    : [...prior, evidence];
+  if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
+    throw new Error('Surface discovery provenance exceeds 64 sources.');
+  }
+  await ctx.db.patch(surface._id, { discoveryEvidence });
+  return discoveryEvidence;
+}
+
 /** Add manager provenance to legacy rows without replaying charter seeding. */
 export async function backfillCharterProvenance(
   ctx: MutationCtx,
@@ -86,29 +155,25 @@ export async function backfillCharterProvenance(
     .query('surfaces')
     .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
     .collect();
-  const bySlug = new Map(surfaces.map((surface) => [surface.slug, surface]));
   let updated = 0;
   for (const system of args.namedSystems) {
     if (system.class === 'docs') continue;
-    const surface = bySlug.get(surfaceSlug(system.name));
+    const matches = charterMatches(surfaces, system);
+    if (matches.length > 1) {
+      await recordCharterMatchAmbiguity(ctx, {
+        agentId: args.agentId,
+        system,
+        matches,
+        now: args.now,
+      });
+      continue;
+    }
+    const surface = matches[0];
     if (!surface) continue;
     const prior = surface.discoveryEvidence ?? [];
     if (prior.some((item): boolean => item.kind === 'charter')) continue;
-    const discoveryEvidence: DiscoveryEvidence[] = [
-      ...prior,
-      {
-        kind: 'charter',
-        ref: 'manager 1:1',
-        quote: system.whereMentioned,
-        current: true,
-        firstSeenAt: surface.createdAt,
-        lastSeenAt: args.now,
-      },
-    ];
-    if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
-      throw new Error('Surface discovery provenance exceeds 64 sources.');
-    }
-    await ctx.db.patch(surface._id, { discoveryEvidence });
+    const discoveryEvidence = await attachCharterEvidence(ctx, surface, system, args.now);
+    surface.discoveryEvidence = discoveryEvidence;
     updated += 1;
   }
   return updated;
@@ -145,9 +210,30 @@ export const seedFromCharter = internalMutation({
   handler: async (ctx, args): Promise<Id<'surfaces'>[]> => {
     const surfaceIds: Id<'surfaces'>[] = [];
     const now = Date.now();
+    const surfaces = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
+      .collect();
     for (const system of args.namedSystems) {
       if (system.class === 'docs') continue;
       const slug = surfaceSlug(system.name);
+      const matches = charterMatches(surfaces, system);
+      if (matches.length > 1) {
+        await recordCharterMatchAmbiguity(ctx, {
+          agentId: args.agentId,
+          system,
+          matches,
+          now,
+        });
+        continue;
+      }
+      const existing = matches[0];
+      if (existing) {
+        const discoveryEvidence = await attachCharterEvidence(ctx, existing, system, now);
+        existing.discoveryEvidence = discoveryEvidence;
+        surfaceIds.push(existing._id);
+        continue;
+      }
       const evidence: DiscoveryEvidence = {
         kind: 'charter',
         ref: 'manager 1:1',
@@ -156,28 +242,6 @@ export const seedFromCharter = internalMutation({
         firstSeenAt: now,
         lastSeenAt: now,
       };
-      const existing = await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent_slug', (index) => index.eq('agentId', args.agentId).eq('slug', slug))
-        .unique();
-      if (existing) {
-        const prior = existing.discoveryEvidence ?? [];
-        const charterEvidence = prior.find((item): boolean => item.kind === 'charter');
-        const discoveryEvidence = charterEvidence
-          ? prior.map(
-              (item): DiscoveryEvidence =>
-                item.kind === 'charter'
-                  ? { ...item, quote: system.whereMentioned, current: true, lastSeenAt: now }
-                  : item,
-            )
-          : [...prior, evidence];
-        if (discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE) {
-          throw new Error('Surface discovery provenance exceeds 64 sources.');
-        }
-        await ctx.db.patch(existing._id, { discoveryEvidence });
-        surfaceIds.push(existing._id);
-        continue;
-      }
       const surfaceId = await ctx.db.insert('surfaces', {
         agentId: args.agentId,
         slug,
@@ -189,6 +253,8 @@ export const seedFromCharter = internalMutation({
         credentialLanded: false,
         createdAt: now,
       });
+      const inserted = await ctx.db.get(surfaceId);
+      if (inserted) surfaces.push(inserted);
       surfaceIds.push(surfaceId);
     }
     return surfaceIds;

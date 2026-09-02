@@ -191,6 +191,170 @@ describe('surface persistence', (): void => {
     ]);
   });
 
+  it('attaches the live Looker charter alias to the documented pipeline tile', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const sourceId = await harness.run(
+      async (ctx): Promise<Id<'docSources'>> =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'RevOps handbook',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    const documented = [
+      { slug: 'linear', displayName: 'Linear', class: 'kanban' },
+      { slug: 'slack', displayName: 'Slack', class: 'chat' },
+      { slug: 'northstar-crm', displayName: 'Northstar CRM', class: 'crm' },
+      {
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        endpoint: 'http://looker-tile:8080/',
+      },
+    ] as const;
+    const tileId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      let tile: Id<'surfaces'> | undefined;
+      for (const system of documented) {
+        const id = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: system.slug,
+          displayName: system.displayName,
+          class: system.class,
+          verdict: 'declared',
+          endpoint: 'endpoint' in system ? system.endpoint : undefined,
+          whereFound: [
+            {
+              sourceId,
+              ref: `systems/${system.slug}.md`,
+              quote: `# ${system.displayName}`,
+            },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              sourceId,
+              ref: `systems/${system.slug}.md`,
+              quote: `# ${system.displayName}`,
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        if (system.slug === 'looker-pipeline-tile') tile = id;
+      }
+      if (!tile) throw new Error('tile surface missing');
+      return tile;
+    });
+
+    await expect(
+      harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          {
+            name: 'Looker',
+            class: 'analytics',
+            whereMentioned: 'Pipeline numbers are on the Looker tile, web UI only.',
+          },
+        ],
+      }),
+    ).resolves.toEqual([tileId]);
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(rows).toHaveLength(4);
+    expect(rows.map((row) => row.slug)).not.toContain('looker');
+    expect(rows.find((row) => row._id === tileId)?.discoveryEvidence).toEqual([
+      expect.objectContaining({ kind: 'documentation', ref: 'systems/looker-pipeline-tile.md' }),
+      expect.objectContaining({
+        kind: 'charter',
+        ref: 'manager 1:1',
+        quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+        current: true,
+      }),
+    ]);
+  });
+
+  it('records an ambiguous hostless charter mention without minting or attaching', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (const system of [
+        { slug: 'looker-sales-tile', displayName: 'Looker sales tile' },
+        { slug: 'looker-finance-tile', displayName: 'Looker finance tile' },
+      ]) {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: system.slug,
+          displayName: system.displayName,
+          class: 'analytics',
+          verdict: 'declared',
+          whereFound: [{ ref: `${system.slug}.md`, quote: `# ${system.displayName}` }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: `${system.slug}.md`,
+              quote: `# ${system.displayName}`,
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+      }
+    });
+
+    await expect(
+      harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          {
+            name: 'Looker',
+            class: 'analytics',
+            whereMentioned: 'Pipeline reporting is in Looker.',
+          },
+        ],
+      }),
+    ).resolves.toEqual([]);
+
+    const result = await harness.run(async (ctx) => ({
+      surfaces: await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect(),
+      events: await ctx.db
+        .query('events')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect(),
+    }));
+    expect(result.surfaces).toHaveLength(2);
+    expect(result.surfaces.every((row) => row.discoveryEvidence?.length === 1)).toBe(true);
+    expect(result.events).toMatchObject([
+      {
+        type: 'surface.charter-match-ambiguous',
+        payload: {
+          namedSystem: 'Looker',
+          class: 'analytics',
+          candidateSlugs: ['looker-finance-tile', 'looker-sales-tile'],
+        },
+      },
+    ]);
+  });
+
   it('records an explicit absence with its search terms', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);

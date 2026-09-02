@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   convergeDiscoveryCandidates,
+  documentedSystemIdentity,
+  sameSystemForHostlessMention,
   type DiscoveredSystemCandidate,
 } from '../../../src/docs/system-discovery';
 
@@ -14,6 +16,31 @@ function candidate(
 }
 
 describe('documentation system identity convergence', (): void => {
+  it('matches a hostless manager alias to one qualified documented system', (): void => {
+    const mention = documentedSystemIdentity({
+      name: 'Looker',
+      quotes: ['Pipeline numbers are on the Looker tile, web UI only.'],
+    });
+    const documented = documentedSystemIdentity({
+      name: 'Looker pipeline tile',
+      endpoints: ['http://looker-tile:8080/'],
+    });
+
+    expect(sameSystemForHostlessMention('analytics', mention, 'analytics', documented)).toBe(true);
+    expect(sameSystemForHostlessMention('other', mention, 'analytics', documented)).toBe(false);
+    expect(
+      sameSystemForHostlessMention(
+        'analytics',
+        documentedSystemIdentity({
+          name: 'Looker',
+          endpoints: ['https://different-looker.example.test/'],
+        }),
+        'analytics',
+        documented,
+      ),
+    ).toBe(false);
+  });
+
   it('attaches a transport description and its page to the named system', (): void => {
     const systems = convergeDiscoveryCandidates([
       candidate(

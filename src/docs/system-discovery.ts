@@ -416,6 +416,29 @@ function compatibleNameKeys(left: readonly string[], right: readonly string[]): 
 }
 
 /**
+ * Match a manager's endpoint-free system mention to a documented identity.
+ *
+ * The direction is deliberate: documentation may carry endpoints that
+ * distinguish similarly named products, while a spoken charter mention
+ * normally cannot. Containment is therefore available only when the mention
+ * has no endpoint or host signal of its own.
+ */
+export function sameSystemForHostlessMention(
+  mentionClass: string,
+  mention: DocumentedSystemIdentity,
+  documentedClass: string,
+  documented: DocumentedSystemIdentity,
+): boolean {
+  if (sameDocumentedSystem(mentionClass, mention, documentedClass, documented)) return true;
+  return (
+    mentionClass === documentedClass &&
+    mention.endpoints.length === 0 &&
+    mention.hosts.length === 0 &&
+    compatibleNameKeys(mention.nameKeys, documented.nameKeys)
+  );
+}
+
+/**
  * Decide whether two documented identities name one system.
  *
  * A conflicting documented host is a hard difference. After that, an exact
