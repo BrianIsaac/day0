@@ -82,17 +82,48 @@ function surfaceIdentity(surface: Doc<'surfaces'>): DocumentedSystemIdentity {
   });
 }
 
+/**
+ * Whether a surface is the charter-only row an earlier build minted for this mention.
+ *
+ * Before charter seeding went through the identity matcher, a mention with no
+ * slug-equal surface always minted its own row, so a row that carries the
+ * mention's slug and nothing but charter evidence is that legacy alias.
+ */
+function isLegacyCharterAlias(surface: Doc<'surfaces'>, system: CharterSystemSeed): boolean {
+  const evidence = surface.discoveryEvidence ?? [];
+  return (
+    surface.slug === surfaceSlug(system.name) &&
+    evidence.length > 0 &&
+    evidence.every((item): boolean => item.kind === 'charter')
+  );
+}
+
+/**
+ * Resolve the surfaces a charter mention stands for.
+ *
+ * A surface carrying the mention's own slug is that mention whatever class the
+ * extractor assigned, as it was before the identity matcher. Otherwise the
+ * hostless-mention rule applies. When several surfaces match and one of them
+ * is the legacy charter-only alias, the documented rows are the system and the
+ * alias is set aside rather than reported as an ambiguity.
+ */
 function charterMatches(
   surfaces: readonly Doc<'surfaces'>[],
   system: CharterSystemSeed,
 ): Doc<'surfaces'>[] {
+  const slug = surfaceSlug(system.name);
   const mention = documentedSystemIdentity({
     name: system.name,
     quotes: [system.whereMentioned],
   });
-  return surfaces.filter((surface) =>
-    sameSystemForHostlessMention(system.class, mention, surface.class, surfaceIdentity(surface)),
+  const matches = surfaces.filter(
+    (surface) =>
+      surface.slug === slug ||
+      sameSystemForHostlessMention(system.class, mention, surface.class, surfaceIdentity(surface)),
   );
+  if (matches.length < 2) return matches;
+  const documented = matches.filter((surface) => !isLegacyCharterAlias(surface, system));
+  return documented.length > 0 ? documented : matches;
 }
 
 async function recordCharterMatchAmbiguity(
