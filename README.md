@@ -727,6 +727,20 @@ The controlled comparison runs the same model, the same non-zero temperature, th
 
 Evidence written by an earlier harness is not resumable under v2 and the v1 directories are kept immutable, so a mixed run cannot happen by accident.
 
+`D` is Day0 and `O` is the ordinary arm:
+
+| Measure | 8B D | 8B O | Terra D | Terra O | Sol D | Sol O |
+|---|---:|---:|---:|---:|---:|---:|
+| Task pass, majority | 7/15 | 6/15 | 15/15 | 12/15 | 15/15 | 13/15 |
+| Task pass, per run | 25/45 | 19/45 | 44/45 | 34/45 | 44/45 | 36/45 |
+| Procedure, majority | 7/15 | 1/15 | 11/15 | 2/15 | 11/15 | 2/15 |
+| Procedure, per run | 20/45 | 4/45 | 33/45 | 6/45 | 32/45 | 6/45 |
+| Prohibited-action free | 42/45 | 34/45 | 45/45 | 34/45 | 45/45 | 38/45 |
+| Out-of-scope pass | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 |
+| Supervision on writes | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 |
+
+The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, while the frontier Terra and Sol arms exercise the hosted Responses API; both arms now complete tool-calling work on that fixed route. Day0 leads the ordinary arm on task pass, a-priori procedure adherence, prohibited-action freedom and out-of-scope pass in all three beds, but it does not pass every task-run (44/45 on each hosted model), and this controlled mock-office comparison does not establish universal performance. The ordinary arm is the same model with no onboarding.
+
 It wants Node 22+, pnpm, a self-hosted backend in **mock** mode and the local sandbox. The model is whatever `OPENAI_MODEL` names, and the harness checks that the deployment agrees with `.env.local` before it starts - the two disagreeing is the failure this check exists to catch. With the bundled `qwen3:8b`, keep `OLLAMA_CONTEXT_LENGTH=16384`; changing it means rebuilding the model service and confirming the context in its startup log.
 
 ```bash
@@ -1116,6 +1130,20 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 | local | 必须使用无网络的本地技能沙箱；会选择 Daytona 的 deployment 在第一项任务之前即被拒绝 |
 
 早期 harness 写出的证据在 v2 下不可恢复，v1 目录保持不可变，因此不会意外混用两个版本。
+
+`D` 表示 Day0，`O` 表示普通 arm：
+
+| 指标 | 8B D | 8B O | Terra D | Terra O | Sol D | Sol O |
+|---|---:|---:|---:|---:|---:|---:|
+| Task pass，多数通过 | 7/15 | 6/15 | 15/15 | 12/15 | 15/15 | 13/15 |
+| Task pass，逐次运行 | 25/45 | 19/45 | 44/45 | 34/45 | 44/45 | 36/45 |
+| 流程遵循，多数通过 | 7/15 | 1/15 | 11/15 | 2/15 | 11/15 | 2/15 |
+| 流程遵循，逐次运行 | 20/45 | 4/45 | 33/45 | 6/45 | 32/45 | 6/45 |
+| 无禁止操作 | 42/45 | 34/45 | 45/45 | 34/45 | 45/45 | 38/45 |
+| 超范围任务通过 | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 |
+| 写操作受到监督 | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 |
+
+自托管 8B 的两个 arm 使用 OpenAI-compatible chat-completions 路由，前沿模型 Terra 与 Sol 的两个 arm 使用托管 Responses API；修复路由后，两边都能完成工具调用。三个环境中，Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上都领先普通 arm；但 Day0 并非每个 task-run 都通过（两个托管模型均为 44/45），这项受控 mock-office 比较也不能证明普遍性能。普通 arm 使用同一模型，只是不经过入职流程。
 
 需要 Node 22+、pnpm、处于 **mock** 模式的自托管 backend 和本地 sandbox。模型由 `OPENAI_MODEL` 指定；harness 在开始前会检查 deployment 与 `.env.local` 是否一致，这项检查正是为了捕捉两者不一致的情况。使用内置 `qwen3:8b` 时必须保留 `OLLAMA_CONTEXT_LENGTH=16384`，修改后需重建 model service，并在启动日志中确认 context。
 

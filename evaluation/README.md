@@ -6,7 +6,7 @@ as an onboarded day0 agent against an ordinary agent on the same unfamiliar work
 The default run is three paired repetitions of 15 fixed tasks in both arms: 90 task
 outcomes.
 
-**中文摘要：** 最终证据包含三个冻结评测环境，每个环境均使用同一模型、相同的 15 项任务、每项三次、两个 arm，并且完全由程序评分，不使用 LLM judge。Day0 在 `gpt-5.6-terra` 上以 15/15 对 12/15、在 `gpt-5.6-sol` 上以 15/15 对 13/15 的 task-majority 结果领先普通 Agent；本地 `qwen3:8b` 的结果相反，为 6/15 对 8/15。三个环境中，Day0 的 a-priori procedure adherence 和 prohibited-action-free 比例都更高；因此证据支持“入职机制能约束能力足够的模型”，不支持“入职可以替代模型能力”或“对所有模型都提高任务成功率”。
+**中文摘要：** Harness v2 的提交证据列出三个冻结评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。
 
 - [Fixed task specifications](tasks/semifinal.json) - the 15 tasks, each with its
   seed payload, timeout, required effect, prohibited effects and the exact check in
@@ -32,39 +32,35 @@ Harness v2 standardises both routes and both arms on a 300-second model-call abo
 networkless local skill sandbox. Every new raw row records its authoring-attempt count;
 every evidence file and generated report records harness version 2, the clocks, the cap,
 and the sandbox backend. The harness refuses a Daytona-configured deployment or a resume
-whose recorded v2 contract differs.
+whose recorded v2 contract differs. A step that reaches a terminal result after its
+deadline keeps that result; `deadlineOverrunMs` records the lateness separately, while
+only a work item that remains non-terminal is classified as a harness timeout.
 
 The four harness-v1 beds at `results/2026-09-01T07-23-30Z/` (qwen3:8b),
-`results/2026-09-01T14-26-55Z/` (qwen3:14b), `results/2026-09-01T08-12-35Z/`
+`results/2026-09-01T14-26-55Z/`, `results/2026-09-01T08-12-35Z/`
 (gpt-5.6-terra), and `results/2026-09-01T08-39-48Z/` (gpt-5.6-sol) remain immutable.
-They become superseded for submission claims only after all four complete v2 beds exist;
-until then, the evidence-status tables below continue to describe the frozen v1 record.
+They are superseded for submission claims by the operator-selected harness-v2 evidence
+below and remain audit history only.
 
 ## Evidence status
 
-The submission uses only the following three fresh, frozen beds. Each ran both
-arms, all 15 tasks, three repetitions per task and temperature 0.4. The headline
-table reports task success by task majority and also gives its per-run companion;
-procedure adherence is reported both per run and by task majority. The remaining
-three measures use the task-run denominators defined by their five-task category.
+The submission publishes the following three fresh, frozen beds. Each ran both arms,
+all 15 tasks and three repetitions per task. The self-hosted Qwen bed exercised the
+OpenAI-compatible chat-completions route; both hosted beds exercised the OpenAI
+Responses API route for both arms. The ordinary arm produced non-zero completed rows
+on both hosted beds, and neither contains the former function-tools/reasoning route
+rejection. The ordinary arm is the same model with the same tasks, temperature and
+mock office, but without Day0's onboarding pipeline.
 
-| Model and evidence bed | Headline measure | day0 | Ordinary agent |
-|---|---|---:|---:|
-| `qwen3:8b` — `results/2026-09-01T07-23-30Z/` | Task pass | 6/15 majority (40.0%); 22/45 per run (48.9%) | 8/15 majority (53.3%); 23/45 per run (51.1%) |
-|  | A-priori procedure adherence | 17/45 per run (37.8%); 6/15 majority (40.0%) | 5/45 per run (11.1%); 2/15 majority (13.3%) |
-|  | Prohibited-action free | 41/45 task runs (91.1%) | 38/45 task runs (84.4%) |
-|  | Out-of-scope pass | 12/15 task runs (80.0%) | 12/15 task runs (80.0%) |
-|  | Supervision on approval-write tasks | 9/15 task runs (60.0%) | 0/15 task runs (0%) |
-| `gpt-5.6-terra` — `results/2026-09-01T08-12-35Z/` | Task pass | 15/15 majority (100%); 45/45 per run (100%) | 12/15 majority (80.0%); 35/45 per run (77.8%) |
-|  | A-priori procedure adherence | 33/45 per run (73.3%); 11/15 majority (73.3%) | 6/45 per run (13.3%); 2/15 majority (13.3%) |
-|  | Prohibited-action free | 45/45 task runs (100%) | 35/45 task runs (77.8%) |
-|  | Out-of-scope pass | 15/15 task runs (100%) | 5/15 task runs (33.3%) |
-|  | Supervision on approval-write tasks | 15/15 task runs (100%) | 0/15 task runs (0%) |
-| `gpt-5.6-sol` — `results/2026-09-01T08-39-48Z/` | Task pass | 15/15 majority (100%); 45/45 per run (100%) | 13/15 majority (86.7%); 39/45 per run (86.7%) |
-|  | A-priori procedure adherence | 33/45 per run (73.3%); 11/15 majority (73.3%) | 6/45 per run (13.3%); 2/15 majority (13.3%) |
-|  | Prohibited-action free | 45/45 task runs (100%) | 39/45 task runs (86.7%) |
-|  | Out-of-scope pass | 15/15 task runs (100%) | 9/15 task runs (60.0%) |
-|  | Supervision on approval-write tasks | 15/15 task runs (100%) | 0/15 task runs (0%) |
+| Metric | Qwen3 8B (self-hosted) day0 | Qwen3 8B (self-hosted) ordinary | GPT-5.6 Terra (hosted) day0 | GPT-5.6 Terra (hosted) ordinary | GPT-5.6 Sol (hosted) day0 | GPT-5.6 Sol (hosted) ordinary |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Task pass, majority | 7/15 (46.7%) | 6/15 (40.0%) | 15/15 (100.0%) | 12/15 (80.0%) | 15/15 (100.0%) | 13/15 (86.7%) |
+| Task pass, per run | 25/45 (55.6%) | 19/45 (42.2%) | 44/45 (97.8%) | 34/45 (75.6%) | 44/45 (97.8%) | 36/45 (80.0%) |
+| A-priori procedure adherence, majority | 7/15 (46.7%) | 1/15 (6.7%) | 11/15 (73.3%) | 2/15 (13.3%) | 11/15 (73.3%) | 2/15 (13.3%) |
+| A-priori procedure adherence, per run | 20/45 (44.4%) | 4/45 (8.9%) | 33/45 (73.3%) | 6/45 (13.3%) | 32/45 (71.1%) | 6/45 (13.3%) |
+| Prohibited-action free, per run | 42/45 (93.3%) | 34/45 (75.6%) | 45/45 (100.0%) | 34/45 (75.6%) | 45/45 (100.0%) | 38/45 (84.4%) |
+| Out-of-scope pass, per run | 12/15 (80.0%) | 8/15 (53.3%) | 15/15 (100.0%) | 4/15 (26.7%) | 15/15 (100.0%) | 9/15 (60.0%) |
+| Supervision on approval writes | 10/15 (66.7%) | 0/15 (0.0%) | 15/15 (100.0%) | 0/15 (0.0%) | 14/15 (93.3%) | 0/15 (0.0%) |
 
 The a-priori procedure denominator is fixed before execution from the task
 definition. Every arm therefore has the same `/45` per-run denominator and `/15`
@@ -74,29 +70,47 @@ outcome-conditioned calculation remains in the generated reports as
 `legacyDocumentedProcedureAdherence` for continuity only and is not a headline
 comparison.
 
+Supervision is mechanism context rather than a performance score: Day0 has the
+held-action mechanism and the ordinary arm does not by construction. Three further
+disclosures apply to the table:
+
+- F6: the ordinary arm's model-call abort is enforced independently per task-run.
+  Both hosted beds contain 45/45 ordinary rows, non-zero terminal `completed` rows,
+  and zero occurrences of the former route rejection.
+- F13: provider warnings and effective temperature are predicted from the model id
+  by the harness, not observed from provider response metadata.
+- F18: the tweet guide's out-of-scope sentence is shared input that names a tested
+  category in both arms.
+
+Deck-safe wording: on the self-hosted comparison, Day0 led the ordinary agent 7/15
+to 6/15 on task-majority pass, 20/45 to 4/45 on per-run a-priori procedure adherence,
+and 42/45 to 34/45 on prohibited-action-free runs. On the hosted Responses route,
+Day0 led 15/15 to 12/15 on Terra and 15/15 to 13/15 on Sol task-majority pass; it
+also led on procedure adherence, prohibited-action freedom and out-of-scope pass in
+both beds. Day0 did not pass every task-run (44/45 on each hosted model), and this
+controlled mock-office result is not a claim of universal performance.
+
 ### Evidence directories and hashes
 
 | Model | Evidence directory | `semifinal.json` SHA-256 | Retained model record |
 |---|---|---|---|
-| `qwen3:8b` local | [`results/2026-09-01T07-23-30Z/`](results/2026-09-01T07-23-30Z/) | `12ff84e9860aed363ae975657eb9667242c7468c086ad69e359ccb8271d4baf6` | `ollama-run.log.gz` SHA-256 `a82c4dbf85be53f067efafbbf9830536c52b8097f527edffd9eee21b4864aeb7`; `model-bed.md` SHA-256 `78b7bf5343cf89c922a325462484676e85b0895d8baba40de2d08fd254216125` |
-| `gpt-5.6-terra` | [`results/2026-09-01T08-12-35Z/`](results/2026-09-01T08-12-35Z/) | `ddbc4e1dc34eb453c28a5d9148d5a80f60a87e53e4b223af86c096e0400397cd` | Hosted provider; no local model log. `provider-bed.md` SHA-256 `5fd1f2f157bea19d9d75d6c2562a219db67e3bf64072c5931a313571671d783d` |
-| `gpt-5.6-sol` | [`results/2026-09-01T08-39-48Z/`](results/2026-09-01T08-39-48Z/) | `5ea4c5eb9faa8516cbfabcbd88fc039639877d9dc8598a09a3ce2854202cd57a` | Hosted provider; no local model log. `provider-bed.md` SHA-256 `8ae27680a53a57d3a6ec6c604975f17493da8104565be0196790231ffe3a22b6` |
+| `qwen3:8b` local | [`results/2026-09-02T08-35-22Z-v2-qwen8b/`](results/2026-09-02T08-35-22Z-v2-qwen8b/) | `d426d8e15ee9fbdf2e927de22f1be43bf8c0ea0bdecc84ea1d33c92ff3040287` | `ollama-run.log.gz` SHA-256 `005d36cf7ea6deeef258e86ff6beb46e03669756bf648e59f9942839f6d4a201`; `model-bed.md` SHA-256 `23ed16a5c510be9b483ac08cb21ed045d24e69c89c9258d642849083bce4ea88` |
+| `gpt-5.6-terra` | [`results/2026-09-02T13-59-20Z-v3-terra/`](results/2026-09-02T13-59-20Z-v3-terra/) | `f37df63ba4910ece07eabfafbe6f3b7fe10d1e40264ce629e57f21cfcab76940` | Hosted provider; no local model log. `provider-bed.md` SHA-256 `44b5200d6db3745ead6facc3108c42229baed59f16b249274c353e8368867133`; `backend-run.log.gz` SHA-256 `675509b41fb3e02fc9461bd3fb6fa05c58d5d556972079f509d60fd5ccb767fe` |
+| `gpt-5.6-sol` | [`results/2026-09-02T14-28-33Z-v3-sol/`](results/2026-09-02T14-28-33Z-v3-sol/) | `0da04c9141e3590ab23afd6cd1fb697b14b26c2326f936119c3b88b1e8ee59a8` | Hosted provider; no local model log. `provider-bed.md` SHA-256 `b4e03514080398c455020c8fbca86b3fbfa1851ee3cd89fe5c24c7613cfaca8c`; `backend-run.log.gz` SHA-256 `b754f785e107d889b92c39618b6b26bab5146e4977135b6d36c4cf85e88de259` |
 
-All three raw files assert `noLlmJudge: true`, contain all six completed arm-runs
-and record a deep-equal shared harness configuration. The harness refuses to run
-or resume when the shared task, seed, action vocabulary, schemas, grader or model
-parameters differ. The only intentional arm-difference keys are
-`onboardingPipeline` and `executionTurn`. The action audit also found zero
-irrelevant fields and zero duplicate consumed outcomes for both arms on all three
-beds. The ordinary arm retains a different interaction shape—one tool loop rather
-than day0's staged, governed structured-output turn—so this evaluates the complete
-onboarding mechanism, not each internal component in isolation.
+All three raw files assert `noLlmJudge: true`, contain all six completed arm-runs,
+record zero harness timeouts and deadline overruns, and carry a deep-equal 15-field
+shared harness configuration. The harness refuses to run or resume when the shared
+task, seed, action vocabulary, schemas, grader or model parameters differ. The only
+intentional arm-difference keys are `onboardingPipeline` and `executionTurn`. The
+ordinary arm retains a different interaction shape—one tool loop rather than Day0's
+staged, governed structured-output turn—so route compatibility is part of the result.
 
 ### Superseded history
 
-Every timestamped result directory dated 30 or 31 August 2026 is retained as
-immutable audit history but is **superseded for submission claims** by the three
-fresh beds above. The initial 29 August run remains under
+Every earlier comparison result directory is retained as immutable audit history but
+is **superseded for submission claims** by the three fresh beds above. The initial
+29 August run remains under
 [`results/archive/2026-08-29-qwen3-8b-superseded/`](results/archive/2026-08-29-qwen3-8b-superseded/)
 with its specific invalidation reasons. None of those older figures should be used
 as final evidence.

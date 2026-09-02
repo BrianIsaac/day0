@@ -84,6 +84,7 @@ function evidence(): EvaluationEvidence {
             workItemId: 'work-1',
             terminalState: 'completed',
             timedOut: false,
+            deadlineOverrunMs: 1250,
             startedAt: '2026-08-30T00:00:01.000Z',
             finishedAt: '2026-08-30T00:00:03.000Z',
             deployToFirstCorrectActionMs: 2500,
@@ -135,7 +136,10 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('Skill verification uses `local`');
     expect(report).toContain('shared skill-authoring cap is 4 attempts');
     expect(report).toContain('| day0-r1 | day0 | docs-team-cadence | completed | pass');
-    expect(report).toContain('| yes (manager-report / manager-report) | 3 | yes |');
+    expect(report).toContain('| yes (manager-report / manager-report) | 3 | 1.25 s | yes |');
+    expect(report).toContain('| Skill authoring attempts | Deadline overrun | Held |');
+    expect(report).toContain('| 3 | 1.25 s | yes |');
+    expect(report).toContain('A step that completes after the deadline counts as completed');
     expect(report).toContain('No LLM judge');
     expect(report).toContain('same fixed tasks');
     expect(report).toContain('human wait');

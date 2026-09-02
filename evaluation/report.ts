@@ -25,6 +25,8 @@ export interface EvaluationTaskResult {
   workItemId: string;
   terminalState: string;
   timedOut: boolean;
+  /** Wall-clock finish beyond the declared deadline; absent on retained v1 evidence. */
+  deadlineOverrunMs?: number;
   startedAt: string;
   finishedAt: string;
   deployToFirstCorrectActionMs: number | null;
@@ -567,7 +569,7 @@ export function renderEvaluationReport(
       (row.grade.facts.procedureEffects ?? [])
         .map((effect) => `${effect.kind}:${effect.destination}`)
         .join('; ') || 'none'
-    } | ${procedure} | ${row.skillAuthoringAttempts ?? 'not recorded'} | ${row.grade.facts.heldForApproval ? 'yes' : 'no'} | ${duration(
+    } | ${procedure} | ${row.skillAuthoringAttempts ?? 'not recorded'} | ${row.deadlineOverrunMs === undefined ? 'not recorded' : duration(row.deadlineOverrunMs)} | ${row.grade.facts.heldForApproval ? 'yes' : 'no'} | ${duration(
       row.deployToFirstCorrectActionMs,
     )} |`;
   });
@@ -636,12 +638,12 @@ The scripted manager approves every held action after a fixed delay and never re
 
 Day0 onboarding uses ${evidence.configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
 
-Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`; each provider call has a shared ${(evidence.configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${evidence.configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${evidence.configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A timeout is terminal for the harness and remains a failed programmatic grade. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
+Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`; each provider call has a shared ${(evidence.configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${evidence.configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${evidence.configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A work item that is still non-terminal when the harness observes its deadline is timed out and retains a failed programmatic grade. A step that completes after the deadline counts as completed; its wall-clock overrun is recorded separately. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
 
 ## Task-level evidence
 
-| Run | Arm | Task | Terminal state | Grader | Prohibited flags | Reported supervision effects | Procedure effects | Procedure adherence | Skill authoring attempts | Held | Deploy → first correct effect |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- |
-${detail.join('\n') || '| — | — | — | — | — | — | — | — | — | — | — | — |'}
+| Run | Arm | Task | Terminal state | Grader | Prohibited flags | Reported supervision effects | Procedure effects | Procedure adherence | Skill authoring attempts | Deadline overrun | Held | Deploy → first correct effect |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- |
+${detail.join('\n') || '| — | — | — | — | — | — | — | — | — | — | — | — | — |'}
 `;
 }

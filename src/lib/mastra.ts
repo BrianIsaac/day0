@@ -1,7 +1,7 @@
 import { Agent } from '@mastra/core/agent';
 import type { MastraModelConfig } from '@mastra/core/llm';
 import { env } from '../env';
-import { languageModel, MODEL } from './openai';
+import { languageModel, MODEL, modelProviderClient } from './openai';
 import { log } from './logger';
 import {
   classifyStructuredFailure,
@@ -29,14 +29,13 @@ import {
 /**
  * Model handed to every Mastra Agent.
  *
- * Every provider uses the explicit AI-SDK chat-completions model. Chat
- * completions with `json_schema` is the common structured-output route across
- * OpenAI and the supported local runtimes; using Mastra's Responses router for
- * only the hosted bed would change both provider and protocol at once.
+ * The shared resolver routes hosted OpenAI through Responses and custom
+ * OpenAI-compatible endpoints through chat completions. Both evaluation arms
+ * and every shipped Mastra agent receive this same lazy model configuration.
  */
 export const MODEL_CONFIG = Object.assign(
   (): MastraModelConfig => languageModel() as MastraModelConfig,
-  { provider: 'openai.chat' as const },
+  { provider: modelProviderClient() },
 );
 
 /** Shared sampling setting for the shipped agent and the evaluation control. */

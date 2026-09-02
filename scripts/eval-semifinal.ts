@@ -113,6 +113,17 @@ export function assertLocalEvaluationSandbox(backend: string): asserts backend i
   );
 }
 
+export function evaluationTaskTiming(
+  stateAtDeadlineCheck: string,
+  finishedAt: number,
+  deadline: number,
+): Pick<EvaluationTaskResult, 'timedOut' | 'deadlineOverrunMs'> {
+  return {
+    timedOut: !isTerminalWorkState(stateAtDeadlineCheck),
+    deadlineOverrunMs: Math.max(0, finishedAt - deadline),
+  };
+}
+
 function positiveInteger(flag: string, value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -720,7 +731,8 @@ async function runTask(
     item = workItemForTask(raw, task);
   }
 
-  if (!isTerminalWorkState(item.state) && Date.now() >= deadline) {
+  const stateAtDeadlineCheck = item.state;
+  if (!isTerminalWorkState(stateAtDeadlineCheck) && Date.now() >= deadline) {
     await context.client.mutation(api.evaluation.timeoutTask, { workItemId: item._id });
   }
 
@@ -729,7 +741,11 @@ async function runTask(
   const observedAt = Date.now();
   const finishedAt = terminalTimestamp(raw, item) ?? observedAt;
   const snapshot = graderSnapshot(raw, item, new Date(active.startedAt).getTime(), finishedAt);
-  const timedOut = finishedAt > deadline || !isTerminalWorkState(item.state);
+  const { timedOut, deadlineOverrunMs } = evaluationTaskTiming(
+    stateAtDeadlineCheck,
+    finishedAt,
+    deadline,
+  );
   const correctEffectAt = firstCorrectEffectAt(task, snapshot);
   const deployedAt = run.deployedAt ? new Date(run.deployedAt).getTime() : finishedAt;
   const grade = gradeEvaluationTask(task, run.arm, snapshot);
@@ -748,6 +764,7 @@ async function runTask(
     workItemId: item._id,
     terminalState: item.state,
     timedOut,
+    deadlineOverrunMs,
     startedAt: active.startedAt,
     finishedAt: new Date(finishedAt).toISOString(),
     deployToFirstCorrectActionMs:
