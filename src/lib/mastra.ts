@@ -29,16 +29,12 @@ import {
 /**
  * Model handed to every Mastra Agent.
  *
- * Hosted OpenAI keeps the model-router string so Mastra resolves the
- * model through its own provider registry (capability metadata, strict
- * structured-output mode, observability labels). A custom
- * OPENAI_BASE_URL swaps in an explicit AI-SDK chat-completions model,
- * because the router would otherwise resolve `openai/*` against
- * api.openai.com and ignore the base URL entirely.
+ * Every provider uses the explicit AI-SDK chat-completions model. Chat
+ * completions with `json_schema` is the common structured-output route across
+ * OpenAI and the supported local runtimes; using Mastra's Responses router for
+ * only the hosted bed would change both provider and protocol at once.
  */
-export const MODEL_CONFIG: MastraModelConfig = env.OPENAI_BASE_URL
-  ? (languageModel() as MastraModelConfig)
-  : (`openai/${MODEL}` as MastraModelConfig);
+export const MODEL_CONFIG = (): MastraModelConfig => languageModel() as MastraModelConfig;
 
 /** Shared sampling setting for the shipped agent and the evaluation control. */
 export const MODEL_TEMPERATURE = 0.4;
@@ -333,10 +329,22 @@ async function generateObject<T>(
   args: { agent: Agent; user: string; schema: unknown },
   mode: StructuredMode,
 ): Promise<T> {
+  const signal = modelAbortSignal();
+  const startedAt = Date.now();
+  const timedOut = (): boolean =>
+    signal.aborted || Date.now() - startedAt >= MODEL_CALL_TIMEOUT_MS;
+  const timeoutError = (cause?: unknown): Error => {
+    const error = new Error(
+      `agentJson(${args.agent.name}): ${mode} model call reached the ${MODEL_CALL_TIMEOUT_MS}ms timeout`,
+      cause === undefined ? undefined : { cause },
+    );
+    error.name = 'TimeoutError';
+    return error;
+  };
   let response;
   try {
     response = await args.agent.generate(args.user, {
-      abortSignal: modelAbortSignal(),
+      abortSignal: signal,
       modelSettings: { temperature: MODEL_TEMPERATURE },
       // Zod 4 schemas pass through Mastra's PublicSchema bridge; the cast
       // sidesteps the v4-vs-v3 peer-dep nuance without losing the
@@ -348,10 +356,22 @@ async function generateObject<T>(
       },
     });
   } catch (err) {
+    if (timedOut()) throw timeoutError(err);
     if (isMastraSchemaViolation(err)) {
       throw new StructuredOutputInvalidError(args.agent.name, mode, err);
     }
     throw err;
+  }
+  const resultError = (response as { error?: unknown }).error;
+  if (timedOut()) throw timeoutError(resultError);
+  if (resultError !== undefined && resultError !== null) {
+    if (resultError instanceof Error) throw resultError;
+    throw new Error(
+      `agentJson(${args.agent.name}): ${mode} generation failed: ${String(resultError)}`,
+    );
+  }
+  if ((response as { finishReason?: unknown }).finishReason === 'error') {
+    throw new Error(`agentJson(${args.agent.name}): ${mode} generation finished with an error`);
   }
   const object = response.object as T | undefined;
   if (object === undefined || object === null) {

@@ -60,14 +60,12 @@ function openaiProvider(): OpenAIProvider {
 /**
  * AI-SDK language model for the Mastra + `streamText` paths.
  *
- * Custom endpoints get the chat-completions surface explicitly: the
- * provider's default is `/v1/responses`, which is an OpenAI-only API
- * that no local runtime implements. Hosted OpenAI keeps the default so
- * the responses-API features (prompt caching, reasoning) stay available.
+ * Every endpoint gets the chat-completions surface explicitly. It is the
+ * common route implemented by OpenAI and the supported local runtimes, so a
+ * bed changes provider and model rather than changing the API contract too.
  */
 export function languageModel(modelId: string = MODEL): SdkLanguageModel {
-  const p = openaiProvider();
-  return env.OPENAI_BASE_URL ? p.chat(modelId) : p(modelId);
+  return openaiProvider().chat(modelId);
 }
 
 /** How a JSON completion coerced the model into emitting an object. */

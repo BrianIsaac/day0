@@ -1,17 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.hoisted(() => {
+  process.env.OPENAI_API_KEY = 'test-key';
+});
 import {
   agentJson,
+  agentJsonWithMode,
   agentText,
   makeAgent,
   MODEL_CALL_TIMEOUT_MS,
+  MODEL_CONFIG,
   MODEL_PROVIDER_MAX_RETRIES,
   MODEL_TEMPERATURE,
+  resetStructuredModeMemo,
+  structuredModeFor,
   withModelRetry,
 } from '../../../src/lib/mastra';
+import { classifyStructuredFailure } from '../../../src/lib/structured-fallback';
 import type { Agent } from '@mastra/core/agent';
 
 afterEach((): void => {
   vi.useRealTimers();
+  resetStructuredModeMemo();
 });
 
 describe('shared model sampling', (): void => {
@@ -51,5 +61,42 @@ describe('shared model sampling', (): void => {
 
     await expect(result).resolves.toBe('recovered');
     expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the chat-completions client for the hosted route too', (): void => {
+    expect(typeof MODEL_CONFIG).toBe('function');
+    expect((MODEL_CONFIG() as { provider?: string }).provider).toBe('openai.chat');
+  });
+
+  it('classifies a native call that reaches the abort wall as transport and keeps native mode', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const generate = vi
+      .fn()
+      .mockImplementationOnce(
+        async (): Promise<{ object?: { ok: boolean }; finishReason: string }> =>
+          await new Promise((resolve) =>
+            setTimeout(() => resolve({ finishReason: 'error' }), MODEL_CALL_TIMEOUT_MS),
+          ),
+      )
+      .mockResolvedValueOnce({ object: { ok: true }, finishReason: 'stop' });
+    const agent = { name: 'abort-regression', generate } as unknown as Agent;
+
+    const pending = agentJsonWithMode<{ ok: boolean }>({
+      agent,
+      user: 'structured',
+      schema: {},
+    }).catch((caught: unknown) => caught);
+    await vi.advanceTimersByTimeAsync(MODEL_CALL_TIMEOUT_MS);
+
+    const error = await pending;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe('TimeoutError');
+    expect(classifyStructuredFailure(error)).toMatchObject({
+      verdict: 'unrelated',
+      provesRefusal: false,
+      evidence: 'transport failure (TimeoutError)',
+    });
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(structuredModeFor(agent.name)).toBe('native');
   });
 });
