@@ -412,6 +412,14 @@ export default defineSchema({
     proposedSkillId: v.optional(v.id('skills')),
     output: v.optional(v.any()),
     skipReason: v.optional(v.string()),
+    /**
+     * The manager's written reason for rejecting the last held action set,
+     * kept in full so a retry can address it; the dashboard shows it beside
+     * the truncated skip reason.
+     */
+    managerFeedback: v.optional(
+      v.object({ reason: v.string(), at: v.number(), runId: v.optional(v.id('events')) }),
+    ),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),

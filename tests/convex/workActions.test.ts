@@ -6,6 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  blockedPlanReason,
   browserTransportRefusal,
   completionFailure,
   dependentTransitionRefusal,
@@ -39,6 +40,7 @@ const recorded = vi.hoisted(() => ({
   failMcpAfterRequest: false,
   failedMcpTool: undefined as string | undefined,
   afterCredentialRead: undefined as (() => Promise<void>) | undefined,
+  afterToolList: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
   skillModes: [] as Array<string | undefined>,
   skillSwitches: [] as Array<boolean | undefined>,
@@ -275,8 +277,9 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   return {
     ...original,
     createMastraMcpClient: (options: McpClientOptions): McpClientLike => ({
-      listTools: async () =>
-        Object.fromEntries(
+      listTools: async () => {
+        await recorded.afterToolList?.();
+        return Object.fromEntries(
           [
             'save_comment',
             'save_issue',
@@ -323,7 +326,8 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
               },
             },
           ]),
-        ),
+        );
+      },
       disconnect: async (): Promise<void> => {},
     }),
   };
@@ -345,6 +349,7 @@ afterEach((): void => {
   recorded.failMcpAfterRequest = false;
   recorded.failedMcpTool = undefined;
   recorded.afterCredentialRead = undefined;
+  recorded.afterToolList = undefined;
   recorded.skillSwitches.length = 0;
   recorded.dependentSwitches.length = 0;
   recorded.planSwitches.length = 0;
@@ -2475,6 +2480,40 @@ describe('the autonomous-actions switch through the gate', (): void => {
     expect(ledger(row)[0].authority).toBeUndefined();
   });
 
+  it('refuses an autonomous write revoked after the first authority read but before the MCP call', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = { ...skillOutput, actions: [skillOutput.actions[0]] };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(
+      harness,
+      'real',
+      ['linear:read', 'linear:write'],
+      { autonomousActions: true },
+    );
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    recorded.afterToolList = async (): Promise<void> => {
+      await harness.withIdentity(OWNER).mutation(api.agents.revokeScope, {
+        agentId,
+        scope: 'linear:write',
+        reason: 'revoked while the MCP catalogue was loading',
+      });
+      recorded.afterToolList = undefined;
+    };
+
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('no grant (linear:write)'),
+    });
+    expect(recorded.mcp).toHaveLength(0);
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(ledger(row)[0]).toMatchObject({ ok: false, reason: 'no grant (linear:write)' });
+    const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
+    expect(metrics.actions.blockedAfterRevocation).toBe(1);
+  });
+
   it('re-reads the browser component switch after credential access and before transport', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
@@ -2761,4 +2800,192 @@ describe('work action surface enablement', (): void => {
       });
     },
   );
+});
+
+describe('plan-step accounting after the loop ran live', (): void => {
+  it('does not read a hold instruction as a promised surface read', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: {
+          summary: 'Hold writes.',
+          steps: [
+            'Hold all non-read writes, including any #revops-asks reply or Linear audit/status update, until the manager gives literal approval because autonomous actions are OFF.',
+          ],
+          expectedOutputType: 'message',
+          riskNotes: '',
+          reversibility: '',
+          estimatedMinutes: 1,
+        },
+        outcomes: [{ step: 1, status: 'satisfied', evidence: 'Every write was held.' }],
+        initialActions: [],
+        initialLedger: [],
+        surfaces: [
+          { slug: 'linear', displayName: 'Linear' },
+          { slug: 'slack', displayName: 'Slack' },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    'Read Linear, then hold every write for literal approval.',
+    'Hold the public reply until you read Linear for the exact issue state.',
+  ])('still enforces a promised read in a mixed instruction: %s', (step): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: {
+          summary: 'Read before holding writes.',
+          steps: [step],
+          expectedOutputType: 'message',
+          riskNotes: '',
+          reversibility: '',
+          estimatedMinutes: 1,
+        },
+        outcomes: [{ step: 1, status: 'satisfied', evidence: 'No provider read was recorded.' }],
+        initialActions: [],
+        initialLedger: [],
+        surfaces: [{ slug: 'linear', displayName: 'Linear' }],
+      }),
+    ).toThrow('promised a Linear read');
+  });
+
+  it('completes a run whose every action landed even though the closing phase marked steps blocked', (): void => {
+    const outcomes: PlanStepOutcome[] = [
+      { step: 1, status: 'blocked', evidence: 'No Linear read in the ledger.' },
+      { step: 2, status: 'satisfied', evidence: 'The comment landed.' },
+    ];
+    const comment = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'REVOPS-7', body: 'Refreshed the tile.' }),
+      },
+    } as const;
+    const transition = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'REVOPS-7', state: 'Done' }),
+      },
+    } as const;
+    const landed: AppliedAction = {
+      tool: 'mcp.call',
+      ok: true,
+      effect: 'save_comment on linear',
+      idempotencyKey: 'item:run:0',
+    };
+    const plan = {
+      summary: 'Refresh the tile.',
+      steps: ['Open the originating ticket', 'Post the audit comment'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    expect(blockedPlanReason(outcomes, { plan, actions: [comment], applied: [landed] })).toBeUndefined();
+    expect(blockedPlanReason(outcomes)).toContain('1 approved plan step(s) remained blocked');
+    expect(blockedPlanReason(outcomes, { plan, actions: [], applied: [] })).toContain(
+      '1 approved plan step(s) remained blocked',
+    );
+    expect(
+      blockedPlanReason(outcomes, { plan, actions: [comment], applied: [{ ...landed, held: true }] }),
+    ).toContain('remained blocked');
+    const closing = { ...plan, steps: ['Post the audit comment', 'Move the ticket to Done'] };
+    expect(
+      blockedPlanReason(outcomes, { plan: closing, actions: [comment], applied: [landed] }),
+    ).toContain('remained blocked');
+    expect(
+      blockedPlanReason(outcomes, {
+        plan: closing,
+        actions: [comment, transition],
+        applied: [landed, { ...landed, effect: 'save_issue on linear', idempotencyKey: 'item:run:1' }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('fails when a ticket plan omitted its primary effect and only a secondary manager DM landed', (): void => {
+    const plan = {
+      summary: 'Update the originating ticket.',
+      steps: ['Post the approved audit comment to the ticket'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const managerDm = skillOutput.actions[2];
+    const landed: AppliedAction = {
+      tool: 'http.request',
+      ok: true,
+      effect: 'sent manager DM',
+      idempotencyKey: 'item:run:0',
+    };
+
+    expect(
+      blockedPlanReason(
+        [{ step: 1, status: 'blocked', evidence: 'The ticket write was never emitted.' }],
+        { plan, actions: [managerDm], applied: [landed] },
+      ),
+    ).toContain('remained blocked');
+  });
+
+  it('still fails an emitted gate refusal and a partial applied batch', (): void => {
+    const plan = {
+      summary: 'Update the originating ticket.',
+      steps: ['Post the audit comment', 'Move the ticket to Done'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const outcomes: PlanStepOutcome[] = [
+      { step: 1, status: 'satisfied', evidence: 'The comment landed.' },
+      { step: 2, status: 'blocked', evidence: 'The gate refused the transition.' },
+    ];
+    const landed: AppliedAction = {
+      tool: 'mcp.call',
+      ok: true,
+      effect: 'comment landed',
+      idempotencyKey: 'item:run:0',
+    };
+    const refused: AppliedAction = {
+      tool: 'mcp.call',
+      ok: false,
+      reason: 'no grant (linear:write)',
+      idempotencyKey: 'item:run:1',
+    };
+
+    expect(
+      blockedPlanReason(outcomes, {
+        plan,
+        actions: [skillOutput.actions[0], skillOutput.actions[1]],
+        applied: [landed, refused],
+      }),
+    ).toContain('remained blocked');
+  });
+
+  it('does not turn a negative state-change instruction into a promised close', (): void => {
+    const plan = {
+      summary: 'Leave the ticket open and add context.',
+      steps: ['Do not close or update the ticket; post only the audit comment.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const landed: AppliedAction = {
+      tool: 'mcp.call',
+      ok: true,
+      effect: 'comment landed',
+      idempotencyKey: 'item:run:0',
+    };
+
+    expect(
+      blockedPlanReason(
+        [{ step: 1, status: 'blocked', evidence: 'The state change was deliberately not emitted.' }],
+        { plan, actions: [skillOutput.actions[0]], applied: [landed] },
+      ),
+    ).toBeUndefined();
+  });
 });

@@ -578,13 +578,17 @@ export function grantingScopes(parsed: ParsedSurfaceAction, surface: SurfaceReco
  * Any other write is authorised by `<surface>:write`, or, when autonomous
  * actions are on, by the toggle itself: it is the manager's standing
  * authority for writes on connected surfaces within their probed allowlist,
- * so a write with no scope of its own applies under it.
+ * so a write with no scope of its own applies under it. A write scope the
+ * manager has revoked is the one thing the toggle does not cover: revoking
+ * is a decision about that surface, and the dashboard promises that queued
+ * and in-flight work needing the scope stops.
  *
  * Args:
  *   parsed: A parsed surface action.
  *   surface: The surface it targets.
  *   grants: The agent's live permission scopes.
  *   autonomousActions: Whether the agent's autonomous-actions toggle is on.
+ *   revokedScopes: Scopes the manager revoked and has not granted again.
  *
  * Returns:
  *   `no grant (<scope>)`, or undefined when the action is authorised.
@@ -594,8 +598,12 @@ export function grantRefusal(
   surface: SurfaceRecord,
   grants: ReadonlySet<string>,
   autonomousActions = false,
+  revokedScopes: ReadonlySet<string> = new Set(),
 ): string | undefined {
-  if (autonomousActions && !needsStandingGrant(parsed, surface)) return undefined;
+  if (autonomousActions && !needsStandingGrant(parsed, surface)) {
+    const scope = requiredScope(parsed);
+    return revokedScopes.has(scope) ? `${NO_GRANT} (${scope})` : undefined;
+  }
   const scopes = grantingScopes(parsed, surface);
   if (scopes.some((scope) => grants.has(scope))) return undefined;
   return `${NO_GRANT} (${scopes[0]})`;
