@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { surfaceSlug } from '../../convex/surfaces';
+import { backfillCharterProvenance, surfaceSlug } from '../../convex/surfaces';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -188,6 +188,475 @@ describe('surface persistence', (): void => {
     const owner = harness.withIdentity({ subject: 'owner' });
     await expect(owner.query(api.surfaces.listForAgent, { agentId })).resolves.toMatchObject([
       { slug: 'linear', verdict: 'declared' },
+    ]);
+  });
+
+  it('attaches the live Looker charter alias to the documented pipeline tile', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const sourceId = await harness.run(
+      async (ctx): Promise<Id<'docSources'>> =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'RevOps handbook',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    const documented = [
+      { slug: 'linear', displayName: 'Linear', class: 'kanban' },
+      { slug: 'slack', displayName: 'Slack', class: 'chat' },
+      { slug: 'northstar-crm', displayName: 'Northstar CRM', class: 'crm' },
+      {
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        endpoint: 'http://looker-tile:8080/',
+      },
+    ] as const;
+    const tileId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      let tile: Id<'surfaces'> | undefined;
+      for (const system of documented) {
+        const id = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: system.slug,
+          displayName: system.displayName,
+          class: system.class,
+          verdict: 'declared',
+          endpoint: 'endpoint' in system ? system.endpoint : undefined,
+          whereFound: [
+            {
+              sourceId,
+              ref: `systems/${system.slug}.md`,
+              quote: `# ${system.displayName}`,
+            },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              sourceId,
+              ref: `systems/${system.slug}.md`,
+              quote: `# ${system.displayName}`,
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        if (system.slug === 'looker-pipeline-tile') tile = id;
+      }
+      if (!tile) throw new Error('tile surface missing');
+      return tile;
+    });
+    const deferredItemId = await harness.run(
+      async (ctx): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Refresh the Looker pipeline tile',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker',
+          },
+          createdAt: 1,
+        }),
+    );
+
+    await expect(
+      harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          {
+            name: 'Looker',
+            class: 'analytics',
+            whereMentioned: 'Pipeline numbers are on the Looker tile, web UI only.',
+          },
+        ],
+      }),
+    ).resolves.toEqual([tileId]);
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(rows).toHaveLength(4);
+    expect(rows.map((row) => row.slug)).not.toContain('looker');
+    expect(rows.find((row) => row._id === tileId)?.discoveryEvidence).toEqual([
+      expect.objectContaining({ kind: 'documentation', ref: 'systems/looker-pipeline-tile.md' }),
+      expect.objectContaining({
+        kind: 'charter',
+        ref: 'manager 1:1',
+        quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+        current: true,
+      }),
+    ]);
+    await expect(harness.run(async (ctx) => await ctx.db.get(deferredItemId))).resolves.toMatchObject(
+      { state: 'discovered' },
+    );
+  });
+
+  it('mints a qualified charter mention beside the bare documented product', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const tileId = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'declared',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        }),
+    );
+
+    const seeded = await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: [
+        {
+          name: 'Looker Studio',
+          class: 'analytics',
+          whereMentioned: 'The board deck charts are built in Looker Studio.',
+        },
+      ],
+    });
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0]).not.toBe(tileId);
+    expect(rows.map((row) => row.slug).sort()).toEqual(['looker-pipeline-tile', 'looker-studio']);
+    expect(rows.find((row) => row._id === tileId)?.discoveryEvidence).toHaveLength(1);
+    expect(await eventTypes(harness)).not.toContain('surface.charter-match-ambiguous');
+  });
+
+  it('attaches a class-mismatched charter mention to the surface carrying its slug', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const slackId = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'declared',
+          whereFound: [{ ref: 'onboarding.md', quote: '| Slack | #revops-asks |' }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'onboarding.md',
+              quote: '| Slack | #revops-asks |',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        }),
+    );
+
+    await expect(
+      harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          { name: 'Slack', class: 'social', whereMentioned: 'Asks come in on Slack.' },
+        ],
+      }),
+    ).resolves.toEqual([slackId]);
+
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent_slug', (index) => index.eq('agentId', agentId).eq('slug', 'slack'))
+          .collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.class).toBe('chat');
+    expect(rows[0]?.discoveryEvidence?.map((item) => item.kind)).toEqual([
+      'documentation',
+      'charter',
+    ]);
+  });
+
+  it('resolves a legacy charter alias onto the documented surface at backfill', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const { tileId, aliasId, workItemId } = await harness.run(
+      async (
+        ctx,
+      ): Promise<{ tileId: Id<'surfaces'>; aliasId: Id<'surfaces'>; workItemId: Id<'workItems'> }> => {
+        const tileId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'connected',
+          path: 'browser-driven',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '- The Looker pipeline tile is reached through its web UI only, at `http://looker-tile:8080/`.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: true,
+          lastVerifiedAt: Date.now(),
+          createdAt: 1,
+        });
+        const aliasId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker',
+          displayName: 'Looker',
+          class: 'analytics',
+          verdict: 'declared',
+          reason: 'Rejected by the operator.',
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+              current: true,
+              firstSeenAt: 2,
+              lastSeenAt: 2,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 2,
+        });
+        const workItemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Refresh the Looker pipeline tile',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 3,
+          state: 'deferred',
+          verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'looker' },
+          createdAt: 3,
+        });
+        return { tileId, aliasId, workItemId };
+      },
+    );
+    const namedSystems = [
+      {
+        name: 'Looker',
+        class: 'analytics',
+        whereMentioned: 'Pipeline numbers are on the Looker tile, web UI only.',
+      },
+    ];
+
+    const first = await harness.run(
+      async (ctx): Promise<number> =>
+        await backfillCharterProvenance(ctx, { agentId, namedSystems, now: 10 }),
+    );
+    const second = await harness.run(
+      async (ctx): Promise<number> =>
+        await backfillCharterProvenance(ctx, { agentId, namedSystems, now: 11 }),
+    );
+
+    const result = await harness.run(async (ctx) => ({
+      tile: await ctx.db.get(tileId),
+      alias: await ctx.db.get(aliasId),
+      item: await ctx.db.get(workItemId),
+    }));
+    expect([first, second]).toEqual([1, 0]);
+    expect(result.tile?.discoveryEvidence?.map((item) => item.kind)).toEqual([
+      'documentation',
+      'charter',
+    ]);
+    expect(result.alias).toMatchObject({ verdict: 'declared', reason: 'Rejected by the operator.' });
+    expect(result.alias?.discoveryEvidence).toHaveLength(1);
+    expect(result.item).toMatchObject({ state: 'discovered' });
+    const types = await eventTypes(harness);
+    expect(types).not.toContain('surface.charter-match-ambiguous');
+    expect(types.filter((type) => type === 'work.requeued')).toHaveLength(1);
+  });
+
+  it('resolves a legacy charter alias onto the documented surface when the charter is re-seeded', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const tileId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const tileId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+        discoveryEvidence: [
+          {
+            kind: 'documentation',
+            ref: 'systems/looker-pipeline-tile.md',
+            quote: '# Looker pipeline tile',
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+        ],
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'declared',
+        reason: 'Rejected by the operator.',
+        whereFound: [],
+        discoveryEvidence: [
+          {
+            kind: 'charter',
+            ref: 'manager 1:1',
+            quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+            current: true,
+            firstSeenAt: 2,
+            lastSeenAt: 2,
+          },
+        ],
+        credentialLanded: false,
+        createdAt: 2,
+      });
+      return tileId;
+    });
+
+    await expect(
+      harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          {
+            name: 'Looker',
+            class: 'analytics',
+            whereMentioned: 'Pipeline numbers are on the Looker tile, web UI only.',
+          },
+        ],
+      }),
+    ).resolves.toEqual([tileId]);
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row._id === tileId)?.discoveryEvidence?.map((item) => item.kind)).toEqual(
+      ['documentation', 'charter'],
+    );
+    expect(await eventTypes(harness)).not.toContain('surface.charter-match-ambiguous');
+  });
+
+  it('records an ambiguous hostless charter mention without minting or attaching', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (const system of [
+        { slug: 'looker-sales-tile', displayName: 'Looker sales tile' },
+        { slug: 'looker-finance-tile', displayName: 'Looker finance tile' },
+      ]) {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: system.slug,
+          displayName: system.displayName,
+          class: 'analytics',
+          verdict: 'declared',
+          whereFound: [{ ref: `${system.slug}.md`, quote: `# ${system.displayName}` }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: `${system.slug}.md`,
+              quote: `# ${system.displayName}`,
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+      }
+    });
+
+    await expect(
+      harness.mutation(internal.surfaces.seedFromCharter, {
+        agentId,
+        namedSystems: [
+          {
+            name: 'Looker',
+            class: 'analytics',
+            whereMentioned: 'Pipeline reporting is in Looker.',
+          },
+        ],
+      }),
+    ).resolves.toEqual([]);
+
+    const result = await harness.run(async (ctx) => ({
+      surfaces: await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect(),
+      events: await ctx.db
+        .query('events')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect(),
+    }));
+    expect(result.surfaces).toHaveLength(2);
+    expect(result.surfaces.every((row) => row.discoveryEvidence?.length === 1)).toBe(true);
+    expect(result.events).toMatchObject([
+      {
+        type: 'surface.charter-match-ambiguous',
+        payload: {
+          namedSystem: 'Looker',
+          class: 'analytics',
+          candidateSlugs: ['looker-finance-tile', 'looker-sales-tile'],
+        },
+      },
     ]);
   });
 
@@ -768,6 +1237,195 @@ describe('surface probe generations', (): void => {
     ).toEqual([{ scope: 'linear:read', source: 'surface' }]);
     expect((await eventTypes(harness)).filter((type) => type === 'work.requeued')).toHaveLength(2);
   });
+
+  it('leaves work waiting on a distinct qualified product when the tile connects', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const [tileId, workItemId] = await harness.run(
+      async (ctx): Promise<[Id<'surfaces'>, Id<'workItems'>]> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-studio',
+          displayName: 'Looker Studio',
+          class: 'analytics',
+          verdict: 'declared',
+          whereFound: [],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'The board deck charts are built in Looker Studio.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'approved',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          managerApprovedAt: 1,
+          itApprovedAt: 1,
+          createdAt: 1,
+        });
+        const itemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-9',
+          title: 'Rebuild the board deck chart in Looker Studio',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker-studio',
+          },
+          createdAt: 1,
+        });
+        return [surfaceId, itemId];
+      },
+    );
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: tileId });
+    if (!probe) throw new Error('probe was not reserved');
+
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: tileId,
+      generation: probe.generation,
+      toolAllowlist: ['browser_navigate'],
+      toolArguments: [],
+      verifiedAt: 100,
+    });
+
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(item).toMatchObject({
+      state: 'deferred',
+      verdict: { reason: 'awaiting-connection', missingSurface: 'looker-studio' },
+    });
+    expect(await eventTypes(harness)).not.toContain('work.requeued');
+  });
+
+  it('requeues work whose missing slug is a legacy alias of the connecting surface', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const [tileId, workItemId] = await harness.run(
+      async (ctx): Promise<[Id<'surfaces'>, Id<'workItems'>]> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker',
+          displayName: 'Looker',
+          class: 'analytics',
+          verdict: 'declared',
+          whereFound: [
+            {
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+            },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'approved',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [
+            { ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          managerApprovedAt: 1,
+          itApprovedAt: 1,
+          createdAt: 1,
+        });
+        const itemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Refresh the Looker pipeline tile',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker',
+          },
+          createdAt: 1,
+        });
+        return [surfaceId, itemId];
+      },
+    );
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: tileId });
+    if (!probe) throw new Error('probe was not reserved');
+
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: tileId,
+      generation: probe.generation,
+      toolAllowlist: ['browser_navigate'],
+      toolArguments: [],
+      verifiedAt: 100,
+    });
+
+    const result = await harness.run(async (ctx) => ({
+      item: await ctx.db.get(workItemId),
+      events: await ctx.db
+        .query('events')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect(),
+    }));
+    expect(result.item).toMatchObject({ state: 'discovered' });
+    expect(result.item).not.toHaveProperty('verdict');
+    expect(result.events.find((event) => event.type === 'work.requeued')?.payload).toMatchObject({
+      surfaceId: tileId,
+      slug: 'looker-pipeline-tile',
+      previousMissingSurface: 'looker',
+    });
+  });
 });
 
 describe('surface connection lifecycle metadata', (): void => {
@@ -1037,6 +1695,179 @@ describe('surface approval state machine', (): void => {
     expect((await eventTypes(harness)).filter((type) => type === 'surface.approved')).toHaveLength(
       1,
     );
+  });
+
+  it('keeps work parked on a rejected distinct product beside the connected tile', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const [studioId, workItemId] = await harness.run(
+      async (ctx): Promise<[Id<'surfaces'>, Id<'workItems'>]> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'connected',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [{ ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' }],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: true,
+          lastVerifiedAt: Date.now(),
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-studio',
+          displayName: 'Looker Studio',
+          class: 'analytics',
+          verdict: 'proposed',
+          whereFound: [],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'The board deck charts are built in Looker Studio.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        const itemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-9',
+          title: 'Rebuild the board deck chart in Looker Studio',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker-studio',
+          },
+          createdAt: 1,
+        });
+        return [surfaceId, itemId];
+      },
+    );
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.reject, { surfaceId: studioId, reason: 'Not this quarter.' });
+
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(item).toMatchObject({
+      state: 'deferred',
+      verdict: { reason: 'awaiting-connection', missingSurface: 'looker-studio' },
+    });
+    expect(await eventTypes(harness)).not.toContain('work.requeued');
+  });
+
+  it('requeues work parked on a rejected duplicate when the documented surface exists', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const [duplicateId, workItemId] = await harness.run(
+      async (ctx): Promise<[Id<'surfaces'>, Id<'workItems'>]> => {
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker-pipeline-tile',
+          displayName: 'Looker pipeline tile',
+          class: 'analytics',
+          verdict: 'connected',
+          endpoint: 'http://looker-tile:8080/',
+          whereFound: [
+            { ref: 'systems/looker-pipeline-tile.md', quote: '# Looker pipeline tile' },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/looker-pipeline-tile.md',
+              quote: '# Looker pipeline tile',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: true,
+          lastVerifiedAt: Date.now(),
+          createdAt: 1,
+        });
+        const surfaceId = await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'looker',
+          displayName: 'Looker',
+          class: 'analytics',
+          verdict: 'declared',
+          whereFound: [
+            {
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+            },
+          ],
+          discoveryEvidence: [
+            {
+              kind: 'charter',
+              ref: 'manager 1:1',
+              quote: 'Pipeline numbers are on the Looker tile, web UI only.',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        });
+        const itemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Refresh the Looker pipeline tile',
+          contentSummary: '',
+          contentRefs: [],
+          observedAt: 1,
+          state: 'deferred',
+          verdict: {
+            decision: 'defer',
+            reason: 'awaiting-connection',
+            missingSurface: 'looker',
+          },
+          createdAt: 1,
+        });
+        return [surfaceId, itemId];
+      },
+    );
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId: duplicateId,
+      request: { target: { system: 'Looker' } },
+      whereFound: [{ ref: 'looker.md', quote: 'Open the pipeline tile.' }],
+      path: 'browser-driven',
+      fallbackPath: 'escalate',
+      endpoint: 'http://looker-tile:8080/',
+      expiresInDays: 30,
+    });
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.reject, { surfaceId: duplicateId, reason: 'Duplicate surface.' });
+
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(item).toMatchObject({ state: 'discovered' });
+    expect(item).not.toHaveProperty('verdict');
   });
 
   it('allows rejection of an approved surface and refuses it elsewhere', async (): Promise<void> => {

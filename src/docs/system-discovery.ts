@@ -416,6 +416,75 @@ function compatibleNameKeys(left: readonly string[], right: readonly string[]): 
 }
 
 /**
+ * Words that qualify a product name without naming a different product.
+ *
+ * "Northstar CRM" is "Northstar" and "Slack workspace" is "Slack". Any other
+ * extra word ("Looker Studio", "Salesforce Marketing Cloud", "Jira Service
+ * Management") names a sibling product and must not collapse into its parent.
+ */
+const GENERIC_QUALIFIER_WORDS = new Set<string>([
+  ...TRANSPORT_NAME_WORDS,
+  ...SYSTEM_CLASSES,
+  'account',
+  'instance',
+  'system',
+  'tenant',
+  'tool',
+  'workspace',
+]);
+
+/**
+ * Whether a mention's name is the documented name minus qualifiers.
+ *
+ * A bare mention ("Looker") is allowed to stand for a qualified documented
+ * name ("Looker sales tile"): the manager names the family, the docs name the
+ * instance. The reverse holds only when the mention's extra words are generic
+ * qualifiers, so "Looker Studio" never folds into a documented "Looker".
+ */
+function bareMentionOfQualifiedName(
+  mentionKeys: readonly string[],
+  documentedKeys: readonly string[],
+): boolean {
+  return mentionKeys.some((mentionKey) => {
+    const mentionWords = mentionKey.split('-');
+    const mentionSet = new Set(mentionWords);
+    return documentedKeys.some((documentedKey) => {
+      const documentedWords = documentedKey.split('-');
+      const documentedSet = new Set(documentedWords);
+      if (mentionWords.every((word) => documentedSet.has(word))) return true;
+      return (
+        documentedWords.every((word) => mentionSet.has(word)) &&
+        mentionWords.every((word) => documentedSet.has(word) || GENERIC_QUALIFIER_WORDS.has(word))
+      );
+    });
+  });
+}
+
+/**
+ * Match a manager's endpoint-free system mention to a documented identity.
+ *
+ * The direction is deliberate: documentation may carry endpoints that
+ * distinguish similarly named products, while a spoken charter mention
+ * normally cannot. Containment is therefore available only when the mention
+ * has no endpoint or host signal of its own, and only from a bare mention
+ * towards a qualified documented name; see `bareMentionOfQualifiedName`.
+ */
+export function sameSystemForHostlessMention(
+  mentionClass: string,
+  mention: DocumentedSystemIdentity,
+  documentedClass: string,
+  documented: DocumentedSystemIdentity,
+): boolean {
+  if (sameDocumentedSystem(mentionClass, mention, documentedClass, documented)) return true;
+  return (
+    mentionClass === documentedClass &&
+    mention.endpoints.length === 0 &&
+    mention.hosts.length === 0 &&
+    bareMentionOfQualifiedName(mention.nameKeys, documented.nameKeys)
+  );
+}
+
+/**
  * Decide whether two documented identities name one system.
  *
  * A conflicting documented host is a hard difference. After that, an exact

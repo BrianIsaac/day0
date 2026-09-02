@@ -85,6 +85,14 @@ const northstar = {
   quote: '# Northstar CRM',
 };
 
+const lookerTile = {
+  slug: 'looker-pipeline-tile',
+  displayName: 'Looker pipeline tile',
+  class: 'analytics',
+  ref: 'systems/looker-pipeline-tile.md',
+  quote: 'The Looker pipeline tile is reached at http://looker-tile:8080/.',
+};
+
 const slack = {
   slug: 'slack',
   displayName: 'Slack',
@@ -227,6 +235,80 @@ describe('documentation discovery lifecycle', (): void => {
           sourceId,
           ref: 'systems/linear.md',
           current: true,
+        }),
+      ]),
+    });
+  });
+
+  it('backfills a hostless charter alias onto the documented surface identity', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId, runId } = await seedDiscovery(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: 'v1',
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+        body: {
+          namedSystems: [
+            {
+              name: 'Looker',
+              class: 'analytics',
+              whereMentioned: 'Pipeline numbers are on the Looker tile, web UI only.',
+            },
+          ],
+        },
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: lookerTile.slug,
+        displayName: lookerTile.displayName,
+        class: lookerTile.class,
+        verdict: 'connected',
+        path: 'browser-driven',
+        endpoint: 'http://looker-tile:8080/',
+        whereFound: [{ ref: lookerTile.ref, quote: lookerTile.quote }],
+        discoveryEvidence: [
+          {
+            kind: 'documentation',
+            sourceId,
+            ref: lookerTile.ref,
+            quote: lookerTile.quote,
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+        ],
+        credentialLanded: true,
+        lastVerifiedAt: 1,
+        createdAt: 1,
+      });
+    });
+
+    await expect(
+      harness.mutation(internal.documentationDiscovery.apply, {
+        sourceId,
+        runId,
+        fingerprint: 'first',
+        candidates: [lookerTile],
+      }),
+    ).resolves.toMatchObject({ applied: true, created: 0, updated: 1, scheduled: 0 });
+    const rows = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      slug: 'looker-pipeline-tile',
+      discoveryEvidence: expect.arrayContaining([
+        expect.objectContaining({ kind: 'documentation', ref: lookerTile.ref }),
+        expect.objectContaining({
+          kind: 'charter',
+          quote: 'Pipeline numbers are on the Looker tile, web UI only.',
         }),
       ]),
     });

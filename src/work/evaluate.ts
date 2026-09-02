@@ -9,7 +9,11 @@ import {
 } from './types';
 import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
 import type { SurfaceMode } from '../surfaces/types';
-import type { SurfaceDiscoveryEvidence } from '../docs/system-discovery';
+import {
+  documentedSystemIdentity,
+  sameSystemForHostlessMention,
+  type SurfaceDiscoveryEvidence,
+} from '../docs/system-discovery';
 
 /**
  * Layer-2 evaluator. Lifted from Protean's `src/work/evaluate.ts`.
@@ -52,6 +56,8 @@ export interface EvaluateOptions {
 export interface EvaluationSurface extends SurfaceLiveness {
   displayName: string;
   slug: string;
+  class: string;
+  endpoint?: string;
   discoveryEvidence?: readonly SurfaceDiscoveryEvidence[];
 }
 
@@ -159,6 +165,50 @@ function candidateNamesSurface(text: string, surface: EvaluationSurface): boolea
   return names.some((name: string): boolean => haystack.includes(` ${name} `));
 }
 
+function evaluationSurfaceIdentity(surface: EvaluationSurface) {
+  return documentedSystemIdentity({
+    name: surface.displayName,
+    quotes: (surface.discoveryEvidence ?? []).map((evidence) => evidence.quote),
+    endpoints: surface.endpoint ? [surface.endpoint] : [],
+  });
+}
+
+function sameEvaluationSystem(
+  left: EvaluationSurface,
+  right: EvaluationSurface,
+): boolean {
+  const leftIdentity = evaluationSurfaceIdentity(left);
+  const rightIdentity = evaluationSurfaceIdentity(right);
+  return (
+    sameSystemForHostlessMention(left.class, leftIdentity, right.class, rightIdentity) ||
+    sameSystemForHostlessMention(right.class, rightIdentity, left.class, leftIdentity)
+  );
+}
+
+function surfaceForSource(
+  sourceSystem: string,
+  surfaces: readonly EvaluationSurface[],
+  now: number,
+): EvaluationSurface | undefined {
+  const sourceSlug = evaluationSurfaceSlug(sourceSystem);
+  const direct = surfaces.find((surface) => surface.slug === sourceSlug);
+  if (direct) {
+    const aliases = surfaces.filter((surface) => sameEvaluationSystem(direct, surface));
+    return aliases.find((surface) => verdictFor(surface, now) === 'connected') ?? direct;
+  }
+
+  const mention = documentedSystemIdentity({ name: sourceSystem });
+  const aliases = surfaces.filter((surface) =>
+    sameSystemForHostlessMention(
+      surface.class,
+      mention,
+      surface.class,
+      evaluationSurfaceIdentity(surface),
+    ),
+  );
+  return aliases.length === 1 ? aliases[0] : undefined;
+}
+
 /**
  * Resolve the first connection required by a real-mode candidate that is not live.
  *
@@ -180,9 +230,8 @@ export function missingConnectionSurface(
   if (ctx.surfaceMode === 'mock') return undefined;
 
   const sourceSlug = evaluationSurfaceSlug(candidate.sourceSystem);
-  const sourceSurface = ctx.surfaces.find(
-    (surface: EvaluationSurface): boolean => surface.slug === sourceSlug,
-  );
+  const now = ctx.now ?? Date.now();
+  const sourceSurface = surfaceForSource(candidate.sourceSystem, ctx.surfaces, now);
   const targets: EvaluationSurface[] = [];
   if (candidate.sourceSystem !== 'boss') {
     if (!sourceSurface) return sourceSlug;
@@ -196,10 +245,16 @@ export function missingConnectionSurface(
     if (candidateNamesSurface(candidateText, surface)) targets.push(surface);
   }
 
-  const now = ctx.now ?? Date.now();
-  return targets.find(
-    (surface: EvaluationSurface): boolean => verdictFor(surface, now) !== 'connected',
-  )?.slug;
+  // A disconnected alias is covered by any connected surface that is the same
+  // system, named by the item or not: "Update the Looker number" names only the
+  // rejected charter alias, and the connected tile still satisfies it.
+  const connected = ctx.surfaces.filter(
+    (surface: EvaluationSurface): boolean => verdictFor(surface, now) === 'connected',
+  );
+  return targets.find((surface: EvaluationSurface): boolean => {
+    if (verdictFor(surface, now) === 'connected') return false;
+    return !connected.some((live) => sameEvaluationSystem(surface, live));
+  })?.slug;
 }
 
 export function scoreValue(candidate: WorkCandidate): number {

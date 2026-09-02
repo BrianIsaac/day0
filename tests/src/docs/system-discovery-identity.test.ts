@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   convergeDiscoveryCandidates,
+  documentedSystemIdentity,
+  sameSystemForHostlessMention,
   type DiscoveredSystemCandidate,
 } from '../../../src/docs/system-discovery';
 
@@ -14,6 +16,95 @@ function candidate(
 }
 
 describe('documentation system identity convergence', (): void => {
+  it('matches a hostless manager alias to one qualified documented system', (): void => {
+    const mention = documentedSystemIdentity({
+      name: 'Looker',
+      quotes: ['Pipeline numbers are on the Looker tile, web UI only.'],
+    });
+    const documented = documentedSystemIdentity({
+      name: 'Looker pipeline tile',
+      endpoints: ['http://looker-tile:8080/'],
+    });
+
+    expect(sameSystemForHostlessMention('analytics', mention, 'analytics', documented)).toBe(true);
+    expect(sameSystemForHostlessMention('other', mention, 'analytics', documented)).toBe(false);
+    expect(
+      sameSystemForHostlessMention(
+        'analytics',
+        documentedSystemIdentity({
+          name: 'Looker',
+          endpoints: ['https://different-looker.example.test/'],
+        }),
+        'analytics',
+        documented,
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps a qualified manager mention apart from a bare documented product', (): void => {
+    const tile = documentedSystemIdentity({
+      name: 'Looker pipeline tile',
+      endpoints: ['http://looker-tile:8080/'],
+    });
+    const hostedLooker = documentedSystemIdentity({
+      name: 'Looker',
+      endpoints: ['https://acme.cloud.looker.com/'],
+    });
+    const studio = documentedSystemIdentity({
+      name: 'Looker Studio',
+      quotes: ['Dashboards are built in Looker Studio.'],
+    });
+
+    expect(sameSystemForHostlessMention('analytics', studio, 'analytics', tile)).toBe(false);
+    expect(sameSystemForHostlessMention('analytics', studio, 'analytics', hostedLooker)).toBe(false);
+    expect(
+      sameSystemForHostlessMention(
+        'crm',
+        documentedSystemIdentity({ name: 'Salesforce Marketing Cloud' }),
+        'crm',
+        documentedSystemIdentity({
+          name: 'Salesforce',
+          endpoints: ['https://acme.my.salesforce.com/'],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      sameSystemForHostlessMention(
+        'kanban',
+        documentedSystemIdentity({ name: 'Jira Service Management' }),
+        'kanban',
+        documentedSystemIdentity({ name: 'Jira' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('merges a mention whose extra words are only generic qualifiers', (): void => {
+    expect(
+      sameSystemForHostlessMention(
+        'crm',
+        documentedSystemIdentity({ name: 'Northstar CRM' }),
+        'crm',
+        documentedSystemIdentity({ name: 'Northstar' }),
+      ),
+    ).toBe(true);
+    expect(
+      sameSystemForHostlessMention(
+        'chat',
+        documentedSystemIdentity({ name: 'Slack workspace' }),
+        'chat',
+        documentedSystemIdentity({ name: 'Slack' }),
+      ),
+    ).toBe(true);
+    expect(
+      sameSystemForHostlessMention(
+        'crm',
+        documentedSystemIdentity({ name: 'Northstar' }),
+        'crm',
+        documentedSystemIdentity({ name: 'Northstar CRM' }),
+      ),
+    ).toBe(true);
+  });
+
   it('attaches a transport description and its page to the named system', (): void => {
     const systems = convergeDiscoveryCandidates([
       candidate(
