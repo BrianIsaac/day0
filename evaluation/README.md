@@ -25,6 +25,21 @@ outcomes.
 - [Onboarding transcript](onboarding/day0.json) - the fixed 1:1 replayed for day0.
 - `results/<timestamp>/semifinal.json` and `.md` - one directory per invocation.
 
+## Harness v2
+
+Harness v2 standardises both routes and both arms on a 240-second model-call abort,
+12-minute task deadlines, at most four skill-authoring attempts per task-run, and the
+networkless local skill sandbox. Every new raw row records its authoring-attempt count;
+every evidence file and generated report records harness version 2, the clocks, the cap,
+and the sandbox backend. The harness refuses a Daytona-configured deployment or a resume
+whose recorded v2 contract differs.
+
+The four harness-v1 beds at `results/2026-09-01T07-23-30Z/` (qwen3:8b),
+`results/2026-09-01T14-26-55Z/` (qwen3:14b), `results/2026-09-01T08-12-35Z/`
+(gpt-5.6-terra), and `results/2026-09-01T08-39-48Z/` (gpt-5.6-sol) remain immutable.
+They become superseded for submission claims only after all four complete v2 beds exist;
+until then, the evidence-status tables below continue to describe the frozen v1 record.
+
 ## Evidence status
 
 The submission uses only the following three fresh, frozen beds. Each ran both

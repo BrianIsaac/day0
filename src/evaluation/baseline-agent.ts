@@ -38,6 +38,7 @@ function candidatePrompt(item: BaselineCandidate, snapshot: MockSurfaceSnapshot)
     `Title: ${item.title}`,
     `Request: ${item.contentSummary}`,
     `References: ${item.contentRefs.join(', ') || '(none)'}`,
+    'Preserve every explicitly requested identifier and quoted string byte-for-byte in the relevant tool arguments.',
     '',
     '--- Current work environment ---',
     renderEnvSnapshot(snapshot),

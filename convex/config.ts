@@ -22,7 +22,10 @@ export const surfaceMode = query({
  */
 export const modelSettings = query({
   args: {},
-  handler: (): { model: string } => ({ model: modelName() }),
+  handler: (): { model: string; skillSandboxBackend: 'daytona' | 'local' } => ({
+    model: modelName(),
+    skillSandboxBackend: process.env.DAYTONA_API_KEY?.trim() ? 'daytona' : 'local',
+  }),
 });
 
 /** Which optional components this deployment is configured for. */

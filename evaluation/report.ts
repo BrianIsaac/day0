@@ -36,6 +36,8 @@ export interface EvaluationTaskResult {
     /** Provider steps only where the action returns them, otherwise null. */
     observableProviderCalls: number | null;
   };
+  /** Harness-counted skill-authoring invocations; absent only on retained v1 evidence. */
+  skillAuthoringAttempts?: number;
   grade: EvaluationGrade;
   actionAudit?: ActionArgumentAudit;
   error?: string;
@@ -60,11 +62,17 @@ export interface EvaluationEvidence {
   experiment: 'day0-semifinal-controlled-comparison';
   generatedAt: string;
   configuration: {
+    /** Execution-harness revision, distinct from the backwards-compatible JSON schema. */
+    harnessVersion?: number;
     commit: string;
     /** The model named by the environment the harness ran in. */
     model: string;
     /** The model the backend reported it was configured for; must equal `model`. */
     backendModel?: string;
+    /** The skill-verification backend the deployment reported it would select. */
+    skillSandboxBackend?: 'daytona' | 'local';
+    /** Shared harness cap; absent on v1 evidence, whose loop was unbounded. */
+    skillAuthoringMaxAttempts?: number;
     temperature: number;
     modelCallTimeoutMs: number;
     surfaceMode: 'mock';
@@ -353,7 +361,7 @@ function harnessParityTables(evidence: EvaluationEvidence): string {
   if (!parameters || !differences) {
     return 'Harness-parameter capture was not recorded in this evidence schema revision.';
   }
-  const labels: Record<keyof typeof parameters.day0, string> = {
+  const labels: Record<string, string> = {
     modelId: 'Model id',
     temperature: 'Temperature',
     modelCallAbortMs: 'Per-call abort deadline (ms)',
@@ -365,9 +373,14 @@ function harnessParityTables(evidence: EvaluationEvidence): string {
     structuredOutputMode: 'Configured structured-output mode',
     modelSeed: 'Model seed',
   };
-  const parameterRows = (Object.keys(labels) as Array<keyof typeof parameters.day0>).map(
-    (key) =>
-      `| ${labels[key]} | ${displayHarnessValue(parameters.day0[key])} | ${displayHarnessValue(parameters.baseline[key])} |`,
+  if ('skillSandboxBackend' in parameters.day0 || 'skillSandboxBackend' in parameters.baseline) {
+    labels.skillSandboxBackend = 'Skill sandbox backend';
+  }
+  const day0Parameters = parameters.day0 as unknown as Record<string, unknown>;
+  const baselineParameters = parameters.baseline as unknown as Record<string, unknown>;
+  const parameterRows = Object.entries(labels).map(
+    ([key, label]) =>
+      `| ${label} | ${displayHarnessValue(day0Parameters[key])} | ${displayHarnessValue(baselineParameters[key])} |`,
   );
   const differenceRows = Object.entries(differences).map(
     ([name, value]) => `| ${name} | ${value.day0} | ${value.baseline} |`,
@@ -547,7 +560,7 @@ export function renderEvaluationReport(
       (row.grade.facts.procedureEffects ?? [])
         .map((effect) => `${effect.kind}:${effect.destination}`)
         .join('; ') || 'none'
-    } | ${procedure} | ${row.grade.facts.heldForApproval ? 'yes' : 'no'} | ${duration(
+    } | ${procedure} | ${row.skillAuthoringAttempts ?? 'not recorded'} | ${row.grade.facts.heldForApproval ? 'yes' : 'no'} | ${duration(
       row.deployToFirstCorrectActionMs,
     )} |`;
   });
@@ -560,7 +573,7 @@ export function renderEvaluationReport(
 
   return `# Semi-final controlled comparison
 
-Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\`. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.${regradeLine}${rerenderLine}
+Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}\` with harness v${evidence.configuration.harnessVersion ?? 1}. Evidence status: ${completedRuns}/${expectedRuns} configured runs completed.${regradeLine}${rerenderLine}
 
 ## Comparison scores
 
@@ -616,12 +629,12 @@ The scripted manager approves every held action after a fixed delay and never re
 
 Day0 onboarding uses ${evidence.configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
 
-Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`; each provider call has a shared ${(evidence.configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. A timeout is terminal for the harness and remains a failed programmatic grade. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
+Per-task timeouts are defined in \`evaluation/tasks/semifinal.json\`; each provider call has a shared ${(evidence.configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${evidence.configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${evidence.configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A timeout is terminal for the harness and remains a failed programmatic grade. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
 
 ## Task-level evidence
 
-| Run | Arm | Task | Terminal state | Grader | Prohibited flags | Reported supervision effects | Procedure effects | Procedure adherence | Held | Deploy → first correct effect |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-${detail.join('\n') || '| — | — | — | — | — | — | — | — | — | — | — |'}
+| Run | Arm | Task | Terminal state | Grader | Prohibited flags | Reported supervision effects | Procedure effects | Procedure adherence | Skill authoring attempts | Held | Deploy → first correct effect |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- |
+${detail.join('\n') || '| — | — | — | — | — | — | — | — | — | — | — | — |'}
 `;
 }
