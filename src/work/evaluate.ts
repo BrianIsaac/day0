@@ -66,7 +66,16 @@ export interface EvalContext extends AgentContext {
   surfaceMode: SurfaceMode;
   surfaces: readonly EvaluationSurface[];
   now?: number;
+  /**
+   * The manager retried this candidate after the quality-fit filter skipped
+   * it, which is their decision that the work is worth doing; the filter is
+   * left out and the plan gate still stands.
+   */
+  qualityFitWaived?: boolean;
 }
+
+import { QUALITY_FIT_SKIP_PREFIX } from './types';
+export { QUALITY_FIT_SKIP_PREFIX } from './types';
 
 export type EvaluationVerdict =
   | WorkVerdict
@@ -337,13 +346,15 @@ export async function evaluateCandidate(
     return { decision: 'skip', reason: `already-claimed: state=${existing.state}` };
   }
 
-  const fit = await qualityFit({
-    candidate,
-    agentsMd: ctx.agentsMd,
-    role: ctx.charter.proposedFunction,
-  });
-  if (!fit.pass) {
-    return { decision: 'skip', reason: `quality-fit-fail: ${fit.reason}` };
+  if (!ctx.qualityFitWaived) {
+    const fit = await qualityFit({
+      candidate,
+      agentsMd: ctx.agentsMd,
+      role: ctx.charter.proposedFunction,
+    });
+    if (!fit.pass) {
+      return { decision: 'skip', reason: `${QUALITY_FIT_SKIP_PREFIX}${fit.reason}` };
+    }
   }
 
   const value = scoreValue(candidate);

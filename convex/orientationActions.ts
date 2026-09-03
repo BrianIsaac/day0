@@ -27,7 +27,7 @@ const API_BASE = /\/api(?:[/?#]|$)|^https?:\/\/api\./i;
 const NO_SURFACE_PATTERN =
   /\bno (?:approved |official |supported |sanctioned )?(?:api|mcp(?: server)?|connection(?: surface)?|integration(?: surface)?|endpoint|surface|access path)\b|\bnot (?:yet )?(?:an? )?approved\b|\bno approved\b/i;
 
-const orientationSchema = z.object({
+export const orientationSchema = z.object({
   path: z.enum(['mcp', 'documented-api', 'browser-driven', 'escalate']),
   fallbackPath: z.enum(['mcp', 'documented-api', 'browser-driven', 'escalate']),
   confidence: z.number().min(0).max(1),

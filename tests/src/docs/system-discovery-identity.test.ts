@@ -28,7 +28,7 @@ describe('documentation system identity convergence', (): void => {
     });
 
     expect(sameSystemForHostlessMention('analytics', mention, 'analytics', documented)).toBe(true);
-    expect(sameSystemForHostlessMention('other', mention, 'analytics', documented)).toBe(false);
+    expect(sameSystemForHostlessMention('chat', mention, 'analytics', documented)).toBe(false);
     expect(
       sameSystemForHostlessMention(
         'analytics',
@@ -40,6 +40,20 @@ describe('documentation system identity convergence', (): void => {
         documented,
       ),
     ).toBe(false);
+  });
+
+  it('lets a bare mention the charter could not classify join the qualified documented system', (): void => {
+    const mention = documentedSystemIdentity({
+      name: 'Northstar',
+      quotes: ["Northstar has the accounts but we've got no approved way in yet."],
+    });
+    const documented = documentedSystemIdentity({
+      name: 'Northstar CRM',
+      quotes: ['Internal account and opportunity records used during close.'],
+    });
+
+    expect(sameSystemForHostlessMention('other', mention, 'crm', documented)).toBe(true);
+    expect(sameSystemForHostlessMention('chat', mention, 'crm', documented)).toBe(false);
   });
 
   it('keeps a qualified manager mention apart from a bare documented product', (): void => {
@@ -217,6 +231,22 @@ describe('documentation system identity convergence', (): void => {
         ),
       ]),
     ).toHaveLength(1);
+  });
+
+  it('merges one named system whose class the classifier labelled two ways', (): void => {
+    const systems = convergeDiscoveryCandidates([
+      candidate(
+        'Slack',
+        'chat',
+        'onboarding.md',
+        '| Slack | Inbound asks arrive in one channel; the manager DM is the only outbound destination. | Messaging administrator |',
+      ),
+      candidate('Slack', 'social', 'policy-page', '# Slack automation policy'),
+    ]);
+
+    expect(systems).toHaveLength(1);
+    expect(systems[0]).toMatchObject({ name: 'Slack', class: 'chat', mergedNames: [] });
+    expect(systems[0]?.evidence.map((item) => item.ref)).toEqual(['onboarding.md', 'policy-page']);
   });
 
   it('keeps two Slack workspaces with conflicting documented hosts distinct', (): void => {

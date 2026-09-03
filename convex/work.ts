@@ -26,6 +26,7 @@ import {
   COLD_START_WIP_LIMIT,
   type MockAction,
   type ReplyTarget,
+  QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
 import type { DecisionKind } from '../src/work/manager-channel';
 import {
@@ -877,12 +878,21 @@ export const approvePlan = mutation({
 });
 
 export const retryFailed = mutation({
-  args: { workItemId: v.id('workItems') },
+  args: { workItemId: v.id('workItems'), feedback: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    const recoverable = ['failed', 'skipped', 'cancelled'];
+    // A note given with Retry is the manager's answer to what the last run
+    // asked, or a direction for the next one; it reaches the retried run the
+    // way a rejection reason does.
+    const feedback = args.feedback?.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
+    const recoverable = ['failed', 'skipped', 'cancelled', 'completed'];
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
+    }
+    // Finished work is sent back only with a direction: a retry that changes
+    // nothing would repeat what already landed.
+    if (row.state === 'completed' && !feedback) {
+      throw new Error('a completed item is sent back with a note saying what to change');
     }
     if (
       retryRequiresProviderReconciliation(row.output, row.skipReason) &&
@@ -892,11 +902,18 @@ export const retryFailed = mutation({
         'retry refused because an external effect may already have landed; reconcile the provider first',
       );
     }
+    const verdict = row.verdict as { decision?: string; reason?: unknown } | undefined;
     const next: Doc<'workItems'>['state'] = row.plan
       ? 'plan-approved'
-      : (row.verdict as { decision?: string } | undefined)?.decision === 'claim'
+      : verdict?.decision === 'claim'
         ? 'claimed'
         : 'discovered';
+    // Retrying an item the quality-fit filter skipped is the manager saying the
+    // work is worth doing; the re-evaluation leaves that filter out.
+    const waivesQualityFit =
+      row.state === 'skipped' &&
+      typeof verdict?.reason === 'string' &&
+      verdict.reason.startsWith(QUALITY_FIT_SKIP_PREFIX);
     await ctx.db.patch(args.workItemId, {
       state: next,
       skipReason: undefined,
@@ -905,11 +922,19 @@ export const retryFailed = mutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
+      ...(waivesQualityFit ? { qualityFitWaivedAt: Date.now() } : {}),
+      ...(feedback ? { managerFeedback: { reason: feedback, at: Date.now() } } : {}),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.retry',
-      payload: { workItemId: args.workItemId, resumeState: next, fromState: row.state },
+      payload: {
+        workItemId: args.workItemId,
+        resumeState: next,
+        fromState: row.state,
+        ...(waivesQualityFit ? { waived: 'quality-fit' } : {}),
+        ...(feedback ? { feedback: true } : {}),
+      },
       createdAt: Date.now(),
     });
     return { ok: true, resumeState: next };
@@ -920,8 +945,8 @@ export const reconcileFailed = mutation({
   args: { workItemId: v.id('workItems'), confirmed: v.boolean() },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (row.state !== 'failed') {
-      throw new Error(`workItem state is ${row.state}; expected failed`);
+    if (row.state !== 'failed' && row.state !== 'completed') {
+      throw new Error(`workItem state is ${row.state}; expected failed or completed`);
     }
     if (!args.confirmed) throw new Error('explicit provider verification is required');
     if (row.providerReconciliation) {

@@ -1,5 +1,6 @@
 'use client';
 
+import { QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
@@ -1001,7 +1002,9 @@ function WorkQueue({
               autonomousActions={autonomousActions}
               onApprovePlan={() => approvePlan({ workItemId: item._id })}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
-              onRetryFailed={() => retryFailed({ workItemId: item._id })}
+              onRetryFailed={(feedback) =>
+                retryFailed({ workItemId: item._id, ...(feedback?.trim() ? { feedback } : {}) })
+              }
               onReconcileFailed={(confirmed) =>
                 reconcileFailed({ workItemId: item._id, confirmed })
               }
@@ -1180,6 +1183,14 @@ export function cancelledReason(item: {
 }
 
 /** Show a manager's full rejection while keeping later failure reasons current. */
+/** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
+export function clipLedgerRow(text: string | undefined): string | undefined {
+  if (text === undefined || text.length <= LEDGER_ROW_LENGTH) return text;
+  return `${text.slice(0, LEDGER_ROW_LENGTH - 1)}…`;
+}
+
+const LEDGER_ROW_LENGTH = 180;
+
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
@@ -1437,7 +1448,7 @@ export function PendingActions({
   );
 }
 
-function WorkItemCard({
+export function WorkItemCard({
   item,
   surfaces,
   autonomousActions,
@@ -1453,7 +1464,7 @@ function WorkItemCard({
   autonomousActions: boolean;
   onApprovePlan: () => void;
   onCancelPlan: () => void;
-  onRetryFailed: () => void;
+  onRetryFailed: (feedback?: string) => void;
   onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
   onRejectActions: (reason: string) => Promise<unknown>;
@@ -1485,6 +1496,14 @@ function WorkItemCard({
     item.skipReason,
   );
   const retryBlocked = needsProviderReconciliation && !item.providerReconciliation;
+  // The quality-fit filter's skip is the agent's judgement, not the manager's;
+  // Retry hands the item back with that filter waived.
+  const qualityFitSkipped =
+    item.state === 'skipped' &&
+    typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string' &&
+    ((verdict as { reason: string }).reason).startsWith(QUALITY_FIT_SKIP_PREFIX);
+  const [retryNote, setRetryNote] = useState('');
+  const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   const awaitingSurface =
     verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
@@ -1612,7 +1631,7 @@ function WorkItemCard({
             {landedActions.map((a, i) => (
               <li key={i}>
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
-                {a.effect ?? '(applied)'}
+                {clipLedgerRow(a.effect) ?? '(applied)'}
                 {a.providerId ? (
                   <span className="ml-1 font-mono text-[10px] text-[var(--color-muted)]">
                     id {a.providerId}
@@ -1670,33 +1689,62 @@ function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' ? (
+      {item.state === 'failed' || item.state === 'completed' || qualityFitSkipped ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
               no registered skill, a model error, a mid-run throw, a rejection. */}
-          {failedActions.length === 0 && failedItemReason(item) ? (
+          {item.state === 'failed' && failedActions.length === 0 && failedItemReason(item) ? (
             <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">
               {failedItemReason(item)}
             </p>
           ) : null}
-          {needsProviderReconciliation || item.providerReconciliation ? (
+          {/* A finished item is sent back only with a note, so its checklist
+              waits until the manager has started writing one. */}
+          {(needsProviderReconciliation || item.providerReconciliation) &&
+          (item.state !== 'completed' || sendingBack) ? (
             <ProviderReconciliationControl
               entries={reconciliationEntries}
               reconciliation={item.providerReconciliation}
               onConfirm={onReconcileFailed}
             />
           ) : null}
+          {item.state === 'failed' || item.state === 'completed' ? (
+            <input
+              type="text"
+              value={retryNote}
+              onChange={(event) => setRetryNote(event.target.value)}
+              placeholder={
+                item.state === 'completed'
+                  ? 'note for the retry: say what to change or answer what the agent asked'
+                  : 'note for the retry (optional): answer what the agent asked, or say what to change'
+              }
+              aria-label="note for the retry"
+              className="w-full mb-1.5 px-2 py-1 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
+            />
+          ) : null}
           <button
-            onClick={onRetryFailed}
-            disabled={retryBlocked}
+            onClick={() => onRetryFailed(retryNote)}
+            disabled={retryBlocked || (item.state === 'completed' && !sendingBack)}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Retry
           </button>
-          {retryBlocked ? (
+          {retryBlocked && (item.state !== 'completed' || sendingBack) ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry remains disabled until provider reconciliation is recorded.
+            </p>
+          ) : null}
+          {item.state === 'completed' ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry with a note sends this finished work back; the note reaches the agent as your
+              direction, and its writes are held again unless autonomous actions are on.
+            </p>
+          ) : null}
+          {qualityFitSkipped ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry re-evaluates this item without the quality-fit filter; its plan still needs
+              your approval.
             </p>
           ) : null}
         </div>
@@ -1744,7 +1792,7 @@ export function ProviderReconciliationControl({
                 {entry.phase} action {entry.actionIndex} · {entry.tool} ·{' '}
                 {entry.outcome === 'outcome-unknown' ? 'outcome unknown' : 'landed'}
               </span>
-              {entry.effect ? <span className="block">{entry.effect}</span> : null}
+              {entry.effect ? <span className="block">{clipLedgerRow(entry.effect)}</span> : null}
               {entry.reason ? <span className="block">{entry.reason}</span> : null}
               {entry.providerId ? (
                 <span className="block font-mono text-[10px] text-[var(--color-muted)]">

@@ -26,6 +26,10 @@ import {
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction } from './plan';
+import { renderHowTos, renderTeamDocs } from './documents';
+import { replyTargetLine } from './reply-target';
+
+export { replyTargetLine };
 
 /**
  * Skill executor. Lifted from Protean's `src/work/execute-skill.ts`
@@ -386,6 +390,7 @@ const REAL_PREAMBLE = [
   '',
   'Discipline:',
   '  - Stay inside charter boundaries.',
+  '  - Two kinds of evidence: the applied ledger is the only evidence of what happened, and the loaded documentation below is citable for documented facts, procedures and checklists. When the candidate, the plan or the manager\'s feedback asks for documented content, quote it from the loaded documentation and name the page; say in `notes` when the documentation does not contain it.',
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
   "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
   '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
@@ -586,7 +591,11 @@ function procedureTrailInventorySchema(contract: ProcedureContract) {
 function realProcedureTrailInventorySchema(contract: ProcedureContract) {
   const ids = contract.trails.map((trail) => trail.id);
   const trailId = ids.length === 0 ? z.string().min(1) : z.enum(ids as [string, ...string[]]);
-  const row = z.discriminatedUnion('state', [
+  // A plain union, for the same reason as `generatedActionSchema`: strict
+  // Structured Outputs accepts the nested `anyOf` it serialises to and refuses
+  // the `oneOf` a discriminated union becomes. The `state` literals still
+  // select exactly one branch on parse.
+  const row = z.union([
     mappedProcedureTrailSchema.extend({ trailId }),
     inapplicableProcedureTrailSchema.extend({ trailId }),
     deferredProcedureTrailSchema.extend({ trailId }),
@@ -1346,30 +1355,6 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
   return lines.join('\n');
 }
 
-/**
- * The prompt line that tells the skill where a public reply belongs.
- *
- * Args:
- *   target: The work item's reply target.
- *
- * Returns:
- *   `Reply target: channel C0… (#team-asks), thread_ts 1787…`.
- */
-export function replyTargetLine(target: ReplyTarget): string {
-  const name = target.channelName ? ` (#${target.channelName})` : '';
-  const thread = target.threadTs ? `, thread_ts ${target.threadTs}` : ', top-level post';
-  return `Reply target: channel ${target.channel}${name}${thread}`;
-}
-
-function renderHowTos(guides: MockSurfaceSnapshot['howToGuides']): string {
-  if (guides.length === 0) return '(no how-to guides loaded)';
-  return guides.map((g) => `--- ${g.title} ---\n${g.body}`).join('\n\n');
-}
-
-function renderTeamDocs(docs: MockSurfaceSnapshot['teamDocs']): string {
-  if (docs.length === 0) return '(no team docs loaded)';
-  return docs.map((d) => `--- ${d.title} ---\n${d.body}`).join('\n\n');
-}
 
 function renderProcedureContract(contract: ProcedureContract): string {
   if (contract.trails.length === 0) {
@@ -1706,9 +1691,9 @@ export async function runDependentSkill(
     "The prerequisite actions have finished. This is the run's only dependent phase; there is no third turn and no loop.",
     'The earlier needsDependentPhase instruction no longer applies; this final schema has no continuation flag.',
     `Emit at most ${DEPENDENT_ACTION_CAP} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
-    'Treat only the applied ledger below as evidence of what happened. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
+    'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
-    'Return one planStepOutcomes row for every approved plan step, in order. Mark a step satisfied only when the ledger proves it; otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
+    'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
   ].join('\n');
 
   const agentName = skillAgentName(skill.name, candidate, 'dependent');
@@ -1739,6 +1724,9 @@ export async function runDependentSkill(
     '',
     '--- Procedure trail applicability for this candidate ---',
     renderProcedureApplicability(procedureContract, candidate, mode),
+    '',
+    '--- Team docs (read-only context) ---',
+    renderTeamDocs(mockEnv.teamDocs),
     '',
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),

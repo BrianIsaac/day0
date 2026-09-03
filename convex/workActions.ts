@@ -8,7 +8,7 @@ import {
   inferRequiredPermissions,
   type EvaluateLookups,
 } from '../src/work/evaluate';
-import { draftExecutionPlan } from '../src/work/plan';
+import { draftExecutionPlan, type DraftPlanArgs } from '../src/work/plan';
 import { runDependentSkill, runSkill } from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import {
@@ -238,6 +238,7 @@ export const evaluateWorkItem = action({
         autonomousActions: autonomousActionsOn(agent),
         surfaceMode: surfaceConfig.mode,
         surfaces,
+        qualityFitWaived: item.qualityFitWaivedAt !== undefined,
       },
       lookups,
     );
@@ -295,6 +296,7 @@ export const draftPlan = action({
       charter: charterRow.body as Charter,
       autonomousActions: autonomousActionsOn(agent),
       surfaceMode: SURFACE_MODE,
+      ...(await planGrounding(ctx, agentId)),
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -524,13 +526,45 @@ const RESULT_STEP =
 const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/gi;
 const CLAUSE_BOUNDARY = /\b(?:after|before|but|once|then|until)\b|[.;\n]/gi;
 const NEGATED_INSTRUCTION = /\b(?:defer|do not|don't|hold|never|not|wait for|without|withhold)\b/i;
+/** A term that names a period is a noun phrase ("close week", "close of quarter"), not a verb. */
+const PERIOD_NOUN = /^\s*(?:of\s+(?:the\s+)?)?(?:day|week|month|quarter|year|period|cycle|date)s?\b/i;
+/** A term after a determiner or "end" is a noun ("the close", "month-end close"), not a verb. */
+const NOUN_MARKER = /\b(?:the|a|an|our|its|their|this|that|each|every|end|of)\s+$/i;
+/** A span in double quotation marks cites a title or a message; it is not an instruction. */
+const QUOTED_SPAN = /"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g;
 
-/** Whether at least one occurrence is an instruction to act rather than to withhold. */
-function affirmedStepTerm(step: string, terms: RegExp): boolean {
+/**
+ * The part of a plan step that instructs, with every quoted span blanked.
+ *
+ * A step that says `locate the "Refresh the dashboard tile" request` names a
+ * ticket, and the words inside the quotes belong to that ticket's title, not
+ * to the step: they promise no read, name no surface and close nothing.
+ *
+ * Args:
+ *   step: One approved plan step.
+ *
+ * Returns:
+ *   The step with each quoted span replaced by a space.
+ */
+function instructionText(step: string): string {
+  return step.replace(QUOTED_SPAN, ' ');
+}
+
+/**
+ * Whether at least one occurrence is an instruction to act rather than to
+ * withhold. A term inside a hyphenated compound on either side ("read-back",
+ * "close-week"), after a determiner or "end", or followed by a period noun is
+ * vocabulary, not an instruction.
+ */
+function affirmedStepTerm(rawStep: string, terms: RegExp): boolean {
+  const step = instructionText(rawStep);
   terms.lastIndex = 0;
   for (let match = terms.exec(step); match; match = terms.exec(step)) {
     if (step[match.index - 1] === '-') continue;
+    const after = step.slice(match.index + match[0].length);
+    if (after.startsWith('-') || PERIOD_NOUN.test(after)) continue;
     const prefix = step.slice(0, match.index);
+    if (NOUN_MARKER.test(prefix)) continue;
     CLAUSE_BOUNDARY.lastIndex = 0;
     let boundary = 0;
     for (
@@ -614,8 +648,9 @@ export function validatePlanStepOutcomes(args: {
     throw new Error('dependent phase did not account for every approved plan step exactly once');
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
-  for (const [index, step] of args.plan.steps.entries()) {
-    if (!promisesResult(step)) continue;
+  for (const [index, rawStep] of args.plan.steps.entries()) {
+    if (!promisesResult(rawStep)) continue;
+    const step = instructionText(rawStep);
     const named = args.surfaces.filter(
       (surface) => namedInStep(step, surface.slug) || namedInStep(step, surface.displayName),
     );
@@ -1074,6 +1109,35 @@ function authorityBeforeTransport(
  * Returns:
  *   Executor-facing surface records.
  */
+/**
+ * Load what a real-mode plan is drawn from: the agent's surfaces with their
+ * verdicts and the same documentation the executor cites.
+ *
+ * Mock mode passes nothing, so the hosted demo's planner prompt stays as it
+ * is; the mock environment already carries its own documents to the executor.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agentId: The agent whose surfaces and documentation are read.
+ *
+ * Returns:
+ *   The planner's grounding, or an empty object outside real mode.
+ */
+async function planGrounding(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+): Promise<Pick<DraftPlanArgs, 'surfaces' | 'documents'>> {
+  if (SURFACE_MODE !== 'real') return {};
+  const [surfaces, snapshot] = await Promise.all([
+    loadSurfaces(ctx, agentId),
+    readSurfaceSnapshot(ctx, agentId, 'mock', []),
+  ]);
+  return {
+    surfaces,
+    documents: { howToGuides: snapshot.howToGuides, teamDocs: snapshot.teamDocs },
+  };
+}
+
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {
   const rows: Doc<'surfaces'>[] = await ctx.runQuery(internal.orientationData.surfacesForAgent, {
     agentId,

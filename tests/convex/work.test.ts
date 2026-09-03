@@ -911,6 +911,78 @@ describe('cancelling a pending plan', (): void => {
   });
 });
 
+describe('retrying an item the quality-fit filter skipped', (): void => {
+  it('records the manager waiver on the item and in the ledger', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'skipped');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        plan: undefined,
+        verdict: { decision: 'skip', reason: 'quality-fit-fail: the request is too thin' },
+        skipReason: 'quality-fit-fail: the request is too thin',
+      });
+    });
+
+    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    expect(result).toEqual({ ok: true, resumeState: 'discovered' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('discovered');
+    expect(row.skipReason).toBeUndefined();
+    expect(typeof row.qualityFitWaivedAt).toBe('number');
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    expect(retries.map((event) => event.payload)).toEqual([
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'quality-fit' },
+    ]);
+  });
+
+  it('carries a note given with Retry to the retried run as manager feedback', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { skipReason: 'the closing phase asked the manager for evidence' });
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: '  The three checks are done;   propose Done.  ' });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.managerFeedback?.reason).toBe('The three checks are done; propose Done.');
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    expect(retries.map((event) => event.payload)).toEqual([
+      { workItemId, resumeState: 'plan-approved', fromState: 'failed', feedback: true },
+    ]);
+  });
+
+  it('does not waive the filter for a run that failed for another reason', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { plan: undefined, skipReason: 'the model returned no plan' });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.qualityFitWaivedAt).toBeUndefined();
+  });
+});
+
 describe('the exact-action gate', (): void => {
   it('holds an executing run with its literal actions and run id', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -2039,5 +2111,77 @@ describe('manager feedback kept for the retry', (): void => {
     });
 
     expect((await readItem(harness, workItemId)).managerFeedback).toBeUndefined();
+  });
+});
+
+describe('sending a completed item back with a note', (): void => {
+  it('retries a completed item from its plan with the note as manager feedback', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'completed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        output: {
+          actions: [readIssue],
+          applied: [{ tool: 'mcp.call', ok: true, effect: 'read issue', idempotencyKey: 'read' }],
+        },
+      });
+    });
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply for the thread and hold it.' });
+
+    expect(result).toEqual({ ok: true, resumeState: 'plan-approved' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.managerFeedback?.reason).toBe('Draft the reply for the thread and hold it.');
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    expect(retries.map((event) => event.payload)).toEqual([
+      { workItemId, resumeState: 'plan-approved', fromState: 'completed', feedback: true },
+    ]);
+  });
+
+  it('refuses to retry a completed item without a note', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'completed');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: '   ' }),
+    ).rejects.toThrow('a completed item is sent back with a note');
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+  });
+
+  it('fences the retry of a completed item on its landed writes until they are reconciled', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'completed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        output: {
+          actions: [pendingOutput.actions[1]],
+          applied: [
+            { tool: 'http.request', ok: true, effect: 'sent the manager DM', providerId: 'dm-1', idempotencyKey: 'dm' },
+          ],
+        },
+      });
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
+    ).rejects.toThrow('reconcile the provider first');
+
+    const reconciled = await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    expect(reconciled).toEqual({ ok: true, reconciledEntries: 1 });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
+    ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
   });
 });

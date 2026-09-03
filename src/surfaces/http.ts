@@ -2,7 +2,7 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { decryptCredential, type DecryptCredential } from './credentials';
-import { clipEffect } from './mock';
+import { clipEffect, READ_EFFECT_LENGTH } from './mock';
 import {
   actionIntent,
   parseSurfaceAction,
@@ -261,7 +261,8 @@ export class HttpAdapter implements SurfaceAdapter {
       const envelope = payload as { ok?: unknown; error?: unknown } | undefined;
       const envelopeFailed = envelope !== undefined && envelope.ok === false;
       const ok = response.ok && !envelopeFailed;
-      const summary = clipEffect(text, EFFECT_LENGTH);
+      const effectLength = writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH;
+      const summary = clipEffect(text, effectLength);
       if (!ok) {
         const providerError =
           typeof envelope?.error === 'string' ? ` · ${redactValue(envelope.error, secret)}` : '';
@@ -275,7 +276,7 @@ export class HttpAdapter implements SurfaceAdapter {
       return {
         tool: action.tool,
         ok: true,
-        effect: clipEffect(`HTTP ${response.status} · ${summary}`, EFFECT_LENGTH),
+        effect: clipEffect(`HTTP ${response.status} · ${summary}`, effectLength),
         providerId: providerIdFrom(payload)
           ? clipEffect(redactValue(providerIdFrom(payload) ?? '', secret), EFFECT_LENGTH)
           : undefined,

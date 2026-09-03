@@ -2,7 +2,7 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { decryptCredential, type DecryptCredential } from './credentials';
-import { clipEffect } from './mock';
+import { clipEffect, READ_EFFECT_LENGTH } from './mock';
 import {
   actionIntent,
   mcpEndpointRefusal,
@@ -524,7 +524,7 @@ export class McpAdapter implements SurfaceAdapter {
           ok: true,
           effect: clipEffect(
             `${call.tool} on ${surface.slug} · ${(evidence ?? text) || 'ok'}`,
-            EFFECT_LENGTH,
+            writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH,
           ),
           providerId: result.providerId
             ? clipEffect(redactValue(result.providerId, bearer), EFFECT_LENGTH)

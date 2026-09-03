@@ -27,7 +27,7 @@ const SYSTEM_PROMPT = [
 
 const qualityFitAgent = makeAgent('day0-quality-fit', SYSTEM_PROMPT);
 
-const qualityFitSchema = z.object({
+export const qualityFitSchema = z.object({
   pass: z.boolean(),
   reason: z.string(),
 });

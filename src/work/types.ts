@@ -219,3 +219,6 @@ export interface MockSurfaceSnapshot {
 export const COLD_START_WIP_LIMIT = 1;
 export const AUTONOMOUS_WIP_LIMIT = 3;
 export const VALUE_THRESHOLD = 30;
+
+/** Prefix of the skip reason the quality-fit filter writes. */
+export const QUALITY_FIT_SKIP_PREFIX = 'quality-fit-fail: ';

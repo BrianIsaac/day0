@@ -46,6 +46,7 @@ const recorded = vi.hoisted(() => ({
   skillSwitches: [] as Array<boolean | undefined>,
   dependentSwitches: [] as Array<boolean | undefined>,
   planSwitches: [] as boolean[],
+  planContexts: [] as Array<{ surfaces?: string[]; documents?: string[] }>,
   skillOutput: undefined as ExecutionOutput | undefined,
   dependentOutput: undefined as DependentExecutionOutput | undefined,
   dependentRuns: 0,
@@ -250,8 +251,16 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/work/plan')>();
   return {
     ...original,
-    draftExecutionPlan: async (args: { autonomousActions: boolean }) => {
+    draftExecutionPlan: async (args: {
+      autonomousActions: boolean;
+      surfaces?: Array<{ slug: string }>;
+      documents?: { howToGuides: unknown[]; teamDocs: unknown[] };
+    }) => {
       recorded.planSwitches.push(args.autonomousActions);
+      recorded.planContexts.push({
+        surfaces: args.surfaces?.map((surface) => surface.slug).sort(),
+        documents: args.documents ? Object.keys(args.documents).sort() : undefined,
+      });
       return {
         summary: 'Comment then close.',
         steps: ['comment', 'close'],
@@ -353,6 +362,7 @@ afterEach((): void => {
   recorded.skillSwitches.length = 0;
   recorded.dependentSwitches.length = 0;
   recorded.planSwitches.length = 0;
+  recorded.planContexts.length = 0;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
   recorded.skillOutput = undefined;
@@ -606,6 +616,50 @@ describe('work action completion evidence', (): void => {
         surfaces: [{ slug: 'looker', displayName: 'Looker pipeline tile' }],
       }),
     ).toThrow('promised a Looker pipeline tile read');
+  });
+
+  it('does not read a compound noun such as close-week as a promise to close the ticket', (): void => {
+    const comment = skillOutput.actions[0];
+    const satisfied = [
+      { step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' },
+      { step: 2, status: 'satisfied' as const, evidence: 'DM auto-applied' },
+    ];
+    for (const wording of [
+      'Draft a manager DM summarising any Sales-Finance or close-week impact; hold it for approval.',
+      'Draft a manager DM flagging close week risks; hold it for approval.',
+      'Note the month-end close status in the DM.',
+    ]) {
+      const plan = {
+        summary: 'Comment, then brief the manager.',
+        steps: ['Comment on the ticket with the triage notes.', wording],
+        expectedOutputType: 'ticket-update' as const,
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      };
+      expect(
+        dependentTransitionRefusal({ plan, actions: [comment], planStepOutcomes: satisfied }),
+        wording,
+      ).toBeUndefined();
+      expect(
+        blockedPlanReason(
+          [{ step: 1, status: 'blocked', evidence: 'No ticket read landed before the comment.' }],
+          { plan, actions: [comment], applied: [{ tool: 'mcp.call', ok: true, effect: 'commented', idempotencyKey: 'run:0' }] },
+        ),
+        wording,
+      ).toBeUndefined();
+    }
+    const closing = {
+      summary: 'Comment, then close.',
+      steps: ['Comment on the ticket.', 'Close the ticket once the comment lands.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    expect(
+      dependentTransitionRefusal({ plan: closing, actions: [comment], planStepOutcomes: satisfied }),
+    ).toContain('omitted the approved ticket state transition');
   });
 
   it('lets a closing phase withhold the transition it accounted for as blocked', (): void => {
@@ -1395,6 +1449,11 @@ describe('executing an approved plan through the gate', (): void => {
       on.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId: seededOn.workItemId }),
     ).resolves.toEqual({ ok: true, reason: 'automatic actions applying' });
     expect(recorded.planSwitches).toEqual([true]);
+    // The planner plans from the same evidence the executor acts on: the
+    // agent's surfaces with their verdicts and the loaded documentation.
+    expect(recorded.planContexts).toEqual([
+      { surfaces: ['linear', 'slack'], documents: ['howToGuides', 'teamDocs'] },
+    ]);
     expect(recorded.skillSwitches).toEqual([true]);
     const approvals = (await on.run(async (ctx) => await ctx.db.query('events').collect())).filter(
       (event) => event.type === 'work.plan-approved',
@@ -1407,6 +1466,7 @@ describe('executing an approved plan through the gate', (): void => {
 
     // Off: the plan parks, the executor does not run, and the one request is scheduled.
     recorded.planSwitches.length = 0;
+    recorded.planContexts.length = 0;
     recorded.skillSwitches.length = 0;
     const off = convexTest(contractSchema(), allConvexModules());
     const seededOff = await seed(off, 'real');
@@ -2827,6 +2887,35 @@ describe('plan-step accounting after the loop ran live', (): void => {
     ).not.toThrow();
   });
 
+  it('does not read a surface named inside a quoted title as a promised read', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: {
+          summary: 'Confirm the originating issue.',
+          steps: [
+            'Read the connected Linear queue to locate the “Refresh the Looker pipeline tile” request and confirm its issue id; flag the "Looker pipeline tile" mismatch if unresolved.',
+          ],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: '',
+          estimatedMinutes: 1,
+        },
+        outcomes: [{ step: 1, status: 'satisfied', evidence: 'The Linear read confirmed the id.' }],
+        initialActions: [
+          {
+            tool: 'mcp.call',
+            args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
+          },
+        ],
+        initialLedger: [{ tool: 'mcp.call', ok: true, effect: 'read issue', idempotencyKey: 'read' }],
+        surfaces: [
+          { slug: 'linear', displayName: 'Linear' },
+          { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   it.each([
     'Read Linear, then hold every write for literal approval.',
     'Hold the public reply until you read Linear for the exact issue state.',
@@ -2963,6 +3052,30 @@ describe('plan-step accounting after the loop ran live', (): void => {
         applied: [landed, refused],
       }),
     ).toContain('remained blocked');
+  });
+
+  it('does not read a quoted title as a close instruction', (): void => {
+    const plan = {
+      summary: 'Add context to the ticket.',
+      steps: ['Comment on the “Close the books review” ticket with the figures read from the tracker.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const landed: AppliedAction = {
+      tool: 'mcp.call',
+      ok: true,
+      effect: 'comment landed',
+      idempotencyKey: 'item:run:0',
+    };
+
+    expect(
+      blockedPlanReason(
+        [{ step: 1, status: 'blocked', evidence: 'No transition was planned or emitted.' }],
+        { plan, actions: [skillOutput.actions[0]], applied: [landed] },
+      ),
+    ).toBeUndefined();
   });
 
   it('does not turn a negative state-change instruction into a promised close', (): void => {
