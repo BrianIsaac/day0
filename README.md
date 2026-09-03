@@ -156,7 +156,7 @@ Elapsed times are counted from the moment the agent was deployed.
 
     *Under the switch, the same shape of work applies on its own. Captured locally on 3 September 2026.*
 
-16. **Revoke a scope mid-run, and the next write is refused.** With a run in flight, `linear:write` was revoked from the Permissions panel. Seventeen seconds later the run reached its Linear write and it did not reach the work environment: `no grant (linear:write)`. The block is counted, and the browser work that had already been approved was unaffected. Elapsed: 48 min 45 s.
+16. **Revoke a scope mid-run, and the next write is refused.** `linear:write` was revoked from the Permissions panel seventeen seconds into a run that was already executing. When that run reached its Linear write, the write did not reach the work environment: `no grant (linear:write)`. The block is counted, and the browser actions the run had already applied were left as they were. Elapsed: 48 min 45 s.
 
     ![The refused Linear write after revocation, beside the supervision metrics for the run](.github/images/full-run-16-refusal-and-supervision.webp)
 
@@ -1053,7 +1053,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
     *在开关之下，同样形态的工作会自行应用。Captured locally on 3 September 2026.*
 
-16. **在运行中撤销一项 scope，下一次写入即被拒绝。** 在有运行进行中时，从 Permissions 面板撤销了 `linear:write`。十七秒后该运行到达它的 Linear 写入，而这次写入没有触达工作环境：`no grant (linear:write)`。这次阻断被计入统计，而此前已经获得批准的浏览器操作不受影响。耗时：48 分 45 秒。
+16. **在运行中撤销一项 scope，下一次写入即被拒绝。** 在一次已经开始执行的运行进行到第十七秒时，从 Permissions 面板撤销了 `linear:write`。当该运行到达它的 Linear 写入时，这次写入没有触达工作环境：`no grant (linear:write)`。这次阻断被计入统计，而该运行此前已经应用的浏览器操作保持原样。耗时：48 分 45 秒。
 
     ![The refused Linear write after revocation, beside the supervision metrics for the run](.github/images/full-run-16-refusal-and-supervision.webp)
 
