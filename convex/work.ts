@@ -885,9 +885,14 @@ export const retryFailed = mutation({
     // asked, or a direction for the next one; it reaches the retried run the
     // way a rejection reason does.
     const feedback = args.feedback?.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
-    const recoverable = ['failed', 'skipped', 'cancelled'];
+    const recoverable = ['failed', 'skipped', 'cancelled', 'completed'];
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
+    }
+    // Finished work is sent back only with a direction: a retry that changes
+    // nothing would repeat what already landed.
+    if (row.state === 'completed' && !feedback) {
+      throw new Error('a completed item is sent back with a note saying what to change');
     }
     if (
       retryRequiresProviderReconciliation(row.output, row.skipReason) &&
@@ -940,8 +945,8 @@ export const reconcileFailed = mutation({
   args: { workItemId: v.id('workItems'), confirmed: v.boolean() },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    if (row.state !== 'failed') {
-      throw new Error(`workItem state is ${row.state}; expected failed`);
+    if (row.state !== 'failed' && row.state !== 'completed') {
+      throw new Error(`workItem state is ${row.state}; expected failed or completed`);
     }
     if (!args.confirmed) throw new Error('explicit provider verification is required');
     if (row.providerReconciliation) {

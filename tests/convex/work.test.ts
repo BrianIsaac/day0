@@ -2113,3 +2113,75 @@ describe('manager feedback kept for the retry', (): void => {
     expect((await readItem(harness, workItemId)).managerFeedback).toBeUndefined();
   });
 });
+
+describe('sending a completed item back with a note', (): void => {
+  it('retries a completed item from its plan with the note as manager feedback', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'completed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        output: {
+          actions: [readIssue],
+          applied: [{ tool: 'mcp.call', ok: true, effect: 'read issue', idempotencyKey: 'read' }],
+        },
+      });
+    });
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply for the thread and hold it.' });
+
+    expect(result).toEqual({ ok: true, resumeState: 'plan-approved' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.managerFeedback?.reason).toBe('Draft the reply for the thread and hold it.');
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    expect(retries.map((event) => event.payload)).toEqual([
+      { workItemId, resumeState: 'plan-approved', fromState: 'completed', feedback: true },
+    ]);
+  });
+
+  it('refuses to retry a completed item without a note', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'completed');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: '   ' }),
+    ).rejects.toThrow('a completed item is sent back with a note');
+    expect((await readItem(harness, workItemId)).state).toBe('completed');
+  });
+
+  it('fences the retry of a completed item on its landed writes until they are reconciled', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'completed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        output: {
+          actions: [pendingOutput.actions[1]],
+          applied: [
+            { tool: 'http.request', ok: true, effect: 'sent the manager DM', providerId: 'dm-1', idempotencyKey: 'dm' },
+          ],
+        },
+      });
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
+    ).rejects.toThrow('reconcile the provider first');
+
+    const reconciled = await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    expect(reconciled).toEqual({ ok: true, reconciledEntries: 1 });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
+    ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
+  });
+});

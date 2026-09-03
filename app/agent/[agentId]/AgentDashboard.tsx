@@ -1688,12 +1688,12 @@ function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' || qualityFitSkipped ? (
+      {item.state === 'failed' || item.state === 'completed' || qualityFitSkipped ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
               no registered skill, a model error, a mid-run throw, a rejection. */}
-          {failedActions.length === 0 && failedItemReason(item) ? (
+          {item.state === 'failed' && failedActions.length === 0 && failedItemReason(item) ? (
             <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">
               {failedItemReason(item)}
             </p>
@@ -1705,19 +1705,23 @@ function WorkItemCard({
               onConfirm={onReconcileFailed}
             />
           ) : null}
-          {item.state === 'failed' ? (
+          {item.state === 'failed' || item.state === 'completed' ? (
             <input
               type="text"
               value={retryNote}
               onChange={(event) => setRetryNote(event.target.value)}
-              placeholder="note for the retry (optional): answer what the agent asked, or say what to change"
+              placeholder={
+                item.state === 'completed'
+                  ? 'note for the retry: say what to change or answer what the agent asked'
+                  : 'note for the retry (optional): answer what the agent asked, or say what to change'
+              }
               aria-label="note for the retry"
               className="w-full mb-1.5 px-2 py-1 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
             />
           ) : null}
           <button
             onClick={() => onRetryFailed(retryNote)}
-            disabled={retryBlocked}
+            disabled={retryBlocked || (item.state === 'completed' && retryNote.trim() === '')}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Retry
@@ -1725,6 +1729,12 @@ function WorkItemCard({
           {retryBlocked ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry remains disabled until provider reconciliation is recorded.
+            </p>
+          ) : null}
+          {item.state === 'completed' ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry with a note sends this finished work back; the note reaches the agent as your
+              direction, and its writes are held again unless autonomous actions are on.
             </p>
           ) : null}
           {qualityFitSkipped ? (
