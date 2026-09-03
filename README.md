@@ -32,7 +32,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
-**Project** · [Controlled evaluation](evaluation/README.md) · [Evaluation quick start](#evaluation-quick-start) · [Credits](#credits) · [Licence](#licence)
+**Project** · [Controlled evaluation](evaluation/README.md) · [Evaluation quick start](#evaluation-quick-start) · [Data and compliance](docs/submission/compliance.md) · [Credits](#credits) · [Licence](#licence)
 
 ## What is unusual about it
 
@@ -443,6 +443,7 @@ OPENAI_API_KEY=sk-…
 OPENAI_MODEL=gpt-5.6-terra
 
 DAY0_SURFACE_MODE=real
+NEXT_PUBLIC_DEMO_BOSS_EMAIL=you@example.com         # your Slack address; stored on the agent at deploy
 DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
 DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile browser
 ```
@@ -929,7 +930,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **工作原理** · [运行流程](#runtime-flow) · [技术栈](#stack) · [路由](#routes) · [Convex 后端](#convex-backend-convex) · [数据结构](#schema-convexschemats) · [领域逻辑](#domain-logic-src)
 
-**项目** · [受控评测](evaluation/README.md) · [评测快速开始](#评测快速开始) · [致谢](#credits) · [许可证](#licence)
+**项目** · [受控评测](evaluation/README.md) · [评测快速开始](#评测快速开始) · [数据来源与合规](docs/submission/compliance.md) · [致谢](#credits) · [许可证](#licence)
 
 ### 它的特别之处
 
@@ -1299,6 +1300,7 @@ OPENAI_API_KEY=sk-…
 OPENAI_MODEL=gpt-5.6-terra
 
 DAY0_SURFACE_MODE=real
+NEXT_PUBLIC_DEMO_BOSS_EMAIL=you@example.com         # your Slack address; stored on the agent at deploy
 DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
 DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile browser
 ```
