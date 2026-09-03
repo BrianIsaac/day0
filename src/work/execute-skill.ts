@@ -26,6 +26,7 @@ import {
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction } from './plan';
+import { renderHowTos, renderTeamDocs } from './documents';
 
 /**
  * Skill executor. Lifted from Protean's `src/work/execute-skill.ts`
@@ -1364,16 +1365,6 @@ export function replyTargetLine(target: ReplyTarget): string {
   const name = target.channelName ? ` (#${target.channelName})` : '';
   const thread = target.threadTs ? `, thread_ts ${target.threadTs}` : ', top-level post';
   return `Reply target: channel ${target.channel}${name}${thread}`;
-}
-
-function renderHowTos(guides: MockSurfaceSnapshot['howToGuides']): string {
-  if (guides.length === 0) return '(no how-to guides loaded)';
-  return guides.map((g) => `--- ${g.title} ---\n${g.body}`).join('\n\n');
-}
-
-function renderTeamDocs(docs: MockSurfaceSnapshot['teamDocs']): string {
-  if (docs.length === 0) return '(no team docs loaded)';
-  return docs.map((d) => `--- ${d.title} ---\n${d.body}`).join('\n\n');
 }
 
 function renderProcedureContract(contract: ProcedureContract): string {

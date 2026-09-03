@@ -46,6 +46,7 @@ const recorded = vi.hoisted(() => ({
   skillSwitches: [] as Array<boolean | undefined>,
   dependentSwitches: [] as Array<boolean | undefined>,
   planSwitches: [] as boolean[],
+  planContexts: [] as Array<{ surfaces?: string[]; documents?: string[] }>,
   skillOutput: undefined as ExecutionOutput | undefined,
   dependentOutput: undefined as DependentExecutionOutput | undefined,
   dependentRuns: 0,
@@ -250,8 +251,16 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/work/plan')>();
   return {
     ...original,
-    draftExecutionPlan: async (args: { autonomousActions: boolean }) => {
+    draftExecutionPlan: async (args: {
+      autonomousActions: boolean;
+      surfaces?: Array<{ slug: string }>;
+      documents?: { howToGuides: unknown[]; teamDocs: unknown[] };
+    }) => {
       recorded.planSwitches.push(args.autonomousActions);
+      recorded.planContexts.push({
+        surfaces: args.surfaces?.map((surface) => surface.slug).sort(),
+        documents: args.documents ? Object.keys(args.documents).sort() : undefined,
+      });
       return {
         summary: 'Comment then close.',
         steps: ['comment', 'close'],
@@ -353,6 +362,7 @@ afterEach((): void => {
   recorded.skillSwitches.length = 0;
   recorded.dependentSwitches.length = 0;
   recorded.planSwitches.length = 0;
+  recorded.planContexts.length = 0;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
   recorded.skillOutput = undefined;
@@ -1439,6 +1449,11 @@ describe('executing an approved plan through the gate', (): void => {
       on.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId: seededOn.workItemId }),
     ).resolves.toEqual({ ok: true, reason: 'automatic actions applying' });
     expect(recorded.planSwitches).toEqual([true]);
+    // The planner plans from the same evidence the executor acts on: the
+    // agent's surfaces with their verdicts and the loaded documentation.
+    expect(recorded.planContexts).toEqual([
+      { surfaces: ['linear', 'slack'], documents: ['howToGuides', 'teamDocs'] },
+    ]);
     expect(recorded.skillSwitches).toEqual([true]);
     const approvals = (await on.run(async (ctx) => await ctx.db.query('events').collect())).filter(
       (event) => event.type === 'work.plan-approved',
@@ -1451,6 +1466,7 @@ describe('executing an approved plan through the gate', (): void => {
 
     // Off: the plan parks, the executor does not run, and the one request is scheduled.
     recorded.planSwitches.length = 0;
+    recorded.planContexts.length = 0;
     recorded.skillSwitches.length = 0;
     const off = convexTest(contractSchema(), allConvexModules());
     const seededOff = await seed(off, 'real');

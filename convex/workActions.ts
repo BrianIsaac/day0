@@ -8,7 +8,7 @@ import {
   inferRequiredPermissions,
   type EvaluateLookups,
 } from '../src/work/evaluate';
-import { draftExecutionPlan } from '../src/work/plan';
+import { draftExecutionPlan, type DraftPlanArgs } from '../src/work/plan';
 import { runDependentSkill, runSkill } from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import {
@@ -296,6 +296,7 @@ export const draftPlan = action({
       charter: charterRow.body as Charter,
       autonomousActions: autonomousActionsOn(agent),
       surfaceMode: SURFACE_MODE,
+      ...(await planGrounding(ctx, agentId)),
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -1087,6 +1088,35 @@ function authorityBeforeTransport(
  * Returns:
  *   Executor-facing surface records.
  */
+/**
+ * Load what a real-mode plan is drawn from: the agent's surfaces with their
+ * verdicts and the same documentation the executor cites.
+ *
+ * Mock mode passes nothing, so the hosted demo's planner prompt stays as it
+ * is; the mock environment already carries its own documents to the executor.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agentId: The agent whose surfaces and documentation are read.
+ *
+ * Returns:
+ *   The planner's grounding, or an empty object outside real mode.
+ */
+async function planGrounding(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+): Promise<Pick<DraftPlanArgs, 'surfaces' | 'documents'>> {
+  if (SURFACE_MODE !== 'real') return {};
+  const [surfaces, snapshot] = await Promise.all([
+    loadSurfaces(ctx, agentId),
+    readSurfaceSnapshot(ctx, agentId, 'mock', []),
+  ]);
+  return {
+    surfaces,
+    documents: { howToGuides: snapshot.howToGuides, teamDocs: snapshot.teamDocs },
+  };
+}
+
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {
   const rows: Doc<'surfaces'>[] = await ctx.runQuery(internal.orientationData.surfacesForAgent, {
     agentId,
