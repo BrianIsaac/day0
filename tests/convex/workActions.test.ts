@@ -2887,6 +2887,35 @@ describe('plan-step accounting after the loop ran live', (): void => {
     ).not.toThrow();
   });
 
+  it('does not read a surface named inside a quoted title as a promised read', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: {
+          summary: 'Confirm the originating issue.',
+          steps: [
+            'Read the connected Linear queue to locate the “Refresh the Looker pipeline tile” request and confirm its issue id; flag the "Looker pipeline tile" mismatch if unresolved.',
+          ],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: '',
+          estimatedMinutes: 1,
+        },
+        outcomes: [{ step: 1, status: 'satisfied', evidence: 'The Linear read confirmed the id.' }],
+        initialActions: [
+          {
+            tool: 'mcp.call',
+            args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
+          },
+        ],
+        initialLedger: [{ tool: 'mcp.call', ok: true, effect: 'read issue', idempotencyKey: 'read' }],
+        surfaces: [
+          { slug: 'linear', displayName: 'Linear' },
+          { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   it.each([
     'Read Linear, then hold every write for literal approval.',
     'Hold the public reply until you read Linear for the exact issue state.',
@@ -3023,6 +3052,30 @@ describe('plan-step accounting after the loop ran live', (): void => {
         applied: [landed, refused],
       }),
     ).toContain('remained blocked');
+  });
+
+  it('does not read a quoted title as a close instruction', (): void => {
+    const plan = {
+      summary: 'Add context to the ticket.',
+      steps: ['Comment on the “Close the books review” ticket with the figures read from the tracker.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const landed: AppliedAction = {
+      tool: 'mcp.call',
+      ok: true,
+      effect: 'comment landed',
+      idempotencyKey: 'item:run:0',
+    };
+
+    expect(
+      blockedPlanReason(
+        [{ step: 1, status: 'blocked', evidence: 'No transition was planned or emitted.' }],
+        { plan, actions: [skillOutput.actions[0]], applied: [landed] },
+      ),
+    ).toBeUndefined();
   });
 
   it('does not turn a negative state-change instruction into a promised close', (): void => {

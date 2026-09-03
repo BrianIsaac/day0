@@ -153,6 +153,26 @@ describe('plan drafter grounding', (): void => {
     expect(user.indexOf('--- Candidate ---')).toBeLessThan(user.indexOf('--- Surfaces ---'));
   });
 
+  it('gives the planner the candidate references and reply target the executor gets', async (): Promise<void> => {
+    await draftExecutionPlan({
+      candidate: {
+        ...candidate,
+        contentRefs: ['ticket://T-2', 'https://tracker.internal/T-2'],
+        replyTarget: { channel: 'C1', channelName: 'team-asks', threadTs: '1787.0001' },
+      },
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      surfaces,
+      documents,
+      now,
+    });
+    const user = planRecorded.users[0];
+    expect(user).toContain('Refs: ticket://T-2, https://tracker.internal/T-2');
+    expect(user).toContain('Reply target: channel C1 (#team-asks), thread_ts 1787.0001');
+    expect(user.indexOf('Refs:')).toBeLessThan(user.indexOf('Body:'));
+  });
+
   it('keeps the prompt as it was when no surfaces or documentation are given', async (): Promise<void> => {
     await draftExecutionPlan({ candidate, charter, autonomousActions: false, surfaceMode: 'mock' });
     const user = planRecorded.users[0];

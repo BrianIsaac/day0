@@ -530,6 +530,25 @@ const NEGATED_INSTRUCTION = /\b(?:defer|do not|don't|hold|never|not|wait for|wit
 const PERIOD_NOUN = /^\s*(?:of\s+(?:the\s+)?)?(?:day|week|month|quarter|year|period|cycle|date)s?\b/i;
 /** A term after a determiner or "end" is a noun ("the close", "month-end close"), not a verb. */
 const NOUN_MARKER = /\b(?:the|a|an|our|its|their|this|that|each|every|end|of)\s+$/i;
+/** A span in double quotation marks cites a title or a message; it is not an instruction. */
+const QUOTED_SPAN = /"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g;
+
+/**
+ * The part of a plan step that instructs, with every quoted span blanked.
+ *
+ * A step that says `locate the "Refresh the dashboard tile" request` names a
+ * ticket, and the words inside the quotes belong to that ticket's title, not
+ * to the step: they promise no read, name no surface and close nothing.
+ *
+ * Args:
+ *   step: One approved plan step.
+ *
+ * Returns:
+ *   The step with each quoted span replaced by a space.
+ */
+function instructionText(step: string): string {
+  return step.replace(QUOTED_SPAN, ' ');
+}
 
 /**
  * Whether at least one occurrence is an instruction to act rather than to
@@ -537,7 +556,8 @@ const NOUN_MARKER = /\b(?:the|a|an|our|its|their|this|that|each|every|end|of)\s+
  * "close-week"), after a determiner or "end", or followed by a period noun is
  * vocabulary, not an instruction.
  */
-function affirmedStepTerm(step: string, terms: RegExp): boolean {
+function affirmedStepTerm(rawStep: string, terms: RegExp): boolean {
+  const step = instructionText(rawStep);
   terms.lastIndex = 0;
   for (let match = terms.exec(step); match; match = terms.exec(step)) {
     if (step[match.index - 1] === '-') continue;
@@ -628,8 +648,9 @@ export function validatePlanStepOutcomes(args: {
     throw new Error('dependent phase did not account for every approved plan step exactly once');
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
-  for (const [index, step] of args.plan.steps.entries()) {
-    if (!promisesResult(step)) continue;
+  for (const [index, rawStep] of args.plan.steps.entries()) {
+    if (!promisesResult(rawStep)) continue;
+    const step = instructionText(rawStep);
     const named = args.surfaces.filter(
       (surface) => namedInStep(step, surface.slug) || namedInStep(step, surface.displayName),
     );

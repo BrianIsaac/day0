@@ -27,6 +27,9 @@ import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
+import { replyTargetLine } from './reply-target';
+
+export { replyTargetLine };
 
 /**
  * Skill executor. Lifted from Protean's `src/work/execute-skill.ts`
@@ -1352,20 +1355,6 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
   return lines.join('\n');
 }
 
-/**
- * The prompt line that tells the skill where a public reply belongs.
- *
- * Args:
- *   target: The work item's reply target.
- *
- * Returns:
- *   `Reply target: channel C0… (#team-asks), thread_ts 1787…`.
- */
-export function replyTargetLine(target: ReplyTarget): string {
-  const name = target.channelName ? ` (#${target.channelName})` : '';
-  const thread = target.threadTs ? `, thread_ts ${target.threadTs}` : ', top-level post';
-  return `Reply target: channel ${target.channel}${name}${thread}`;
-}
 
 function renderProcedureContract(contract: ProcedureContract): string {
   if (contract.trails.length === 0) {

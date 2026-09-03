@@ -37,3 +37,18 @@ export function replyTargetFor(row: {
   const channelName = MENTION_TITLE.exec(row.title)?.[1];
   return { channel: match[1], threadTs: match[2], ...(channelName ? { channelName } : {}) };
 }
+
+/**
+ * The prompt line that tells the planner and the skill where a public reply belongs.
+ *
+ * Args:
+ *   target: The work item's reply target.
+ *
+ * Returns:
+ *   `Reply target: channel C0… (#team-asks), thread_ts 1787…`.
+ */
+export function replyTargetLine(target: ReplyTarget): string {
+  const name = target.channelName ? ` (#${target.channelName})` : '';
+  const thread = target.threadTs ? `, thread_ts ${target.threadTs}` : ', top-level post';
+  return `Reply target: channel ${target.channel}${name}${thread}`;
+}

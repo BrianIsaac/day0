@@ -4,6 +4,7 @@ import type { Charter } from '../agent/charter';
 import type { SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
 import { renderHowTos, renderTeamDocs } from './documents';
+import { replyTargetLine } from './reply-target';
 import type { ExecutionPlan, MockSurfaceSnapshot, WorkCandidate } from './types';
 
 /**
@@ -134,6 +135,8 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
     `From: ${candidate.requesterLabel ?? '(unknown)'}`,
     `Title: ${candidate.title}`,
+    `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
+    ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
     `Body:`,
     candidate.contentSummary,
   ];
