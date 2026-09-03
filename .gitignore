@@ -22,6 +22,9 @@ coverage
 # entries lets `docs/running/` be re-included below.
 /docs/*
 !/docs/running/
+!/docs/submission/
+/docs/submission/*
+!/docs/submission/compliance.md
 /docs-fixture/
 /docs-local/
 AGENTS.md
