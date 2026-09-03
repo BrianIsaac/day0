@@ -7,10 +7,12 @@ vi.mock('convex/react', () => ({
   useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
 }));
 
+import type { Doc } from '../../../../convex/_generated/dataModel';
 import {
   ActionPayload,
   DraftDetails,
   PlanExecutionLedger,
+  WorkItemCard,
   eventLabel,
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
@@ -109,5 +111,66 @@ describe('a run with two phases', (): void => {
       <DraftDetails output={{ draft: 'd', notes: '', applied: twoPhase.applied }} />,
     );
     expect(single).toContain('written before anything was applied');
+  });
+});
+
+describe('sending a finished item back', (): void => {
+  const landedDm = {
+    draft: 'Told the manager.',
+    notes: '',
+    actions: [
+      {
+        tool: 'http.request' as const,
+        args: { surface: 'slack', method: 'POST', path: 'chat.postMessage', headersJson: '{}', body: '{}' },
+      },
+    ],
+    applied: [
+      { tool: 'http.request', ok: true, effect: 'sent the manager DM', providerId: 'dm-1', idempotencyKey: 'dm' },
+    ],
+  };
+  const item = (state: 'completed' | 'failed'): Doc<'workItems'> =>
+    ({
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state,
+      title: 'Answer the ask in the thread',
+      contentSummary: 'Confirm the figure.',
+      sourceSystem: 'slack',
+      sourceCategory: 'event-stream',
+      externalId: 'x',
+      observedAt: 1,
+      contentRefs: [],
+      output: landedDm,
+    }) as unknown as Doc<'workItems'>;
+  const noop = (): void => undefined;
+  const resolved = async (): Promise<void> => undefined;
+  const render = (row: Doc<'workItems'>): string =>
+    renderToStaticMarkup(
+      <WorkItemCard
+        item={row}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={noop}
+        onCancelPlan={noop}
+        onRetryFailed={noop}
+        onReconcileFailed={resolved}
+        onApproveActions={resolved}
+        onRejectActions={resolved}
+      />,
+    );
+
+  it('offers a finished item the note and Retry only, keeping the reconciliation checklist for a note in progress', (): void => {
+    const markup = render(item('completed'));
+    expect(markup).toContain('note for the retry');
+    expect(markup).toContain('Retry with a note sends this finished work back');
+    expect(markup).not.toContain('Provider reconciliation required');
+    expect(markup).not.toContain('Retry remains disabled until provider reconciliation is recorded');
+  });
+
+  it('still asks a failed run with a landed write to reconcile before Retry', (): void => {
+    const markup = render(item('failed'));
+    expect(markup).toContain('Provider reconciliation required');
+    expect(markup).toContain('Retry remains disabled until provider reconciliation is recorded');
   });
 });

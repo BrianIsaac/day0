@@ -1448,7 +1448,7 @@ export function PendingActions({
   );
 }
 
-function WorkItemCard({
+export function WorkItemCard({
   item,
   surfaces,
   autonomousActions,
@@ -1503,6 +1503,7 @@ function WorkItemCard({
     typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string' &&
     ((verdict as { reason: string }).reason).startsWith(QUALITY_FIT_SKIP_PREFIX);
   const [retryNote, setRetryNote] = useState('');
+  const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   const awaitingSurface =
     verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
@@ -1698,7 +1699,10 @@ function WorkItemCard({
               {failedItemReason(item)}
             </p>
           ) : null}
-          {needsProviderReconciliation || item.providerReconciliation ? (
+          {/* A finished item is sent back only with a note, so its checklist
+              waits until the manager has started writing one. */}
+          {(needsProviderReconciliation || item.providerReconciliation) &&
+          (item.state !== 'completed' || sendingBack) ? (
             <ProviderReconciliationControl
               entries={reconciliationEntries}
               reconciliation={item.providerReconciliation}
@@ -1721,12 +1725,12 @@ function WorkItemCard({
           ) : null}
           <button
             onClick={() => onRetryFailed(retryNote)}
-            disabled={retryBlocked || (item.state === 'completed' && retryNote.trim() === '')}
+            disabled={retryBlocked || (item.state === 'completed' && !sendingBack)}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Retry
           </button>
-          {retryBlocked ? (
+          {retryBlocked && (item.state !== 'completed' || sendingBack) ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry remains disabled until provider reconciliation is recorded.
             </p>
