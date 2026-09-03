@@ -24,7 +24,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 ## Contents
 
-**Start here** · [Live demo](#live-demo) · [What is unusual about it](#what-is-unusual-about-it) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
+**Start here** · [Live demo](#live-demo) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
 
 **Run it** · [No accounts](#run-it-with-no-accounts) · [With an OpenAI key](#run-it-with-an-openai-key) · [On your own systems](#run-it-in-real-mode) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
 
@@ -59,6 +59,130 @@ Nothing hands it a queue. The agent reads its work environment and proposes what
 A work item that matches no registered skill returns `needs-skill` rather than being dropped. The agent proposes a skill, authors it, then verifies it by running a smoke test in an isolated sandbox. It registers the skill only if the sandbox agrees; one that fails verification, or that was never verified at all, stays visibly uncallable. Capability grows in place, without a developer.
 
 ![The skills panel after sandbox verification, showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/skills-registered.webp)
+
+## One full run, from the first page
+
+Everything below is a single run of the [real-mode walkthrough](#run-it-in-real-mode), start to finish, on a fresh clone of `main` set up by the route printed there. It ran on 3 September 2026 with `OPENAI_MODEL=gpt-5.6-terra`, against the author's own Linear workspace, the author's own Slack workspace, and the synthetic Looker-style pipeline tile this repository ships behind the `demo` profile. One person acted as both the manager and the IT approver, which is what a single-user local run means. The [one-minute demo video](https://youtu.be/YgbSmy1shnM) is a cut of a run like this one and is where the Linear and Slack sides are shown; every screenshot below is the day0 dashboard.
+
+Elapsed times are counted from the moment the agent was deployed.
+
+1. **Link the documentation, before deploying anything.** The folder source read the seven runbook, systems and onboarding pages mounted read-only at `DAY0_DOCS_HOST_DIR`. The Notion source read six pages through the bundled Notion component. Both reported `synced` within half a minute. No role, no scope and no tool list existed yet.
+
+   ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/full-run-01-documentation-synced.webp)
+
+   *Both documentation sources synced before the agent existed. Captured locally on 3 September 2026.*
+
+2. **Deploy the agent and hold the Day-1 one-to-one.** Chat was the only mode available, since this deployment carries no ElevenLabs credentials. The agent opened the conversation itself and worked through the seven topics in order: why the hire was made, the role and its 30/60/90 days, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. The manager answered in plain sentences. The conversation completed 4 min 34 s after deploy.
+
+   ![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/full-run-02-day-one-chat.webp)
+
+   *The opening exchange of the Day-1 one-to-one, in chat. Captured locally on 3 September 2026.*
+
+3. **Approve the charter it drafted.** From that conversation alone the agent wrote its own purpose, proposed function, 30/60/90-day outcomes, boundaries, collaborators and open questions. The manager read it and pressed Approve. Time to first approved charter: **5 min 8 s**.
+
+   ![The approved charter card, showing why this hire, the proposed RevOps coordinator function and the 30/60/90-day outcomes](.github/images/full-run-03-charter-approved.webp)
+
+   *The charter the agent wrote, after approval. Captured locally on 3 September 2026.*
+
+4. **Orientation proposes one card per system.** About two minutes after the charter was approved, and with nothing pressed, the agent produced exactly four connection cards from the documentation and the charter together: Linear over its MCP endpoint, Slack over its documented API, the Looker tile as browser-driven, and Northstar CRM with no approved path. Each card carries the sentences it was proposed from, including the manager's own words from the one-to-one. Elapsed: 7 min 12 s.
+
+   ![The Surfaces tab after orientation, showing the Linear and Slack cards proposed with their approved connection ladders](.github/images/full-run-04-cards-proposed.webp)
+
+   *Two of the four cards orientation proposed, each with the ladder it intends to use. Captured locally on 3 September 2026.*
+
+5. **Land the Slack token, then approve each card twice.** This deployment has no public address, so no Slack app can be registered; the card offers a field for a shared bot token instead, and it was pasted there before either approval. Each of the three cards then took the manager button and the IT button. All three probes connected within seconds. Northstar CRM stayed `absent`, because the documentation records no approved way in. Elapsed: 9 min 5 s.
+
+   ![Connection status headers showing Linear, Slack and the Looker pipeline tile connected and Northstar CRM absent](.github/images/full-run-05-connected-statuses.webp)
+
+   *Three systems connected, one left absent by the documentation. Captured locally on 3 September 2026.*
+
+6. **Intake fills the queue on its own.** The five-minute intake cron read the connected systems and returned four candidates: a Slack mention in `#revops-asks`, an urgent Linear ticket asking for a close-summary audit note, a medium Linear ticket asking for a tile refresh, and a Northstar ticket that deferred at the connection gate rather than guessing. The first three matched no registered skill and returned `needs-skill`. Elapsed: 13 min 25 s.
+
+   ![The real-mode work queue after intake, showing three needs-skill items and one deferred on an absent connection](.github/images/full-run-06-work-queue.webp)
+
+   *What the agent found to do, and why it could not start yet. Captured locally on 3 September 2026.*
+
+7. **Approve the three skills it proposes.** Each proposal names the scopes it needs and the candidate that prompted it. The manager approved all three; the agent authored each one and verified it by running a smoke test in the local sandbox. All three registered within a minute and a half. Elapsed: 16 min 5 s.
+
+   ![The skills panel showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/full-run-07-skills-registered.webp)
+
+   *Three skills the agent wrote for itself, after sandbox verification. Captured locally on 3 September 2026.*
+
+8. **Approve a plan before anything executes.** Under the cold-start cap the agent takes one item at a time. It drafted a four-step plan for the audit note: read the ticket, draft the comment, submit the comment and the state change only after literal approval, then verify what came back. The manager approved the plan. Elapsed: 17 min 14 s.
+
+   ![A held execution plan for the close-summary audit note, with its four steps and the approve control](.github/images/full-run-08-plan-held.webp)
+
+   *A plan waiting for a decision. Nothing has executed. Captured locally on 3 September 2026.*
+
+9. **A web-only system arrives as one held browser batch.** The Slack ask needed the pipeline figure, and the documentation says that tile has a web UI and no API. The agent produced the documented sequence as six browser actions held together, because they cannot be split across isolated browser sessions. Nothing had reached a surface. Elapsed: 20 min 35 s.
+
+   ![Six browser operations held together as one batch, with the batch decision controls](.github/images/full-run-09-browser-batch-held.webp)
+
+   *The whole sign-in and save sequence, held as one decision. Captured locally on 3 September 2026.*
+
+10. **Approve it whole, and the tile reads itself back.** The manager pressed Approve all. The six actions applied in about a second, and the last one read the page back: the visible figure and the audit line the runbook asks for as evidence. Every plan step was marked satisfied from the applied ledger, not from the agent's own account of itself. Elapsed: 21 min 11 s.
+
+    ![The applied browser batch with its read-back of the visible figure and audit line, above the plan execution ledger](.github/images/full-run-10-batch-applied.webp)
+
+    *The applied sequence and the read-back that evidences it. Captured locally on 3 September 2026.*
+
+11. **The public reply is held separately, and lands when approved.** The charter says not to post publicly during cold start, so the reply into the ask's thread arrived as its own decision after the read-back. The manager approved it and it landed in `#revops-asks` with the provenance trailer. Elapsed: 23 min 1 s.
+
+    ![A held public Slack reply quoting the pipeline figure and the tile audit line, with its approval controls](.github/images/full-run-11-public-reply-held.webp)
+
+    *The public reply, held for a decision before it is sent. Captured locally on 3 September 2026.*
+
+12. **Reject a comment that is too thin, with a reason.** The audit note's first run ended honestly: it read the ticket, found no completed-check evidence, and asked in the DM rather than inventing any. The manager sent it back with the three checks as a note. The comment that came back was still not enough, so the manager rejected the run with a written reason. The reason is kept and travels to the retry. Elapsed: 29 min 16 s.
+
+    ![Two held Linear actions above the manager's written rejection reason](.github/images/full-run-12-rejection-with-reason.webp)
+
+    *The held comment and state change, and the reason they were rejected. Captured locally on 3 September 2026.*
+
+13. **Confirm the provider state, retry, and the revision lands.** Because a DM had already landed, the retry was fenced behind a reconciliation checklist until the manager confirmed what was really at the provider. The revision then quoted the figure and the three checks, and proposed the state change with it. Approved together, both writes landed on the ticket. Elapsed: 35 min 24 s.
+
+    ![The completed audit-note item with the Linear comment and Done transition recorded in its ledger](.github/images/full-run-13-revision-landed.webp)
+
+    *The revision after the rejection, applied to the ticket. Captured locally on 3 September 2026.*
+
+14. **Turn autonomous actions on.** The switch is in the header and asks for a confirmation that says plainly what changes. Skills and connections still need approval either way. Elapsed: 39 min 22 s.
+
+    ![The confirmation dialog for turning on autonomous actions](.github/images/full-run-14-autonomy-confirm.webp)
+
+    *The switch asks before it changes what applies without asking. Captured locally on 3 September 2026.*
+
+15. **The same work now applies without a decision.** One item was retried under the switch. It ran the documented browser sequence, read the tile back, wrote the audit comment and moved the ticket to Done: nine actions, all applied with autonomous authority, no prompt, in about forty seconds. Elapsed: 40 min 25 s.
+
+    ![Nine actions applied autonomously, including the browser sequence, the Linear comment and the state change](.github/images/full-run-15-autonomous-batch.webp)
+
+    *Under the switch, the same shape of work applies on its own. Captured locally on 3 September 2026.*
+
+16. **Revoke a scope mid-run, and the next write is refused.** With a run in flight, `linear:write` was revoked from the Permissions panel. Seventeen seconds later the run reached its Linear write and it did not reach the work environment: `no grant (linear:write)`. The block is counted, and the browser work that had already been approved was unaffected. Elapsed: 48 min 45 s.
+
+    ![The refused Linear write after revocation, beside the supervision metrics for the run](.github/images/full-run-16-refusal-and-supervision.webp)
+
+    *The refusal, and the numbers the run ended on. Captured locally on 3 September 2026.*
+
+### Deviations a reader should know
+
+- **The manager email is not in the setup list, and Slack needs it.** On the first attempt the Slack probe failed with `the manager email boss@day0.local is not a member of this Slack workspace`. Real mode resolves the manager's DM from `NEXT_PUBLIC_DEMO_BOSS_EMAIL`, which the setup block above does not mention and `.env.example` leaves empty. The run recorded here was started again after setting it. If your Slack workspace is real, set it to the address you use there.
+- **The one-to-one asked one question the answers did not cover.** After the collaborators topic it asked for the names behind the three roles. The manager repeated that introductions go through them; the conversation then continued through the remaining topics as normal.
+- **The queue chose its own order.** The cold-start cap runs one item at a time, and the agent took the audit note and the Slack ask before the tile refresh. Nothing in the walkthrough depends on that order.
+- **The tile refresh was carried by the Slack ask.** The Slack ask needed the figure, so its plan included the documented refresh, and the tile was already current when the tile ticket ran. That run reported honestly that its own ledger held no browser evidence, held a comment saying so, and proposed no state change. It reached Done later, under the switch, in step 15.
+- **A run that ends with a question has no rejection to make.** The audit note's first run held nothing, so there was nothing to reject at that point. Sending the finished run back with a note is the control that answers it.
+- **Reconciliation is asked for more often than the walkthrough implies.** Any retry after something landed at a provider asks for the checklist first, not only the one after a rejection.
+- **The switch confirms on the way on, not on the way off.**
+
+### The numbers this run ended on
+
+| Metric | Value |
+|---|---|
+| time to first approved charter | 5 min 8 s |
+| human decisions (approved / rejected) | 7 / 1 |
+| median decision latency | 2 min 7 s |
+| actions blocked after revocation | 1 |
+| audit-trail completeness | 100% (41/41) |
+
+The footer of the same card reads 8 decisions requested, 0 partial, 31 actions automatic, 11 held, 1 refused. The exported ledger holds 197 events and 42 ledger rows, and contains no credential value.
 
 ## What this is, and what it is not
 
@@ -797,7 +921,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 ### 目录
 
-**从这里开始** · [在线演示](#在线演示) · [它的特别之处](#它的特别之处) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
+**从这里开始** · [在线演示](#在线演示) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
 
 **运行** · [无需任何账户](#无需任何账户运行) · [使用 OpenAI key](#使用-openai-key-运行) · [在真实系统上运行](#在真实模式下运行) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
 
@@ -832,6 +956,130 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 如果工作项与任何已注册技能都不匹配，结果是 `needs-skill`，而不是直接丢弃。Agent 会提出技能、编写技能，并在隔离沙箱中运行冒烟测试。只有沙箱验证通过后，技能才会注册；验证失败或从未验证的技能会保持为清晰可见的不可调用状态。这样可以在不要求开发者介入的情况下扩展能力。
 
 ![The skills panel after sandbox verification, showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/skills-registered.webp)
+
+### 一次完整运行，从第一个页面开始
+
+以下是[真实模式流程](#在真实模式下运行)的一次完整运行，从头到尾，在按该节所印步骤搭建的 `main` 全新克隆上完成。运行时间为 2026 年 9 月 3 日，`OPENAI_MODEL=gpt-5.6-terra`，连接的是作者本人的 Linear workspace、作者本人的 Slack workspace，以及本仓库通过 `demo` profile 提供的合成 Looker 式 pipeline tile。由同一个人同时担任 manager 与 IT 审批人，这正是单用户本地运行的含义。[一分钟演示视频](https://youtu.be/YgbSmy1shnM)是类似运行的剪辑，Linear 与 Slack 两侧的效果在视频中呈现；下面每一张截图都来自 day0 dashboard。
+
+耗时均从 Agent 部署那一刻开始计算。
+
+1. **先链接文档，再部署任何东西。** folder source 读取了以只读方式挂载在 `DAY0_DOCS_HOST_DIR` 的七个 runbook、系统与入职页面。Notion source 通过随附的 Notion 组件读取了六个页面。两者都在半分钟内显示 `synced`。此时还不存在角色、范围或工具清单。
+
+   ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/full-run-01-documentation-synced.webp)
+
+   *两个文档来源在 Agent 存在之前就已同步。Captured locally on 3 September 2026.*
+
+2. **部署 Agent 并进行 Day-1 一对一。** 该部署没有 ElevenLabs 凭据，因此只能使用文字模式。Agent 自己发起对话，并按顺序走完七个主题：为什么招聘、角色及其 30/60/90 天、需要与谁协作、应该阅读什么、工作由哪些工具承载、首先接手什么，以及还有哪些问题未确定。Manager 用平实的句子作答。对话在部署后 4 分 34 秒完成。
+
+   ![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/full-run-02-day-one-chat.webp)
+
+   *Day-1 一对一的开场交流，文字模式。Captured locally on 3 September 2026.*
+
+3. **批准它起草的章程。** 仅凭这次对话，Agent 写出了自己的目的、建议职能、30/60/90 天成果、边界、协作对象与未决问题。Manager 阅读后点击 Approve。首次章程批准耗时：**5 分 8 秒**。
+
+   ![The approved charter card, showing why this hire, the proposed RevOps coordinator function and the 30/60/90-day outcomes](.github/images/full-run-03-charter-approved.webp)
+
+   *Agent 自己写下的章程，批准之后。Captured locally on 3 September 2026.*
+
+4. **Orientation 为每个系统提出一张卡片。** 章程批准约两分钟后，在没有点击任何按钮的情况下，Agent 依据文档与章程给出了恰好四张连接卡片：走 MCP endpoint 的 Linear、走文档化 API 的 Slack、以浏览器驱动的 Looker tile，以及没有已批准接入路径的 Northstar CRM。每张卡片都附有提出它所依据的原文，其中包括 manager 在一对一中说过的话。耗时：7 分 12 秒。
+
+   ![The Surfaces tab after orientation, showing the Linear and Slack cards proposed with their approved connection ladders](.github/images/full-run-04-cards-proposed.webp)
+
+   *Orientation 提出的四张卡片中的两张，各自标明打算使用的接入方式。Captured locally on 3 September 2026.*
+
+5. **先落地 Slack token，再对每张卡片批准两次。** 该部署没有公网地址，因此无法注册 Slack 应用；卡片改为提供一个共享 bot token 输入框，token 在任何批准之前就已粘贴到这里。随后三张卡片各自点击 manager 按钮与 IT 按钮。三次探测都在数秒内连接成功。Northstar CRM 保持 `absent`，因为文档中没有记录任何已批准的接入方式。耗时：9 分 5 秒。
+
+   ![Connection status headers showing Linear, Slack and the Looker pipeline tile connected and Northstar CRM absent](.github/images/full-run-05-connected-statuses.webp)
+
+   *三个系统已连接，另一个因文档而保持 absent。Captured locally on 3 September 2026.*
+
+6. **Intake 自行填充队列。** 五分钟一次的 intake cron 读取已连接的系统，返回四个候选事项：`#revops-asks` 中的一次 Slack mention、一张要求补充结账摘要审计说明的 Urgent Linear 工单、一张要求刷新 tile 的 Medium Linear 工单，以及一张在连接门处 defer 而不是猜测的 Northstar 工单。前三项与任何已注册技能都不匹配，返回 `needs-skill`。耗时：13 分 25 秒。
+
+   ![The real-mode work queue after intake, showing three needs-skill items and one deferred on an absent connection](.github/images/full-run-06-work-queue.webp)
+
+   *Agent 自己发现的工作，以及它暂时还不能开始的原因。Captured locally on 3 September 2026.*
+
+7. **批准它提出的三个技能。** 每个提案都写明所需 scope 以及触发它的候选事项。Manager 批准了全部三个；Agent 逐个编写技能，并在本地沙箱中运行冒烟测试进行验证。三个技能都在一分半钟内注册完成。耗时：16 分 5 秒。
+
+   ![The skills panel showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/full-run-07-skills-registered.webp)
+
+   *Agent 为自己编写的三个技能，通过沙箱验证之后。Captured locally on 3 September 2026.*
+
+8. **在任何执行之前批准计划。** 在冷启动上限下，Agent 一次只处理一个事项。它为审计说明起草了四步计划：读取工单、起草评论、只有在获得逐条批准后才提交评论与状态变更、然后核验返回结果。Manager 批准了该计划。耗时：17 分 14 秒。
+
+   ![A held execution plan for the close-summary audit note, with its four steps and the approve control](.github/images/full-run-08-plan-held.webp)
+
+   *等待决定的计划。此时尚未执行任何动作。Captured locally on 3 September 2026.*
+
+9. **只有 Web 界面的系统以一个被挂起的浏览器批次出现。** Slack 上的请求需要 pipeline 数字，而文档写明该 tile 只有 Web UI、没有 API。Agent 将文档化的操作序列作为六个浏览器动作整体挂起，因为它们无法拆分到相互隔离的浏览器会话中。此时尚未有任何动作触达系统。耗时：20 分 35 秒。
+
+   ![Six browser operations held together as one batch, with the batch decision controls](.github/images/full-run-09-browser-batch-held.webp)
+
+   *整个登录与保存序列，作为一个决定被挂起。Captured locally on 3 September 2026.*
+
+10. **整体批准后，tile 自己被读回。** Manager 点击 Approve all。六个动作在约一秒内应用完成，最后一个动作把页面读了回来：runbook 要求作为证据的可见数字与审计行。每个计划步骤都依据已应用的 ledger 判定为 satisfied，而不是依据 Agent 对自己的陈述。耗时：21 分 11 秒。
+
+    ![The applied browser batch with its read-back of the visible figure and audit line, above the plan execution ledger](.github/images/full-run-10-batch-applied.webp)
+
+    *已应用的操作序列，以及为其提供证据的读回结果。Captured locally on 3 September 2026.*
+
+11. **公开回复被单独挂起，批准后才发出。** 章程规定冷启动期间不得公开发帖，因此发往该请求所在 thread 的回复在读回之后作为独立决定出现。Manager 批准后，它带着来源标注落在 `#revops-asks`。耗时：23 分 1 秒。
+
+    ![A held public Slack reply quoting the pipeline figure and the tile audit line, with its approval controls](.github/images/full-run-11-public-reply-held.webp)
+
+    *公开回复在发出之前先等待一个决定。Captured locally on 3 September 2026.*
+
+12. **对内容过于单薄的评论给出理由并驳回。** 审计说明的第一次运行结束得很诚实：它读取了工单，没有找到完成检查的证据，于是在 DM 中询问，而不是编造。Manager 把已完成的工作连同三项检查作为备注退回。返回的评论仍然不够，于是 manager 带着书面理由驳回了这次运行。该理由会被保留并随重试一起传递。耗时：29 分 16 秒。
+
+    ![Two held Linear actions above the manager's written rejection reason](.github/images/full-run-12-rejection-with-reason.webp)
+
+    *被挂起的评论与状态变更，以及它们被驳回的理由。Captured locally on 3 September 2026.*
+
+13. **确认 provider 状态、重试，修订版落地。** 由于此前已有一条 DM 落地，重试被拦在对账清单之后，直到 manager 确认 provider 端的真实状态。随后的修订版引用了数字与三项检查，并连同状态变更一起提出。两者一并批准后，两次写入都落在了工单上。耗时：35 分 24 秒。
+
+    ![The completed audit-note item with the Linear comment and Done transition recorded in its ledger](.github/images/full-run-13-revision-landed.webp)
+
+    *驳回之后的修订版，已应用到工单。Captured locally on 3 September 2026.*
+
+14. **打开 autonomous actions。** 开关位于页头，并会要求一次确认，明确说明会发生什么变化。无论开关状态如何，技能与连接仍然需要批准。耗时：39 分 22 秒。
+
+    ![The confirmation dialog for turning on autonomous actions](.github/images/full-run-14-autonomy-confirm.webp)
+
+    *开关在改变"无需询问即可执行"的范围之前，会先询问。Captured locally on 3 September 2026.*
+
+15. **同样的工作现在无需决定即可应用。** 在开关打开的状态下重试了一个事项。它运行了文档化的浏览器序列、读回 tile、写入审计评论并把工单移到 Done：九个动作全部以 autonomous 权限应用，没有任何提示，用时约四十秒。耗时：40 分 25 秒。
+
+    ![Nine actions applied autonomously, including the browser sequence, the Linear comment and the state change](.github/images/full-run-15-autonomous-batch.webp)
+
+    *在开关之下，同样形态的工作会自行应用。Captured locally on 3 September 2026.*
+
+16. **在运行中撤销一项 scope，下一次写入即被拒绝。** 在有运行进行中时，从 Permissions 面板撤销了 `linear:write`。十七秒后该运行到达它的 Linear 写入，而这次写入没有触达工作环境：`no grant (linear:write)`。这次阻断被计入统计，而此前已经获得批准的浏览器操作不受影响。耗时：48 分 45 秒。
+
+    ![The refused Linear write after revocation, beside the supervision metrics for the run](.github/images/full-run-16-refusal-and-supervision.webp)
+
+    *这次拒绝，以及本次运行最终的数字。Captured locally on 3 September 2026.*
+
+#### 读者应当知道的偏差
+
+- **manager 邮箱不在配置清单里，而 Slack 需要它。** 第一次尝试时 Slack 探测失败，报错为 `the manager email boss@day0.local is not a member of this Slack workspace`。真实模式通过 `NEXT_PUBLIC_DEMO_BOSS_EMAIL` 解析 manager 的 DM，而上文的配置段没有提到它，`.env.example` 中它也是空的。此处记录的运行是在设置该值之后重新开始的。如果你的 Slack workspace 是真实的，请把它设为你在那里使用的邮箱地址。
+- **一对一多问了一个答案未覆盖的问题。** 在协作对象这一主题之后，它追问了三个角色背后的具体人名。Manager 重申介绍一律由自己安排；随后对话照常走完其余主题。
+- **队列自行决定了顺序。** 冷启动上限一次只跑一个事项，Agent 先取了审计说明与 Slack 请求，然后才是 tile 刷新。流程中没有任何环节依赖这个顺序。
+- **tile 刷新是由 Slack 请求带着完成的。** Slack 请求需要那个数字，因此它的计划包含了文档化的刷新流程；等到 tile 工单运行时，tile 已经是最新的。那次运行诚实地报告自己的 ledger 中没有浏览器证据，挂起了一条说明此事的评论，并且没有提出状态变更。它是在第 15 步、开关打开之后才到达 Done 的。
+- **以提问结束的运行没有可驳回的内容。** 审计说明的第一次运行没有挂起任何动作，因此当时没有东西可以驳回。把已完成的运行连同备注退回，才是回应它的控制项。
+- **对账被要求的频率高于流程说明所暗示的。** 只要此前有内容在 provider 端落地，任何重试都会先要求对账清单，而不只是驳回之后的那一次。
+- **开关在打开时确认，关闭时不确认。**
+
+#### 本次运行最终的数字
+
+| 指标 | 数值 |
+|---|---|
+| time to first approved charter | 5 min 8 s |
+| human decisions (approved / rejected) | 7 / 1 |
+| median decision latency | 2 min 7 s |
+| actions blocked after revocation | 1 |
+| audit-trail completeness | 100% (41/41) |
+
+同一张卡片的页脚显示 8 decisions requested、0 partial、31 actions automatic、11 held、1 refused。导出的 ledger 包含 197 条 event 与 42 行 ledger，其中不含任何凭据值。
 
 ### 它是什么，以及不是什么
 
