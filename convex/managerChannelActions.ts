@@ -70,6 +70,7 @@ async function deliverManagerMessage(
   workItemId: Id<'workItems'>,
   delivery: ManagerDelivery,
   text: string,
+  decisionId?: string,
 ) {
   const applied = await applySurfaceActions(
     ctx,
@@ -88,7 +89,7 @@ async function deliverManagerMessage(
         createMcpClient: createMastraMcpClient,
     browserMcpUrl: process.env.DAY0_BROWSER_MCP_URL,
         fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
-        beforeTransport: beforeManagerTransport(ctx, delivery.agentId),
+        beforeTransport: beforeManagerTransport(ctx, delivery.agentId, workItemId, decisionId),
       },
       grants: new Set(delivery.grants),
       approvedIndexes: new Set([0]),
@@ -105,6 +106,8 @@ async function deliverManagerMessage(
 function beforeManagerTransport(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
+  workItemId: Id<'workItems'>,
+  decisionId?: string,
 ): BeforeSurfaceTransport {
   return async (action, claimedSurface): Promise<string | undefined> => {
     const parsed = parseSurfaceAction(action);
@@ -113,6 +116,15 @@ function beforeManagerTransport(
       agentId,
       surfaceSlug: parsed.action.surface,
     });
+    if (decisionId) {
+      const item = await ctx.runQuery(internal.work.getInternal, { workItemId });
+      const decision = item?.decision;
+      const pendingState = decision?.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+      if (
+        !decision || decision.id !== decisionId || decision.decidedAt ||
+        decision.requestFailedAt || decision.ts || item?.state !== pendingState
+      ) return 'decision request is no longer current';
+    }
     if (!authority.agentExists) return 'agent not found';
     const surface = authority.surface;
     if (!surface) return UNKNOWN_SURFACE;
@@ -157,7 +169,7 @@ export const requestDecision = internalAction({
         closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
       });
     try {
-      const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text);
+      const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text, prepared.decisionId);
       await ctx.runMutation(internal.work.recordDecisionRequest, {
         workItemId: args.workItemId,
         decisionId: prepared.decisionId,

@@ -387,3 +387,30 @@ describe('the outbound manager-channel action', (): void => {
     expect(sent).toHaveLength(2);
   });
 });
+
+
+it('does not transport a request superseded while its credential was being read', async () => {
+  const fetchSpy = vi.fn(async (): Promise<Response> =>
+    new Response(JSON.stringify({ ok: true, ts: '1787768500.000100' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+  vi.stubGlobal('fetch', fetchSpy);
+  const harness = convexTest(schema, allConvexModules());
+  const { workItemId } = await seedParkedPlan(harness);
+  hooks.afterCredentialRead = async () => {
+    hooks.afterCredentialRead = undefined;
+    const row = await harness.query(internal.work.getInternal, { workItemId });
+    const decisionId = row!.decision!.id;
+    await harness.mutation(internal.work.recoverUndeliveredDecisionRequest, { workItemId, decisionId });
+    await expect(harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId, kind: 'plan', supersedes: decisionId,
+    })).resolves.toEqual({ sent: true });
+  };
+  await expect(harness.action(internal.managerChannelActions.requestDecision, {
+    workItemId, kind: 'plan',
+  })).resolves.toEqual({ sent: false, reason: 'decision request is no longer current' });
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+  const row = await harness.query(internal.work.getInternal, { workItemId });
+  expect(row?.decision?.ts).toBe('1787768500.000100');
+  expect(row?.decision?.requestFailedAt).toBeUndefined();
+});
