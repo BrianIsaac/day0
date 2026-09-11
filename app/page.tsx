@@ -127,7 +127,7 @@ function SignedOutHero() {
       <footer className="px-6 py-10 border-t border-[var(--color-border)] mt-auto">
         <p className="text-xs text-[var(--color-muted)] text-center">
           Built on OpenAI GPT-5.6 Terra · ElevenLabs Conversational AI · Convex · Mastra · Exa · Daytona ·
-          Vercel · Cloudflare · Clerk
+          Vercel · Clerk
         </p>
       </footer>
     </div>

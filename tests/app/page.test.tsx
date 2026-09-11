@@ -39,3 +39,15 @@ describe('signed-out landing page', (): void => {
     expect(html).toContain('One name in. Everything else is learned state.');
   });
 });
+
+describe('landing footer', (): void => {
+  const html = renderToStaticMarkup(<LandingPage />);
+
+  it('credits only what the hosted demo runs on', (): void => {
+    const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
+    expect(footer).toContain(
+      'Built on OpenAI GPT-5.6 Terra · ElevenLabs Conversational AI · Convex · Mastra · Exa · Daytona · Vercel · Clerk',
+    );
+    expect(footer).not.toContain('Cloudflare');
+  });
+});
