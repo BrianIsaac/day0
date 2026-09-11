@@ -11,7 +11,6 @@ import {
   type MockSurfaceSnapshot,
   type ProcedureTrailAttestation,
   type ProcedureTrailLimitation,
-  type ReplyTarget,
   type WorkCandidate,
 } from './types';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
