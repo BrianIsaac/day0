@@ -105,9 +105,21 @@ rotated into an approved vault.
 
 ## Retention, deletion and privacy protection
 
-- `api.reset.deleteMyData` removes the current agent's Day0 records. Documentation
-  unlink removes its stored pages and mirrors; credential revoke/rotation makes the
-  previous stored credential unavailable.
+- `api.reset.deleteMyData` removes the current agent's Day0 records: the agent row
+  and its rows in the 17 agent-keyed tables (charters, workspace, voice sessions,
+  work items, manager decision notices, skills, permission grants, events, surfaces
+  and the eight mock-environment tables). A plain reset keeps the owner-level
+  documentation sources, their stored pages, and the owner's stored credentials,
+  still encrypted and still usable. A reset with `alsoUnlinkDocumentation` also
+  unlinks every documentation source, deleting its pages, mirrors, sync runs and
+  system discoveries, and revokes every credential the owner holds, whether it came
+  from a page, was typed on a card or was delivered by an OAuth install: the
+  ciphertext and IV are deleted at once, with no grace period, and the credential
+  row survives with only its label, kind, source reference, app id and dates as the
+  audit trail. A documentation unlink on its own does the same for the credentials
+  that source held: pages and mirrors deleted, ciphertext deleted, row kept. The
+  dashboard's revoke and a rotation revoke without deleting, so the previous value
+  is unusable but a later rotation can reactivate the row.
 - Local self-hosted data and model logs remain in operator-controlled volumes/files
   until the operator deletes them. External provider objects and provider-side
   records must be deleted under those providers' controls; Day0 reset cannot erase
@@ -188,7 +200,7 @@ workspace，三个系统经审批卡片连接，工作在操作者自有的 Line
 
 ### 保留、删除和隐私保护
 
-- `api.reset.deleteMyData` 删除当前 Agent 的 Day0 记录。Documentation unlink 会删除已存页面和镜像；credential revoke/rotation 会使之前的 stored credential 不再可用。
+- `api.reset.deleteMyData` 删除当前 Agent 的 Day0 记录：Agent 行及其在 17 张以 agent 为键的表中的行（charter、workspace、voice session、work item、manager decision notice、skill、permission grant、event、surface，以及八张 mock 环境表）。普通 reset 会保留 owner 级别的文档源、已存页面和 owner 的 stored credential，后者仍处于加密状态且仍可使用。带 `alsoUnlinkDocumentation` 的 reset 还会 unlink 每个文档源（删除其页面、镜像、sync run 和系统发现记录），并撤销 owner 持有的每一条 credential，无论它来自页面、在卡片上手动输入还是由 OAuth 安装交付：ciphertext 和 IV 会立即删除，没有宽限期；credential 行本身保留，只剩 label、kind、来源引用、app id 和日期作为审计记录。单独的 documentation unlink 对该来源持有的 credential 做同样处理：删除页面和镜像、删除 ciphertext、保留行。Dashboard 上的 revoke 和 rotation 只撤销不删除，之前的值不再可用，但后续 rotation 可以重新激活该行。
 - 本地自托管数据和模型日志会保留在操作者控制的 volume/file 中，直至操作者删除。外部 provider object 和 provider-side record 必须使用相应服务商的控制项删除；Day0 reset 无法撤销已经落地的外部操作。
 - 仓库保留复现所需的合成 fixture 和冻结评测证据。不保留值的 action audit 保存 field name 和 SHA-256 digest，而不是模型生成值。提交使用的私有 working notes 已被 gitignore，不属于公开仓库。
 - 不应把生产 secret、个人数据或受监管记录输入演示 stack。若将系统改造用于真实组织，应先执行字段最小化、定义保留/删除周期、审查 provider 条款、取得必要同意或授权，并完成适当的安全和隐私评估。

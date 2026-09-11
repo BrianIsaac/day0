@@ -6,6 +6,49 @@ export const DECISION_ID_LENGTH = 6;
 export const DECISION_ID_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
 
 export type DecisionKind = 'plan' | 'actions';
+
+/**
+ * How long a decision request may sit with neither a provider ts nor a
+ * recorded failure before it is treated as undelivered and sent again.
+ *
+ * The send is one DM through the surface adapter, so anything past a few
+ * minutes is a process that died between the claim and the record, not a
+ * slow provider. Shared with the dashboard so the card and the timer agree.
+ */
+export const DECISION_REQUEST_RECOVERY_MS = 3 * 60 * 1000;
+
+export interface DecisionDeliveryFields {
+  requestedAt: number;
+  ts?: string;
+  requestFailedAt?: number;
+  requestFailure?: string;
+  decidedAt?: number;
+}
+
+/**
+ * The reason a decision request counts as not delivered, or undefined.
+ *
+ * A request is undelivered once it recorded a failure, or once the recovery
+ * bound passed with no provider ts. A delivered or decided request never is:
+ * the manager holds a code that must keep working.
+ *
+ * Args:
+ *   decision: The delivery fields of a work item's decision request.
+ *   now: The clock to measure the bound against.
+ *
+ * Returns:
+ *   The recorded failure, `request not delivered` for a silent one, or
+ *   undefined while the request is in flight, delivered or decided.
+ */
+export function undeliveredDecisionReason(
+  decision: DecisionDeliveryFields | undefined,
+  now: number,
+): string | undefined {
+  if (!decision || decision.ts || decision.decidedAt) return undefined;
+  if (decision.requestFailedAt) return decision.requestFailure ?? 'request not delivered';
+  if (now - decision.requestedAt >= DECISION_REQUEST_RECOVERY_MS) return 'request not delivered';
+  return undefined;
+}
 export type DecisionReply =
   | { verb: 'approve'; id: string }
   | { verb: 'reject'; id: string; reason: string };

@@ -5,9 +5,10 @@ import {
   internalQuery,
   mutation,
   query,
+  type MutationCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
@@ -154,6 +155,54 @@ export const getInternal = internalQuery({
   handler: async (ctx, args) => await ctx.db.get(args.credentialId),
 });
 
+/**
+ * Revoke a credential and delete its ciphertext, keeping the row.
+ *
+ * The reset and unlink paths delete the value outright: nothing can be
+ * rotated back into a source that no longer exists. The label, source and
+ * dates stay so the audit trail still says what was held and when it ended.
+ *
+ * Args:
+ *   ctx: Convex mutation context.
+ *   credential: The row to purge.
+ *   now: Revocation time for a row not yet revoked.
+ */
+export async function purgeCredential(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+  now: number,
+): Promise<void> {
+  if (credential.ciphertext === undefined && credential.iv === undefined && credential.revokedAt) {
+    return;
+  }
+  await ctx.db.patch(credential._id, {
+    revokedAt: credential.revokedAt ?? now,
+    ciphertext: undefined,
+    iv: undefined,
+  });
+}
+
+/**
+ * Purge every credential one owner holds, for a reset that unlinks documentation.
+ *
+ * Args:
+ *   ctx: Convex mutation context.
+ *   userId: Owner subject being reset.
+ *
+ * Returns:
+ *   Number of rows purged.
+ */
+export async function purgeOwnedCredentials(ctx: MutationCtx, userId: string): Promise<number> {
+  const rows = await ctx.db
+    .query('credentials')
+    .withIndex('by_userId', (index) => index.eq('userId', userId))
+    .take(1_001);
+  if (rows.length > 1_000) throw new Error('Owner exceeds 1,000 credentials.');
+  const now = Date.now();
+  for (const row of rows) await purgeCredential(ctx, row, now);
+  return rows.length;
+}
+
 /** Record credential use without exposing the decrypted value. */
 export const touch = internalMutation({
   args: { credentialId: v.id('credentials') },
@@ -207,7 +256,7 @@ export const store = internalAction({
           sourceId: sourced.sourceId,
           ref: sourced.ref,
         });
-    if (existing) {
+    if (existing && existing.ciphertext !== undefined && existing.iv !== undefined) {
       let current: string | undefined;
       try {
         current = await ctx.runAction(internal.credentialCryptoActions.open, {
@@ -247,7 +296,14 @@ export const decrypt = internalAction({
   args: { credentialId: v.id('credentials') },
   handler: async (ctx, args): Promise<string> => {
     const credential = await ctx.runQuery(internal.credentials.getInternal, args);
-    if (!credential || credential.revokedAt) throw new Error('Credential is unavailable.');
+    if (
+      !credential ||
+      credential.revokedAt ||
+      credential.ciphertext === undefined ||
+      credential.iv === undefined
+    ) {
+      throw new Error('Credential is unavailable.');
+    }
     const plaintext = await ctx.runAction(internal.credentialCryptoActions.open, {
       ciphertext: credential.ciphertext,
       iv: credential.iv,

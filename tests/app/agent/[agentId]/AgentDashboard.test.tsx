@@ -17,6 +17,7 @@ import {
   eventLabel,
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
+import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
 
 describe('live event labels', (): void => {
   it('shows every candidate slug when a charter surface match is ambiguous', (): void => {
@@ -158,6 +159,7 @@ describe('sending a finished item back', (): void => {
         onReconcileFailed={resolved}
         onApproveActions={resolved}
         onRejectActions={resolved}
+        onResendDecision={resolved}
       />,
     );
 
@@ -200,5 +202,70 @@ describe('header state pill', (): void => {
     expect(markup).toContain('Active · Supervised');
     expect(markup).not.toContain('cold-start');
     expect(markup).not.toContain('posture');
+  });
+});
+
+describe('phone approval delivery', (): void => {
+  const parked = (decision: Record<string, unknown>): Doc<'workItems'> =>
+    ({
+      _id: 'w2',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'plan-pending',
+      title: 'Close the quarter',
+      contentSummary: 'Post the close summary.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket',
+      externalId: 'REVOPS-7',
+      observedAt: 1,
+      contentRefs: [],
+      plan: { summary: 'Post it.', steps: ['Post.'], estimatedMinutes: 5, reversibility: 'reversible' },
+      decision: {
+        id: 'ab3xyz',
+        kind: 'plan',
+        channel: 'D0MANAGER',
+        surfaceSlug: 'slack',
+        surfaceName: 'Slack',
+        ...decision,
+      },
+    }) as unknown as Doc<'workItems'>;
+  const noop = (): void => undefined;
+  const resolved = async (): Promise<void> => undefined;
+  const render = (row: Doc<'workItems'>): string =>
+    renderToStaticMarkup(
+      <WorkItemCard
+        item={row}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={noop}
+        onCancelPlan={noop}
+        onRetryFailed={noop}
+        onReconcileFailed={resolved}
+        onApproveActions={resolved}
+        onRejectActions={resolved}
+        onResendDecision={resolved}
+      />,
+    );
+
+  it('says a request the channel never confirmed was not delivered and offers a resend', (): void => {
+    const stale = render(parked({ requestedAt: Date.now() - DECISION_REQUEST_RECOVERY_MS - 1 }));
+    expect(stale).toContain('request not delivered');
+    expect(stale).toContain('Resend');
+    const failed = render(parked({ requestedAt: Date.now(), requestFailedAt: Date.now(), requestFailure: 'no grant (boss:message)' }));
+    expect(failed).toContain('request not delivered');
+    expect(failed).toContain('no grant (boss:message)');
+    expect(failed).toContain('Resend');
+  });
+
+  it('stays quiet while a request is in flight, delivered or decided', (): void => {
+    for (const decision of [
+      { requestedAt: Date.now() },
+      { requestedAt: Date.now() - DECISION_REQUEST_RECOVERY_MS - 1, ts: '1787768406.604379' },
+      { requestedAt: 1, ts: '1.1', decidedAt: 2, outcome: 'approved', decidedVia: 'channel' },
+    ]) {
+      const markup = render(parked(decision));
+      expect(markup).not.toContain('request not delivered');
+      expect(markup).not.toContain('Resend');
+    }
   });
 });

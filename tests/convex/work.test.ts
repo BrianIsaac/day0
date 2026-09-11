@@ -369,6 +369,182 @@ describe('manager channel request claims', (): void => {
     ).toEqual({ prepared: false, reason: 'decision request already claimed' });
   });
 
+  it('arms a recovery timer with the claim and resends once when the send never reported back', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    // The claim and its dead-man's switch are one transaction.
+    expect(await scheduledFunctionNames(harness)).toEqual(['work:recoverUndeliveredDecisionRequest']);
+
+    // The action died between the claim and the record: no ts, no failure.
+    expect(
+      await harness.mutation(internal.work.recoverUndeliveredDecisionRequest, {
+        workItemId,
+        decisionId: 'ab3xyz',
+      }),
+    ).toEqual({ recovered: 'resent' });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      requestFailedAt: expect.any(Number),
+      requestFailure: 'request not delivered',
+    });
+    expect(await scheduledFunctionNames(harness)).toEqual([
+      'managerChannelActions:requestDecision',
+      'work:recoverUndeliveredDecisionRequest',
+    ]);
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-resent')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([{ workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: 'request not delivered' }]);
+
+    // A second timer for the same claim finds the resend already under way.
+    expect(
+      await harness.mutation(internal.work.recoverUndeliveredDecisionRequest, {
+        workItemId,
+        decisionId: 'ab3xyz',
+      }),
+    ).toEqual({ recovered: 'ignored' });
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:requestDecision',
+      ),
+    ).toHaveLength(1);
+
+    // The resend claims a fresh code by naming the one it replaces ...
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+        supersedes: 'ab3xyz',
+      }),
+    ).toMatchObject({ prepared: true, decisionId: 'cd4uvw' });
+    const resent = (await readItem(harness, workItemId)).decision;
+    expect(resent).toMatchObject({ id: 'cd4uvw', kind: 'plan' });
+    expect(resent).not.toHaveProperty('requestFailedAt');
+    expect(resent).not.toHaveProperty('ts');
+    // ... and a duplicate of the same resend is refused: one request is recorded.
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'ef5rst',
+        supersedes: 'ab3xyz',
+      }),
+    ).toEqual({ prepared: false, reason: 'decision request already claimed' });
+    // The dead send reporting late cannot overwrite the live claim.
+    expect(
+      await harness.mutation(internal.work.recordDecisionRequest, {
+        workItemId,
+        decisionId: 'ab3xyz',
+        ts: '1787770700.000100',
+      }),
+    ).toBe(false);
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({ id: 'cd4uvw' });
+    expect((await readItem(harness, workItemId)).decision).not.toHaveProperty('ts');
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-requesting')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      { workItemId, decisionId: 'ab3xyz', kind: 'plan' },
+      { workItemId, decisionId: 'cd4uvw', kind: 'plan', supersedes: 'ab3xyz' },
+    ]);
+  });
+
+  it('leaves a delivered or decided request alone and never replaces a code the manager holds', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'plan-pending', undefined, { withSlack: true });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      ts: '1787770700.000100',
+    });
+    expect(
+      await harness.mutation(internal.work.recoverUndeliveredDecisionRequest, {
+        workItemId,
+        decisionId: 'ab3xyz',
+      }),
+    ).toEqual({ recovered: 'ignored' });
+    expect(
+      await harness.mutation(internal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+        supersedes: 'ab3xyz',
+      }),
+    ).toEqual({ prepared: false, reason: 'decision request already claimed' });
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      id: 'ab3xyz',
+      ts: '1787770700.000100',
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
+    ).rejects.toThrow('delivered');
+
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    expect(
+      await harness.mutation(internal.work.recoverUndeliveredDecisionRequest, {
+        workItemId,
+        decisionId: 'ab3xyz',
+      }),
+    ).toEqual({ recovered: 'ignored' });
+  });
+
+  it('lets the owner resend a failed request from the card, and nobody else', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    // Still in flight: nothing to resend yet.
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId }),
+    ).rejects.toThrow('still being delivered');
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      failure: 'Slack returned HTTP 503.',
+    });
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).mutation(api.work.resendDecisionRequest, {
+        workItemId,
+      }),
+    ).rejects.toThrow();
+    await harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId });
+    expect(
+      (await scheduledFunctionNames(harness)).filter(
+        (name) => name === 'managerChannelActions:requestDecision',
+      ),
+    ).toHaveLength(1);
+    expect(
+      (await eventsOfType(harness, agentId, 'work.decision-request-resent')).map(
+        (event) => event.payload,
+      ),
+    ).toEqual([
+      { workItemId, decisionId: 'ab3xyz', kind: 'plan', reason: 'resend requested from the dashboard' },
+    ]);
+  });
+
   it('lists the sent, undecided requests intake must read threads under', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

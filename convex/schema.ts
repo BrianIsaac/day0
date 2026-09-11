@@ -76,8 +76,10 @@ export default defineSchema({
     kind: v.union(v.literal('value'), v.literal('location'), v.literal('oauth')),
     appId: v.optional(v.string()),
     label: v.string(),
-    ciphertext: v.string(),
-    iv: v.string(),
+    /** Absent once the value is deleted by a reset or an unlink; the row then
+     * stays as the audit trail of a credential that was held. */
+    ciphertext: v.optional(v.string()),
+    iv: v.optional(v.string()),
     /** Where the value came from: a documentation page, a field the approver
      * typed into, or - Phase 3 - the provider's own OAuth install redirect. */
     source: v.union(

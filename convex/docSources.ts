@@ -13,6 +13,7 @@ import { assertDocsComponentReachable, componentFor } from '../src/docs/componen
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { reconcileDocumentedSystems } from './surfaces';
+import { purgeCredential } from './credentials';
 
 const sourceKind = v.union(
   v.literal('mcp'),
@@ -111,7 +112,7 @@ export function agentReadsSource(agent: Doc<'agents'>, sourceId: Id<'docSources'
 }
 
 /**
- * Revoke credentials and remove sync generations associated with one source.
+ * Purge credentials and remove sync generations associated with one source.
  *
  * Args:
  *   ctx: Convex mutation context.
@@ -143,9 +144,7 @@ async function retireSourceState(ctx: MutationCtx, source: Doc<'docSources'>): P
   if (source.credentialId) credentialIds.add(source.credentialId);
   for (const credentialId of credentialIds) {
     const credential = await ctx.db.get(credentialId);
-    if (credential && !credential.revokedAt) {
-      await ctx.db.patch(credential._id, { revokedAt: now });
-    }
+    if (credential) await purgeCredential(ctx, credential, now);
   }
   const runs = await ctx.db
     .query('docSyncRuns')

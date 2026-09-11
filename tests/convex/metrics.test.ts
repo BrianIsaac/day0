@@ -443,4 +443,69 @@ describe('metrics under adversarial sequences', (): void => {
       p90LatencyMs: 3_000,
     });
   });
+
+  it('counts a resent request once, timing the decision from the first ask', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Resent',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: id,
+        sourceCategory: 'inbox',
+        sourceSystem: 'docs',
+        externalId: 'REVOPS-11',
+        title: 'Asked twice',
+        contentSummary: 'The first DM never arrived.',
+        contentRefs: [],
+        state: 'completed',
+        observedAt: 1,
+        createdAt: 1,
+        decision: {
+          id: 'd-second',
+          kind: 'plan',
+          requestedAt: 6_000,
+          channel: 'D123',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1.2',
+          decidedAt: 9_000,
+          outcome: 'approved',
+          decidedVia: 'channel',
+        },
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.decision-requesting',
+        payload: { workItemId, kind: 'plan', decisionId: 'd-first' },
+        createdAt: 2_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.decision-request-resent',
+        payload: { workItemId, kind: 'plan', decisionId: 'd-first', reason: 'request not delivered' },
+        createdAt: 5_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.decision-requesting',
+        payload: { workItemId, kind: 'plan', decisionId: 'd-second', supersedes: 'd-first' },
+        createdAt: 6_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.plan-approved',
+        payload: { workItemId, decidedVia: 'channel' },
+        createdAt: 9_000,
+      });
+      return id;
+    });
+    const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
+    expect(metrics.decisions).toMatchObject({ requested: 1, approved: 1, medianLatencyMs: 7_000 });
+    expect(metrics.decisions.byVia.channel.decided).toBe(1);
+  });
 });
