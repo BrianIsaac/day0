@@ -78,7 +78,7 @@ const CONNECTION_PASSWORD = /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*):\/\/[^\s/:@`'"<
  * so "Bearer YOUR_TOKEN_HERE" is read as the placeholder it is.
  */
 const BEARER_VALUE = /\bBearer\s+([^\s,;"'`<>]{12,})/gi;
-const LABELLED_VALUE = /(?:^|\n)[^\n:]{0,48}\b(?:token|key|secret)\b[^\n:]{0,32}:\s*`?([^\s`]+)`?/gi;
+const LABELLED_VALUE = /(?:^|\n)[^\n:]{0,48}\b(?:token|key|secret)\b[^\n:]{0,32}:\s*[`"']?([^\s`"']+)[`"']?/gi;
 /**
  * A line that declares a sign-in credential and puts its value in code
  * formatting.
@@ -231,9 +231,9 @@ function shapedLabel(match: RegExpMatchArray, title: string): string {
  *
  * Provider shapes are taken wherever they occur. Every other detector
  * captures a value out of its context (a connection string, a `Bearer`
- * scheme word, a labelled or declaring line), so it yields to any match
- * already found on the same characters and, where the context is a mere
- * word, the value must also look like a secret.
+ * scheme word, a labelled or declaring line). Explicit enclosing values
+ * replace partial matches; equal spans retain the provider label. Where
+ * the context is a mere word, the value must also look like a secret.
  *
  * Args:
  *   text: Page body or title.
@@ -251,9 +251,21 @@ function findCredentials(
   const matches: CredentialMatch[] = [];
   const overlaps = (start: number, end: number): boolean =>
     matches.some((known): boolean => start < known.end && end > known.start);
+  const addContextMatch = (match: CredentialMatch): void => {
+    // Explicit value boundaries outrank a provider-shaped substring, while an
+    // exact match retains the more informative provider label.
+    for (let index = matches.length - 1; index >= 0; index -= 1) {
+      const known = matches[index];
+      if (match.start <= known.start && match.end >= known.end &&
+        (match.start < known.start || match.end > known.end)) {
+        matches.splice(index, 1);
+      }
+    }
+    if (!overlaps(match.start, match.end)) matches.push(match);
+  };
   for (const match of text.matchAll(SHAPED_VALUE)) {
     if (match.index === undefined) continue;
-    const plaintext = match[0].replace(TRAILING_PUNCTUATION, '');
+    const plaintext = match[0];
     matches.push({
       plaintext,
       label: shapedLabel(match, labelContext),
@@ -265,9 +277,8 @@ function findCredentials(
     if (match.index === undefined || REFERENCE_START.test(match[2])) continue;
     const start = match.index + match[0].lastIndexOf(`${match[2]}@`);
     const end = start + match[2].length;
-    if (overlaps(start, end)) continue;
     const label = `${match[1].toLowerCase()} connection secret`;
-    matches.push({ plaintext: match[2], label, start, end });
+    addContextMatch({ plaintext: match[2], label, start, end });
   }
   for (const match of text.matchAll(BEARER_VALUE)) {
     if (match.index === undefined) continue;
@@ -275,8 +286,7 @@ function findCredentials(
     if (!looksLikeSecret(plaintext)) continue;
     const start = match.index + match[0].lastIndexOf(match[1]);
     const end = start + plaintext.length;
-    if (overlaps(start, end)) continue;
-    matches.push({ plaintext, label: `${systemFromTitle(labelContext)} bearer token`, start, end });
+    addContextMatch({ plaintext, label: `${systemFromTitle(labelContext)} bearer token`, start, end });
   }
   for (const [pattern, requireSecretShape] of [
     [LABELLED_VALUE, true],
@@ -289,9 +299,8 @@ function findCredentials(
       if (URL_SCHEME.test(plaintext)) continue;
       const start = match.index + match[0].lastIndexOf(match[1]);
       const end = start + plaintext.length;
-      if (overlaps(start, end)) continue;
       const line = match[0].replace(/^\n/, '');
-      matches.push({ plaintext, label: labelledLineLabel(line, labelContext), start, end });
+      addContextMatch({ plaintext, label: labelledLineLabel(line, labelContext), start, end });
     }
   }
   if (options.genericEntropyFloor) {
@@ -340,7 +349,12 @@ export function redactCredentials(
   title: string,
   options: RedactionOptions = {},
 ): RedactedMarkdown {
-  const titleMatches = findCredentials(title, title.replace(SHAPED_VALUE, ' '), options);
+  const titleSpans = findCredentials(title, 'Documentation', options);
+  let labelContext = title;
+  for (const match of [...titleSpans].reverse()) {
+    labelContext = `${labelContext.slice(0, match.start)} ${labelContext.slice(match.end)}`;
+  }
+  const titleMatches = findCredentials(title, labelContext, options);
   const safeTitle = replaceCredentials(title, titleMatches);
   const bodyMatches = findCredentials(markdown, safeTitle, options);
   const distinct = new Map<string, RedactedCredential>();

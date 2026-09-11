@@ -370,3 +370,38 @@ describe('documentation redaction breadth', (): void => {
     expect(markerCount(generic.markdown)).toBe(3);
   });
 });
+
+
+describe('adversarial credential boundaries', () => {
+  it('preserves every byte of a shaped token ending in URL-safe punctuation', () => {
+    const secret = join('sk', '-proj-', MIXED, '_-');
+    const result = redactCredentials(`Use ${secret}.`, 'Models');
+    expect(result.credentials.map((row) => row.plaintext)).toEqual([secret]);
+    expect(result.markdown).toBe('Use <credential: openai api key, stored>.');
+  });
+
+  it('extracts the whole connection password when a provider shape is only part of it', () => {
+    const password = join('sk', '-proj-', MIXED, '+extra');
+    const result = redactCredentials(`postgres://reader:${password}@db.internal/app`, 'Warehouse');
+    expect(result.credentials.map((row) => row.plaintext)).toEqual([password]);
+    expect(result.markdown).toBe('postgres://reader:<credential: postgres connection secret, stored>@db.internal/app');
+  });
+
+  it('does not reuse a Bearer secret from the title in its own marker label', () => {
+    const title = `Bearer ${MIXED}`;
+    const result = redactCredentials('', title);
+    expect(result.credentials).toHaveLength(1);
+    expect(result.title.toLowerCase()).not.toContain(MIXED.toLowerCase());
+    expect(result.credentials[0].label.toLowerCase()).not.toContain(MIXED.toLowerCase());
+    expect(redactCredentials('', result.title).title).toBe(result.title);
+  });
+});
+
+
+it.each(['Bearer ', 'API key: ', 'Password: `'])('takes a whole explicit value after %s despite an embedded provider shape', (prefix) => {
+  const secret = join('sk', '-proj-', MIXED, '+extra');
+  const body = `${prefix}${secret}${prefix.endsWith('`') ? '`' : ''}`;
+  const result = redactCredentials(body, 'Warehouse');
+  expect(result.credentials.map((row) => row.plaintext)).toEqual([secret]);
+  expect(result.markdown).not.toContain('+extra');
+});
