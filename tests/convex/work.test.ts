@@ -721,6 +721,61 @@ describe('single-use manager decisions', (): void => {
     ).toHaveLength(1);
   });
 
+  it('drops a reply that predates the agent without an event or a manager notice', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, {
+      withSlack: true,
+    });
+    const deployedAt = 1_787_000_000_000;
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { createdAt: deployedAt });
+    });
+    const surfaceId = await chatSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    const secondsBefore = (deployedAt - 1_000) / 1_000;
+    const secondsAfter = (deployedAt + 60_000) / 1_000;
+
+    // A code left in the manager DM by an earlier agent is not this agent's business.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: `${secondsBefore}.000100`,
+        reply: { verb: 'approve', id: 'cd4uvw' },
+      }),
+    ).resolves.toEqual({ status: 'ignored', reason: 'predates the agent' });
+    expect(await eventsOfType(harness, agentId, 'work.decision-ignored')).toEqual([]);
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect()),
+    ).toEqual([]);
+
+    // The same unknown code sent after the deploy is still answered as unknown.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: `${secondsAfter}.000100`,
+        reply: { verb: 'approve', id: 'cd4uvw' },
+      }),
+    ).resolves.toEqual({ status: 'ignored', reason: 'unknown decision id', notified: true });
+    expect(await eventsOfType(harness, agentId, 'work.decision-ignored')).toHaveLength(1);
+
+    // A live approval after the deploy decides as before.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: `${secondsAfter + 1}.000100`,
+        reply: { verb: 'approve', id: 'ab3xyz' },
+      }),
+    ).resolves.toEqual({ status: 'decided', outcome: 'approve' });
+  });
+
   it('cancels a plan or fails a run from a channel reject, with the bounded reason and no apply', async (): Promise<void> => {
     useSurfaceMode('real');
     const longReason = `${'x'.repeat(230)}  <script>alert(1)</script>`;
