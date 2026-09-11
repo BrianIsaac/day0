@@ -45,3 +45,6 @@ phase*.txt
 # serve a 404 where the icon should be.
 !app/apple-icon.png
 !app/opengraph-image.png
+
+# demo bed kit: snapshots and offline-rung results (`pnpm demo:bed`)
+/.demo-bed/

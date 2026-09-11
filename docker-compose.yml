@@ -88,6 +88,18 @@
 # the same way (`pnpm sandbox:up`), and it is reached over a unix socket rather
 # than a port, which is the whole of its network story: see the service.
 
+# Every `image:` below is pinned to a digest, `name:tag@sha256:...`, so that a
+# machine which already has these images never pulls at start and a machine
+# that lacks one fails loudly rather than downloading whatever the tag means
+# today. The tag is kept beside the digest for the reader; Docker resolves the
+# digest. Pinned 12 Sep 2026 to the images then present on the demo laptop. To
+# re-pin after a deliberate `docker pull <name:tag>`:
+#
+#   docker image inspect --format '{{index .RepoDigests 0}}' <name:tag>
+#
+# and put the `sha256:...` it prints after the `@`. `pnpm demo:bed preflight`
+# reports any image line that is not pinned or not present.
+
 services:
   # day0 itself. `real` is the profile an enterprise runs, and this is all it
   # starts: the backend, its data volume, the read-only documentation mount and
@@ -96,7 +108,7 @@ services:
   # for what each one is for and when you need it.
   backend:
     profiles: ['real']
-    image: ghcr.io/get-convex/convex-backend:latest
+    image: ghcr.io/get-convex/convex-backend:latest@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -141,7 +153,7 @@ services:
 
   dashboard:
     profiles: ['dev']
-    image: ghcr.io/get-convex/convex-dashboard:latest
+    image: ghcr.io/get-convex/convex-dashboard:latest@sha256:284a2638e0c1a4ec0c2327d8219776f3a426ca5824b81686ae4d9454dc0ce8ed
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -174,7 +186,7 @@ services:
   # dependency.
   model:
     profiles: ['model']
-    image: ollama/ollama:latest
+    image: ollama/ollama:latest@sha256:1685741456770df6e3cceb2a945a5f75e020f658d1701509668d6f4688f1dd3f
     stop_grace_period: 10s
     environment:
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
@@ -213,7 +225,7 @@ services:
   # a restart rather than the rest of the session.
   sandbox:
     profiles: ['sandbox']
-    image: python:3.12-slim
+    image: python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
     restart: unless-stopped
     stop_grace_period: 5s
     network_mode: none
@@ -260,7 +272,7 @@ services:
   # accumulate a minute for as long as the container runs.
   docs-notion-mcp:
     profiles: ['docs-notion']
-    image: node:22-alpine
+    image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
     networks:
       default:
         aliases: ['notion-mcp']
@@ -272,6 +284,13 @@ services:
       ]
     environment:
       - AUTH_TOKEN=${DAY0_NOTION_MCP_AUTH_TOKEN:-}
+      # The package is fetched by `npx` at every container start. With the
+      # cache kept on a volume and this flag set, a version already cached is
+      # used without asking the registry, so a start on a network that cannot
+      # reach npm succeeds once the component has started on one that can.
+      - npm_config_prefer_offline=true
+    volumes:
+      - notion_npm_cache:/root/.npm
     expose: ['3000']
     healthcheck:
       test:
@@ -291,7 +310,7 @@ services:
   # port exists solely so a host browser can follow the synthetic install link.
   fake-slack:
     profiles: ['test']
-    image: node:22-alpine
+    image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
     command: ['node', '/app/server.js']
     environment:
       - FAKE_SLACK_PORT=8090
@@ -317,7 +336,7 @@ services:
   # service; the agent reaches it by service name over the compose network.
   looker-tile:
     profiles: ['demo']
-    image: node:22-alpine
+    image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
     command: ['node', '/app/server.js']
     environment:
       - LOOKER_TILE_PORT=8080
@@ -353,7 +372,7 @@ services:
   # per-action call should mean.
   playwright-mcp:
     profiles: ['browser']
-    image: mcr.microsoft.com/playwright/mcp:latest
+    image: mcr.microsoft.com/playwright/mcp:latest@sha256:18c0a9c934004fe9580cc79f1e8e6e6cde7c667348b215335e8a23fd3e509804
     command:
       [
         '--isolated',
@@ -384,6 +403,9 @@ services:
 volumes:
   convex_data:
   model_data:
+  # The Notion component's npm cache, so its package is fetched once per
+  # project rather than at every start. See the service.
+  notion_npm_cache:
   # Carries one unix socket between the backend and the sandbox. It is the only
   # thing the two share, and the only way into a container that has no network.
   sandbox_socket:
