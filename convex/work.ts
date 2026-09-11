@@ -28,7 +28,11 @@ import {
   type ReplyTarget,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
-import type { DecisionKind } from '../src/work/manager-channel';
+import {
+  DECISION_REQUEST_RECOVERY_MS,
+  type DecisionKind,
+  undeliveredDecisionReason,
+} from '../src/work/manager-channel';
 import {
   browserComponentRefusal,
   withBrowserComponentState,
@@ -439,6 +443,8 @@ export const prepareDecisionRequest = internalMutation({
     workItemId: v.id('workItems'),
     kind: v.union(v.literal('plan'), v.literal('actions')),
     decisionId: v.string(),
+    /** The undelivered request this one replaces; a delivered code is never replaced. */
+    supersedes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
@@ -447,7 +453,8 @@ export const prepareDecisionRequest = internalMutation({
     if (row.state !== expectedState) {
       return { prepared: false as const, reason: `work item is ${row.state}` };
     }
-    if (row.decision?.kind === args.kind && !row.decision.decidedAt) {
+    const live = row.decision?.kind === args.kind && !row.decision.decidedAt ? row.decision : undefined;
+    if (live && (live.ts || live.id !== args.supersedes)) {
       return { prepared: false as const, reason: 'decision request already claimed' };
     }
     if (!/^[23456789abcdefghjkmnpqrstuvwxyz]{6}$/.test(args.decisionId)) {
@@ -494,7 +501,12 @@ export const prepareDecisionRequest = internalMutation({
     const requestRunId = await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.decision-requesting',
-      payload: { workItemId: row._id, decisionId: args.decisionId, kind: args.kind },
+      payload: {
+        workItemId: row._id,
+        decisionId: args.decisionId,
+        kind: args.kind,
+        ...(live ? { supersedes: live.id } : {}),
+      },
       createdAt: Date.now(),
     });
     const decision = {
@@ -506,6 +518,12 @@ export const prepareDecisionRequest = internalMutation({
       surfaceName: chat.displayName,
     };
     await ctx.db.patch(row._id, { decision });
+    // The claim's dead-man's switch, in the same transaction as the claim.
+    await ctx.scheduler.runAfter(
+      DECISION_REQUEST_RECOVERY_MS,
+      internal.work.recoverUndeliveredDecisionRequest,
+      { workItemId: row._id, decisionId: args.decisionId },
+    );
     return {
       prepared: true as const,
       agentId: row.agentId,
@@ -520,6 +538,62 @@ export const prepareDecisionRequest = internalMutation({
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
     };
+  },
+});
+
+/**
+ * Mark an undelivered request failed and send a fresh one in its place.
+ *
+ * The old code stays on the row, marked failed, until the resend claims a
+ * new one; a duplicate resend is refused by the claim because the id it
+ * names is no longer the live one.
+ */
+async function supersedeDecisionRequest(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  decision: NonNullable<Doc<'workItems'>['decision']>,
+  reason: string,
+): Promise<void> {
+  const now = Date.now();
+  if (!decision.requestFailedAt) {
+    await ctx.db.patch(row._id, {
+      decision: { ...decision, requestFailedAt: now, requestFailure: reason },
+    });
+  }
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.decision-request-resent',
+    payload: { workItemId: row._id, decisionId: decision.id, kind: decision.kind, reason },
+    createdAt: now,
+  });
+  await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
+    workItemId: row._id,
+    kind: decision.kind,
+    supersedes: decision.id,
+  });
+}
+
+/**
+ * The request path's dead-man's switch, armed with every claim.
+ *
+ * Fires after the recovery bound. A claim that still has neither a provider
+ * ts nor a recorded failure belongs to a send that died between the claim and
+ * the record; it is resent once. Anything else is somebody else's: a delivered
+ * request, a decided one, a claim already replaced, a failure already audited.
+ */
+export const recoverUndeliveredDecisionRequest = internalMutation({
+  args: { workItemId: v.id('workItems'), decisionId: v.string() },
+  handler: async (ctx, args): Promise<{ recovered: 'resent' | 'ignored' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    const decision = row?.decision;
+    if (!row || !decision || decision.id !== args.decisionId) return { recovered: 'ignored' };
+    const expectedState = decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+    if (row.state !== expectedState) return { recovered: 'ignored' };
+    if (decision.ts || decision.decidedAt || decision.requestFailedAt) {
+      return { recovered: 'ignored' };
+    }
+    await supersedeDecisionRequest(ctx, row, decision, 'request not delivered');
+    return { recovered: 'resent' };
   },
 });
 
@@ -873,6 +947,31 @@ export const approvePlan = mutation({
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     await approvePlanInTransaction(ctx, row, 'dashboard');
+    return { ok: true };
+  },
+});
+
+/**
+ * Resend, from the card, the decision request it shows as not delivered.
+ *
+ * Accepts a recorded failure or a silent request past the recovery bound.
+ * Refuses a request still in flight, so a slow send is not doubled, and a
+ * delivered one, so the code the manager holds keeps working.
+ */
+export const resendDecisionRequest = mutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args) => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    const decision = row.decision;
+    const expectedState = decision?.kind === 'plan' ? 'plan-pending' : 'actions-pending';
+    if (!decision || decision.decidedAt || row.state !== expectedState) {
+      throw new Error('There is no open decision request to resend.');
+    }
+    if (decision.ts) throw new Error('The request was delivered; the manager holds its code.');
+    if (!undeliveredDecisionReason(decision, Date.now())) {
+      throw new Error('The request is still being delivered.');
+    }
+    await supersedeDecisionRequest(ctx, row, decision, 'resend requested from the dashboard');
     return { ok: true };
   },
 });

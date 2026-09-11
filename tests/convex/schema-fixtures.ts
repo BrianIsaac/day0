@@ -104,6 +104,6 @@ async function minimalValue(
       return await insertMinimalRow(ctx, target, agentId);
     }
     default:
-      throw new Error(`No fixture for validator kind ${validator.kind}`);
+      throw new Error(`No fixture for validator kind ${(validator as { kind: string }).kind}`);
   }
 }

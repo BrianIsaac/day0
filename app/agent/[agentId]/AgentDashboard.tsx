@@ -35,6 +35,7 @@ import {
 } from '../../../src/work/reconciliation';
 import type { MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
+import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import type { AgentMetrics } from '../../../convex/metrics';
 
 interface Props {
@@ -927,6 +928,7 @@ function WorkQueue({
   const reconcileFailed = useMutation(api.work.reconcileFailed);
   const approveActions = useMutation(api.work.approveActions);
   const rejectActions = useMutation(api.work.rejectActions);
+  const resendDecision = useMutation(api.work.resendDecisionRequest);
 
   const items = useMemo(
     () =>
@@ -1023,6 +1025,7 @@ function WorkQueue({
                   ? rejectActions({ workItemId: item._id, pendingRunId: item.pendingRunId, reason })
                   : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
               }
+              onResendDecision={() => resendDecision({ workItemId: item._id })}
             />
           ))}
         </div>
@@ -1459,6 +1462,7 @@ export function WorkItemCard({
   onReconcileFailed,
   onApproveActions,
   onRejectActions,
+  onResendDecision,
 }: {
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
@@ -1469,6 +1473,7 @@ export function WorkItemCard({
   onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
   onRejectActions: (reason: string) => Promise<unknown>;
+  onResendDecision: () => Promise<unknown>;
 }) {
   const now = useNow();
   const verdict = item.verdict as
@@ -1510,6 +1515,13 @@ export function WorkItemCard({
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
       : undefined;
   const decidedFrom = decisionAttribution(item.decision);
+  // The phone request is shown only when it is known not to have arrived: a
+  // recorded failure, or a silent send past the recovery bound. In flight,
+  // delivered and decided requests say nothing here.
+  const undelivered =
+    item.state === 'plan-pending' || item.state === 'actions-pending'
+      ? undeliveredDecisionReason(item.decision, now)
+      : undefined;
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
@@ -1534,6 +1546,21 @@ export function WorkItemCard({
 
       {decidedFrom ? (
         <p className="mt-1 text-[10px] text-[var(--color-muted)]">{decidedFrom}</p>
+      ) : null}
+
+      {undelivered && item.decision ? (
+        <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-warn)]">
+          <span>
+            {item.decision.surfaceName} request not delivered
+            {undelivered === 'request not delivered' ? '' : ` (${undelivered})`}
+          </span>
+          <button
+            onClick={() => void onResendDecision()}
+            className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
+          >
+            Resend
+          </button>
+        </p>
       ) : null}
 
       {item.state === 'cancelled' ? (

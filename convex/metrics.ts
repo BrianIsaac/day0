@@ -211,14 +211,31 @@ function decisionMetrics(
   const pending = new Map<string, Doc<'events'>[]>();
   const requestIds = new Set<string>();
   const resultIds = new Set<string>();
+  const resentIds = new Map<string, string>();
+  const firstAsk = (decisionId: string): string => {
+    let id = decisionId;
+    for (let hops = 0; hops < 100; hops += 1) {
+      const earlier = resentIds.get(id);
+      if (!earlier) break;
+      id = earlier;
+    }
+    return id;
+  };
   for (const event of [...events].sort((left, right) => left.createdAt - right.createdAt)) {
     const payload = asRecord(event.payload);
     if (event.type === 'work.decision-requesting') {
       const workItemId = asString(payload?.workItemId);
       const kind = payload?.kind;
       if (!workItemId || (kind !== 'plan' && kind !== 'actions')) continue;
-      totals.requested += 1;
       const decisionId = asString(payload?.decisionId);
+      const supersedes = asString(payload?.supersedes);
+      if (supersedes) {
+        // A resend after an undelivered DM is the same ask: the manager's wait
+        // began with the first request, so it keeps its place in the queue.
+        if (decisionId) resentIds.set(decisionId, supersedes);
+        continue;
+      }
+      totals.requested += 1;
       if (decisionId) requestIds.add(decisionId);
       const key = `${workItemId}:${kind}`;
       pending.set(key, [...(pending.get(key) ?? []), event]);
@@ -241,9 +258,10 @@ function decisionMetrics(
   for (const item of workItems) {
     const decision = item.decision;
     if (!decision) continue;
-    if (!requestIds.has(decision.id)) totals.requested += 1;
+    const askId = firstAsk(decision.id);
+    if (!requestIds.has(askId)) totals.requested += 1;
     if (!decision.decidedAt || !decision.outcome || !decision.decidedVia) continue;
-    if (!resultIds.has(decision.id)) {
+    if (!resultIds.has(askId)) {
       countDecision(
         totals,
         decision.outcome,

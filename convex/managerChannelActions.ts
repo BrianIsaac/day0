@@ -132,6 +132,8 @@ export const requestDecision = internalAction({
   args: {
     workItemId: v.id('workItems'),
     kind: v.union(v.literal('plan'), v.literal('actions')),
+    /** The undelivered request this send replaces, when it is a resend. */
+    supersedes: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
     const decisionId = decisionIdFromBytes(randomBytes(32));
@@ -139,6 +141,7 @@ export const requestDecision = internalAction({
       workItemId: args.workItemId,
       kind: args.kind,
       decisionId,
+      supersedes: args.supersedes,
     });
     if (!prepared.prepared) return { sent: false, reason: prepared.reason };
 
