@@ -106,6 +106,30 @@ intentional arm-difference keys are `onboardingPipeline` and `executionTurn`. Th
 ordinary arm retains a different interaction shape—one tool loop rather than Day0's
 staged, governed structured-output turn—so route compatibility is part of the result.
 
+### A fourth bed, cited as a second counter-result
+
+[`results/2026-09-02T09-40-48Z-v2-qwen14b/`](results/2026-09-02T09-40-48Z-v2-qwen14b/)
+is a complete harness-v2 bed on the self-hosted `qwen3:14b` (Q4_K_M GGUF served at a
+10,240-token context with 40 of 41 layers on a 12 GB GPU; 6/6 runs, 90/90 rows, zero
+harness timeouts, `noLlmJudge: true`, the same 15-field parity, harness commit
+`906f991`). It is not one of the three beds the submission published and it is not
+on the submitted deck. It is cited here, as of 12 September 2026, because it is in the
+repository and because it is a second local counter-result, not an exception to hide.
+On it the ordinary arm led task pass 8/15 to 6/15 by majority and 25/45 to 20/45 per
+run; Day0 led a-priori procedure adherence 8/45 to 6/45, prohibited-action-free runs
+45/45 to 34/45 and out-of-scope pass 13/15 to 10/15; supervision on approval writes
+was 0/15 for both arms because no Day0 approval-write row completed. The 25 failed
+Day0 rows carry two error strings in `semifinal.json`: nine ended
+`skill-authoring-attempts-exhausted` at the six-attempt cap, and sixteen ended
+`executor action contract remained invalid after one repair`, the fail-closed
+procedure-trail validator. Neither the local 8B row nor this row shows a task-pass
+uplift from onboarding; the hosted rows are the evidence for the narrower claim that
+onboarding governs sufficiently capable models on these fixed beds. `semifinal.json`
+SHA-256 `490825415a419df91de71f2550313705cef7b9c97b00fb0e66c7058fd3f1a0e1`;
+`model-bed.md` `96df10875f9c1a485fa459f6cee40ac83f6e833733a62e3f33dc9aeb70ef0d61`;
+`ollama-run.log.gz` `94946e1319f71e78a549b56355e58795cbf9a8bbc848e31653a837a45938c5f6`
+(the directory's `SHA256SUMS`).
+
 ### Superseded history
 
 Every earlier comparison result directory is retained as immutable audit history but
@@ -117,18 +141,32 @@ as final evidence.
 
 ## Direction 2 - permissions and supervision
 
-Two deterministic measurements now cover the judges' second direction:
+Two deterministic measurements cover the judges' second direction:
 
-- [Live revocation evidence](results/revocation-2026-08-30T09-52-46Z/trials.md), with
-  [raw JSON](results/revocation-2026-08-30T09-52-46Z/trials.json), the complete
-  redacted agent trace and exact commands. This ran in real mode on an isolated
-  self-hosted backend against `fake-slack` and the browser-driven Looker tile. Across
-  10 revoke-then-attempt trials and 5 switch-off trials there were N attempted=17,
-  N blocked=13 and N landed=4; all four landings were expected boundaries or
-  successful re-grant retries, so N unexpected=0. Block latency was n=13,
-  median=56 ms and max=123 ms. The fake provider logged n=4 requests: the two
-  manager-authorised writes and two successful re-grant reads, and no blocked
-  attempt reached it.
+- [Live revocation evidence](results/revocation-2026-09-02T12-17-54Z/trials.md), with
+  [raw JSON](results/revocation-2026-09-02T12-17-54Z/trials.json), the complete
+  redacted agent trace (`trace-agent.json`) and the exact commands (`commands.txt`).
+  This is the trial set the submission quotes. It ran on 2 September 2026 at commit
+  `2b3ee44` in real mode on an isolated self-hosted backend (compose project
+  `day0-revoc-cf6879`) against `fake-slack` and the browser-driven Looker tile, with
+  Daytona blanked; the driver makes no model call. Across 12 revoke-then-attempt
+  trials and 5 switch-off trials there were N attempted=19, N blocked=15 and
+  N landed=4, all four by declared design, so N unexpected=0. Time to block was
+  n=15, median=66 ms and max=151 ms (median 76 ms after a permission revocation,
+  56 ms after a switch-off; all 5/5 switch-off attempts were blocked at transport).
+  The fake provider logged n=4 requests, all from the four landed attempts: two
+  `chat.postMessage` from the manager-authorised writes and two `auth.test` from
+  the re-granted reads. No blocked attempt reached it. The four landings are two
+  populations and are not merged into a rate: two generic writes the manager had
+  approved as literal actions before the standing write scope was revoked
+  (`authority: manager`), and two reads refused under revocation, then re-granted
+  and retried successfully (`authority: autonomous`).
+- The earlier trial set at
+  [`results/revocation-2026-08-30T09-52-46Z/`](results/revocation-2026-08-30T09-52-46Z/trials.md)
+  (10 revoke-then-attempt and 5 switch-off trials; N attempted=17, N blocked=13,
+  N landed=4 by design, N unexpected=0; block latency n=13, median=56 ms, max=123 ms;
+  fake-provider log n=4, no blocked attempt reached it) is retained as audit history
+  and is superseded for submission claims by the 2 September directory above.
 - [Gate-accuracy confusion matrix](gate/2026-08-30T09-20-51Z/matrix.md), with
   [raw JSON](gate/2026-08-30T09-20-51Z/matrix.json). Its 28 pre-labelled actions
   were passed through `reviewActions` once with the autonomous switch off and once
@@ -151,14 +189,16 @@ scope afterwards does not cancel that approval, and the ledger records
 `authority: manager`.
 
 The trial agent's `api.metrics.forAgent` result exactly matched the driver's
-pairable subset: 6 no-grant refusals after permission revocation and 47 ms to the
-first one. That metric deliberately excludes the 2 evaluation deferrals and 5
-switch-off refusals because neither is a `no grant (<scope>)` ledger row. The same
-card recorded 4/4 complete landed-action audit rows, 2 approved surfaces, 10
-autonomy changes, 4 approved actions, 4 held actions, 6 refused actions and 2
-standing-authority auto applications. The matrix remains in its report: wiring a
-fixture-wide static measurement into a per-agent live metrics card would conflate
-two different populations.
+pairable subset on the 2 September set: 8 no-grant refusals after permission
+revocation and 51 ms to the first one (`metricsReconciliation.matches: true` in
+`trials.json`; the 30 August set reconciled the same way at 6 and 47 ms). That
+metric deliberately excludes the 2 evaluation deferrals and 5 switch-off refusals
+because neither is a `no grant (<scope>)` ledger row. The same card recorded 4/4
+complete landed-action audit rows, 2 approved surfaces, 10 autonomy changes, 4
+approved actions, 4 held actions, 8 refused actions and 2 standing-authority auto
+applications. The matrix remains in its report: wiring a fixture-wide static
+measurement into a per-agent live metrics card would conflate two different
+populations.
 
 ## Controlled arms
 
