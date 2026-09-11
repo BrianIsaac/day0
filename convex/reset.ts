@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { mutation } from './_generated/server';
 import { getCallerOrThrow } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
+import { purgeOwnedCredentials } from './credentials';
 
 /**
  * Every table whose rows belong to one agent through an `agentId` field.
@@ -33,8 +34,10 @@ export const AGENT_KEYED_TABLES = [
  * Wipe every record belonging to the signed-in user. Idempotent.
  * Called from the reset button on the landing page.
  *
- * Owner-level documentation outlives a plain reset; `alsoUnlinkDocumentation`
- * unlinks every owned source as well.
+ * Owner-level documentation and credentials outlive a plain reset. With
+ * `alsoUnlinkDocumentation` every owned source is unlinked and every owned
+ * credential is revoked with its ciphertext deleted; the credential rows
+ * stay as the audit trail of what was held.
  */
 export const deleteMyData = mutation({
   args: { alsoUnlinkDocumentation: v.optional(v.boolean()) },
@@ -65,6 +68,7 @@ export const deleteMyData = mutation({
     const unlinkedSources = args.alsoUnlinkDocumentation
       ? await deleteOwnedDocumentation(ctx, userId)
       : 0;
+    if (args.alsoUnlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
     return { deleted, unlinkedSources };
   },
 });
