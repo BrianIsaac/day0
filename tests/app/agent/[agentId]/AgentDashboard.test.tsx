@@ -10,6 +10,7 @@ vi.mock('convex/react', () => ({
 import type { Doc } from '../../../../convex/_generated/dataModel';
 import {
   ActionPayload,
+  DashboardHeader,
   DraftDetails,
   PlanExecutionLedger,
   WorkItemCard,
@@ -172,5 +173,32 @@ describe('sending a finished item back', (): void => {
     const markup = render(item('failed'));
     expect(markup).toContain('Provider reconciliation required');
     expect(markup).toContain('Retry remains disabled until provider reconciliation is recorded');
+  });
+});
+
+describe('header state pill', (): void => {
+  const agent = {
+    _id: 'agent-1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Day0',
+    state: 'active',
+    createdAt: 1,
+  } as unknown as Doc<'agents'>;
+  const charter = {
+    _id: 'charter-1',
+    _creationTime: 2,
+    agentId: agent._id,
+    version: '0.0',
+    body: {},
+    approved: true,
+    createdAt: 2,
+  } as unknown as Doc<'charters'>;
+
+  it('names the supervised state on an active agent, not the retired posture ladder', (): void => {
+    const markup = renderToStaticMarkup(<DashboardHeader agent={agent} charter={charter} />);
+    expect(markup).toContain('Active · supervised');
+    expect(markup).not.toContain('cold-start');
+    expect(markup).not.toContain('posture');
   });
 });

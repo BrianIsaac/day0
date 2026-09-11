@@ -152,7 +152,7 @@ export function AgentDashboard({ agentId }: Props) {
 
   return (
     <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
-      <Header agent={agent} charter={charter ?? null} />
+      <DashboardHeader agent={agent} charter={charter ?? null} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 space-y-4">
@@ -356,7 +356,7 @@ export function AutonomyControl({
   );
 }
 
-function Header({
+export function DashboardHeader({
   agent,
   charter,
 }: {
@@ -376,7 +376,7 @@ function Header({
       text: 'Charter drafted · awaiting boss approval',
       tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
     },
-    active: { text: 'Active · cold-start posture', tone: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]' },
+    active: { text: 'Active · supervised', tone: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]' },
   };
   // A charter on the page is the more recent fact: a pill reading "Day-1 1:1
   // in progress" above a drafted charter is wrong however the row got there.
@@ -2026,6 +2026,11 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       ? 'not yet'
       : `${metrics.decisions.approved} / ${metrics.decisions.rejected}`
     : undefined;
+  const decidedFrom = metrics
+    ? metrics.decisions.requested === 0
+      ? 'not yet'
+      : `${metrics.decisions.byVia.dashboard.decided} / ${metrics.decisions.byVia.channel.decided}`
+    : undefined;
   const blocked = metrics
     ? metrics.actions.blockedAfterRevocation === null
       ? 'not yet'
@@ -2042,6 +2047,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       value: metrics ? formatMetricDuration(metrics.charter.timeToFirstApprovedMs) : undefined,
     },
     { label: 'human decisions (approved / rejected)', value: humanDecisions },
+    { label: 'human decisions (dashboard / phone)', value: decidedFrom },
     {
       label: 'median decision latency',
       value: metrics ? formatMetricDuration(metrics.decisions.medianLatencyMs) : undefined,

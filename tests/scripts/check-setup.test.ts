@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   browserSetupConfiguration,
   composeRunningServices,
   docSourceDependency,
+  main,
 } from '../../scripts/check-setup';
 
 describe('documentation component setup reporting', (): void => {
@@ -53,5 +56,28 @@ describe('optional component discovery', (): void => {
       present: false,
       invalidReason: 'DAY0_BROWSER_MCP_URL must be an http or https URL.',
     });
+  });
+});
+
+describe('exit status without an early exit', (): void => {
+  afterEach((): void => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it('reports a missing env file as status 1 and lets stdout drain', (): void => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((): never => {
+      throw new Error('process.exit was called');
+    });
+    vi.spyOn(console, 'error').mockImplementation((): void => undefined);
+    const missing = join(import.meta.dirname, 'no-such-dir', '.env.local');
+    expect(main(missing)).toBe(1);
+    expect(process.exitCode).toBe(1);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('never calls process.exit, which drops buffered output on a pipe', (): void => {
+    const source = readFileSync(join(import.meta.dirname, '../../scripts/check-setup.ts'), 'utf8');
+    expect(source).not.toMatch(/process\.exit\(/);
   });
 });

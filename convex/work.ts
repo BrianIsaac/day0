@@ -1801,6 +1801,26 @@ async function rejectActionsInTransaction(
 }
 
 /** Resolve one parsed manager reply inside the same transaction as the dashboard controls. */
+/**
+ * Read a chat provider's message timestamp as epoch milliseconds.
+ *
+ * Slack and the Slack-shaped MCP tools give `seconds.fraction`; a generic
+ * history tool may give an ISO date. Anything else reads as unknown, so a
+ * provider with an unfamiliar clock keeps today's behaviour rather than
+ * having its replies dropped.
+ *
+ * Args:
+ *   ts: The provider's message timestamp as received.
+ *
+ * Returns:
+ *   Epoch milliseconds, or null when the string is not a timestamp.
+ */
+export function providerTsToMs(ts: string): number | null {
+  if (/^\d+(\.\d+)?$/.test(ts)) return Number(ts) * 1_000;
+  const parsed = Date.parse(ts);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 export const resolveChannelDecision = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -1816,6 +1836,15 @@ export const resolveChannelDecision = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface || surface.class !== 'chat') {
       return { status: 'ignored' as const, reason: 'not a chat surface' };
+    }
+    // The first poll of a manager DM has no checkpoint and reads the channel's
+    // history, which on a reused workspace holds the codes of every earlier
+    // agent. A reply written before this agent was deployed cannot answer one
+    // of its requests, so it is neither logged nor answered.
+    const agent = await ctx.db.get(surface.agentId);
+    const messageAt = providerTsToMs(args.messageTs);
+    if (agent && messageAt !== null && messageAt < agent.createdAt) {
+      return { status: 'ignored' as const, reason: 'predates the agent' };
     }
     const ignored = async (reason: string) => {
       await ctx.db.insert('events', {

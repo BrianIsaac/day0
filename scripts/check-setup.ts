@@ -135,13 +135,28 @@ function isLoopback(url: string): boolean {
   return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(url);
 }
 
-function main(): void {
-  if (!existsSync(ENV_FILE)) {
-    console.error(`error: ${ENV_FILE} not found. Copy .env.example to ${ENV_FILE} first.`);
-    process.exit(1);
+/**
+ * Print the setup report and say whether anything is half-done.
+ *
+ * The status is handed back rather than passed to `process.exit`: on a pipe
+ * Node writes stdout asynchronously, and exiting straight after a burst of
+ * `console.log` drops whatever has not drained yet, which showed as a report
+ * missing its last sections when piped right after a backend restart.
+ *
+ * Args:
+ *   envFile: Path of the env file to read; defaults to the CLI argument or `.env.local`.
+ *
+ * Returns:
+ *   The process exit status: 1 when the file is missing or a section is a gap, else 0.
+ */
+export function main(envFile: string = ENV_FILE): number {
+  if (!existsSync(envFile)) {
+    console.error(`error: ${envFile} not found. Copy .env.example to ${envFile} first.`);
+    process.exitCode = 1;
+    return 1;
   }
 
-  const v = resolve(ENV_FILE);
+  const v = resolve(envFile);
   const selfHosted = !!v.CONVEX_SELF_HOSTED_URL;
   const projectName = v.COMPOSE_PROJECT_NAME || 'day0';
   // Asked once and shared: every section that cares about a container reads the
@@ -159,7 +174,7 @@ function main(): void {
     finalisationSection(v),
   ];
 
-  console.log(`Day0 local setup, read from ${ENV_FILE}`);
+  console.log(`Day0 local setup, read from ${envFile}`);
   console.log('(process environment wins wherever it declares a variable, empty included)\n');
   for (const section of sections) {
     console.log(`${marker(section.status)} ${section.title}`);
@@ -181,9 +196,11 @@ function main(): void {
         .map((s) => s.title)
         .join('; ')}`,
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return 1;
   }
   console.log('Nothing here is half-done.');
+  return 0;
 }
 
 /**
@@ -950,4 +967,6 @@ function marker(status: Status): string {
   return status === 'ok' ? 'ok  ' : status === 'warn' ? 'note' : 'GAP ';
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = main();
+}
