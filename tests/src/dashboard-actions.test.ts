@@ -356,6 +356,8 @@ describe('judge-facing dashboard evidence', (): void => {
     expect(html).toContain('3 min 28 s');
     expect(html).toContain('human decisions (approved / rejected)');
     expect(html).toContain('2 / 0');
+    expect(html).toContain('human decisions (dashboard / phone)');
+    expect(html).toContain('0 / 2');
     expect(html).toContain('median decision latency');
     expect(html).toContain('1 s');
     expect(html).toContain('actions blocked after revocation');
@@ -383,7 +385,7 @@ describe('judge-facing dashboard evidence', (): void => {
       auditTrail: { complete: 0, total: 0, fraction: null },
     };
     const html = renderToStaticMarkup(createElement(MetricsCard, { metrics }));
-    expect(html.match(/not yet/g)).toHaveLength(5);
+    expect(html.match(/not yet/g)).toHaveLength(6);
     expect(html).not.toContain('0 s');
   });
 

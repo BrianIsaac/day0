@@ -2026,6 +2026,11 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       ? 'not yet'
       : `${metrics.decisions.approved} / ${metrics.decisions.rejected}`
     : undefined;
+  const decidedFrom = metrics
+    ? metrics.decisions.requested === 0
+      ? 'not yet'
+      : `${metrics.decisions.byVia.dashboard.decided} / ${metrics.decisions.byVia.channel.decided}`
+    : undefined;
   const blocked = metrics
     ? metrics.actions.blockedAfterRevocation === null
       ? 'not yet'
@@ -2042,6 +2047,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       value: metrics ? formatMetricDuration(metrics.charter.timeToFirstApprovedMs) : undefined,
     },
     { label: 'human decisions (approved / rejected)', value: humanDecisions },
+    { label: 'human decisions (dashboard / phone)', value: decidedFrom },
     {
       label: 'median decision latency',
       value: metrics ? formatMetricDuration(metrics.decisions.medianLatencyMs) : undefined,
