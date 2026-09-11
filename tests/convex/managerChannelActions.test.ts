@@ -251,6 +251,74 @@ describe('the outbound manager-channel action', (): void => {
     expect(sent).toHaveLength(2);
   });
 
+  it('resends with a fresh code after a send that died before recording, and only once', async (): Promise<void> => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({
+          url: input.href,
+          authorization: new Headers(init.headers).get('authorization') ?? '',
+          body: String(init.body),
+        });
+        return new Response(JSON.stringify({ ok: true, ts: '1787768500.000100' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    // The claim committed and the process died before the DM was recorded.
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    await expect(
+      harness.mutation(internal.work.recoverUndeliveredDecisionRequest, {
+        workItemId,
+        decisionId: 'ab3xyz',
+      }),
+    ).resolves.toEqual({ recovered: 'resent' });
+
+    // The recovery's resend, run by hand instead of by the scheduler.
+    await expect(
+      harness.action(internal.managerChannelActions.requestDecision, {
+        workItemId,
+        kind: 'plan',
+        supersedes: 'ab3xyz',
+      }),
+    ).resolves.toEqual({ sent: true });
+    expect(sent).toHaveLength(1);
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(row?.decision).toMatchObject({ kind: 'plan', ts: '1787768500.000100' });
+    expect(row?.decision?.id).not.toBe('ab3xyz');
+    expect(row?.decision).not.toHaveProperty('requestFailedAt');
+    expect(sent[0]?.body).toContain(row?.decision?.id ?? 'missing');
+
+    // The same resend delivered twice records one request and sends one DM.
+    await expect(
+      harness.action(internal.managerChannelActions.requestDecision, {
+        workItemId,
+        kind: 'plan',
+        supersedes: 'ab3xyz',
+      }),
+    ).resolves.toEqual({ sent: false, reason: 'decision request already claimed' });
+    expect(sent).toHaveLength(1);
+    const requesting = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.decision-requesting'))
+          .collect(),
+    );
+    expect(requesting.map((event) => (event.payload as { decisionId: string }).decisionId)).toEqual([
+      'ab3xyz',
+      row?.decision?.id,
+    ]);
+  });
+
   it('delivers a receipt acknowledgement once and records its provider timestamp', async (): Promise<void> => {
     vi.stubGlobal(
       'fetch',
