@@ -4,8 +4,37 @@ import { getCallerOrThrow } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 
 /**
+ * Every table whose rows belong to one agent through an `agentId` field.
+ *
+ * `tests/convex/reset.test.ts` derives the same list from the schema and
+ * fails when the two differ, so a new agent-keyed table cannot be missed here.
+ */
+export const AGENT_KEYED_TABLES = [
+  'charters',
+  'workspace',
+  'voiceSessions',
+  'workItems',
+  'managerDecisionNotices',
+  'skills',
+  'permissionGrants',
+  'events',
+  'surfaces',
+  'mockDocs',
+  'mockSpreadsheets',
+  'mockSpreadsheetRows',
+  'mockSlackChannels',
+  'mockSlackMessages',
+  'mockTweets',
+  'mockTweetReplies',
+  'mockTickets',
+] as const;
+
+/**
  * Wipe every record belonging to the signed-in user. Idempotent.
  * Called from the reset button on the landing page.
+ *
+ * Owner-level documentation outlives a plain reset; `alsoUnlinkDocumentation`
+ * unlinks every owned source as well.
  */
 export const deleteMyData = mutation({
   args: { alsoUnlinkDocumentation: v.optional(v.boolean()) },
@@ -21,54 +50,14 @@ export const deleteMyData = mutation({
     let deleted = 0;
     for (const agent of agents) {
       const agentId = agent._id;
-      // Delete all rows that reference this agentId across every per-agent table.
       const tableDeletions: Array<Promise<unknown>> = [];
-
-      const collectAndDelete = async (
-        tableName:
-          | 'charters'
-          | 'workspace'
-          | 'voiceSessions'
-          | 'workItems'
-          | 'skills'
-          | 'permissionGrants'
-          | 'events'
-          | 'surfaces'
-          | 'mockDocs'
-          | 'mockSpreadsheets'
-          | 'mockSpreadsheetRows'
-          | 'mockSlackChannels'
-          | 'mockSlackMessages'
-          | 'mockTweets'
-          | 'mockTweetReplies'
-          | 'mockTickets',
-      ) => {
+      for (const tableName of AGENT_KEYED_TABLES) {
         const rows = await ctx.db
           .query(tableName)
           .filter((q) => q.eq(q.field('agentId'), agentId))
           .collect();
-        for (const r of rows) {
-          tableDeletions.push(ctx.db.delete(r._id));
-        }
-      };
-
-      await collectAndDelete('charters');
-      await collectAndDelete('workspace');
-      await collectAndDelete('voiceSessions');
-      await collectAndDelete('workItems');
-      await collectAndDelete('skills');
-      await collectAndDelete('permissionGrants');
-      await collectAndDelete('events');
-      await collectAndDelete('surfaces');
-      await collectAndDelete('mockDocs');
-      await collectAndDelete('mockSpreadsheets');
-      await collectAndDelete('mockSpreadsheetRows');
-      await collectAndDelete('mockSlackChannels');
-      await collectAndDelete('mockSlackMessages');
-      await collectAndDelete('mockTweets');
-      await collectAndDelete('mockTweetReplies');
-      await collectAndDelete('mockTickets');
-
+        for (const row of rows) tableDeletions.push(ctx.db.delete(row._id));
+      }
       await Promise.all(tableDeletions);
       await ctx.db.delete(agent._id);
       deleted += 1;
