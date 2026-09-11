@@ -9,6 +9,16 @@ export interface RedactedMarkdown {
   credentials: RedactedCredential[];
 }
 
+export interface RedactionOptions {
+  /**
+   * Also treat an unlabelled run of 32 or more mixed letters and digits as a
+   * secret when its per-character entropy clears the generic floor. Off by
+   * default: the same rule catches commit hashes, UUIDs and page ids, and a
+   * marker in place of one of those is a corrupted page.
+   */
+  genericEntropyFloor?: boolean;
+}
+
 interface CredentialMatch extends RedactedCredential {
   start: number;
   end: number;
@@ -83,13 +93,46 @@ const LABELLED_VALUE = /(?:^|\n)[^\n:]{0,48}\b(?:token|key|secret)\b[^\n:]{0,32}
  */
 const DECLARED_VALUE =
   /(?:^|\n)[^\n:]{0,48}\b(?:login|password|passphrase|credential)\b[^\n:]{0,32}:\s*`([^\s`]+)`/gi;
+/** An unlabelled run long enough to be a bare token, judged by entropy alone. */
+const GENERIC_CANDIDATE = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])/g;
 const MARKER = /<credential:[^>]*>/g;
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}'"_-]+$/;
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 /** A value that refers to a secret rather than carrying one: `<password>`, `${VAR}`, `{{ secret }}`. */
 const REFERENCE_START = /^[<${]/;
 
+/**
+ * Total Shannon entropy, in bits, a labelled value must carry to be a secret.
+ *
+ * The floor is on the whole value, not per character, so it encodes length
+ * as well as spread. A random 16-character hexadecimal key carries 64 bits
+ * and passes; an issue key (`REVOPS-7`, 24 bits), a date-like key
+ * (`2026-Q3-close`, 44 bits) and a masked value (`xxxxxxxx`, 0 bits) do not.
+ */
+export const LABELLED_ENTROPY_FLOOR_BITS = 48;
+/** Per-character entropy an unlabelled run must clear under the generic floor. */
+export const GENERIC_ENTROPY_FLOOR_BITS_PER_CHAR = 3.5;
 
+/**
+ * Measure the Shannon entropy of a value over its own character distribution.
+ *
+ * Args:
+ *   value: Any string.
+ *
+ * Returns:
+ *   Total bits: per-character entropy multiplied by the character count.
+ */
+export function shannonBits(value: string): number {
+  const chars = [...value];
+  const counts = new Map<string, number>();
+  for (const char of chars) counts.set(char, (counts.get(char) ?? 0) + 1);
+  let perChar = 0;
+  for (const count of counts.values()) {
+    const probability = count / chars.length;
+    perChar -= probability * Math.log2(probability);
+  }
+  return perChar * chars.length;
+}
 
 /** Normalise a label fragment for a marker and metadata row. */
 function words(value: string): string {
@@ -153,9 +196,10 @@ function labelledLineLabel(line: string, title: string): string {
  * A `token`/`key` line also introduces names (`Key contacts: Alice`), counts
  * (`Token budget: 20000`), scheme words (`Bot token: Bearer xoxb-...`),
  * pointers (`Service token: see the vault`), locations (a vault URL),
- * and references (`${LINEAR_TOKEN}`). None of those is a credential, and
- * storing them would corrupt the page and the owner's credential list. A real
- * key mixes letters and digits or is long.
+ * references (`${LINEAR_TOKEN}`) and identifiers (`Issue key: REVOPS-7`).
+ * None of those is a credential, and storing them would corrupt the page and
+ * the owner's credential list. A real key mixes letters and digits or is
+ * long, and it carries at least `LABELLED_ENTROPY_FLOOR_BITS` of entropy.
  *
  * Args:
  *   value: Captured value with trailing punctuation removed.
@@ -166,7 +210,8 @@ function labelledLineLabel(line: string, title: string): string {
 export function looksLikeSecret(value: string): boolean {
   if (URL_SCHEME.test(value) || REFERENCE_START.test(value)) return false;
   const mixed = /[a-z]/i.test(value) && /[0-9]/.test(value);
-  return (value.length >= 8 && mixed) || value.length >= 20;
+  const shaped = (value.length >= 8 && mixed) || value.length >= 20;
+  return shaped && shannonBits(value) >= LABELLED_ENTROPY_FLOOR_BITS;
 }
 
 /** Create the only safe representation written into documentation tables. */
@@ -193,11 +238,16 @@ function shapedLabel(match: RegExpMatchArray, title: string): string {
  * Args:
  *   text: Page body or title.
  *   labelContext: Value-free title used to name generic lines.
+ *   options: Optional detectors.
  *
  * Returns:
  *   Non-overlapping matches in document order.
  */
-function findCredentials(text: string, labelContext: string): CredentialMatch[] {
+function findCredentials(
+  text: string,
+  labelContext: string,
+  options: RedactionOptions = {},
+): CredentialMatch[] {
   const matches: CredentialMatch[] = [];
   const overlaps = (start: number, end: number): boolean =>
     matches.some((known): boolean => start < known.end && end > known.start);
@@ -244,6 +294,20 @@ function findCredentials(text: string, labelContext: string): CredentialMatch[] 
       matches.push({ plaintext, label: labelledLineLabel(line, labelContext), start, end });
     }
   }
+  if (options.genericEntropyFloor) {
+    for (const match of text.matchAll(GENERIC_CANDIDATE)) {
+      if (match.index === undefined) continue;
+      const plaintext = match[0];
+      const mixed = /[a-z]/i.test(plaintext) && /[0-9]/.test(plaintext);
+      if (!mixed || shannonBits(plaintext) / plaintext.length < GENERIC_ENTROPY_FLOOR_BITS_PER_CHAR) {
+        continue;
+      }
+      const end = match.index + plaintext.length;
+      if (overlaps(match.index, end)) continue;
+      const label = `${systemFromTitle(labelContext)} secret`;
+      matches.push({ plaintext, label, start: match.index, end });
+    }
+  }
   return matches.sort((left, right): number => left.start - right.start);
 }
 
@@ -265,15 +329,20 @@ function replaceCredentials(text: string, matches: CredentialMatch[]): string {
  * Args:
  *   markdown: Raw page body returned by a reader.
  *   title: Raw page title used to label generic token lines.
+ *   options: Optional detectors; every default is the conservative one.
  *
  * Returns:
  *   Redacted Markdown and title, and distinct plaintext values in document
  *   order for immediate storage.
  */
-export function redactCredentials(markdown: string, title: string): RedactedMarkdown {
-  const titleMatches = findCredentials(title, title.replace(SHAPED_VALUE, ' '));
+export function redactCredentials(
+  markdown: string,
+  title: string,
+  options: RedactionOptions = {},
+): RedactedMarkdown {
+  const titleMatches = findCredentials(title, title.replace(SHAPED_VALUE, ' '), options);
   const safeTitle = replaceCredentials(title, titleMatches);
-  const bodyMatches = findCredentials(markdown, safeTitle);
+  const bodyMatches = findCredentials(markdown, safeTitle, options);
   const distinct = new Map<string, RedactedCredential>();
   for (const match of [...titleMatches, ...bodyMatches]) {
     if (!distinct.has(match.plaintext)) {
