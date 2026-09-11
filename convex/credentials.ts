@@ -76,6 +76,13 @@ export const persistEncrypted = internalMutation({
   },
   handler: async (ctx, args): Promise<Id<'credentials'>> => {
     const sourced = pageSource(args.source);
+    if (sourced) {
+      // Unlink can commit while the store action is encrypting the value.
+      const source = await ctx.db.get(sourced.sourceId);
+      if (!source || source.userId !== args.userId) {
+        throw new Error('Credential source does not belong to its owner.');
+      }
+    }
     const existing =
       sourced === undefined
         ? null
