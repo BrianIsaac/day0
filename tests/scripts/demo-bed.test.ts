@@ -5,11 +5,13 @@ import {
   PROTECTED_PROJECTS,
   PROTECTED_VOLUMES,
   assertNotProtected,
+  bedEnvDefaults,
   bedPorts,
   composeImages,
   credentialKeyToAdopt,
   demoTiers,
   parseDemoBedArguments,
+  rungAlreadyRun,
   parseDockerPs,
   probeTier,
   renderChecklist,
@@ -188,6 +190,44 @@ describe('the env file', (): void => {
       }),
     ).toEqual({ backend: 44210, site: 44211, dashboard: 46791, fakeSlack: 44090 });
   });
+
+  it('points the deployment at the Slack double whenever the test profile runs', (): void => {
+    const ports = bedPorts({ FAKE_SLACK_HOST_PORT: '44090' });
+    const derived = bedEnvDefaults('day0-a7-abc123', BED_PROFILES, {}, ports);
+    expect(derived.DAY0_TEST_SLACK_API_URL).toBe('http://fake-slack:8090/api/');
+    expect(derived.DAY0_TEST_SLACK_AUTHORIZE_URL).toBe('http://127.0.0.1:44090/oauth/v2/authorize');
+  });
+
+  it('leaves the Slack seam alone without the test profile, and never overwrites a value', (): void => {
+    const ports = bedPorts({});
+    expect(bedEnvDefaults('day0-a7-abc123', ['real'], {}, ports)).not.toHaveProperty(
+      'DAY0_TEST_SLACK_API_URL',
+    );
+    expect(
+      bedEnvDefaults(
+        'day0-a7-abc123',
+        BED_PROFILES,
+        { DAY0_TEST_SLACK_API_URL: 'http://fake-slack/api/' },
+        ports,
+      ),
+    ).not.toHaveProperty('DAY0_TEST_SLACK_API_URL');
+  });
+
+  it('derives the project, the two Convex origins and the browser switch it already wrote', (): void => {
+    const derived = bedEnvDefaults(
+      'day0-a7-abc123',
+      BED_PROFILES,
+      {},
+      bedPorts({ CONVEX_PORT: '44310', CONVEX_SITE_PROXY_PORT: '44311' }),
+    );
+    expect(derived).toMatchObject({
+      COMPOSE_PROJECT_NAME: 'day0-a7-abc123',
+      CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:44310',
+      NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:44310',
+      NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:44311',
+      DAY0_BROWSER_MCP_URL: 'http://playwright-mcp:8931/mcp',
+    });
+  });
 });
 
 describe("a restored volume carries the recording bed's deployment env", (): void => {
@@ -290,8 +330,11 @@ describe('the pre-flight verdict', (): void => {
     const tiers = demoTiers({
       videoPresent: true,
       offlineRungReady: true,
+      slackDoubleWired: true,
+      rungAlreadyRun: false,
       backendHealthy: true,
       modelBaseUrl: '',
+      rungModelRoute: 'http://model:11434/v1',
       probeTier: 1,
     });
     expect(tiers.find((tier) => tier.name.includes('warm bed'))?.go).toBe(false);
@@ -302,8 +345,11 @@ describe('the pre-flight verdict', (): void => {
     const base = {
       videoPresent: true,
       offlineRungReady: true,
+      slackDoubleWired: true,
+      rungAlreadyRun: false,
       backendHealthy: true,
       modelBaseUrl: 'https://api.featherless.ai/v1',
+      rungModelRoute: 'https://api.featherless.ai/v1',
     };
     expect(demoTiers({ ...base, probeTier: 1 }).map((tier) => tier.go)).toEqual([true, true, true]);
     expect(demoTiers({ ...base, probeTier: 3 }).map((tier) => tier.go)).toEqual([
@@ -326,5 +372,80 @@ describe('the pre-flight verdict', (): void => {
       true,
       true,
     ]);
+  });
+
+  it('reads a spent bed off the agent list, because the trial ids are unique per volume', (): void => {
+    expect(rungAlreadyRun([{ name: 'Acme RevOps agent' }])).toBe(false);
+    expect(rungAlreadyRun([])).toBe(false);
+    expect(
+      rungAlreadyRun([{ name: 'Acme RevOps agent' }, { name: 'Day0 revocation evaluation' }]),
+    ).toBe(true);
+  });
+
+  it('names the route the rung will dial and never lets it be OpenAI', (): void => {
+    const base = {
+      videoPresent: true,
+      offlineRungReady: true,
+      slackDoubleWired: true,
+      rungAlreadyRun: false,
+      backendHealthy: true,
+      probeTier: 1 as const,
+    };
+    const openAi = demoTiers({ ...base, modelBaseUrl: '', rungModelRoute: '' }).find((tier) =>
+      tier.name.includes('offline rung'),
+    );
+    expect(openAi?.go).toBe(false);
+    expect(openAi?.reason).toContain('OpenAI');
+    const local = demoTiers({
+      ...base,
+      modelBaseUrl: 'http://127.0.0.1:44312/v1',
+      rungModelRoute: 'http://model:11434/v1',
+    }).find((tier) => tier.name.includes('offline rung'));
+    expect(local?.go).toBe(true);
+    expect(local?.reason).toContain('http://model:11434/v1');
+  });
+
+  it('stops calling the rung model-free, because its onboarding calls a model', (): void => {
+    const rung = demoTiers({
+      videoPresent: true,
+      offlineRungReady: true,
+      slackDoubleWired: true,
+      rungAlreadyRun: false,
+      backendHealthy: true,
+      modelBaseUrl: 'http://127.0.0.1:44312/v1',
+      rungModelRoute: 'http://model:11434/v1',
+      probeTier: 1,
+    }).find((tier) => tier.name.includes('offline rung'));
+    expect(rung?.name).not.toContain('no model call');
+  });
+
+  it('refuses the offline rung on a bed that has already spent its trial ids', (): void => {
+    const rung = demoTiers({
+      videoPresent: true,
+      offlineRungReady: true,
+      slackDoubleWired: true,
+      rungAlreadyRun: true,
+      backendHealthy: true,
+      modelBaseUrl: 'https://api.featherless.ai/v1',
+      rungModelRoute: 'https://api.featherless.ai/v1',
+      probeTier: 1,
+    }).find((tier) => tier.name.includes('offline rung'));
+    expect(rung?.go).toBe(false);
+    expect(rung?.reason).toContain('restore');
+  });
+
+  it('refuses the offline rung when the deployment still resolves Slack to slack.com', (): void => {
+    const rung = demoTiers({
+      videoPresent: true,
+      offlineRungReady: true,
+      slackDoubleWired: false,
+      rungAlreadyRun: false,
+      backendHealthy: true,
+      modelBaseUrl: 'https://api.featherless.ai/v1',
+      rungModelRoute: 'https://api.featherless.ai/v1',
+      probeTier: 1,
+    }).find((tier) => tier.name.includes('offline rung'));
+    expect(rung?.go).toBe(false);
+    expect(rung?.reason).toContain('DAY0_TEST_SLACK_API_URL');
   });
 });

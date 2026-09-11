@@ -62,6 +62,41 @@ export const BED_PROFILES: readonly string[] = ['real', 'sandbox', 'test', 'demo
 /** Where the bundled browser component answers, as the deployment must address it. */
 const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
 
+/**
+ * Where the Slack double answers, as the deployment must address it.
+ *
+ * `slackApiBaseUrl()` only leaves slack.com for a local no-auth real-mode bed
+ * whose `DAY0_TEST_SLACK_API_URL` names `fake-slack` on the compose network. The
+ * key is empty in `.env.example` and sits in the sync script's CLEAR_WHEN_EMPTY
+ * list, so a bed that does not set it sends the double's synthetic token to the
+ * real Slack, which answers `invalid_auth`, and the rung's first probe ends
+ * `ungranted`. The port is the container's own, not the published one.
+ */
+const TEST_SLACK_API_URL = 'http://fake-slack:8090/api/';
+
+/** The agent `pnpm eval:revocation` deploys; its presence means the bed is spent. */
+const RUNG_AGENT_NAME = 'Day0 revocation evaluation';
+
+/**
+ * Whether this bed has already run the rung, so a second one would fail.
+ *
+ * The trial's work rows are keyed `EVAL-rev-scope-01` and up, and the index
+ * they are looked up by is `(sourceSystem, externalId)` alone
+ * (`convex/revocationEvaluation.ts`), so the ids are unique per *volume*, not
+ * per agent. A second rung on the same volume dies with
+ * `trial rev-scope-01 already exists` around a minute in, after the onboarding
+ * has been paid for. Restoring the snapshot again is the cheap way back.
+ *
+ * Args:
+ *   agents: The boss's agents as the deployment lists them.
+ *
+ * Returns:
+ *   Whether a rung has already run on this volume.
+ */
+export function rungAlreadyRun(agents: readonly { name: string }[]): boolean {
+  return agents.some((agent: { name: string }): boolean => agent.name === RUNG_AGENT_NAME);
+}
+
 const SYNC_SCRIPT = 'scripts/sync-convex-env.sh';
 
 /** Pinned in the compose file; used for the throwaway tar containers too. */
@@ -607,6 +642,18 @@ export function renderChecklist(items: readonly ChecklistItem[]): string {
 export interface TierInputs {
   videoPresent: boolean;
   offlineRungReady: boolean;
+  /**
+   * The env file resolves Slack to the double. Without it the rung's first
+   * probe sends a synthetic token to slack.com and ends `ungranted`.
+   */
+  slackDoubleWired: boolean;
+  /** A rung has already run on this volume, so its trial ids are spent. */
+  rungAlreadyRun: boolean;
+  /**
+   * What the *deployment* dials for a model, which is not always what the host
+   * dials: the rung's onboarding runs inside the backend container.
+   */
+  rungModelRoute: string;
   backendHealthy: boolean;
   /** Empty means api.openai.com, which is never dialled from the venue. */
   modelBaseUrl: string;
@@ -640,11 +687,21 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
     reason: inputs.videoPresent ? 'the file is on disk' : 'no video file found; queue it locally',
   };
   const rung: TierVerdict = {
-    name: 'Tier 2, the offline rung (pnpm eval:revocation, no model call)',
-    go: inputs.offlineRungReady,
-    reason: inputs.offlineRungReady
-      ? 'backend, fake-slack and looker-tile are up in real mode'
-      : 'the backend, fake-slack or looker-tile is not up in real mode',
+    name: 'Tier 2, the offline rung (pnpm eval:revocation; its measurements are model-free, its onboarding is not)',
+    go:
+      inputs.offlineRungReady &&
+      inputs.slackDoubleWired &&
+      !inputs.rungAlreadyRun &&
+      !isOpenAi(inputs.rungModelRoute),
+    reason: !inputs.offlineRungReady
+      ? 'the backend, fake-slack or looker-tile is not up in real mode'
+      : !inputs.slackDoubleWired
+        ? `DAY0_TEST_SLACK_API_URL does not name the double, so the rung's Slack probe ends ungranted; set it to ${TEST_SLACK_API_URL} and re-run pnpm demo:bed up`
+        : inputs.rungAlreadyRun
+          ? 'this volume has already run the rung and its trial ids are spent; down --volumes, restore the snapshot again, then up'
+          : isOpenAi(inputs.rungModelRoute)
+            ? "the rung's onboarding would dial OpenAI, which is never called from the venue; point CONVEX_OPENAI_BASE_URL at the bundled model or the Featherless route"
+            : `backend, fake-slack and looker-tile are up in real mode, and the onboarding dials ${inputs.rungModelRoute}`,
   };
   let warm: TierVerdict;
   if (isOpenAi(inputs.modelBaseUrl)) {
@@ -735,6 +792,47 @@ function stamp(now: Date = new Date()): string {
 
 function elapsed(startedAt: number): string {
   return `${((Date.now() - startedAt) / 1000).toFixed(1)} s`;
+}
+
+/**
+ * What the env file must say for this bed, for every value it leaves empty.
+ *
+ * The file is the bed's contract, so a value it already carries is never
+ * rewritten; this only fills the blanks a fresh checkout has. The component
+ * switches are conditional on the profile that starts the component, because
+ * naming a component that is not running is what makes a surface card flip.
+ *
+ * Args:
+ *   project: Compose project the bed runs as.
+ *   profiles: Components this bed starts.
+ *   values: What the env file already declares.
+ *   ports: Host ports derived from the same file.
+ *
+ * Returns:
+ *   The keys to write, and nothing the file already answers.
+ */
+export function bedEnvDefaults(
+  project: string,
+  profiles: readonly string[],
+  values: Readonly<Values>,
+  ports: BedPorts,
+): Values {
+  const derived: Values = {};
+  if (!values.COMPOSE_PROJECT_NAME) derived.COMPOSE_PROJECT_NAME = project;
+  if (!values.CONVEX_SELF_HOSTED_URL)
+    derived.CONVEX_SELF_HOSTED_URL = `http://127.0.0.1:${ports.backend}`;
+  if (!values.NEXT_PUBLIC_CONVEX_URL)
+    derived.NEXT_PUBLIC_CONVEX_URL = `http://127.0.0.1:${ports.backend}`;
+  if (!values.NEXT_PUBLIC_CONVEX_SITE_URL)
+    derived.NEXT_PUBLIC_CONVEX_SITE_URL = `http://127.0.0.1:${ports.site}`;
+  if (profiles.includes('browser') && !values.DAY0_BROWSER_MCP_URL)
+    derived.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
+  if (profiles.includes('test')) {
+    if (!values.DAY0_TEST_SLACK_API_URL) derived.DAY0_TEST_SLACK_API_URL = TEST_SLACK_API_URL;
+    if (!values.DAY0_TEST_SLACK_AUTHORIZE_URL)
+      derived.DAY0_TEST_SLACK_AUTHORIZE_URL = `http://127.0.0.1:${ports.fakeSlack}/oauth/v2/authorize`;
+  }
+  return derived;
 }
 
 /** Everything the bed's child processes see: the shell, then the file, then the project. */
@@ -953,22 +1051,13 @@ async function up(options: DemoBedOptions): Promise<void> {
   }
   let values = readEnvFile();
   const ports = bedPorts(values);
-  const derived: Values = {};
-  if (!values.COMPOSE_PROJECT_NAME) derived.COMPOSE_PROJECT_NAME = options.project;
   if (values.COMPOSE_PROJECT_NAME && values.COMPOSE_PROJECT_NAME !== options.project) {
     throw new Error(
       `${ENV_FILE} says COMPOSE_PROJECT_NAME=${values.COMPOSE_PROJECT_NAME} and --project says ${options.project}; ` +
         'the file is the contract, so change one of them.',
     );
   }
-  if (!values.CONVEX_SELF_HOSTED_URL)
-    derived.CONVEX_SELF_HOSTED_URL = `http://127.0.0.1:${ports.backend}`;
-  if (!values.NEXT_PUBLIC_CONVEX_URL)
-    derived.NEXT_PUBLIC_CONVEX_URL = `http://127.0.0.1:${ports.backend}`;
-  if (!values.NEXT_PUBLIC_CONVEX_SITE_URL)
-    derived.NEXT_PUBLIC_CONVEX_SITE_URL = `http://127.0.0.1:${ports.site}`;
-  if (options.profiles.includes('browser') && !values.DAY0_BROWSER_MCP_URL)
-    derived.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
+  const derived = bedEnvDefaults(options.project, options.profiles, values, ports);
   if (Object.keys(derived).length > 0) {
     writeEnvValues(derived);
     log(`Wrote ${Object.keys(derived).join(', ')} to ${ENV_FILE}.`);
@@ -1123,6 +1212,7 @@ async function up(options: DemoBedOptions): Promise<void> {
 
 interface SurfaceSummary {
   agents: number;
+  rungAlreadyRun: boolean;
   verdicts: Record<string, number>;
   docSources: string[];
   lastProbeFailure?: string;
@@ -1156,6 +1246,7 @@ async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
     const sources = await boss.client.query(api.docSources.listMine, {});
     return {
       agents: agents.length,
+      rungAlreadyRun: rungAlreadyRun(agents),
       verdicts,
       docSources: sources.map(
         (source): string =>
@@ -1372,10 +1463,20 @@ async function preflight(options: DemoBedOptions): Promise<number> {
 
   const rungReady =
     surfaceMode === 'real' && !!version && healthy('fake-slack') && healthy('looker-tile');
+  const slackDouble = values.DAY0_TEST_SLACK_API_URL ?? '';
+  const spent = typeof surfaces !== 'string' && surfaces.rungAlreadyRun;
   items.push({
     label: 'Offline rung doubles',
-    status: rungReady ? 'ok' : 'gap',
-    detail: `fake-slack ${healthy('fake-slack') ? 'healthy' : 'not healthy'}, looker-tile ${healthy('looker-tile') ? 'healthy' : 'not healthy'}, sandbox ${healthy('sandbox') ? 'healthy' : 'not healthy'}`,
+    status: rungReady && slackDouble && !spent ? 'ok' : 'gap',
+    detail: [
+      `fake-slack ${healthy('fake-slack') ? 'healthy' : 'not healthy'}, looker-tile ${healthy('looker-tile') ? 'healthy' : 'not healthy'}, sandbox ${healthy('sandbox') ? 'healthy' : 'not healthy'}`,
+      slackDouble
+        ? `DAY0_TEST_SLACK_API_URL names ${slackDouble}`
+        : `DAY0_TEST_SLACK_API_URL is empty, so the rung's Slack probe reaches slack.com and ends ungranted; set it to ${TEST_SLACK_API_URL}`,
+      spent
+        ? 'this volume has already run the rung: restore the snapshot again before running another'
+        : 'the trial ids on this volume are unspent',
+    ].join('\n'),
   });
 
   let tier: 1 | 2 | 3 | undefined;
@@ -1441,6 +1542,9 @@ async function preflight(options: DemoBedOptions): Promise<number> {
   const tiers = demoTiers({
     videoPresent,
     offlineRungReady: rungReady,
+    slackDoubleWired: !!slackDouble,
+    rungAlreadyRun: spent,
+    rungModelRoute: values.CONVEX_OPENAI_BASE_URL || baseUrl,
     backendHealthy: !!version,
     modelBaseUrl: baseUrl,
     probeTier: tier,
@@ -1452,7 +1556,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
 
 /* ------------------------------- offline rung ------------------------------ */
 
-function offlineRung(options: DemoBedOptions): void {
+async function offlineRung(options: DemoBedOptions): Promise<void> {
   assertNotProtected(options.project);
   const values = readEnvFile();
   const services = projectServices(options.project) ?? [];
@@ -1467,6 +1571,19 @@ function offlineRung(options: DemoBedOptions): void {
   }
   if ((values.DAY0_SURFACE_MODE || 'mock') !== 'real') {
     throw new Error(`DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`);
+  }
+  const boss = await bossClient(values);
+  if (!('reason' in boss)) {
+    const { api } = await import('../convex/_generated/api');
+    if (rungAlreadyRun(await boss.client.query(api.agents.listForUser, {}))) {
+      throw new Error(
+        `this volume has already run the rung, and its trial ids are spent: a second one dies ` +
+          `about a minute in with "trial rev-scope-01 already exists". Start from the snapshot ` +
+          `again:\n  pnpm demo:bed down --volumes --project ${options.project}\n` +
+          `  pnpm demo:bed restore --snapshot ${KIT_DIR}/snapshots/<file>.tar.gz --project ${options.project}\n` +
+          `  pnpm demo:bed up --project ${options.project}`,
+      );
+    }
   }
   const ports = bedPorts(values);
   const out = resolve(options.out ?? `${KIT_DIR}/revocation-${stamp()}`);
@@ -1546,7 +1663,7 @@ async function main(): Promise<number> {
       case 'preflight':
         return await preflight(options);
       case 'offline-rung':
-        offlineRung(options);
+        await offlineRung(options);
         return 0;
       case 'down':
         down(options);
