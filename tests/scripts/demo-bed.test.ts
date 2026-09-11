@@ -11,7 +11,8 @@ import {
   credentialKeyToAdopt,
   demoTiers,
   parseDemoBedArguments,
-  rungAlreadyRun,
+  rungAgents,
+  trialIdsSpent,
   parseDockerPs,
   probeTier,
   renderChecklist,
@@ -374,12 +375,18 @@ describe('the pre-flight verdict', (): void => {
     ]);
   });
 
-  it('reads a spent bed off the agent list, because the trial ids are unique per volume', (): void => {
-    expect(rungAlreadyRun([{ name: 'Acme RevOps agent' }])).toBe(false);
-    expect(rungAlreadyRun([])).toBe(false);
+  it("picks the rung's own agents out of the boss's list", (): void => {
+    expect(rungAgents([{ name: 'Acme RevOps agent' }])).toEqual([]);
+    expect(rungAgents([])).toEqual([]);
     expect(
-      rungAlreadyRun([{ name: 'Acme RevOps agent' }, { name: 'Day0 revocation evaluation' }]),
-    ).toBe(true);
+      rungAgents([{ name: 'Acme RevOps agent' }, { name: 'Day0 revocation evaluation' }]),
+    ).toEqual([{ name: 'Day0 revocation evaluation' }]);
+  });
+
+  it('calls the ids spent only once a trial was seeded, not merely attempted', (): void => {
+    expect(trialIdsSpent([])).toBe(false);
+    expect(trialIdsSpent([{ payload: { charterId: 'x' } }, { payload: null }])).toBe(false);
+    expect(trialIdsSpent([{ payload: { workItemId: 'w', trialId: 'rev-scope-01' } }])).toBe(true);
   });
 
   it('names the route the rung will dial and never lets it be OpenAI', (): void => {

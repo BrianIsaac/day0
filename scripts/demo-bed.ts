@@ -78,7 +78,20 @@ const TEST_SLACK_API_URL = 'http://fake-slack:8090/api/';
 const RUNG_AGENT_NAME = 'Day0 revocation evaluation';
 
 /**
- * Whether this bed has already run the rung, so a second one would fail.
+ * The rung's own agents, whose events say whether the trial ids are spent.
+ *
+ * Args:
+ *   agents: The boss's agents as the deployment lists them.
+ *
+ * Returns:
+ *   Those the rung deployed, newest first as the deployment ordered them.
+ */
+export function rungAgents<T extends { name: string }>(agents: readonly T[]): T[] {
+  return agents.filter((agent: T): boolean => agent.name === RUNG_AGENT_NAME);
+}
+
+/**
+ * Whether a rung has seeded its trials on this volume, so a second one fails.
  *
  * The trial's work rows are keyed `EVAL-rev-scope-01` and up, and the index
  * they are looked up by is `(sourceSystem, externalId)` alone
@@ -87,14 +100,41 @@ const RUNG_AGENT_NAME = 'Day0 revocation evaluation';
  * `trial rev-scope-01 already exists` around a minute in, after the onboarding
  * has been paid for. Restoring the snapshot again is the cheap way back.
  *
+ * A run that died in onboarding leaves its agent behind and seeds nothing, and
+ * that bed is still good: the trial id, not the agent, is what is spent, so the
+ * seeded event is what this reads.
+ *
  * Args:
- *   agents: The boss's agents as the deployment lists them.
+ *   events: Events on one of the rung's agents.
  *
  * Returns:
- *   Whether a rung has already run on this volume.
+ *   Whether any trial was seeded.
  */
-export function rungAlreadyRun(agents: readonly { name: string }[]): boolean {
-  return agents.some((agent: { name: string }): boolean => agent.name === RUNG_AGENT_NAME);
+export function trialIdsSpent(events: readonly { payload: unknown }[]): boolean {
+  return events.some(
+    (event: { payload: unknown }): boolean =>
+      typeof (event.payload as { trialId?: unknown } | null)?.trialId === 'string',
+  );
+}
+
+/**
+ * Whether any of the boss's agents shows a seeded trial on this volume.
+ *
+ * Args:
+ *   agents: The boss's agents as the deployment lists them.
+ *   readEvents: Reads one agent's recent events; the caller owns the client.
+ *
+ * Returns:
+ *   Whether the trial ids on this volume are spent.
+ */
+async function volumeSpent<T extends { name: string }>(
+  agents: readonly T[],
+  readEvents: (agent: T) => Promise<Array<{ payload: unknown }>>,
+): Promise<boolean> {
+  for (const agent of rungAgents(agents)) {
+    if (trialIdsSpent(await readEvents(agent))) return true;
+  }
+  return false;
 }
 
 const SYNC_SCRIPT = 'scripts/sync-convex-env.sh';
@@ -1246,7 +1286,11 @@ async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
     const sources = await boss.client.query(api.docSources.listMine, {});
     return {
       agents: agents.length,
-      rungAlreadyRun: rungAlreadyRun(agents),
+      rungAlreadyRun: await volumeSpent(
+        agents,
+        async (agent): Promise<Array<{ payload: unknown }>> =>
+          await boss.client.query(api.events.recent, { agentId: agent._id, limit: 500 }),
+      ),
       verdicts,
       docSources: sources.map(
         (source): string =>
@@ -1575,7 +1619,13 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
   const boss = await bossClient(values);
   if (!('reason' in boss)) {
     const { api } = await import('../convex/_generated/api');
-    if (rungAlreadyRun(await boss.client.query(api.agents.listForUser, {}))) {
+    const agents = await boss.client.query(api.agents.listForUser, {});
+    const spentHere = await volumeSpent(
+      agents,
+      async (agent): Promise<Array<{ payload: unknown }>> =>
+        await boss.client.query(api.events.recent, { agentId: agent._id, limit: 500 }),
+    );
+    if (spentHere) {
       throw new Error(
         `this volume has already run the rung, and its trial ids are spent: a second one dies ` +
           `about a minute in with "trial rev-scope-01 already exists". Start from the snapshot ` +
