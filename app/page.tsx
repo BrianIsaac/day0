@@ -64,8 +64,8 @@ function SignedOutHero() {
               Day0 · autonomous teammate
             </p>
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight leading-[1.05] mb-6">
-              Enterprise Digital Employees{' '}
-              <span className="text-[var(--color-muted)]">that just works.</span>
+              Enterprise digital employees{' '}
+              <span className="text-[var(--color-muted)]">that just work.</span>
             </h1>
             <p className="text-lg text-[var(--color-muted)] mb-10 leading-relaxed max-w-xl">
               One name in. Everything else is learned state. The agent runs its own Day-1 1:1 with
