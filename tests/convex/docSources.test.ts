@@ -359,6 +359,43 @@ describe('documentation sources in real mode', (): void => {
     });
   });
 
+  it('deletes the ciphertext of every credential an unlink revokes and keeps the row', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const { discovered, connection, typed } = await harness.run(async (ctx) => {
+      const base = { userId: 'owner', kind: 'value' as const, ciphertext: 'sealed', iv: 'iv', createdAt: 1 };
+      const connection = await ctx.db.insert('credentials', {
+        ...base,
+        label: 'notion integration token',
+        source: 'entered',
+      });
+      await ctx.db.patch(sourceId, { credentialId: connection });
+      return {
+        discovered: await ctx.db.insert('credentials', {
+          ...base,
+          label: 'linear service token',
+          source: { sourceId, ref: 'linear-automation' },
+        }),
+        connection,
+        typed: await ctx.db.insert('credentials', { ...base, label: 'typed elsewhere', source: 'entered' }),
+      };
+    });
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.docSources.unlink, { sourceId });
+    for (const id of [discovered, connection]) {
+      const row = await harness.run(async (ctx) => await ctx.db.get(id));
+      expect(row).toMatchObject({ userId: 'owner', revokedAt: expect.any(Number) });
+      expect(row?.label).toBeTruthy();
+      expect(row).not.toHaveProperty('ciphertext');
+      expect(row).not.toHaveProperty('iv');
+    }
+    // A credential the source never held is not the unlink's to touch.
+    expect(await harness.run(async (ctx) => await ctx.db.get(typed))).toMatchObject({
+      ciphertext: 'sealed',
+      iv: 'iv',
+    });
+  });
+
   it('retires a discovered system as history and keeps its approved surface', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
