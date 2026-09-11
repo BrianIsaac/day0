@@ -8,6 +8,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import * as credentialsModule from '../../convex/credentials';
 import { allConvexModules } from './all-modules';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const SECRET = ['ntn', 'contract-value-0123456789abcdef'].join('_');
 const ROTATED = ['ntn', 'rotated-value-0123456789abcdef'].join('_');
@@ -18,6 +19,7 @@ beforeEach((): void => {
 
 afterEach((): void => {
   vi.unstubAllEnvs();
+  restoreSurfaceMode();
 });
 
 /** Seed one owner source the page-derived credentials hang off. */
@@ -242,5 +244,30 @@ describe('credential contract', (): void => {
       .query(api.credentials.summaryForOwner, {});
     expect(summary[0].revokedAt).toEqual(expect.any(Number));
     await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
+  });
+});
+
+
+describe('credential persistence after unlink', () => {
+  it.each([false, true])('refuses late ciphertext after unlink (existing row: %s)', async (existing) => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const args = {
+      userId: 'owner', kind: 'value' as const, label: 'linear service token',
+      source: { sourceId, ref: 'page' }, ciphertext: 'late-ciphertext', iv: 'late-iv',
+      reactivate: true,
+    };
+    if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.docSources.unlink, { sourceId });
+    // Encryption began while the source existed; its final transaction arrives after unlink.
+    await expect(harness.mutation(internal.credentials.persistEncrypted, args)).rejects.toThrow('does not belong');
+    const stored = await rows(harness);
+    expect(stored).toHaveLength(existing ? 1 : 0);
+    for (const row of stored) {
+      expect(row).not.toHaveProperty('ciphertext');
+      expect(row).not.toHaveProperty('iv');
+      expect(row.revokedAt).toEqual(expect.any(Number));
+    }
   });
 });
