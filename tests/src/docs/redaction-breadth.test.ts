@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { notionPageTemplate, type NotionPageName } from '../../fixtures/notion-pages';
 import {
   credentialMarker,
+  LABELLED_ENTROPY_FLOOR_BITS,
+  looksLikeSecret,
   redactCredentials,
+  shannonBits,
 } from '../../../src/docs/redaction';
 
 /**
@@ -210,6 +213,12 @@ const NON_SHAPES: Fixture[] = [
     redacted: 0,
   },
   {
+    name: 'Linear issue keys, including on a key line',
+    title: 'Linear automation',
+    body: ['Issue key: REVOPS-7', 'Close REVOPS-12 after REVOPS-7.', 'Team key: REVOPS'].join('\n'),
+    redacted: 0,
+  },
+  {
     name: 'Notion page ids in a URL and on an id line',
     title: 'Onboarding',
     body: [
@@ -240,6 +249,19 @@ const NON_SHAPES: Fixture[] = [
       'DSN: postgres://app:${DB_PASSWORD}@warehouse.internal/revops',
       'DSN: postgres://app:<password>@warehouse.internal/revops',
       'DSN: postgres://app:{{ secret }}@warehouse.internal/revops',
+    ].join('\n'),
+    redacted: 0,
+  },
+  {
+    name: 'labelled values below the entropy floor',
+    title: 'Linear automation',
+    body: [
+      `Token: ${'x'.repeat(32)}`,
+      `Key: ${'*'.repeat(24)}`,
+      'Key: 2026-Q3-close',
+      'Channel key: C0123456789',
+      'Token version: v2-2026',
+      'Key: abcd1234',
     ].join('\n'),
     redacted: 0,
   },
@@ -320,5 +342,31 @@ describe('documentation redaction breadth', (): void => {
     expect(counts).toEqual([0, 1, 0, 0, 1]);
   });
 
+  it('applies the entropy floor to labelled values and to nothing else', (): void => {
+    expect(shannonBits('REVOPS-7')).toBeLessThan(LABELLED_ENTROPY_FLOOR_BITS);
+    expect(shannonBits('x'.repeat(32))).toBe(0);
+    expect(shannonBits(MIXED)).toBeGreaterThan(LABELLED_ENTROPY_FLOOR_BITS);
+    expect(looksLikeSecret('REVOPS-7')).toBe(false);
+    expect(looksLikeSecret('x'.repeat(32))).toBe(false);
+    expect(looksLikeSecret('2026-Q3-close')).toBe(false);
+    expect(looksLikeSecret(MIXED)).toBe(true);
+    expect(looksLikeSecret('0123456789abcdef')).toBe(true);
+    expect(looksLikeSecret('PASTE_LINEAR_API_KEY_HERE')).toBe(true);
+    // The floor never reaches an unlabelled identifier: a UUID in prose is kept.
+    const prose = `Run ${UUID} finished; see commit ${HEX_40}.`;
+    expect(redactCredentials(prose, 'Release notes').markdown).toBe(prose);
+  });
 
+  it('redacts unlabelled high-entropy identifiers only when the generic floor is switched on', (): void => {
+    const prose = `Run ${UUID} finished at commit ${HEX_40}; the page is ${NOTION_ID}.`;
+    expect(redactCredentials(prose, 'Release notes').credentials).toEqual([]);
+    const generic = redactCredentials(prose, 'Release notes', { genericEntropyFloor: true });
+    expect(generic.credentials.map((row) => row.plaintext)).toEqual([UUID, HEX_40, NOTION_ID]);
+    expect(generic.credentials.map((row) => row.label)).toEqual([
+      'release notes secret',
+      'release notes secret',
+      'release notes secret',
+    ]);
+    expect(markerCount(generic.markdown)).toBe(3);
+  });
 });
