@@ -21,6 +21,7 @@ import {
   autonomyLabel,
   HELD_BEFORE_AUTONOMY_NOTE,
   HELD_WHILE_SUPERVISED_NOTE,
+  SUPERVISED_LABEL,
 } from '../../../src/work/autonomy';
 import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
@@ -376,7 +377,7 @@ export function DashboardHeader({
       text: 'Charter drafted · awaiting boss approval',
       tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
     },
-    active: { text: 'Active · supervised', tone: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]' },
+    active: { text: `Active · ${SUPERVISED_LABEL}`, tone: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]' },
   };
   // A charter on the page is the more recent fact: a pill reading "Day-1 1:1
   // in progress" above a drafted charter is wrong however the row got there.

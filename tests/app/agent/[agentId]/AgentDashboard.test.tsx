@@ -197,7 +197,7 @@ describe('header state pill', (): void => {
 
   it('names the supervised state on an active agent, not the retired posture ladder', (): void => {
     const markup = renderToStaticMarkup(<DashboardHeader agent={agent} charter={charter} />);
-    expect(markup).toContain('Active · supervised');
+    expect(markup).toContain('Active · Supervised');
     expect(markup).not.toContain('cold-start');
     expect(markup).not.toContain('posture');
   });
