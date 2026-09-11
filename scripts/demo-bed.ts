@@ -51,11 +51,18 @@ export const PROTECTED_VOLUMES: readonly string[] = PROTECTED_PROJECTS.flatMap(
 export const DEFAULT_SNAPSHOT_SOURCE = 'day0-demo-7c65e7_convex_data';
 
 /**
- * What a demo bed runs: day0 itself, the sandbox that verifies a skill, and the
- * two doubles the offline rung is measured against. The dashboard, Notion and
- * browser components are opt-in with `--profile`.
+ * What a demo bed runs: day0 itself, the sandbox that verifies a skill, the
+ * two doubles the offline rung is measured against, and the browser component,
+ * without which the recorded run's tile card flips to `ungranted` on the first
+ * re-probe after bring-up (seen 12 Sep 2026). The dashboard and the Notion
+ * component are opt-in with `--profile`.
  */
-export const BED_PROFILES: readonly string[] = ['real', 'sandbox', 'test', 'demo'];
+export const BED_PROFILES: readonly string[] = ['real', 'sandbox', 'test', 'demo', 'browser'];
+
+/** Where the bundled browser component answers, as the deployment must address it. */
+const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
+
+const SYNC_SCRIPT = 'scripts/sync-convex-env.sh';
 
 /** Pinned in the compose file; used for the throwaway tar containers too. */
 const TAR_IMAGE_PREFIX = 'node:22-alpine@sha256:';
@@ -496,6 +503,78 @@ export function revocationSummary(report: string): string[] {
     );
 }
 
+/**
+ * The keys `scripts/sync-convex-env.sh` pushes, read off the script itself.
+ *
+ * The sync script skips a key that is empty in the file, which is right for a
+ * fresh deployment and wrong for a restored one: the recording bed's OpenAI,
+ * Daytona and Exa keys stay on the deployment, and the first is then sent to
+ * whichever host `OPENAI_BASE_URL` names. `up` clears those; this is the list
+ * it clears from, so the two scripts cannot drift apart.
+ *
+ * Args:
+ *   scriptText: The sync script.
+ *
+ * Returns:
+ *   The names inside its `KEYS=( ... )` block, in order.
+ *
+ * Raises:
+ *   Error: When the block is not found.
+ */
+export function syncScriptKeys(scriptText: string): string[] {
+  const block = /^KEYS=\(\n([\s\S]*?)^\)/m.exec(scriptText);
+  if (!block) throw new Error(`${SYNC_SCRIPT} has no KEYS=( ... ) block to read.`);
+  return block[1]
+    .split('\n')
+    .map((line: string): string => line.replace(/#.*$/, '').trim())
+    .filter((line: string): boolean => /^[A-Z][A-Z0-9_]*$/.test(line));
+}
+
+/**
+ * Deployment variables to remove: present there, empty in the file, and among
+ * the keys the sync script would otherwise leave alone.
+ *
+ * Args:
+ *   fileValues: What `.env.local` declares.
+ *   deploymentValues: What `convex env list` reports.
+ *   keys: The sync script's key list.
+ *
+ * Returns:
+ *   The names to clear, in the sync script's order.
+ */
+export function secretsToClear(
+  fileValues: Readonly<Record<string, string>>,
+  deploymentValues: Readonly<Record<string, string>>,
+  keys: readonly string[],
+): string[] {
+  return keys.filter(
+    (key: string): boolean => !(fileValues[key] ?? '') && (deploymentValues[key] ?? '') !== '',
+  );
+}
+
+/**
+ * The credential key to write into the file, if the volume's differs.
+ *
+ * Stored credentials were encrypted under the key the recording bed ran with,
+ * which a restored volume still carries in its deployment env until the sync
+ * overwrites it. Keeping the file's own key would leave every stored
+ * credential unreadable and every connected card failing its next probe.
+ *
+ * Args:
+ *   fileValue: `DAY0_CREDENTIAL_KEY` in the file.
+ *   deploymentValue: `DAY0_CREDENTIAL_KEY` on the restored deployment.
+ *
+ * Returns:
+ *   The deployment's key when it is set and differs, else undefined.
+ */
+export function credentialKeyToAdopt(
+  fileValue: string,
+  deploymentValue: string | undefined,
+): string | undefined {
+  if (!deploymentValue) return undefined;
+  return deploymentValue === fileValue ? undefined : deploymentValue;
+}
+
 export type ChecklistStatus = 'ok' | 'warn' | 'gap';
 
 export interface ChecklistItem {
@@ -764,6 +843,18 @@ async function bossClient(
   return { client };
 }
 
+/** `convex env list` as a map; empty when the CLI cannot answer. */
+function deploymentEnv(env: Values): Values {
+  const result = run('npx', ['convex', 'env', 'list'], { env, timeoutMs: 60_000 });
+  const values: Values = {};
+  if (result.status !== 0) return values;
+  for (const line of result.stdout.split('\n')) {
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line.trim());
+    if (match) values[match[1]] = match[2];
+  }
+  return values;
+}
+
 /* --------------------------------- snapshot -------------------------------- */
 
 function snapshot(options: DemoBedOptions): void {
@@ -876,6 +967,8 @@ async function up(options: DemoBedOptions): Promise<void> {
     derived.NEXT_PUBLIC_CONVEX_URL = `http://127.0.0.1:${ports.backend}`;
   if (!values.NEXT_PUBLIC_CONVEX_SITE_URL)
     derived.NEXT_PUBLIC_CONVEX_SITE_URL = `http://127.0.0.1:${ports.site}`;
+  if (options.profiles.includes('browser') && !values.DAY0_BROWSER_MCP_URL)
+    derived.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
   if (Object.keys(derived).length > 0) {
     writeEnvValues(derived);
     log(`Wrote ${Object.keys(derived).join(', ')} to ${ENV_FILE}.`);
@@ -889,7 +982,7 @@ async function up(options: DemoBedOptions): Promise<void> {
   const env = bedEnvironment(options, readEnvFile());
 
   const startedAt = Date.now();
-  log(`[1/7] Keys: pnpm dev:no-auth-key (no-op when ${ENV_FILE} already has them)`);
+  log(`[1/8] Keys: pnpm dev:no-auth-key (no-op when ${ENV_FILE} already has them)`);
   must(
     run('pnpm', ['exec', 'tsx', 'scripts/dev-no-auth-key.ts', 'init'], { env, inherit: true }),
     'dev:no-auth-key',
@@ -897,7 +990,7 @@ async function up(options: DemoBedOptions): Promise<void> {
   values = readEnvFile();
 
   log(
-    `[2/7] Documentation directory, then compose up (${options.profiles.join(', ')}), images never pulled`,
+    `[2/8] Documentation directory, then compose up (${options.profiles.join(', ')}), images never pulled`,
   );
   must(
     run('pnpm', ['exec', 'tsx', 'scripts/dev-docs-dir.ts'], {
@@ -916,7 +1009,7 @@ async function up(options: DemoBedOptions): Promise<void> {
   const version = await waitForBackend(ports.backend);
   log(`      backend ${version} on 127.0.0.1:${ports.backend} after ${elapsed(startedAt)}`);
 
-  log("[3/7] Admin key from the volume's own instance secret");
+  log("[3/8] Admin key from the volume's own instance secret");
   const keyResult = must(
     run(
       'docker',
@@ -944,15 +1037,47 @@ async function up(options: DemoBedOptions): Promise<void> {
     log('      the key in the file already matches this volume');
   }
   values = readEnvFile();
+
+  log("[4/8] What the volume's deployment already carries");
+  const deployment = deploymentEnv(bedEnvironment(options, values));
+  const adopt = credentialKeyToAdopt(
+    values.DAY0_CREDENTIAL_KEY ?? '',
+    deployment.DAY0_CREDENTIAL_KEY,
+  );
+  if (adopt) {
+    writeEnvValues({ DAY0_CREDENTIAL_KEY: adopt });
+    log(
+      `      adopted the volume's DAY0_CREDENTIAL_KEY into ${ENV_FILE}: its stored credentials stay readable`,
+    );
+    values = readEnvFile();
+  }
+  const stale = secretsToClear(
+    values,
+    deployment,
+    syncScriptKeys(readFileSync(SYNC_SCRIPT, 'utf8')),
+  );
+  for (const key of stale) {
+    must(
+      run('npx', ['convex', 'env', 'remove', key], {
+        env: bedEnvironment(options, values),
+        timeoutMs: 60_000,
+      }),
+      `convex env remove ${key}`,
+    );
+    log(
+      `      cleared ${key}: on the deployment, empty in ${ENV_FILE}, and the sync would skip it`,
+    );
+  }
+  if (!adopt && stale.length === 0) log('      nothing to adopt or clear');
   const pushEnv = bedEnvironment(options, values);
 
-  log('[4/7] Deployment env: ./scripts/sync-convex-env.sh');
+  log('[5/8] Deployment env: ./scripts/sync-convex-env.sh');
   must(
     run('bash', ['scripts/sync-convex-env.sh', ENV_FILE], { env: pushEnv, inherit: true }),
     'sync:env',
   );
 
-  log('[5/7] Functions: convex dev --once');
+  log('[6/8] Functions: convex dev --once');
   const pushStartedAt = Date.now();
   must(
     run('pnpm', ['exec', 'convex', 'dev', '--once', '--typecheck', 'disable'], {
@@ -963,7 +1088,7 @@ async function up(options: DemoBedOptions): Promise<void> {
   );
   log(`      pushed in ${elapsed(pushStartedAt)}`);
 
-  log('[6/7] Restart the backend so the pushed env is what the modules read');
+  log('[7/8] Restart the backend so the pushed env is what the modules read');
   must(
     run('docker', [...composeArgs(options, ['real']), 'restart', 'backend'], {
       env: pushEnv,
@@ -975,7 +1100,7 @@ async function up(options: DemoBedOptions): Promise<void> {
 
   if (options.reset) {
     log(
-      `[7/7] Reset the local boss's agents${options.unlink ? ', documentation and credentials' : ''}`,
+      `[8/8] Reset the local boss's agents${options.unlink ? ', documentation and credentials' : ''}`,
     );
     const boss = await bossClient(values);
     if ('reason' in boss) throw new Error(`cannot reset: ${boss.reason}`);
@@ -985,7 +1110,7 @@ async function up(options: DemoBedOptions): Promise<void> {
     });
     log(`      deleted ${result.deleted} agent(s), unlinked ${result.unlinkedSources} source(s)`);
   } else {
-    log("[7/7] No reset asked for; the volume's agents stay");
+    log("[8/8] No reset asked for; the volume's agents stay");
   }
   log(`Up in ${elapsed(startedAt)}.`);
   if (options.preflight) {
@@ -1000,6 +1125,7 @@ interface SurfaceSummary {
   agents: number;
   verdicts: Record<string, number>;
   docSources: string[];
+  lastProbeFailure?: string;
 }
 
 async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
@@ -1009,10 +1135,23 @@ async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
     const { api } = await import('../convex/_generated/api');
     const agents = await boss.client.query(api.agents.listForUser, {});
     const verdicts: Record<string, number> = {};
+    let lastProbeFailure: { createdAt: number; text: string } | undefined;
     for (const agent of agents) {
       const surfaces = await boss.client.query(api.surfaces.listForAgent, { agentId: agent._id });
       for (const surface of surfaces)
         verdicts[surface.verdict] = (verdicts[surface.verdict] ?? 0) + 1;
+      const events = (await boss.client.query(api.events.recent, {
+        agentId: agent._id,
+        limit: 200,
+      })) as Array<{ type: string; createdAt: number; payload: unknown }>;
+      const failure = events.find((event): boolean => event.type === 'surface.probe-failed');
+      if (failure && (!lastProbeFailure || failure.createdAt > lastProbeFailure.createdAt)) {
+        const payload = failure.payload as { reason?: string; verdict?: string };
+        lastProbeFailure = {
+          createdAt: failure.createdAt,
+          text: `${new Date(failure.createdAt).toISOString()} -> ${payload.verdict ?? '?'}: ${(payload.reason ?? '').slice(0, 120)}`,
+        };
+      }
     }
     const sources = await boss.client.query(api.docSources.listMine, {});
     return {
@@ -1020,8 +1159,13 @@ async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
       verdicts,
       docSources: sources.map(
         (source): string =>
-          `${source.kind} "${source.label}": ${source.status}, ${source.pageCount} pages`,
+          `${source.kind} "${source.label}": ${source.status}, ${source.pageCount} pages${
+            source.status === 'error' && source.lastError
+              ? ` (${source.lastError.slice(0, 100)})`
+              : ''
+          }`,
       ),
+      ...(lastProbeFailure ? { lastProbeFailure: lastProbeFailure.text } : {}),
     };
   } catch (error) {
     return (error as Error).message.split('\n')[0];
@@ -1120,7 +1264,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
     label: 'Backend answers /version',
     status: version ? 'ok' : 'gap',
     detail: version
-      ? `${values.CONVEX_SELF_HOSTED_URL || `http://127.0.0.1:${ports.backend}`} is ${version}`
+      ? `${values.CONVEX_SELF_HOSTED_URL || `http://127.0.0.1:${ports.backend}`} (version ${version})`
       : 'no answer',
   });
 
@@ -1190,7 +1334,40 @@ async function preflight(options: DemoBedOptions): Promise<number> {
                 .join(', ') || 'none'
             }`,
             ...surfaces.docSources,
+            ...(surfaces.lastProbeFailure
+              ? [`last surface.probe-failed: ${surfaces.lastProbeFailure}`]
+              : []),
+            'the hourly re-probe runs within seconds of a bring-up; with no network the Slack and Linear cards flip on it',
           ].join('\n'),
+  });
+
+  if (version && values.CONVEX_SELF_HOSTED_ADMIN_KEY) {
+    const deployment = deploymentEnv(bedEnvironment(options, values));
+    const stale = Object.keys(deployment).length
+      ? secretsToClear(values, deployment, syncScriptKeys(readFileSync(SYNC_SCRIPT, 'utf8')))
+      : [];
+    items.push({
+      label: `Deployment env: ${Object.keys(deployment).length} variable(s)`,
+      status: Object.keys(deployment).length === 0 ? 'warn' : stale.length > 0 ? 'gap' : 'ok',
+      detail:
+        Object.keys(deployment).length === 0
+          ? 'convex env list did not answer; the admin key may not match this volume'
+          : stale.length > 0
+            ? `set on the deployment and empty in ${ENV_FILE}: ${stale.join(', ')}; run pnpm demo:bed up to clear them`
+            : `nothing on the deployment that ${ENV_FILE} leaves empty`,
+    });
+  }
+
+  const browserRunning = running('playwright-mcp');
+  const browserSwitch = values.DAY0_BROWSER_MCP_URL ?? '';
+  items.push({
+    label: 'Browser component',
+    status: browserRunning && browserSwitch ? 'ok' : 'warn',
+    detail: browserRunning
+      ? browserSwitch
+        ? `playwright-mcp is running and DAY0_BROWSER_MCP_URL names ${browserSwitch}`
+        : 'playwright-mcp is running but DAY0_BROWSER_MCP_URL is empty, so the tile card flips to ungranted on the next probe'
+      : 'playwright-mcp is not running; the recorded tile card flips to ungranted on the next probe',
   });
 
   const rungReady =

@@ -7,6 +7,7 @@ import {
   assertNotProtected,
   bedPorts,
   composeImages,
+  credentialKeyToAdopt,
   demoTiers,
   parseDemoBedArguments,
   parseDockerPs,
@@ -15,7 +16,9 @@ import {
   restoreCommand,
   restoreTargetVolume,
   revocationSummary,
+  secretsToClear,
   snapshotCommand,
+  syncScriptKeys,
   upsertEnvText,
   type ChecklistItem,
 } from '../../scripts/demo-bed';
@@ -184,6 +187,48 @@ describe('the env file', (): void => {
         FAKE_SLACK_HOST_PORT: '44090',
       }),
     ).toEqual({ backend: 44210, site: 44211, dashboard: 46791, fakeSlack: 44090 });
+  });
+});
+
+describe("a restored volume carries the recording bed's deployment env", (): void => {
+  const SYNC_SCRIPT = readFileSync('scripts/sync-convex-env.sh', 'utf8');
+
+  it('reads the key list the sync script pushes, so the two never drift', (): void => {
+    const keys = syncScriptKeys(SYNC_SCRIPT);
+    expect(keys).toContain('OPENAI_API_KEY');
+    expect(keys).toContain('DAYTONA_API_KEY');
+    expect(keys).toContain('EXA_API_KEY');
+    expect(keys).not.toContain('NEXT_PUBLIC_DEV_NO_AUTH');
+    expect(syncScriptKeys('KEYS=(\n  A\n  B # note\n)\n')).toEqual(['A', 'B']);
+    expect(() => syncScriptKeys('nothing')).toThrow('KEYS');
+  });
+
+  it('clears a secret the deployment holds and the file leaves empty, and nothing else', (): void => {
+    expect(
+      secretsToClear(
+        { OPENAI_API_KEY: '', DAYTONA_API_KEY: '', OPENAI_MODEL: 'glm' },
+        {
+          OPENAI_API_KEY: 'sk-old',
+          DAYTONA_API_KEY: 'dtn-old',
+          OPENAI_MODEL: 'gpt',
+          DAY0_SURFACE_MODE: 'real',
+        },
+        ['OPENAI_API_KEY', 'DAYTONA_API_KEY', 'OPENAI_MODEL', 'EXA_API_KEY'],
+      ),
+    ).toEqual(['OPENAI_API_KEY', 'DAYTONA_API_KEY']);
+  });
+
+  it("adopts the volume's credential key so its stored credentials stay readable", (): void => {
+    expect(credentialKeyToAdopt('', 'volume-key')).toBe('volume-key');
+    expect(credentialKeyToAdopt('file-key', 'volume-key')).toBe('volume-key');
+    expect(credentialKeyToAdopt('same', 'same')).toBeUndefined();
+    expect(credentialKeyToAdopt('file-key', '')).toBeUndefined();
+    expect(credentialKeyToAdopt('file-key', undefined)).toBeUndefined();
+  });
+
+  it('runs the browser component by default, or the recorded tile card flips to ungranted', (): void => {
+    expect(BED_PROFILES).toContain('browser');
+    expect(BED_PROFILES).toContain('demo');
   });
 });
 
