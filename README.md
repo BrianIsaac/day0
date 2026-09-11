@@ -699,7 +699,7 @@ It resolves values the way the running app does, which matters more than it soun
 4. **Approval** — boss approves; `api.charters.approve` flips state to `active` and triggers `postCharterApproval` (Exa + the configured model → `## Good-habits memory` block in `AGENTS.md`).
 5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item. Claimed items get a plan (`draftPlan`), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Run it in real mode](#run-it-in-real-mode). **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
 6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** non-empty stdout, whichever ran. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
-7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 16 explicitly enumerated related tables. Owner-level documentation locations remain unless the reset request sets `alsoUnlinkDocumentation`.
+7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 17 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
 
 ## Stack
 
@@ -778,7 +778,7 @@ It resolves values the way the running app does, which matters more than it soun
 | `metrics.ts` | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger |
 | `ownership.ts` | Shared caller and per-agent ownership guards for queries, mutations and actions |
 | `crons.ts` | Recovery, documentation sync, surface re-probe, work intake and manager-decision schedules |
-| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 16 enumerated related tables; documentation unlinking is optional |
+| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 17 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |
 | `auth.config.ts` | Chooses the Clerk JWT bridge or the guarded local no-auth JWT provider from deployment env |
 
 ## Schema (`convex/schema.ts`)
