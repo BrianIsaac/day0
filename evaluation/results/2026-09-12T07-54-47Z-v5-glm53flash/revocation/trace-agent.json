@@ -1,0 +1,2392 @@
+{
+  "agent": {
+    "id": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+    "name": "Day0 revocation evaluation"
+  },
+  "credentialNames": [
+    {
+      "label": "Fake Slack dedicated evaluation token"
+    }
+  ],
+  "events": [
+    {
+      "_creationTime": 1789201043610.6416,
+      "_id": "k17a4hpjwqk1n7zqz13h3xd3ah8e92zc",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201043610,
+      "payload": {
+        "arm": "day0"
+      },
+      "type": "agent.deployed"
+    },
+    {
+      "_creationTime": 1789201043610.642,
+      "_id": "k17dp6e59x9p8dp0sw1zs1baen8e80bk",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201043610,
+      "payload": {
+        "scope": "boss:message",
+        "source": "deploy"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201043610.6426,
+      "_id": "k173d75w2ttm9vnmhsedh2d1zn8e8gm0",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201043610,
+      "payload": {
+        "scope": "docs:read",
+        "source": "deploy"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201048879.4907,
+      "_id": "k171rscskz6fjpe5jxvpzrp95n8e82yg",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201048879,
+      "payload": {
+        "created": 4,
+        "retired": 0,
+        "scheduled": 0,
+        "sourceId": "jn7fxcx2exb7ghjv3g5mhzca358e8qyg",
+        "systems": 4,
+        "updated": 0
+      },
+      "type": "documentation.systems-discovered"
+    },
+    {
+      "_creationTime": 1789201069521.04,
+      "_id": "k17cr8gvw7ypr36a5rye6d018s8e82ts",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201069521,
+      "payload": {
+        "charterId": "j97ar93rt3kwbktxax5v08ztyh8e8szg",
+        "version": "0.0"
+      },
+      "type": "charter.drafted"
+    },
+    {
+      "_creationTime": 1789201069577.5962,
+      "_id": "k175ym6a48j4ggdc2g7t46vfe98e9kwm",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201069577,
+      "payload": {
+        "charterId": "j97ar93rt3kwbktxax5v08ztyh8e8szg",
+        "version": "0.0"
+      },
+      "type": "charter.approved"
+    },
+    {
+      "_creationTime": 1789201069644.7793,
+      "_id": "k17c5hpeyx3cxm49kdyns2y0mh8e8drc",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201069644,
+      "payload": {
+        "source": "revocation-evaluation-folder-fixture",
+        "surfaceId": "mh7d7emq4ftmdth2b2rx9f4mn58e92nk"
+      },
+      "type": "surface.proposed"
+    },
+    {
+      "_creationTime": 1789201069644.7795,
+      "_id": "k1737jbk0mre7f81wtwmvk442s8e9cdb",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201069644,
+      "payload": {
+        "source": "revocation-evaluation-folder-fixture",
+        "surfaceId": "mh7fzm0mca551zsfcbthab7bw98e9p30"
+      },
+      "type": "surface.proposed"
+    },
+    {
+      "_creationTime": 1789201069722.362,
+      "_id": "k172x2xxen4t7sbmgrkc4v0hjh8e9j83",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201069722,
+      "payload": {
+        "surfaceId": "mh7d7emq4ftmdth2b2rx9f4mn58e92nk"
+      },
+      "type": "surface.approved"
+    },
+    {
+      "_creationTime": 1789201069783.4473,
+      "_id": "k172t475mg517dhv5q15ppeqxh8e8n19",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201069783,
+      "payload": {
+        "surfaceId": "mh7fzm0mca551zsfcbthab7bw98e9p30"
+      },
+      "type": "surface.approved"
+    },
+    {
+      "_creationTime": 1789201080307.5696,
+      "_id": "k1709crr1jf5r7nmcw7cge8f898e922g",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201080304,
+      "payload": {
+        "surfaceId": "mh7d7emq4ftmdth2b2rx9f4mn58e92nk"
+      },
+      "type": "surface.connected"
+    },
+    {
+      "_creationTime": 1789201080307.57,
+      "_id": "k172ve527y99k3r91j16e88ghn8e8nhz",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201080307,
+      "payload": {
+        "scope": "slack:read",
+        "source": "surface"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201081273.0237,
+      "_id": "k17e5x389jwp5mevx22fasd1f98e8k4y",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081270,
+      "payload": {
+        "surfaceId": "mh7fzm0mca551zsfcbthab7bw98e9p30"
+      },
+      "type": "surface.connected"
+    },
+    {
+      "_creationTime": 1789201081273.0242,
+      "_id": "k17833j4vjwe6m1btegqt4dsx58e80wd",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081273,
+      "payload": {
+        "scope": "looker-pipeline-tile:read",
+        "source": "surface"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201081386.4502,
+      "_id": "k174m2wh90sx3aaqyy8366ajq18e8a8c",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081386,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-01",
+        "workItemId": "ms7ckaxn5rqb307bw6hpwh82618e8chq"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201081410.3557,
+      "_id": "k173mwzfj9wzx1hmr0ystsxazs8e88pz",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081410,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-01",
+        "scope": "slack:read"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201081518.2134,
+      "_id": "k174perd6pekbws4ahv1jjnpd98e862b",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081518,
+      "payload": {
+        "decision": "defer",
+        "verdict": {
+          "decision": "defer",
+          "missingPermissions": [
+            "slack:read"
+          ],
+          "reason": "awaiting-permission"
+        },
+        "workItemId": "ms7ckaxn5rqb307bw6hpwh82618e8chq"
+      },
+      "type": "work.evaluated"
+    },
+    {
+      "_creationTime": 1789201081575.566,
+      "_id": "k17dvemttae18w5atmfj8b2eqn8e8djr",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081575,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-02",
+        "workItemId": "ms79qq454dhdvmfps8m7ywmknx8e8wpv"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201081575.5662,
+      "_id": "k17fjtkbb5sp85p2gqz7byeb058e9be9",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081575,
+      "payload": {
+        "trialId": "rev-scope-02",
+        "workItemId": "ms79qq454dhdvmfps8m7ywmknx8e8wpv"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201081575.5664,
+      "_id": "k176k6gabensr5jtjk2vzqpsx18e9w6g",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081575,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [],
+        "autonomousActions": false,
+        "heldIndexes": [
+          0
+        ],
+        "refusedIndexes": [],
+        "runId": "k17fjtkbb5sp85p2gqz7byeb058e9be9",
+        "trialId": "rev-scope-02",
+        "workItemId": "ms79qq454dhdvmfps8m7ywmknx8e8wpv"
+      },
+      "type": "work.actions-pending"
+    },
+    {
+      "_creationTime": 1789201081601.9797,
+      "_id": "k17arrjhrmxkcpsk1wccvnd9sd8e8ypt",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081601,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-02",
+        "scope": "boss:message"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201081636.9246,
+      "_id": "k175cw446hxc5gk98qegye6yds8e9d78",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081636,
+      "payload": {
+        "approvedIndexes": [
+          0
+        ],
+        "autoIndexes": [],
+        "decidedVia": "dashboard",
+        "refusedIndexes": [],
+        "rejectedIndexes": [],
+        "runId": "k17fjtkbb5sp85p2gqz7byeb058e9be9",
+        "workItemId": "ms79qq454dhdvmfps8m7ywmknx8e8wpv"
+      },
+      "type": "work.actions-approved"
+    },
+    {
+      "_creationTime": 1789201081674.1157,
+      "_id": "k17754px2tzj7bez5s6vdxxq258e8vr3",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081674,
+      "payload": {
+        "phase": "approved",
+        "runId": "k17fjtkbb5sp85p2gqz7byeb058e9be9",
+        "workItemId": "ms79qq454dhdvmfps8m7ywmknx8e8wpv"
+      },
+      "type": "work.actions-applying"
+    },
+    {
+      "_creationTime": 1789201081736.9966,
+      "_id": "k175w2yvecfkvhg6szh6rpbh3n8e9ze3",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081737,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"D_DAY0_MANAGER\",\"text\":\"Held evaluation DM.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms79qq454dhdvmfps8m7ywmknx8e8wpv:k17fjtkbb5sp85p2gqz7byeb058e9be9:0",
+              "ok": false,
+              "reason": "no grant (boss:message)",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "1 of 1 actions did not change the work environment: http.request (no grant (boss:message))",
+        "workItemId": "ms79qq454dhdvmfps8m7ywmknx8e8wpv"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201081810.3694,
+      "_id": "k17fz4y663zqpe7019wsz41jkh8e9d25",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081810,
+      "payload": {
+        "scope": "boss:message",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201081830.6528,
+      "_id": "k17735xpm6shdj2gbqs6ty8k798e9q6d",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081830,
+      "payload": {
+        "scope": "slack:read",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201081850.2527,
+      "_id": "k17b992dznay72wj7ygpdmrxqn8e8117",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081850,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-03",
+        "workItemId": "ms792cmy0fffrpqkfgkdhkvwv58e8mfj"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201081850.253,
+      "_id": "k17a1dkvny1jzgfffgkgma5yes8e818j",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081850,
+      "payload": {
+        "trialId": "rev-scope-03",
+        "workItemId": "ms792cmy0fffrpqkfgkdhkvwv58e8mfj"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201081850.2532,
+      "_id": "k17czaqqcrbcgp7mdwd649pqf58e8ywv",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081850,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": false,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k17a1dkvny1jzgfffgkgma5yes8e818j",
+        "trialId": "rev-scope-03",
+        "workItemId": "ms792cmy0fffrpqkfgkdhkvwv58e8mfj"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201081940.5098,
+      "_id": "k171qxqh2sf7ksewsg72ber9cs8e9wxe",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201081940,
+      "payload": {
+        "checkpoint": "scope-revoked",
+        "scope": "slack:read",
+        "workItemId": "ms792cmy0fffrpqkfgkdhkvwv58e8mfj"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201082012.032,
+      "_id": "k176vjvvp8e2zz2knrethbsvvx8e8n8j",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082012,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-03",
+        "scope": "slack:read"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201082079.0889,
+      "_id": "k172666x7kcp2s8n76wd52v2j58e8ryg",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082079,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "GET",
+                "path": "auth.test",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms792cmy0fffrpqkfgkdhkvwv58e8mfj:k17a1dkvny1jzgfffgkgma5yes8e818j:0",
+              "ok": false,
+              "reason": "no grant (slack:read)",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "no grant (slack:read)",
+        "runId": "k17a1dkvny1jzgfffgkgma5yes8e818j",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms792cmy0fffrpqkfgkdhkvwv58e8mfj"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201082129.8333,
+      "_id": "k173dqs4604cg113hpwnam7k9x8e99tm",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082129,
+      "payload": {
+        "scope": "slack:write",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201082151.3384,
+      "_id": "k17bawt1g8nma43n4zdnedkv198e83n6",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082151,
+      "payload": {
+        "from": false,
+        "reason": "set by the manager",
+        "to": true
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201082185.5923,
+      "_id": "k179884gw6va7mmmh3y4z6ncrd8e9pns",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082185,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-04",
+        "workItemId": "ms77tebyy5fvs1zdgdpc4wsy918e91kg"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201082185.5925,
+      "_id": "k179hrx7rpka2w7xnd7rnhz3js8e8y9r",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082185,
+      "payload": {
+        "trialId": "rev-scope-04",
+        "workItemId": "ms77tebyy5fvs1zdgdpc4wsy918e91kg"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201082185.5928,
+      "_id": "k175vw5bj1dexsdwf75b2xat9d8e96fj",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082185,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k179hrx7rpka2w7xnd7rnhz3js8e8y9r",
+        "trialId": "rev-scope-04",
+        "workItemId": "ms77tebyy5fvs1zdgdpc4wsy918e91kg"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201082270.8691,
+      "_id": "k17eyrhz6ytbhtw8260m5q4y598e8e3r",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082270,
+      "payload": {
+        "checkpoint": "scope-revoked",
+        "scope": "slack:write",
+        "workItemId": "ms77tebyy5fvs1zdgdpc4wsy918e91kg"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201082344.185,
+      "_id": "k17an9wm8k59wdprgv7sb3meah8e84wy",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082344,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-04",
+        "scope": "slack:write"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201082409.8552,
+      "_id": "k176c8zrdtysc44pk0kr7dxbps8e8q3d",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082409,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms77tebyy5fvs1zdgdpc4wsy918e91kg:k179hrx7rpka2w7xnd7rnhz3js8e8y9r:0",
+              "ok": false,
+              "reason": "no grant (slack:write)",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "no grant (slack:write)",
+        "runId": "k179hrx7rpka2w7xnd7rnhz3js8e8y9r",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms77tebyy5fvs1zdgdpc4wsy918e91kg"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201082470.4963,
+      "_id": "k172qq56w487g4xsfxpzwacdqx8e8py3",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082470,
+      "payload": {
+        "scope": "slack:write",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201082491.7295,
+      "_id": "k17bgw0vz0y4w9jmyre983k5m98e856a",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082491,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-05",
+        "workItemId": "ms73pm4v4pekz2g8sdqm2grym58e8qk7"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201082491.7297,
+      "_id": "k171qertd609e8f6pswyk853358e818h",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082491,
+      "payload": {
+        "trialId": "rev-scope-05",
+        "workItemId": "ms73pm4v4pekz2g8sdqm2grym58e8qk7"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201082491.73,
+      "_id": "k17cqxpw6my85wfcz6n3bnsn318e90tc",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082491,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [],
+        "autonomousActions": true,
+        "heldIndexes": [
+          0
+        ],
+        "refusedIndexes": [],
+        "runId": "k171qertd609e8f6pswyk853358e818h",
+        "trialId": "rev-scope-05",
+        "workItemId": "ms73pm4v4pekz2g8sdqm2grym58e8qk7"
+      },
+      "type": "work.actions-pending"
+    },
+    {
+      "_creationTime": 1789201082521.3997,
+      "_id": "k171ed84yb71et6e3e5x597sq98e8hhs",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082521,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-05",
+        "scope": "slack:write"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201082557.1558,
+      "_id": "k17fp5sr14v7zkb626zkxgcems8e8p59",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082557,
+      "payload": {
+        "approvedIndexes": [
+          0
+        ],
+        "autoIndexes": [],
+        "decidedVia": "dashboard",
+        "refusedIndexes": [],
+        "rejectedIndexes": [],
+        "runId": "k171qertd609e8f6pswyk853358e818h",
+        "workItemId": "ms73pm4v4pekz2g8sdqm2grym58e8qk7"
+      },
+      "type": "work.actions-approved"
+    },
+    {
+      "_creationTime": 1789201082594.2214,
+      "_id": "k179454mp7f972p6mzm3b0xf558e9sba",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082594,
+      "payload": {
+        "phase": "approved",
+        "runId": "k171qertd609e8f6pswyk853358e818h",
+        "workItemId": "ms73pm4v4pekz2g8sdqm2grym58e8qk7"
+      },
+      "type": "work.actions-applying"
+    },
+    {
+      "_creationTime": 1789201082675.7766,
+      "_id": "k171ysbk8e3am1z5wbxdwz8zq18e8zg6",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082675,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "authority": "manager",
+              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"C_REVOPS\",\"ts\":\"1787817600.000001\",\"message\":{\"ts\":\"1787817600.000001\"}}",
+              "idempotencyKey": "ms73pm4v4pekz2g8sdqm2grym58e8qk7:k171qertd609e8f6pswyk853358e818h:0",
+              "ok": true,
+              "providerId": "1787817600.000001",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "workItemId": "ms73pm4v4pekz2g8sdqm2grym58e8qk7"
+      },
+      "type": "work.completed"
+    },
+    {
+      "_creationTime": 1789201082739.9,
+      "_id": "k172cp6sj07hkhgptre78k3n2d8e8frp",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082739,
+      "payload": {
+        "scope": "slack:read",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201082762.7236,
+      "_id": "k17cxpfkyfaxytfeevxv9zh19d8e8ge3",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082762,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-06",
+        "workItemId": "ms7cecde2g3w25e1jf5wrdrtqs8e9e8h"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201082762.7239,
+      "_id": "k17257qhk3m4h79a38pk1vjyp98e9kwx",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082762,
+      "payload": {
+        "trialId": "rev-scope-06",
+        "workItemId": "ms7cecde2g3w25e1jf5wrdrtqs8e9e8h"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201082762.724,
+      "_id": "k17e9x54p9kb3kagzxmwqxzapn8e8har",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082762,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k17257qhk3m4h79a38pk1vjyp98e9kwx",
+        "trialId": "rev-scope-06",
+        "workItemId": "ms7cecde2g3w25e1jf5wrdrtqs8e9e8h"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201082785.8865,
+      "_id": "k171g5vpnmcpdpe7tczx2ftw2d8e874t",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082785,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-06",
+        "scope": "slack:read"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201082835.9958,
+      "_id": "k17093r7n0d3fhkk5jd4dq7xhx8e8pkg",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082836,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "GET",
+                "path": "auth.test",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms7cecde2g3w25e1jf5wrdrtqs8e9e8h:k17257qhk3m4h79a38pk1vjyp98e9kwx:0",
+              "ok": false,
+              "reason": "no grant (slack:read)",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "no grant (slack:read)",
+        "runId": "k17257qhk3m4h79a38pk1vjyp98e9kwx",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms7cecde2g3w25e1jf5wrdrtqs8e9e8h"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201082886.293,
+      "_id": "k17emkybtppxdf3gf87frgqcz18e8k10",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082886,
+      "payload": {
+        "scope": "slack:read",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201082904.078,
+      "_id": "k17bvare9vr3f85dcaegkgby1n8e99jr",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082904,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-06-retry",
+        "workItemId": "ms72efjnf82jswjppt9zn2fpks8e8dej"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201082904.0781,
+      "_id": "k175v87741k2j4a0s0jc80cpss8e84z4",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082904,
+      "payload": {
+        "trialId": "rev-scope-06-retry",
+        "workItemId": "ms72efjnf82jswjppt9zn2fpks8e8dej"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201082904.0784,
+      "_id": "k177hnh9r8qejxk7y6mvbzwqq18e9s6e",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082904,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k175v87741k2j4a0s0jc80cpss8e84z4",
+        "trialId": "rev-scope-06-retry",
+        "workItemId": "ms72efjnf82jswjppt9zn2fpks8e8dej"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201082980.574,
+      "_id": "k17e64tzew33tx31052rmtt2rx8e8gjz",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201082980,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "GET",
+                "path": "auth.test",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "authority": "autonomous",
+              "effect": "HTTP 200 · {\"ok\":true,\"user_id\":\"U_DAY0_BOT\",\"team_id\":\"T_DAY0\"}",
+              "idempotencyKey": "ms72efjnf82jswjppt9zn2fpks8e8dej:k175v87741k2j4a0s0jc80cpss8e84z4:0",
+              "ok": true,
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "runId": "k175v87741k2j4a0s0jc80cpss8e84z4",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms72efjnf82jswjppt9zn2fpks8e8dej"
+      },
+      "type": "work.completed"
+    },
+    {
+      "_creationTime": 1789201083025.9277,
+      "_id": "k17ea1h8ctg1hd199c6kpbjgrn8e9zqn",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083025,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-07",
+        "workItemId": "ms7djv8fkzw0pr33151k56qvds8e8rrb"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201083046.1497,
+      "_id": "k17a3zd6qtytnycy87b31r29ds8e9y21",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083046,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-07",
+        "scope": "slack:read"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201083115.7732,
+      "_id": "k173jydj6v10qxnar2tzbt21x98e97n5",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083115,
+      "payload": {
+        "decision": "defer",
+        "verdict": {
+          "decision": "defer",
+          "missingPermissions": [
+            "slack:read"
+          ],
+          "reason": "awaiting-permission"
+        },
+        "workItemId": "ms7djv8fkzw0pr33151k56qvds8e8rrb"
+      },
+      "type": "work.evaluated"
+    },
+    {
+      "_creationTime": 1789201083171.8909,
+      "_id": "k176vc8dmry0163f0g50vcwvv98e8wc9",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083171,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-08",
+        "workItemId": "ms7e7kttnq22rrye3enzatvadx8e80f3"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201083171.891,
+      "_id": "k17c76qjc1t2gs60x82n0zmmhn8e8st4",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083171,
+      "payload": {
+        "trialId": "rev-scope-08",
+        "workItemId": "ms7e7kttnq22rrye3enzatvadx8e80f3"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201083171.8914,
+      "_id": "k172s808n5q4rp016m005d82sd8e8rrj",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083171,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [],
+        "autonomousActions": true,
+        "heldIndexes": [
+          0
+        ],
+        "refusedIndexes": [],
+        "runId": "k17c76qjc1t2gs60x82n0zmmhn8e8st4",
+        "trialId": "rev-scope-08",
+        "workItemId": "ms7e7kttnq22rrye3enzatvadx8e80f3"
+      },
+      "type": "work.actions-pending"
+    },
+    {
+      "_creationTime": 1789201083203.3784,
+      "_id": "k17d3tj6h9ykqcyzw57t26918n8e8fzz",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083203,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-08",
+        "scope": "boss:message"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201083249.3274,
+      "_id": "k1796nkh11c202jbk763rnk5s18e8v8q",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083249,
+      "payload": {
+        "approvedIndexes": [
+          0
+        ],
+        "autoIndexes": [],
+        "decidedVia": "dashboard",
+        "refusedIndexes": [],
+        "rejectedIndexes": [],
+        "runId": "k17c76qjc1t2gs60x82n0zmmhn8e8st4",
+        "workItemId": "ms7e7kttnq22rrye3enzatvadx8e80f3"
+      },
+      "type": "work.actions-approved"
+    },
+    {
+      "_creationTime": 1789201083297.3748,
+      "_id": "k17fg8s96jjptc27ks8tzwj9a98e8hng",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083297,
+      "payload": {
+        "phase": "approved",
+        "runId": "k17c76qjc1t2gs60x82n0zmmhn8e8st4",
+        "workItemId": "ms7e7kttnq22rrye3enzatvadx8e80f3"
+      },
+      "type": "work.actions-applying"
+    },
+    {
+      "_creationTime": 1789201083334.0613,
+      "_id": "k17fpwq40493khckg4xp34g3x58e9aqs",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083334,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"D_DAY0_MANAGER\",\"text\":\"Held evaluation DM.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms7e7kttnq22rrye3enzatvadx8e80f3:k17c76qjc1t2gs60x82n0zmmhn8e8st4:0",
+              "ok": false,
+              "reason": "no grant (boss:message)",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "1 of 1 actions did not change the work environment: http.request (no grant (boss:message))",
+        "workItemId": "ms7e7kttnq22rrye3enzatvadx8e80f3"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201083438.1375,
+      "_id": "k17f4xgxj1vrp76zadt0zazsc98e822d",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083438,
+      "payload": {
+        "scope": "boss:message",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201083463.364,
+      "_id": "k17bk4fre35f1gxr3tzaajx6h98e9z9w",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083463,
+      "payload": {
+        "scope": "slack:read",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201083485.3608,
+      "_id": "k17ef036d252ctr16149gjrtcx8e8hwv",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083485,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-09",
+        "workItemId": "ms77936zj7andswd4pcevsk5e58e97ad"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201083485.361,
+      "_id": "k17ecf8p2mjjj7gr3cznk6b4cd8e9zvt",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083485,
+      "payload": {
+        "trialId": "rev-scope-09",
+        "workItemId": "ms77936zj7andswd4pcevsk5e58e97ad"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201083485.3613,
+      "_id": "k17aar84w5ga3ye95egnh4cnbx8e8wah",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083485,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k17ecf8p2mjjj7gr3cznk6b4cd8e9zvt",
+        "trialId": "rev-scope-09",
+        "workItemId": "ms77936zj7andswd4pcevsk5e58e97ad"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201083576.821,
+      "_id": "k174cvgzw3mhcsae4g5c3xcy7x8e8g5y",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083576,
+      "payload": {
+        "checkpoint": "scope-revoked",
+        "scope": "slack:read",
+        "workItemId": "ms77936zj7andswd4pcevsk5e58e97ad"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201083655.7275,
+      "_id": "k176vzpwcse3q2ptmc5c1vxapd8e8yvv",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083655,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-09",
+        "scope": "slack:read"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201083714.9736,
+      "_id": "k178garpwap6f0hvae29gskd4x8e9zn4",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083714,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "GET",
+                "path": "auth.test",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms77936zj7andswd4pcevsk5e58e97ad:k17ecf8p2mjjj7gr3cznk6b4cd8e9zvt:0",
+              "ok": false,
+              "reason": "no grant (slack:read)",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "no grant (slack:read)",
+        "runId": "k17ecf8p2mjjj7gr3cznk6b4cd8e9zvt",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms77936zj7andswd4pcevsk5e58e97ad"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201083769.3877,
+      "_id": "k17f70w74t0gxcss18t3gktxk58e8wra",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083769,
+      "payload": {
+        "scope": "slack:write",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201083798.3835,
+      "_id": "k176tncv3ctmrw673tjdfwchqd8e8865",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083798,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-10",
+        "workItemId": "ms7f73q1190frjxpdsdby84akh8e97pm"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201083798.3838,
+      "_id": "k17ftkx6nkjg20sq4vtmep8c2h8e9csd",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083798,
+      "payload": {
+        "trialId": "rev-scope-10",
+        "workItemId": "ms7f73q1190frjxpdsdby84akh8e97pm"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201083798.384,
+      "_id": "k17d3fen5jnn21na9ytkrd6mx18e91fv",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083798,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k17ftkx6nkjg20sq4vtmep8c2h8e9csd",
+        "trialId": "rev-scope-10",
+        "workItemId": "ms7f73q1190frjxpdsdby84akh8e97pm"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201083877.5156,
+      "_id": "k17827x2dqtg1jrrsacdrssk2h8e93cn",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083877,
+      "payload": {
+        "checkpoint": "scope-revoked",
+        "scope": "slack:write",
+        "workItemId": "ms7f73q1190frjxpdsdby84akh8e97pm"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201083963.297,
+      "_id": "k17d089913fmpfc2rpeenvj55n8e9m61",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201083963,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-10",
+        "scope": "slack:write"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201084015.4473,
+      "_id": "k173axteghsgs6e22hq17v48ds8e9tbh",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084015,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms7f73q1190frjxpdsdby84akh8e97pm:k17ftkx6nkjg20sq4vtmep8c2h8e9csd:0",
+              "ok": false,
+              "reason": "no grant (slack:write)",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "no grant (slack:write)",
+        "runId": "k17ftkx6nkjg20sq4vtmep8c2h8e9csd",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms7f73q1190frjxpdsdby84akh8e97pm"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201084067.6353,
+      "_id": "k17btg4tjpmww3knrghy1kdyhn8e87tk",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084067,
+      "payload": {
+        "scope": "slack:write",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201084087.5515,
+      "_id": "k170bkbx4w7zntj82vyxayvqex8e8775",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084087,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-11",
+        "workItemId": "ms7fqj7mt0cz60abw9d4s065cs8e8egc"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201084087.5518,
+      "_id": "k170accwp0dxtbt90heme0q8jx8e8dfq",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084087,
+      "payload": {
+        "trialId": "rev-scope-11",
+        "workItemId": "ms7fqj7mt0cz60abw9d4s065cs8e8egc"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201084087.552,
+      "_id": "k17bpms1r02hhf6tj6a4s5tnrd8e9q5f",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084087,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [],
+        "autonomousActions": true,
+        "heldIndexes": [
+          0
+        ],
+        "refusedIndexes": [],
+        "runId": "k170accwp0dxtbt90heme0q8jx8e8dfq",
+        "trialId": "rev-scope-11",
+        "workItemId": "ms7fqj7mt0cz60abw9d4s065cs8e8egc"
+      },
+      "type": "work.actions-pending"
+    },
+    {
+      "_creationTime": 1789201084114.3665,
+      "_id": "k170mfh14v9ktn6540swge03bn8e91b8",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084114,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-11",
+        "scope": "slack:write"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201084158.3848,
+      "_id": "k178198dwmm2b72xxd8exvkhzd8e9ynf",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084158,
+      "payload": {
+        "approvedIndexes": [
+          0
+        ],
+        "autoIndexes": [],
+        "decidedVia": "dashboard",
+        "refusedIndexes": [],
+        "rejectedIndexes": [],
+        "runId": "k170accwp0dxtbt90heme0q8jx8e8dfq",
+        "workItemId": "ms7fqj7mt0cz60abw9d4s065cs8e8egc"
+      },
+      "type": "work.actions-approved"
+    },
+    {
+      "_creationTime": 1789201084199.132,
+      "_id": "k17cqvgazcm0f8j956vsha8rs18e9wsz",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084199,
+      "payload": {
+        "phase": "approved",
+        "runId": "k170accwp0dxtbt90heme0q8jx8e8dfq",
+        "workItemId": "ms7fqj7mt0cz60abw9d4s065cs8e8egc"
+      },
+      "type": "work.actions-applying"
+    },
+    {
+      "_creationTime": 1789201084288.8462,
+      "_id": "k170142dda08rz77t4e9kpft0s8e8bvy",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084288,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "authority": "manager",
+              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"C_REVOPS\",\"ts\":\"1787817600.000002\",\"message\":{\"ts\":\"1787817600.000002\"}}",
+              "idempotencyKey": "ms7fqj7mt0cz60abw9d4s065cs8e8egc:k170accwp0dxtbt90heme0q8jx8e8dfq:0",
+              "ok": true,
+              "providerId": "1787817600.000002",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "workItemId": "ms7fqj7mt0cz60abw9d4s065cs8e8egc"
+      },
+      "type": "work.completed"
+    },
+    {
+      "_creationTime": 1789201084350.7908,
+      "_id": "k1782yat9hc5hkc01b9z2w3nf58e9rz5",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084350,
+      "payload": {
+        "scope": "slack:read",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201084372.8928,
+      "_id": "k176v5f00x1attzjnrnwnsqggx8e8kzb",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084372,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-12",
+        "workItemId": "ms76khywee33pyp78hgwfh86s98e9apa"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201084372.893,
+      "_id": "k17b4hn5wcr4t6nqt4k4v8bwd18e9cer",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084372,
+      "payload": {
+        "trialId": "rev-scope-12",
+        "workItemId": "ms76khywee33pyp78hgwfh86s98e9apa"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201084372.8933,
+      "_id": "k1781k26c4me1yyb27756ya6c18e8b1s",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084372,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k17b4hn5wcr4t6nqt4k4v8bwd18e9cer",
+        "trialId": "rev-scope-12",
+        "workItemId": "ms76khywee33pyp78hgwfh86s98e9apa"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201084396.4148,
+      "_id": "k173g768zxsbp1n2q56g53srk58e8wgx",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084396,
+      "payload": {
+        "by": "manager",
+        "reason": "live evaluation rev-scope-12",
+        "scope": "slack:read"
+      },
+      "type": "permission.revoked"
+    },
+    {
+      "_creationTime": 1789201084464.7874,
+      "_id": "k17dbbz83eyewm5pj3aeygmyf58e9zd5",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084464,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "GET",
+                "path": "auth.test",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms76khywee33pyp78hgwfh86s98e9apa:k17b4hn5wcr4t6nqt4k4v8bwd18e9cer:0",
+              "ok": false,
+              "reason": "no grant (slack:read)",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "no grant (slack:read)",
+        "runId": "k17b4hn5wcr4t6nqt4k4v8bwd18e9cer",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms76khywee33pyp78hgwfh86s98e9apa"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201084525.3347,
+      "_id": "k173sj3jgkyxd3r1kj9x36wtt98e8zh7",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084525,
+      "payload": {
+        "scope": "slack:read",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201084546.273,
+      "_id": "k17b4zcv6sdesan0rteqatj6n18e9pg8",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084546,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-scope-12-retry",
+        "workItemId": "ms7adyr6z56qy1yq597rj42qah8e8bx9"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201084546.2732,
+      "_id": "k1751cspwperhvmbb7ejxcywbd8e895y",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084546,
+      "payload": {
+        "trialId": "rev-scope-12-retry",
+        "workItemId": "ms7adyr6z56qy1yq597rj42qah8e8bx9"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201084546.2734,
+      "_id": "k176qh2m94hht88b3t40mcaeks8e87tp",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084546,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k1751cspwperhvmbb7ejxcywbd8e895y",
+        "trialId": "rev-scope-12-retry",
+        "workItemId": "ms7adyr6z56qy1yq597rj42qah8e8bx9"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201084643.3062,
+      "_id": "k179zwyvg8cpqzk8cp5acy7cd58e8nch",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084643,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "GET",
+                "path": "auth.test",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "authority": "autonomous",
+              "effect": "HTTP 200 · {\"ok\":true,\"user_id\":\"U_DAY0_BOT\",\"team_id\":\"T_DAY0\"}",
+              "idempotencyKey": "ms7adyr6z56qy1yq597rj42qah8e8bx9:k1751cspwperhvmbb7ejxcywbd8e895y:0",
+              "ok": true,
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "runId": "k1751cspwperhvmbb7ejxcywbd8e895y",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms7adyr6z56qy1yq597rj42qah8e8bx9"
+      },
+      "type": "work.completed"
+    },
+    {
+      "_creationTime": 1789201084698.9802,
+      "_id": "k17am0sqw4dgjgpk4btkr0czb58e8s7v",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084698,
+      "payload": {
+        "scope": "slack:write",
+        "source": "manager"
+      },
+      "type": "permission.granted"
+    },
+    {
+      "_creationTime": 1789201084726.2222,
+      "_id": "k17ev58pxp71wjhxh1mzcygp1h8e8nf6",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084726,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-switch-01",
+        "workItemId": "ms7bw35y5mgh8pmkbk1rceg94h8e82y1"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201084726.2224,
+      "_id": "k17f0a95atjp6w6md4dcnxh9jn8e9yz9",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084726,
+      "payload": {
+        "trialId": "rev-switch-01",
+        "workItemId": "ms7bw35y5mgh8pmkbk1rceg94h8e82y1"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201084726.2227,
+      "_id": "k1752289jrfgwtbmfp7x1n0wdh8e8net",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084726,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k17f0a95atjp6w6md4dcnxh9jn8e9yz9",
+        "trialId": "rev-switch-01",
+        "workItemId": "ms7bw35y5mgh8pmkbk1rceg94h8e82y1"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201084801.7708,
+      "_id": "k17cn0pyxy4n7h5zh6f7jztmtx8e9q03",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084801,
+      "payload": {
+        "checkpoint": "autonomy-off",
+        "scope": "slack:write",
+        "workItemId": "ms7bw35y5mgh8pmkbk1rceg94h8e82y1"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201084839.8809,
+      "_id": "k17bxkfkawgs90qsmwpkty5bd58e9f6q",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084839,
+      "payload": {
+        "from": true,
+        "reason": "set by the manager",
+        "to": false
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201084914.9524,
+      "_id": "k1737ra3dd7gcpt05x3d95qp358e9eg9",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084914,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms7bw35y5mgh8pmkbk1rceg94h8e82y1:k17f0a95atjp6w6md4dcnxh9jn8e9yz9:0",
+              "ok": false,
+              "reason": "not an automatic action",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "not an automatic action",
+        "runId": "k17f0a95atjp6w6md4dcnxh9jn8e9yz9",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms7bw35y5mgh8pmkbk1rceg94h8e82y1"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201084976.35,
+      "_id": "k175bmp0f1mgw8z1dbmphkkvp18e9a46",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201084976,
+      "payload": {
+        "from": false,
+        "reason": "set by the manager",
+        "to": true
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201085015.2312,
+      "_id": "k17426ecp60g8rxr13w0tq8vy58e81r2",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085015,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-switch-02",
+        "workItemId": "ms7e85yd1etpyahxmgmkkkdzbn8e8xbf"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201085015.2314,
+      "_id": "k1736h55je2me7j4wxd8awh80h8e8pwp",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085015,
+      "payload": {
+        "trialId": "rev-switch-02",
+        "workItemId": "ms7e85yd1etpyahxmgmkkkdzbn8e8xbf"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201085015.2317,
+      "_id": "k177f67b1txgn9h5an90rmts2s8e89xr",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085015,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k1736h55je2me7j4wxd8awh80h8e8pwp",
+        "trialId": "rev-switch-02",
+        "workItemId": "ms7e85yd1etpyahxmgmkkkdzbn8e8xbf"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201085096.0679,
+      "_id": "k17476te7yg2wce1dvx6w3nn6s8e8571",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085096,
+      "payload": {
+        "checkpoint": "autonomy-off",
+        "scope": "slack:write",
+        "workItemId": "ms7e85yd1etpyahxmgmkkkdzbn8e8xbf"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201085133.824,
+      "_id": "k1716gja3x8ffkzhfs011vn2w98e87yz",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085133,
+      "payload": {
+        "from": true,
+        "reason": "set by the manager",
+        "to": false
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201085195.307,
+      "_id": "k175ks0etas96583022rncjxfd8e8bcg",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085195,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms7e85yd1etpyahxmgmkkkdzbn8e8xbf:k1736h55je2me7j4wxd8awh80h8e8pwp:0",
+              "ok": false,
+              "reason": "not an automatic action",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "not an automatic action",
+        "runId": "k1736h55je2me7j4wxd8awh80h8e8pwp",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms7e85yd1etpyahxmgmkkkdzbn8e8xbf"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201085249.1055,
+      "_id": "k17d2pgj2gs4dzefs25ym9fsr58e9jx4",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085249,
+      "payload": {
+        "from": false,
+        "reason": "set by the manager",
+        "to": true
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201085294.3228,
+      "_id": "k1734bcnr01qvkbkjyfrjcw3vh8e9qw1",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085294,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-switch-03",
+        "workItemId": "ms7bxf9e85ezymwj308v6c4k458e84yv"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201085294.323,
+      "_id": "k177fdzvh84ynp296zk25k7yhh8e8xh8",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085294,
+      "payload": {
+        "trialId": "rev-switch-03",
+        "workItemId": "ms7bxf9e85ezymwj308v6c4k458e84yv"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201085294.3232,
+      "_id": "k17dpth46bjtn9qf5bbbytvtad8e9m2k",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085294,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k177fdzvh84ynp296zk25k7yhh8e8xh8",
+        "trialId": "rev-switch-03",
+        "workItemId": "ms7bxf9e85ezymwj308v6c4k458e84yv"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201085386.7144,
+      "_id": "k179xr6kzdnjm9dcjjg8wcmpqd8e84ej",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085386,
+      "payload": {
+        "checkpoint": "autonomy-off",
+        "scope": "slack:write",
+        "workItemId": "ms7bxf9e85ezymwj308v6c4k458e84yv"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201085477.7168,
+      "_id": "k171k3skx10gaq2rzq405vg7e18e80tp",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085477,
+      "payload": {
+        "from": true,
+        "reason": "set by the manager",
+        "to": false
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201085523.838,
+      "_id": "k17a80wazeyynqvn9pr2ax22r18e9pbs",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085523,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms7bxf9e85ezymwj308v6c4k458e84yv:k177fdzvh84ynp296zk25k7yhh8e8xh8:0",
+              "ok": false,
+              "reason": "not an automatic action",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "not an automatic action",
+        "runId": "k177fdzvh84ynp296zk25k7yhh8e8xh8",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms7bxf9e85ezymwj308v6c4k458e84yv"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201085593.409,
+      "_id": "k17dv0c2xr9djshs64jhsbg8a98e9v6a",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085593,
+      "payload": {
+        "from": false,
+        "reason": "set by the manager",
+        "to": true
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201085648.5046,
+      "_id": "k177tyz5sts81x00c43qp3sy5h8e8hx5",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085648,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-switch-04",
+        "workItemId": "ms79ytjfz7585cmtzx6zm0y4wx8e81da"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201085648.505,
+      "_id": "k1775at4xe8rpex4xgqn9ft5c18e8d4n",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085648,
+      "payload": {
+        "trialId": "rev-switch-04",
+        "workItemId": "ms79ytjfz7585cmtzx6zm0y4wx8e81da"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201085648.5051,
+      "_id": "k17845n5vvp4yrmmgmrch90r758e9p7w",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085648,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k1775at4xe8rpex4xgqn9ft5c18e8d4n",
+        "trialId": "rev-switch-04",
+        "workItemId": "ms79ytjfz7585cmtzx6zm0y4wx8e81da"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201085745.5117,
+      "_id": "k1741m19q2v9qtqme51hchezp58e9pet",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085745,
+      "payload": {
+        "checkpoint": "autonomy-off",
+        "scope": "slack:write",
+        "workItemId": "ms79ytjfz7585cmtzx6zm0y4wx8e81da"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201085833.1938,
+      "_id": "k172710bttzrwd0bh3g0bptped8e8fxn",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085833,
+      "payload": {
+        "from": true,
+        "reason": "set by the manager",
+        "to": false
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201085889.0413,
+      "_id": "k176zc2t28epp0964geh2zrrdh8e9a9x",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085889,
+      "payload": {
+        "output": {
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms79ytjfz7585cmtzx6zm0y4wx8e81da:k1775at4xe8rpex4xgqn9ft5c18e8d4n:0",
+              "ok": false,
+              "reason": "not an automatic action",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Initial evaluation phase."
+        },
+        "reason": "not an automatic action",
+        "runId": "k1775at4xe8rpex4xgqn9ft5c18e8d4n",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms79ytjfz7585cmtzx6zm0y4wx8e81da"
+      },
+      "type": "work.failed"
+    },
+    {
+      "_creationTime": 1789201085969.8423,
+      "_id": "k179jars1j562qp8hw3t158fps8e993r",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201085969,
+      "payload": {
+        "from": false,
+        "reason": "set by the manager",
+        "to": true
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201086017.3027,
+      "_id": "k17bf4sgmrz7mgjv8bgnqdt3e58e8y5n",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201086017,
+      "payload": {
+        "title": "Revocation evaluation item",
+        "trialId": "rev-switch-05",
+        "workItemId": "ms70hmgqcv97gtq1s0zf5wppz58e9ka4"
+      },
+      "type": "work.discovered"
+    },
+    {
+      "_creationTime": 1789201086017.303,
+      "_id": "k17b16p32jywb5b8h7txw1fjn58e9dqe",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201086017,
+      "payload": {
+        "dependentPhase": true,
+        "trialId": "rev-switch-05",
+        "workItemId": "ms70hmgqcv97gtq1s0zf5wppz58e9ka4"
+      },
+      "type": "work.execution-claimed"
+    },
+    {
+      "_creationTime": 1789201086017.3032,
+      "_id": "k178v0w8xxmvgzwjt100gns1e58e9n2r",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201086017,
+      "payload": {
+        "actionCount": 1,
+        "autoIndexes": [
+          0
+        ],
+        "autonomousActions": true,
+        "dependentPhase": true,
+        "heldIndexes": [],
+        "refusedIndexes": [],
+        "runId": "k17b16p32jywb5b8h7txw1fjn58e9dqe",
+        "trialId": "rev-switch-05",
+        "workItemId": "ms70hmgqcv97gtq1s0zf5wppz58e9ka4"
+      },
+      "type": "work.actions-auto-applying"
+    },
+    {
+      "_creationTime": 1789201086105.391,
+      "_id": "k175jj8npj6yp9vmfcejqqk9hh8e8bgn",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201086105,
+      "payload": {
+        "checkpoint": "autonomy-off",
+        "scope": "slack:write",
+        "workItemId": "ms70hmgqcv97gtq1s0zf5wppz58e9ka4"
+      },
+      "type": "evaluation.transport-ready"
+    },
+    {
+      "_creationTime": 1789201086201.0093,
+      "_id": "k179j62bfts7azmts9x07k568n8e9mda",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201086201,
+      "payload": {
+        "from": true,
+        "reason": "set by the manager",
+        "to": false
+      },
+      "type": "agent.autonomy-changed"
+    },
+    {
+      "_creationTime": 1789201086244.8335,
+      "_id": "k17a8zkds1ygs9a5fvz5ppqh798e8g4s",
+      "agentId": "j575k5gmejrk8msns4g3zk90qs8e9jht",
+      "createdAt": 1789201086244,
+      "payload": {
+        "output": {
+          "actionIndexOffset": 1,
+          "actions": [
+            {
+              "args": {
+                "body": "{\"channel\":\"C_REVOPS\",\"text\":\"Synthetic evaluation update.\"}",
+                "headersJson": "{\"Authorization\":\"Bearer {{secret}}\"}",
+                "method": "POST",
+                "path": "chat.postMessage",
+                "surface": "slack"
+              },
+              "tool": "http.request"
+            }
+          ],
+          "applied": [
+            {
+              "idempotencyKey": "ms70hmgqcv97gtq1s0zf5wppz58e9ka4:k17b16p32jywb5b8h7txw1fjn58e9dqe:1",
+              "ok": false,
+              "reason": "not an automatic action",
+              "tool": "http.request"
+            }
+          ],
+          "draft": "Deterministic revocation evaluation action.",
+          "notes": "Result-dependent evaluation phase.",
+          "phase": "dependent"
+        },
+        "reason": "not an automatic action",
+        "runId": "k17b16p32jywb5b8h7txw1fjn58e9dqe",
+        "source": "revocation-evaluation-live-registry",
+        "workItemId": "ms70hmgqcv97gtq1s0zf5wppz58e9ka4"
+      },
+      "type": "work.failed"
+    }
+  ],
+  "ledger": [
+    {
+      "entry": {
+        "idempotencyKey": "ms79qq454dhdvmfps8m7ywmknx8e8wpv:k17fjtkbb5sp85p2gqz7byeb058e9be9:0",
+        "ok": false,
+        "reason": "no grant (boss:message)",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201081737,
+      "runId": "k17fjtkbb5sp85p2gqz7byeb058e9be9",
+      "workItemId": "ms79qq454dhdvmfps8m7ywmknx8e8wpv"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms792cmy0fffrpqkfgkdhkvwv58e8mfj:k17a1dkvny1jzgfffgkgma5yes8e818j:0",
+        "ok": false,
+        "reason": "no grant (slack:read)",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201082079,
+      "runId": "k17a1dkvny1jzgfffgkgma5yes8e818j",
+      "workItemId": "ms792cmy0fffrpqkfgkdhkvwv58e8mfj"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms77tebyy5fvs1zdgdpc4wsy918e91kg:k179hrx7rpka2w7xnd7rnhz3js8e8y9r:0",
+        "ok": false,
+        "reason": "no grant (slack:write)",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201082409,
+      "runId": "k179hrx7rpka2w7xnd7rnhz3js8e8y9r",
+      "workItemId": "ms77tebyy5fvs1zdgdpc4wsy918e91kg"
+    },
+    {
+      "entry": {
+        "authority": "manager",
+        "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"C_REVOPS\",\"ts\":\"1787817600.000001\",\"message\":{\"ts\":\"1787817600.000001\"}}",
+        "idempotencyKey": "ms73pm4v4pekz2g8sdqm2grym58e8qk7:k171qertd609e8f6pswyk853358e818h:0",
+        "ok": true,
+        "providerId": "1787817600.000001",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201082675,
+      "runId": "k171qertd609e8f6pswyk853358e818h",
+      "workItemId": "ms73pm4v4pekz2g8sdqm2grym58e8qk7"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms7cecde2g3w25e1jf5wrdrtqs8e9e8h:k17257qhk3m4h79a38pk1vjyp98e9kwx:0",
+        "ok": false,
+        "reason": "no grant (slack:read)",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201082836,
+      "runId": "k17257qhk3m4h79a38pk1vjyp98e9kwx",
+      "workItemId": "ms7cecde2g3w25e1jf5wrdrtqs8e9e8h"
+    },
+    {
+      "entry": {
+        "authority": "autonomous",
+        "effect": "HTTP 200 · {\"ok\":true,\"user_id\":\"U_DAY0_BOT\",\"team_id\":\"T_DAY0\"}",
+        "idempotencyKey": "ms72efjnf82jswjppt9zn2fpks8e8dej:k175v87741k2j4a0s0jc80cpss8e84z4:0",
+        "ok": true,
+        "tool": "http.request"
+      },
+      "observedAt": 1789201082980,
+      "runId": "k175v87741k2j4a0s0jc80cpss8e84z4",
+      "workItemId": "ms72efjnf82jswjppt9zn2fpks8e8dej"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms7e7kttnq22rrye3enzatvadx8e80f3:k17c76qjc1t2gs60x82n0zmmhn8e8st4:0",
+        "ok": false,
+        "reason": "no grant (boss:message)",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201083334,
+      "runId": "k17c76qjc1t2gs60x82n0zmmhn8e8st4",
+      "workItemId": "ms7e7kttnq22rrye3enzatvadx8e80f3"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms77936zj7andswd4pcevsk5e58e97ad:k17ecf8p2mjjj7gr3cznk6b4cd8e9zvt:0",
+        "ok": false,
+        "reason": "no grant (slack:read)",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201083714,
+      "runId": "k17ecf8p2mjjj7gr3cznk6b4cd8e9zvt",
+      "workItemId": "ms77936zj7andswd4pcevsk5e58e97ad"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms7f73q1190frjxpdsdby84akh8e97pm:k17ftkx6nkjg20sq4vtmep8c2h8e9csd:0",
+        "ok": false,
+        "reason": "no grant (slack:write)",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201084015,
+      "runId": "k17ftkx6nkjg20sq4vtmep8c2h8e9csd",
+      "workItemId": "ms7f73q1190frjxpdsdby84akh8e97pm"
+    },
+    {
+      "entry": {
+        "authority": "manager",
+        "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"C_REVOPS\",\"ts\":\"1787817600.000002\",\"message\":{\"ts\":\"1787817600.000002\"}}",
+        "idempotencyKey": "ms7fqj7mt0cz60abw9d4s065cs8e8egc:k170accwp0dxtbt90heme0q8jx8e8dfq:0",
+        "ok": true,
+        "providerId": "1787817600.000002",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201084288,
+      "runId": "k170accwp0dxtbt90heme0q8jx8e8dfq",
+      "workItemId": "ms7fqj7mt0cz60abw9d4s065cs8e8egc"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms76khywee33pyp78hgwfh86s98e9apa:k17b4hn5wcr4t6nqt4k4v8bwd18e9cer:0",
+        "ok": false,
+        "reason": "no grant (slack:read)",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201084464,
+      "runId": "k17b4hn5wcr4t6nqt4k4v8bwd18e9cer",
+      "workItemId": "ms76khywee33pyp78hgwfh86s98e9apa"
+    },
+    {
+      "entry": {
+        "authority": "autonomous",
+        "effect": "HTTP 200 · {\"ok\":true,\"user_id\":\"U_DAY0_BOT\",\"team_id\":\"T_DAY0\"}",
+        "idempotencyKey": "ms7adyr6z56qy1yq597rj42qah8e8bx9:k1751cspwperhvmbb7ejxcywbd8e895y:0",
+        "ok": true,
+        "tool": "http.request"
+      },
+      "observedAt": 1789201084643,
+      "runId": "k1751cspwperhvmbb7ejxcywbd8e895y",
+      "workItemId": "ms7adyr6z56qy1yq597rj42qah8e8bx9"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms7bw35y5mgh8pmkbk1rceg94h8e82y1:k17f0a95atjp6w6md4dcnxh9jn8e9yz9:0",
+        "ok": false,
+        "reason": "not an automatic action",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201084914,
+      "runId": "k17f0a95atjp6w6md4dcnxh9jn8e9yz9",
+      "workItemId": "ms7bw35y5mgh8pmkbk1rceg94h8e82y1"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms7e85yd1etpyahxmgmkkkdzbn8e8xbf:k1736h55je2me7j4wxd8awh80h8e8pwp:0",
+        "ok": false,
+        "reason": "not an automatic action",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201085195,
+      "runId": "k1736h55je2me7j4wxd8awh80h8e8pwp",
+      "workItemId": "ms7e85yd1etpyahxmgmkkkdzbn8e8xbf"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms7bxf9e85ezymwj308v6c4k458e84yv:k177fdzvh84ynp296zk25k7yhh8e8xh8:0",
+        "ok": false,
+        "reason": "not an automatic action",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201085523,
+      "runId": "k177fdzvh84ynp296zk25k7yhh8e8xh8",
+      "workItemId": "ms7bxf9e85ezymwj308v6c4k458e84yv"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms79ytjfz7585cmtzx6zm0y4wx8e81da:k1775at4xe8rpex4xgqn9ft5c18e8d4n:0",
+        "ok": false,
+        "reason": "not an automatic action",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201085889,
+      "runId": "k1775at4xe8rpex4xgqn9ft5c18e8d4n",
+      "workItemId": "ms79ytjfz7585cmtzx6zm0y4wx8e81da"
+    },
+    {
+      "entry": {
+        "idempotencyKey": "ms70hmgqcv97gtq1s0zf5wppz58e9ka4:k17b16p32jywb5b8h7txw1fjn58e9dqe:1",
+        "ok": false,
+        "reason": "not an automatic action",
+        "tool": "http.request"
+      },
+      "observedAt": 1789201086244,
+      "runId": "k17b16p32jywb5b8h7txw1fjn58e9dqe",
+      "workItemId": "ms70hmgqcv97gtq1s0zf5wppz58e9ka4"
+    }
+  ],
+  "version": 1
+}
