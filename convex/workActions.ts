@@ -530,24 +530,18 @@ const NEGATED_INSTRUCTION = /\b(?:defer|do not|don't|hold|never|not|wait for|wit
 const PERIOD_NOUN = /^\s*(?:of\s+(?:the\s+)?)?(?:day|week|month|quarter|year|period|cycle|date)s?\b/i;
 /** A term after a determiner or "end" is a noun ("the close", "month-end close"), not a verb. */
 const NOUN_MARKER = /\b(?:the|a|an|our|its|their|this|that|each|every|end|of)\s+$/i;
-/** A span in double quotation marks cites a title or a message; it is not an instruction. */
 const QUOTED_SPAN = /"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g;
 
-/**
- * The part of a plan step that instructs, with every quoted span blanked.
- *
- * A step that says `locate the "Refresh the dashboard tile" request` names a
- * ticket, and the words inside the quotes belong to that ticket's title, not
- * to the step: they promise no read, name no surface and close nothing.
- *
- * Args:
- *   step: One approved plan step.
- *
- * Returns:
- *   The step with each quoted span replaced by a space.
- */
+/** Titles are references; quoted surface names and target states still impose obligations. */
 function instructionText(step: string): string {
-  return step.replace(QUOTED_SPAN, ' ');
+  return step.replace(QUOTED_SPAN, (span: string, offset: number): string => {
+    const before = step.slice(0, offset);
+    const after = step.slice(offset + span.length);
+    const titleContext =
+      /\b(?:ticket|issue|request|message)\s+(?:(?:titled|called|named)\s+)?$/i.test(before) ||
+      /^\s+(?:ticket|issue|request|message|title|mismatch)\b/i.test(after);
+    return titleContext ? ' ' : span.slice(1, -1);
+  });
 }
 
 /**
