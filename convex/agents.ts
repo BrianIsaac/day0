@@ -120,7 +120,7 @@ export const deploy = mutation({
     });
     const initialScopes =
       SURFACE_MODE === 'mock'
-        ? ['boss:message', 'docs:read', 'spreadsheet:read', 'social:read', 'ticket:read']
+        ? ['boss:message', 'docs:read', 'spreadsheet:read', 'social:read', 'ticket:read', 'slack:read']
         : ['boss:message', 'docs:read'];
     for (const scope of initialScopes) {
       const createdAt = Date.now();
