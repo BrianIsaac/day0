@@ -1,0 +1,6 @@
+COMPOSE_PROJECT_NAME=day0-v4-glm53flash-1a2075 CONVEX_PORT=45410 CONVEX_SITE_PROXY_PORT=45411 FAKE_SLACK_HOST_PORT=45412 pnpm convex:up --profile test --profile demo --profile browser --profile sandbox
+COMPOSE_PROJECT_NAME=day0-v4-glm53flash-1a2075 CONVEX_PORT=45410 CONVEX_SITE_PROXY_PORT=45411 FAKE_SLACK_HOST_PORT=45412 pnpm convex:admin-key  # captured directly into ignored .env.local; value never logged
+pnpm sync:env
+pnpm exec convex dev --once --typecheck disable
+DAY0_EVAL_COMPOSE_PROJECT=day0-v4-glm53flash-1a2075 FAKE_SLACK_PROOF_URL=http://127.0.0.1:45412 pnpm eval:revocation -- --out evaluation/results/2026-09-12T06-33-21Z-v4-glm53flash/revocation
+COMPOSE_PROJECT_NAME=day0-v4-glm53flash-1a2075 CONVEX_PORT=45410 CONVEX_SITE_PROXY_PORT=45411 FAKE_SLACK_HOST_PORT=45412 pnpm convex:down --profile test --profile demo --profile browser --profile sandbox -- -v
