@@ -60,12 +60,10 @@ describe('the /setup guide', (): void => {
   });
 
   it('prints the five commands in order', (): void => {
-    let at = -1;
-    for (const command of QUICKSTART_COMMANDS) {
-      const next = text.indexOf(command, at + 1);
-      expect(next, command).toBeGreaterThan(at);
-      at = next;
-    }
+    const block = /<pre[^>]*><code[^>]*>(.*?)<\/code><\/pre>/s.exec(html)?.[1];
+    expect(block).toBeDefined();
+    const commands = [...block!.matchAll(/<span[^>]*>(.*?)<\/span>/gs)].map((match) => match[1]);
+    expect(commands).toEqual(QUICKSTART_COMMANDS);
   });
 
   it('says what a first success looks like, step by step', (): void => {
