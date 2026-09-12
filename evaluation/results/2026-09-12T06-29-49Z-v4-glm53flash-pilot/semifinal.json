@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:32:01.915Z",
+  "generatedAt": "2026-09-12T06:32:08.703Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "0c515300675e6a1e9550db90f29d5fa3420d95c3",
@@ -562,12 +562,94 @@
       "status": "running",
       "humanWaitMs": 0,
       "decisions": [],
-      "tasks": [],
+      "tasks": [
+        {
+          "taskId": "docs-team-cadence",
+          "externalId": "EVAL-DOC-01",
+          "category": "docs-grounded-read",
+          "workItemId": "ms76hj8d8vfmtxyss4kzcce1k18e966h",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:32:01.915Z",
+          "finishedAt": "2026-09-12T06:32:08.643Z",
+          "deployToFirstCorrectActionMs": 5305,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              2
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "a6fda7def8cbab39943e10568ab9d37f262d16c79ee43799a0a31b3facbb3df6"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:slack-message",
+                "passed": true,
+                "detail": "one matching message found in dm-manager"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "slack.postMessage"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
+        }
+      ],
       "agentId": "j5737c26qv5m2wt4910s9qx88n8e99jr",
       "deployedAt": "2026-09-12T06:32:01.717Z",
       "activeTask": {
-        "taskId": "docs-team-cadence",
-        "startedAt": "2026-09-12T06:32:01.915Z",
+        "taskId": "write-pipeline-row",
+        "startedAt": "2026-09-12T06:32:08.703Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 0,
