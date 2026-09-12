@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:44:20.592Z",
+  "generatedAt": "2026-09-12T06:44:37.274Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -5683,7 +5683,7 @@
       "arm": "day0",
       "run": 3,
       "status": "running",
-      "humanWaitMs": 2253,
+      "humanWaitMs": 3755,
       "decisions": [
         {
           "kind": "charter",
@@ -5703,6 +5703,20 @@
           "taskId": "docs-team-cadence",
           "requestedAt": "2026-09-12T06:44:19.120Z",
           "approvedAt": "2026-09-12T06:44:19.928Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-on-call-tier-two",
+          "requestedAt": "2026-09-12T06:44:24.000Z",
+          "approvedAt": "2026-09-12T06:44:24.782Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-on-call-tier-two",
+          "requestedAt": "2026-09-12T06:44:35.835Z",
+          "approvedAt": "2026-09-12T06:44:36.617Z",
           "delayMs": 751
         }
       ],
@@ -5808,13 +5822,128 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "docs-on-call-tier-two",
+          "externalId": "EVAL-DOC-02",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7617xrnkzw0sbkh3h86eybxx8e812c",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:44:20.492Z",
+          "finishedAt": "2026-09-12T06:44:36.724Z",
+          "deployToFirstCorrectActionMs": 37461,
+          "humanWaitMs": 1502,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-on-call-tier-two",
+              "requestedAt": "2026-09-12T06:44:24.000Z",
+              "approvedAt": "2026-09-12T06:44:24.782Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-on-call-tier-two",
+              "requestedAt": "2026-09-12T06:44:35.835Z",
+              "approvedAt": "2026-09-12T06:44:36.617Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 2,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              2,
+              2
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "b77a279d9ccceff87ec990c3ad162a5699ec2f6f22a7ec971fce5442af623239"
+              },
+              {
+                "phase": "output",
+                "index": 1,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "e4a3db3e019ea6a7f37cf2d463cb7fa82825f382d3145938831c1acc13af0ffe"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:slack-message",
+                "passed": true,
+                "detail": "one matching message found in dm-priya"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "slack.postMessage",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
         }
       ],
       "agentId": "j57cd39e0ys59tr3bgfg2qvba98e89yz",
       "deployedAt": "2026-09-12T06:43:59.231Z",
       "activeTask": {
-        "taskId": "docs-on-call-tier-two",
-        "startedAt": "2026-09-12T06:44:20.492Z",
+        "taskId": "docs-first-week-observation",
+        "startedAt": "2026-09-12T06:44:37.178Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 1,
