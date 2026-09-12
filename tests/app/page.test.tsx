@@ -65,6 +65,25 @@ describe('signed-out landing page', (): void => {
     expect(html).not.toContain('Deploy your first agent');
   });
 
+  it('boxes the two hero CTAs identically, so neither sits a border taller', (): void => {
+    const classesOf = (label: string): string[] => {
+      const tag = new RegExp(`<a\\b([^>]*)>${label}</a>`).exec(html)?.[1] ?? '';
+      return (/class="([^"]*)"/.exec(tag)?.[1] ?? '').split(' ');
+    };
+    /* Only the utilities that set the border box. A border on one and none on
+       the other made them 46 px and 44 px side by side on the same row. */
+    const box = (classes: string[]): string[] =>
+      classes
+        .filter((c) => /^(px-|py-|p-|border$|border-[0-9]|text-(xs|sm|base)$|rounded)/.test(c))
+        .sort();
+
+    const primary = classesOf('Try the demo');
+    const secondary = classesOf('Set up Day0');
+    expect(primary).not.toEqual(['']);
+    expect(box(primary)).toEqual(box(secondary));
+    expect(primary).toContain('border-transparent');
+  });
+
   it('says what the demo is before the visitor spends a click on it', (): void => {
     expect(html).toContain('Explore the mock office and its recorded approval flow');
   });
