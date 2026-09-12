@@ -1,0 +1,31 @@
+{
+  "initial": {
+    "source": "operator dashboard transcription during pilot",
+    "recordedAt": "2026-09-12T06:31:08.189758+00:00",
+    "plan": "Feather Per-Request",
+    "status": "Active",
+    "usdPerMonth": 25,
+    "expires": "2026-09-29",
+    "balanceUsd": 24.72,
+    "spentPeriodUsd": 0.280916,
+    "billedRequests": 300,
+    "period": "2026-06-14 to 2026-09-12"
+  },
+  "final": {
+    "source": "operator dashboard transcription after all model-bearing runs",
+    "recordedAt": "2026-09-12T06:53:58.133284+00:00",
+    "plan": "Feather Per-Request",
+    "status": "Active",
+    "usdPerMonth": 25,
+    "expires": "2026-09-29",
+    "balanceUsd": 24.6,
+    "spentPeriodUsd": 0.398216,
+    "billedRequests": 545,
+    "period": "2026-06-14 to 2026-09-12"
+  },
+  "delta": {
+    "usd": 0.1173,
+    "billedRequests": 245,
+    "scope": "Account-wide change from mid-pilot checkpoint through full bed and revocation; excludes earlier probe and pilot calls; not a bed-only invoice."
+  }
+}

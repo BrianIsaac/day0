@@ -1,0 +1,10 @@
+Command: npx convex env list
+Target: http://127.0.0.1:45410
+OPENAI_BASE_URL=https://api.featherless.ai/v1
+OPENAI_MODEL=zai-org/GLM-5.3-Flash
+OPENAI_JSON_MODE=prompt
+OPENAI_MAX_OUTPUT_TOKENS=32768
+OPENAI_REASONING_EFFORT=low
+DAY0_SURFACE_MODE=mock
+DAYTONA_API_KEY absent
+Other values omitted to protect secrets.

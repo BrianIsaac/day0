@@ -699,6 +699,10 @@ export interface TierInputs {
    * dials: the rung's onboarding runs inside the backend container.
    */
   rungModelRoute: string;
+  deploymentModelSettings?: {
+    OPENAI_MAX_OUTPUT_TOKENS?: string;
+    OPENAI_REASONING_EFFORT?: string;
+  };
   backendHealthy: boolean;
   /** Empty means api.openai.com, which is never dialled from the venue. */
   modelBaseUrl: string;
@@ -749,11 +753,19 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
             : `backend, fake-slack and looker-tile are up in real mode, and the onboarding dials ${inputs.rungModelRoute}; model onboarding remains unverified by this checklist`,
   };
   let warm: TierVerdict;
+  const missingSettings = (['OPENAI_MAX_OUTPUT_TOKENS', 'OPENAI_REASONING_EFFORT'] as const)
+    .filter((key) => !inputs.deploymentModelSettings?.[key]?.trim());
   if (isOpenAi(inputs.modelBaseUrl) || isOpenAi(inputs.rungModelRoute)) {
     warm = {
       name: 'Tier 3, the warm bed with a live model rung',
       go: false,
       reason: 'The host or backend model route is empty or OpenAI; OpenAI is never called from the venue',
+    };
+  } else if (missingSettings.length > 0) {
+    warm = {
+      name: 'Tier 3, the warm bed with a live model rung',
+      go: false,
+      reason: `missing on the deployment: ${missingSettings.join(', ')}; set both output settings, run pnpm sync:env and restart the backend`,
     };
   } else if (!inputs.backendHealthy) {
     warm = {
@@ -1506,8 +1518,10 @@ async function preflight(options: DemoBedOptions): Promise<number> {
           ].join('\n'),
   });
 
+  const deployment = version && values.CONVEX_SELF_HOSTED_ADMIN_KEY
+    ? deploymentEnv(bedEnvironment(options, values))
+    : {};
   if (version && values.CONVEX_SELF_HOSTED_ADMIN_KEY) {
-    const deployment = deploymentEnv(bedEnvironment(options, values));
     const stale = Object.keys(deployment).length
       ? secretsToClear(values, deployment, syncScriptKeys(readFileSync(SYNC_SCRIPT, 'utf8')))
       : [];
@@ -1618,7 +1632,8 @@ async function preflight(options: DemoBedOptions): Promise<number> {
     offlineRungReady: rungReady,
     slackDoubleWired: !!slackDouble,
     rungAlreadyRun: spent,
-    rungModelRoute: values.CONVEX_OPENAI_BASE_URL || baseUrl,
+    rungModelRoute: deployment.OPENAI_BASE_URL ?? '',
+    deploymentModelSettings: deployment,
     backendHealthy: !!version,
     modelBaseUrl: baseUrl,
     probeTier: tier,

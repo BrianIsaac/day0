@@ -320,6 +320,35 @@ describe('reading docker and the probes', (): void => {
 });
 
 describe('the pre-flight verdict', (): void => {
+  it('names every missing deployment output setting before offering Tier 3', (): void => {
+    const base = {
+      videoPresent: true,
+      offlineRungReady: true,
+      slackDoubleWired: true,
+      rungAlreadyRun: false,
+      backendHealthy: true,
+      modelBaseUrl: 'https://api.featherless.ai/v1',
+      rungModelRoute: 'https://api.featherless.ai/v1',
+      probeTier: 1 as const,
+    };
+    for (const deployment of [
+      {},
+      { OPENAI_MAX_OUTPUT_TOKENS: '32768' },
+      { OPENAI_REASONING_EFFORT: 'low' },
+      { OPENAI_MAX_OUTPUT_TOKENS: ' ', OPENAI_REASONING_EFFORT: '' },
+    ]) {
+      const warm = demoTiers({ ...base, deploymentModelSettings: deployment })[2];
+      expect(warm.go).toBe(false);
+      for (const key of ['OPENAI_MAX_OUTPUT_TOKENS', 'OPENAI_REASONING_EFFORT'] as const) {
+        expect(warm.reason.includes(key)).toBe(!deployment[key]?.trim());
+      }
+      expect(warm.reason).toContain('deployment');
+    }
+    expect(demoTiers({ ...base, deploymentModelSettings: {
+      OPENAI_MAX_OUTPUT_TOKENS: '32768', OPENAI_REASONING_EFFORT: 'low',
+    } })[2].go).toBe(true);
+  });
+
   it('does not offer a live rung when the host probe passes but the backend dials OpenAI', () => {
     const tiers = demoTiers({ videoPresent: true, offlineRungReady: true,
       slackDoubleWired: true, rungAlreadyRun: false, backendHealthy: true,
@@ -369,6 +398,10 @@ describe('the pre-flight verdict', (): void => {
       backendHealthy: true,
       modelBaseUrl: 'https://api.featherless.ai/v1',
       rungModelRoute: 'https://api.featherless.ai/v1',
+      deploymentModelSettings: {
+        OPENAI_MAX_OUTPUT_TOKENS: '32768',
+        OPENAI_REASONING_EFFORT: 'low',
+      },
     };
     expect(demoTiers({ ...base, probeTier: 1 }).map((tier) => tier.go)).toEqual([true, true, true]);
     expect(demoTiers({ ...base, probeTier: 3 }).map((tier) => tier.go)).toEqual([
