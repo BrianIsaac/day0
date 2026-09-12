@@ -70,7 +70,7 @@ function SignedOutHero() {
               <Link
                 href="/demo"
                 aria-describedby="demo-cta-help"
-                className="px-6 py-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90 transition"
+                className="px-6 py-3 rounded-lg border border-transparent bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90 transition"
               >
                 Try the demo
               </Link>

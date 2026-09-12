@@ -17,7 +17,13 @@ export function SlackTab({
 }) {
   const channels = useQuery(api.mock.listChannels, { agentId });
   const [pickedSlug, setPickedSlug] = useState<string | null>(null);
-  const activeSlug = pickedSlug ?? channels?.[0]?.slug ?? null;
+
+  /* listChannels reads the by_agent_slug index, so channels[0] is the
+     alphabetically first slug - in the seeded office an empty DM three rows
+     down the rail. Open on the row the rail actually draws first instead. */
+  const channelList = channels?.filter((c) => c.kind === 'channel') ?? [];
+  const dmList = channels?.filter((c) => c.kind === 'dm') ?? [];
+  const activeSlug = pickedSlug ?? (channelList[0] ?? dmList[0])?.slug ?? null;
 
   const messages = useQuery(
     api.mock.listMessages,
@@ -37,9 +43,6 @@ export function SlackTab({
   if (!channels) return <div className="text-xs text-[var(--color-muted)]">loading slack…</div>;
   if (channels.length === 0)
     return <div className="text-xs text-[var(--color-muted)]">{EMPTY_CHANNELS}</div>;
-
-  const channelList = channels.filter((c) => c.kind === 'channel');
-  const dmList = channels.filter((c) => c.kind === 'dm');
 
   /* A fixed 12rem rail took 114px of a 398px panel and left the conversation
      the rest, wrapping a 24-word message over nine lines. The rail earns its
