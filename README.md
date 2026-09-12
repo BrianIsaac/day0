@@ -74,7 +74,7 @@ Nothing hands it a queue. The agent reads its work environment and proposes what
 
 ### It writes the skill it is missing
 
-A work item that matches no registered skill returns `needs-skill` rather than being dropped. The agent proposes a skill, authors it, then verifies it by running a smoke test in an isolated sandbox. It registers the skill only if the sandbox agrees; one that fails verification, or that was never verified at all, stays visibly uncallable. Capability grows in place, without a developer.
+A work item that reaches skill matching but matches no registered skill returns `needs-skill` rather than being dropped. Its reason reports the missing skill and proposed name; it does not establish that the work is within the charter’s boundaries. The agent proposes a skill, authors it, then verifies it by running a smoke test in an isolated sandbox. It registers the skill only if the sandbox agrees; one that fails verification, or that was never verified at all, stays visibly uncallable. Capability grows in place, without a developer.
 
 ![The skills panel after sandbox verification, showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/skills-registered.webp)
 
@@ -990,7 +990,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 #### 缺少技能时，它会编写并验证技能
 
-如果工作项与任何已注册技能都不匹配，结果是 `needs-skill`，而不是直接丢弃。Agent 会提出技能、编写技能，并在隔离沙箱中运行冒烟测试。只有沙箱验证通过后，技能才会注册；验证失败或从未验证的技能会保持为清晰可见的不可调用状态。这样可以在不要求开发者介入的情况下扩展能力。
+如果工作项进入技能匹配步骤，但与任何已注册技能都不匹配，结果是 `needs-skill`，而不是直接丢弃。判定理由说明缺少匹配技能及拟议技能名称，并不表示该工作已被确认符合章程边界。Agent 会提出技能、编写技能，并在隔离沙箱中运行冒烟测试。只有沙箱验证通过后，技能才会注册；验证失败或从未验证的技能会保持为清晰可见的不可调用状态。这样可以在不要求开发者介入的情况下扩展能力。
 
 ![The skills panel after sandbox verification, showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/skills-registered.webp)
 
