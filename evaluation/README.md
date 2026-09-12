@@ -124,8 +124,13 @@ gate 重跑不调用模型；revocation 的准备阶段依赖模型，本次没�
 | `gpt-5.6-sol` | [`results/2026-09-02T14-28-33Z-v3-sol/`](results/2026-09-02T14-28-33Z-v3-sol/) | `0da04c9141e3590ab23afd6cd1fb697b14b26c2326f936119c3b88b1e8ee59a8` | Hosted provider; no local model log. `provider-bed.md` SHA-256 `b4e03514080398c455020c8fbca86b3fbfa1851ee3cd89fe5c24c7613cfaca8c`; `backend-run.log.gz` SHA-256 `b754f785e107d889b92c39618b6b26bab5146e4977135b6d36c4cf85e88de259` |
 
 All three raw files assert `noLlmJudge: true`, contain all six completed arm-runs,
-record zero harness timeouts and deadline overruns, and carry a deep-equal 15-field
-shared harness configuration. The harness refuses to run or resume when the shared
+record zero harness timeouts and deadline overruns, and carry a deep-equal shared
+harness configuration with 15 fields at capture time. Current code records 17:
+those fields plus `maxOutputTokens` and `reasoningEffort`, both `null` when unset.
+`OPENAI_MAX_OUTPUT_TOKENS` and `OPENAI_REASONING_EFFORT` configure both arms; the
+budget appears in the report table and effort is retained in the raw configuration.
+The hosted defaults remain unset. Older evidence cannot resume against the expanded
+configuration; the frozen files remain unchanged. The harness refuses to run or resume when the shared
 task, seed, action vocabulary, schemas, grader or model parameters differ. The only
 intentional arm-difference keys are `onboardingPipeline` and `executionTurn`. The
 ordinary arm retains a different interaction shape—one tool loop rather than Day0's

@@ -167,6 +167,7 @@ describe('evaluation evidence report', (): void => {
     const report = renderEvaluationReport(input);
 
     expect(report).toContain('| Model id |');
+    expect(report).toContain('| Output budget (tokens) | not set / provider-managed | not set / provider-managed |');
     expect(report).toContain('| Per-call abort deadline (ms) | 300000 | 300000 |');
     expect(report).toContain('| Skill sandbox backend | local | local |');
     expect(report).toContain('| Effective temperature after provider warnings |');
@@ -175,6 +176,20 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain('| onboardingPipeline | runtime charter, loaded documents');
     expect(report).toContain('| executionTurn | one governed structured executor turn');
     expect(report).toContain('overload\\|service_unavailable');
+  });
+
+  it('renders an explicit budget while still rendering frozen evidence without that field', (): void => {
+    const input = evidence();
+    const parameters = evaluationHarnessParameters({ 'docs-team-cadence': 240_000 });
+    parameters.day0.maxOutputTokens = parameters.baseline.maxOutputTokens = 32768;
+    input.configuration.harnessParameters = parameters;
+    input.configuration.intentionalArmDifferences = INTENTIONAL_ARM_DIFFERENCES;
+    expect(renderEvaluationReport(input)).toContain('| Output budget (tokens) | 32768 | 32768 |');
+    for (const arm of [parameters.day0, parameters.baseline]) {
+      Reflect.deleteProperty(arm, 'maxOutputTokens');
+      Reflect.deleteProperty(arm, 'reasoningEffort');
+    }
+    expect(renderEvaluationReport(input)).not.toContain('| Output budget (tokens) |');
   });
 
   it('puts a direction on every score row and no direction on context rows', (): void => {

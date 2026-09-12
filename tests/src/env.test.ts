@@ -34,6 +34,8 @@ describe('environment contract', (): void => {
   });
 
   it('applies defaults so module loading never needs deployment values', async (): Promise<void> => {
+    vi.stubEnv('OPENAI_MAX_OUTPUT_TOKENS', '');
+    vi.stubEnv('OPENAI_REASONING_EFFORT', '');
     vi.stubEnv('DAY0_SURFACE_MODE', '');
     vi.stubEnv('DAY0_DOCS_ROOT', '');
     vi.stubEnv('OPENAI_MODEL', '');
@@ -41,6 +43,10 @@ describe('environment contract', (): void => {
     expect(env.DAY0_SURFACE_MODE).toBe('mock');
     expect(env.DAY0_DOCS_ROOT).toBe('/docs');
     expect(env.OPENAI_MODEL).toBe('gpt-5.6-terra');
+    expect(env.OPENAI_MAX_OUTPUT_TOKENS).toBeUndefined();
+    expect(env.OPENAI_REASONING_EFFORT).toBeUndefined();
+    expect(process.env.OPENAI_MAX_OUTPUT_TOKENS).toBeUndefined();
+    expect(process.env.OPENAI_REASONING_EFFORT).toBeUndefined();
     expect(env.SKILL_SANDBOX_SOCKET).toBe('/run/day0-sandbox/skill-sandbox.sock');
   });
 

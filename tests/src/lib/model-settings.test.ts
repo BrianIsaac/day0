@@ -96,3 +96,66 @@ it('sends the configured budget and effort through real Mastra JSON and text cal
     expect(body).not.toHaveProperty('chat_template_kwargs');
   }
 });
+
+it.each(['', 'low'])(
+  'preserves hosted defaults and translates configured settings on Responses (effort %s)',
+  async (effort) => {
+    vi.resetModules();
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', '');
+    vi.stubEnv('OPENAI_MODEL', 'gpt-5.6-terra');
+    vi.stubEnv('OPENAI_MAX_OUTPUT_TOKENS', effort ? '32768' : '');
+    vi.stubEnv('OPENAI_REASONING_EFFORT', effort);
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        requests.push(JSON.parse(String(init?.body)));
+        return new Response(
+          JSON.stringify({
+            id: 'resp_test',
+            created_at: 1,
+            model: 'gpt-5.6-terra',
+            output: [
+              {
+                type: 'message',
+                role: 'assistant',
+                id: 'msg_test',
+                content: [
+                  { type: 'output_text', text: '{"ok":true}', annotations: [], logprobs: null },
+                ],
+              },
+            ],
+            usage: { input_tokens: 20, output_tokens: 5 },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        );
+      }),
+    );
+    const { agentJson, agentText, makeAgent } = await import('../../../src/lib/mastra');
+    const agent = makeAgent('hosted-budget-test', 'Return JSON.');
+    await expect(
+      agentJson({ agent, user: 'Test', schema: z.object({ ok: z.boolean() }), mode: 'native' }),
+    ).resolves.toEqual({ ok: true });
+    await agentText({ agent, user: 'Test' });
+    expect(requests).toHaveLength(2);
+    for (const body of requests) {
+      if (effort)
+        expect(body).toMatchObject({ max_output_tokens: 32768, reasoning: { effort: 'low' } });
+      else {
+        expect(body).not.toHaveProperty('max_output_tokens');
+        expect(body).not.toHaveProperty('reasoning');
+      }
+      for (const field of [
+        'max_tokens',
+        'max_completion_tokens',
+        'reasoning_effort',
+        'thinking',
+        'chat_template_kwargs',
+        'temperature',
+      ]) {
+        expect(body).not.toHaveProperty(field);
+      }
+    }
+  },
+);
