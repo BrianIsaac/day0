@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:40:28.918Z",
+  "generatedAt": "2026-09-12T06:40:52.410Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -4169,7 +4169,7 @@
       "arm": "day0",
       "run": 2,
       "status": "running",
-      "humanWaitMs": 2252,
+      "humanWaitMs": 3002,
       "decisions": [
         {
           "kind": "charter",
@@ -4190,6 +4190,13 @@
           "requestedAt": "2026-09-12T06:40:27.482Z",
           "approvedAt": "2026-09-12T06:40:28.264Z",
           "delayMs": 751
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-on-call-tier-two",
+          "requestedAt": "2026-09-12T06:40:32.927Z",
+          "approvedAt": "2026-09-12T06:40:33.700Z",
+          "delayMs": 750
         }
       ],
       "tasks": [
@@ -4294,13 +4301,77 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "docs-on-call-tier-two",
+          "externalId": "EVAL-DOC-02",
+          "category": "docs-grounded-read",
+          "workItemId": "ms74g9r2vr25y6zt4r3k7s5x7s8e8bjv",
+          "terminalState": "failed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:40:28.819Z",
+          "finishedAt": "2026-09-12T06:40:52.259Z",
+          "deployToFirstCorrectActionMs": null,
+          "humanWaitMs": 750,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-on-call-tier-two",
+              "requestedAt": "2026-09-12T06:40:32.927Z",
+              "approvedAt": "2026-09-12T06:40:33.700Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 0,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [],
+            "actions": [],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": false,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": false,
+                "detail": "failed; expected completed"
+              },
+              {
+                "check": "required:slack-message",
+                "passed": false,
+                "detail": "0 matching dm-priya messages; expected exactly one"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [],
+              "proposedTools": [],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          },
+          "error": "agentJson(day0-skill-see-internal-docs-docs-eval-doc-02-initial): prompt reply did not satisfy the schema"
         }
       ],
       "agentId": "j57baegbd1vy6pkeyvztysvtms8e9gpk",
       "deployedAt": "2026-09-12T06:40:07.383Z",
       "activeTask": {
-        "taskId": "docs-on-call-tier-two",
-        "startedAt": "2026-09-12T06:40:28.819Z",
+        "taskId": "docs-first-week-observation",
+        "startedAt": "2026-09-12T06:40:52.314Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 1,
