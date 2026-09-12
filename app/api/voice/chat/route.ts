@@ -2,10 +2,21 @@ import { convertToModelMessages, hasToolCall, streamText, tool, type UIMessage }
 import { z } from 'zod';
 import { establishCaller } from '@/lib/dev-auth-server';
 import { languageModel } from '@/lib/openai';
+import { streamCallOptions } from '@/lib/stream-settings';
 import { DAY_ONE_TOPIC_SPECS, DAY_ONE_WELCOME } from '@/agent/day-one-prompts';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
+
+/**
+ * One turn of a 1:1 is a question and a short follow-up, and this has been the
+ * budget since the route was written. `OPENAI_MAX_OUTPUT_TOKENS` raises it for
+ * a provider that spends part of the budget on reasoning; unset, the route is
+ * unchanged. A larger budget is a ceiling, not a target, but it is a ceiling
+ * inside a 60-second function, so whatever a provider does with it has to fit
+ * `maxDuration` above.
+ */
+const DAY_ONE_MAX_OUTPUT_TOKENS = 2000;
 
 interface ChatBody {
   messages: UIMessage[];
@@ -68,7 +79,10 @@ export async function POST(req: Request): Promise<Response> {
       model: languageModel(),
       system: SYSTEM_PROMPT,
       messages,
-      maxOutputTokens: 2000,
+      ...streamCallOptions({
+        maxOutputTokens: DAY_ONE_MAX_OUTPUT_TOKENS,
+        openai: { promptCacheKey: 'day0-day1-system-v1' },
+      }),
       tools: {
         dayOneComplete: tool({
           description: 'Call this when all seven topics have been covered and the 1:1 is finished.',
@@ -78,9 +92,6 @@ export async function POST(req: Request): Promise<Response> {
         }),
       },
       stopWhen: hasToolCall('dayOneComplete'),
-      providerOptions: {
-        openai: { promptCacheKey: 'day0-day1-system-v1' },
-      },
       maxRetries: 3,
     });
     return result.toUIMessageStreamResponse();
