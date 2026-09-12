@@ -46,6 +46,7 @@ const SYSTEM_PROMPT = [
  * as choosing a message history.
  */
 export async function POST(req: Request): Promise<Response> {
+  const abortSignal = AbortSignal.any([req.signal, AbortSignal.timeout(maxDuration * 1000)]);
   const caller = await establishCaller();
   if (!caller.ok) return caller.refusal;
 
@@ -76,6 +77,7 @@ export async function POST(req: Request): Promise<Response> {
   const messages = await convertToModelMessages(uiMessages);
   try {
     const result = streamText({
+      abortSignal,
       model: languageModel(),
       system: SYSTEM_PROMPT,
       messages,

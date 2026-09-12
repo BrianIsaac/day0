@@ -176,14 +176,14 @@ The measured cost of the layer is in
 **88 structured calls, 3 invalid on first schema validation, 3 repair attempts, 0
 coercions, 0 calls still failing after repair**. The three repairs fell on
 `day0-r1/write-team-handoff`, `day0-r1/write-priya-verification` and
-`day0-r2/write-priya-verification`, three of the rows the paired bed lost; all three
+`day0-r2/write-priya-verification`, ~~three of the rows the paired bed lost~~ REFUTED BY v4 and v5 semifinal.json matched by runId/taskId, 12 Sep 2026. two rows the paired bed lost (Priya repetitions 1 and 2), plus team handoff repetition 1, which had already passed; all three
 passed here. The remaining 85 calls took the unchanged path. The single Day0 row that did
 not pass, `day0-r2/write-closed-won-row`, is not a schema failure: the provider returned a
 `no_output` server error with no `choices` array, which the client rejects before any
-schema applies, so the repair loop correctly did not engage. Terra, Sol and the 8B have
+schema applies, so the repair loop correctly did not engage. ~~Terra, Sol and the 8B have
 zero terminal schema failures in their frozen evidence, so this layer has nothing to
 engage on those recorded routes; their first-parse counters were never recorded and are
-held as `null` rather than assumed to be zero
+held as `null` rather than assumed to be zero~~ REFUTED BY `frozen-structured-output-audit.json`, 12 Sep 2026. Zero terminal failures does not establish zero intermediate schema failures. Terra and Sol each record 45 Day0 rows, zero terminal schema failures and zero repeated-authoring rows; their semantic repair counts are 3 and 0. The 8B records 45 rows, zero terminal schema failures, 10 semantic repairs and 10 repeated-authoring rows (43 author invocations). Discarded earlier authoring errors are unmeasured, so a new repair could change those sequences. Frozen first-parse counters are `null`. Only the fresh three-task Terra control measures zero engagement: 10 calls, zero invalid first replies and zero repairs.
 ([`frozen-structured-output-audit.json`](results/2026-09-12T07-54-47Z-v5-glm53flash/frozen-structured-output-audit.json)).
 The [three-task pilot](results/2026-09-12T07-48-48Z-v5-glm53flash-pilot/provider-bed.md)
 that gated this bed is retained separately and is not pooled into it.
@@ -206,8 +206,12 @@ Mastra 判定回复不符合 schema 后，把真实校验错误与被拒对象�
 通过率由 **13/15 升至 15/15**，逐次通过由 **37/45 升至 44/45**，与 Terra、Sol 持平；无禁止
 操作仍为 45/45，超范围任务 15/15。88 次结构化调用中有 3 次首次校验失败，3 次修复后全部通过，
 0 次强制转换。唯一未通过的 Day0 行是供应商返回 `no_output` 服务端错误，并非 schema 问题，
-修复层按设计未介入。Terra、Sol 与 8B 的冻结证据中没有终止性 schema 失败，该层在这些线路上
-不会启用；其首解析计数从未记录，因此记为 `null`，不能当作零。
+修复层按设计未介入。~~Terra、Sol 与 8B 的冻结证据中没有终止性 schema 失败，该层在这些线路上
+不会启用；其首解析计数从未记录，因此记为 `null`，不能当作零。~~ REFUTED BY `frozen-structured-output-audit.json`, 12 Sep 2026. 没有终止性失败不代表没有中间 schema 失败。Terra 与 Sol 各有 45 行、0 次终止性 schema 失败、0 行重复技能编写；语义修复分别为 3 与 0。8B 有 10 行重复编写（共 43 次编写调用），早期丢弃的异常未保留，新的修复可能改变这些调用序列。冻结记录的首次解析计数为 `null`。新的 Terra 三任务对照才实际测得 10 次调用、0 次首次无效回复、0 次修复。
+
+The frozen v5 `provider-bed.md` also contains the superseded zero-engagement inference and the incorrect “three previously lost rows” mapping. Its bytes remain unchanged as a retained record; the corrections above govern current claims.
+
+**更正：** v5 冻结 `provider-bed.md` 中“冻结环境零介入”的推断以及“三行此前均失败”的映射均不成立。真正此前失败的是 Priya 第 1、2 次；team handoff 第 1 次原本已通过。保留记录不改字节，以本页更正为准。
 
 ### GLM route check — baseline-only, outside the comparison table
 
@@ -473,8 +477,8 @@ context, not scores: the former confirms that day0's held-action mechanism ran,
 while the latter is one value per run from deployment to the first effect of any
 task that passed. The timing table shows human wait beside the raw figure and
 subtracts it only in a net column; day0's raw figure includes onboarding by design.
-A task that exceeds its declared timeout is terminalised as failed and cannot later
-apply a delayed model response.
+~~A task that exceeds its declared timeout is terminalised as failed and cannot later
+apply a delayed model response.~~ REFUTED BY scripts/eval-semifinal.ts stateAtDeadlineCheck and evaluationTaskTiming, 12 Sep 2026. A still-nonterminal task at the deadline check is terminalised as failed, fencing later model results. A task already terminal when the driver regains control keeps its result and records any deadline overrun separately.
 
 ## Reproduce
 

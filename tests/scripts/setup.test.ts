@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -139,6 +139,9 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     if (joined.startsWith('docker volume ls')) {
       return { status: 0, stdout: `${volumes.join('\n')}\n`, stderr: '' };
+    }
+    if (joined.startsWith('docker inspect')) {
+      return { status: 0, stdout: `${directory}\n`, stderr: '' };
     }
     if (joined.startsWith('docker ps')) {
       return { status: 0, stdout: `${services.join('\n')}\n`, stderr: '' };
@@ -380,6 +383,44 @@ describe('refusing anything that is not this machine', (): void => {
 });
 
 describe('protected volumes and existing installations', (): void => {
+  it('pins every child to this compose file and backend despite inherited overrides', async () => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend'],
+      environment: { COMPOSE_FILE: '/other/compose.yml', CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:3999' } });
+    const original = h.io.run;
+    const children: Record<string, string>[] = [];
+    h.io.run = (command, args, options) => {
+      if (options?.env) children.push(options.env);
+      return original(command, args, options);
+    };
+    expect(await runSetup(keyRoute(), h.io)).toBe(0);
+    expect(children.length).toBeGreaterThan(0);
+    for (const child of children) {
+      expect(child.COMPOSE_FILE).toBe(join(h.directory, 'docker-compose.yml'));
+      expect(child.CONVEX_SELF_HOSTED_URL).toBe('http://127.0.0.1:3210');
+    }
+  });
+
+  it('refuses a copied env file that names another checkout’s volume', async () => {
+    const h = harness({ envLocal: 'COMPOSE_PROJECT_NAME=day0-setup-test\nOPENAI_API_KEY=synthetic\n',
+      volumes: ['day0-setup-test_convex_data'], services: ['backend'] });
+    const originalRun = h.io.run;
+    h.io.run = (command, args, options) => args.includes('inspect')
+      ? { status: 0, stdout: '/some/other/checkout\n', stderr: '' }
+      : originalRun(command, args, options);
+    const before = readFileSync(join(h.directory, '.env.local'), 'utf8');
+    expect(await runSetup(keyRoute(), h.io)).toBe(1);
+    expect(readFileSync(join(h.directory, '.env.local'), 'utf8')).toBe(before);
+    expect(h.commands.some(c => c.command === 'pnpm')).toBe(false);
+  });
+
+  it('fails closed when Docker cannot inventory existing volumes', async () => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend'],
+      failing: [{ match: 'docker volume ls', status: 1, stderr: 'daemon unavailable' }] });
+    expect(await runSetup(keyRoute(), h.io)).toBe(1);
+    expect(h.commands.some(c => c.command === 'pnpm')).toBe(false);
+    expect(() => readFileSync(join(h.directory, '.env.local'))).toThrow();
+  });
+
   it('derives the two volumes a project owns', (): void => {
     expect(projectVolumes('day0-setup-abc')).toEqual([
       'day0-setup-abc_convex_data',
@@ -468,6 +509,12 @@ describe('the hardware question the local route asks first', (): void => {
 });
 
 describe('the values written into .env.local', (): void => {
+  it('serves the model it actually pulls on a fresh local route', async () => {
+    const h = harness({ services: ['backend', 'sandbox', 'model'] });
+    expect(await runSetup(keyRoute({ route: 'local', model: 'qwen3:4b' }), h.io)).toBe(0);
+    expect(readEnvValues(join(h.directory, '.env.local')).OPENAI_MODEL).toBe('qwen3:4b');
+  });
+
   it('writes the installation’s own settings and the paired addresses', (): void => {
     const updates = setupEnvUpdates({
       route: 'key',
@@ -527,6 +574,17 @@ describe('the values written into .env.local', (): void => {
 });
 
 describe('writing the file', (): void => {
+  it('cannot follow a pre-existing temporary-file symlink while writing secrets', () => {
+    const directory = checkout('OPENAI_API_KEY=old\n');
+    const path = join(directory, '.env.local');
+    const other = join(directory, 'unrelated');
+    writeFileSync(other, 'untouched', { mode: 0o644 });
+    symlinkSync(other, `${path}.setup-${process.pid}`);
+    writeEnvValues(path, { OPENAI_API_KEY: 'new-secret' });
+    expect(readFileSync(other, 'utf8')).toBe('untouched');
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
   it('replaces a value, keeps every other line and leaves the file private', (): void => {
     const directory = checkout('# a comment\nEXA_API_KEY=exa-1\nCONVEX_PORT=3210\n');
     const path = join(directory, '.env.local');

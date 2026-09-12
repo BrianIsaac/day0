@@ -178,8 +178,8 @@ function CharterSection({
           </span>
         </div>
         <p className="text-sm text-[var(--color-muted)] leading-relaxed">
-          Six seconds of reading, and nothing below this point in the recording happened before it.
-          The agent held a drafted charter and no work until the boss approved this version.
+          Approval followed the draft by six seconds. Initial scopes had already been granted at deployment;
+          the recorded work was surfaced after the boss approved this charter.
         </p>
         <p className="text-xs text-[var(--color-muted)] mt-3">{conversation.note}</p>
         <p className="text-xs text-[var(--color-muted)] mt-2">
@@ -245,7 +245,7 @@ function CharterSection({
 
       <Card title="Provenance">
         <p className="text-xs text-[var(--color-muted)] mb-3">
-          Every claim above is tagged with the line of the conversation it came from. Source:{' '}
+          The recorded charter cites the Day-1 conversation. These are sanitised summaries, not conversation quotations. Source:{' '}
           {charter.source}.
         </p>
         <ul className="space-y-2">
@@ -748,7 +748,7 @@ export function DemoWalkthrough({ snapshot }: { snapshot: HostedDemoSnapshot }) 
           id="charter"
           index={1}
           title="The charter"
-          lede="The agent arrived with a name and nothing else. It ran its own Day-1 1:1, wrote this charter from what it heard, and then waited."
+          lede="The boss supplied a name. The agent ran its Day-1 1:1, drafted this charter from the conversation, and waited for approval."
         >
           <CharterSection charter={charter} conversation={snapshot.conversation} />
         </Chapter>
@@ -815,7 +815,7 @@ export function DemoWalkthrough({ snapshot }: { snapshot: HostedDemoSnapshot }) 
           id="sequence"
           index={7}
           title="The sequence"
-          lede="Every recorded moment, in order. Read it top to bottom and the shape of the gate is visible: nothing lands before an approval."
+          lede="The retained event sequence, in order. Trace charter, plan and skill approvals alongside the recorded effects."
         >
           <Timeline entries={timeline} />
         </Chapter>

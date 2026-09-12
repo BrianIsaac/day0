@@ -3,7 +3,7 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
-import { useUser, Show } from '@clerk/nextjs';
+import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -29,21 +29,15 @@ export default function LandingPage() {
       {DEV_NO_AUTH ? (
         <SignedInDashboard boss={{ email: DEV_BOSS_EMAIL, firstName: DEV_BOSS_FIRST_NAME }} />
       ) : (
-        <>
-          <Show when="signed-out">
-            <SignedOutHero />
-          </Show>
-          <Show when="signed-in">
-            <ClerkSignedInDashboard />
-          </Show>
-        </>
+        <ClerkLanding />
       )}
     </main>
   );
 }
 
-function ClerkSignedInDashboard() {
+function ClerkLanding() {
   const { user } = useUser();
+  if (!user) return <SignedOutHero />;
   return (
     <SignedInDashboard
       boss={{

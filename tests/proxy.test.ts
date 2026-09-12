@@ -104,6 +104,10 @@ describe('the Clerk proxy gate', (): void => {
     await expect(proxy(request('/setup'))).resolves.toBeUndefined();
   });
 
+  it.each(['/demolition', '/setup-admin', '/demo/private', '/setup/private'])('protects routes that only share the public prefix: %s', async (path) => {
+    await expect(proxy(request(path))).rejects.toThrow('sign-in');
+  });
+
   it('still protects an agent dashboard', async (): Promise<void> => {
     await expect(proxy(request('/agent/j57agent'))).rejects.toThrow('sign-in');
   });

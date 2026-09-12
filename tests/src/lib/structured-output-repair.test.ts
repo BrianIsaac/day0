@@ -319,3 +319,20 @@ it('retries a transient repair request without restarting the original response 
     vi.useRealTimers();
   }
 });
+
+it('never retries a schema failure as transport because the agent name sounds transient', async () => {
+  vi.useFakeTimers();
+  try {
+    const generate = vi.fn().mockRejectedValue(violation(priya));
+    const result = agentJsonWithMode({
+      agent: { name: 'temporary-rate-limit-reviewer', generate } as unknown as Agent,
+      user: 'Original', schema: {}, mode: 'prompt',
+    });
+    const rejected = expect(result).rejects.toThrow('did not satisfy the schema');
+    await vi.runAllTimersAsync();
+    await rejected;
+    expect(generate).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -39,6 +39,7 @@ describe('dev-no-auth-key url mode', (): void => {
     writeFileSync(envFile, 'NEXT_PUBLIC_DEV_NO_AUTH=false\n', 'utf8');
     const first = runUrlMode(cwd);
     expect(first.status).toBe(0);
+    expect(statSync(envFile).mode & 0o777).toBe(0o600);
     const written = readFileSync(envFile, 'utf8');
     const key = /^DAY0_CREDENTIAL_KEY=(.+)$/m.exec(written)?.[1];
     const token = /^DAY0_NOTION_MCP_AUTH_TOKEN=(.+)$/m.exec(written)?.[1];
