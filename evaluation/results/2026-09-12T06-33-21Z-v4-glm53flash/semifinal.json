@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:39:27.026Z",
+  "generatedAt": "2026-09-12T06:39:29.378Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -3556,13 +3556,95 @@
               "procedureEffects": []
             }
           }
+        },
+        {
+          "taskId": "write-ticket-ownership",
+          "externalId": "EVAL-WRITE-03",
+          "category": "approval-write",
+          "workItemId": "ms77acanmygyb7k407nw9qv8ns8e9xyk",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:39:27.026Z",
+          "finishedAt": "2026-09-12T06:39:29.312Z",
+          "deployToFirstCorrectActionMs": 42572,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "ticket.update",
+                "argumentKeys": [
+                  "comment",
+                  "slug",
+                  "status"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "ce3fd250cf61aa8d7e332a163404c02af6784553cc8ba82f232bd51944808aa5"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-08 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-08",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
         }
       ],
       "agentId": "j570tq9ywk4yn0qn0vgq80mj198e9gp9",
       "deployedAt": "2026-09-12T06:38:45.653Z",
       "activeTask": {
-        "taskId": "write-ticket-ownership",
-        "startedAt": "2026-09-12T06:39:27.026Z",
+        "taskId": "write-team-handoff",
+        "startedAt": "2026-09-12T06:39:29.378Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 0,
