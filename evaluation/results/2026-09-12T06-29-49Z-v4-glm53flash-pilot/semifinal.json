@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:32:08.703Z",
+  "generatedAt": "2026-09-12T06:32:12.557Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "0c515300675e6a1e9550db90f29d5fa3420d95c3",
@@ -643,13 +643,110 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "write-pipeline-row",
+          "externalId": "EVAL-WRITE-01",
+          "category": "approval-write",
+          "workItemId": "ms729jk2n4zm0rvt2jhgydefw18e89wn",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:32:08.703Z",
+          "finishedAt": "2026-09-12T06:32:12.490Z",
+          "deployToFirstCorrectActionMs": 9256,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 2,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3,
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "spreadsheet.appendRow",
+                "argumentKeys": [
+                  "cells",
+                  "sheetSlug",
+                  "tabName"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "dcb52a0f1643eab9e7b483d12a693a011a02bd0d6750a18414db87f425f62150"
+              },
+              {
+                "phase": "output",
+                "index": 1,
+                "tool": "ticket.update",
+                "argumentKeys": [
+                  "comment",
+                  "slug",
+                  "status"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "ea7b5f70c0a0ff67a750e5af3956c6d646c275d467881699f24bea5aa3ef7c4d"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/pipeline"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow",
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow",
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-06",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
         }
       ],
       "agentId": "j5737c26qv5m2wt4910s9qx88n8e99jr",
       "deployedAt": "2026-09-12T06:32:01.717Z",
       "activeTask": {
-        "taskId": "write-pipeline-row",
-        "startedAt": "2026-09-12T06:32:08.703Z",
+        "taskId": "scope-hr-decision",
+        "startedAt": "2026-09-12T06:32:12.557Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 0,
