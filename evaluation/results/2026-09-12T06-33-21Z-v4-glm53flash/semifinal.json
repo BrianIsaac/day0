@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:38:11.908Z",
+  "generatedAt": "2026-09-12T06:38:17.145Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -2514,17 +2514,91 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "write-team-handoff",
+          "externalId": "EVAL-WRITE-04",
+          "category": "approval-write",
+          "workItemId": "ms7e24397wzy7pqg3jnp8nxqwh8e9jgr",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:38:11.908Z",
+          "finishedAt": "2026-09-12T06:38:14.155Z",
+          "deployToFirstCorrectActionMs": 40622,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug",
+                  "threadKey"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "72a46b5f4f4fac4a9ca88c53ea283f99ac829f294a594136c6e74048b3cc9f13"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:slack-message",
+                "passed": true,
+                "detail": "one matching message found in revops"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "slack.postMessage"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
         }
       ],
       "agentId": "j577z7hmdvvj64w8bb1dvvw6758e8bps",
       "deployedAt": "2026-09-12T06:37:32.373Z",
       "activeTask": {
-        "taskId": "write-team-handoff",
-        "startedAt": "2026-09-12T06:38:11.908Z",
+        "taskId": "write-priya-verification",
+        "startedAt": "2026-09-12T06:38:14.212Z",
         "humanWaitMs": 0,
         "decisions": [],
-        "logicalStages": 0,
-        "observableProviderCalls": null,
+        "logicalStages": 2,
+        "observableProviderCalls": 2,
         "skillAuthoringAttempts": 0
       }
     }
