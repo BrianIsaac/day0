@@ -74,6 +74,7 @@ export const MODEL_RETRY_POLICY = {
 } as const;
 
 function isTransientApiError(err: unknown): boolean {
+  if (err instanceof StructuredContractError) return false;
   if (!err || typeof err !== 'object') return false;
   const e = err as { isRetryable?: boolean; message?: unknown; statusCode?: number };
   if (e.isRetryable === true) return true;
