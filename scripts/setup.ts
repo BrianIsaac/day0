@@ -33,6 +33,7 @@ import {
   existsSync,
   readFileSync,
   renameSync,
+  realpathSync,
   writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
@@ -615,7 +616,7 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     DAY0_SURFACE_MODE: 'mock',
   };
   if (input.apiKey) whenMissing.OPENAI_API_KEY = input.apiKey;
-  if (input.model) whenMissing.OPENAI_MODEL = input.model;
+  if (input.model) selected.OPENAI_MODEL = input.model;
 
   const updates: Record<string, string> = { ...selected };
   for (const [name, value] of Object.entries(whenMissing)) {
@@ -827,9 +828,18 @@ export function firstSuccessLines(unlockUrl: string | undefined): string[] {
    through Docker. */
 
 /** The env values every child process inherits, so none of them guesses. */
-function childEnvironment(project: string, ports: SetupPorts): Record<string, string> {
+function childEnvironment(project: string, ports: SetupPorts, cwd: string): Record<string, string> {
   return {
     COMPOSE_PROJECT_NAME: project,
+    COMPOSE_FILE: join(cwd, 'docker-compose.yml'),
+    COMPOSE_PROFILES: '',
+    CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${ports.backend}`,
+    CONVEX_SELF_HOSTED_ADMIN_KEY: readEnvValues(join(cwd, ENV_FILE)).CONVEX_SELF_HOSTED_ADMIN_KEY ?? '',
+    CONVEX_DEPLOYMENT: '',
+    CONVEX_DEPLOY_KEY: '',
+    CONVEX_ADMIN_KEY: '',
+    CONVEX_URL: `http://127.0.0.1:${ports.backend}`,
+    NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports.backend}`,
     CONVEX_PORT: String(ports.backend),
     CONVEX_SITE_PROXY_PORT: String(ports.site),
     CONVEX_DASHBOARD_PORT: String(ports.dashboard),
@@ -962,8 +972,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     };
 
     const volumes = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
-    const existingVolumes =
-      volumes.status === 0 ? volumes.stdout.split('\n').map((name) => name.trim()) : [];
+    if (volumes.status !== 0) {
+      io.log('error: Docker could not inventory volumes; no installation can be safely selected.');
+      return 1;
+    }
+    const existingVolumes = volumes.stdout.split('\n').map((name) => name.trim());
     const decision = attachmentDecision({
       project: resolvedProject,
       existingVolumes,
@@ -979,6 +992,30 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         `       Start your own: \`pnpm setup:local --project ${resolvedProject}-2\`, or set ` +
           `COMPOSE_PROJECT_NAME=${resolvedProject} in ${ENV_FILE} if that volume really is this checkout’s.`,
       );
+      return 1;
+    }
+
+    const checkoutRoot = realpathSync(io.cwd);
+    if (existing.DAY0_SETUP_ROOT && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
+      io.log('error: this env file belongs to another checkout; choose a fresh project and env file.');
+      return 1;
+    }
+    const containers = io.run('docker', ['ps', '-a', '--filter',
+      `label=com.docker.compose.project=${resolvedProject}`, '--format', '{{.ID}}']);
+    if (containers.status !== 0) {
+      io.log('error: Docker could not identify this project’s existing containers.');
+      return 1;
+    }
+    const ids = containers.stdout.trim().split(/\s+/).filter(Boolean);
+    if (ids.length) {
+      const owners = io.run('docker', ['inspect', '--format',
+        '{{index .Config.Labels "com.docker.compose.project.working_dir"}}', ...ids]);
+      if (owners.status !== 0 || owners.stdout.trim().split('\n').some(root => root !== checkoutRoot)) {
+        io.log('error: existing project containers belong to another checkout or have unknown ownership.');
+        return 1;
+      }
+    } else if (decision === 'rerun' && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
+      io.log('error: existing volumes have no verifiable checkout ownership; choose a fresh project.');
       return 1;
     }
 
@@ -1061,7 +1098,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         return 1;
       }
       const choice = chooseLocalModel(freeVram(io));
-      model = model ?? choice.model;
+      model = model ?? (existing.OPENAI_BASE_URL?.includes('127.0.0.1:') ? existing.OPENAI_MODEL : undefined) ?? choice.model;
       io.log('');
       io.log('Running the model here is a hardware question, so it is asked before the pull.');
       io.log(`  ${choice.reason}`);
@@ -1121,6 +1158,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       model,
       endpoint,
     });
+    if (existing.DAY0_SETUP_ROOT !== checkoutRoot) updates.DAY0_SETUP_ROOT = checkoutRoot;
     if (Object.keys(updates).length > 0) {
       writeEnvValues(envPath, updates);
       wrote = true;
@@ -1133,7 +1171,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(`${ENV_FILE} already says all of this; nothing was changed in it.`);
     }
 
-    const environment = childEnvironment(resolvedProject, ports);
+    const environment = childEnvironment(resolvedProject, ports, checkoutRoot);
     const steps = sequenceSteps(route);
     const streamed: RunOptions = { env: environment, inherit: true, timeoutMs: 900_000 };
     io.log('');
@@ -1256,6 +1294,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
           'volume, so it is kept',
       );
     }
+
+    environment.CONVEX_SELF_HOSTED_ADMIN_KEY = adminKey;
 
     const published = io.run(
       'docker',
