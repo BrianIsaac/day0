@@ -110,6 +110,20 @@ function lookups(
 }
 
 describe('work surface enablement', (): void => {
+  it('reports a missing skill without asserting in-scope', async (): Promise<void> => {
+    const verdict = await evaluateCandidate(candidate('ticket'), context('mock', []), {
+      ...lookups(),
+      findMatchingSkill: async (): Promise<null> => null,
+    });
+
+    expect(verdict.decision).toBe('needs-skill');
+    if (verdict.decision !== 'needs-skill') throw new Error('Expected needs-skill verdict');
+    expect(verdict.reason).not.toContain('in-scope');
+    expect(verdict.reason).toBe(
+      `no registered skill matches; agent will propose "${verdict.suggestedSkillName}"`,
+    );
+  });
+
   it('preserves mock behaviour when no persistent surfaces exist', async (): Promise<void> => {
     await expect(
       evaluateCandidate(candidate('ticket'), context('mock', []), lookups()),

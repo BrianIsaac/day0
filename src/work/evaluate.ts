@@ -26,7 +26,7 @@ import {
  *      from a global store. The Convex action wires them.
  *
  *   2. There's a new terminal verdict — `needs-skill`. When the
- *      candidate is in scope but no registered skill matches, we
+ *      candidate reaches skill matching but no registered skill matches, we
  *      surface this as a propose-new-skill flow rather than
  *      hard-skipping. Capability is meant to grow in place, so an
  *      unmatched candidate is a gap to fill rather than a dead end.
@@ -381,7 +381,7 @@ export async function evaluateCandidate(
     const { name, rationale } = inferSkillRationale(candidate, ctx.charter);
     return {
       decision: 'needs-skill',
-      reason: `in-scope but no registered skill matches; agent will propose "${name}"`,
+      reason: `no registered skill matches; agent will propose "${name}"`,
       suggestedSkillName: name,
       suggestedSkillRationale: rationale,
     };
