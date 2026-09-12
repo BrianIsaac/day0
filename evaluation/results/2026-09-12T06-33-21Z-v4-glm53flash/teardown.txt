@@ -1,0 +1,10 @@
+Compose project: day0-v4-glm53flash-1a2075
+Teardown verified: 2026-09-12T06:53:34.369272+00:00
+Command: COMPOSE_PROJECT_NAME=day0-v4-glm53flash-1a2075 pnpm convex:down --profile test --profile demo --profile browser --profile sandbox -- -v
+docker ps -a filtered by compose project: none
+docker volume ls filtered by compose project: none
+docker network ls filtered by compose project: none
+Ports 45410, 45411, 47991, 45412, 45413 free
+All four protected volumes still present; none was operated on.
+Primary .env.local* files byte-identical to initial hashes.
+No Vercel, cloud Convex or primary environment mutation.

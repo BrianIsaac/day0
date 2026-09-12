@@ -90,6 +90,57 @@ also led on procedure adherence, prohibited-action freedom and out-of-scope pass
 both beds. Day0 did not pass every task-run (44/45 on each hosted model), and this
 controlled mock-office result is not a claim of universal performance.
 
+### Paired GLM bed — 12 September 2026
+
+The new [`2026-09-12T06-33-21Z-v4-glm53flash`](results/2026-09-12T06-33-21Z-v4-glm53flash/provider-bed.md) runs both arms on
+`zai-org/GLM-5.3-Flash` through Featherless, with JSON mode `prompt`, output budget
+`32768` and reasoning effort `low`. **6/6 arm-runs, 90/90 terminal task rows; three
+Day0 charters approved; no harness timeout or deadline overrun.** It supplements
+the frozen submission beds; the first GLM bed below stays an ordinary-only route check.
+
+| Measure | 8B day0 | 8B plain | Terra day0 | Terra plain | Sol day0 | Sol plain | 14B day0 | 14B plain | GLM day0 | GLM plain |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Task pass, majority | 7/15 | 6/15 | 15/15 | 12/15 | 15/15 | 13/15 | 6/15 | 8/15 | 13/15 | 8/15 |
+| Task pass, per run | 25/45 | 19/45 | 44/45 | 34/45 | 44/45 | 36/45 | 20/45 | 25/45 | 37/45 | 28/45 |
+| Procedure adherence, majority (a priori) | 7/15 | 1/15 | 11/15 | 2/15 | 11/15 | 2/15 | 2/15 | 2/15 | 9/15 | 2/15 |
+| Procedure adherence, per run (a priori) | 20/45 | 4/45 | 33/45 | 6/45 | 32/45 | 6/45 | 8/45 | 6/45 | 26/45 | 6/45 |
+| Prohibited-action free, per run | 42/45 | 34/45 | 45/45 | 34/45 | 45/45 | 38/45 | 45/45 | 34/45 | 45/45 | 34/45 |
+| Docs-grounded-read pass | 7/15 | 3/15 | 14/15 | 15/15 | 15/15 | 12/15 | 7/15 | 3/15 | 12/15 | 8/15 |
+| Approval-write pass | 6/15 | 8/15 | 15/15 | 15/15 | 14/15 | 15/15 | 0/15 | 12/15 | 10/15 | 15/15 |
+| Out-of-scope pass | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 | 13/15 | 10/15 | 15/15 | 5/15 |
+| Supervision on approval writes (context) | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 | 0/15 | 0/15 | 10/15 | 0/15 |
+
+Day0 leads this ordinary arm on task-majority pass (13/15 vs 8/15), per-run pass (37/45 vs 28/45), a-priori procedure adherence (26/45 vs 6/45), prohibited-action freedom (45/45 vs 34/45) and out-of-scope pass (15/15 vs 5/15). It loses approval-write pass (10/15 vs 15/15). Its task-majority result is below Terra and Sol (15/15 each) and above the local 8B (7/15) and 14B (6/15). Seven Day0 rows failed on schema-invalid structured executor replies: Priya verification in all three repetitions, team handoff in repetitions 2 and 3, and the on-call and Salesforce documentation tasks in repetition 2. One further row completed without the required manager message (team cadence, repetition 2). These eight misses have no prohibited-action flags. There were no harness timeouts, deadline overruns or exhausted six-attempt authoring caps.
+
+All performance rows above are higher-is-better; supervision is context. The driver, graders and task fixture are byte-identical to the four older beds. Product code and model configuration differ across capture dates; these cross-bed figures do not isolate model identity alone. Both arms within this bed share all 17 recorded parameters. Supervision is mechanism context, not a performance score. The fixed mock office and three repetitions do not establish general performance.
+The generated reports retain the Wilson intervals and timing definitions.
+
+The new directory follows `<UTC stamp>-v4-glm53flash`: `v4` is the evidence-generation
+label following the v3 hosted reruns and merged output/effort settings, **not a change
+to harness v2**. Its 17-field parity objects match exactly. SHA-256 of `semifinal.json`:
+`ade81b63ab6f47a639d6e7069f3d41dbffcd5d5b78aa150a7eb9ac93769362c6`; all file hashes are in its `SHA256SUMS`.
+The [separate six-row pilot](results/2026-09-12T06-29-49Z-v4-glm53flash-pilot/provider-bed.md)
+is not pooled into the full bed.
+
+Wall time was **15 min 51.941 s** from first deployment to final completion; task medians
+were **12.355 s Day0 / 4.505 s ordinary**. The operator’s account-wide billing change
+from mid-pilot through revocation was **$0.117300 / 245 billed requests**, including
+the tail of the pilot and not an isolated full-bed invoice. The [provider record](results/2026-09-12T06-33-21Z-v4-glm53flash/provider-bed.md)
+retains the plan, prices, checkpoints, latency definitions and limitations.
+
+The [gate rerun](results/2026-09-12T06-33-21Z-v4-glm53flash/gate/matrix.md) matches the retained matrix apart from
+time. The [GLM revocation rerun](results/2026-09-12T06-33-21Z-v4-glm53flash/revocation/trials.md) records 19 attempts,
+15 blocked, four landed by design, zero unexpected; median block 55 ms, max 124 ms,
+5/5 switch-off attempts blocked, and exact product-metric reconciliation. Its setup
+uses model-authored onboarding; its containment measurements are model-free.
+
+**中文：** **2026 年 9 月 12 日**新增 GLM 双 arm
+评测共有 90/90 行，Day0 三次 charter 均获批准。任务多数通过率 **13/15 对 8/15**，
+逐次通过 **37/45 对 28/45**，预先定义的流程遵循 **26/45 对 6/45**，无禁止操作
+**45/45 对 34/45**，超范围任务 **15/15 对 5/15**；审批写入通过率则为 **10/15 对 15/15**。
+两 arm 的 17 项参数一致，输出预算 32768、推理强度 low、JSON 模式 prompt。旧 GLM 单 arm
+结果仍作为线路检查保留；旧评测与本次产品提交不同，不能把跨环境差异全部归因于模型。
+
 ### GLM route check — baseline-only, outside the comparison table
 
 [`results/2026-09-11T20-08-51Z-v2-glm53flash/`](results/2026-09-11T20-08-51Z-v2-glm53flash/)
@@ -154,9 +205,9 @@ was 0/15 for both arms because no Day0 approval-write row completed. The 25 fail
 Day0 rows carry two error strings in `semifinal.json`: nine ended
 `skill-authoring-attempts-exhausted` at the six-attempt cap, and sixteen ended
 `executor action contract remained invalid after one repair`, the fail-closed
-procedure-trail validator. Neither the local 8B row nor this row shows a task-pass
-uplift from onboarding; the hosted rows are the evidence for the narrower claim that
-onboarding governs sufficiently capable models on these fixed beds. `semifinal.json`
+procedure-trail validator. The local 8B row shows a one-task observed uplift (7/15 versus 6/15), while
+the 14B row loses task pass. Neither result establishes a population effect; the
+hosted rows support the narrower claim on those fixed beds. `semifinal.json`
 SHA-256 `490825415a419df91de71f2550313705cef7b9c97b00fb0e66c7058fd3f1a0e1`;
 `model-bed.md` `96df10875f9c1a485fa459f6cee40ac83f6e833733a62e3f33dc9aeb70ef0d61`;
 `ollama-run.log.gz` `94946e1319f71e78a549b56355e58795cbf9a8bbc848e31653a837a45938c5f6`
@@ -181,7 +232,8 @@ Two deterministic measurements cover the judges' second direction:
   This is the trial set the submission quotes. It ran on 2 September 2026 at commit
   `2b3ee44` in real mode on an isolated self-hosted backend (compose project
   `day0-revoc-cf6879`) against `fake-slack` and the browser-driven Looker tile, with
-  Daytona blanked; the driver makes no model call. Across 12 revoke-then-attempt
+  Daytona blanked; trial measurements are model-free, while preparation synthesises
+  a model-authored charter. Across 12 revoke-then-attempt
   trials and 5 switch-off trials there were N attempted=19, N blocked=15 and
   N landed=4, all four by declared design, so N unexpected=0. Time to block was
   n=15, median=66 ms and max=151 ms (median 76 ms after a permission revocation,

@@ -1,0 +1,57 @@
+{
+  "observedAt": "2026-09-12T06:30:42.767154+00:00",
+  "url": "https://api.featherless.ai/v1/models/zai-org/GLM-5.3-Flash",
+  "data": {
+    "id": "zai-org/GLM-5.3-Flash",
+    "is_gated": false,
+    "created": 1787863778,
+    "model_class": "glm5-next-321b3",
+    "owned_by": "Feather",
+    "context_length": 262144,
+    "max_completion_tokens": 32768,
+    "concurrency_cost": 4,
+    "pricing": {
+      "prompt": "0.00000015",
+      "completion": "0.0000005",
+      "image": "0",
+      "request": "0",
+      "input": 0.15,
+      "output": 0.5
+    },
+    "features": {
+      "tool_use": true,
+      "image_input": true
+    },
+    "niche": false,
+    "object": "model",
+    "status": "active",
+    "availability": {
+      "tier": "warm",
+      "is_hot_live": true,
+      "is_hot_recent": false,
+      "loading_stage": null,
+      "last_changed_at": "2026-09-12T06:26:07.952Z"
+    },
+    "huggingface_id": "6a8d39822a943ad8a2f2ea50",
+    "hf_created_at": "2026-08-25T06:43:14.000Z",
+    "license": "mit",
+    "downloads": 1173520,
+    "favorites": 2253,
+    "parameter_size": 321300000000,
+    "is_moe": false,
+    "active_parameters": null,
+    "vision_supported": true,
+    "input_modalities": [
+      "text",
+      "image"
+    ],
+    "output_modalities": [
+      "text"
+    ],
+    "tasks": [
+      "image-text-to-text",
+      "conversational"
+    ],
+    "tags": null
+  }
+}
