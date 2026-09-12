@@ -16,7 +16,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 ## Live demo
 
-[`day0-olive.vercel.app`](https://day0-olive.vercel.app) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It uses the deployment's `OPENAI_MODEL`; the code default is `gpt-5.6-terra`, and the operator can override it in the deployment environment, for example to `gpt-5.6`. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
+[`day0-olive.vercel.app`](https://day0-olive.vercel.app) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It runs the model named by the deployment's `OPENAI_MODEL`, with `gpt-5.6-terra` as the code default when unset; the demo's provider for a given window is a deployment setting, not the product's identity. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
 
 - Sign in with Clerk and deploy an agent.
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
@@ -932,7 +932,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 ### 在线演示
 
-[`day0-olive.vercel.app`](https://day0-olive.vercel.app) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它使用 deployment 中配置的 `OPENAI_MODEL`；代码默认值是 `gpt-5.6-terra`，operator 也可以在 deployment environment 中覆盖为例如 `gpt-5.6`。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
+[`day0-olive.vercel.app`](https://day0-olive.vercel.app) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它运行 deployment 的 `OPENAI_MODEL` 指定的模型，未设置时使用代码默认值 `gpt-5.6-terra`；特定时间窗内演示所用的提供方是部署设置，不代表产品身份。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
 
 - 使用 Clerk 登录并部署一个 Agent。
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
