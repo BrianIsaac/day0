@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:41:02.137Z",
+  "generatedAt": "2026-09-12T06:41:19.655Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -4169,7 +4169,7 @@
       "arm": "day0",
       "run": 2,
       "status": "running",
-      "humanWaitMs": 4503,
+      "humanWaitMs": 5254,
       "decisions": [
         {
           "kind": "charter",
@@ -4211,6 +4211,13 @@
           "requestedAt": "2026-09-12T06:41:00.695Z",
           "approvedAt": "2026-09-12T06:41:01.475Z",
           "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-09-12T06:41:05.502Z",
+          "approvedAt": "2026-09-12T06:41:06.282Z",
+          "delayMs": 751
         }
       ],
       "tasks": [
@@ -4481,13 +4488,77 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7eweef165da63q4n5pt78nkh8e9g4p",
+          "terminalState": "failed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:41:02.040Z",
+          "finishedAt": "2026-09-12T06:41:19.475Z",
+          "deployToFirstCorrectActionMs": null,
+          "humanWaitMs": 751,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-09-12T06:41:05.502Z",
+              "approvedAt": "2026-09-12T06:41:06.282Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 0,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [],
+            "actions": [],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": false,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": false,
+                "detail": "failed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": false,
+                "detail": "ticket REVOPS-EVAL-04 status=open, matching comments=0"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [],
+              "proposedTools": [],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          },
+          "error": "agentJson(day0-skill-see-internal-docs-docs-eval-doc-04-initial): prompt reply did not satisfy the schema"
         }
       ],
       "agentId": "j57baegbd1vy6pkeyvztysvtms8e9gpk",
       "deployedAt": "2026-09-12T06:40:07.383Z",
       "activeTask": {
-        "taskId": "docs-salesforce-escalation",
-        "startedAt": "2026-09-12T06:41:02.040Z",
+        "taskId": "docs-q4-source-of-truth",
+        "startedAt": "2026-09-12T06:41:19.548Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 1,
