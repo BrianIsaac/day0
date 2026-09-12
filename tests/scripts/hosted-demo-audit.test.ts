@@ -109,7 +109,7 @@ describe('offline hosted export audit', () => {
       writeFileSync(join(path, 'agents', 'generated_schema.jsonl'), '"uniform"\n');
     }
     writeFileSync(join(after, '_storage', 'file-a.txt'), 'after!');
-    const archive = join(before, 'sample export; literal.zip');
+    const archive = join(fixture({}), 'sample export; literal.zip');
     execFileSync('zip', ['-q', '-r', archive, '_tables', 'agents', '_storage'], { cwd: before });
     expect(auditExports(archive, before).equal).toBe(true);
     const report = auditExports(archive, after);
@@ -131,6 +131,13 @@ describe('offline hosted export audit', () => {
   ])('refuses invalid row identities instead of certifying a lossy comparison (%#)', (...rows) => {
     const invalid = fixture({ agents: rows });
     expect(() => auditExports(invalid, invalid)).toThrow(/Invalid|Duplicate/);
+  });
+
+  it('refuses unexpected root files instead of silently ignoring their changes', () => {
+    const before = fixture({ agents: [] });
+    const after = fixture({ agents: [] });
+    writeFileSync(join(after, 'unexpected.json'), '{"changed":true}');
+    expect(() => auditExports(before, after)).toThrow(/Unsupported export layout/);
   });
 
   it('refuses a directory with no document files', () => {

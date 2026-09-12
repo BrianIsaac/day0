@@ -34,7 +34,10 @@ function exportEntries(path: string): Map<string, Buffer> {
   if (statSync(path).isDirectory()) {
     for (const table of readdirSync(path, { withFileTypes: true })) {
       if (table.isSymbolicLink()) throw new Error('Export contains a symbolic link');
-      if (!table.isDirectory()) continue;
+      if (table.name === 'README.md' && table.isFile()) continue;
+      if (!table.isDirectory()) {
+        throw new Error('Unsupported export layout; expected root table directories');
+      }
       if (!readdirSync(join(path, table.name)).includes('documents.jsonl')) {
         throw new Error('Export table is missing documents.jsonl');
       }
