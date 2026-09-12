@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "experiment": "day0-semifinal-controlled-comparison",
+  "generatedAt": "2026-09-12T06:29:53.051Z",
+  "configuration": {
+    "harnessVersion": 2,
+    "commit": "0c515300675e6a1e9550db90f29d5fa3420d95c3",
+    "model": "zai-org/GLM-5.3-Flash",
+    "temperature": 0.4,
+    "modelCallTimeoutMs": 300000,
+    "surfaceMode": "mock",
+    "arms": [
+      "day0",
+      "baseline"
+    ],
+    "requestedRuns": 1,
+    "taskIds": [
+      "docs-team-cadence",
+      "write-pipeline-row",
+      "scope-hr-decision"
+    ],
+    "taskTimeoutMs": {
+      "docs-team-cadence": 900000,
+      "write-pipeline-row": 900000,
+      "scope-hr-decision": 900000
+    },
+    "approvalDelayMs": 750,
+    "pollIntervalMs": 500,
+    "skillAuthoringMaxAttempts": 6,
+    "noLlmJudge": true,
+    "onboardingTranscriptProvenance": "Fixed reconstruction from the operator facts recorded in docs/plans/progress/e2e-30aug.md; the preserved source does not contain the original seven answer texts, so this is not a verbatim transcript. The boundary answer is stated generically and does not name the systems the out-of-scope tasks probe.",
+    "onboardingTranscriptPath": "evaluation/onboarding/day0.json",
+    "postCharterApprovalSkipped": true,
+    "harnessParameters": {
+      "day0": {
+        "modelId": "zai-org/GLM-5.3-Flash",
+        "temperature": 0.4,
+        "maxOutputTokens": 32768,
+        "reasoningEffort": "low",
+        "modelCallAbortMs": 300000,
+        "taskTimeoutMs": {
+          "docs-team-cadence": 900000,
+          "write-pipeline-row": 900000,
+          "scope-hr-decision": 900000
+        },
+        "retryPolicy": {
+          "providerMaxRetries": 2,
+          "outer": {
+            "maxAttempts": 5,
+            "baseDelayMs": 2000,
+            "maxDelayMs": 30000,
+            "retryableStatusCodes": [
+              429,
+              503
+            ],
+            "retryableMessagePattern": "overload|service_unavailable|503|temporar|rate.?limit"
+          }
+        },
+        "providerClient": "@ai-sdk/openai chat-completions through Mastra",
+        "providerBaseUrl": "https://api.featherless.ai/v1",
+        "contextLimitTokens": null,
+        "structuredOutputMode": "prompt",
+        "modelSeed": null,
+        "skillSandboxBackend": "local",
+        "effectiveTemperature": 0.4,
+        "providerWarnings": [],
+        "ollamaVersion": null,
+        "ollamaModelDigest": null
+      },
+      "baseline": {
+        "modelId": "zai-org/GLM-5.3-Flash",
+        "temperature": 0.4,
+        "maxOutputTokens": 32768,
+        "reasoningEffort": "low",
+        "modelCallAbortMs": 300000,
+        "taskTimeoutMs": {
+          "docs-team-cadence": 900000,
+          "write-pipeline-row": 900000,
+          "scope-hr-decision": 900000
+        },
+        "retryPolicy": {
+          "providerMaxRetries": 2,
+          "outer": {
+            "maxAttempts": 5,
+            "baseDelayMs": 2000,
+            "maxDelayMs": 30000,
+            "retryableStatusCodes": [
+              429,
+              503
+            ],
+            "retryableMessagePattern": "overload|service_unavailable|503|temporar|rate.?limit"
+          }
+        },
+        "providerClient": "@ai-sdk/openai chat-completions through Mastra",
+        "providerBaseUrl": "https://api.featherless.ai/v1",
+        "contextLimitTokens": null,
+        "structuredOutputMode": "prompt",
+        "modelSeed": null,
+        "skillSandboxBackend": "local",
+        "effectiveTemperature": 0.4,
+        "providerWarnings": [],
+        "ollamaVersion": null,
+        "ollamaModelDigest": null
+      }
+    },
+    "intentionalArmDifferences": {
+      "onboardingPipeline": {
+        "day0": "runtime charter, loaded documents, approved plan, and exact-action gate",
+        "baseline": "none"
+      },
+      "executionTurn": {
+        "day0": "one governed structured executor turn after onboarding",
+        "baseline": "one five-tool in-generation loop"
+      }
+    },
+    "backendModel": "zai-org/GLM-5.3-Flash",
+    "skillSandboxBackend": "local"
+  },
+  "runs": [
+    {
+      "id": "day0-r1",
+      "arm": "day0",
+      "run": 1,
+      "status": "running",
+      "humanWaitMs": 0,
+      "decisions": [],
+      "tasks": [],
+      "agentId": "j57bsw0fnekxremf6je5wzfk0d8e8sh6",
+      "deployedAt": "2026-09-12T06:29:53.022Z"
+    }
+  ]
+}
