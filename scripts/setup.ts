@@ -667,6 +667,26 @@ export function parseAdminKey(stdout: string): string | undefined {
     .pop();
 }
 
+/**
+ * Whether a new admin key has to be taken from the backend container.
+ *
+ * `generate_admin_key.sh` mints a *new* key every time it is called, and every
+ * key it has ever minted for that volume keeps working. Calling it on a rerun
+ * therefore rotates the line in `.env.local` for no reason, which is exactly
+ * what this helper promises not to do. So the key already in the file is kept
+ * whenever the backend still accepts it.
+ *
+ * Args:
+ *   existing: The key `.env.local` already holds.
+ *   accepted: Whether the backend answered an admin call made with it.
+ *
+ * Returns:
+ *   True when the generator has to be run.
+ */
+export function shouldCaptureAdminKey(existing: string, accepted: boolean): boolean {
+  return !existing.includes('|') || !accepted;
+}
+
 /** The half of an admin key that is safe to print: its instance name. */
 export function adminKeyPrefix(key: string): string {
   return `${key.split('|')[0]}|...`;
@@ -1211,21 +1231,30 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     io.log(
       `[${steps.indexOf('admin-key') + 1}/${steps.length}] admin key, from the backend container`,
     );
-    const generated = io.run(
-      'docker',
-      composeArguments(['exec', '-T', 'backend', './generate_admin_key.sh']),
-      { env: environment, timeoutMs: 60_000 },
-    );
-    const adminKey = generated.status === 0 ? parseAdminKey(generated.stdout) : undefined;
-    if (adminKey === undefined) {
-      reportFailure(io, 'generate_admin_key.sh', generated, resolvedProject);
-      return 1;
-    }
-    if (readEnvValues(envPath).CONVEX_SELF_HOSTED_ADMIN_KEY !== adminKey) {
+    const heldKey = readEnvValues(envPath).CONVEX_SELF_HOSTED_ADMIN_KEY ?? '';
+    const heldKeyWorks =
+      heldKey.includes('|') &&
+      io.run('npx', ['convex', 'env', 'list'], { env: environment, timeoutMs: 120_000 }).status ===
+        0;
+    let adminKey: string | undefined = heldKey;
+    if (shouldCaptureAdminKey(heldKey, heldKeyWorks)) {
+      const generated = io.run(
+        'docker',
+        composeArguments(['exec', '-T', 'backend', './generate_admin_key.sh']),
+        { env: environment, timeoutMs: 60_000 },
+      );
+      adminKey = generated.status === 0 ? parseAdminKey(generated.stdout) : undefined;
+      if (adminKey === undefined) {
+        reportFailure(io, 'generate_admin_key.sh', generated, resolvedProject);
+        return 1;
+      }
       writeEnvValues(envPath, { CONVEX_SELF_HOSTED_ADMIN_KEY: adminKey });
       io.log(`    wrote CONVEX_SELF_HOSTED_ADMIN_KEY (${adminKeyPrefix(adminKey)}) to ${ENV_FILE}`);
     } else {
-      io.log(`    the key in ${ENV_FILE} already belongs to this volume`);
+      io.log(
+        `    the key in ${ENV_FILE} (${adminKeyPrefix(heldKey)}) still authenticates against this ` +
+          'volume, so it is kept',
+      );
     }
 
     const published = io.run(

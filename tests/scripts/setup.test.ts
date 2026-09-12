@@ -22,6 +22,7 @@ import {
   SetupCancelled,
   sequenceSteps,
   setupEnvUpdates,
+  shouldCaptureAdminKey,
   writeEnvValues,
   type RunResult,
   type SetupIo,
@@ -97,6 +98,8 @@ interface HarnessOptions {
   /** Whether the backend answers on its port. */
   backendUp?: boolean;
   environment?: Record<string, string | undefined>;
+  /** Whether the backend accepts the admin key the file already holds. */
+  adminKeyAccepted?: boolean;
 }
 
 /**
@@ -116,6 +119,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const services = options.services ?? [];
   const volumes = options.volumes ?? [];
   const failing = options.failing ?? [];
+  let minted = 0;
 
   const run = (command: string, args: readonly string[]): RunResult => {
     const joined = [command, ...args].join(' ');
@@ -144,7 +148,17 @@ function harness(options: HarnessOptions = {}): Harness {
       return { status: 0, stdout: `127.0.0.1:${port}\n`, stderr: '' };
     }
     if (joined.includes('generate_admin_key.sh')) {
-      return { status: 0, stdout: 'Admin key:\nconvex-self-hosted|0123456789abcdef\n', stderr: '' };
+      // The real generator mints a new key on every call; every one of them
+      // keeps working for that volume.
+      minted += 1;
+      return {
+        status: 0,
+        stdout: `Admin key:\nconvex-self-hosted|0123456789abcdef${minted}\n`,
+        stderr: '',
+      };
+    }
+    if (joined.includes('convex env list')) {
+      return { status: options.adminKeyAccepted === false ? 1 : 0, stdout: '', stderr: '' };
     }
     if (joined.includes('nvidia-smi')) return { status: 1, stdout: '', stderr: 'not found' };
     if (joined.includes('dev-no-auth-key.ts url')) {
@@ -603,7 +617,7 @@ describe('a whole run on the key route', (): void => {
     expect(written).toContain('CONVEX_PORT=46210');
     expect(written).toContain('COMPOSE_PROJECT_NAME=day0-setup-test');
     expect(written).toContain('NEXT_PUBLIC_DEV_NO_AUTH=true');
-    expect(written).toContain('CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|0123456789abcdef');
+    expect(written).toContain('CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|0123456789abcdef1');
     expect(statSync(join(directory, '.env.local')).mode & 0o777).toBe(0o600);
 
     const ran = commands.map((entry) => [entry.command, ...entry.args].join(' ')).join('\n');
@@ -630,7 +644,7 @@ describe('a whole run on the key route', (): void => {
     const everyArgument = commands.flatMap((entry) => entry.args).join('\n');
     expect(everyArgument).not.toContain('sk-rehearsal-key');
     expect(output.join('\n')).not.toContain('sk-rehearsal-key');
-    expect(output.join('\n')).not.toContain('convex-self-hosted|0123456789abcdef');
+    expect(output.join('\n')).not.toContain('convex-self-hosted|0123456789abcdef1');
     expect(output.join('\n')).toContain('convex-self-hosted|');
   });
 
@@ -767,6 +781,45 @@ describe('stopping for a reason the reader can act on', (): void => {
     expect(status).toBe(1);
     expect(output.join('\n')).toContain('day0-setup-test_convex_data');
     expect(output.join('\n')).toContain('--project');
+  });
+});
+
+describe('the admin key on a rerun', (): void => {
+  it('is taken from the container only when the file has none or it is refused', (): void => {
+    expect(shouldCaptureAdminKey('', true)).toBe(true);
+    expect(shouldCaptureAdminKey('not-a-key', true)).toBe(true);
+    expect(shouldCaptureAdminKey('convex-self-hosted|abc', false)).toBe(true);
+    expect(shouldCaptureAdminKey('convex-self-hosted|abc', true)).toBe(false);
+  });
+
+  it('keeps a working key rather than minting a second one', async (): Promise<void> => {
+    const first = harness({ answers: ['sk-rehearsal-key'], services: ['backend', 'sandbox'] });
+    expect(await runSetup(keyRoute(), first.io)).toBe(0);
+    const afterFirst = readEnvValues(join(first.directory, '.env.local'));
+
+    const second: SetupIo = { ...first.io, ask: async (): Promise<string> => '' };
+    expect(await runSetup(keyRoute(), second)).toBe(0);
+    expect(readEnvValues(join(first.directory, '.env.local')).CONVEX_SELF_HOSTED_ADMIN_KEY).toBe(
+      afterFirst.CONVEX_SELF_HOSTED_ADMIN_KEY,
+    );
+  });
+
+  it('replaces a key this volume refuses', async (): Promise<void> => {
+    const { io, directory } = harness({
+      envLocal: [
+        'COMPOSE_PROJECT_NAME=day0-setup-test',
+        'OPENAI_API_KEY=sk-existing',
+        'CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|from-another-volume',
+        '',
+      ].join('\n'),
+      volumes: ['day0-setup-test_convex_data'],
+      services: ['backend', 'sandbox'],
+      adminKeyAccepted: false,
+    });
+    expect(await runSetup(keyRoute(), io)).toBe(0);
+    expect(readEnvValues(join(directory, '.env.local')).CONVEX_SELF_HOSTED_ADMIN_KEY).toBe(
+      'convex-self-hosted|0123456789abcdef1',
+    );
   });
 });
 
