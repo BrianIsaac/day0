@@ -38,8 +38,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </span>
             </Link>
             <div className="flex items-center gap-4">
+              {/* Protected, so a signed-out visitor's prefetch of it is a
+                  bounce to Clerk's hosted sign-in from every public page. */}
               <Link
                 href="/documentation"
+                prefetch={false}
                 className="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
               >
                 Documentation

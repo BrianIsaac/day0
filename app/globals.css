@@ -71,7 +71,7 @@ body {
 }
 
 /* Drop a quiet inset ring on focusable surfaces so accessibility holds */
-:where(button, input, textarea, [tabindex='0']):focus-visible {
+:where(a, button, input, summary, textarea, [tabindex='0']):focus-visible {
   outline: 2px solid color-mix(in oklab, var(--color-accent) 75%, transparent);
   outline-offset: 1px;
   border-radius: 6px;

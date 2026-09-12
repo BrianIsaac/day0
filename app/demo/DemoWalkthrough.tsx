@@ -731,7 +731,7 @@ export function DemoWalkthrough({ snapshot }: { snapshot: HostedDemoSnapshot }) 
             <li key={chapter.id}>
               <a
                 href={`#${chapter.id}`}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)]"
               >
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">
                   {String(index + 1).padStart(2, '0')}
