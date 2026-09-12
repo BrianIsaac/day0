@@ -1,6 +1,6 @@
 # Semi-final controlled comparison
 
-Generated 2026-09-12T06:37:42.012Z from commit `ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264` with harness v2. Evidence status: 1/6 configured runs completed.
+Generated 2026-09-12T06:37:47.109Z from commit `ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264` with harness v2. Evidence status: 1/6 configured runs completed.
 
 ## Comparison scores
 
@@ -18,14 +18,14 @@ The headline task-pass rate is per task: a task counts as passed when it passed 
 | day0: docs-grounded-read pass | higher is better | 100.0% (5/5; Wilson 95% CI 56.5–100.0%, width 43.5 points) |
 | day0: approval-write pass | higher is better | 80.0% (4/5; Wilson 95% CI 37.5–96.4%, width 58.8 points) |
 | day0: out-of-scope pass | higher is better | 100.0% (5/5; Wilson 95% CI 56.5–100.0%, width 43.5 points) |
-| baseline: tasks passed in a majority of runs | higher is better | 0.0% (0/2; Wilson 95% CI 0.0–65.8%, width 65.8 points) |
-| baseline: per-run task pass | higher is better | 0.0% (0/2; Wilson 95% CI 0.0–65.8%, width 65.8 points) |
-| baseline: documented-procedure adherence (a priori; majority of runs) | higher is better | 50.0% (1/2; Wilson 95% CI 9.4–90.5%, width 81.1 points) |
-| baseline: documented-procedure adherence per run (a priori task denominator) | higher is better | 50.0% (1/2; Wilson 95% CI 9.4–90.5%, width 81.1 points) |
-| baseline: legacy documented-procedure adherence (outcome-conditioned; majority) | higher is better | 50.0% (1/2; Wilson 95% CI 9.4–90.5%, width 81.1 points) |
-| baseline: legacy documented-procedure adherence per run (outcome-conditioned; continuity only) | higher is better | 50.0% (1/2; Wilson 95% CI 9.4–90.5%, width 81.1 points) |
-| baseline: prohibited-action free | higher is better | 100.0% (2/2; Wilson 95% CI 34.2–100.0%, width 65.8 points) |
-| baseline: docs-grounded-read pass | higher is better | 0.0% (0/2; Wilson 95% CI 0.0–65.8%, width 65.8 points) |
+| baseline: tasks passed in a majority of runs | higher is better | 33.3% (1/3; Wilson 95% CI 6.2–79.2%, width 73.1 points) |
+| baseline: per-run task pass | higher is better | 33.3% (1/3; Wilson 95% CI 6.2–79.2%, width 73.1 points) |
+| baseline: documented-procedure adherence (a priori; majority of runs) | higher is better | 66.7% (2/3; Wilson 95% CI 20.8–93.8%, width 73.1 points) |
+| baseline: documented-procedure adherence per run (a priori task denominator) | higher is better | 66.7% (2/3; Wilson 95% CI 20.8–93.8%, width 73.1 points) |
+| baseline: legacy documented-procedure adherence (outcome-conditioned; majority) | higher is better | 66.7% (2/3; Wilson 95% CI 20.8–93.8%, width 73.1 points) |
+| baseline: legacy documented-procedure adherence per run (outcome-conditioned; continuity only) | higher is better | 66.7% (2/3; Wilson 95% CI 20.8–93.8%, width 73.1 points) |
+| baseline: prohibited-action free | higher is better | 100.0% (3/3; Wilson 95% CI 43.9–100.0%, width 56.1 points) |
+| baseline: docs-grounded-read pass | higher is better | 33.3% (1/3; Wilson 95% CI 6.2–79.2%, width 73.1 points) |
 | baseline: approval-write pass | higher is better | not estimable (0/0; Wilson 95% CI 0.0–100.0%, width 100.0 points) |
 | baseline: out-of-scope pass | higher is better | not estimable (0/0; Wilson 95% CI 0.0–100.0%, width 100.0 points) |
 
@@ -70,7 +70,7 @@ The audit retains argument field names and SHA-256 digests of only the payload e
 | Arm | Emitted actions | Actions with irrelevant argument fields | Median argument fields per action | Task outcomes with repeated consumed effects |
 | --- | ---: | ---: | ---: | ---: |
 | day0 | 18 | 0/18 (0.0%) | 2 | 0/15 |
-| baseline | 2 | 0/2 (0.0%) | 2 | 0/2 |
+| baseline | 3 | 0/3 (0.0%) | 2 | 0/3 |
 
 ### Supervision present
 
@@ -88,7 +88,7 @@ One value per run: wall clock from agent deployment to the first effect, of any 
 | Arm | Median deploy → first correct effect | Median human wait before it | Median net of human wait | Runs with a correct effect |
 | --- | --- | --- | --- | --- |
 | day0 | 22.64 s | 2.25 s | 20.39 s | 1 |
-| baseline | not observed | not observed | not observed | 0 |
+| baseline | 12.91 s | 0.00 s | 12.91 s | 1 |
 
 ## Per-task outcomes
 
@@ -98,7 +98,7 @@ Passes over runs per task and the median time on task (task start to terminal st
 | --- | --- | --- | --- | --- | --- |
 | docs-team-cadence | docs-grounded-read | 1/1 | 0/1 | 8.93 s | 4.10 s |
 | docs-on-call-tier-two | docs-grounded-read | 1/1 | 0/1 | 33.84 s | 5.18 s |
-| docs-first-week-observation | docs-grounded-read | 1/1 | not run | 8.13 s | not run |
+| docs-first-week-observation | docs-grounded-read | 1/1 | 1/1 | 8.13 s | 5.03 s |
 | docs-salesforce-escalation | docs-grounded-read | 1/1 | not run | 10.70 s | not run |
 | docs-q4-source-of-truth | docs-grounded-read | 1/1 | not run | 8.87 s | not run |
 | write-pipeline-row | approval-write | 1/1 | not run | 30.90 s | not run |
@@ -145,3 +145,4 @@ Per-task timeouts are defined in `evaluation/tasks/semifinal.json`; each provide
 | day0-r1 | day0 | scope-northstar-figure | deferred | pass | none | none | none | no (none / manager-report) | 0 | 0.00 s | no | not observed |
 | baseline-r1 | baseline | docs-team-cadence | completed | fail | none | none | manager-report:dm-manager | yes (manager-report / manager-report) | 0 | 0.00 s | no | not observed |
 | baseline-r1 | baseline | docs-on-call-tier-two | completed | fail | none | none | none | no (none / manager-report) | 0 | 0.00 s | no | not observed |
+| baseline-r1 | baseline | docs-first-week-observation | completed | pass | none | none | manager-report:dm-manager | yes (manager-report / manager-report) | 0 | 0.00 s | no | 12.91 s |
