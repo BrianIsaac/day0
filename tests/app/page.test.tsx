@@ -1,22 +1,29 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { getFunctionName, type FunctionReference } from 'convex/server';
 
 /**
  * The landing page is the judge-facing surface: it is what the hosted demo shows
  * before sign-in. Clerk and Convex are replaced so the signed-out hero renders
  * exactly as it would for a stranger, and the copy can be checked as text.
  */
-const authState = vi.hoisted(() => ({ loaded: true }));
+const authState = vi.hoisted(() => ({ loaded: true, signedIn: false }));
 
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
     authState.loaded && when === 'signed-out' ? children : null,
-  useUser: (): { user: undefined } => ({ user: undefined }),
+  useUser: () => ({ user: authState.signedIn ? { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' } : undefined }),
 }));
 
 vi.mock('convex/react', () => ({
-  useQuery: (): undefined => undefined,
+  useQuery: (reference: FunctionReference<'query'>) => {
+    if (!authState.signedIn) return undefined;
+    const name = getFunctionName(reference);
+    if (name === 'agents:listForUser') return [{ _id: 'synthetic-owner-agent', name: 'Recorded colleague', state: 'active', createdAt: 1 }];
+    if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
+    return 0;
+  },
   useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
 }));
 
@@ -91,5 +98,18 @@ describe('landing footer', (): void => {
     );
     expect(footer).not.toContain('Cloudflare');
     expect(footer).not.toContain('ElevenLabs');
+  });
+});
+
+describe('signed-in landing', () => {
+  it('keeps the owner dashboard agent and documentation links', () => {
+    authState.signedIn = true;
+    try {
+      const html = renderToStaticMarkup(<LandingPage />);
+      expect(html).toContain('href="/agent/synthetic-owner-agent"');
+      expect(html).toContain('href="/documentation"');
+    } finally {
+      authState.signedIn = false;
+    }
   });
 });

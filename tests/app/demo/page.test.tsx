@@ -16,6 +16,14 @@ describe('the /demo route', (): void => {
     expect(html).toContain('Append missing pipeline follow-up notes to Q4 tracker');
   });
 
+  it('distinguishes deployment grants from later charter approval', () => {
+    const html = renderToStaticMarkup(<DemoPage />);
+    expect(html).not.toContain('nothing below this point');
+    expect(html).not.toContain('Six seconds of reading');
+    expect(html).toContain('Approval followed the draft by six seconds');
+    expect(html).toContain('Initial scopes had already been granted at deployment');
+  });
+
   it('is built out of the tracked snapshot and nothing live', (): void => {
     const sources = ['app/demo/page.tsx', 'app/demo/DemoWalkthrough.tsx'].map((path) =>
       readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8'),
