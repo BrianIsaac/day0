@@ -1520,8 +1520,9 @@ async function chooseRoute(options: SetupOptions, io: SetupIo): Promise<SetupRou
 
 let consoleReader: Interface | undefined;
 let hidden = false;
+let pipedAnswers: AsyncIterableIterator<string> | undefined;
 
-/** One readline interface for the whole run, so piped answers are not lost. */
+/** Attach the pipe iterator before input flows so answers survive between prompts and EOF. */
 function reader(): Interface {
   if (!consoleReader) {
     const output = new Writable({
@@ -1535,6 +1536,7 @@ function reader(): Interface {
       output,
       terminal: process.stdin.isTTY === true,
     });
+    if (!process.stdin.isTTY) pipedAnswers = consoleReader[Symbol.asyncIterator]();
   }
   return consoleReader;
 }
@@ -1558,6 +1560,17 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
     ask: (question: string, options: { hidden?: boolean } = {}): Promise<string> =>
       new Promise<string>((resolvePromise, rejectPromise) => {
         const rl = reader();
+        if (pipedAnswers) {
+          process.stdout.write(question);
+          void pipedAnswers.next().then(({ value, done }) => {
+            if (done) rejectPromise(new SetupCancelled('the answer stream ended'));
+            else {
+              if (options.hidden === true) process.stdout.write('\n');
+              resolvePromise(value);
+            }
+          }, rejectPromise);
+          return;
+        }
         let answered = false;
         const onClose = (): void => {
           if (!answered) rejectPromise(new SetupCancelled('the answer stream ended'));

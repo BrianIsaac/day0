@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -953,5 +954,26 @@ describe('running it a second time', (): void => {
     };
     expect(await runSetup(keyRoute(), second)).toBe(0);
     expect(readFileSync(join(first.directory, '.env.local'), 'utf8')).toBe(afterFirst);
+  });
+});
+
+
+describe('console input from a pipe', () => {
+  it.each([false, true])('keeps queued answers after EOF (hidden: %s)', (hidden) => {
+    const script = `
+      import { consoleIo, SetupCancelled } from './scripts/setup.ts';
+      const io = consoleIo();
+      const first = await io.ask('route: ');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const second = await io.ask('key: ', { hidden: ${hidden} });
+      if (first !== '1' || second !== 'synthetic-secret') process.exit(2);
+      try { await io.ask('third: '); process.exit(3); }
+      catch (error) { if (!(error instanceof SetupCancelled)) throw error; }
+    `;
+    const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+      cwd: process.cwd(), input: '1\nsynthetic-secret\n', encoding: 'utf8', timeout: 5000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain('synthetic-secret');
   });
 });
