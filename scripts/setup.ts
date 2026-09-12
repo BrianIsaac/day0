@@ -702,6 +702,37 @@ export function backendIdentityRefusal(args: {
 }
 
 /**
+ * Put back the host addresses the Convex CLI replaced during a push.
+ *
+ * `npx convex dev --once` writes its own `NEXT_PUBLIC_CONVEX_URL` and
+ * `NEXT_PUBLIC_CONVEX_SITE_URL` lines, and a self-hosted backend answers with
+ * its *container* ports, so a stack published on 46210/46211 ends the push
+ * declaring 3211. Nothing in day0 reads the site URL, which is why this is
+ * silent rather than broken, but the file is what a reader believes.
+ *
+ * Args:
+ *   values: The env file after the push.
+ *   ports: The host ports this installation publishes.
+ *
+ * Returns:
+ *   The addresses to put back; empty when the CLI left them alone.
+ */
+export function publicUrlCorrections(
+  values: Readonly<Record<string, string>>,
+  ports: SetupPorts,
+): Record<string, string> {
+  const wanted: Record<string, string> = {
+    NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports.backend}`,
+    NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${ports.site}`,
+  };
+  const corrections: Record<string, string> = {};
+  for (const [name, value] of Object.entries(wanted)) {
+    if ((values[name] ?? '') !== value) corrections[name] = value;
+  }
+  return corrections;
+}
+
+/**
  * Every `KEY=value` an env file declares.
  *
  * Args:
@@ -808,12 +839,14 @@ function runningServices(io: SetupIo, project: string): string[] | undefined {
  */
 function step(
   io: SetupIo,
+  steps: readonly string[],
+  name: string,
   label: string,
   command: string,
   args: readonly string[],
   options: RunOptions,
 ): RunResult {
-  io.log(label);
+  io.log(`[${steps.indexOf(name) + 1}/${steps.length}] ${label}`);
   return io.run(command, args, options);
 }
 
@@ -824,6 +857,8 @@ function reportFailure(io: SetupIo, what: string, result: RunResult, project: st
   const detail = `${result.stdout}${result.stderr}`.trim();
   if (detail !== '') {
     for (const line of detail.split('\n').slice(-12)) io.log(`  ${line}`);
+  } else {
+    io.log('  Its own output is above.');
   }
   io.log('');
   io.log(
@@ -1052,39 +1087,64 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const environment = childEnvironment(resolvedProject, ports);
-    const inherit: RunOptions = { env: environment, inherit: true };
+    const steps = sequenceSteps(route);
+    const streamed: RunOptions = { env: environment, inherit: true, timeoutMs: 900_000 };
     io.log('');
-    io.log(`Starting. Steps: ${sequenceSteps(route).join(' → ')}`);
+    io.log(`Starting. Steps: ${steps.join(' → ')}`);
     io.log('');
     started = true;
 
-    const keys = step(io, '[1] pnpm dev:no-auth-key', 'pnpm', ['run', 'dev:no-auth-key'], inherit);
+    const keys = step(
+      io,
+      steps,
+      'dev:no-auth-key',
+      'pnpm dev:no-auth-key',
+      'pnpm',
+      ['run', 'dev:no-auth-key'],
+      { env: environment, timeoutMs: 120_000 },
+    );
     if (keys.status !== 0) {
       reportFailure(io, 'pnpm dev:no-auth-key', keys, resolvedProject);
       return 1;
     }
+    for (const line of keys.stdout.split('\n')) {
+      if (line.startsWith('Wrote') || line.includes('already carries'))
+        io.log(`    ${line.trim()}`);
+    }
 
-    const up = step(io, '[2] pnpm convex:up', 'pnpm', ['run', 'convex:up'], {
-      env: environment,
-      timeoutMs: 600_000,
-    });
+    const up = step(
+      io,
+      steps,
+      'convex:up',
+      'pnpm convex:up',
+      'pnpm',
+      ['run', 'convex:up'],
+      streamed,
+    );
     if (up.status !== 0) {
       reportFailure(io, 'pnpm convex:up', up, resolvedProject);
       return 1;
     }
 
     if (route === 'local') {
-      const modelUp = step(io, '[3] pnpm model:up', 'pnpm', ['run', 'model:up'], {
-        env: environment,
-        timeoutMs: 600_000,
-      });
+      const modelUp = step(
+        io,
+        steps,
+        'model:up',
+        'pnpm model:up',
+        'pnpm',
+        ['run', 'model:up'],
+        streamed,
+      );
       if (modelUp.status !== 0) {
         reportFailure(io, 'pnpm model:up', modelUp, resolvedProject);
         return 1;
       }
       const pull = step(
         io,
-        `[4] pnpm model:pull ${model}`,
+        steps,
+        'model:pull',
+        `pnpm model:pull ${model}`,
         'pnpm',
         ['run', 'model:pull', model ?? ''],
         { env: environment, inherit: true, timeoutMs: 3_600_000 },
@@ -1095,10 +1155,15 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       }
     }
 
-    const sandbox = step(io, '[5] pnpm sandbox:up', 'pnpm', ['run', 'sandbox:up'], {
-      env: environment,
-      timeoutMs: 600_000,
-    });
+    const sandbox = step(
+      io,
+      steps,
+      'sandbox:up',
+      'pnpm sandbox:up',
+      'pnpm',
+      ['run', 'sandbox:up'],
+      streamed,
+    );
     if (sandbox.status !== 0) {
       reportFailure(io, 'pnpm sandbox:up', sandbox, resolvedProject);
       return 1;
@@ -1116,7 +1181,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       return 1;
     }
 
-    io.log('[6] admin key, from the backend container');
+    io.log(
+      `[${steps.indexOf('admin-key') + 1}/${steps.length}] admin key, from the backend container`,
+    );
     const generated = io.run(
       'docker',
       composeArguments(['exec', '-T', 'backend', './generate_admin_key.sh']),
@@ -1156,43 +1223,67 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
     io.log('    URL, admin key and Compose service are the same backend');
 
-    const sync = step(io, '[7] pnpm sync:env', 'pnpm', ['run', 'sync:env'], {
-      env: environment,
-      timeoutMs: 300_000,
-    });
+    const sync = step(
+      io,
+      steps,
+      'sync:env',
+      'pnpm sync:env',
+      'pnpm',
+      ['run', 'sync:env'],
+      streamed,
+    );
     if (sync.status !== 0) {
       reportFailure(io, 'pnpm sync:env', sync, resolvedProject);
       return 1;
     }
 
-    const push = step(io, '[8] npx convex dev --once', 'npx', ['convex', 'dev', '--once'], {
-      env: environment,
-      timeoutMs: 600_000,
-    });
+    const push = step(
+      io,
+      steps,
+      'convex dev --once',
+      'npx convex dev --once',
+      'npx',
+      ['convex', 'dev', '--once'],
+      streamed,
+    );
     if (push.status !== 0) {
       reportFailure(io, 'npx convex dev --once', push, resolvedProject);
       return 1;
     }
+    const corrections = publicUrlCorrections(readEnvValues(envPath), ports);
+    if (Object.keys(corrections).length > 0) {
+      writeEnvValues(envPath, corrections);
+      io.log(
+        `    the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's ` +
+          'own container ports; put back the host addresses this installation publishes',
+      );
+    }
 
-    const restart = step(io, '[9] pnpm convex:restart', 'pnpm', ['run', 'convex:restart'], {
-      env: environment,
-      timeoutMs: 300_000,
-    });
+    const restart = step(
+      io,
+      steps,
+      'convex:restart',
+      'pnpm convex:restart',
+      'pnpm',
+      ['run', 'convex:restart'],
+      streamed,
+    );
     if (restart.status !== 0) {
       reportFailure(io, 'pnpm convex:restart', restart, resolvedProject);
       return 1;
     }
     await io.waitForBackend(ports.backend, 180_000);
 
-    io.log('[10] pnpm check:setup');
-    const checker = io.run('pnpm', ['run', 'check:setup'], {
-      env: environment,
-      timeoutMs: 300_000,
-    });
     io.log('');
-    for (const line of `${checker.stdout}${checker.stderr}`.replace(/\n$/, '').split('\n')) {
-      io.log(line);
-    }
+    const checker = step(
+      io,
+      steps,
+      'check:setup',
+      'pnpm check:setup',
+      'pnpm',
+      ['run', 'check:setup'],
+      streamed,
+    );
 
     const unlock = io.run('pnpm', ['exec', 'tsx', 'scripts/dev-no-auth-key.ts', 'url'], {
       env: environment,

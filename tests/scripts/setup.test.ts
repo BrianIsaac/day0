@@ -16,6 +16,7 @@ import {
   parseSetupArguments,
   prerequisiteReport,
   projectVolumes,
+  publicUrlCorrections,
   readEnvValues,
   runSetup,
   SetupCancelled,
@@ -161,6 +162,14 @@ function harness(options: HarnessOptions = {}): Harness {
           DAY0_CREDENTIAL_KEY: 'generated-credential-key',
         });
       }
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (joined.includes('convex dev --once')) {
+      // The Convex CLI writes its own public URL lines, and a self-hosted
+      // backend answers with its container ports.
+      writeEnvValues(join(directory, '.env.local'), {
+        NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:3211',
+      });
       return { status: 0, stdout: '', stderr: '' };
     }
     if (joined.includes('check:setup')) {
@@ -632,6 +641,41 @@ describe('a whole run on the key route', (): void => {
     expect(written).toContain('OPENAI_BASE_URL=http://127.0.0.1:48191/v1');
     expect(written).toContain('CONVEX_OPENAI_BASE_URL=http://model:11434/v1');
     expect(written).not.toContain('OPENAI_API_KEY=sk');
+  });
+});
+
+describe('what the Convex CLI rewrites during the push', (): void => {
+  it('names both public URLs it has to put back', (): void => {
+    expect(
+      publicUrlCorrections(
+        {
+          NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:46210',
+          NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:3211',
+        },
+        { ...DEFAULT_PORTS, backend: 46210, site: 46211 },
+      ),
+    ).toEqual({ NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:46211' });
+    expect(
+      publicUrlCorrections(
+        {
+          NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:46210',
+          NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:46211',
+        },
+        { ...DEFAULT_PORTS, backend: 46210, site: 46211 },
+      ),
+    ).toEqual({});
+  });
+
+  it('puts the host address back into the file after the push', async (): Promise<void> => {
+    const { io, output, directory } = harness({
+      answers: ['sk-rehearsal-key'],
+      services: ['backend', 'sandbox'],
+    });
+    expect(await runSetup(keyRoute({ ports: { backend: 46210, site: 46211 } }), io)).toBe(0);
+    expect(readFileSync(join(directory, '.env.local'), 'utf8')).toContain(
+      'NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:46211',
+    );
+    expect(output.join('\n')).toContain('the Convex CLI rewrote');
   });
 });
 
