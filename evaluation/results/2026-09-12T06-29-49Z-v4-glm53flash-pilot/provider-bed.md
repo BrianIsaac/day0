@@ -14,4 +14,4 @@ Harness v2, code commit `0c515300675e6a1e9550db90f29d5fa3420d95c3`, project `day
 not a harness-version change. The `-pilot` suffix keeps its six rows out of the full bed.
 
 `backend-run.log.gz` is the redacted backend watcher for the pilot window only.
-`run.log` is the redacted nohup driver log. All model calls used the shipped code.
+`run.log.gz` is the redacted nohup driver log. All model calls used the shipped code.
