@@ -90,6 +90,31 @@ also led on procedure adherence, prohibited-action freedom and out-of-scope pass
 both beds. Day0 did not pass every task-run (44/45 on each hosted model), and this
 controlled mock-office result is not a claim of universal performance.
 
+### GLM route check — baseline-only, outside the comparison table
+
+[`results/2026-09-11T20-08-51Z-v2-glm53flash/`](results/2026-09-11T20-08-51Z-v2-glm53flash/)
+contains 45 ordinary-arm rows (15 tasks, three runs). The onboarded arm failed at
+charter synthesis before producing task rows. It is **not** a fourth paired
+comparison: read its [provider record](results/2026-09-11T20-08-51Z-v2-glm53flash/provider-bed.md)
+for the recorded output-budget failure. The directory's `SHA256SUMS` covers the
+retained evidence; raw charter HTTP responses were not retained, so the detailed
+budget measurements are the run author's observations, not independently
+reconstructible from the backend access log.
+
+Two invocation directories remain as audit history only:
+
+- [`2026-09-11T19-24-41Z`](results/2026-09-11T19-24-41Z/): aborted two-arm pilot.
+- [`2026-09-11T19-56-20Z`](results/2026-09-11T19-56-20Z/): three-task ordinary-arm pilot.
+
+Neither pilot adds rows to the published bed. The model-free gate rerun is at
+[`gate/2026-09-11T20-45-23Z/`](gate/2026-09-11T20-45-23Z/); revocation setup was
+blocked by charter synthesis and produced no new revocation trials.
+
+**中文：** GLM 环境只有普通 arm 的 45 行，day0 arm 在 charter 合成时失败；
+它不是新增的双 arm 对照列。两个试跑目录仅作审计历史，不计入正式结果。
+输出预算的详细测量来自运行者记录，未保留原始 HTTP 回复，不能从后端访问日志独立重建。
+gate 重跑不调用模型；revocation 的准备阶段依赖模型，本次没有产生新的撤销试验。
+
 ### Evidence directories and hashes
 
 | Model | Evidence directory | `semifinal.json` SHA-256 | Retained model record |

@@ -2,6 +2,14 @@
 
 Generated 2026-09-11T20:38:59.654Z from commit `0dbcbb32393a0de548d14ba1a240f8e3dac7f7b9` with harness v2. Evidence status: 3/3 configured runs completed.
 
+**Scope note, 12 Sep 2026: baseline only.** All 45 rows are ordinary-arm rows.
+The onboarded arm failed during charter synthesis and has no task rows. This is
+not a Day0-versus-ordinary comparison; the configured day0 parity column below
+is not evidence of execution. See [the provider record](provider-bed.md).
+
+**中文：** 本环境仅运行普通 arm（45 行）；day0 arm 在 charter 合成时失败，
+没有任务结果，不能作为 Day0 与普通 Agent 的对照。下方 day0 配置列不代表实际执行。
+
 ## Comparison scores
 
 The headline task-pass rate is per task: a task counts as passed when it passed in strictly more than half of its runs, so n is the number of tasks and repeated runs of one task do not narrow the interval. Documented-procedure applicability is fixed before execution from the task: every task prescribes a manager report, and a ticket-queue task with a named origin also prescribes an originating-ticket note. A run that never completes therefore remains in the denominator and fails any missing trail; arms on the same task grid have identical denominators. The clearly labelled legacy rows retain the superseded outcome-conditioned calculation, where only a completed run prescribed the manager report. A run adheres only when every applicable trail is present. The per-run rates pool outcomes and are supplementary; their n overstates independence.
