@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:37:36.770Z",
+  "generatedAt": "2026-09-12T06:37:42.012Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -1951,13 +1951,86 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "docs-on-call-tier-two",
+          "externalId": "EVAL-DOC-02",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7bmpf9173h91acpm3xfgycjh8e93rm",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:37:36.770Z",
+          "finishedAt": "2026-09-12T06:37:41.951Z",
+          "deployToFirstCorrectActionMs": null,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              2
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "30a194b8285fce7a240883068b115c9cfe423cb949145f996f1782974cba776b"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": false,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:slack-message",
+                "passed": false,
+                "detail": "0 matching dm-priya messages; expected exactly one"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "slack.postMessage"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
         }
       ],
       "agentId": "j577z7hmdvvj64w8bb1dvvw6758e8bps",
       "deployedAt": "2026-09-12T06:37:32.373Z",
       "activeTask": {
-        "taskId": "docs-on-call-tier-two",
-        "startedAt": "2026-09-12T06:37:36.770Z",
+        "taskId": "docs-first-week-observation",
+        "startedAt": "2026-09-12T06:37:42.012Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 0,
