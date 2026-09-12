@@ -373,10 +373,10 @@ function harnessParityTables(evidence: EvaluationEvidence): string {
     providerBaseUrl: 'Provider base URL',
     contextLimitTokens: 'Context limit (tokens)',
     structuredOutputMode: 'Configured structured-output mode',
-    structuredOutputRepairAttempts: 'Maximum prompt schema-repair attempts (0 disables)',
     modelSeed: 'Model seed',
   };
   const optionalLabels: Record<string, string> = {
+    structuredOutputRepairAttempts: 'Maximum prompt schema-repair attempts (0 disables)',
     maxOutputTokens: 'Output budget (tokens)',
     skillSandboxBackend: 'Skill sandbox backend',
     effectiveTemperature: 'Effective temperature after provider warnings',

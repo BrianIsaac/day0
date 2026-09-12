@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { renderEvaluationReport } from '../../evaluation/report';
 import { describe, expect, it } from 'vitest';
 import {
   decodeConsoleString,
@@ -95,4 +97,17 @@ describe('structured-output evaluation record', () => {
     expect(decodeConsoleString("'a\\nb\\'c\\\\d'")).toBe("a\nb'c\\d");
     expect(decodeConsoleString('`value \\${process.exit()}`')).toBe('value ${process.exit()}');
   });
+});
+
+it.each([
+  '2026-09-02T13-59-20Z-v3-terra',
+  '2026-09-02T14-28-33Z-v3-sol',
+  '2026-09-02T08-35-22Z-v2-qwen8b',
+  '2026-09-12T06-33-21Z-v4-glm53flash',
+])('renders frozen %s evidence byte-for-byte without a missing repair setting', (bed) => {
+  const directory = `evaluation/results/${bed}`;
+  const frozen = JSON.parse(
+    readFileSync(`${directory}/semifinal.json`, 'utf8'),
+  ) as EvaluationEvidence;
+  expect(renderEvaluationReport(frozen)).toBe(readFileSync(`${directory}/semifinal.md`, 'utf8'));
 });
