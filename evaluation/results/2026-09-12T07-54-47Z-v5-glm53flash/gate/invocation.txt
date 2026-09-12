@@ -1,0 +1,9 @@
+Command: pnpm eval:gate
+Model-free matrix: no provider calls.
+Invocation model: zai-org/GLM-5.3-Flash
+OPENAI_JSON_MODE=prompt
+OPENAI_STRUCTURED_REPAIR_ATTEMPTS=2
+OPENAI_MAX_OUTPUT_TOKENS=32768
+OPENAI_REASONING_EFFORT=low
+Matrix byte-equivalent after removing generatedAt to evaluation/gate/2026-08-30T09-20-51Z/matrix.json: true.
+Source: evaluation/gate/2026-09-12T08-14-09Z/.

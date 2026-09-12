@@ -1,0 +1,7 @@
+Compose project: day0-v5-glm53flash-4ad4c9
+Command: COMPOSE_PROJECT_NAME=day0-v5-glm53flash-4ad4c9 pnpm convex:down --profile test --profile demo --profile browser --profile sandbox -- -v
+Verified 2026-09-12T08:26Z: no containers, volumes or networks remain for this project.
+Ports 45710, 45711, 48291, 45712, 45713 free.
+The four protected volumes (day0_convex_data, day0_sandbox_socket,
+day0-demo-7c65e7_convex_data, day0-demo-7c65e7_sandbox_socket) remain present and were
+never operated on. No Vercel, cloud Convex or primary environment change.
