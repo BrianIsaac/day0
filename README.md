@@ -48,7 +48,7 @@ pnpm setup:local
 pnpm dev
 ```
 
-`pnpm setup:local` asks one question - a key you already have, or no account at all and the model runs here - and then does the rest: the containers, the generated keys written into `.env.local` rather than pasted into it, the two model addresses written as a pair, the function push and `pnpm check:setup`. It finishes by printing an unlock URL. Open that, deploy an agent, hold the Day-1 1:1 in chat, and approve the charter it writes; that first approval is what fills the work queue.
+`pnpm setup:local` asks how it should reach a model - a key you already have, or no account at all and the model runs here - and, on the key route, for that key in a hidden prompt. It then does the rest: the containers, the generated keys written into `.env.local` rather than pasted into it, the two model addresses written as a pair, the function push and `pnpm check:setup`. It finishes by printing an unlock URL. Open that, deploy an agent, hold the Day-1 1:1 in chat, and approve the charter it writes; that first approval is what fills the work queue.
 
 [**Set up Day0**](https://day0-olive.vercel.app/setup) is this quick start as a page, with what first success looks like, the two traps worth knowing and the measured timings. [Local dev](#local-dev) keeps the hand-run version of all three routes, and is what to read when something needs fixing.
 
@@ -964,7 +964,7 @@ pnpm setup:local
 pnpm dev
 ```
 
-`pnpm setup:local` 只问一个问题：使用你已有的 key，还是完全不注册账户、在本机运行模型；其余步骤由它完成：启动容器、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的章程；第一次批准会填充工作队列。
+`pnpm setup:local` 会先问它应当如何调用模型：使用你已有的 key，还是完全不注册账户、在本机运行模型；若选择前者，再通过隐藏输入读取该 key。其余步骤由它完成：启动容器、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的章程；第一次批准会填充工作队列。
 
 [**Set up Day0**](https://day0-olive.vercel.app/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、两个值得了解的陷阱，以及实测耗时。[本地开发](#local-dev)保留三条路径的手动步骤，遇到问题时应当从那里读起。
 

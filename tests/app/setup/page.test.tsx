@@ -40,8 +40,11 @@ describe('the /setup guide', (): void => {
     expect(text).toMatch(/mock office/i);
   });
 
-  it('states the prerequisites before the commands', (): void => {
-    for (const item of PREREQUISITES) expect(text).toContain(item.name);
+  it('states the prerequisites, and the command that gets each one, before the commands', (): void => {
+    for (const item of PREREQUISITES) {
+      expect(text).toContain(item.name);
+      if (item.fix) expect(text).toContain(item.fix);
+    }
     expect(text.indexOf(PREREQUISITES[0].name)).toBeLessThan(text.indexOf('git clone'));
   });
 

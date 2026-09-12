@@ -157,6 +157,11 @@ export default function SetupPage() {
               {PREREQUISITES.map((item) => (
                 <Row key={item.name} label={item.name}>
                   {item.detail}
+                  {item.fix ? (
+                    <code className="font-mono text-xs text-[var(--color-accent)] block mt-1.5">
+                      {item.fix}
+                    </code>
+                  ) : null}
                 </Row>
               ))}
             </ul>
@@ -233,7 +238,8 @@ export default function SetupPage() {
             </code>
           </pre>
           <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
-            The fourth command asks its one question, then starts the backend, the sandbox and, on
+            The fourth command asks how it should reach a model and, if the answer is a key you
+            have, for that key in a hidden prompt. Then it starts the backend, the sandbox and, on
             the account-free route, the model server; writes the values it generates into{' '}
             <code className="font-mono text-[var(--color-fg)]">.env.local</code> instead of asking
             you to paste them; pushes the backend functions; and finishes by running{' '}

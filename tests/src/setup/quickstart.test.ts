@@ -117,6 +117,12 @@ describe('the prerequisites the page states', (): void => {
     for (const item of PREREQUISITES) expect(item.detail.length).toBeGreaterThan(20);
   });
 
+  it('offer a command where one line gets the tool', (): void => {
+    const fixes = PREREQUISITES.map((item) => item.fix).filter(Boolean);
+    expect(fixes.length).toBeGreaterThanOrEqual(2);
+    for (const fix of fixes) expect(fix).toMatch(/^(nvm|corepack|docker) /);
+  });
+
   it('list the host ports the installation publishes', (): void => {
     expect(PUBLISHED_PORTS.map((port) => port.port)).toEqual([3210, 3211, 6791, 3000, 11434]);
     for (const port of PUBLISHED_PORTS) expect(port.what.length).toBeGreaterThan(10);

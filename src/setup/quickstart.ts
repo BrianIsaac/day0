@@ -36,8 +36,10 @@ export const QUICKSTART_BLOCK: string = ['```bash', ...QUICKSTART_COMMANDS, '```
 export interface Prerequisite {
   /** The tool, and the version this project needs. */
   name: string;
-  /** What the setup command does about it, and what it says when it is missing. */
+  /** Why it is needed, and what the setup command says when it is missing. */
   detail: string;
+  /** The command that gets it, where one line does the job. */
+  fix?: string;
 }
 
 /** Checked by `pnpm setup:local` before it starts a single service. */
@@ -46,16 +48,17 @@ export const PREREQUISITES: readonly Prerequisite[] = [
     name: 'Node 22 or newer',
     detail:
       'The version in package.json engines. The setup command reads it first and names the version it found.',
+    fix: 'nvm install 22 && nvm use 22',
   },
   {
     name: 'pnpm 9 or newer',
-    detail:
-      'Corepack ships it: corepack enable && corepack prepare pnpm@9 --activate is the fix it prints.',
+    detail: 'Corepack ships it, so there is nothing to download by hand.',
+    fix: 'corepack enable && corepack prepare pnpm@9 --activate',
   },
   {
     name: 'Docker, with Compose v2',
     detail:
-      'The backend, the skill sandbox and, on the account-free route, the model server all run in containers. Compose v1 is not enough.',
+      'The backend, the skill sandbox and, on the account-free route, the model server all run in containers. Compose v1 is not enough, and the setup command says so by name.',
   },
 ];
 
@@ -138,7 +141,7 @@ export const FIRST_SUCCESS: readonly FirstSuccessStep[] = [
   {
     action: 'Hold the Day-1 1:1 in chat mode and answer the seven topics.',
     detail:
-      'It opens the conversation itself. Plain sentences are enough; there is no form to fill in.',
+      'It opens the conversation itself, and plain sentences are enough. Voice is greyed out unless you hold ElevenLabs credentials, which is expected: chat runs the identical seven-topic 1:1.',
   },
   {
     action: 'Approve the charter it writes.',
@@ -190,23 +193,29 @@ export interface MeasuredTiming {
 export const MEASURED_TIMINGS: readonly MeasuredTiming[] = [
   {
     phase: 'git clone',
-    measured: '0.2 s',
-    excludes: 'from a path on the same disk, so a clone over a network is not in this figure',
+    measured: '0.3 s',
+    excludes: 'from a repository on the same disk, so a clone over a network is not in this figure',
   },
   {
     phase: 'pnpm install --frozen-lockfile',
-    measured: '2.9 s',
+    measured: '2.7 s',
     excludes:
       'with a warm package store; a first install on a machine downloads the dependency set, which was not measured',
   },
   {
-    phase: 'pnpm setup:local',
+    phase: 'pnpm setup:local, first run',
+    measured: '40.7 s',
+    excludes: 'with both container images already present, so nothing at all was pulled',
+  },
+  {
+    phase: 'pnpm setup:local, run again',
     measured: '38.3 s',
-    excludes: 'with every container image already present, so nothing at all was pulled',
+    excludes:
+      'on the same installation, which it left exactly as it found it, down to the byte in .env.local',
   },
   {
     phase: 'pnpm dev, cold',
-    measured: '5.6 s',
+    measured: '5.8 s',
     excludes:
       'to the unlocked page answering, with the first compile included and the build cache deleted first',
   },
@@ -214,7 +223,7 @@ export const MEASURED_TIMINGS: readonly MeasuredTiming[] = [
 
 /** Why the figures above are not a promise about your machine. */
 export const TIMING_CAVEAT =
-  'Ten minutes is a target rather than a promise. Everything above was measured on a machine that already had every container image, and the download is the part that decides it: roughly 552 MB for the backend and 122 MB for the sandbox on the key route, and on the account-free route a model server image and 2.5 GB to 5 GB of weights on top. None of that was measured here, and none of it is in those figures.';
+  'Ten minutes is a target rather than a promise. Everything above was measured on a machine that already had both container images, and the download is the part that decides it: the backend image is about 207 MB to fetch and 578 MB once unpacked, the sandbox image about 46 MB and 127 MB, and the account-free route adds a model server image and 2.5 GB to 5 GB of weights on top. None of that was downloaded here, so none of it is in those figures.';
 
 /** How to stop it, and what survives. */
 export const STOP_AND_RESTART =
