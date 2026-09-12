@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:36:19.846Z",
+  "generatedAt": "2026-09-12T06:36:50.761Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -170,7 +170,7 @@
       "arm": "day0",
       "run": 1,
       "status": "running",
-      "humanWaitMs": 14261,
+      "humanWaitMs": 16512,
       "decisions": [
         {
           "kind": "charter",
@@ -302,6 +302,27 @@
           "taskId": "write-ticket-ownership",
           "requestedAt": "2026-09-12T06:36:18.458Z",
           "approvedAt": "2026-09-12T06:36:19.235Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "skill",
+          "taskId": "write-team-handoff",
+          "requestedAt": "2026-09-12T06:36:19.937Z",
+          "approvedAt": "2026-09-12T06:36:20.811Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "write-team-handoff",
+          "requestedAt": "2026-09-12T06:36:35.858Z",
+          "approvedAt": "2026-09-12T06:36:36.635Z",
+          "delayMs": 751
+        },
+        {
+          "kind": "actions",
+          "taskId": "write-team-handoff",
+          "requestedAt": "2026-09-12T06:36:49.309Z",
+          "approvedAt": "2026-09-12T06:36:50.081Z",
           "delayMs": 750
         }
       ],
@@ -1282,16 +1303,144 @@
             }
           },
           "error": "skill authored but verification failed - smoke test exited 1"
+        },
+        {
+          "taskId": "write-team-handoff",
+          "externalId": "EVAL-WRITE-04",
+          "category": "approval-write",
+          "workItemId": "ms75h2rk5t6z840aeff52tj1958e8zfp",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:36:19.846Z",
+          "finishedAt": "2026-09-12T06:36:50.187Z",
+          "deployToFirstCorrectActionMs": 204869,
+          "humanWaitMs": 2251,
+          "decisions": [
+            {
+              "kind": "skill",
+              "taskId": "write-team-handoff",
+              "requestedAt": "2026-09-12T06:36:19.937Z",
+              "approvedAt": "2026-09-12T06:36:20.811Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "plan",
+              "taskId": "write-team-handoff",
+              "requestedAt": "2026-09-12T06:36:35.858Z",
+              "approvedAt": "2026-09-12T06:36:36.635Z",
+              "delayMs": 751
+            },
+            {
+              "kind": "actions",
+              "taskId": "write-team-handoff",
+              "requestedAt": "2026-09-12T06:36:49.309Z",
+              "approvedAt": "2026-09-12T06:36:50.081Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "skillAuthoringAttempts": 1,
+          "actionAudit": {
+            "totalActions": 2,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3,
+              2
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug",
+                  "threadKey"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "583b1a08235d2f1f585635668d71d74a715385aa261b704bdc054e17eda19a27"
+              },
+              {
+                "phase": "output",
+                "index": 1,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "7309f1f40fbfc7fca72dd8f65d71de73b734fc3a322ff6bc387a58a89ad0c8ee"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:slack-message",
+                "passed": true,
+                "detail": "one matching message found in revops"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              },
+              {
+                "check": "day0-held-and-approved",
+                "passed": true,
+                "detail": "held=true, approved=true, managerAuthority=true"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "slack.postMessage",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
         }
       ],
       "agentId": "j579j3ztah4cattpv79qfes8hh8e8tcj",
       "deployedAt": "2026-09-12T06:33:25.260Z",
       "activeTask": {
-        "taskId": "write-team-handoff",
-        "startedAt": "2026-09-12T06:36:19.846Z",
+        "taskId": "write-priya-verification",
+        "startedAt": "2026-09-12T06:36:50.657Z",
         "humanWaitMs": 0,
         "decisions": [],
-        "logicalStages": 0,
+        "logicalStages": 1,
         "observableProviderCalls": null,
         "skillAuthoringAttempts": 0
       }
