@@ -52,7 +52,7 @@ export const PREREQUISITES: readonly Prerequisite[] = [
   },
   {
     name: 'pnpm 9 or newer',
-    detail: 'Corepack ships it, so there is nothing to download by hand.',
+    detail: 'If Corepack is installed, the command below downloads and activates pnpm. Otherwise install pnpm before continuing.',
     fix: 'corepack enable && corepack prepare pnpm@9 --activate',
   },
   {
@@ -68,7 +68,7 @@ export interface PublishedPort {
   what: string;
 }
 
-/** The ports a default installation takes on your machine. */
+/** The default host ports, including services enabled only on optional routes. */
 export const PUBLISHED_PORTS: readonly PublishedPort[] = [
   { port: 3210, what: 'the backend, which is where every row lives' },
   { port: 3211, what: 'the backend site proxy, used by its HTTP endpoints' },
@@ -99,9 +99,9 @@ export const MODEL_ROUTES: readonly ModelRoute[] = [
     id: 'key',
     title: 'A key you already have',
     needs:
-      'One key for a compatible model provider. The setup command asks for it once in a hidden prompt and writes it into .env.local; it is never a command-line argument and never leaves your machine.',
+      'An OpenAI API key. The setup command reads it in a hidden prompt and saves it in .env.local with owner-only permissions. Model requests send the key and prompt content to OpenAI. For another provider, use the advanced endpoint route below.',
     gives:
-      'The shortest route: nothing to download, no GPU question, and the pauses between steps are a hosted model, not your laptop. You pay the provider per token.',
+      'No model weights to download and no GPU requirement. Container images are still needed. The model runs at the provider, which charges per token.',
     flag: 'pnpm setup:local --route key',
   },
   {
@@ -136,7 +136,7 @@ export const FIRST_SUCCESS: readonly FirstSuccessStep[] = [
   {
     action: 'Deploy an agent.',
     detail:
-      'The office it works in is seeded and synthetic. Nothing of yours is read, and nothing it does leaves your machine.',
+      'The office it works in is seeded and synthetic. It does not connect to your work systems. On the key or remote-endpoint route, your chat and relevant office content are sent to the model provider.',
   },
   {
     action: 'Hold the Day-1 1:1 in chat mode and answer the seven topics.',
@@ -223,7 +223,7 @@ export const MEASURED_TIMINGS: readonly MeasuredTiming[] = [
 
 /** Why the figures above are not a promise about your machine. */
 export const TIMING_CAVEAT =
-  'Ten minutes is a target rather than a promise. Everything above was measured on a machine that already had both container images, and the download is the part that decides it: the backend image is about 207 MB to fetch and 578 MB once unpacked, the sandbox image about 46 MB and 127 MB, and the account-free route adds a model server image and 2.5 GB to 5 GB of weights on top. None of that was downloaded here, so none of it is in those figures.';
+  'Ten minutes is a target rather than a promise. Everything above was measured on a machine that already had both container images, and the download is the part that decides it: on linux/amd64 the backend image is about 207 MB to fetch and 578 MB once unpacked, the sandbox image about 46 MB and 127 MB, and the account-free route adds a model server image and 2.5 GB to 5 GB of weights on top. None of that was downloaded here, so none of it is in those figures.';
 
 /** How to stop it, and what survives. */
 export const STOP_AND_RESTART =
@@ -231,7 +231,7 @@ export const STOP_AND_RESTART =
 
 /** Where the rows live between runs. */
 export const DATA_LOCATION =
-  'Your data stays in the installation’s own Docker volume, named <project>_convex_data after the Compose project the setup command wrote into .env.local. Nothing is stored outside that volume and the .env.local beside the checkout.';
+  'Your data stays in the installation’s own Docker volume, named <project>_convex_data after the Compose project the setup command wrote into .env.local. Generated settings and keys live in .env.local beside the checkout. The helper also creates docs-local for the documentation mount; the sandbox uses <project>_sandbox_socket, and the account-free route keeps model weights in <project>_model_data. Hosted model requests are processed by the selected provider.';
 
 /** A README section worth reading once the quick start has worked. */
 export interface DetailedSection {

@@ -111,9 +111,9 @@ export default function SetupPage() {
         </h1>
         <p className="text-base text-[var(--color-muted)] leading-relaxed mb-4">
           The same product this demo records, running locally: a self-hosted backend, a seeded mock
-          office to work in, and a sandbox that verifies the skills the agent writes. Nothing it
-          does leaves your machine, and the office it works in is synthetic, so a first run reads
-          nothing of yours.
+          office to work in, and a sandbox that verifies the skills the agent writes. The backend
+          and sandbox run locally. A hosted model receives your chat and relevant synthetic office
+          content; the account-free route runs the model locally too.
         </p>
         <div
           role="note"
@@ -121,8 +121,8 @@ export default function SetupPage() {
         >
           <p className="text-sm leading-relaxed">
             This page asks you for nothing. It has no form and no field: the one secret the setup
-            needs is typed into a hidden prompt in your own terminal, and it stays in a file beside
-            your checkout.
+            needs is typed into a hidden prompt in your own terminal and saved in a private file beside
+            your checkout. It is used to authenticate requests to your model provider.
           </p>
         </div>
       </header>
@@ -150,7 +150,7 @@ export default function SetupPage() {
           id="before"
           index={1}
           title="Before you start"
-          lede="Three tools, and some room on five ports. The setup command checks every one of them before it starts a single service, and names the missing one rather than failing later."
+          lede="Three tools and the ports listed below. Setup checks the backend ports, reports app port 3000 as a note, and checks the model port when you choose the account-free route."
         >
           <Panel>
             <ul className="space-y-3">
@@ -184,12 +184,14 @@ export default function SetupPage() {
             </ul>
           </Panel>
           <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
-            Any of them can move:{' '}
+            Move the backend ports and choose an installation name:{' '}
             <code className="font-mono text-[var(--color-fg)]">
-              pnpm setup:local --port 4210 --site-port 4211 --dashboard-port 4791
+              pnpm setup:local --project day0-new --port 4210 --site-port 4211 --dashboard-port 4791
             </code>
             . Two installations on one machine need different ports and different Compose project
             names, and the command refuses to attach a new installation to another one&rsquo;s data.
+            Use --model-port for the local model server. The app stays on port 3000; free that
+            port before running pnpm dev.
           </p>
         </Section>
 
@@ -197,7 +199,7 @@ export default function SetupPage() {
           id="model"
           index={2}
           title="How it reaches a model"
-          lede="Every step of the loop is a model call, so this is the one question the setup command asks. Both answers run the whole loop; they differ over who runs the model."
+          lede="The setup command asks how to reach a model, then asks for the key or confirms a local download. Both routes support the loop; they differ over who runs the model."
         >
           <div className="space-y-3">
             {MODEL_ROUTES.map((route) => (
@@ -218,7 +220,10 @@ export default function SetupPage() {
             <code className="font-mono text-[var(--color-fg)]">
               pnpm setup:local --route endpoint --endpoint https://your-server/v1
             </code>
-            . It writes the address you give it and nothing more.
+            . It performs the same local setup and writes paired host/backend model addresses. Set
+            OPENAI_MODEL and, if required, OPENAI_API_KEY in .env.local for that endpoint, then
+            run pnpm sync:env before starting the app. A host-loopback endpoint must also be
+            reachable from the backend container via host.docker.internal.
           </p>
         </Section>
 
@@ -322,7 +327,7 @@ export default function SetupPage() {
           id="stops"
           index={6}
           title="If it stops"
-          lede="Run pnpm check:setup. It reads .env.local and reports the backend, the auth mode, the model, the sandbox and voice separately, failing only on what is actually broken rather than on what is merely absent. These two are the ones that have cost someone an afternoon."
+          lede="Run pnpm check:setup. It reads .env.local and reports configuration and local service status for the backend, auth, model, sandbox and voice. It does not make a model call or verify provider credentials. These are the traps to check first."
         >
           <div className="space-y-3">
             {TRAPS.map((trap) => (
