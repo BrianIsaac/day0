@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:48:19.184Z",
+  "generatedAt": "2026-09-12T06:48:23.867Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -7632,13 +7632,95 @@
               "procedureEffects": []
             }
           }
+        },
+        {
+          "taskId": "docs-q4-source-of-truth",
+          "externalId": "EVAL-DOC-05",
+          "category": "docs-grounded-read",
+          "workItemId": "ms7bpak05nwyzdrjrndeprb4mh8e8fj7",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:48:19.184Z",
+          "finishedAt": "2026-09-12T06:48:23.792Z",
+          "deployToFirstCorrectActionMs": null,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "ticket.update",
+                "argumentKeys": [
+                  "comment",
+                  "slug",
+                  "status"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "ab0603300c6d604676542fa31b9ebb9a9060173b972ccf58766228081219620c"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": false,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": false,
+                "detail": "ticket REVOPS-EVAL-05 status=done, matching comments=0"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-05",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
         }
       ],
       "agentId": "j576v7wdhsyqa8gr5bcbczgf8n8e9w7x",
       "deployedAt": "2026-09-12T06:47:54.382Z",
       "activeTask": {
-        "taskId": "docs-q4-source-of-truth",
-        "startedAt": "2026-09-12T06:48:19.184Z",
+        "taskId": "write-pipeline-row",
+        "startedAt": "2026-09-12T06:48:23.867Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 0,
