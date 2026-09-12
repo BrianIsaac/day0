@@ -295,8 +295,17 @@ else
   record FAIL "tcp+tls handshake" "curl: $(trim 200 < "$TMPDIR_PROBE/tls.err")"
 fi
 if command -v openssl >/dev/null 2>&1; then
-  CERT="$(printf '' | openssl s_client -servername "$HOST" -connect "${HOST}:443" 2>/dev/null \
-    | openssl x509 -noout -subject -issuer -enddate 2>/dev/null | tr '\n' ' ' || true)"
+  # Bound the separate certificate request too, including a peer that stalls after TCP.
+  openssl s_client -servername "$HOST" -connect "${HOST}:443" \
+    < /dev/null > "$TMPDIR_PROBE/cert.pem" 2>/dev/null &
+  cert_pid=$!
+  ( sleep "$TIMEOUT"; kill "$cert_pid" 2>/dev/null || true ) > /dev/null 2>&1 &
+  deadline_pid=$!
+  wait "$cert_pid" 2>/dev/null || true
+  kill "$deadline_pid" 2>/dev/null || true
+  wait "$deadline_pid" 2>/dev/null || true
+  CERT="$(openssl x509 -in "$TMPDIR_PROBE/cert.pem" -noout -subject -issuer -enddate \
+    2>/dev/null | tr '\n' ' ' || true)"
   if [ -n "$CERT" ]; then
     # A certificate issued by anything other than the expected public CA chain
     # (an interception proxy, a captive portal) shows here as an unexpected issuer.
@@ -425,9 +434,10 @@ post_chat_with_fallback() {
     body="$(printf '%s' "$body" | sed 's/"max_completion_tokens"/"max_tokens"/')"
     elapsed="$(post_chat "$name" "$body")"
   fi
-  echo "$elapsed"
+  CHAT_ELAPSED="$elapsed"
 }
 MAX_TOKENS_NOTE=""
+CHAT_ELAPSED=""
 
 # Inspect a completion with python3 when present, otherwise with grep.
 # Prints: STATUS|DETAIL where STATUS is ok, empty, error.
@@ -518,7 +528,8 @@ report_completion() {
   local code verdict status detail
   code="$(cat "$TMPDIR_PROBE/${name}.code")"
   if [ "$code" = "000" ]; then
-    record FAIL "$label" "no HTTP response after ${elapsed} ms: $(trim 160 < "$TMPDIR_PROBE/${name}.err")"
+    detail="no HTTP response after ${elapsed} ms: $(trim 160 < "$TMPDIR_PROBE/${name}.err")"
+    if [ "$required" -eq 1 ]; then record FAIL "$label" "$detail"; else record note "$label" "$detail"; fi
     return
   fi
   if [ "$code" != "200" ]; then
@@ -544,28 +555,32 @@ if [ -z "$API_KEY" ]; then
 else
   # 4a. Plain completion: the floor. Required.
   body="$(build_body 'Reply with exactly the single word: ready' '')"
-  elapsed="$(post_chat_with_fallback plain "$body")"
+  post_chat_with_fallback plain "$body"
+  elapsed="$CHAT_ELAPSED"
   report_completion plain "chat completion" text "$elapsed" 1
-  [ -n "$MAX_TOKENS_NOTE" ] && record note "max_completion_tokens" "$MAX_TOKENS_NOTE"
 
   # 4b. Tool call: what the ordinary (baseline) arm and any MCP surface need.
   tools='"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city.","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"},"unit":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]}}}],"tool_choice":"auto"'
   body="$(build_body 'What is the weather in Hangzhou right now? Use the tool.' ",${tools}")"
-  elapsed="$(post_chat_with_fallback tool "$body")"
+  post_chat_with_fallback tool "$body"
+  elapsed="$CHAT_ELAPSED"
   report_completion tool "tool call" tool "$elapsed" 1
 
   # 4c. json_object: the raw-SDK native rung in src/lib/openai.ts. Advisory,
   # because Day0's ladder falls back to prompt mode when a server declines it.
   body="$(build_body 'Return a JSON object with keys title (string) and priority (low or high) for a task about refreshing a sales tracker.' ',"response_format":{"type":"json_object"}')"
-  elapsed="$(post_chat_with_fallback json_object "$body")"
+  post_chat_with_fallback json_object "$body"
+  elapsed="$CHAT_ELAPSED"
   report_completion json_object "response_format json_object" json "$elapsed" 0
 
   # 4d. json_schema with strict: what @ai-sdk/openai sends for Mastra's native
   # structured output. Advisory for the same reason.
   schema='"response_format":{"type":"json_schema","json_schema":{"name":"work_item","strict":true,"schema":{"type":"object","properties":{"title":{"type":"string"},"priority":{"type":"string","enum":["low","high"]}},"required":["title","priority"],"additionalProperties":false}}}'
   body="$(build_body 'Describe a task about refreshing a sales tracker.' ",${schema}")"
-  elapsed="$(post_chat_with_fallback json_schema "$body")"
+  post_chat_with_fallback json_schema "$body"
+  elapsed="$CHAT_ELAPSED"
   report_completion json_schema "response_format json_schema" json "$elapsed" 0
+  if [ -n "$MAX_TOKENS_NOTE" ]; then record note "max_completion_tokens" "$MAX_TOKENS_NOTE"; fi
 fi
 
 # ---------------------------------------------------------------------------

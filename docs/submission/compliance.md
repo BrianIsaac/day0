@@ -26,6 +26,8 @@ reproduce the submission. Any use with another organisation's information requir
 that organisation to establish its own lawful basis, access authority, retention
 rules and provider agreements; this demonstration does not supply them.
 
+12 September final addendum: the evidence card also includes the retained local `qwen3:14b` comparison and Featherless-hosted `zai-org/GLM-5.3-Flash` **baseline only** (45 rows, no onboarded arm: charter setup failed). These use synthetic evaluation content. The three-bed inventory below describes the September submission; it is not the complete final inventory. Provider-budget details are recorded observations, with no retained raw charter HTTP responses.
+
 ## Evaluation provenance and claim boundary
 
 The submitted controlled comparison ran in mock mode so both arms received the
@@ -65,8 +67,8 @@ deployment.
   values are encrypted into the `credentials` table, while `docPages` and mirrored
   documents receive only a marker such as `<credential: linear service token,
   stored>`. Removing the discovered value on a later sync revokes that credential.
-- Plaintext exists only inside the current server-side action that connects to the
-  authorised provider. Credentials are not returned to clients or placed in task
+- ~~Plaintext exists only inside the current server-side action that connects to the
+  authorised provider.~~ REFUTED BY app/documentation/DocumentationPage.tsx:59,86 and surface credential forms, 12 Sep 2026. Manual entry necessarily exists transiently in the browser password input and FormData before submission; sync/encryption and authorised transport also process plaintext on the server. The old statement described decryption for transport as though it covered credential intake Credentials are not returned to clients or placed in task
   fixtures, skill bodies, literal work-action payloads, events or the audit ledger.
 - Provider-returned effects, identifiers and errors are redacted before persistence,
   including literal, JSON-escaped and URL-encoded credential echoes. Retained
@@ -165,6 +167,8 @@ effects, especially in higher-risk domains.
 
 操作者拥有或管理所有演示工作区，并编写了全部源记录。复现本次提交不需要任何生产、客户、员工或个人数据。若使用其他组织的信息，该组织必须自行确认合法处理依据、访问授权、保留规则和服务商协议；本演示不提供这些授权。
 
+9 月 12 日决赛补充：证据卡还包含本地 `qwen3:14b` 比较和经 Featherless 托管的 `zai-org/GLM-5.3-Flash` **仅 baseline** 结果（45 行，charter 准备失败，没有入职组）。内容均为合成评测数据。下述三个环境是半决赛清单，并非决赛的全部清单。预算细节来自运行者记录，未保留原始 charter HTTP 回复。
+
 ### 评测来源与结论边界
 
 提交的受控比较在 mock mode 中运行，因此两个实验组获得相同且不可变的预置 office，评审无需第三方账户即可复现。三个冻结环境都运行两个实验组、相同的 15 项任务、每项三次、`temperature` 0.4，并使用已断言两组配置一致的共享 harness。任何得分都不使用 LLM judge；确定性评分器读取终止状态、adapter state、ledger 和预置 mock surfaces。
@@ -183,7 +187,7 @@ workspace，三个系统经审批卡片连接，工作在操作者自有的 Line
 - 文档凭据和手工写入的 surface 凭据只由 server action 通过 write-only password input 接收。输入会立即清空，明文不会保存在 React state 中。
 - 存储使用 AES-256-GCM，每条记录使用新的 12-byte IV 和 authentication tag。加密 key 是服务端环境机密。公开 query 只返回安全 label 和 source reference，不返回 ciphertext 或 IV。
 - 脱敏是文档持久化的第一道边界。检测到的 token/key 值会加密写入 `credentials` table；`docPages` 和镜像文档只收到 `<credential: linear service token, stored>` 一类 marker。后续同步若移除该值，相应凭据会被撤销。
-- 明文只在当前连接已授权 provider 的 server-side action 中存在。凭据不会返回 client，也不会进入 task fixture、skill body、literal work-action payload、event 或 audit ledger。
+- ~~明文只在当前连接已授权 provider 的 server-side action 中存在。~~ REFUTED BY app/documentation/DocumentationPage.tsx:59,86 及凭据表单, 12 Sep 2026. 手工输入的明文先短暂存在于浏览器密码框及 FormData；服务端同步、加密与授权传输也会处理明文。旧句把传输时的解密范围误写成了整个凭据接入过程。凭据不会返回 client，也不会进入 task fixture、skill body、literal work-action payload、event 或 audit ledger。
 - Provider 返回的 effect、identifier 和 error 在持久化前会脱敏，包括 literal、JSON-escaped 和 URL-encoded credential echo。保留的 request metadata 不含 body、header 或凭据。
 - Surface 只有在 evidence-backed route 和 credential request 取得所需批准，并且服务端 probe 成功后，才进入 `connected`。Provider endpoint 和 tool allowlist 受到边界约束，不会直接接受文档中的任意文本。
 

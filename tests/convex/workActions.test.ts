@@ -2863,6 +2863,48 @@ describe('work action surface enablement', (): void => {
 });
 
 describe('plan-step accounting after the loop ran live', (): void => {
+  it.each([
+    'Read "Looker pipeline tile" and report the figure.',
+    'Read “Looker pipeline tile” and report the figure.',
+  ])('enforces a quoted surface name: %s', (step): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: {
+          summary: 'Read the tile.',
+          steps: [step],
+          expectedOutputType: 'message',
+          riskNotes: '',
+          reversibility: '',
+          estimatedMinutes: 1,
+        },
+        outcomes: [{ step: 1, status: 'satisfied', evidence: 'No read landed.' }],
+        initialActions: [],
+        initialLedger: [],
+        surfaces: [{ slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' }],
+      }),
+    ).toThrow('promised a Looker pipeline tile read');
+  });
+
+  it.each(['Move the ticket to "Done".', 'Move the ticket to “Done”.'])(
+    'enforces a quoted target state: %s',
+    (step): void => {
+      expect(
+        dependentTransitionRefusal({
+          plan: {
+            summary: 'Complete the ticket.',
+            steps: [step],
+            expectedOutputType: 'ticket-update',
+            riskNotes: '',
+            reversibility: '',
+            estimatedMinutes: 1,
+          },
+          actions: [],
+          planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'No transition landed.' }],
+        }),
+      ).toContain('omitted the approved ticket state transition');
+    },
+  );
+
   it('does not read a hold instruction as a promised surface read', (): void => {
     expect(() =>
       validatePlanStepOutcomes({

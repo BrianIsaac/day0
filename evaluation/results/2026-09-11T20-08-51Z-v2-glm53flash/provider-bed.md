@@ -28,8 +28,11 @@ this bed: `response_format: {type: json_object}` returns HTTP 200 with **empty c
 deterministically, sometimes inside an HTTP 200 and sometimes as an HTTP 503. On `auto`, every
 structured call would first pay that native attempt; the 503 shape additionally costs five
 retries with backoff and then fails the stage outright, because a 5xx is classified as
-unrelated to the parameter. On this server `auto` also ends on the prompt rung, so the rung
-used is the same in both settings and pinning `prompt` only removes the wasted attempt.
+unrelated to the parameter. ~~On this server `auto` also ends on the prompt rung, so the rung
+used is the same in both settings and pinning `prompt` only removes the wasted attempt.~~
+REFUTED BY the 503 failure path described above, 12 Sep 2026. auto is not guaranteed
+to reach prompt mode: a retry-exhausted 503 can fail the stage. Pinning prompt avoids
+that path as well as the extra native request. Successful small probes hid this distinction.
 
 `pnpm probe:model` passed 5/5 required checks twice on the day, with both native rungs declined
 and both prompt rungs passing.
@@ -46,7 +49,7 @@ in prompt mode
     at async draftCharter (../convex/onboarding.ts:242:4)
 ```
 
-Measured at the HTTP level against this endpoint with day0's real charter system prompt and the
+Recorded by the run author at the HTTP level against this endpoint with day0's real charter system prompt and the
 seven fixture answers, one variable at a time:
 
 | Output-budget field sent | finish_reason | completion_tokens | content | valid JSON | latency |
@@ -56,13 +59,19 @@ seven fixture answers, one variable at a time:
 | `max_tokens: 20000` | `stop` | 9,381 | 6,113 chars | yes | 138 s |
 | `max_tokens: 20000`, repeat | `stop` | 10,316 | 9,030 chars | yes | 147 s |
 
+The raw HTTP responses were not retained; the table is the run author's record,
+not a reconstruction from the backend access log.
+
 This endpoint caps completion at **4,096 tokens by default**, accepts `max_completion_tokens`
 without honouring it, and honours only the legacy `max_tokens`. GLM 5.3 Flash cannot have its
 thinking disabled, and on a charter-sized prompt it spends more than 4,096 tokens thinking: the
 truncated responses carried 17,819 and 18,148 characters of `reasoning` and zero characters of
 `content`. day0 sends no output budget on the Mastra path, and sends `max_completion_tokens`
-(which this server ignores) on the raw path, so every large-output structured call on this
-route returns nothing.
+(which this server ignores) on the raw path, ~~so every large-output structured call on this
+route returns nothing.~~ REFUTED BY the experiment's limited sample (the charter prompt),
+12 Sep 2026. The observed charter calls returned no answer at the default budget;
+other large structured prompts were not measured. The earlier wording generalised
+from the preparation failure.
 
 Small-output calls are unaffected, which is why `pnpm probe:model` passes 5/5, `check:setup`
 reports the model ok, and the whole ordinary arm runs. The boundary is output size, not the
@@ -90,10 +99,16 @@ Token cost is not a harness field (report section 5.5) and the provider exposes 
 endpoint to an API key — `/usage` answers 401 to a bearer token and needs a dashboard session —
 so the exact figure must be read from the Featherless usage page for the window 20:08Z-20:39Z
 on 11 Sep 2026. What can be stated from measurement: this endpoint generated at 68-73 output
-tokens per second in every timed call, so 30.1 minutes of task wall bounds the bed above at
+tokens per second in every timed call, ~~so 30.1 minutes of task wall bounds the bed above at
 roughly 126,000 output tokens, about **$0.06 of output and a similar order of input**, against
 the $12 the report priced a two-arm 90-row bed at. The bed came in far under budget because
-only one arm ran and the ordinary arm's calls are short.
+only one arm ran and the ordinary arm's calls are short.~~ REFUTED BY the absence of
+aggregate token usage and the arithmetic 30.1 × 60 × 73 = 131,838, 12 Sep 2026.
+At the observed rates, treating all task wall as sequential generation gives an
+illustrative 122,808–131,838 output tokens ($0.0614–$0.0659 at the recorded price),
+not a measured total or a guaranteed bound. The input-token cost cannot be inferred
+from output throughput. The old estimate treated a sample rate as a ceiling and
+assumed input was comparable without usage data. Exact spend remains unverified.
 
 ## Retained files
 
