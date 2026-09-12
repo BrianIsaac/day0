@@ -28,13 +28,9 @@
  */
 import { spawnSync } from 'node:child_process';
 import {
-  chmodSync,
-  copyFileSync,
   existsSync,
   readFileSync,
-  renameSync,
   realpathSync,
-  writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
 import { basename, join } from 'node:path';
@@ -42,6 +38,7 @@ import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { composeArguments } from './compose';
+import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
 
 const ENV_FILE = '.env.local';
@@ -804,10 +801,7 @@ export function readEnvValues(path: string): Record<string, string> {
  */
 export function writeEnvValues(path: string, updates: Readonly<Record<string, string>>): void {
   const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
-  const temporary = `${path}.setup-${process.pid}`;
-  writeFileSync(temporary, upsertEnvText(text, updates), { encoding: 'utf8', mode: 0o600 });
-  renameSync(temporary, path);
-  chmodSync(path, 0o600);
+  writePrivateEnv(path, upsertEnvText(text, updates));
 }
 
 /** What a first success looks like, printed after the checker's own report. */
@@ -1143,8 +1137,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         );
         return 1;
       }
-      copyFileSync(examplePath, envPath);
-      chmodSync(envPath, 0o600);
+      writePrivateEnv(envPath, readFileSync(examplePath, 'utf8'));
       wrote = true;
       io.log('');
       io.log(`Created ${ENV_FILE} from ${ENV_EXAMPLE}, readable only by you.`);

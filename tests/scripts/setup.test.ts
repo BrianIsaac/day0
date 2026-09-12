@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -574,6 +574,17 @@ describe('the values written into .env.local', (): void => {
 });
 
 describe('writing the file', (): void => {
+  it('cannot follow a pre-existing temporary-file symlink while writing secrets', () => {
+    const directory = checkout('OPENAI_API_KEY=old\n');
+    const path = join(directory, '.env.local');
+    const other = join(directory, 'unrelated');
+    writeFileSync(other, 'untouched', { mode: 0o644 });
+    symlinkSync(other, `${path}.setup-${process.pid}`);
+    writeEnvValues(path, { OPENAI_API_KEY: 'new-secret' });
+    expect(readFileSync(other, 'utf8')).toBe('untouched');
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
   it('replaces a value, keeps every other line and leaves the file private', (): void => {
     const directory = checkout('# a comment\nEXA_API_KEY=exa-1\nCONVEX_PORT=3210\n');
     const path = join(directory, '.env.local');

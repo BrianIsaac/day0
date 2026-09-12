@@ -22,7 +22,8 @@
  * is why an existing key is left alone unless --force says otherwise.
  */
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { writePrivateEnv } from './private-env';
 import { DEV_NO_AUTH_KEY_ID } from '../convex/devAuth';
 import type { DEV_NO_AUTH_UNLOCK_PARAM as UnlockParam } from '../src/lib/dev-auth-server';
 
@@ -96,7 +97,7 @@ function upsertEnvFile(updates: Record<string, string>): void {
     if (index >= 0) lines[index] = `${key}=${value}`;
     else lines.push(`${key}=${value}`);
   }
-  writeFileSync(ENV_FILE, lines.join('\n'), 'utf8');
+  writePrivateEnv(ENV_FILE, lines.join('\n'));
 }
 
 /**
