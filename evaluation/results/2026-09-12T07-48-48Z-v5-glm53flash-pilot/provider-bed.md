@@ -1,4 +1,4 @@
-# GLM 5.3 Flash re-bed pilot — structured-output hardening
+# GLM 5.3 Flash re-bed pilot - structured-output hardening
 
 Completed 12 September 2026 on disposable project `day0-v5-glm53flash-4ad4c9`,
 backend `http://127.0.0.1:45710`. Three tasks, one repetition, both arms: the

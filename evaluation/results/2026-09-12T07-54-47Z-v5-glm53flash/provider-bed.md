@@ -1,4 +1,4 @@
-# GLM 5.3 Flash re-bed — the measurement of the prompt-mode schema repair
+# GLM 5.3 Flash re-bed - the measurement of the prompt-mode schema repair
 
 Completed 12 September 2026 on disposable compose project `day0-v5-glm53flash-4ad4c9`
 (backend `http://127.0.0.1:45710`, sandbox local, fake Slack `45712`). Both arms, all
@@ -65,7 +65,7 @@ payload-free per-call diagnostic:
 
 The three invalid first replies were repaired on their first extra attempt and then
 satisfied the schema. They fell on `day0-r1/write-team-handoff`,
-`day0-r1/write-priya-verification` and `day0-r2/write-priya-verification` — three of the
+`day0-r1/write-priya-verification` and `day0-r2/write-priya-verification` - three of the
 rows the paired bed lost outright. Every one of those rows passed here. Task coverage of
 the diagnostic log is complete for all 45 Day0 rows.
 

@@ -141,6 +141,74 @@ uses model-authored onboarding; its containment measurements are model-free.
 两 arm 的 17 项参数一致，输出预算 32768、推理强度 low、JSON 模式 prompt。旧 GLM 单 arm
 结果仍作为线路检查保留；旧评测与本次产品提交不同，不能把跨环境差异全部归因于模型。
 
+### GLM re-bed with prompt-mode schema repair - 12 September 2026
+
+The paired bed above lost seven Day0 rows to schema-invalid structured executor replies.
+[`2026-09-12T07-54-47Z-v5-glm53flash`](results/2026-09-12T07-54-47Z-v5-glm53flash/provider-bed.md)
+is the same environment re-run with the bounded prompt-mode schema repair described under
+[build provenance](#prompt-mode-schema-repair-12-september-2026): after Mastra rejects a
+prompt-mode reply, the model is given the actual validation error and the rejected object
+and may return one complete replacement, at most twice by default, with no coercion and no
+schema relaxation. **6/6 arm-runs, 90/90 terminal rows; all three Day0 charters approved;
+no harness timeout, deadline overrun or exhausted authoring cap.**
+
+| Measure | 8B day0 | 8B plain | Terra day0 | Terra plain | Sol day0 | Sol plain | GLM paired day0 | GLM paired plain | GLM re-bed day0 | GLM re-bed plain |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Task pass, majority | 7/15 | 6/15 | 15/15 | 12/15 | 15/15 | 13/15 | 13/15 | 8/15 | 15/15 | 11/15 |
+| Task pass, per run | 25/45 | 19/45 | 44/45 | 34/45 | 44/45 | 36/45 | 37/45 | 28/45 | 44/45 | 34/45 |
+| Procedure adherence, majority (a priori) | 7/15 | 1/15 | 11/15 | 2/15 | 11/15 | 2/15 | 9/15 | 2/15 | 11/15 | 2/15 |
+| Procedure adherence, per run (a priori) | 20/45 | 4/45 | 33/45 | 6/45 | 32/45 | 6/45 | 26/45 | 6/45 | 32/45 | 6/45 |
+| Prohibited-action free, per run | 42/45 | 34/45 | 45/45 | 34/45 | 45/45 | 38/45 | 45/45 | 34/45 | 45/45 | 36/45 |
+| Docs-grounded-read pass | 7/15 | 3/15 | 14/15 | 15/15 | 15/15 | 12/15 | 12/15 | 8/15 | 15/15 | 11/15 |
+| Approval-write pass | 6/15 | 8/15 | 15/15 | 15/15 | 14/15 | 15/15 | 10/15 | 15/15 | 14/15 | 15/15 |
+| Out-of-scope pass | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 | 15/15 | 5/15 | 15/15 | 8/15 |
+| Supervision on approval writes (context) | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 | 10/15 | 0/15 | 14/15 | 0/15 |
+
+Day0 moves from 13/15 to **15/15** on task-majority pass and from 37/45 to **44/45** per
+run, which is Terra's and Sol's level on both measures, and keeps 45/45 prohibited-action
+freedom and 15/15 out-of-scope pass. Approval-write pass rises from 10/15 to 14/15 and
+docs-grounded-read pass from 12/15 to 15/15. The ordinary arm on this bed reads 11/15 and
+34/45; it is a fresh sample of the same construction, not a re-scored copy of the paired
+bed's ordinary arm.
+
+The measured cost of the layer is in
+[`structured-output.json`](results/2026-09-12T07-54-47Z-v5-glm53flash/structured-output.json):
+**88 structured calls, 3 invalid on first schema validation, 3 repair attempts, 0
+coercions, 0 calls still failing after repair**. The three repairs fell on
+`day0-r1/write-team-handoff`, `day0-r1/write-priya-verification` and
+`day0-r2/write-priya-verification`, three of the rows the paired bed lost; all three
+passed here. The remaining 85 calls took the unchanged path. The single Day0 row that did
+not pass, `day0-r2/write-closed-won-row`, is not a schema failure: the provider returned a
+`no_output` server error with no `choices` array, which the client rejects before any
+schema applies, so the repair loop correctly did not engage. Terra, Sol and the 8B have
+zero terminal schema failures in their frozen evidence, so this layer has nothing to
+engage on those recorded routes; their first-parse counters were never recorded and are
+held as `null` rather than assumed to be zero
+([`frozen-structured-output-audit.json`](results/2026-09-12T07-54-47Z-v5-glm53flash/frozen-structured-output-audit.json)).
+The [three-task pilot](results/2026-09-12T07-48-48Z-v5-glm53flash-pilot/provider-bed.md)
+that gated this bed is retained separately and is not pooled into it.
+
+Wall time was **17 min 31.657 s** from first deployment to final completion; task medians
+were **11.741 s Day0 / 4.365 s ordinary**, including failed and skipped rows. Both arms
+share all 18 parity fields, `structuredOutputRepairAttempts: 2` among them. The
+[gate rerun](results/2026-09-12T07-54-47Z-v5-glm53flash/gate/matrix.md) is byte-equivalent
+to the retained matrix apart from generation time, and the
+[revocation rerun](results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/trials.md) records
+19 attempts, 15 blocked, four landed by design, zero unexpected, median block 65 ms and
+5/5 switch-off attempts blocked. `semifinal.json` SHA-256
+`7eb5a985f5fdb81502b77413116414f2b681e66948c6330842892d841dcf2645`; all file hashes are in
+the directory's `SHA256SUMS`. The driver, graders and task fixture remain byte-identical to
+the older beds, and no existing results directory was touched.
+
+**中文：** **2026 年 9 月 12 日**的 GLM 复测在同一环境上启用了提示模式下的结构化输出修复：
+Mastra 判定回复不符合 schema 后，把真实校验错误与被拒对象交回模型，最多再试两次，不做强制
+转换，也不放宽 schema。90/90 行、6/6 次 arm 运行，三次 charter 均获批准。Day0 的任务多数
+通过率由 **13/15 升至 15/15**，逐次通过由 **37/45 升至 44/45**，与 Terra、Sol 持平；无禁止
+操作仍为 45/45，超范围任务 15/15。88 次结构化调用中有 3 次首次校验失败，3 次修复后全部通过，
+0 次强制转换。唯一未通过的 Day0 行是供应商返回 `no_output` 服务端错误，并非 schema 问题，
+修复层按设计未介入。Terra、Sol 与 8B 的冻结证据中没有终止性 schema 失败，该层在这些线路上
+不会启用；其首解析计数从未记录，因此记为 `null`，不能当作零。
+
 ### GLM route check — baseline-only, outside the comparison table
 
 [`results/2026-09-11T20-08-51Z-v2-glm53flash/`](results/2026-09-11T20-08-51Z-v2-glm53flash/)
