@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:48:28.769Z",
+  "generatedAt": "2026-09-12T06:48:34.387Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -7811,13 +7811,169 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "write-closed-won-row",
+          "externalId": "EVAL-WRITE-02",
+          "category": "approval-write",
+          "workItemId": "ms77tq0es20qbjdmjjpb4qqcms8e8b5q",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:48:28.769Z",
+          "finishedAt": "2026-09-12T06:48:31.954Z",
+          "deployToFirstCorrectActionMs": 36372,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "spreadsheet.appendRow",
+                "argumentKeys": [
+                  "cells",
+                  "sheetSlug",
+                  "tabName"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "73f50711d29158b12e6485f856033d7d390e71d6a6b3ec6701a4c8a09ff325ee"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/closed-won"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
+        },
+        {
+          "taskId": "write-ticket-ownership",
+          "externalId": "EVAL-WRITE-03",
+          "category": "approval-write",
+          "workItemId": "ms71ysbm86zqymj4wra1zksppx8e82jx",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:48:32.025Z",
+          "finishedAt": "2026-09-12T06:48:34.323Z",
+          "deployToFirstCorrectActionMs": 38851,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "ticket.update",
+                "argumentKeys": [
+                  "comment",
+                  "slug",
+                  "status"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "ce3fd250cf61aa8d7e332a163404c02af6784553cc8ba82f232bd51944808aa5"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-08 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-08",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                }
+              ]
+            }
+          }
         }
       ],
       "agentId": "j576v7wdhsyqa8gr5bcbczgf8n8e9w7x",
       "deployedAt": "2026-09-12T06:47:54.382Z",
       "activeTask": {
-        "taskId": "write-closed-won-row",
-        "startedAt": "2026-09-12T06:48:28.769Z",
+        "taskId": "write-team-handoff",
+        "startedAt": "2026-09-12T06:48:34.387Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 0,
