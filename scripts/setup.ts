@@ -46,6 +46,9 @@ import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed
 const ENV_FILE = '.env.local';
 const ENV_EXAMPLE = '.env.example';
 
+/** The port `pnpm dev` serves the app on (`package.json`'s `dev` script). */
+const APP_PORT = 3000;
+
 /** The container ports the compose file publishes from, whatever the host uses. */
 const CONTAINER_BACKEND_PORT = 3210;
 const CONTAINER_MODEL_PORT = 11434;
@@ -224,6 +227,8 @@ export interface PrerequisiteResult {
   ok: boolean;
   detail: string;
   fix?: string;
+  /** False for a state worth saying out loud that does not stop the setup. */
+  blocking: boolean;
 }
 
 export interface PrerequisiteObservations {
@@ -232,7 +237,13 @@ export interface PrerequisiteObservations {
   pnpm?: string;
   docker?: string;
   compose?: string;
-  ports: readonly { name: string; port: number; free: boolean }[];
+  ports: readonly {
+    name: string;
+    port: number;
+    free: boolean;
+    blocking?: boolean;
+    fix?: string;
+  }[];
 }
 
 /**
@@ -248,6 +259,7 @@ export function prerequisiteReport(observed: PrerequisiteObservations): Prerequi
   const results: PrerequisiteResult[] = [];
   const node = majorVersion(observed.node);
   results.push({
+    blocking: true,
     name: 'Node',
     ok: node !== undefined && node >= REQUIRED_NODE_MAJOR,
     detail:
@@ -258,6 +270,7 @@ export function prerequisiteReport(observed: PrerequisiteObservations): Prerequi
   });
   const pnpm = majorVersion(observed.pnpm);
   results.push({
+    blocking: true,
     name: 'pnpm',
     ok: pnpm !== undefined && pnpm >= REQUIRED_PNPM_MAJOR,
     detail:
@@ -267,6 +280,7 @@ export function prerequisiteReport(observed: PrerequisiteObservations): Prerequi
     fix: 'Run `corepack enable && corepack prepare pnpm@9 --activate`.',
   });
   results.push({
+    blocking: true,
     name: 'Docker',
     ok: observed.docker !== undefined,
     detail: observed.docker?.trim() ?? 'the daemon did not answer',
@@ -274,6 +288,7 @@ export function prerequisiteReport(observed: PrerequisiteObservations): Prerequi
   });
   const compose = majorVersion(observed.compose);
   results.push({
+    blocking: true,
     name: 'Compose v2',
     ok: compose !== undefined && compose >= REQUIRED_COMPOSE_MAJOR,
     detail: observed.compose?.trim() ?? '`docker compose version` did not answer',
@@ -281,10 +296,13 @@ export function prerequisiteReport(observed: PrerequisiteObservations): Prerequi
   });
   for (const port of observed.ports) {
     results.push({
+      blocking: port.blocking ?? true,
       name: `${port.name} ${port.port}`,
       ok: port.free,
       detail: port.free ? 'free' : 'already in use on this machine',
-      fix: `Move it: \`pnpm setup:local --port <n>\` (or --site-port, --dashboard-port, --model-port), or stop whatever holds ${port.port}.`,
+      fix:
+        port.fix ??
+        `Move it: \`pnpm setup:local --port <n>\` (or --site-port, --dashboard-port, --model-port), or stop whatever holds ${port.port}.`,
     });
   }
   return results;
@@ -960,6 +978,15 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     for (const candidate of portsToCheck) {
       portResults.push({ ...candidate, free: await io.portFree(candidate.port) });
     }
+    // Not a port this helper publishes, and not a reason to stop: `pnpm dev`
+    // serves there, and the unlock URL printed at the end names it.
+    portResults.push({
+      name: 'pnpm dev',
+      port: APP_PORT,
+      free: await io.portFree(APP_PORT),
+      blocking: false,
+      fix: `\`pnpm dev\` serves on ${APP_PORT} and the unlock URL names it. Free that port before you run it; the setup below is unaffected.`,
+    });
     const prerequisites = prerequisiteReport({
       node: versionOf(io, 'node', ['--version']),
       pnpm: versionOf(io, 'pnpm', ['--version']),
@@ -1347,9 +1374,13 @@ function freeVram(io: SetupIo): number | undefined {
 function printPrerequisites(io: SetupIo, results: readonly PrerequisiteResult[]): boolean {
   io.log('Before anything starts:');
   for (const result of results) {
-    io.log(`  ${result.ok ? 'ok  ' : 'GAP '}  ${result.name}: ${result.detail}`);
+    const marker = result.ok ? 'ok  ' : result.blocking ? 'GAP ' : 'note';
+    io.log(`  ${marker}  ${result.name}: ${result.detail}`);
+    if (!result.ok && !result.blocking && result.fix) io.log(`          ${result.fix}`);
   }
-  const missing = results.filter((result: PrerequisiteResult): boolean => !result.ok);
+  const missing = results.filter(
+    (result: PrerequisiteResult): boolean => !result.ok && result.blocking,
+  );
   if (missing.length === 0) {
     io.log('');
     return true;

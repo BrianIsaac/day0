@@ -314,6 +314,20 @@ describe('prerequisites', (): void => {
     });
     expect(report.every((item) => item.ok)).toBe(true);
   });
+
+  it('says a port that is only in the way, without stopping the setup', (): void => {
+    const report = prerequisiteReport({
+      node: 'v22.19.0',
+      pnpm: '9.15.0',
+      docker: 'Docker version 29.8.0',
+      compose: 'Docker Compose version v5.5.1',
+      ports: [{ name: 'pnpm dev', port: 3000, free: false, blocking: false, fix: 'free it' }],
+    });
+    const appPort = report.find((item) => item.name === 'pnpm dev 3000');
+    expect(appPort?.ok).toBe(false);
+    expect(appPort?.blocking).toBe(false);
+    expect(report.filter((item) => !item.ok && item.blocking)).toEqual([]);
+  });
 });
 
 describe('refusing anything that is not this machine', (): void => {
@@ -687,6 +701,18 @@ describe('stopping for a reason the reader can act on', (): void => {
     expect(output.join('\n')).toContain('OPENAI_API_KEY');
     expect(output.join('\n')).toContain('--route local');
     expect(commands.map((entry) => entry.args.join(' ')).join('\n')).not.toContain('convex:up');
+  });
+
+  it('says the app’s own port is taken and carries on anyway', async (): Promise<void> => {
+    const { io, output } = harness({
+      answers: ['sk-rehearsal-key'],
+      services: ['backend', 'sandbox'],
+      busyPorts: [3000],
+    });
+    expect(await runSetup(keyRoute(), io)).toBe(0);
+    const printed = output.join('\n');
+    expect(printed).toContain('note  pnpm dev 3000: already in use');
+    expect(printed).toContain('Free that port before you run it');
   });
 
   it('names the occupied port and the flag that moves it, before writing anything', async (): Promise<void> => {
