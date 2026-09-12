@@ -17,6 +17,8 @@ KEYS=(
   OPENAI_MODEL
   OPENAI_IMAGE_MODEL
   OPENAI_JSON_MODE
+  OPENAI_MAX_OUTPUT_TOKENS
+  OPENAI_REASONING_EFFORT
   EXA_API_KEY
   DAYTONA_API_KEY
   DAYTONA_API_URL
@@ -65,6 +67,8 @@ declare -A ALIASED=(
 # token likewise means that deployment access has been revoked, not that a
 # previous value should remain available to an action.
 CLEAR_WHEN_EMPTY=(
+  OPENAI_MAX_OUTPUT_TOKENS
+  OPENAI_REASONING_EFFORT
   OPENAI_BASE_URL
   DAY0_SURFACE_MODE
   DAY0_CREDENTIAL_KEY

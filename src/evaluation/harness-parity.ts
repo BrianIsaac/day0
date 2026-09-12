@@ -24,6 +24,8 @@ export interface ArmHarnessDiagnostics {
 export interface ArmHarnessParameters extends ArmHarnessDiagnostics {
   modelId: string;
   temperature: number;
+  maxOutputTokens: number | null;
+  reasoningEffort: NonNullable<typeof env.OPENAI_REASONING_EFFORT> | null;
   modelCallAbortMs: number;
   taskTimeoutMs: Record<string, number>;
   retryPolicy: {
@@ -163,6 +165,8 @@ function armParameters(
   const parameters: ArmHarnessParameters = {
     modelId: MODEL,
     temperature: MODEL_TEMPERATURE,
+    maxOutputTokens: env.OPENAI_MAX_OUTPUT_TOKENS ?? null,
+    reasoningEffort: env.OPENAI_REASONING_EFFORT ?? null,
     modelCallAbortMs: MODEL_CALL_TIMEOUT_MS,
     taskTimeoutMs: { ...taskTimeoutMs },
     retryPolicy: {

@@ -174,6 +174,7 @@ export interface JsonCompleteArgs<TParsed> {
   user: string;
   model?: string;
   maxTokens?: number;
+  reasoningEffort?: typeof env.OPENAI_REASONING_EFFORT;
   /** Optional schema-like coercion applied after JSON.parse. */
   coerce?: (raw: unknown) => TParsed;
   /**
@@ -324,7 +325,7 @@ async function runJsonCompletion<TParsed>(
 ): Promise<TParsed> {
   const res = await openai().chat.completions.create({
     model: args.model ?? MODEL,
-    max_completion_tokens: args.maxTokens ?? 4000,
+    ...rawModelSettings(args),
     ...(mode === 'native' ? { response_format: { type: 'json_object' as const } } : {}),
     messages: [
       {
@@ -367,12 +368,26 @@ export interface TextCompleteArgs {
   user: string;
   model?: string;
   maxTokens?: number;
+  reasoningEffort?: typeof env.OPENAI_REASONING_EFFORT;
+}
+
+function rawModelSettings(args: Pick<TextCompleteArgs, 'maxTokens' | 'reasoningEffort'>) {
+  const maxTokens = args.maxTokens ?? env.OPENAI_MAX_OUTPUT_TOKENS;
+  const reasoningEffort = args.reasoningEffort ?? env.OPENAI_REASONING_EFFORT;
+  // Raw calls always use chat completions, including when the AI SDK uses Responses.
+  const hosted = !env.OPENAI_BASE_URL || new URL(env.OPENAI_BASE_URL).hostname === 'api.openai.com';
+  return {
+    ...(maxTokens === undefined
+      ? {}
+      : hosted ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }),
+    ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
+  };
 }
 
 export async function textComplete(args: TextCompleteArgs): Promise<string> {
   const res = await openai().chat.completions.create({
     model: args.model ?? MODEL,
-    max_completion_tokens: args.maxTokens ?? 4000,
+    ...rawModelSettings(args),
     messages: [
       { role: 'system', content: args.system },
       { role: 'user', content: args.user },

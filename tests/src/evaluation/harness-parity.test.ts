@@ -27,6 +27,7 @@ describe('evaluation harness parity', (): void => {
     expect(Object.keys(parameters.day0).sort()).toEqual([
       'contextLimitTokens',
       'effectiveTemperature',
+      'maxOutputTokens',
       'modelCallAbortMs',
       'modelId',
       'modelSeed',
@@ -35,6 +36,7 @@ describe('evaluation harness parity', (): void => {
       'providerBaseUrl',
       'providerClient',
       'providerWarnings',
+      'reasoningEffort',
       'retryPolicy',
       'skillSandboxBackend',
       'structuredOutputMode',
@@ -44,6 +46,8 @@ describe('evaluation harness parity', (): void => {
     expect(parameters.day0.skillSandboxBackend).toBe('local');
     expect(parameters.baseline.skillSandboxBackend).toBe('local');
     expect(parameters.day0.modelCallAbortMs).toBe(300_000);
+    expect(parameters.day0.maxOutputTokens).toBeNull();
+    expect(parameters.day0.reasoningEffort).toBeNull();
   });
 
   it('fails closed when any arm parameter diverges', (): void => {
@@ -58,6 +62,25 @@ describe('evaluation harness parity', (): void => {
     );
   });
 
+  it('records configured output settings in both arms and refuses drift in either knob', async () => {
+    vi.resetModules();
+    vi.stubEnv('OPENAI_MAX_OUTPUT_TOKENS', '32768');
+    vi.stubEnv('OPENAI_REASONING_EFFORT', 'low');
+    const { evaluationHarnessParameters: parametersFor } =
+      await import('../../../src/evaluation/harness-parity');
+    const parameters = parametersFor(taskTimeoutMs);
+    expect(parameters.day0).toMatchObject({ maxOutputTokens: 32768, reasoningEffort: 'low' });
+    expect(parameters.baseline).toEqual(parameters.day0);
+    for (const overrides of [{ maxOutputTokens: 4096 }, { reasoningEffort: null }]) {
+      expect(() =>
+        assertEvaluationHarnessParity({
+          ...parameters,
+          baseline: { ...parameters.baseline, ...overrides },
+        }),
+      ).toThrow('evaluation harness differs between arms');
+    }
+  });
+
   it('records the provider endpoint used inside the evaluation backend', (): void => {
     vi.stubEnv('CONVEX_OPENAI_BASE_URL', 'http://model:11434/v1');
 
@@ -67,9 +90,7 @@ describe('evaluation harness parity', (): void => {
 
     expect(parameters.day0.providerBaseUrl).toBe('http://model:11434/v1');
     expect(parameters.baseline.providerBaseUrl).toBe('http://model:11434/v1');
-    expect(parameters.day0.providerClient).toBe(
-      '@ai-sdk/openai chat-completions through Mastra',
-    );
+    expect(parameters.day0.providerClient).toBe('@ai-sdk/openai chat-completions through Mastra');
     expect(parameters.baseline.providerClient).toBe(parameters.day0.providerClient);
     expect(harnessDiagnostics(parameters.day0)).toMatchObject({
       ollamaVersion: '0.32.9',
@@ -85,9 +106,7 @@ describe('evaluation harness parity', (): void => {
     const diagnostics = harnessDiagnostics(parameters.day0);
 
     expect(parameters.day0.providerBaseUrl).toBe('https://api.openai.com/v1');
-    expect(parameters.day0.providerClient).toBe(
-      '@ai-sdk/openai Responses API through Mastra',
-    );
+    expect(parameters.day0.providerClient).toBe('@ai-sdk/openai Responses API through Mastra');
     expect(parameters.day0.contextLimitTokens).toBeNull();
     expect(diagnostics.effectiveTemperature).toBeNull();
     expect(diagnostics.providerWarnings).toContain(

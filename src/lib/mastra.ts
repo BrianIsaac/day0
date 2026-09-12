@@ -43,6 +43,25 @@ export const MODEL_TEMPERATURE = 0.4;
 export const MODEL_CALL_TIMEOUT_MS = 300_000;
 export const MODEL_PROVIDER_MAX_RETRIES = 2;
 
+export interface ModelCallSettings {
+  maxOutputTokens?: number;
+  reasoningEffort?: typeof env.OPENAI_REASONING_EFFORT;
+}
+
+export function modelCallOptions(overrides: ModelCallSettings = {}) {
+  const maxOutputTokens = overrides.maxOutputTokens ?? env.OPENAI_MAX_OUTPUT_TOKENS;
+  const reasoningEffort = overrides.reasoningEffort ?? env.OPENAI_REASONING_EFFORT;
+  return {
+    modelSettings: {
+      temperature: MODEL_TEMPERATURE,
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+    },
+    ...(reasoningEffort === undefined
+      ? {}
+      : { providerOptions: { openai: { reasoningEffort } } }),
+  };
+}
+
 function modelAbortSignal(): AbortSignal {
   return AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS);
 }
@@ -203,7 +222,7 @@ function pinnedStructuredMode(override?: StructuredMode): StructuredMode | undef
   return env.OPENAI_JSON_MODE === 'auto' ? undefined : env.OPENAI_JSON_MODE;
 }
 
-export interface AgentJsonArgs {
+export interface AgentJsonArgs extends ModelCallSettings {
   agent: Agent;
   user: string;
   schema: unknown;
@@ -372,7 +391,7 @@ export async function agentJson<T>(args: AgentJsonArgs): Promise<T> {
 }
 
 async function generateObject<T>(
-  args: { agent: Agent; user: string; schema: unknown },
+  args: AgentJsonArgs,
   mode: StructuredMode,
 ): Promise<GeneratedObject<T>> {
   const signal = modelAbortSignal();
@@ -391,7 +410,7 @@ async function generateObject<T>(
   try {
     response = await args.agent.generate(args.user, {
       abortSignal: signal,
-      modelSettings: { temperature: MODEL_TEMPERATURE },
+      ...modelCallOptions(args),
       // Zod 4 schemas pass through Mastra's PublicSchema bridge; the cast
       // sidesteps the v4-vs-v3 peer-dep nuance without losing the
       // runtime validation Mastra performs against the schema.
@@ -442,11 +461,11 @@ async function generateObject<T>(
   };
 }
 
-export async function agentText(args: { agent: Agent; user: string }): Promise<string> {
+export async function agentText(args: { agent: Agent; user: string } & ModelCallSettings): Promise<string> {
   return withRetry(`agentText(${args.agent.name})`, async () => {
     const response = await args.agent.generate(args.user, {
       abortSignal: modelAbortSignal(),
-      modelSettings: { temperature: MODEL_TEMPERATURE },
+      ...modelCallOptions(args),
     });
     return response.text ?? '';
   });
