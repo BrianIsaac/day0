@@ -26,6 +26,7 @@ const text = allText(HOSTED_DEMO_SNAPSHOT);
 
 describe('the committed hosted-demo snapshot', (): void => {
   it('publishes labelled summaries rather than private conversation quotations', () => {
+    expect(HOSTED_DEMO_SNAPSHOT.conversation.note).toContain('summaries');
     for (const evidence of HOSTED_DEMO_SNAPSHOT.charter.evidence) {
       expect(evidence.source).toContain('summary');
       expect(evidence.text).not.toMatch(/^"/);

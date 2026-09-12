@@ -152,3 +152,34 @@ describe('the Day-1 chat route', (): void => {
     expect(sent).toHaveLength(0);
   });
 });
+
+it('cancels a stalled provider at the 60-second route deadline', async () => {
+  const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
+  vi.useFakeTimers();
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+    setTimeout(() => deadline.abort(new DOMException('Deadline', 'TimeoutError')), ms);
+    return deadline.signal;
+  });
+  let providerSignal: AbortSignal | null | undefined;
+  vi.stubGlobal('fetch', vi.fn((_input: unknown, init?: RequestInit) => {
+    providerSignal = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), { once: true });
+    });
+  }));
+  try {
+    const response = await POST(day1Request({ messages: [] }));
+    const body = response.text();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(providerSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(providerSignal?.aborted).toBe(true);
+    expect(timeout).toHaveBeenCalledWith(60_000);
+    await body;
+  } finally {
+    deadline.abort();
+    timeout.mockRestore();
+    vi.useRealTimers();
+  }
+});
