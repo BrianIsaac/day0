@@ -36,6 +36,7 @@ export interface ArmHarnessParameters extends ArmHarnessDiagnostics {
   providerBaseUrl: string;
   contextLimitTokens: number | null;
   structuredOutputMode: 'auto' | 'native' | 'prompt';
+  structuredOutputRepairAttempts: number;
   modelSeed: null;
   /**
    * Harness v2 is a single fixed bed contract: the harness preflight proves
@@ -180,6 +181,7 @@ function armParameters(
     providerBaseUrl: providerBaseUrl(),
     contextLimitTokens: configuredContextLimit(customBaseUrl),
     structuredOutputMode: env.OPENAI_JSON_MODE,
+    structuredOutputRepairAttempts: env.OPENAI_STRUCTURED_REPAIR_ATTEMPTS,
     modelSeed: null,
     skillSandboxBackend: 'local',
     effectiveTemperature: warnings.some((warning) => warning.includes('(temperature)'))

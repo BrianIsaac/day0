@@ -40,9 +40,11 @@ describe('evaluation harness parity', (): void => {
       'retryPolicy',
       'skillSandboxBackend',
       'structuredOutputMode',
+      'structuredOutputRepairAttempts',
       'taskTimeoutMs',
       'temperature',
     ]);
+    expect(parameters.day0.structuredOutputRepairAttempts).toBe(2);
     expect(parameters.day0.skillSandboxBackend).toBe('local');
     expect(parameters.baseline.skillSandboxBackend).toBe('local');
     expect(parameters.day0.modelCallAbortMs).toBe(300_000);

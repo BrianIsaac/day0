@@ -1,3 +1,4 @@
+import { schemaRepairPrompt, type StructuredOutputDiagnostics } from './structured-repair';
 import { Agent } from '@mastra/core/agent';
 import type { MastraModelConfig } from '@mastra/core/llm';
 import { env } from '../env';
@@ -56,9 +57,7 @@ export function modelCallOptions(overrides: ModelCallSettings = {}) {
       temperature: MODEL_TEMPERATURE,
       ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
     },
-    ...(reasoningEffort === undefined
-      ? {}
-      : { providerOptions: { openai: { reasoningEffort } } }),
+    ...(reasoningEffort === undefined ? {} : { providerOptions: { openai: { reasoningEffort } } }),
   };
 }
 
@@ -276,10 +275,9 @@ export function providerWarningTexts(warnings: unknown): string[] {
  * cannot tell a refusal from a coincidence.
  */
 export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJsonResult<T>> {
-  const label = `agentJson(${args.agent.name})`;
   const pinned = pinnedStructuredMode(args.mode);
   if (pinned) {
-    const generated = await withRetry(label, () => generateObject<T>(args, pinned));
+    const generated = await generateObject<T>(args, pinned);
     return {
       value: generated.value,
       mode: pinned,
@@ -291,7 +289,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
   const key = structuredModeKey(args.agent.name);
   const endpoint = env.OPENAI_BASE_URL ?? 'api.openai.com';
   if (structuredModeMemo.begin(key) === 'prompt') {
-    const generated = await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt'));
+    const generated = await generateObject<T>(args, 'prompt');
     return {
       value: generated.value,
       mode: 'prompt',
@@ -302,7 +300,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
 
   let native: GeneratedObject<T>;
   try {
-    native = await withRetry(label, () => generateObject<T>(args, 'native'));
+    native = await generateObject<T>(args, 'native');
   } catch (err) {
     const failure = classifyStructuredFailure(err);
     if (failure.verdict === 'unrelated') {
@@ -319,7 +317,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
     }
     let generated: GeneratedObject<T>;
     try {
-      generated = await withRetry(`${label}:prompt`, () => generateObject<T>(args, 'prompt'));
+      generated = await generateObject<T>(args, 'prompt');
     } catch (withoutParameter) {
       structuredModeMemo.inconclusive(key);
       log.warn(
@@ -394,10 +392,61 @@ async function generateObject<T>(
   args: AgentJsonArgs,
   mode: StructuredMode,
 ): Promise<GeneratedObject<T>> {
+  const startedAt = new Date().toISOString();
+  const maxRepairs = mode === 'prompt' ? env.OPENAI_STRUCTURED_REPAIR_ATTEMPTS : 0;
+  const diagnostics: StructuredOutputDiagnostics = {
+    version: 1,
+    id: crypto.randomUUID(),
+    agent: args.agent.name,
+    mode,
+    startedAt,
+    finishedAt: startedAt,
+    firstReplyValid: null,
+    validationFailures: 0,
+    repairAttempts: 0,
+    coercions: 0,
+    outcome: 'failed',
+  };
+  let user = args.user;
+  try {
+    for (;;) {
+      try {
+        const result = await withRetry(`agentJson(${args.agent.name})`, () =>
+          generateObjectOnce<T>({ ...args, user }, mode),
+        );
+        if (diagnostics.firstReplyValid === null) diagnostics.firstReplyValid = true;
+        diagnostics.outcome = 'valid';
+        return result;
+      } catch (error) {
+        if (!(error instanceof StructuredOutputInvalidError)) throw error;
+        diagnostics.firstReplyValid = false;
+        diagnostics.validationFailures += 1;
+        if (diagnostics.repairAttempts >= maxRepairs) throw error;
+        const cause = error.cause as { message?: unknown; details?: { value?: unknown } };
+        // Mastra owns parsing/validation. Its rejected value and error are the
+        // evidence for a repair; neither licenses manufacturing missing actions.
+        const rejected = cause?.details?.value;
+        user = schemaRepairPrompt(
+          args.user,
+          typeof cause?.message === 'string' ? cause.message : error.message,
+          typeof rejected === 'string' ? rejected : undefined,
+        );
+        diagnostics.repairAttempts += 1;
+      }
+    }
+  } finally {
+    diagnostics.finishedAt = new Date().toISOString();
+    log.info('structured-output-call', { diagnostics });
+  }
+}
+
+async function generateObjectOnce<T>(
+  args: AgentJsonArgs,
+  mode: StructuredMode,
+): Promise<GeneratedObject<T>> {
   const signal = modelAbortSignal();
   const startedAt = Date.now();
-  const timedOut = (): boolean =>
-    signal.aborted || Date.now() - startedAt >= MODEL_CALL_TIMEOUT_MS;
+  const timedOut = (): boolean => signal.aborted || Date.now() - startedAt >= MODEL_CALL_TIMEOUT_MS;
   const timeoutError = (cause?: unknown): Error => {
     const error = new Error(
       `agentJson(${args.agent.name}): ${mode} model call reached the ${MODEL_CALL_TIMEOUT_MS}ms timeout`,
@@ -449,7 +498,9 @@ async function generateObject<T>(
       tripwire && typeof tripwire === 'object' && 'reason' in tripwire
         ? String((tripwire as { reason?: unknown }).reason)
         : 'no reason given';
-    throw new Error(`agentJson(${args.agent.name}): ${mode} generation was stopped by a tripwire (${reason})`);
+    throw new Error(
+      `agentJson(${args.agent.name}): ${mode} generation was stopped by a tripwire (${reason})`,
+    );
   }
   const object = response.object as T | undefined;
   if (object === undefined || object === null) {
@@ -461,7 +512,9 @@ async function generateObject<T>(
   };
 }
 
-export async function agentText(args: { agent: Agent; user: string } & ModelCallSettings): Promise<string> {
+export async function agentText(
+  args: { agent: Agent; user: string } & ModelCallSettings,
+): Promise<string> {
   return withRetry(`agentText(${args.agent.name})`, async () => {
     const response = await args.agent.generate(args.user, {
       abortSignal: modelAbortSignal(),
