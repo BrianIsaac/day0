@@ -10,7 +10,6 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
     when === 'signed-out' ? children : null,
-  SignInButton: ({ children }: { children: ReactNode }): ReactNode => children,
   useUser: (): { user: undefined } => ({ user: undefined }),
 }));
 
@@ -38,16 +37,48 @@ describe('signed-out landing page', (): void => {
     expect(html).not.toContain('just works');
     expect(html).toContain('One name in. Everything else is learned state.');
   });
+
+  it('offers a stranger the recorded demo first and setup second', (): void => {
+    expect(html).toContain('Try the demo');
+    expect(html).toContain('href="/demo"');
+    expect(html).toContain('Set up Day0');
+    expect(html).toContain('href="/setup"');
+    // Both must be links a signed-out visitor can follow, not sign-in prompts.
+    expect(html).not.toContain('Deploy your first agent');
+  });
+
+  it('says what the demo is before the visitor spends a click on it', (): void => {
+    expect(html).toContain('Explore the mock office and its recorded approval flow');
+  });
+
+  it('keeps the source repository, smaller than the two routes into the product', (): void => {
+    expect(html).toContain('https://github.com/BrianIsaac/day0');
+    expect(html).toContain('>Source<');
+    expect(html).not.toContain('View source');
+  });
+
+  it('describes the charter without naming who writes it', (): void => {
+    expect(html).toContain(
+      'The conversation becomes a charter for the boss to review and approve.',
+    );
+  });
+
+  it('names no model anywhere, because the operator picks the provider', (): void => {
+    for (const model of ['GPT-5.6', 'GPT-5.5', 'Terra', 'GLM', 'OpenAI', 'Gemini']) {
+      expect(html).not.toContain(model);
+    }
+  });
 });
 
 describe('landing footer', (): void => {
   const html = renderToStaticMarkup(<LandingPage />);
 
-  it('credits only what the hosted demo runs on', (): void => {
+  it('describes what Day0 runs on without naming a provider', (): void => {
     const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
     expect(footer).toContain(
-      'Built on OpenAI GPT-5.6 Terra · ElevenLabs Conversational AI · Convex · Mastra · Exa · Daytona · Vercel · Clerk',
+      'Run Day0 with a compatible model provider or your own model server.',
     );
     expect(footer).not.toContain('Cloudflare');
+    expect(footer).not.toContain('ElevenLabs');
   });
 });

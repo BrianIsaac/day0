@@ -7,8 +7,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * tunnel, so the list is worth a test of its own.
  */
 
+/**
+ * A signed-out caller, as Clerk's own `auth` argument presents one: awaitable
+ * for the user id, and with a `protect()` that refuses rather than returns.
+ */
+const signedOut = Object.assign(async (): Promise<{ userId: null }> => ({ userId: null }), {
+  protect: async (): Promise<never> => {
+    throw new Error('clerk would redirect to sign-in');
+  },
+});
+
 vi.mock('@clerk/nextjs/server', () => ({
-  clerkMiddleware: (handler: unknown) => handler,
+  clerkMiddleware:
+    (handler: (auth: unknown, request: unknown) => unknown) =>
+    (request: unknown): unknown =>
+      handler(signedOut, request),
   createRouteMatcher:
     (patterns: string[]) =>
     (request: { nextUrl: URL }): boolean =>
@@ -66,5 +79,32 @@ describe('the no-auth proxy gate', (): void => {
 
   it('refuses a path that merely starts like the redirect', async (): Promise<void> => {
     expect(await status('/api/oauth-slack')).toBe(403);
+  });
+});
+
+/**
+ * With Clerk configured, the proxy's own public list is the whole of what a
+ * stranger can reach. The demo and the setup page are the two routes the
+ * landing page sends a signed-out visitor to, so a missing entry there is a
+ * dead button on the hosted site rather than a visible error.
+ */
+describe('the Clerk proxy gate', (): void => {
+  beforeEach(async (): Promise<void> => {
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', '');
+    vi.stubEnv('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'pk_test_landing');
+    vi.resetModules();
+    proxy = (await import('../proxy')).default as typeof proxy;
+  });
+
+  it('lets a signed-out visitor reach the recorded demo', async (): Promise<void> => {
+    await expect(proxy(request('/demo'))).resolves.toBeUndefined();
+  });
+
+  it('lets a signed-out visitor reach the setup page', async (): Promise<void> => {
+    await expect(proxy(request('/setup'))).resolves.toBeUndefined();
+  });
+
+  it('still protects an agent dashboard', async (): Promise<void> => {
+    await expect(proxy(request('/agent/j57agent'))).rejects.toThrow('sign-in');
   });
 });

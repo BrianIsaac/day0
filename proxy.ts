@@ -10,8 +10,13 @@ import {
 
 /**
  * Next.js 16 renamed `middleware.ts` to `proxy.ts`. Public routes
- * include Clerk's own sign-in/sign-up pages plus webhook endpoints
- * called by external services.
+ * include Clerk's own sign-in/sign-up pages, the two routes the landing
+ * page sends a signed-out visitor to, plus webhook endpoints called by
+ * external services.
+ *
+ * `/demo` renders a recorded snapshot that ships with the build and
+ * `/setup` is static prose; neither reads a row, so neither needs a
+ * caller.
  *
  * `auth.protect()` only fires when Clerk has a real publishable key in
  * the environment. Keyless dev mode bootstraps keys on the client but
@@ -29,6 +34,8 @@ import {
  */
 const isPublicRoute = createRouteMatcher([
   '/',
+  '/demo(.*)',
+  '/setup(.*)',
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/voice/elevenlabs/webhook(.*)',

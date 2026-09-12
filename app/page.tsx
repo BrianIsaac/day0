@@ -3,7 +3,7 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
-import { useUser, Show, SignInButton } from '@clerk/nextjs';
+import { useUser, Show } from '@clerk/nextjs';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -73,20 +73,33 @@ function SignedOutHero() {
               new skills when it hits a gap, and authoring them in a sandbox.
             </p>
             <div className="flex flex-wrap items-center gap-3">
-              <SignInButton mode="modal">
-                <button className="px-6 py-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90 transition">
-                  Deploy your first agent
-                </button>
-              </SignInButton>
+              <Link
+                href="/demo"
+                aria-describedby="demo-cta-help"
+                className="px-6 py-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90 transition"
+              >
+                Try the demo
+              </Link>
+              <Link
+                href="/setup"
+                className="px-6 py-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] text-sm transition"
+              >
+                Set up Day0
+              </Link>
+            </div>
+            <p id="demo-cta-help" className="mt-3 text-sm text-[var(--color-muted)]">
+              Explore the mock office and its recorded approval flow.
+            </p>
+            <p className="mt-5 text-xs text-[var(--color-muted)]">
               <a
                 href="https://github.com/BrianIsaac/day0"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-6 py-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] text-sm transition"
+                className="underline underline-offset-4 hover:text-[var(--color-accent)]"
               >
-                View source
+                Source
               </a>
-            </div>
+            </p>
           </div>
           <div className="relative order-first lg:order-last">
             <SurfaceOrbitSvg />
@@ -108,7 +121,7 @@ function SignedOutHero() {
             <LoopStep
               n="02"
               title="Charter"
-              body="GPT-5.6 Terra distils the conversation into a typed charter. Boss approves before anything ships."
+              body="The conversation becomes a charter for the boss to review and approve."
             />
             <LoopStep
               n="03"
@@ -118,7 +131,7 @@ function SignedOutHero() {
             <LoopStep
               n="04"
               title="Skill creation"
-              body="When the agent hits a gap it proposes a skill — authored in a Daytona sandbox, smoke-tested, and registered."
+              body="When the agent hits a gap it proposes a skill - authored in a sandbox, smoke-tested, and registered."
             />
           </ol>
         </div>
@@ -126,8 +139,7 @@ function SignedOutHero() {
 
       <footer className="px-6 py-10 border-t border-[var(--color-border)] mt-auto">
         <p className="text-xs text-[var(--color-muted)] text-center">
-          Built on OpenAI GPT-5.6 Terra · ElevenLabs Conversational AI · Convex · Mastra · Exa · Daytona ·
-          Vercel · Clerk
+          Run Day0 with a compatible model provider or your own model server.
         </p>
       </footer>
     </div>
