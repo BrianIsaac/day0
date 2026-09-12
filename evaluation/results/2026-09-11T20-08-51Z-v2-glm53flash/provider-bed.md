@@ -5,7 +5,7 @@ This bed carries the ordinary (baseline) arm only. The onboarded arm could not b
 this route, and that, not the scores, is the result.
 
 - Evaluation window: 2026-09-11T20:08:52Z to 2026-09-11T20:38:59Z (30 min 07 s), Singapore.
-- Harness commit: `0dbcbb32393a0de548d14ba1a240f8e3dac7f7b9`.
+- Harness commit: `0dbcbb32393a0de548d14ba1a240f8e3dac7f7b9` as recorded; rewritten equivalent `d1216fb9b0bfde829fd03a36054c01b3181dcaac` with an identical tree, see `PROVENANCE.md`.
 - Compose project: `day0-v2-glm53flash-29cdc0`; private volumes `day0-v2-glm53flash-29cdc0_convex_data` and `day0-v2-glm53flash-29cdc0_sandbox_socket`.
 - Published ports: Convex 45310/45311, dashboard 47891 (unstarted), fake Slack 45312, model port 45313 unpublished. No model service was started; the operator's `ollama-embed` remained on 11434.
 - Model: `zai-org/GLM-5.3-Flash` through `https://api.featherless.ai/v1`, route `@ai-sdk/openai chat-completions through Mastra`. `CONVEX_OPENAI_BASE_URL` was empty, so `./scripts/sync-convex-env.sh` pushed the local base URL to the deployment unchanged.

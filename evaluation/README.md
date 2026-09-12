@@ -101,6 +101,8 @@ retained evidence; raw charter HTTP responses were not retained, so the detailed
 budget measurements are the run author's observations, not independently
 reconstructible from the backend access log.
 
+The commit identifiers recorded in that directory and in the two pilot directories beside it predate a rewrite of the repository's history on 12 September 2026; [`PROVENANCE.md`](results/2026-09-11T20-08-51Z-v2-glm53flash/PROVENANCE.md) maps each to its rewritten equivalent, whose tree is identical.
+
 Two invocation directories remain as audit history only:
 
 - [`2026-09-11T19-24-41Z`](results/2026-09-11T19-24-41Z/): aborted two-arm pilot.
