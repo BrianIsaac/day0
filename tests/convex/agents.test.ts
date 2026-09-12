@@ -6,6 +6,9 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { autonomousActionsOn } from '../../src/work/autonomy';
+import { evaluateCandidate, type EvalContext } from '../../src/work/evaluate';
+import type { WorkCandidate } from '../../src/work/types';
+import { asAgentId } from '../../src/lib/ids';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -126,6 +129,63 @@ describe('evaluation arm', (): void => {
 });
 
 describe('agent surface grants', (): void => {
+  it('lets a slot-2 Slack action candidate reach needs-skill under deployed mock grants', async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'mock-owner' });
+    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'mock@day0.local' });
+    const grants = await owner.query(api.agents.permissionScopes, { agentId });
+    const candidate: WorkCandidate = {
+      sourceCategory: 'inbox',
+      sourceSystem: 'slack',
+      externalId: 'slack-revenue-handoff',
+      title: 'Post the revenue operations handoff summary to the team channel',
+      contentSummary: 'Manager asks: "Draft a revenue operations handoff message for #revops."',
+      contentRefs: ['channel://revops'],
+      observedAt: new Date(),
+      priority: 'P1',
+      requesterLabel: 'Manager',
+    };
+    const context: EvalContext = {
+      agentId: asAgentId(agentId),
+      charter: {
+        version: '0.0',
+        source: 'day-1 manager 1:1',
+        whyThisHire: 'Keep revenue operations handoffs moving.',
+        proposedFunction: 'Revenue operations triage and follow-through',
+        evidence: [],
+        shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
+        proposedBoundaries: {
+          willDo: ['Draft revenue operations handoff messages.'],
+          willNotDo: [],
+          escalationTriggers: [],
+        },
+        namedCollaborators: [],
+        namedSystems: [],
+        priorityReading: [],
+        adjacentRoles: [],
+        approvalChain: { boss: 'Manager', confidence: 'high' },
+        openQuestions: [],
+        createdAt: new Date().toISOString(),
+      },
+      agentsMd: '',
+      bossLabel: 'Manager',
+      autonomousActions: false,
+      surfaceMode: 'mock',
+      surfaces: [],
+    };
+
+    const verdict = await evaluateCandidate(candidate, context, {
+      hasGrantForScope: async (scope) => grants.some((grant) => grant.scope === scope && grant.active),
+      findExistingClaim: async () => null,
+      countOpenClaims: async () => 0,
+      findMatchingSkill: async () => null,
+    });
+
+    expect(verdict).toMatchObject({ decision: 'needs-skill' });
+  });
+
   it('refuses the baseline arm outside mock mode', async (): Promise<void> => {
     useSurfaceMode('real');
     const { api: realApi } = await import('../../convex/_generated/api');
@@ -162,6 +222,7 @@ describe('agent surface grants', (): void => {
     expect(mockScopes).toEqual([
       'boss:message',
       'docs:read',
+      'slack:read',
       'social:read',
       'spreadsheet:read',
       'ticket:read',
