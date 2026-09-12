@@ -746,14 +746,14 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
           ? 'this volume has already run the rung and its trial ids are spent; down --volumes, restore the snapshot again, then up'
           : isOpenAi(inputs.rungModelRoute)
             ? "the rung's onboarding would dial OpenAI, which is never called from the venue; point CONVEX_OPENAI_BASE_URL at the bundled model or the Featherless route"
-            : `backend, fake-slack and looker-tile are up in real mode, and the onboarding dials ${inputs.rungModelRoute}`,
+            : `backend, fake-slack and looker-tile are up in real mode, and the onboarding dials ${inputs.rungModelRoute}; model onboarding remains unverified by this checklist`,
   };
   let warm: TierVerdict;
-  if (isOpenAi(inputs.modelBaseUrl)) {
+  if (isOpenAi(inputs.modelBaseUrl) || isOpenAi(inputs.rungModelRoute)) {
     warm = {
       name: 'Tier 3, the warm bed with a live model rung',
       go: false,
-      reason: 'OPENAI_BASE_URL is empty or OpenAI; OpenAI is never called from the venue',
+      reason: 'The host or backend model route is empty or OpenAI; OpenAI is never called from the venue',
     };
   } else if (!inputs.backendHealthy) {
     warm = {
@@ -767,7 +767,7 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
       go: inputs.probeTier === 1,
       reason:
         inputs.probeTier === 1
-          ? 'the probe reached the model with the key (tier 1)'
+          ? 'the small-prompt probe reached the host model route (tier 1); backend reachability and model onboarding remain unverified by this probe'
           : inputs.probeTier === undefined
             ? 'the probe did not run or printed no verdict; run it before deciding'
             : `the probe verdict is tier ${inputs.probeTier}; stay on tiers 1 and 2 and retry on the next network path`,
@@ -856,12 +856,36 @@ function elapsed(startedAt: number): string {
  * Returns:
  *   The keys to write, and nothing the file already answers.
  */
+function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPorts): void {
+  assertNotProtected(project);
+  if (values.COMPOSE_PROJECT_NAME && values.COMPOSE_PROJECT_NAME !== project) {
+    throw new Error(`The file names project ${values.COMPOSE_PROJECT_NAME}, not ${project}.`);
+  }
+  if (values.CONVEX_DEPLOYMENT) throw new Error('A demo bed cannot target CONVEX_DEPLOYMENT.');
+  for (const [key, port] of [
+    ['CONVEX_SELF_HOSTED_URL', ports.backend],
+    ['NEXT_PUBLIC_CONVEX_URL', ports.backend],
+    ['NEXT_PUBLIC_CONVEX_SITE_URL', ports.site],
+  ] as const) {
+    const value = values[key];
+    if (!value) continue;
+    let url: URL;
+    try { url = new URL(value); } catch { throw new Error(`${key} is not a valid URL.`); }
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
+        Number(url.port || 80) !== port || url.pathname !== '/' || url.search || url.hash ||
+        url.username || url.password) {
+      throw new Error(`${key} must address this bed on loopback port ${port}.`);
+    }
+  }
+}
+
 export function bedEnvDefaults(
   project: string,
   profiles: readonly string[],
   values: Readonly<Values>,
   ports: BedPorts,
 ): Values {
+  assertBedTarget(project, values, ports);
   const derived: Values = {};
   if (!values.COMPOSE_PROJECT_NAME) derived.COMPOSE_PROJECT_NAME = project;
   if (!values.CONVEX_SELF_HOSTED_URL)
@@ -1315,6 +1339,7 @@ async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
 async function preflight(options: DemoBedOptions): Promise<number> {
   const values = readEnvFile();
   const ports = bedPorts(values);
+  assertBedTarget(options.project, values, ports);
   const items: ChecklistItem[] = [];
   const startedAt = Date.now();
 
@@ -1608,6 +1633,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
 async function offlineRung(options: DemoBedOptions): Promise<void> {
   assertNotProtected(options.project);
   const values = readEnvFile();
+  assertBedTarget(options.project, values, bedPorts(values));
   const services = projectServices(options.project) ?? [];
   for (const name of ['backend', 'fake-slack', 'looker-tile']) {
     if (

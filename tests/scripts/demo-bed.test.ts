@@ -160,6 +160,17 @@ describe('the compose file is pinned to digests', (): void => {
 });
 
 describe('the env file', (): void => {
+  it.each<Record<string, string>>([
+    { COMPOSE_PROJECT_NAME: 'day0' },
+    { CONVEX_DEPLOYMENT: 'prod:cloud' },
+    { CONVEX_SELF_HOSTED_URL: 'https://example.convex.cloud' },
+    { CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:3210' },
+    { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' },
+  ])('refuses a bed contract pointing outside the selected project: %j', (values) => {
+    expect(() => bedEnvDefaults('day0-sweep-e6771f', BED_PROFILES, values,
+      bedPorts({ CONVEX_PORT: '44510' }))).toThrow();
+  });
+
   it('replaces a value in place and appends a missing one, keeping the trailing newline', (): void => {
     const text = 'A=1\nCONVEX_SELF_HOSTED_ADMIN_KEY=\nB=2\n';
     const next = upsertEnvText(text, {
@@ -309,6 +320,13 @@ describe('reading docker and the probes', (): void => {
 });
 
 describe('the pre-flight verdict', (): void => {
+  it('does not offer a live rung when the host probe passes but the backend dials OpenAI', () => {
+    const tiers = demoTiers({ videoPresent: true, offlineRungReady: true,
+      slackDoubleWired: true, rungAlreadyRun: false, backendHealthy: true,
+      modelBaseUrl: 'http://127.0.0.1:44312/v1', rungModelRoute: 'https://api.openai.com/v1', probeTier: 1 });
+    expect(tiers[2].go).toBe(false);
+  });
+
   const item = (label: string, status: ChecklistItem['status']): ChecklistItem => ({
     label,
     status,
