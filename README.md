@@ -24,7 +24,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 ## Contents
 
-**Start here** · [Live demo](#live-demo) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
+**Start here** · [Live demo](#live-demo) · [Quick start](#quick-start) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
 
 **Run it** · [No accounts](#run-it-with-no-accounts) · [With an OpenAI key](#run-it-with-an-openai-key) · [On your own systems](#run-it-in-real-mode) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
 
@@ -33,6 +33,24 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
 **Project** · [Controlled evaluation](evaluation/README.md) · [Evaluation quick start](#evaluation-quick-start) · [Data and compliance](docs/submission/compliance.md) · [Credits](#credits) · [Licence](#licence)
+
+## Quick start
+
+Everything here runs on your own machine: a self-hosted backend, a seeded mock office, a local sandbox that verifies the skills the agent writes, and either a key you already hold or a model you run yourself. One command sets all of it up.
+
+You need Node 22+, pnpm 9+, and Docker with Compose v2. `pnpm setup:local` checks each of those, and the ports it is about to publish, before it starts anything.
+
+```bash
+git clone https://github.com/BrianIsaac/day0.git
+cd day0
+pnpm install --frozen-lockfile
+pnpm setup:local
+pnpm dev
+```
+
+`pnpm setup:local` asks one question - a key you already have, or no account at all and the model runs here - and then does the rest: the containers, the generated keys written into `.env.local` rather than pasted into it, the two model addresses written as a pair, the function push and `pnpm check:setup`. It finishes by printing an unlock URL. Open that, deploy an agent, hold the Day-1 1:1 in chat, and approve the charter it writes; that first approval is what fills the work queue.
+
+[**Set up Day0**](https://day0-olive.vercel.app/setup) is this quick start as a page, with what first success looks like, the two traps worth knowing and the measured timings. [Local dev](#local-dev) keeps the hand-run version of all three routes, and is what to read when something needs fixing.
 
 ## What is unusual about it
 
@@ -922,7 +940,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 ### 目录
 
-**从这里开始** · [在线演示](#在线演示) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
+**从这里开始** · [在线演示](#在线演示) · [快速开始](#快速开始) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
 
 **运行** · [无需任何账户](#无需任何账户运行) · [使用 OpenAI key](#使用-openai-key-运行) · [在真实系统上运行](#在真实模式下运行) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
 
@@ -931,6 +949,24 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 **工作原理** · [运行流程](#runtime-flow) · [技术栈](#stack) · [路由](#routes) · [Convex 后端](#convex-backend-convex) · [数据结构](#schema-convexschemats) · [领域逻辑](#domain-logic-src)
 
 **项目** · [受控评测](evaluation/README.md) · [评测快速开始](#评测快速开始) · [数据来源与合规](docs/submission/compliance.md) · [致谢](#credits) · [许可证](#licence)
+
+### 快速开始
+
+以下全部在本机运行：自托管后端、预置的 mock office、用于验证 Agent 自写技能的本地沙箱，以及你已有的 key 或你自己运行的模型。一条命令即可完成安装。
+
+需要 Node 22+、pnpm 9+，以及带 Compose v2 的 Docker。`pnpm setup:local` 会在启动任何服务之前检查这些工具，以及它将要占用的端口。
+
+```bash
+git clone https://github.com/BrianIsaac/day0.git
+cd day0
+pnpm install --frozen-lockfile
+pnpm setup:local
+pnpm dev
+```
+
+`pnpm setup:local` 只问一个问题：使用你已有的 key，还是完全不注册账户、在本机运行模型；其余步骤由它完成：启动容器、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的章程；第一次批准会填充工作队列。
+
+[**Set up Day0**](https://day0-olive.vercel.app/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、两个值得了解的陷阱，以及实测耗时。[本地开发](#local-dev)保留三条路径的手动步骤，遇到问题时应当从那里读起。
 
 ### 它的特别之处
 
