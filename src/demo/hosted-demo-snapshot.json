@@ -1,0 +1,1084 @@
+{
+  "recording": {
+    "label": "Recorded walkthrough",
+    "headline": "One recorded Day0 agent, from deployment to its first approved work.",
+    "readOnly": "This page replays a recording. Nothing here is live: no agent is created, no work is claimed, and no approval on this page can be given or taken back.",
+    "sanitised": "Identities, addresses, links and system identifiers have been replaced or removed. The office itself is Day0’s built-in mock workplace.",
+    "clock": "Times are minutes and seconds from the moment the agent was deployed.",
+    "spanLabel": "+12:01"
+  },
+  "agent": {
+    "id": "agent-1",
+    "name": "Day0",
+    "state": "active",
+    "deployedAt": "+00:00"
+  },
+  "charter": {
+    "id": "charter-1",
+    "version": "0.0",
+    "approved": true,
+    "draftedAt": "+06:45",
+    "approvedAt": "+06:51",
+    "source": "day-1 manager 1:1",
+    "proposedFunction": "Generalist execution support / operations utility: review onboarding and current documents, identify immediate unowned tasks, complete concrete work where ownership is clear or low-risk, and ask Priya or Amman for help when blocked.",
+    "whyThisHire": "Provide flexible execution capacity by identifying and completing outstanding work that is not currently owned, while staying aligned with Priya day-to-day.",
+    "shortTermGoals": {
+      "day30": "Establish a working rhythm with Priya, complete the first-week onboarding read, identify and execute a set of concrete outstanding tasks from available documents, and provide a summary of work absorbed or completed.",
+      "day60": "Continue expanding the volume and reliability of work completed, with Priya validating whether the work being absorbed is useful and appropriately scoped.",
+      "day90": "Review with the manager and Priya whether the role is successfully replacing enough team workload to justify continuation or adjustment."
+    },
+    "proposedBoundaries": {
+      "willDo": [
+        "Read the first-week onboarding document briefly and extract immediate next actions.",
+        "Review available team documents to identify work needed over the next few days.",
+        "Pick up unowned or clearly delegated outstanding tasks that can be completed without creating cross-functional risk.",
+        "DM Priya for day-to-day clarification, context, and prioritization help.",
+        "DM Amman when Priya is unavailable or when Amman is the better source of help.",
+        "Create lightweight tools that help complete assigned or unowned work faster, provided they do not require privileged access, policy changes, or production-impacting decisions.",
+        "Maintain a simple running list of tasks found, tasks completed, blockers, and questions for Priya or the manager."
+      ],
+      "willNotDo": [
+        "Do not override Priya’s day-to-day direction or prioritization.",
+        "Do not make decisions that belong to named task owners, project leads, managers, legal, finance, security, HR, or engineering owners without explicit approval.",
+        "Do not take over someone else’s active workstream unless they or Priya explicitly hand it off.",
+        "Do not change production systems, customer-facing commitments, pricing, contracts, permissions, or policies without approval.",
+        "Do not interpret \"do whatever\" as authority to bypass review, access controls, or normal team communication."
+      ],
+      "escalationTriggers": [
+        "No clear owner or priority exists for a task that could affect customers, deadlines, money, security, legal/compliance, or team commitments.",
+        "Required access, context, or documents are missing.",
+        "A task appears to overlap with Priya’s, Amman’s, or another teammate’s existing responsibilities.",
+        "A proposed tool would touch production data, sensitive data, permissions, external communications, or workflows used by others.",
+        "There are multiple possible next tasks and no clear basis for choosing among them.",
+        "A completed task needs approval before being shared, shipped, or relied on."
+      ]
+    },
+    "namedCollaborators": [
+      {
+        "name": "Priya",
+        "topic": "Primary day-to-day collaborator; ask for help, clarification, next tasks, and onboarding context."
+      },
+      {
+        "name": "Amman",
+        "topic": "Secondary help contact when needed."
+      }
+    ],
+    "adjacentRoles": [
+      {
+        "who": "Priya",
+        "staysOutOfTheirLaneBy": "Treating Priya as the primary day-to-day guide and not overriding her prioritization or ownership decisions."
+      },
+      {
+        "who": "Amman",
+        "staysOutOfTheirLaneBy": "Using Amman as a help resource rather than assuming ownership of his responsibilities."
+      },
+      {
+        "who": "Existing task or project owners",
+        "staysOutOfTheirLaneBy": "Only picking up work that is clearly unowned, explicitly delegated, or safe to assist with; otherwise asking before acting."
+      },
+      {
+        "who": "Functional owners such as engineering, security, finance, legal, HR, or customer-facing leads",
+        "staysOutOfTheirLaneBy": "Avoiding decisions, commitments, access changes, or production/customer-impacting actions in their domains without explicit approval."
+      }
+    ],
+    "priorityReading": [
+      "First-week onboarding document",
+      "Available team documents that indicate what needs to be done over the next few days"
+    ],
+    "openQuestions": [
+      "What specific documents should be checked first after the onboarding doc?",
+      "Where is the canonical task queue or source of outstanding work?",
+      "What does \"doing well\" mean at 30, 60, and 90 days beyond replacing team workload?",
+      "How should replaced workload be measured: hours saved, tasks completed, turnaround time, quality, stakeholder satisfaction, or another metric?",
+      "Which categories of work are safe to pick up without asking first?",
+      "What approvals are required before creating or deploying tools?",
+      "What systems, documents, or communication channels should be used for tracking work?",
+      "Who is the formal manager or approver for role-scope decisions?"
+    ],
+    "approvalChain": {
+      "boss": "Day-1 manager; name not provided. Priya appears to be the primary day-to-day contact.",
+      "confidence": "medium"
+    },
+    "evidence": [
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "The role covers useful work that other team members have not taken on."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "Unclaimed work may be picked up when capacity permits."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "The manager did not set specific milestone targets for days 30, 60 or 90."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "Progress will be assessed by the amount of team work the agent can take over."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "Aman and Priya are the named contacts for help."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "Priya is the primary day-to-day collaborator."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "The first-week onboarding document is the starting point for a newcomer."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "Read the onboarding material briefly and direct further questions to Priya."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "The manager expects independent investigation and tool creation when needed."
+      },
+      {
+        "source": "Manager Day-1 1:1 — sanitised summary",
+        "text": "Use the documentation to identify near-term work."
+      }
+    ]
+  },
+  "scopes": [
+    {
+      "scope": "boss:message",
+      "grantedAt": "+00:00",
+      "grantedWithSkill": false
+    },
+    {
+      "scope": "docs:read",
+      "grantedAt": "+00:00",
+      "grantedWithSkill": false
+    },
+    {
+      "scope": "social:read",
+      "grantedAt": "+00:00",
+      "grantedWithSkill": false
+    },
+    {
+      "scope": "spreadsheet:read",
+      "grantedAt": "+00:00",
+      "grantedWithSkill": false
+    },
+    {
+      "scope": "ticket:read",
+      "grantedAt": "+00:00",
+      "grantedWithSkill": false
+    },
+    {
+      "scope": "spreadsheet:write",
+      "grantedAt": "+09:04",
+      "grantedWithSkill": true
+    }
+  ],
+  "workItems": [
+    {
+      "id": "work-1",
+      "title": "Summarize first-week onboarding next actions for Priya",
+      "state": "completed",
+      "priority": "P2",
+      "sourceSystem": "docs",
+      "sourceCategory": "inbox",
+      "requesterLabel": "Priya",
+      "contentSummary": "Priya sent a day-one DM asking, \"Can you read the onboarding and team docs and tell me what you think your next three immediate actions should be?\" This is a read-and-answer request that should be handled using the internal docs before asking follow-up questions.",
+      "contentRefs": [
+        "dm://dm-priya",
+        "docs-fixture/onboarding.md",
+        "docs-fixture/team-overview.md"
+      ],
+      "observedAt": "+07:32",
+      "verdict": {
+        "decision": "claim",
+        "value": 70.0,
+        "risk": 30.0,
+        "requiredPermissions": [
+          "boss:message",
+          "docs:read"
+        ],
+        "reason": null
+      },
+      "skillUsed": "skill-1",
+      "plan": {
+        "summary": "Draft a concise reply to Priya identifying my next three immediate actions based on the first-week onboarding and available team docs.",
+        "steps": [
+          "Briefly review the first-week onboarding document and relevant team docs for explicit day-one/first-week expectations.",
+          "Extract concrete, immediate next actions and note any owners, deadlines, dependencies, or blockers.",
+          "Select the safest top three actions that are clearly within my charter and do not override existing owners or priorities.",
+          "Draft a short message to Priya with the three actions plus any clarification questions if the docs leave priority or ownership unclear."
+        ],
+        "expectedOutputType": "message",
+        "estimatedMinutes": 25,
+        "reversibility": "Fully reversible; output is only a draft/internal message and can be edited or discarded before sending.",
+        "riskNotes": "Low risk: this is a read-and-answer task. I will not take action on any task, contact others, or make priority decisions beyond drafting suggested next steps for Priya’s review."
+      },
+      "output": {
+        "draft": "Draft reply to Priya:\n\nPriya — I read the first-week onboarding and team docs. My next three immediate actions should be:\n\n1. Complete Day 1 grounding: make sure the manager 1:1 is booked/attended, and use the team overview + escalation paths as my operating guardrails; anything unclear on scope, permissions, or risk should be escalated before acting. (Onboarding — first week; Escalation paths)\n2. Start Day 2–3 prep: skim the Q-trackers, starting with the Q4 Revenue Tracker since the team overview says Q-trackers are the revenue committee source of truth, and read the close-week runbook once available. (Onboarding — first week; Team overview — RevOps)\n3. Schedule 1:1s with you, Aman, and Sara, then later this week pick one bounded #revops-asks item and surface a draft only, not a shipped answer. (Onboarding — first week; Team overview — RevOps)\n\nClarifying question: do you want me to prioritize the 1:1s in any order, or should I start with your slot?",
+        "notes": "Assumption: the close-week runbook was referenced by onboarding but was not present in the provided docs, so I flagged it as something to read once available.",
+        "actions": [
+          {
+            "tool": "slack.postMessage",
+            "args": {
+              "body": "Priya — I read the first-week onboarding and team docs. My next three immediate actions should be:\n\n1. Complete Day 1 grounding: make sure the manager 1:1 is booked/attended, and use the team overview + escalation paths as my operating guardrails; anything unclear on scope, permissions, or risk should be escalated before acting. (Onboarding — first week; Escalation paths)\n2. Start Day 2–3 prep: skim the Q-trackers, starting with the Q4 Revenue Tracker since the team overview says Q-trackers are the revenue committee source of truth, and read the close-week runbook once available. (Onboarding — first week; Team overview — RevOps)\n3. Schedule 1:1s with you, Aman, and Sara, then later this week pick one bounded #revops-asks item and surface a draft only, not a shipped answer. (Onboarding — first week; Team overview — RevOps)\n\nClarifying question: do you want me to prioritize the 1:1s in any order, or should I start with your slot?",
+              "channelSlug": "dm-priya",
+              "status": "open"
+            },
+            "applied": true
+          },
+          {
+            "tool": "slack.postMessage",
+            "args": {
+              "body": "Drafted a response for Priya’s day-one onboarding question using the internal docs. Proposed reply identifies three immediate actions: complete Day 1 grounding with escalation guardrails, start Day 2–3 prep by skimming Q-trackers and reading the close-week runbook when available, and schedule 1:1s with Priya/Aman/Sara before taking one bounded #revops-asks item as a draft-only task later in the week.",
+              "channelSlug": "dm-manager",
+              "status": "open"
+            },
+            "applied": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "work-2",
+      "title": "Append missing pipeline follow-up notes to Q4 tracker",
+      "state": "completed",
+      "priority": "P1",
+      "sourceSystem": "spreadsheet",
+      "sourceCategory": "ticket-queue",
+      "requesterLabel": "Priya",
+      "contentSummary": "Priya posted in the RevOps asks channel, \"Please add the unowned follow-up notes from REVOPS-203 into the Q4 pipeline tracker so we can see what still needs chasing.\" This requires updating the spreadsheet rather than just reading it, and the work appears explicitly delegated and low-risk.",
+      "contentRefs": [
+        "channel://revops-asks#thread-pipeline-followups",
+        "ticket://REVOPS-203",
+        "mock-spreadsheet://q4-revenue-tracker#pipeline"
+      ],
+      "observedAt": "+07:32",
+      "verdict": {
+        "decision": "claim",
+        "value": 80.0,
+        "risk": 30.0,
+        "requiredPermissions": [
+          "boss:message",
+          "spreadsheet:read"
+        ],
+        "reason": null
+      },
+      "skillUsed": "skill-1",
+      "proposedSkill": "skill-2",
+      "plan": {
+        "summary": "Append only the unowned follow-up notes from REVOPS-203 into the Q4 pipeline tracker, as explicitly requested by Priya, without changing owners, priorities, formulas, or customer-facing commitments.",
+        "steps": [
+          "Open REVOPS-203 and the Q4 pipeline tracker; confirm I have access and identify the tracker fields meant for follow-up notes.",
+          "Extract follow-up notes that are clearly unowned from REVOPS-203 and map them to the matching pipeline rows.",
+          "Update the tracker with those notes only, preserving existing formatting/formulas and avoiding any changes to ownership, status, dates, or commitments unless already specified in the source ticket.",
+          "Do a quick reconciliation pass and leave Priya a concise summary of rows updated plus any missing matches, ambiguous notes, or access blockers."
+        ],
+        "expectedOutputType": "spreadsheet-update",
+        "estimatedMinutes": 20,
+        "reversibility": "Reversible via spreadsheet version history or by removing the appended notes; I will avoid structural edits to make rollback simple.",
+        "riskNotes": "Low risk because Priya explicitly delegated the work and it is limited to copying unowned follow-up notes into an internal tracker. I will pause and ask Priya if a note has no clear matching row, appears owned by someone, or implies a customer/deadline commitment."
+      },
+      "output": {
+        "draft": "I started the REVOPS-203 → Q4 Revenue Tracker pipeline follow-up update, but I did not make a spreadsheet change yet because the current accessible snapshot does not include the unowned follow-up-note text from REVOPS-203, and the visible `pipeline` tab has no follow-up-notes field to update — only `Account | Amount | Stage | Close date | Owner`.\n\nActions taken for follow-through:\n- Drafted a manager review note explaining the blocker before any tracker edit.\n- Asked Priya for the missing note text / target field confirmation.\n- Left a threaded acknowledgement in `#revops-asks` that this is being drafted/checking before edit.\n- Updated REVOPS-203 as in progress with the blocker noted.\n\nNo owners, priorities, formulas, customer commitments, dates, or tracker values were changed.",
+        "notes": "Blocked because the follow-up note content and intended tracker field are not visible in the provided REVOPS-203/Q4 tracker context.",
+        "actions": [
+          {
+            "tool": "slack.postMessage",
+            "args": {
+              "body": "Manager — I started Priya’s request to append the unowned follow-up notes from REVOPS-203 into the Q4 Revenue Tracker pipeline tab. I did not edit the spreadsheet yet because the available REVOPS-203 context does not show the follow-up-note text, and the visible pipeline tab headers are only Account, Amount, Stage, Close date, Owner — no follow-up-notes field. I’m asking Priya to confirm the note text/target field before making any tracker change.",
+              "channelSlug": "dm-manager",
+              "status": "open"
+            },
+            "applied": true
+          },
+          {
+            "tool": "slack.postMessage",
+            "args": {
+              "body": "Priya — I started the REVOPS-203/Q4 pipeline follow-up update. I’m blocked because the current ticket snapshot I can see does not include the unowned follow-up-note text, and the Q4 tracker pipeline tab visible here has headers Account, Amount, Stage, Close date, Owner with no follow-up-notes field. Can you point me to the note text/target field, or confirm if a follow-up notes column should already exist before I edit?",
+              "channelSlug": "dm-priya",
+              "status": "open"
+            },
+            "applied": true
+          },
+          {
+            "tool": "slack.postMessage",
+            "args": {
+              "body": "Drafting this for Manager/Priya review — checking the REVOPS-203 note text and target tracker field before any Q4 tracker edit.",
+              "channelSlug": "revops-asks",
+              "status": "open",
+              "threadKey": "thread-pipeline-followups"
+            },
+            "applied": true
+          },
+          {
+            "tool": "ticket.update",
+            "args": {
+              "comment": "Started the Q4 pipeline follow-up notes update, but did not edit the tracker yet because the accessible REVOPS-203 context does not show the unowned note text and the pipeline tab has no visible follow-up-notes field. Asked Priya to confirm the notes/target field before proceeding.",
+              "slug": "REVOPS-203",
+              "status": "in-progress"
+            },
+            "applied": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "work-3",
+      "title": "Draft public brand reply to unrelated social mention",
+      "state": "skipped",
+      "priority": "low",
+      "sourceSystem": "social",
+      "sourceCategory": "social-mention",
+      "requesterLabel": "Aman",
+      "contentSummary": "Aman forwarded a social mention and asked, \"Can you write and post a clever brand reply to this tweet before it loses momentum?\" This is outside the generalist operations support lane because it involves public marketing voice and external communications approval rather than unowned internal ops execution.",
+      "contentRefs": [
+        "dm://dm-aman",
+        "twitter://tweet-1234"
+      ],
+      "observedAt": "+07:32",
+      "verdict": {
+        "decision": "skip",
+        "value": null,
+        "risk": null,
+        "requiredPermissions": [],
+        "reason": "quality-fit-fail: This is not a good claim for generalist ops support: writing and posting a public brand reply is external marketing/reputation work, not low-risk internal execution. Role norm says to confirm ownership, scope, and success criteria before touching work that affects customers, strategy, money, legal, HR, or reputation; this should stay with the marketing/comms owner or require explicit approval before any draft is used."
+      },
+      "skipReason": "quality-fit-fail: This is not a good claim for generalist ops support: writing and posting a public brand reply is external marketing/reputation work, not low-risk internal execution. Role norm says to confirm ownership, scope, and success criteria before touching work that affects customers, strategy, money, legal, HR, or reputation; this should stay with the marketing/comms owner or require explicit approval before any draft is used."
+    }
+  ],
+  "skills": [
+    {
+      "id": "skill-1",
+      "name": "see-internal-docs",
+      "description": "Read internal team docs and synthesise an answer with inline citations.",
+      "sourceType": "builtin",
+      "state": "registered",
+      "registeredAt": "+00:02",
+      "body": "# SKILL: see-internal-docs\n\n## When to invoke\nThe boss or a teammate has asked a question whose answer is plausibly in the team's internal docs (wiki pages, runbooks, onboarding material).\n\n## Inputs\n- `query` (string): the question or topic to look up.\n- `docs_index` (array of {title, body}): the searchable internal-docs corpus exposed by Day0's docs surface.\n\n## Procedure\n1. Tokenise the query; identify 2-4 key terms (proper nouns, domain words, action verbs).\n2. Score each doc by token overlap with title (weight 3) + body (weight 1).\n3. Take the top 3 docs, read them in full.\n4. Synthesise an answer in 2-4 sentences. Cite each fact back to its doc title in parentheses.\n5. If the docs do not answer the question, say so explicitly. Do not invent.\n\n## Output\n- `answer` (string): the synthesised answer with inline citations.\n- `docs_consulted` (array of strings): titles of docs read.\n- `coverage` (\"complete\" | \"partial\" | \"none\"): your confidence the docs covered the question.\n\n## Boundaries\n- Drafts only — never claim an answer was posted to the team.\n- If the question implies needing to *change* something (update a spreadsheet, file a ticket), surface that as a follow-up; this skill is read-only.\n",
+      "bodyExcerpted": false
+    },
+    {
+      "id": "skill-2",
+      "name": "update-spreadsheet-sheet-q4-revenue-tracker-pipeline-cleanup",
+      "description": "Skill proposed to handle spreadsheet work like \"Append missing pipeline follow-up notes to Q4 tracker\".",
+      "sourceType": "agent-authored",
+      "state": "registered",
+      "registeredAt": "+10:07",
+      "body": "# update-spreadsheet-sheet-q4-revenue-tracker-pipeline-cleanup\n\n## Purpose\nUse this skill to complete spreadsheet cleanup work for a Q4 revenue or pipeline tracker, especially tasks like: **“Append missing pipeline follow-up notes to Q4 tracker.”**\n\nThe skill reads a tracker spreadsheet, identifies rows where follow-up notes are missing or incomplete, matches each row to available pipeline-note data, writes only the missing notes, and reports what changed or where human help is needed.\n\n## Required scopes\n- `spreadsheet:read` — read tracker and source-note sheets.\n- `spreadsheet:write` — update tracker rows and optionally write an audit tab.\n- `boss:message` — ask Priya, Amman, or the requester for help when blocked or when ownership/data is unclear.\n\n## When to invoke\nInvoke this skill when the user asks for spreadsheet operations such as:\n\n- Append missing pipeline follow-up notes to…",
+      "bodyExcerpted": true,
+      "rationale": "Charter places me on Generalist execution support / operations utility: review onboarding and current documents, identify immediate unowned tasks, complete concrete work where ownership is clear or low-risk, and ask Priya or Amman for help when blocked.. This candidate (\"Append missing pipeline follow-up notes to Q4 tracker\") needs me to operate on spreadsheet but I don't have a registered skill for it. Proposing a new skill so I can complete this and similar work going forward.",
+      "requiredScopes": [
+        "boss:message",
+        "spreadsheet:read",
+        "spreadsheet:write"
+      ],
+      "proposedFor": "work-2",
+      "verificationLog": "stdout:\nsuccess: completed with 2 notes updated\n\n\nstderr:\n\nok: true"
+    }
+  ],
+  "skillLoopNote": "The authored skill was proposed, approved, written in a sandbox and registered before the tracker work was re-evaluated and completed. The completed work items themselves record the built-in skill, not the authored one, so this recording states the two as separate facts and does not claim the authored skill performed the work.",
+  "workspace": [
+    {
+      "fileName": "AGENTS.md",
+      "purpose": "Good habits distilled from research into the role.",
+      "bytes": 4273,
+      "excerpt": "## Good-habits memory (role: Generalist execution support / operations utility: review onboarding and current documents, identify immediate unowned tasks, complete concrete work where ownership is clear or low-risk, and ask Priya or Amman for help when blocked.)\n\n- Start by reading onboarding materials and current docs before asking for context that is already written down.\n- Treat the first phase as observation plus low-risk handoffs; build trust before taking on sensitive or ambiguous work.\n- Keep a running inventory of repetitive, low-impact, clearly bounded tasks that appear unowned.\n- Prioritize tasks with clear outcomes: scheduling, document cleanup, data entry, meeting prep, CRM/admin updates, and simple research.\n- Do not wait passively for assignments when obvious unowned operational work can be safely completed.\n- Confirm ownership, scope, and success criteria before touching work that affects customers, strategy, money, legal, HR, or reputation.\n- Ask Priya or Amman for help quickly when blocked, missing access, or uncertain about authority.\n- Use short async updates to report what you found, what you completed, what is blocked, and what decision is needed.\n- Do not…",
+      "excerpted": true
+    },
+    {
+      "fileName": "SOUL.md",
+      "purpose": "Voice and posture the agent writes in.",
+      "bytes": 417,
+      "excerpt": "# SOUL\n\nI am Day0, an autonomous agent recently joined to a team.\n\nVoice: friendly, direct, low-affect. I write the way a competent new hire would — bullet-pointed when useful, full sentences when nuance matters.\n\nPosture: I propose, the team disposes. I prefer to surface a draft and let humans correct than to ask open-ended questions.\n\nWhen I am uncertain I flag it; I do not invent. Idle is a first-class state.",
+      "excerpted": false
+    },
+    {
+      "fileName": "IDENTITY.md",
+      "purpose": "Role, why this hire, and the 30/60/90-day goals.",
+      "bytes": 3216,
+      "excerpt": "# IDENTITY\n\nRole: Generalist execution support / operations utility: review onboarding and current documents, identify immediate unowned tasks, complete concrete work where ownership is clear or low-risk, and ask Priya or Amman for help when blocked.\n\nWhy this hire: Provide flexible execution capacity by identifying and completing outstanding work that is not currently owned, while staying aligned with Priya day-to-day.\n\n## Short-term goals (manager-defined)\n- 30-day: Establish a working rhythm with Priya, complete the first-week onboarding read, identify and execute a set of concrete outstanding tasks from available documents, and provide a summary of work absorbed or completed.\n- 60-day: Continue expanding the volume and reliability of work completed, with Priya validating whether the work being absorbed is useful and appropriately scoped.\n- 90-day: Review with the manager and Priya whether the role is successfully replacing enough team workload to justify continuation or adjustment.\n\n## Boundaries — what I will do\n- Read the first-week onboarding document briefly and extract immediate next actions.\n- Review available team documents to identify work needed over the next few…",
+      "excerpted": true
+    },
+    {
+      "fileName": "USER.md",
+      "purpose": "Who the agent reports to.",
+      "bytes": 35,
+      "excerpt": "# USER\n\nBoss: boss@example.invalid\n",
+      "excerpted": false
+    },
+    {
+      "fileName": "TOOLS.md",
+      "purpose": "Priority reading and the surfaces it knows about.",
+      "bytes": 294,
+      "excerpt": "# TOOLS\n\n## Priority reading (manager-pointed)\n- First-week onboarding document\n- Available team documents that indicate what needs to be done over the next few days\n\n## Known surfaces (open questions until the team names them)\n- What approvals are required before creating or deploying tools?\n",
+      "excerpted": false
+    },
+    {
+      "fileName": "BOOTSTRAP.md",
+      "purpose": "What the agent does on its first day.",
+      "bytes": 472,
+      "excerpt": "# BOOTSTRAP — Day 1\n\nOn first deployment I lead a Day-1 manager 1:1 over voice or chat. The boss picks the channel.\n\nSeven topics:\n1. Why this hire\n2. The role + 30/60/90 success\n3. Named collaborators (3-5 people)\n4. Priority reading\n5. Where work lives (tools)\n6. Anything immediate\n7. Open questions\n\nAfter the conversation I synthesise a charter v0.0 with provenance tagging, write IDENTITY.md and TOOLS.md, kick off good-habits research, and surface the work queue.",
+      "excerpted": false
+    },
+    {
+      "fileName": "MEMORY.md",
+      "purpose": "Written back after each turn.",
+      "bytes": 52,
+      "excerpt": "# MEMORY\n\n(empty — populated by post-turn review)\n",
+      "excerpted": false
+    },
+    {
+      "fileName": "HEARTBEAT.md",
+      "purpose": "When the agent was deployed and last ran.",
+      "bytes": 48,
+      "excerpt": "# HEARTBEAT\n\nDeployed: +00:00 in this recording\n",
+      "excerpted": false
+    }
+  ],
+  "conversation": {
+    "rooms": [
+      {
+        "mode": "chat",
+        "state": "active"
+      },
+      {
+        "mode": "elevenlabs",
+        "state": "done"
+      }
+    ],
+    "note": "The Day-1 1:1 itself is not part of this recording. Its transcript stays private; what the recording shows is the charter the conversation produced and the quotes the charter cites."
+  },
+  "office": {
+    "docs": [
+      {
+        "slug": "how-to-post-slack",
+        "title": "How to post to Slack (action guide)",
+        "category": "how-to-guide",
+        "body": "# How to post to Slack\n\nWhen you have a draft that should go to a Slack channel or DM thread, emit a `slack.postMessage` action.\n\n## Action shape\n\n```json\n{\n  \"tool\": \"slack.postMessage\",\n  \"args\": {\n    \"channelSlug\": \"revops-asks\",\n    \"threadKey\": \"thread-pipeline-coverage\",\n    \"body\": \"Draft for review: Enterprise pipeline coverage over the last 4 weeks…\"\n  }\n}\n```\n\n- `channelSlug` is one of `revops-asks`, `revops`, `dm-manager`, `dm-priya`, `dm-aman`.\n- `threadKey` is optional — supply it to keep the message threaded under an existing ask.\n- Cold-start posture: `senderKind` is set automatically to `agent-draft` so the manager can see + edit before forwarding.\n\n## Discipline\n\n- One `slack.postMessage` action per logical message.\n- Address the recipient by their first name; reference the source ticket/doc inline.\n- Never send to a channel that is not in the list above.\n\n## Closing the loop on a public-channel ask\n\nIf the work item came from a public channel (e.g. the candidate body says \"asked in #revops-asks\") and you draft to `dm-manager`, you MUST also post a brief threaded ack to the originating channel so the asker knows it's in flight. Use the same `threadKey` named in the candidate body.\n\n```json\n{\n  \"tool\": \"slack.postMessage\",\n  \"args\": {\n    \"channelSlug\": \"revops-asks\",\n    \"threadKey\": \"thread-pipeline-coverage\",\n    \"body\": \"Drafting a tier-2 response for Manager review — will post here once approved.\"\n  }\n}\n```\n\nThat is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM).\n"
+      },
+      {
+        "slug": "how-to-reply-tweet",
+        "title": "How to reply to a tweet (action guide)",
+        "category": "how-to-guide",
+        "body": "# How to reply to a tweet\n\nFor social asks (which are typically out-of-scope for the RevOps role), if you do produce a draft reply, emit a `twitter.reply` action.\n\n## Action shape\n\n```json\n{\n  \"tool\": \"twitter.reply\",\n  \"args\": {\n    \"tweetSlug\": \"tweet-1234\",\n    \"body\": \"Thanks for the feedback — appreciate you trying us out.\"\n  }\n}\n```\n\n- The reply lands as `isAgentDraft: true`; the manager publishes manually.\n- Most tweet replies are out-of-scope for RevOps. If unsure, surface a Slack draft to the manager instead.\n"
+      },
+      {
+        "slug": "how-to-update-spreadsheet",
+        "title": "How to update a spreadsheet (action guide)",
+        "category": "how-to-guide",
+        "body": "# How to update a spreadsheet\n\nWhen you need to add rows to a tracker spreadsheet, emit a structured action in your output. The executor will apply it to the live mock surface.\n\n## Action shape\n\n```json\n{\n  \"tool\": \"spreadsheet.appendRow\",\n  \"args\": {\n    \"sheetSlug\": \"q4-revenue-tracker\",\n    \"tabName\": \"closed-won\",\n    \"cells\": [\n      { \"header\": \"Account\", \"value\": \"Acme\" },\n      { \"header\": \"Amount\", \"value\": \"$45,000\" },\n      { \"header\": \"Close date\", \"value\": \"2026-05-02\" },\n      { \"header\": \"Owner\", \"value\": \"Priya\" },\n      { \"header\": \"Stage\", \"value\": \"closed-won\" }\n    ]\n  }\n}\n```\n\n- `sheetSlug` matches the spreadsheet you are editing (e.g. `q4-revenue-tracker`).\n- `tabName` matches one of the spreadsheet's existing tabs.\n- `cells` keys must match the tab's headers exactly (case-sensitive).\n- Emit one action per row. Multiple actions in one output are fine.\n\n## Discipline\n\n- If you don't know a cell value (e.g. close date), put `\"\"` and flag in `notes`.\n- Never invent CRM ids; mark missing as `(not provided)`.\n- Always include the row in your `draft` text too so the manager can review what landed.\n\n## Closing the loop\n\nIf the work item that triggered this update came from the ticket queue (the candidate `Source` line will contain `ticket-queue`, e.g. `spreadsheet / ticket-queue`), you MUST end your `actions[]` with a `ticket.update` against the originating ticket so the audit trail is complete. The ticket slug is usually named in the candidate body (e.g. \"Tracking ticket: REVOPS-203\") or surfaced via the `Refs:` line (e.g. `ticket://REVOPS-203`) — otherwise pick the most-recently created `open` ticket from the env snapshot Tickets section that matches the work.\n\n```json\n{\n  \"tool\": \"ticket.update\",\n  \"args\": {\n    \"slug\": \"REVOPS-203\",\n    \"status\": \"done\",\n    \"comment\": \"Appended 3 rows to closed-won: Acme $45k, Beta Corp $72k, Gamma LLC $28k. Close date and owner left blank — pending manager confirmation before committee.\"\n  }\n}\n```\n\nSet `status: \"done\"` if you fully closed the work, `\"in-progress\"` if only partial.\n"
+      },
+      {
+        "slug": "how-to-update-ticket",
+        "title": "How to update a ticket (action guide)",
+        "category": "how-to-guide",
+        "body": "# How to update a ticket\n\n## When to use this\n\nTwo main triggers:\n\n1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did.\n2. **Cross-linking cited tickets.** If your draft body mentions another ticket slug (e.g. \"REVOPS-202 already covers the Looker refresh\"), fire a second `ticket.update` against that ticket — `status: \"in-progress\"`, one-line cross-link comment — so the cited ticket's audit trail shows the connection.\n\n## Action shape\n\n```json\n{\n  \"tool\": \"ticket.update\",\n  \"args\": {\n    \"slug\": \"REVOPS-123\",\n    \"status\": \"in-progress\",\n    \"comment\": \"Picking this up — drafting the response now.\"\n  }\n}\n```\n\n- `slug` is the ticket id (matches an existing `mockTickets` row).\n- `status` is one of `open`, `in-progress`, `blocked`, `done`.\n- `comment` is optional; will be appended with author \"Day0\".\n"
+      },
+      {
+        "slug": "escalation-paths",
+        "title": "Escalation paths",
+        "category": "team-doc",
+        "body": "# Escalation paths\n\nWhen in doubt about scope, permissions, or risk, escalate before acting.\n\n## Scope ambiguity\n\nIf a request is unclear about *what* we are being asked to do or *whether it falls inside the team's remit*, escalate to the manager via DM.\n\n## Permission gaps\n\nIf executing a task would require access we do not currently have, do not work around the permission. File a request via the manager.\n\n## Risk concerns\n\nDefault: surface a draft to the manager for review before any side-effect.\n\nEscalation triggers (mandatory):\n- The change would alter a number visible in the revenue committee deck.\n- The change would touch a Salesforce record.\n- The change would send a message outside the team or company.\n- The change would touch finance-audited data.\n\n## Out-of-scope asks\n\nMarketing copy, brand voice, social-media replies, hiring decisions, HR matters → out of scope. Politely redirect.\n"
+      },
+      {
+        "slug": "on-call",
+        "title": "On-call rotation",
+        "category": "team-doc",
+        "body": "# On-call rotation\n\nThe team operates a tier-1 + tier-2 on-call rotation. Tier-1 carries the pager 24/7; tier-2 is the escalation contact and only pages when tier-1 has been silent for 15 minutes.\n\n## Rotation\n\n- One-week rotations, Monday 09:00 SGT to Monday 09:00 SGT.\n- Five-engineer rotation pool (Priya, Aman, Sara, Theo, Ines).\n- Anyone can swap their shift directly with another engineer in the pool. Post the swap in #ops-oncall.\n\n## Coverage windows\n\n- Daytime (09:00-21:00 SGT): primary in their normal working hours.\n- Nighttime (21:00-09:00 SGT): primary remains responsible. Alerts page through PagerDuty + Slack.\n- Weekends: unchanged from weekdays.\n\n## Escalation contacts\n\n- Tier-2 (this week): Sara\n- Tier-2 backup: Aman\n- Manager-on-call (only for sev-0): Priya\n\n## Day0 note\n\nDay0 is not on the rotation until at least week 4 and only after explicit manager opt-in. Skim this doc but do not respond to pages.\n"
+      },
+      {
+        "slug": "onboarding",
+        "title": "Onboarding — first week",
+        "category": "team-doc",
+        "body": "# Onboarding — first week\n\nWelcome to RevOps. The first week is light by design.\n\n## Day 1\n- Manager 1:1 (90 min).\n- Read the team overview + escalation paths.\n\n## Day 2-3\n- Skim the Q-trackers.\n- Read the close-week runbook.\n- Schedule three 1:1s with Priya, Aman, Sara.\n\n## Day 4-5\n- Sit in on Tuesday committee prep silently.\n- Pick up one bounded ad-hoc ask from #revops-asks. Surface a draft, do not ship.\n\n## Week 2 onwards\n- Start contributing drafts on real asks.\n- Attend Monday standup + Tuesday committee meeting.\n- Cold-start posture: draft → manager review → ship.\n"
+      },
+      {
+        "slug": "team-overview",
+        "title": "Team overview — RevOps",
+        "category": "team-doc",
+        "body": "# Team overview — RevOps\n\nWe are the Revenue Operations team at Acme Co. We sit between Sales and Finance, owning the data, tooling, and reporting that turn deal activity into a credible revenue forecast.\n\n## What we do\n\n- Maintain the four Q-trackers (Q1–Q4 in Google Sheets) — these are the source of truth for the revenue committee.\n- Wire Salesforce → BigQuery → Looker dashboards used by Sales leadership in their weekly cadence.\n- Run the close-week process (last 5 business days of each quarter) — collecting closed-won deals, reconciling them with the CRM, signing off the revenue total.\n- Field ad-hoc analytical asks (\"What's our pipeline coverage on enterprise?\", \"How's the SMB segment trending?\").\n\n## Who we are\n\n- **Manager:** runs the team, owns the relationship with the CRO.\n- **Priya:** senior analyst, segment + pipeline.\n- **Aman:** senior analyst, forecasting + variance analysis.\n- **Sara:** analyst, ad-hoc requests.\n- **Day0 (you):** newly deployed; charter to be discovered via the Day-1 1:1.\n\n## Cadence\n\n- Monday standup, 09:30 SGT (15 min).\n- Weekly committee meeting Tuesday 14:00 SGT (1h, manager presents).\n- Quarter-end close: last 5 business days of each quarter.\n\n## Working surfaces\n\n- Google Sheets — Q1, Q2, Q3, Q4 revenue trackers, plus the deal-stage tracker. Slug for the Q4 tracker is `q4-revenue-tracker`.\n- Slack — `#revops-asks` (inbound), `#revops` (team), `#standups` (committee prep).\n- Linear — internal team tickets (project: REVOPS).\n- Looker — published dashboards.\n"
+      }
+    ],
+    "channels": [
+      {
+        "slug": "revops",
+        "displayName": "#revops",
+        "kind": "channel"
+      },
+      {
+        "slug": "revops-asks",
+        "displayName": "#revops-asks",
+        "kind": "channel"
+      },
+      {
+        "slug": "dm-aman",
+        "displayName": "DM · Aman",
+        "kind": "dm"
+      },
+      {
+        "slug": "dm-manager",
+        "displayName": "DM · Manager",
+        "kind": "dm"
+      },
+      {
+        "slug": "dm-priya",
+        "displayName": "DM · Priya",
+        "kind": "dm"
+      }
+    ],
+    "messages": [
+      {
+        "channelSlug": "dm-manager",
+        "sender": "Manager",
+        "senderKind": "manager",
+        "body": "Three closed-won deals from last Friday's standup need to land in the Q4 Revenue Tracker — Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k). Closed-won tab.",
+        "at": "+00:02"
+      },
+      {
+        "channelSlug": "revops-asks",
+        "sender": "Priya",
+        "senderKind": "requester",
+        "body": "New joiner ask: what does our enterprise segment pipeline coverage look like over the last four weeks? Briefing the CRO Tuesday.",
+        "at": "+00:02"
+      },
+      {
+        "channelSlug": "dm-priya",
+        "sender": "Day0",
+        "senderKind": "agent-posted",
+        "body": "Hi Priya — I reviewed the first-week onboarding, team overview, escalation paths, and on-call notes. My next three immediate actions should be:\n\n1. Finish Day-1 orientation by keeping a short running list of tasks, blockers, and questions, using the escalation guidance as guardrails — especially for anything touching revenue committee numbers, Salesforce, external messages, or audited data (Onboarding — first week; Escalation paths).\n2. Move into Day 2–3 prep by skimming the available Q-trackers and looking for clearly bounded, low-risk items I can summarize or draft on, without changing tracker values unless you or the manager confirm (Onboarding — first week; Team overview — RevOps).\n3. Schedule 1:1s with you, Aman, and Sara, then later this week pick one bounded #revops-asks item for a draft-only response before anything is shipped (Onboarding — first week; Team overview — RevOps).\n\nOne blocker: I don’t see the close-week runbook in the docs available here yet, so I’ll need that before completing the Day 2–3 reading.",
+        "at": "+08:37"
+      },
+      {
+        "channelSlug": "dm-manager",
+        "sender": "Day0",
+        "senderKind": "agent-posted",
+        "body": "Drafted a concise reply to Priya based on the onboarding/team docs. Summary: next actions are to maintain a running task/blocker list with escalation guardrails, skim available Q-trackers for low-risk bounded work without edits unless confirmed, and schedule 1:1s with Priya/Aman/Sara before taking a draft-only #revops-asks item. Noted blocker: close-week runbook is not available in the current docs context.",
+        "at": "+08:37"
+      },
+      {
+        "channelSlug": "dm-manager",
+        "sender": "Manager",
+        "senderKind": "manager",
+        "body": "Got it. Make sure the close-date column is populated before we send to committee.",
+        "at": "+08:42"
+      },
+      {
+        "channelSlug": "dm-priya",
+        "sender": "Priya",
+        "senderKind": "teammate",
+        "body": "Thanks — I’ll cross-check against Looker and send any tweaks back to you.",
+        "at": "+08:43"
+      },
+      {
+        "channelSlug": "dm-priya",
+        "sender": "Day0",
+        "senderKind": "agent-posted",
+        "body": "Priya — I read the first-week onboarding and team docs. My next three immediate actions should be:\n\n1. Complete Day 1 grounding: make sure the manager 1:1 is booked/attended, and use the team overview + escalation paths as my operating guardrails; anything unclear on scope, permissions, or risk should be escalated before acting. (Onboarding — first week; Escalation paths)\n2. Start Day 2–3 prep: skim the Q-trackers, starting with the Q4 Revenue Tracker since the team overview says Q-trackers are the revenue committee source of truth, and read the close-week runbook once available. (Onboarding — first week; Team overview — RevOps)\n3. Schedule 1:1s with you, Aman, and Sara, then later this week pick one bounded #revops-asks item and surface a draft only, not a shipped answer. (Onboarding — first week; Team overview — RevOps)\n\nClarifying question: do you want me to prioritize the 1:1s in any order, or should I start with your slot?",
+        "at": "+09:20"
+      },
+      {
+        "channelSlug": "dm-manager",
+        "sender": "Day0",
+        "senderKind": "agent-posted",
+        "body": "Drafted a response for Priya’s day-one onboarding question using the internal docs. Proposed reply identifies three immediate actions: complete Day 1 grounding with escalation guardrails, start Day 2–3 prep by skimming Q-trackers and reading the close-week runbook when available, and schedule 1:1s with Priya/Aman/Sara before taking one bounded #revops-asks item as a draft-only task later in the week.",
+        "at": "+09:20"
+      },
+      {
+        "channelSlug": "dm-manager",
+        "sender": "Manager",
+        "senderKind": "manager",
+        "body": "Got it. Make sure the close-date column is populated before we send to committee.",
+        "at": "+09:24"
+      },
+      {
+        "channelSlug": "dm-priya",
+        "sender": "Priya",
+        "senderKind": "teammate",
+        "body": "Good first pass. Add the source link for the four-week window before I forward.",
+        "at": "+09:26"
+      },
+      {
+        "channelSlug": "dm-manager",
+        "sender": "Day0",
+        "senderKind": "agent-posted",
+        "body": "Manager — I started Priya’s request to append the unowned follow-up notes from REVOPS-203 into the Q4 Revenue Tracker pipeline tab. I did not edit the spreadsheet yet because the available REVOPS-203 context does not show the follow-up-note text, and the visible pipeline tab headers are only Account, Amount, Stage, Close date, Owner — no follow-up-notes field. I’m asking Priya to confirm the note text/target field before making any tracker change.",
+        "at": "+11:56"
+      },
+      {
+        "channelSlug": "dm-priya",
+        "sender": "Day0",
+        "senderKind": "agent-posted",
+        "body": "Priya — I started the REVOPS-203/Q4 pipeline follow-up update. I’m blocked because the current ticket snapshot I can see does not include the unowned follow-up-note text, and the Q4 tracker pipeline tab visible here has headers Account, Amount, Stage, Close date, Owner with no follow-up-notes field. Can you point me to the note text/target field, or confirm if a follow-up notes column should already exist before I edit?",
+        "at": "+11:56"
+      },
+      {
+        "channelSlug": "revops-asks",
+        "sender": "Day0",
+        "senderKind": "agent-draft",
+        "body": "Drafting this for Manager/Priya review — checking the REVOPS-203 note text and target tracker field before any Q4 tracker edit.",
+        "at": "+11:56"
+      },
+      {
+        "channelSlug": "dm-priya",
+        "sender": "Priya",
+        "senderKind": "teammate",
+        "body": "Thanks — I’ll cross-check against Looker and send any tweaks back to you.",
+        "at": "+12:00"
+      },
+      {
+        "channelSlug": "revops-asks",
+        "sender": "Priya",
+        "senderKind": "requester",
+        "body": "Appreciate the quick triage — leaving the pipeline interpretation to me, but the framing here is clean.",
+        "at": "+12:00"
+      },
+      {
+        "channelSlug": "dm-manager",
+        "sender": "Manager",
+        "senderKind": "manager",
+        "body": "Thanks — looks good. I’ll forward it after a quick read.",
+        "at": "+12:01"
+      }
+    ],
+    "tickets": [
+      {
+        "slug": "REVOPS-201",
+        "title": "Reconcile Q3 closed-won totals against Salesforce",
+        "status": "open",
+        "priority": "P2",
+        "body": "Numbers in the committee deck do not match Salesforce; gap of ~$30k. Trace and reconcile.",
+        "comments": []
+      },
+      {
+        "slug": "REVOPS-202",
+        "title": "Refresh Q4 pipeline coverage view in Looker",
+        "status": "open",
+        "priority": "P3",
+        "body": "Pipeline coverage tile is showing stale data. Look into the dbt model dependency.",
+        "comments": []
+      },
+      {
+        "slug": "REVOPS-203",
+        "title": "Add Friday standup closed-won deals to Q4 Revenue Tracker",
+        "status": "in-progress",
+        "priority": "P1",
+        "body": "Manager filed: append Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k) to the closed-won tab from last Friday's standup. Close once the rows are in.",
+        "comments": [
+          {
+            "author": "Day0",
+            "body": "Started the Q4 pipeline follow-up notes update, but did not edit the tracker yet because the accessible REVOPS-203 context does not show the unowned note text and the pipeline tab has no visible follow-up-notes field. Asked Priya to confirm the notes/target field before proceeding.",
+            "at": "+11:56"
+          }
+        ]
+      }
+    ],
+    "spreadsheet": {
+      "slug": "q4-revenue-tracker",
+      "title": "Q4 Revenue Tracker",
+      "tabs": [
+        {
+          "name": "closed-won",
+          "headers": [
+            "Account",
+            "Amount",
+            "Close date",
+            "Owner",
+            "Stage"
+          ]
+        },
+        {
+          "name": "pipeline",
+          "headers": [
+            "Account",
+            "Amount",
+            "Stage",
+            "Close date",
+            "Owner"
+          ]
+        }
+      ],
+      "rows": [
+        {
+          "tabName": "closed-won",
+          "addedBy": "Priya",
+          "cells": {
+            "Account": "Northwind",
+            "Amount": "$120,000",
+            "Close date": "2026-04-12",
+            "Owner": "Priya",
+            "Stage": "closed-won"
+          }
+        },
+        {
+          "tabName": "closed-won",
+          "addedBy": "Priya",
+          "cells": {
+            "Account": "Contoso",
+            "Amount": "$58,000",
+            "Close date": "2026-04-19",
+            "Owner": "Aman",
+            "Stage": "closed-won"
+          }
+        },
+        {
+          "tabName": "pipeline",
+          "addedBy": "Priya",
+          "cells": {
+            "Account": "Initech",
+            "Amount": "$95,000",
+            "Close date": "2026-06-01",
+            "Owner": "Priya",
+            "Stage": "negotiation"
+          }
+        }
+      ]
+    },
+    "socialMention": {
+      "slug": "tweet-acme-feedback",
+      "author": "random_person",
+      "handle": "@random_person",
+      "body": "@AcmeCo your product is fine I guess"
+    }
+  },
+  "timeline": [
+    {
+      "at": "+00:00",
+      "type": "agent.deployed",
+      "label": "Agent deployed",
+      "detail": "The boss deployed the agent. The office and the built-in skill are installed."
+    },
+    {
+      "at": "+00:02",
+      "type": "skill.builtin-installed",
+      "label": "Built-in skill installed",
+      "subject": "see-internal-docs",
+      "detail": "The one skill every agent starts with."
+    },
+    {
+      "at": "+00:37",
+      "type": "voice.started",
+      "label": "Day-1 1:1 opened",
+      "subject": "chat room"
+    },
+    {
+      "at": "+00:44",
+      "type": "voice.started",
+      "label": "Day-1 1:1 opened",
+      "subject": "elevenlabs room"
+    },
+    {
+      "at": "+06:16",
+      "type": "voice.completed",
+      "label": "Day-1 1:1 completed",
+      "detail": "The conversation ended; the charter is drafted from it."
+    },
+    {
+      "at": "+06:45",
+      "type": "charter.drafted",
+      "label": "Charter drafted",
+      "subject": "version 0.0",
+      "detail": "The charter records conversation provenance; only sanitised summaries are published here."
+    },
+    {
+      "at": "+06:51",
+      "type": "charter.approved",
+      "label": "Charter approved by the boss",
+      "subject": "version 0.0",
+      "detail": "Nothing below this line happened before this approval."
+    },
+    {
+      "at": "+07:15",
+      "type": "good-habits.distilled",
+      "label": "Good habits researched",
+      "subject": "20 norms",
+      "detail": "Researched for the approved role and written into AGENTS.md."
+    },
+    {
+      "at": "+07:32",
+      "type": "work.seeded",
+      "label": "Work observed",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+07:32",
+      "type": "work.seeded",
+      "label": "Work observed",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker"
+    },
+    {
+      "at": "+07:32",
+      "type": "work.seeded",
+      "label": "Work observed",
+      "subject": "Draft public brand reply to unrelated social mention"
+    },
+    {
+      "at": "+07:32",
+      "type": "work.generated-from-charter",
+      "label": "Work queue generated from the charter",
+      "subject": "3 candidates"
+    },
+    {
+      "at": "+07:36",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Summarize first-week onboarding next actions for Priya",
+      "detail": "Seven-criterion verdict: claim."
+    },
+    {
+      "at": "+07:37",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+07:39",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Draft public brand reply to unrelated social mention",
+      "detail": "Seven-criterion verdict: skip."
+    },
+    {
+      "at": "+07:41",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Draft public brand reply to unrelated social mention",
+      "detail": "Seven-criterion verdict: skip."
+    },
+    {
+      "at": "+07:43",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+07:45",
+      "type": "work.plan-drafted",
+      "label": "Plan drafted",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+07:47",
+      "type": "work.plan-drafted",
+      "label": "Plan drafted",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+07:47",
+      "type": "work.plan-drafted",
+      "label": "Plan drafted",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+07:50",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+07:50",
+      "type": "work.plan-approved",
+      "label": "Plan approved by the boss",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+07:51",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+07:51",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+07:51",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+07:53",
+      "type": "work.plan-drafted",
+      "label": "Plan drafted",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+07:54",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+07:55",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+07:56",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+08:08",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+08:33",
+      "type": "work.plan-approved",
+      "label": "Plan approved by the boss",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+08:36",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+08:37",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: queue."
+    },
+    {
+      "at": "+08:38",
+      "type": "work.completed",
+      "label": "Work completed",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+08:41",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: needs-skill."
+    },
+    {
+      "at": "+08:41",
+      "type": "skill.proposed",
+      "label": "Skill proposed",
+      "subject": "update-spreadsheet-sheet-q4-revenue-tracker-pipeline-cleanup",
+      "detail": "The evaluator found no registered skill for the work."
+    },
+    {
+      "at": "+08:42",
+      "type": "coworker.replied",
+      "label": "Colleague replied",
+      "subject": "Manager in dm-manager"
+    },
+    {
+      "at": "+08:43",
+      "type": "coworker.replied",
+      "label": "Colleague replied",
+      "subject": "Priya in dm-priya"
+    },
+    {
+      "at": "+09:04",
+      "type": "skill.approved",
+      "label": "Skill approved by the boss",
+      "subject": "update-spreadsheet-sheet-q4-revenue-tracker-pipeline-cleanup",
+      "detail": "Approving the skill granted the scopes it asked for."
+    },
+    {
+      "at": "+09:20",
+      "type": "work.completed",
+      "label": "Work completed",
+      "subject": "Summarize first-week onboarding next actions for Priya"
+    },
+    {
+      "at": "+09:24",
+      "type": "coworker.replied",
+      "label": "Colleague replied",
+      "subject": "Manager in dm-manager"
+    },
+    {
+      "at": "+09:26",
+      "type": "coworker.replied",
+      "label": "Colleague replied",
+      "subject": "Priya in dm-priya"
+    },
+    {
+      "at": "+10:07",
+      "type": "skill.authoring",
+      "label": "Skill authored in a sandbox",
+      "subject": "update-spreadsheet-sheet-q4-revenue-tracker-pipeline-cleanup",
+      "detail": "Written and smoke-tested away from the office."
+    },
+    {
+      "at": "+10:07",
+      "type": "skill.registered",
+      "label": "Skill registered",
+      "subject": "update-spreadsheet-sheet-q4-revenue-tracker-pipeline-cleanup",
+      "detail": "Callable from here on."
+    },
+    {
+      "at": "+10:07",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: pending-reevaluation."
+    },
+    {
+      "at": "+10:13",
+      "type": "work.evaluated",
+      "label": "Work evaluated",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker",
+      "detail": "Seven-criterion verdict: claim."
+    },
+    {
+      "at": "+10:21",
+      "type": "work.plan-drafted",
+      "label": "Plan drafted",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker"
+    },
+    {
+      "at": "+11:13",
+      "type": "work.plan-approved",
+      "label": "Plan approved by the boss",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker"
+    },
+    {
+      "at": "+11:56",
+      "type": "work.completed",
+      "label": "Work completed",
+      "subject": "Append missing pipeline follow-up notes to Q4 tracker"
+    },
+    {
+      "at": "+12:00",
+      "type": "coworker.replied",
+      "label": "Colleague replied",
+      "subject": "Priya in dm-priya"
+    },
+    {
+      "at": "+12:00",
+      "type": "coworker.replied",
+      "label": "Colleague replied",
+      "subject": "Priya in revops-asks"
+    },
+    {
+      "at": "+12:01",
+      "type": "coworker.replied",
+      "label": "Colleague replied",
+      "subject": "Manager in dm-manager"
+    }
+  ]
+}
