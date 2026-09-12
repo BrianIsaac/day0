@@ -53,8 +53,9 @@ describe('the charter and its approval', (): void => {
     expect(text).toContain(HOSTED_DEMO_SNAPSHOT.charter.proposedBoundaries.escalationTriggers[0]);
   });
 
-  it('keeps each claim next to the quote it came from', (): void => {
+  it('labels the published conversation evidence as sanitised summaries', (): void => {
     const evidence = HOSTED_DEMO_SNAPSHOT.charter.evidence[0];
+    expect(text).toContain('sanitised summaries, not conversation quotations');
     expect(text).toContain(evidence.source);
     expect(text).toContain(evidence.text);
   });

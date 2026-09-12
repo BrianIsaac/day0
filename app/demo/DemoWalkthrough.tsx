@@ -245,7 +245,7 @@ function CharterSection({
 
       <Card title="Provenance">
         <p className="text-xs text-[var(--color-muted)] mb-3">
-          Every claim above is tagged with the line of the conversation it came from. Source:{' '}
+          The recorded charter cites the Day-1 conversation. These are sanitised summaries, not conversation quotations. Source:{' '}
           {charter.source}.
         </p>
         <ul className="space-y-2">

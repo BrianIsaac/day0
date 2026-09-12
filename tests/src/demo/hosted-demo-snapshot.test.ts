@@ -25,6 +25,14 @@ function allText(value: unknown, path = '$'): Array<{ path: string; text: string
 const text = allText(HOSTED_DEMO_SNAPSHOT);
 
 describe('the committed hosted-demo snapshot', (): void => {
+  it('publishes labelled summaries rather than private conversation quotations', () => {
+    for (const evidence of HOSTED_DEMO_SNAPSHOT.charter.evidence) {
+      expect(evidence.source).toContain('summary');
+      expect(evidence.text).not.toMatch(/^"/);
+    }
+    expect(HOSTED_DEMO_SNAPSHOT.timeline.find((event) => event.type === 'charter.drafted')?.detail).toContain('summar');
+  });
+
   it('carries no address that could reach a real person', (): void => {
     const addresses = text.flatMap(({ path, text: value }) =>
       [...value.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)].map((m) => ({
