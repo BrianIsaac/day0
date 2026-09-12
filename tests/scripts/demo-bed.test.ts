@@ -398,6 +398,10 @@ describe('the pre-flight verdict', (): void => {
       backendHealthy: true,
       modelBaseUrl: 'https://api.featherless.ai/v1',
       rungModelRoute: 'https://api.featherless.ai/v1',
+      deploymentModelSettings: {
+        OPENAI_MAX_OUTPUT_TOKENS: '32768',
+        OPENAI_REASONING_EFFORT: 'low',
+      },
     };
     expect(demoTiers({ ...base, probeTier: 1 }).map((tier) => tier.go)).toEqual([true, true, true]);
     expect(demoTiers({ ...base, probeTier: 3 }).map((tier) => tier.go)).toEqual([
