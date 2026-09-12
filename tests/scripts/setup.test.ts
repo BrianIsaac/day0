@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { FIRST_SUCCESS } from '../../src/setup/quickstart';
 import {
   attachmentDecision,
   backendIdentityRefusal,
@@ -20,9 +21,11 @@ import {
   readEnvValues,
   runSetup,
   SetupCancelled,
+  firstSuccessLines,
   sequenceSteps,
   setupEnvUpdates,
   shouldCaptureAdminKey,
+  wrapIndented,
   writeEnvValues,
   type RunResult,
   type SetupIo,
@@ -623,6 +626,29 @@ describe('the order the helpers run in', (): void => {
       'convex:restart',
       'check:setup',
     ]);
+  });
+});
+
+describe('what the run prints at the end', (): void => {
+  it('wraps a long line under its step without breaking a word', (): void => {
+    const lines = wrapIndented('one two three four five six seven', '     ', 20);
+    expect(lines).toEqual(['     one two three', '     four five six', '     seven']);
+  });
+
+  it('keeps a sentence that already fits on one line', (): void => {
+    expect(wrapIndented('short enough', '  ')).toEqual(['  short enough']);
+  });
+
+  it('names the unlock URL it resolved, and the four steps after it', (): void => {
+    const printed = firstSuccessLines('http://localhost:3000/?day0_key=x')
+      .join(' ')
+      .replace(/\s+/g, ' ');
+    expect(printed).toContain('1 Open http://localhost:3000/?day0_key=x.');
+    expect(printed).toContain(FIRST_SUCCESS[3].detail);
+  });
+
+  it('falls back to naming the command when no URL could be read', (): void => {
+    expect(firstSuccessLines(undefined).join(' ')).toContain(FIRST_SUCCESS[0].action);
   });
 });
 

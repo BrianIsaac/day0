@@ -37,6 +37,7 @@ import { basename, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
+import { FIRST_SUCCESS } from '../src/setup/quickstart';
 import { composeArguments } from './compose';
 import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
@@ -804,17 +805,47 @@ export function writeEnvValues(path: string, updates: Readonly<Record<string, st
   writePrivateEnv(path, upsertEnvText(text, updates));
 }
 
-/** What a first success looks like, printed after the checker's own report. */
+/**
+ * Wrap prose under a numbered step, so a long sentence stays readable in a
+ * terminal without being hard-wrapped at the place it is written.
+ *
+ * Args:
+ *   text: The sentence to wrap.
+ *   indent: What every line starts with.
+ *   width: The column to break before.
+ *
+ * Returns:
+ *   One string per line, each already indented.
+ */
+export function wrapIndented(text: string, indent: string, width = 92): string[] {
+  const lines: string[] = [];
+  let current = '';
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (current === '') current = word;
+    else if (indent.length + current.length + 1 + word.length > width) {
+      lines.push(indent + current);
+      current = word;
+    } else current = `${current} ${word}`;
+  }
+  if (current !== '') lines.push(indent + current);
+  return lines;
+}
+
+/**
+ * What a first success looks like, printed after the checker's own report.
+ *
+ * The steps are `src/setup/quickstart.ts`'s, which is also what the `/setup`
+ * page renders: a reader who follows the page and a reader who follows this
+ * terminal are told the same four things.
+ */
 export function firstSuccessLines(unlockUrl: string | undefined): string[] {
-  return [
-    'What a first success looks like:',
-    `  1  Open ${unlockUrl ?? 'the unlock URL `pnpm dev` prints'}. It carries the key once; after that it is a cookie.`,
-    '     Opening http://localhost:3000 directly answers 403. That is the boundary working.',
-    '  2  Deploy an agent. The office it works in is seeded and synthetic; nothing of yours is read.',
-    '  3  Hold the Day-1 1:1 in chat mode and answer the seven topics.',
-    '  4  Approve the charter it writes. That is the first approval card, and approving it',
-    '     is what fills the work queue.',
-  ];
+  const lines = ['What a first success looks like:'];
+  FIRST_SUCCESS.forEach((step, index): void => {
+    const action = index === 0 && unlockUrl !== undefined ? `Open ${unlockUrl}.` : step.action;
+    lines.push(`  ${index + 1}  ${action}`);
+    lines.push(...wrapIndented(step.detail, '     '));
+  });
+  return lines;
 }
 
 /* Everything below this line talks to the machine: child processes, ports and
