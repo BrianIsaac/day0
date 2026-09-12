@@ -386,9 +386,12 @@ export function snapshotCommand(volume: string, outDirectory: string, fileName: 
     '-v',
     `${outDirectory}:/to`,
     tarImage(),
-    'sh',
-    '-c',
-    `tar czf /to/${fileName} -C /from .`,
+    'tar',
+    'czf',
+    `/to/${fileName}`,
+    '-C',
+    '/from',
+    '.',
   ];
 }
 
@@ -420,9 +423,11 @@ export function restoreCommand(
     '-v',
     `${volume}:/to`,
     tarImage(),
-    'sh',
-    '-c',
-    `tar xzf /from/${fileName} -C /to`,
+    'tar',
+    'xzf',
+    `/from/${fileName}`,
+    '-C',
+    '/to',
   ];
 }
 
