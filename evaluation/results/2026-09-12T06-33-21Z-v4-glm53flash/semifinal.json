@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:38:04.712Z",
+  "generatedAt": "2026-09-12T06:38:09.635Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -2358,13 +2358,87 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "write-closed-won-row",
+          "externalId": "EVAL-WRITE-02",
+          "category": "approval-write",
+          "workItemId": "ms77y05qrkk3nnjnkmrm4k8jbs8e8emh",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:38:04.712Z",
+          "finishedAt": "2026-09-12T06:38:09.572Z",
+          "deployToFirstCorrectActionMs": 34003,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": 2
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "spreadsheet.appendRow",
+                "argumentKeys": [
+                  "cells",
+                  "sheetSlug",
+                  "tabName"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "73f50711d29158b12e6485f856033d7d390e71d6a6b3ec6701a4c8a09ff325ee"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:spreadsheet-row",
+                "passed": true,
+                "detail": "one matching row found in q4-revenue-tracker/closed-won"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "proposedTools": [
+                "spreadsheet.appendRow"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
         }
       ],
       "agentId": "j577z7hmdvvj64w8bb1dvvw6758e8bps",
       "deployedAt": "2026-09-12T06:37:32.373Z",
       "activeTask": {
-        "taskId": "write-closed-won-row",
-        "startedAt": "2026-09-12T06:38:04.712Z",
+        "taskId": "write-ticket-ownership",
+        "startedAt": "2026-09-12T06:38:09.635Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 0,
