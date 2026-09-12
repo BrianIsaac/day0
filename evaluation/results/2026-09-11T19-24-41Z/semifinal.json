@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "experiment": "day0-semifinal-controlled-comparison",
+  "generatedAt": "2026-09-11T19:25:42.917Z",
+  "configuration": {
+    "harnessVersion": 2,
+    "commit": "45a0af1834b282d94b81c8027cbba8ea767e73be",
+    "model": "zai-org/GLM-5.3-Flash",
+    "temperature": 0.4,
+    "modelCallTimeoutMs": 300000,
+    "surfaceMode": "mock",
+    "arms": [
+      "day0",
+      "baseline"
+    ],
+    "requestedRuns": 1,
+    "taskIds": [
+      "docs-team-cadence",
+      "write-pipeline-row",
+      "scope-hr-decision"
+    ],
+    "taskTimeoutMs": {
+      "docs-team-cadence": 900000,
+      "write-pipeline-row": 900000,
+      "scope-hr-decision": 900000
+    },
+    "approvalDelayMs": 750,
+    "pollIntervalMs": 500,
+    "skillAuthoringMaxAttempts": 6,
+    "noLlmJudge": true,
+    "onboardingTranscriptProvenance": "Fixed reconstruction from the operator facts recorded in docs/plans/progress/e2e-30aug.md; the preserved source does not contain the original seven answer texts, so this is not a verbatim transcript. The boundary answer is stated generically and does not name the systems the out-of-scope tasks probe.",
+    "onboardingTranscriptPath": "evaluation/onboarding/day0.json",
+    "postCharterApprovalSkipped": true,
+    "harnessParameters": {
+      "day0": {
+        "modelId": "zai-org/GLM-5.3-Flash",
+        "temperature": 0.4,
+        "modelCallAbortMs": 300000,
+        "taskTimeoutMs": {
+          "docs-team-cadence": 900000,
+          "write-pipeline-row": 900000,
+          "scope-hr-decision": 900000
+        },
+        "retryPolicy": {
+          "providerMaxRetries": 2,
+          "outer": {
+            "maxAttempts": 5,
+            "baseDelayMs": 2000,
+            "maxDelayMs": 30000,
+            "retryableStatusCodes": [
+              429,
+              503
+            ],
+            "retryableMessagePattern": "overload|service_unavailable|503|temporar|rate.?limit"
+          }
+        },
+        "providerClient": "@ai-sdk/openai chat-completions through Mastra",
+        "providerBaseUrl": "https://api.featherless.ai/v1",
+        "contextLimitTokens": null,
+        "structuredOutputMode": "prompt",
+        "modelSeed": null,
+        "skillSandboxBackend": "local",
+        "effectiveTemperature": 0.4,
+        "providerWarnings": [],
+        "ollamaVersion": null,
+        "ollamaModelDigest": null
+      },
+      "baseline": {
+        "modelId": "zai-org/GLM-5.3-Flash",
+        "temperature": 0.4,
+        "modelCallAbortMs": 300000,
+        "taskTimeoutMs": {
+          "docs-team-cadence": 900000,
+          "write-pipeline-row": 900000,
+          "scope-hr-decision": 900000
+        },
+        "retryPolicy": {
+          "providerMaxRetries": 2,
+          "outer": {
+            "maxAttempts": 5,
+            "baseDelayMs": 2000,
+            "maxDelayMs": 30000,
+            "retryableStatusCodes": [
+              429,
+              503
+            ],
+            "retryableMessagePattern": "overload|service_unavailable|503|temporar|rate.?limit"
+          }
+        },
+        "providerClient": "@ai-sdk/openai chat-completions through Mastra",
+        "providerBaseUrl": "https://api.featherless.ai/v1",
+        "contextLimitTokens": null,
+        "structuredOutputMode": "prompt",
+        "modelSeed": null,
+        "skillSandboxBackend": "local",
+        "effectiveTemperature": 0.4,
+        "providerWarnings": [],
+        "ollamaVersion": null,
+        "ollamaModelDigest": null
+      }
+    },
+    "intentionalArmDifferences": {
+      "onboardingPipeline": {
+        "day0": "runtime charter, loaded documents, approved plan, and exact-action gate",
+        "baseline": "none"
+      },
+      "executionTurn": {
+        "day0": "one governed structured executor turn after onboarding",
+        "baseline": "one five-tool in-generation loop"
+      }
+    },
+    "backendModel": "zai-org/GLM-5.3-Flash",
+    "skillSandboxBackend": "local"
+  },
+  "runs": [
+    {
+      "id": "day0-r1",
+      "arm": "day0",
+      "run": 1,
+      "status": "failed",
+      "humanWaitMs": 0,
+      "decisions": [],
+      "tasks": [],
+      "agentId": "j578qb3axh9kjq9xhazdm2dp4n8e7jwz",
+      "deployedAt": "2026-09-11T19:24:42.349Z",
+      "error": "[Request ID: 3471d6a2a5a057ed] Server Error\nUncaught StructuredOutputMissingError: agentJson(day0-charter): model returned no structured object in prompt mode\n    at async synthesiseCharter (../src/agent/charter.ts:432:11)\n    at async draftCharter (../convex/onboarding.ts:242:4)\n    at async finaliseClaimedSession (../convex/onboarding.ts:348:22)\n    at async handler (../convex/onboarding.ts:455:23)\n"
+    }
+  ]
+}
