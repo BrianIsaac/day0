@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:34:42.594Z",
+  "generatedAt": "2026-09-12T06:34:52.813Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -170,7 +170,7 @@
       "arm": "day0",
       "run": 1,
       "status": "running",
-      "humanWaitMs": 6756,
+      "humanWaitMs": 9008,
       "decisions": [
         {
           "kind": "charter",
@@ -233,6 +233,27 @@
           "requestedAt": "2026-09-12T06:34:41.156Z",
           "approvedAt": "2026-09-12T06:34:41.933Z",
           "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-q4-source-of-truth",
+          "requestedAt": "2026-09-12T06:34:44.882Z",
+          "approvedAt": "2026-09-12T06:34:45.654Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-q4-source-of-truth",
+          "requestedAt": "2026-09-12T06:34:50.473Z",
+          "approvedAt": "2026-09-12T06:34:51.252Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "skill",
+          "taskId": "write-pipeline-row",
+          "requestedAt": "2026-09-12T06:34:51.908Z",
+          "approvedAt": "2026-09-12T06:34:52.769Z",
+          "delayMs": 752
         }
       ],
       "tasks": [
@@ -678,18 +699,150 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "docs-q4-source-of-truth",
+          "externalId": "EVAL-DOC-05",
+          "category": "docs-grounded-read",
+          "workItemId": "ms72a0knbwqf6sry6cdk6fwwk18e9fdc",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:34:42.493Z",
+          "finishedAt": "2026-09-12T06:34:51.365Z",
+          "deployToFirstCorrectActionMs": 86040,
+          "humanWaitMs": 1500,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-q4-source-of-truth",
+              "requestedAt": "2026-09-12T06:34:44.882Z",
+              "approvedAt": "2026-09-12T06:34:45.654Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-q4-source-of-truth",
+              "requestedAt": "2026-09-12T06:34:50.473Z",
+              "approvedAt": "2026-09-12T06:34:51.252Z",
+              "delayMs": 750
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 2,
+            "observableProviderCalls": null
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 2,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3,
+              2
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "ticket.update",
+                "argumentKeys": [
+                  "comment",
+                  "slug",
+                  "status"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "8a46b0259ef5006a891643483a0d17a13fe6a47a4268535a650e4c8f02228da8"
+              },
+              {
+                "phase": "output",
+                "index": 1,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "16e595b2b0f08c69001a44bc3595e78dd1a3b8649d7a2fba532d109a6995f071"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-05 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "proposedTools": [
+                "ticket.update",
+                "slack.postMessage"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-05",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
         }
       ],
       "agentId": "j579j3ztah4cattpv79qfes8hh8e8tcj",
       "deployedAt": "2026-09-12T06:33:25.260Z",
       "activeTask": {
-        "taskId": "docs-q4-source-of-truth",
-        "startedAt": "2026-09-12T06:34:42.493Z",
-        "humanWaitMs": 0,
-        "decisions": [],
+        "taskId": "write-pipeline-row",
+        "startedAt": "2026-09-12T06:34:51.826Z",
+        "humanWaitMs": 752,
+        "decisions": [
+          {
+            "kind": "skill",
+            "taskId": "write-pipeline-row",
+            "requestedAt": "2026-09-12T06:34:51.908Z",
+            "approvedAt": "2026-09-12T06:34:52.769Z",
+            "delayMs": 752
+          }
+        ],
         "logicalStages": 1,
         "observableProviderCalls": null,
-        "skillAuthoringAttempts": 0
+        "skillAuthoringAttempts": 1
       }
     }
   ]
