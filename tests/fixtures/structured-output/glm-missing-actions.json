@@ -1,0 +1,113 @@
+[
+  {
+    "provenance": "Fresh authorised three-task capture on 2026-09-12; synthetic office content sanitised. Historical paired reply bodies were not retained.",
+    "captureId": "217de01c-3032-4112-a783-99ef46bb180e",
+    "capture": "capture1-functions.jsonl",
+    "rawReplySha256": "35a706822eb641dcd65a214637c2eb9ddcf32e01bdf9d3d9496f61ce5cd8b73b",
+    "taskId": "write-priya-verification",
+    "message": "Structured output validation failed: - actions: Too small: expected array to have >=2 items",
+    "actionsMinimum": 2,
+    "raw": "{\n  \"draft\": \"[sanitised draft]\",\n  \"notes\": \"[sanitised notes]\",\n  \"needsDependentPhase\": false,\n  \"actions\": [\n    {\n      \"tool\": \"slack.postMessage\",\n      \"args\": {\n        \"channelSlug\": \"dm-priya\",\n        \"threadKey\": null,\n        \"body\": \"[sanitised requested message]\"\n      }\n    }\n  ],\n  \"procedureTrails\": [\n    {\n      \"trailId\": \"trail-1\",\n      \"actionIndex\": 0,\n      \"inapplicabilityReason\": null\n    },\n    {\n      \"trailId\": \"trail-2\",\n      \"actionIndex\": null,\n      \"inapplicabilityReason\": \"[sanitised inapplicability reason]\"\n    }\n  ]\n}",
+    "value": {
+      "draft": "[sanitised draft]",
+      "notes": "[sanitised notes]",
+      "needsDependentPhase": false,
+      "actions": [
+        {
+          "tool": "slack.postMessage",
+          "args": {
+            "channelSlug": "dm-priya",
+            "threadKey": null,
+            "body": "[sanitised requested message]"
+          }
+        }
+      ],
+      "procedureTrails": [
+        {
+          "trailId": "trail-1",
+          "actionIndex": 0,
+          "inapplicabilityReason": null
+        },
+        {
+          "trailId": "trail-2",
+          "actionIndex": null,
+          "inapplicabilityReason": "[sanitised inapplicability reason]"
+        }
+      ]
+    }
+  },
+  {
+    "provenance": "Fresh authorised three-task capture on 2026-09-12; synthetic office content sanitised. Historical paired reply bodies were not retained.",
+    "captureId": "4daa45a0-4a3d-499b-b2a4-63b860a304ef",
+    "capture": "capture2-functions.jsonl",
+    "rawReplySha256": "4f7fb0ef8d8df098876f4e2dae7305bda0fc1fc084ce2790ab8d4186828345c5",
+    "taskId": "write-priya-verification",
+    "message": "Structured output validation failed: - actions: Too small: expected array to have >=2 items",
+    "actionsMinimum": 2,
+    "raw": "```json\n{\n  \"draft\": \"[sanitised draft]\",\n  \"notes\": \"[sanitised notes]\",\n  \"needsDependentPhase\": false,\n  \"actions\": [\n    {\n      \"tool\": \"slack.postMessage\",\n      \"args\": {\n        \"channelSlug\": \"dm-priya\",\n        \"threadKey\": null,\n        \"body\": \"[sanitised requested message]\"\n      }\n    }\n  ],\n  \"procedureTrails\": [\n    {\n      \"trailId\": \"trail-1\",\n      \"actionIndex\": 0,\n      \"inapplicabilityReason\": null\n    },\n    {\n      \"trailId\": \"trail-2\",\n      \"actionIndex\": null,\n      \"inapplicabilityReason\": \"[sanitised inapplicability reason]\"\n    }\n  ]\n}\n```",
+    "value": {
+      "draft": "[sanitised draft]",
+      "notes": "[sanitised notes]",
+      "needsDependentPhase": false,
+      "actions": [
+        {
+          "tool": "slack.postMessage",
+          "args": {
+            "channelSlug": "dm-priya",
+            "threadKey": null,
+            "body": "[sanitised requested message]"
+          }
+        }
+      ],
+      "procedureTrails": [
+        {
+          "trailId": "trail-1",
+          "actionIndex": 0,
+          "inapplicabilityReason": null
+        },
+        {
+          "trailId": "trail-2",
+          "actionIndex": null,
+          "inapplicabilityReason": "[sanitised inapplicability reason]"
+        }
+      ]
+    }
+  },
+  {
+    "provenance": "Fresh authorised three-task capture on 2026-09-12; synthetic office content sanitised. Historical paired reply bodies were not retained.",
+    "captureId": "ba7c74d1-568c-4e34-be2b-97c1f7f60402",
+    "capture": "capture5-functions.jsonl",
+    "rawReplySha256": "e915f5c53597d7a3468472688ac93c6057e295812ec015325b93b25a95a7aa05",
+    "taskId": "write-priya-verification",
+    "message": "Structured output validation failed: - actions: Too small: expected array to have >=2 items",
+    "actionsMinimum": 2,
+    "raw": "{\n  \"draft\": \"[sanitised draft]\",\n  \"notes\": \"[sanitised notes]\",\n  \"needsDependentPhase\": false,\n  \"actions\": [\n    {\n      \"tool\": \"slack.postMessage\",\n      \"args\": {\n        \"channelSlug\": \"dm-priya\",\n        \"threadKey\": null,\n        \"body\": \"[sanitised requested message]\"\n      }\n    }\n  ],\n  \"procedureTrails\": [\n    {\n      \"trailId\": \"trail-1\",\n      \"actionIndex\": 0,\n      \"inapplicabilityReason\": null\n    },\n    {\n      \"trailId\": \"trail-2\",\n      \"actionIndex\": null,\n      \"inapplicabilityReason\": \"[sanitised inapplicability reason]\"\n    }\n  ]\n}",
+    "value": {
+      "draft": "[sanitised draft]",
+      "notes": "[sanitised notes]",
+      "needsDependentPhase": false,
+      "actions": [
+        {
+          "tool": "slack.postMessage",
+          "args": {
+            "channelSlug": "dm-priya",
+            "threadKey": null,
+            "body": "[sanitised requested message]"
+          }
+        }
+      ],
+      "procedureTrails": [
+        {
+          "trailId": "trail-1",
+          "actionIndex": 0,
+          "inapplicabilityReason": null
+        },
+        {
+          "trailId": "trail-2",
+          "actionIndex": null,
+          "inapplicabilityReason": "[sanitised inapplicability reason]"
+        }
+      ]
+    }
+  }
+]

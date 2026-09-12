@@ -1,0 +1,11 @@
+{
+  "OPENAI_MODEL": "gpt-5.6-terra",
+  "OPENAI_JSON_MODE": "auto",
+  "OPENAI_STRUCTURED_REPAIR_ATTEMPTS": "2",
+  "DAY0_SURFACE_MODE": "mock",
+  "OPENAI_BASE_URL": null,
+  "OPENAI_MAX_OUTPUT_TOKENS": null,
+  "OPENAI_REASONING_EFFORT": null,
+  "DAYTONA_API_KEY": null,
+  "project": "day0-v5-terra-36a7f9"
+}

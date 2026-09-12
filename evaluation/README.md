@@ -178,8 +178,9 @@ gate 重跑不调用模型；revocation 的准备阶段依赖模型，本次没�
 
 All three raw files assert `noLlmJudge: true`, contain all six completed arm-runs,
 record zero harness timeouts and deadline overruns, and carry a deep-equal shared
-harness configuration with 15 fields at capture time. Current code records 17:
-those fields plus `maxOutputTokens` and `reasoningEffort`, both `null` when unset.
+harness configuration with 15 fields at capture time. Current code records 18:
+those fields plus `maxOutputTokens` and `reasoningEffort` (both `null` when unset),
+and `structuredOutputRepairAttempts` (default 2).
 `OPENAI_MAX_OUTPUT_TOKENS` and `OPENAI_REASONING_EFFORT` configure both arms; the
 budget appears in the report table and effort is retained in the raw configuration.
 The hosted defaults remain unset. Older evidence cannot resume against the expanded
@@ -486,3 +487,20 @@ from `a139796`, with the reviewed A/B/F staging update `41cba4f` merged as
 `74e141b`. The cross-model review of 30 Aug 2026 (`docs/plans/progress/evaluation-review.md`
 in the operator's records) changed the task payloads, graders, driver, report and
 control prompt; the reasons are listed with the archived first run.
+
+### Prompt-mode schema repair (12 September 2026)
+
+`OPENAI_STRUCTURED_REPAIR_ATTEMPTS` defaults to 2 (0 disables, maximum 3). After
+Mastra rejects a prompt-mode reply against its schema, the model receives the actual
+validation error and rejected object and may return a complete replacement. A valid
+first reply, native structured calls, initial prompts and the existing semantic
+action-contract repair keep their original paths. No deterministic coercion is enabled:
+the captured GLM failures omitted required actions that a validator cannot invent.
+
+The setting is the eighteenth shared parity field. New evidence includes a
+`structured-output.json` companion record, produced by
+`pnpm exec tsx scripts/eval-structured-output.ts <semifinal.json> <function-logs.jsonl>`.
+It records initial schema failures, repair attempts and coercions for every observed
+structured call and task, and flags incomplete log coverage. First-reply validity means
+schema validation after Mastra's existing JSON extraction; fences alone are not schema
+failures. This audit leaves the frozen evaluation driver, tasks and graders unchanged.

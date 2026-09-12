@@ -17,6 +17,7 @@ const schema = z.object({
   OPENAI_MODEL: z.string().default(DEFAULT_MODEL),
   OPENAI_IMAGE_MODEL: z.string().default('gpt-image-2'),
   OPENAI_JSON_MODE: z.enum(['auto', 'native', 'prompt']).default('auto'),
+  OPENAI_STRUCTURED_REPAIR_ATTEMPTS: z.coerce.number().int().min(0).max(3).default(2),
   OPENAI_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().optional(),
   OPENAI_REASONING_EFFORT: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
 
@@ -88,6 +89,7 @@ const OPTIONAL_STRINGS = [
   'OPENAI_MODEL',
   'OPENAI_IMAGE_MODEL',
   'OPENAI_JSON_MODE',
+  'OPENAI_STRUCTURED_REPAIR_ATTEMPTS',
   'OPENAI_MAX_OUTPUT_TOKENS',
   'OPENAI_REASONING_EFFORT',
   'ELEVENLABS_API_KEY',
@@ -146,6 +148,7 @@ export const env = schema.parse(
     OPENAI_MODEL: process.env.OPENAI_MODEL,
     OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL,
     OPENAI_JSON_MODE: process.env.OPENAI_JSON_MODE,
+    OPENAI_STRUCTURED_REPAIR_ATTEMPTS: process.env.OPENAI_STRUCTURED_REPAIR_ATTEMPTS,
     OPENAI_MAX_OUTPUT_TOKENS: process.env.OPENAI_MAX_OUTPUT_TOKENS,
     OPENAI_REASONING_EFFORT: process.env.OPENAI_REASONING_EFFORT,
     ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,

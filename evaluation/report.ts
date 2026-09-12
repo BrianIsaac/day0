@@ -376,6 +376,7 @@ function harnessParityTables(evidence: EvaluationEvidence): string {
     modelSeed: 'Model seed',
   };
   const optionalLabels: Record<string, string> = {
+    structuredOutputRepairAttempts: 'Maximum prompt schema-repair attempts (0 disables)',
     maxOutputTokens: 'Output budget (tokens)',
     skillSandboxBackend: 'Skill sandbox backend',
     effectiveTemperature: 'Effective temperature after provider warnings',
