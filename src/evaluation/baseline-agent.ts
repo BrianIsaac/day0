@@ -5,7 +5,7 @@ import {
   MODEL_CALL_TIMEOUT_MS,
   MODEL_CONFIG,
   MODEL_PROVIDER_MAX_RETRIES,
-  MODEL_TEMPERATURE,
+  modelCallOptions,
   withModelRetry,
 } from '../lib/mastra';
 import type { AppliedAction } from '../surfaces/types';
@@ -134,7 +134,7 @@ export async function runBaselineAgent(args: {
     ordinary.generate(candidatePrompt(args.candidate, args.snapshot), {
       abortSignal: AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS),
       maxSteps: 10,
-      modelSettings: { temperature: MODEL_TEMPERATURE },
+      ...modelCallOptions(),
       toolChoice: 'auto',
     }),
   );

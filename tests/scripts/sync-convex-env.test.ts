@@ -56,6 +56,17 @@ function runSync(
 }
 
 describe('sync-convex-env.sh', (): void => {
+  it('sets model knobs and removes stale knobs when the local settings are cleared', (): void => {
+    const configured = runSync([], 'OPENAI_MAX_OUTPUT_TOKENS=32768\nOPENAI_REASONING_EFFORT=low\n');
+    expect(configured.status).toBe(0);
+    expect(configured.calls).toContain('convex env set OPENAI_MAX_OUTPUT_TOKENS 32768');
+    expect(configured.calls).toContain('convex env set OPENAI_REASONING_EFFORT low');
+    const cleared = runSync(['OPENAI_MAX_OUTPUT_TOKENS=32768', 'OPENAI_REASONING_EFFORT=low'], '');
+    expect(cleared.status).toBe(0);
+    expect(cleared.calls).toContain('convex env remove OPENAI_MAX_OUTPUT_TOKENS');
+    expect(cleared.calls).toContain('convex env remove OPENAI_REASONING_EFFORT');
+  });
+
   it('clears the retired credential names a deployment still carries', (): void => {
     const { status, calls } = runSync(
       [

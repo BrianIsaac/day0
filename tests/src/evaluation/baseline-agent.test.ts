@@ -49,6 +49,7 @@ vi.mock('../../../src/lib/mastra', () => ({
   MODEL_CALL_TIMEOUT_MS: 90_000,
   MODEL_PROVIDER_MAX_RETRIES: 2,
   MODEL_TEMPERATURE: 0.4,
+  modelCallOptions: () => ({ modelSettings: { temperature: 0.4 } }),
   withModelRetry: async <T>(_label: string, run: () => Promise<T>): Promise<T> => await run(),
 }));
 

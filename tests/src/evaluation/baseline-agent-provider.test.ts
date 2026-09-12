@@ -38,93 +38,102 @@ afterEach((): void => {
 });
 
 describe('ordinary-agent hosted provider boundary', (): void => {
-  it('sends the real five-tool loop through Responses and accepts a tool round trip', async (): Promise<void> => {
-    vi.resetModules();
-    vi.stubEnv('OPENAI_API_KEY', 'test-key');
-    vi.stubEnv('OPENAI_BASE_URL', '');
-    vi.stubEnv('OPENAI_MODEL', 'gpt-5.6-terra');
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-        const url = input instanceof Request ? input.url : String(input);
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-        requests.push({ url, body });
-        if (requests.length === 1) {
+  it.each(['', 'low'])(
+    'sends the tool loop and model settings through Responses (effort %s)',
+    async (effort): Promise<void> => {
+      vi.resetModules();
+      vi.stubEnv('OPENAI_API_KEY', 'test-key');
+      vi.stubEnv('OPENAI_BASE_URL', '');
+      vi.stubEnv('OPENAI_MODEL', 'gpt-5.6-terra');
+      vi.stubEnv('OPENAI_MAX_OUTPUT_TOKENS', '32768');
+      vi.stubEnv('OPENAI_REASONING_EFFORT', effort);
+      const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          const url = input instanceof Request ? input.url : String(input);
+          const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          requests.push({ url, body });
+          if (requests.length === 1) {
+            return response(
+              [
+                {
+                  type: 'function_call',
+                  id: 'fc_docs',
+                  call_id: 'call_docs',
+                  name: 'docs_lookup',
+                  arguments: '{"query":"team guide"}',
+                },
+              ],
+              'resp_tool',
+            );
+          }
           return response(
             [
               {
-                type: 'function_call',
-                id: 'fc_docs',
-                call_id: 'call_docs',
-                name: 'docs_lookup',
-                arguments: '{"query":"team guide"}',
+                type: 'message',
+                role: 'assistant',
+                id: 'msg_done',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: 'Done.',
+                    annotations: [],
+                    logprobs: null,
+                  },
+                ],
               },
             ],
-            'resp_tool',
+            'resp_done',
           );
-        }
-        return response(
-          [
-            {
-              type: 'message',
-              role: 'assistant',
-              id: 'msg_done',
-              content: [
-                {
-                  type: 'output_text',
-                  text: 'Done.',
-                  annotations: [],
-                  logprobs: null,
-                },
-              ],
-            },
-          ],
-          'resp_done',
-        );
-      }),
-    );
+        }),
+      );
 
-    const { runBaselineAgent } = await import('../../../src/evaluation/baseline-agent');
-    let toolCalls = 0;
-    const result = await runBaselineAgent({
-      candidate: {
-        id: 'work-provider',
-        sourceSystem: 'linear',
-        sourceCategory: 'issue',
-        externalId: 'PROBE-1',
-        title: 'Check the team guide',
-        contentSummary: 'Look up the team guide and report completion.',
-        contentRefs: [],
-      },
-      snapshot: snapshot(),
-      invokeAction: async (): Promise<AppliedAction> => {
-        throw new Error('the probe should only use docs.lookup');
-      },
-      onToolCall: () => {
-        toolCalls += 1;
-      },
-    });
+      const { runBaselineAgent } = await import('../../../src/evaluation/baseline-agent');
+      let toolCalls = 0;
+      const result = await runBaselineAgent({
+        candidate: {
+          id: 'work-provider',
+          sourceSystem: 'linear',
+          sourceCategory: 'issue',
+          externalId: 'PROBE-1',
+          title: 'Check the team guide',
+          contentSummary: 'Look up the team guide and report completion.',
+          contentRefs: [],
+        },
+        snapshot: snapshot(),
+        invokeAction: async (): Promise<AppliedAction> => {
+          throw new Error('the probe should only use docs.lookup');
+        },
+        onToolCall: () => {
+          toolCalls += 1;
+        },
+      });
 
-    expect(result.draft).toBe('Done.');
-    expect(toolCalls).toBe(1);
-    expect(requests).toHaveLength(2);
-    expect(requests.every(({ url }) => url === 'https://api.openai.com/v1/responses')).toBe(true);
-    expect(requests[0]?.body).not.toHaveProperty('reasoning');
-    expect(requests[0]?.body).not.toHaveProperty('reasoning_effort');
-    expect(
-      (requests[0]?.body.tools as Array<{ name: string }>).map(({ name }) => name).sort(),
-    ).toEqual([
-      'docs_lookup',
-      'slack_postMessage',
-      'spreadsheet_appendRow',
-      'ticket_update',
-      'twitter_reply',
-    ]);
-    expect(requests[1]?.body.input).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: 'function_call_output', call_id: 'call_docs' }),
-      ]),
-    );
-  });
+      expect(result.draft).toBe('Done.');
+      expect(toolCalls).toBe(1);
+      expect(requests).toHaveLength(2);
+      expect(requests.every(({ url }) => url === 'https://api.openai.com/v1/responses')).toBe(true);
+      for (const { body } of requests) {
+        expect(body.max_output_tokens).toBe(32768);
+        if (effort) expect(body.reasoning).toEqual({ effort });
+        else expect(body).not.toHaveProperty('reasoning');
+      }
+      expect(requests[0]?.body).not.toHaveProperty('reasoning_effort');
+      expect(
+        (requests[0]?.body.tools as Array<{ name: string }>).map(({ name }) => name).sort(),
+      ).toEqual([
+        'docs_lookup',
+        'slack_postMessage',
+        'spreadsheet_appendRow',
+        'ticket_update',
+        'twitter_reply',
+      ]);
+      expect(requests[1]?.body.input).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'function_call_output', call_id: 'call_docs' }),
+        ]),
+      );
+    },
+  );
 });
