@@ -7,9 +7,11 @@ import { describe, expect, it, vi } from 'vitest';
  * before sign-in. Clerk and Convex are replaced so the signed-out hero renders
  * exactly as it would for a stranger, and the copy can be checked as text.
  */
+const authState = vi.hoisted(() => ({ loaded: true }));
+
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
-    when === 'signed-out' ? children : null,
+    authState.loaded && when === 'signed-out' ? children : null,
   useUser: (): { user: undefined } => ({ user: undefined }),
 }));
 
@@ -29,6 +31,15 @@ vi.mock('../../app/CursorToggle', () => ({
 import LandingPage from '../../app/page';
 
 describe('signed-out landing page', (): void => {
+  it('renders public entry links before the authentication script loads', () => {
+    authState.loaded = false;
+    try {
+      const pending = renderToStaticMarkup(<LandingPage />);
+      expect(pending).toContain('Try the demo');
+      expect(pending).toContain('Set up Day0');
+    } finally { authState.loaded = true; }
+  });
+
   const html = renderToStaticMarkup(<LandingPage />);
 
   it('states the headline in agreement: plural employees, plural verb', (): void => {

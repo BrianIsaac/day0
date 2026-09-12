@@ -34,8 +34,8 @@ import {
  */
 const isPublicRoute = createRouteMatcher([
   '/',
-  '/demo(.*)',
-  '/setup(.*)',
+  '/demo',
+  '/setup',
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/voice/elevenlabs/webhook(.*)',
