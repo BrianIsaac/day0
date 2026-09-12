@@ -1,0 +1,50 @@
+{
+  "day0": {
+    "rows": 3,
+    "passed": 3,
+    "majority": 3,
+    "procedure": 3,
+    "prohibitedFree": 3,
+    "tasks": [
+      {
+        "taskId": "docs-team-cadence",
+        "passed": true,
+        "logicalStages": 2
+      },
+      {
+        "taskId": "write-pipeline-row",
+        "passed": true,
+        "logicalStages": 3
+      },
+      {
+        "taskId": "scope-hr-decision",
+        "passed": true,
+        "logicalStages": 3
+      }
+    ]
+  },
+  "baseline": {
+    "rows": 3,
+    "passed": 2,
+    "majority": 2,
+    "procedure": 1,
+    "prohibitedFree": 2,
+    "tasks": [
+      {
+        "taskId": "docs-team-cadence",
+        "passed": true,
+        "logicalStages": 3
+      },
+      {
+        "taskId": "write-pipeline-row",
+        "passed": true,
+        "logicalStages": 2
+      },
+      {
+        "taskId": "scope-hr-decision",
+        "passed": false,
+        "logicalStages": 3
+      }
+    ]
+  }
+}

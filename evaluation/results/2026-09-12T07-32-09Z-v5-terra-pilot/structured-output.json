@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "evidenceGeneratedAt": "2026-09-12T07:34:34.029Z",
+  "definition": "First reply validity is Mastra schema validation after its JSON extraction. Repair attempts count additional schema-correction requests; existing semantic action-contract repairs are separate calls. No deterministic coercion is enabled.",
+  "totals": {
+    "calls": 10,
+    "invalidFirstReplies": 0,
+    "validationFailures": 0,
+    "repairAttempts": 0,
+    "coercions": 0,
+    "failedCalls": 0
+  },
+  "rows": [
+    {
+      "runId": "day0-r1",
+      "arm": "day0",
+      "taskId": "docs-team-cadence",
+      "calls": 2,
+      "invalidFirstReplies": 0,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "failedCalls": 0,
+      "logicalStages": 2,
+      "coverage": "complete",
+      "callIds": [
+        "4764c703-f345-45c6-8e29-390d991d599c",
+        "fcac7a49-2f02-48ca-8597-b051e5b4ebe0"
+      ]
+    },
+    {
+      "runId": "day0-r1",
+      "arm": "day0",
+      "taskId": "write-pipeline-row",
+      "calls": 3,
+      "invalidFirstReplies": 0,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "failedCalls": 0,
+      "logicalStages": 3,
+      "coverage": "complete",
+      "callIds": [
+        "a5d95b75-40cc-488e-a542-7a35e4f484ce",
+        "7884cb24-db08-4008-be10-85950373059c",
+        "308d8b57-f15c-48ad-99ec-c288b7934cd2"
+      ]
+    },
+    {
+      "runId": "day0-r1",
+      "arm": "day0",
+      "taskId": "scope-hr-decision",
+      "calls": 3,
+      "invalidFirstReplies": 0,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "failedCalls": 0,
+      "logicalStages": 3,
+      "coverage": "complete",
+      "callIds": [
+        "e20d7bbc-d253-40be-85ea-f90571dabda1",
+        "708dc5e2-4104-4f7c-ab79-8b8ab60fa218",
+        "65f57883-b915-4bb8-8a2c-5ec5da72b5b0"
+      ]
+    },
+    {
+      "runId": "baseline-r1",
+      "arm": "baseline",
+      "taskId": "docs-team-cadence",
+      "calls": 0,
+      "invalidFirstReplies": 0,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "failedCalls": 0,
+      "logicalStages": 3,
+      "coverage": "not-used-by-tool-loop",
+      "callIds": []
+    },
+    {
+      "runId": "baseline-r1",
+      "arm": "baseline",
+      "taskId": "write-pipeline-row",
+      "calls": 0,
+      "invalidFirstReplies": 0,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "failedCalls": 0,
+      "logicalStages": 2,
+      "coverage": "not-used-by-tool-loop",
+      "callIds": []
+    },
+    {
+      "runId": "baseline-r1",
+      "arm": "baseline",
+      "taskId": "scope-hr-decision",
+      "calls": 0,
+      "invalidFirstReplies": 0,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "failedCalls": 0,
+      "logicalStages": 3,
+      "coverage": "not-used-by-tool-loop",
+      "callIds": []
+    }
+  ],
+  "outsideTaskWindows": [
+    "004e9bae-4f82-4b83-849a-2d1a936ebf63",
+    "d8819e0e-cc7b-4d54-b0a5-53494fde6f50"
+  ],
+  "calls": [
+    {
+      "version": 1,
+      "id": "004e9bae-4f82-4b83-849a-2d1a936ebf63",
+      "agent": "day0-question-labeller",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:32:11.987Z",
+      "finishedAt": "2026-09-12T07:32:15.398Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "d8819e0e-cc7b-4d54-b0a5-53494fde6f50",
+      "agent": "day0-charter",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:32:15.399Z",
+      "finishedAt": "2026-09-12T07:32:31.690Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "4764c703-f345-45c6-8e29-390d991d599c",
+      "agent": "day0-plan",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:32:32.726Z",
+      "finishedAt": "2026-09-12T07:32:35.557Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "fcac7a49-2f02-48ca-8597-b051e5b4ebe0",
+      "agent": "day0-skill-see-internal-docs-docs-eval-doc-01-initial",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:32:36.513Z",
+      "finishedAt": "2026-09-12T07:32:39.158Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "a5d95b75-40cc-488e-a542-7a35e4f484ce",
+      "agent": "day0-skill-author",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:32:41.684Z",
+      "finishedAt": "2026-09-12T07:33:14.503Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "7884cb24-db08-4008-be10-85950373059c",
+      "agent": "day0-plan",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:33:14.774Z",
+      "finishedAt": "2026-09-12T07:33:18.329Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "308d8b57-f15c-48ad-99ec-c288b7934cd2",
+      "agent": "day0-skill-update-spreadsheet-eval-write-01-spreadsheet-eval-write-01-initial",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:33:19.256Z",
+      "finishedAt": "2026-09-12T07:33:24.168Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "e20d7bbc-d253-40be-85ea-f90571dabda1",
+      "agent": "day0-skill-author",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:33:26.542Z",
+      "finishedAt": "2026-09-12T07:34:02.477Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "708dc5e2-4104-4f7c-ab79-8b8ab60fa218",
+      "agent": "day0-plan",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:34:02.756Z",
+      "finishedAt": "2026-09-12T07:34:05.899Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    },
+    {
+      "version": 1,
+      "id": "65f57883-b915-4bb8-8a2c-5ec5da72b5b0",
+      "agent": "day0-skill-boss-action-eval-scope-01-boss-eval-scope-01-initial",
+      "mode": "native",
+      "startedAt": "2026-09-12T07:34:06.845Z",
+      "finishedAt": "2026-09-12T07:34:13.204Z",
+      "firstReplyValid": true,
+      "validationFailures": 0,
+      "repairAttempts": 0,
+      "coercions": 0,
+      "outcome": "valid"
+    }
+  ]
+}

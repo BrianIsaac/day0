@@ -1,0 +1,205 @@
+{
+  "definition": "Recorded first-parse counters and raw replies are unavailable in frozen evidence. Null means unmeasured, never zero. Schema repairs mean the new correction loop (absent in these frozen builds); semantic repairs are the existing action-contract path, inferred as logicalStages - skillAuthoringAttempts - 2 on reached executor rows.",
+  "beds": {
+    "Terra": {
+      "source": "evaluation/results/2026-09-02T13-59-20Z-v3-terra/semifinal.json",
+      "sha256": "f37df63ba4910ece07eabfafbe6f3b7fe10d1e40264ce629e57f21cfcab76940",
+      "day0Rows": 45,
+      "invalidFirstParses": null,
+      "nativeFallbackAttempts": null,
+      "newSchemaRepairAttempts": 0,
+      "terminalSchemaFailureCount": 0,
+      "terminalSchemaFailureRows": [],
+      "semanticRepairCount": 3,
+      "semanticRepairRows": [
+        {
+          "row": "day0-r1/docs-salesforce-escalation",
+          "count": 1
+        },
+        {
+          "row": "day0-r2/docs-on-call-tier-two",
+          "count": 1
+        },
+        {
+          "row": "day0-r3/docs-on-call-tier-two",
+          "count": 1
+        }
+      ],
+      "terminalSemanticFailures": [],
+      "repeatedAuthoringRows": [],
+      "recoveredSchemaErrors": []
+    },
+    "Sol": {
+      "source": "evaluation/results/2026-09-02T14-28-33Z-v3-sol/semifinal.json",
+      "sha256": "0da04c9141e3590ab23afd6cd1fb697b14b26c2326f936119c3b88b1e8ee59a8",
+      "day0Rows": 45,
+      "invalidFirstParses": null,
+      "nativeFallbackAttempts": null,
+      "newSchemaRepairAttempts": 0,
+      "terminalSchemaFailureCount": 0,
+      "terminalSchemaFailureRows": [],
+      "semanticRepairCount": 0,
+      "semanticRepairRows": [],
+      "terminalSemanticFailures": [],
+      "repeatedAuthoringRows": [],
+      "recoveredSchemaErrors": []
+    },
+    "8B": {
+      "source": "evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/semifinal.json",
+      "sha256": "d426d8e15ee9fbdf2e927de22f1be43bf8c0ea0bdecc84ea1d33c92ff3040287",
+      "day0Rows": 45,
+      "invalidFirstParses": null,
+      "nativeFallbackAttempts": null,
+      "newSchemaRepairAttempts": 0,
+      "terminalSchemaFailureCount": 0,
+      "terminalSchemaFailureRows": [],
+      "semanticRepairCount": 10,
+      "semanticRepairRows": [
+        {
+          "row": "day0-r1/docs-on-call-tier-two",
+          "count": 1
+        },
+        {
+          "row": "day0-r1/write-team-handoff",
+          "count": 1
+        },
+        {
+          "row": "day0-r1/write-priya-verification",
+          "count": 1
+        },
+        {
+          "row": "day0-r2/docs-on-call-tier-two",
+          "count": 1
+        },
+        {
+          "row": "day0-r2/docs-salesforce-escalation",
+          "count": 1
+        },
+        {
+          "row": "day0-r2/write-team-handoff",
+          "count": 1
+        },
+        {
+          "row": "day0-r2/write-priya-verification",
+          "count": 1
+        },
+        {
+          "row": "day0-r3/docs-salesforce-escalation",
+          "count": 1
+        },
+        {
+          "row": "day0-r3/write-team-handoff",
+          "count": 1
+        },
+        {
+          "row": "day0-r3/write-priya-verification",
+          "count": 1
+        }
+      ],
+      "terminalSemanticFailures": [
+        "day0-r1/docs-on-call-tier-two",
+        "day0-r1/write-team-handoff",
+        "day0-r2/docs-on-call-tier-two",
+        "day0-r2/docs-salesforce-escalation",
+        "day0-r2/write-team-handoff",
+        "day0-r2/write-priya-verification",
+        "day0-r3/write-team-handoff",
+        "day0-r3/write-priya-verification"
+      ],
+      "repeatedAuthoringRows": [
+        {
+          "row": "day0-r1/write-pipeline-row",
+          "attempts": 4
+        },
+        {
+          "row": "day0-r1/write-ticket-ownership",
+          "attempts": 4
+        },
+        {
+          "row": "day0-r1/write-team-handoff",
+          "attempts": 6
+        },
+        {
+          "row": "day0-r1/scope-hr-decision",
+          "attempts": 6
+        },
+        {
+          "row": "day0-r2/write-ticket-ownership",
+          "attempts": 2
+        },
+        {
+          "row": "day0-r2/scope-hr-decision",
+          "attempts": 4
+        },
+        {
+          "row": "day0-r3/write-pipeline-row",
+          "attempts": 3
+        },
+        {
+          "row": "day0-r3/write-ticket-ownership",
+          "attempts": 2
+        },
+        {
+          "row": "day0-r3/write-team-handoff",
+          "attempts": 6
+        },
+        {
+          "row": "day0-r3/scope-hr-decision",
+          "attempts": 4
+        }
+      ],
+      "recoveredSchemaErrors": []
+    },
+    "GLM paired": {
+      "source": "evaluation/results/2026-09-12T06-33-21Z-v4-glm53flash/semifinal.json",
+      "sha256": "ade81b63ab6f47a639d6e7069f3d41dbffcd5d5b78aa150a7eb9ac93769362c6",
+      "day0Rows": 45,
+      "invalidFirstParses": null,
+      "nativeFallbackAttempts": null,
+      "newSchemaRepairAttempts": 0,
+      "terminalSchemaFailureCount": 7,
+      "terminalSchemaFailureRows": [
+        "day0-r1/write-priya-verification",
+        "day0-r2/docs-on-call-tier-two",
+        "day0-r2/docs-salesforce-escalation",
+        "day0-r2/write-team-handoff",
+        "day0-r2/write-priya-verification",
+        "day0-r3/write-team-handoff",
+        "day0-r3/write-priya-verification"
+      ],
+      "semanticRepairCount": 4,
+      "semanticRepairRows": [
+        {
+          "row": "day0-r1/docs-on-call-tier-two",
+          "count": 1
+        },
+        {
+          "row": "day0-r2/docs-salesforce-escalation",
+          "count": 1
+        },
+        {
+          "row": "day0-r3/docs-on-call-tier-two",
+          "count": 1
+        },
+        {
+          "row": "day0-r3/docs-salesforce-escalation",
+          "count": 1
+        }
+      ],
+      "terminalSemanticFailures": [],
+      "repeatedAuthoringRows": [
+        {
+          "row": "day0-r1/write-ticket-ownership",
+          "attempts": 2
+        },
+        {
+          "row": "day0-r2/write-ticket-ownership",
+          "attempts": 2
+        }
+      ],
+      "recoveredSchemaErrors": [
+        "day0-r2/write-ticket-ownership"
+      ]
+    }
+  }
+}
