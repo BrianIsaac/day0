@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:48:14.609Z",
+  "generatedAt": "2026-09-12T06:48:19.184Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -7558,13 +7558,87 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms740wh6720gg0w5q0tdb6704d8e999j",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:48:14.609Z",
+          "finishedAt": "2026-09-12T06:48:19.114Z",
+          "deployToFirstCorrectActionMs": 22976,
+          "humanWaitMs": 0,
+          "decisions": [],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": 3
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 1,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "ticket.update",
+                "argumentKeys": [
+                  "comment",
+                  "slug",
+                  "status"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "d1b3d11dd0429014aa8239750a69690ddba88cba84f6c610fb036f0c82a7c184"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-04 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": false,
+              "approvedByManager": false,
+              "landedTools": [
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "ticket.update"
+              ],
+              "reportedEffects": [],
+              "procedureEffects": []
+            }
+          }
         }
       ],
       "agentId": "j576v7wdhsyqa8gr5bcbczgf8n8e9w7x",
       "deployedAt": "2026-09-12T06:47:54.382Z",
       "activeTask": {
-        "taskId": "docs-salesforce-escalation",
-        "startedAt": "2026-09-12T06:48:14.609Z",
+        "taskId": "docs-q4-source-of-truth",
+        "startedAt": "2026-09-12T06:48:19.184Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 0,
