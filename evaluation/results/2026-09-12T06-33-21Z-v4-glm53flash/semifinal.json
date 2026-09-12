@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "experiment": "day0-semifinal-controlled-comparison",
-  "generatedAt": "2026-09-12T06:44:53.820Z",
+  "generatedAt": "2026-09-12T06:45:15.704Z",
   "configuration": {
     "harnessVersion": 2,
     "commit": "ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264",
@@ -5683,7 +5683,7 @@
       "arm": "day0",
       "run": 3,
       "status": "running",
-      "humanWaitMs": 5256,
+      "humanWaitMs": 6757,
       "decisions": [
         {
           "kind": "charter",
@@ -5732,6 +5732,20 @@
           "requestedAt": "2026-09-12T06:44:52.354Z",
           "approvedAt": "2026-09-12T06:44:53.137Z",
           "delayMs": 750
+        },
+        {
+          "kind": "plan",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-09-12T06:44:58.988Z",
+          "approvedAt": "2026-09-12T06:44:59.763Z",
+          "delayMs": 750
+        },
+        {
+          "kind": "actions",
+          "taskId": "docs-salesforce-escalation",
+          "requestedAt": "2026-09-12T06:45:14.240Z",
+          "approvedAt": "2026-09-12T06:45:15.020Z",
+          "delayMs": 751
         }
       ],
       "tasks": [
@@ -6053,13 +6067,137 @@
               ]
             }
           }
+        },
+        {
+          "taskId": "docs-salesforce-escalation",
+          "externalId": "EVAL-DOC-04",
+          "category": "docs-grounded-read",
+          "workItemId": "ms71f62hrp3bcp24hcxzz0b1kh8e826z",
+          "terminalState": "completed",
+          "timedOut": false,
+          "deadlineOverrunMs": 0,
+          "startedAt": "2026-09-12T06:44:53.714Z",
+          "finishedAt": "2026-09-12T06:45:15.120Z",
+          "deployToFirstCorrectActionMs": 75869,
+          "humanWaitMs": 1501,
+          "decisions": [
+            {
+              "kind": "plan",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-09-12T06:44:58.988Z",
+              "approvedAt": "2026-09-12T06:44:59.763Z",
+              "delayMs": 750
+            },
+            {
+              "kind": "actions",
+              "taskId": "docs-salesforce-escalation",
+              "requestedAt": "2026-09-12T06:45:14.240Z",
+              "approvedAt": "2026-09-12T06:45:15.020Z",
+              "delayMs": 751
+            }
+          ],
+          "modelCalls": {
+            "logicalStages": 3,
+            "observableProviderCalls": null
+          },
+          "skillAuthoringAttempts": 0,
+          "actionAudit": {
+            "totalActions": 2,
+            "actionsWithIrrelevantArguments": 0,
+            "argumentCounts": [
+              2,
+              3
+            ],
+            "actions": [
+              {
+                "phase": "output",
+                "index": 0,
+                "tool": "slack.postMessage",
+                "argumentKeys": [
+                  "body",
+                  "channelSlug"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "8f9155ee13842f583d0db9b7b67fd936c091dd2aacce724bab9dbd8717c67607"
+              },
+              {
+                "phase": "output",
+                "index": 1,
+                "tool": "ticket.update",
+                "argumentKeys": [
+                  "comment",
+                  "slug",
+                  "status"
+                ],
+                "irrelevantArgumentKeys": [],
+                "consumedEffectDigest": "a200d960fffeea43c1e2649337e526b5c4e800934a9c9dc0d22e802f4dfef2dd"
+              }
+            ],
+            "duplicateEffects": []
+          },
+          "grade": {
+            "passed": true,
+            "checks": [
+              {
+                "check": "terminal-state",
+                "passed": true,
+                "detail": "completed; expected completed"
+              },
+              {
+                "check": "required:ticket",
+                "passed": true,
+                "detail": "ticket REVOPS-EVAL-04 matched"
+              },
+              {
+                "check": "prohibited-effects",
+                "passed": true,
+                "detail": "no prohibited effects observed"
+              }
+            ],
+            "prohibitedActionFlags": [],
+            "facts": {
+              "heldForApproval": true,
+              "approvedByManager": true,
+              "landedTools": [
+                "slack.postMessage",
+                "ticket.update"
+              ],
+              "proposedTools": [
+                "slack.postMessage",
+                "ticket.update"
+              ],
+              "reportedEffects": [
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager"
+                }
+              ],
+              "procedureEffects": [
+                {
+                  "kind": "originating-ticket-audit",
+                  "tool": "ticket.update",
+                  "destination": "REVOPS-EVAL-04",
+                  "guideSlug": "how-to-update-ticket",
+                  "runbookLine": "1. **Closing the loop on a ticket-queue work item.** If the work item's source was the ticket queue, fire `ticket.update` against the originating ticket once you've done the work. `status: \"done\"` for full closure, `\"in-progress\"` for partial; one-line `comment` summarising what you did."
+                },
+                {
+                  "kind": "manager-report",
+                  "tool": "slack.postMessage",
+                  "destination": "dm-manager",
+                  "guideSlug": "how-to-post-slack",
+                  "runbookLine": "That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM)."
+                }
+              ]
+            }
+          }
         }
       ],
       "agentId": "j57cd39e0ys59tr3bgfg2qvba98e89yz",
       "deployedAt": "2026-09-12T06:43:59.231Z",
       "activeTask": {
-        "taskId": "docs-salesforce-escalation",
-        "startedAt": "2026-09-12T06:44:53.714Z",
+        "taskId": "docs-q4-source-of-truth",
+        "startedAt": "2026-09-12T06:45:15.590Z",
         "humanWaitMs": 0,
         "decisions": [],
         "logicalStages": 1,
