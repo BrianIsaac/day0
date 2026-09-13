@@ -15,6 +15,7 @@ import {
 } from '@/agent/avatar-pets';
 import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
 import { CursorToggle } from './CursorToggle';
+import { PageMotion } from './PageMotion';
 
 /** Whoever the dashboard is acting for — a Clerk user, or the local dev boss. */
 interface Boss {
@@ -50,23 +51,32 @@ function ClerkLanding() {
 
 function SignedOutHero() {
   return (
-    <div className="flex-1 flex flex-col">
+    <PageMotion className="day0-public-motion flex-1 flex flex-col">
       <section className="px-6 pt-16 lg:pt-24 pb-16 max-w-6xl mx-auto w-full">
         <div className="grid lg:grid-cols-[1.15fr_1fr] gap-12 lg:gap-16 items-center">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-accent)] mb-5">
+            <p
+              data-enter="0"
+              className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-accent)] mb-5"
+            >
               Day0 · autonomous teammate
             </p>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight leading-[1.05] mb-6">
+            <h1
+              data-enter="1"
+              className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight leading-[1.05] mb-6"
+            >
               Enterprise digital employees{' '}
               <span className="text-[var(--color-muted)]">that just work.</span>
             </h1>
-            <p className="text-lg text-[var(--color-muted)] mb-10 leading-relaxed max-w-xl">
+            <p
+              data-enter="2"
+              className="text-lg text-[var(--color-muted)] mb-10 leading-relaxed max-w-xl"
+            >
               One name in. Everything else is learned state. The agent runs its own Day-1 1:1 with
               its boss, drafts a charter for approval, then claims work under your eye — proposing
               new skills when it hits a gap, and authoring them in a sandbox.
             </p>
-            <div className="flex flex-wrap items-center gap-3">
+            <div data-enter="3" className="flex flex-wrap items-center gap-3">
               <Link
                 href="/demo"
                 aria-describedby="demo-cta-help"
@@ -81,10 +91,10 @@ function SignedOutHero() {
                 Set up Day0
               </Link>
             </div>
-            <p id="demo-cta-help" className="mt-3 text-sm text-[var(--color-muted)]">
+            <p data-enter="3" id="demo-cta-help" className="mt-3 text-sm text-[var(--color-muted)]">
               Explore the mock office and its recorded approval flow.
             </p>
-            <p className="mt-5 text-xs text-[var(--color-muted)]">
+            <p data-enter="3" className="mt-5 text-xs text-[var(--color-muted)]">
               <a
                 href="https://github.com/BrianIsaac/day0"
                 target="_blank"
@@ -95,7 +105,7 @@ function SignedOutHero() {
               </a>
             </p>
           </div>
-          <div className="relative order-first lg:order-last">
+          <div data-enter="4" className="relative order-first lg:order-last">
             <SurfaceOrbitSvg />
           </div>
         </div>
@@ -136,13 +146,17 @@ function SignedOutHero() {
           Run Day0 with a compatible model provider or your own model server.
         </p>
       </footer>
-    </div>
+    </PageMotion>
   );
 }
 
 function LoopStep({ n, title, body }: { n: string; title: string; body: string }) {
   return (
-    <li className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5 hover:border-[var(--color-accent)]/40 transition">
+    <li
+      data-reveal=""
+      style={{ '--reveal-delay': `${(Number(n) - 1) * 80}ms` } as CSSProperties}
+      className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5 hover:border-[var(--color-accent)]/40 transition"
+    >
       <div className="text-[10px] tracking-[0.2em] text-[var(--color-accent)] mb-3">{n}</div>
       <div className="text-sm font-semibold mb-2">{title}</div>
       <p className="text-xs text-[var(--color-muted)] leading-relaxed">{body}</p>
