@@ -207,7 +207,17 @@ now_ms() {
 }
 
 TMPDIR_PROBE="$(mktemp -d "${TMPDIR:-/tmp}/day0-probe.XXXXXX")"
-trap 'rm -rf "$TMPDIR_PROBE"' EXIT
+cleanup() {
+  # A cancelled watchdog can inherit this trap before BASH_SUBSHELL is updated.
+  if [ -n "${BASHPID:-}" ]; then
+    if [ "$BASHPID" = "$$" ]; then rm -rf "$TMPDIR_PROBE"; fi
+  else
+    # Bash 3.2 has no BASHPID. Avoid a command substitution: it adds another parent.
+    sh -c 'if [ "$PPID" = "$1" ]; then rm -rf "$2"; fi' sh "$$" "$TMPDIR_PROBE"
+    return
+  fi
+}
+trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
 # Plan

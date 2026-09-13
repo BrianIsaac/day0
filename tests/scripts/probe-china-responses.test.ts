@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +13,17 @@ function exercise(scenario: string) {
   executable('openssl', `#!/bin/sh
 if [ "$1" = s_client ] && [ "$SCENARIO" = tls ]; then exec sleep 3; fi
 exit 0
+`);
+  const shellEnvironment = join(directory, 'bash-env');
+  writeFileSync(shellEnvironment, `
+if [ "$SCENARIO" = cleanup-legacy ]; then unset BASHPID; fi
+kill() {
+  if [ "$1" = "\${deadline_pid:-}" ]; then
+    # Cancellation can run the inherited trap before Bash updates BASH_SUBSHELL.
+    ( BASH_SUBSHELL=0; eval "$(trap -p EXIT)"; exit 0 )
+  fi
+  builtin kill "$@"
+}
 `);
   executable('curl', `#!/usr/bin/env python3
 import json, os, sys
@@ -44,11 +55,22 @@ print(code,end='')
   try {
     const result = spawnSync('bash', [script, '--model', 'test-model', '--timeout', '1', '--no-reference', '--no-catalogue'], {
       cwd: directory,
-      env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, FEATHERLESS_API_KEY: scenario === 'tls' ? '' : 'synthetic', SCENARIO: scenario },
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        TMPDIR: directory,
+        FEATHERLESS_API_KEY: scenario === 'tls' ? '' : 'synthetic',
+        SCENARIO: scenario,
+        ...(scenario.startsWith('cleanup') ? { BASH_ENV: shellEnvironment } : {}),
+      },
       encoding: 'utf8',
       timeout: 10_000,
     });
-    return { ...result, elapsed: Date.now() - start };
+    return {
+      ...result,
+      elapsed: Date.now() - start,
+      remainingProbeDirectories: readdirSync(directory).filter((name) => name.startsWith('day0-probe.')),
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -73,7 +95,14 @@ describe('arrival probe response paths', () => {
   });
   it('reports the token-field mismatch after a successful fallback', () => {
     const result = exercise('fallback');
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('server rejected max_completion_tokens; retried with max_tokens');
+  });
+  it.each(['cleanup', 'cleanup-legacy'])('only lets the owning process clean up probe files (%s)', (scenario) => {
+    const result = exercise(scenario);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain('Summary');
+    expect(result.stdout).toContain('tier 1:');
+    expect(result.remainingProbeDirectories).toEqual([]);
   });
 });
