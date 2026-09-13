@@ -102,7 +102,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export default function SetupPage() {
   return (
-    <PageMotion className="day0-public-motion">
+    <PageMotion className="day0-public-motion day0-setup-motion" revealMargin="0px 0px 120px 0px">
       <main className="min-h-[calc(100vh-3.25rem)] px-6 py-12 max-w-3xl lg:max-w-6xl mx-auto w-full lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-x-12">
         <header
           id="setup"
@@ -138,13 +138,13 @@ export default function SetupPage() {
           aria-label="Sections of this guide"
           className="day0-setup-nav mb-12 lg:sticky lg:top-24 lg:self-start lg:col-start-1 lg:row-start-1 lg:row-span-3 lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto"
         >
-          <ol className="flex flex-wrap gap-2 lg:flex-col">
+          <ol className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap lg:flex-col">
             {SECTIONS.map((section, index) => (
               <li key={section.id}>
                 <a
                   href={`#${section.id}`}
                   data-section-link=""
-                  className="inline-flex lg:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)]"
+                  className="flex h-full min-h-11 lg:min-h-0 items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)]"
                 >
                   <span className="font-mono text-[10px] text-[var(--color-muted)]">
                     {String(index + 1).padStart(2, '0')}

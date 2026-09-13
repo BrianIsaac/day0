@@ -560,7 +560,44 @@ body {
 .day0-setup-nav a[aria-current='location'] {
   color: var(--color-accent);
   border-color: var(--color-accent);
+}
+
+.day0-setup-nav a {
+  position: relative;
+  isolation: isolate;
+}
+
+.day0-setup-nav a::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
   background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  opacity: 0;
+}
+
+.day0-setup-nav a[aria-current='location']::before {
+  opacity: 1;
+}
+
+@keyframes day0-setup-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .day0-setup-motion [data-reveal='visible'] {
+    animation-name: day0-setup-reveal;
+    animation-duration: 400ms;
+  }
+  .day0-setup-nav a::before {
+    transition: opacity 180ms ease-out;
+  }
 }
 
 @media print {
