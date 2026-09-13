@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { SURFACE_MODE } from '@/lib/surface-mode';
 import './globals.css';
 import { HeaderAccount } from './HeaderAccount';
 import { Providers } from './providers';
@@ -31,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <Providers>
-          <header className="px-6 py-3 flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-sm sticky top-0 z-10">
+          <header className="min-h-14 px-6 py-3 flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-sm sticky top-0 z-10">
             <Link href="/" className="flex items-center gap-2">
               <span className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)]">
                 Day0
@@ -40,13 +41,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="flex items-center gap-4">
               {/* Protected, so a signed-out visitor's prefetch of it is a
                   bounce to Clerk's hosted sign-in from every public page. */}
-              <Link
-                href="/documentation"
-                prefetch={false}
-                className="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
-              >
-                Documentation
-              </Link>
+              {SURFACE_MODE === 'real' ? (
+                <Link
+                  href="/documentation"
+                  prefetch={false}
+                  className="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+                >
+                  Documentation
+                </Link>
+              ) : null}
               <HeaderAccount />
             </div>
           </header>

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { PageMotion } from '../PageMotion';
 
 import {
   DATA_LOCATION,
@@ -66,7 +67,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section id={id} className="scroll-mt-20">
+    <section id={id} data-reveal="" data-scroll-section="" className="scroll-mt-20">
       <div className="flex items-baseline gap-3 mb-3">
         <span className="font-mono text-[11px] text-[var(--color-muted)]">
           {String(index).padStart(2, '0')}
@@ -101,310 +102,325 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export default function SetupPage() {
   return (
-    <main className="min-h-[calc(100vh-3.25rem)] px-6 py-12 max-w-3xl mx-auto w-full">
-      <header className="mb-10">
-        <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-accent)] mb-4">
-          Set up Day0
-        </p>
-        <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight leading-tight mb-5">
-          Run Day0 on your own machine.
-        </h1>
-        <p className="text-base text-[var(--color-muted)] leading-relaxed mb-4">
-          The same product this demo records, running locally: a self-hosted backend, a seeded mock
-          office to work in, and a sandbox that verifies the skills the agent writes. The backend
-          and sandbox run locally. A hosted model receives your chat and relevant synthetic office
-          content; the account-free route runs the model locally too.
-        </p>
-        <div
-          role="note"
-          className="rounded-xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4"
+    <PageMotion className="day0-public-motion">
+      <main className="min-h-[calc(100vh-3.25rem)] px-6 py-12 max-w-3xl lg:max-w-6xl mx-auto w-full lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-x-12">
+        <header
+          id="setup"
+          data-reveal=""
+          data-scroll-section=""
+          className="mb-10 scroll-mt-20 lg:col-start-2"
         >
-          <p className="text-sm leading-relaxed">
-            This page asks you for nothing. It has no form and no field: the one secret the setup
-            needs is typed into a hidden prompt in your own terminal and saved in a private file beside
-            your checkout. It is used to authenticate requests to your model provider.
+          <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-accent)] mb-4">
+            Set up Day0
           </p>
-        </div>
-      </header>
-
-      <nav aria-label="Sections of this guide" className="mb-12">
-        <ol className="flex flex-wrap gap-2">
-          {SECTIONS.map((section, index) => (
-            <li key={section.id}>
-              <a
-                href={`#${section.id}`}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)]"
-              >
-                <span className="font-mono text-[10px] text-[var(--color-muted)]">
-                  {String(index + 1).padStart(2, '0')}
-                </span>
-                {section.title}
-              </a>
-            </li>
-          ))}
-        </ol>
-      </nav>
-
-      <div className="space-y-12">
-        <Section
-          id="before"
-          index={1}
-          title="Before you start"
-          lede="Three tools and the ports listed below. Setup checks the backend ports, reports app port 3000 as a note, and checks the model port when you choose the account-free route."
-        >
-          <Panel>
-            <ul className="space-y-3">
-              {PREREQUISITES.map((item) => (
-                <Row key={item.name} label={item.name}>
-                  {item.detail}
-                  {item.fix ? (
-                    <code className="font-mono text-xs text-[var(--color-accent)] block mt-1.5">
-                      {item.fix}
-                    </code>
-                  ) : null}
-                </Row>
-              ))}
-            </ul>
-          </Panel>
-          <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4 mb-3">
-            The ports a default installation publishes on your machine:
+          <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight leading-tight mb-5">
+            Run Day0 on your own machine.
+          </h1>
+          <p className="text-base text-[var(--color-muted)] leading-relaxed mb-4">
+            The same product this demo records, running locally: a self-hosted backend, a seeded
+            mock office to work in, and a sandbox that verifies the skills the agent writes. The
+            backend and sandbox run locally. A hosted model receives your chat and relevant
+            synthetic office content; the account-free route runs the model locally too.
           </p>
-          <Panel>
-            <ul className="space-y-2">
-              {PUBLISHED_PORTS.map((port) => (
-                <li key={port.port} className="flex gap-4">
-                  <span className="font-mono text-sm text-[var(--color-accent)] w-16 shrink-0">
-                    {port.port}
-                  </span>
-                  <span className="text-sm text-[var(--color-muted)] leading-relaxed">
-                    {port.what}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-          <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
-            Move the backend ports and choose an installation name:{' '}
-            <code className="font-mono text-[var(--color-fg)]">
-              pnpm setup:local --project day0-new --port 4210 --site-port 4211 --dashboard-port 4791
-            </code>
-            . Two installations on one machine need different ports and different Compose project
-            names, and the command refuses to attach a new installation to another one&rsquo;s data.
-            Use --model-port for the local model server. The app stays on port 3000; free that
-            port before running pnpm dev.
-          </p>
-        </Section>
-
-        <Section
-          id="model"
-          index={2}
-          title="How it reaches a model"
-          lede="The setup command asks how to reach a model, then asks for the key or confirms a local download. Both routes support the loop; they differ over who runs the model."
-        >
-          <div className="space-y-3">
-            {MODEL_ROUTES.map((route) => (
-              <Panel key={route.id}>
-                <h3 className="text-sm font-semibold tracking-tight mb-2">{route.title}</h3>
-                <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-2">
-                  {route.needs}
-                </p>
-                <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
-                  {route.gives}
-                </p>
-                <code className="font-mono text-xs text-[var(--color-accent)]">{route.flag}</code>
-              </Panel>
-            ))}
+          <div
+            role="note"
+            className="rounded-xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4"
+          >
+            <p className="text-sm leading-relaxed">
+              This page asks you for nothing. It has no form and no field: the one secret the setup
+              needs is typed into a hidden prompt in your own terminal and saved in a private file
+              beside your checkout. It is used to authenticate requests to your model provider.
+            </p>
           </div>
-          <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
-            A third answer exists for a reader who already runs a compatible endpoint of their own:{' '}
-            <code className="font-mono text-[var(--color-fg)]">
-              pnpm setup:local --route endpoint --endpoint https://your-server/v1
-            </code>
-            . It performs the same local setup and writes paired host/backend model addresses. Set
-            OPENAI_MODEL and, if required, OPENAI_API_KEY in .env.local for that endpoint, then
-            run pnpm sync:env before starting the app. A host-loopback endpoint must also be
-            reachable from the backend container via host.docker.internal.
-          </p>
-        </Section>
+        </header>
 
-        <Section
-          id="commands"
-          index={3}
-          title="The commands"
-          lede="Five, from an empty directory. The fourth is the one that does the work; run it again whenever you want, because it keeps what is already there rather than starting over."
+        <nav
+          aria-label="Sections of this guide"
+          className="day0-setup-nav mb-12 lg:sticky lg:top-24 lg:self-start lg:col-start-1 lg:row-start-1 lg:row-span-3 lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto"
         >
-          <pre className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-4 overflow-x-auto">
-            <code className="font-mono text-sm leading-relaxed">
-              {QUICKSTART_COMMANDS.map((command) => (
-                <span key={command} className="block">
-                  {command}
-                </span>
-              ))}
-            </code>
-          </pre>
-          <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
-            The fourth command asks how it should reach a model and, if the answer is a key you
-            have, for that key in a hidden prompt. Then it starts the backend, the sandbox and, on
-            the account-free route, the model server; writes the values it generates into{' '}
-            <code className="font-mono text-[var(--color-fg)]">.env.local</code> instead of asking
-            you to paste them; pushes the backend functions; and finishes by running{' '}
-            <code className="font-mono text-[var(--color-fg)]">pnpm check:setup</code> and printing
-            the unlock URL. If it stops, it says which step stopped and what to run next. It never
-            deletes a volume to recover.
-          </p>
-        </Section>
-
-        <Section
-          id="success"
-          index={4}
-          title="What first success looks like"
-          lede="Four things, in this order. The setup command prints the same four when it finishes."
-        >
-          <ol className="space-y-4 mb-6">
-            {FIRST_SUCCESS.map((step, index) => (
-              <li key={step.action} className="flex gap-4">
-                <span className="font-mono text-xs text-[var(--color-accent)] pt-0.5">
-                  {String(index + 1).padStart(2, '0')}
-                </span>
-                <span>
-                  <span className="text-sm font-medium block mb-1">{step.action}</span>
-                  <span className="text-sm text-[var(--color-muted)] leading-relaxed">
-                    {step.detail}
+          <ol className="flex flex-wrap gap-2 lg:flex-col">
+            {SECTIONS.map((section, index) => (
+              <li key={section.id}>
+                <a
+                  href={`#${section.id}`}
+                  data-section-link=""
+                  className="inline-flex lg:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)]"
+                >
+                  <span className="font-mono text-[10px] text-[var(--color-muted)]">
+                    {String(index + 1).padStart(2, '0')}
                   </span>
-                </span>
+                  {section.title}
+                </a>
               </li>
             ))}
           </ol>
-          <figure>
-            {/* eslint-disable-next-line @next/next/no-img-element -- this page is
-                prerendered and must serve its own bytes; the optimiser would put
-                a server request in front of the one picture a stuck reader needs. */}
-            <img
-              src="/setup/first-success-day-one-chat.webp"
-              width={817}
-              height={447}
-              alt="The Day-1 one-to-one in chat mode, the agent opening the conversation by asking what triggered the decision to bring it on and what the team is trying to make easier"
-              className="rounded-xl border border-[var(--color-border)] w-full h-auto"
-            />
-            <figcaption className="text-xs text-[var(--color-muted)] mt-2 leading-relaxed">
-              Step three, as it arrives: the agent opens the one-to-one itself. Captured locally on
-              a run of this repository.
-            </figcaption>
-          </figure>
-        </Section>
+        </nav>
 
-        <Section
-          id="time"
-          index={5}
-          title="How long it takes"
-          lede="Measured on one machine, from a clean clone with nothing copied into it. Each figure says what it does not include."
-        >
-          <Panel>
-            <ul className="space-y-3">
-              {MEASURED_TIMINGS.map((timing) => (
-                <li key={timing.phase} className="flex flex-col sm:flex-row sm:gap-4">
-                  <span className="font-mono text-sm sm:w-64 sm:shrink-0">{timing.phase}</span>
-                  <span className="text-sm">
-                    <span className="text-[var(--color-accent)] font-mono">{timing.measured}</span>
-                    <span className="text-[var(--color-muted)] leading-relaxed">
-                      {' '}
-                      {timing.excludes}
+        <div className="space-y-12 min-w-0 lg:col-start-2">
+          <Section
+            id="before"
+            index={1}
+            title="Before you start"
+            lede="Three tools and the ports listed below. Setup checks the backend ports, reports app port 3000 as a note, and checks the model port when you choose the account-free route."
+          >
+            <Panel>
+              <ul className="space-y-3">
+                {PREREQUISITES.map((item) => (
+                  <Row key={item.name} label={item.name}>
+                    {item.detail}
+                    {item.fix ? (
+                      <code className="font-mono text-xs text-[var(--color-accent)] block mt-1.5">
+                        {item.fix}
+                      </code>
+                    ) : null}
+                  </Row>
+                ))}
+              </ul>
+            </Panel>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4 mb-3">
+              The ports a default installation publishes on your machine:
+            </p>
+            <Panel>
+              <ul className="space-y-2">
+                {PUBLISHED_PORTS.map((port) => (
+                  <li key={port.port} className="flex gap-4">
+                    <span className="font-mono text-sm text-[var(--color-accent)] w-16 shrink-0">
+                      {port.port}
+                    </span>
+                    <span className="text-sm text-[var(--color-muted)] leading-relaxed">
+                      {port.what}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
+              Move the backend ports and choose an installation name:{' '}
+              <code className="font-mono text-[var(--color-fg)]">
+                pnpm setup:local --project day0-new --port 4210 --site-port 4211 --dashboard-port
+                4791
+              </code>
+              . Two installations on one machine need different ports and different Compose project
+              names, and the command refuses to attach a new installation to another one&rsquo;s
+              data. Use --model-port for the local model server. The app stays on port 3000; free
+              that port before running pnpm dev.
+            </p>
+          </Section>
+
+          <Section
+            id="model"
+            index={2}
+            title="How it reaches a model"
+            lede="The setup command asks how to reach a model, then asks for the key or confirms a local download. Both routes support the loop; they differ over who runs the model."
+          >
+            <div className="space-y-3">
+              {MODEL_ROUTES.map((route) => (
+                <Panel key={route.id}>
+                  <h3 className="text-sm font-semibold tracking-tight mb-2">{route.title}</h3>
+                  <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-2">
+                    {route.needs}
+                  </p>
+                  <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
+                    {route.gives}
+                  </p>
+                  <code className="font-mono text-xs text-[var(--color-accent)]">{route.flag}</code>
+                </Panel>
+              ))}
+            </div>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
+              A third answer exists for a reader who already runs a compatible endpoint of their
+              own:{' '}
+              <code className="font-mono text-[var(--color-fg)]">
+                pnpm setup:local --route endpoint --endpoint https://your-server/v1
+              </code>
+              . It performs the same local setup and writes paired host/backend model addresses. Set
+              OPENAI_MODEL and, if required, OPENAI_API_KEY in .env.local for that endpoint, then
+              run pnpm sync:env before starting the app. A host-loopback endpoint must also be
+              reachable from the backend container via host.docker.internal.
+            </p>
+          </Section>
+
+          <Section
+            id="commands"
+            index={3}
+            title="The commands"
+            lede="Five, from an empty directory. The fourth is the one that does the work; run it again whenever you want, because it keeps what is already there rather than starting over."
+          >
+            <pre className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-4 overflow-x-auto">
+              <code className="font-mono text-sm leading-relaxed">
+                {QUICKSTART_COMMANDS.map((command) => (
+                  <span key={command} className="block">
+                    {command}
+                  </span>
+                ))}
+              </code>
+            </pre>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
+              The fourth command asks how it should reach a model and, if the answer is a key you
+              have, for that key in a hidden prompt. Then it starts the backend, the sandbox and, on
+              the account-free route, the model server; writes the values it generates into{' '}
+              <code className="font-mono text-[var(--color-fg)]">.env.local</code> instead of asking
+              you to paste them; pushes the backend functions; and finishes by running{' '}
+              <code className="font-mono text-[var(--color-fg)]">pnpm check:setup</code> and
+              printing the unlock URL. If it stops, it says which step stopped and what to run next.
+              It never deletes a volume to recover.
+            </p>
+          </Section>
+
+          <Section
+            id="success"
+            index={4}
+            title="What first success looks like"
+            lede="Four things, in this order. The setup command prints the same four when it finishes."
+          >
+            <ol className="space-y-4 mb-6">
+              {FIRST_SUCCESS.map((step, index) => (
+                <li key={step.action} className="flex gap-4">
+                  <span className="font-mono text-xs text-[var(--color-accent)] pt-0.5">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <span>
+                    <span className="text-sm font-medium block mb-1">{step.action}</span>
+                    <span className="text-sm text-[var(--color-muted)] leading-relaxed">
+                      {step.detail}
                     </span>
                   </span>
                 </li>
               ))}
-            </ul>
-          </Panel>
-          <div
-            role="note"
-            className="rounded-xl border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 p-4 mt-4"
+            </ol>
+            <figure>
+              {/* eslint-disable-next-line @next/next/no-img-element -- this page is
+                prerendered and must serve its own bytes; the optimiser would put
+                a server request in front of the one picture a stuck reader needs. */}
+              <img
+                src="/setup/first-success-day-one-chat.webp"
+                width={817}
+                height={447}
+                alt="The Day-1 one-to-one in chat mode, the agent opening the conversation by asking what triggered the decision to bring it on and what the team is trying to make easier"
+                className="rounded-xl border border-[var(--color-border)] w-full h-auto"
+              />
+              <figcaption className="text-xs text-[var(--color-muted)] mt-2 leading-relaxed">
+                Step three, as it arrives: the agent opens the one-to-one itself. Captured locally
+                on a run of this repository.
+              </figcaption>
+            </figure>
+          </Section>
+
+          <Section
+            id="time"
+            index={5}
+            title="How long it takes"
+            lede="Measured on one machine, from a clean clone with nothing copied into it. Each figure says what it does not include."
           >
-            <p className="text-sm leading-relaxed">{TIMING_CAVEAT}</p>
-          </div>
-        </Section>
+            <Panel>
+              <ul className="space-y-3">
+                {MEASURED_TIMINGS.map((timing) => (
+                  <li key={timing.phase} className="flex flex-col sm:flex-row sm:gap-4">
+                    <span className="font-mono text-sm sm:w-64 sm:shrink-0">{timing.phase}</span>
+                    <span className="text-sm">
+                      <span className="text-[var(--color-accent)] font-mono">
+                        {timing.measured}
+                      </span>
+                      <span className="text-[var(--color-muted)] leading-relaxed">
+                        {' '}
+                        {timing.excludes}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+            <div
+              role="note"
+              className="rounded-xl border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 p-4 mt-4"
+            >
+              <p className="text-sm leading-relaxed">{TIMING_CAVEAT}</p>
+            </div>
+          </Section>
 
-        <Section
-          id="stops"
-          index={6}
-          title="If it stops"
-          lede="Run pnpm check:setup. It reads .env.local and reports configuration and local service status for the backend, auth, model, sandbox and voice. It does not make a model call or verify provider credentials. These are the traps to check first."
-        >
-          <div className="space-y-3">
-            {TRAPS.map((trap) => (
-              <Panel key={trap.title}>
-                <h3 className="text-sm font-semibold tracking-tight mb-2">{trap.title}</h3>
-                <p className="text-sm text-[var(--color-muted)] leading-relaxed">{trap.body}</p>
-              </Panel>
-            ))}
-          </div>
-        </Section>
+          <Section
+            id="stops"
+            index={6}
+            title="If it stops"
+            lede="Run pnpm check:setup. It reads .env.local and reports configuration and local service status for the backend, auth, model, sandbox and voice. It does not make a model call or verify provider credentials. These are the traps to check first."
+          >
+            <div className="space-y-3">
+              {TRAPS.map((trap) => (
+                <Panel key={trap.title}>
+                  <h3 className="text-sm font-semibold tracking-tight mb-2">{trap.title}</h3>
+                  <p className="text-sm text-[var(--color-muted)] leading-relaxed">{trap.body}</p>
+                </Panel>
+              ))}
+            </div>
+          </Section>
 
-        <Section id="stop-restart" index={7} title="Stopping and starting again">
-          <Panel>
-            <p className="text-sm leading-relaxed mb-3">{STOP_AND_RESTART}</p>
-            <p className="text-sm text-[var(--color-muted)] leading-relaxed">{DATA_LOCATION}</p>
-          </Panel>
-        </Section>
+          <Section id="stop-restart" index={7} title="Stopping and starting again">
+            <Panel>
+              <p className="text-sm leading-relaxed mb-3">{STOP_AND_RESTART}</p>
+              <p className="text-sm text-[var(--color-muted)] leading-relaxed">{DATA_LOCATION}</p>
+            </Panel>
+          </Section>
 
-        <Section
-          id="detail"
-          index={8}
-          title="Where the detail is"
-          lede="The README carries the hand-run version of every route, which is what to read when you want to know what a command did rather than to run it."
-        >
-          <ul className="space-y-3">
-            {DETAILED_SECTIONS.map((section) => (
-              <li
-                key={section.href}
-                className="border border-[var(--color-border)] rounded-xl p-4 bg-[var(--color-card)]"
-              >
-                <a
-                  href={section.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm font-medium text-[var(--color-accent)] underline underline-offset-4"
+          <Section
+            id="detail"
+            index={8}
+            title="Where the detail is"
+            lede="The README carries the hand-run version of every route, which is what to read when you want to know what a command did rather than to run it."
+          >
+            <ul className="space-y-3">
+              {DETAILED_SECTIONS.map((section) => (
+                <li
+                  key={section.href}
+                  className="border border-[var(--color-border)] rounded-xl p-4 bg-[var(--color-card)]"
                 >
-                  {section.title}
-                </a>
-                <p className="text-sm text-[var(--color-muted)] mt-1.5 leading-relaxed">
-                  {section.body}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      </div>
+                  <a
+                    href={section.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-[var(--color-accent)] underline underline-offset-4"
+                  >
+                    {section.title}
+                  </a>
+                  <p className="text-sm text-[var(--color-muted)] mt-1.5 leading-relaxed">
+                    {section.body}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        </div>
 
-      <footer className="mt-14 pt-6 border-t border-[var(--color-border)] space-y-2">
-        <p className="text-sm text-[var(--color-muted)]">
-          Only wanted to see it work?{' '}
-          <Link href="/demo" className="text-[var(--color-accent)] underline underline-offset-4">
-            Try the demo
-          </Link>{' '}
-          instead - it is a recording, and it needs nothing installed.
-        </p>
-        <p className="text-xs text-[var(--color-muted)]">
-          <a
-            href={REPOSITORY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-4"
-          >
-            Source
-          </a>
-          {' · '}
-          This guide describes{' '}
-          <a
-            href={REVISION ? `${REPOSITORY_URL}/tree/${REVISION}` : `${REPOSITORY_URL}/tree/main`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-mono underline underline-offset-4"
-          >
-            {REVISION ? REVISION.slice(0, 7) : 'main'}
-          </a>
-          , and is generated from the same file the repository tests its own quick starts against.
-        </p>
-      </footer>
-    </main>
+        <footer className="lg:col-start-2 mt-14 pt-6 border-t border-[var(--color-border)] space-y-2">
+          <p className="text-sm text-[var(--color-muted)]">
+            Only wanted to see it work?{' '}
+            <Link href="/demo" className="text-[var(--color-accent)] underline underline-offset-4">
+              Try the demo
+            </Link>{' '}
+            instead - it is a recording, and it needs nothing installed.
+          </p>
+          <p className="text-xs text-[var(--color-muted)]">
+            <a
+              href={REPOSITORY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-4"
+            >
+              Source
+            </a>
+            {' · '}
+            This guide describes{' '}
+            <a
+              href={REVISION ? `${REPOSITORY_URL}/tree/${REVISION}` : `${REPOSITORY_URL}/tree/main`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono underline underline-offset-4"
+            >
+              {REVISION ? REVISION.slice(0, 7) : 'main'}
+            </a>
+            , and is generated from the same file the repository tests its own quick starts against.
+          </p>
+        </footer>
+      </main>
+    </PageMotion>
   );
 }
