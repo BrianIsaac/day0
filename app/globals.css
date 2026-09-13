@@ -560,7 +560,44 @@ body {
 .day0-setup-nav a[aria-current='location'] {
   color: var(--color-accent);
   border-color: var(--color-accent);
+}
+
+.day0-setup-nav a {
+  position: relative;
+  isolation: isolate;
+}
+
+.day0-setup-nav a::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
   background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  opacity: 0;
+}
+
+.day0-setup-nav a[aria-current='location']::before {
+  opacity: 1;
+}
+
+@keyframes day0-setup-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .day0-setup-motion [data-reveal='visible'] {
+    animation-name: day0-setup-reveal;
+    animation-duration: 400ms;
+  }
+  .day0-setup-nav a::before {
+    transition: opacity 180ms ease-out;
+  }
 }
 
 @media print {
@@ -578,24 +615,140 @@ body {
   }
 }
 
-@keyframes day0-surface-pulse {
-  0%,
-  100% {
-    r: 20px;
-    fill-opacity: 0.18;
+@keyframes day0-surface-discover {
+  from {
+    opacity: 0;
   }
-  50% {
-    r: 26px;
-    fill-opacity: 0.32;
+  to {
+    opacity: 1;
   }
 }
 
+@keyframes day0-surface-connect {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes day0-surface-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  50% {
+    transform: scale(1.035);
+    opacity: 1;
+  }
+}
+
+@keyframes day0-surface-pulse {
+  0%,
+  20%,
+  48%,
+  100% {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  25%,
+  35% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+}
+
+/* The packet resets only while invisible; the docs packet waits for approval. */
+@keyframes day0-surface-packet {
+  0%,
+  3% {
+    transform: translate(var(--packet-x), var(--packet-y));
+    opacity: 0;
+  }
+  7% {
+    opacity: 0.85;
+  }
+  25% {
+    transform: translate(0, 0);
+    opacity: 0.85;
+  }
+  47% {
+    transform: translate(var(--packet-x), var(--packet-y));
+    opacity: 0.85;
+  }
+  51%,
+  100% {
+    transform: translate(var(--packet-x), var(--packet-y));
+    opacity: 0;
+  }
+}
+
+@keyframes day0-surface-packet-held {
+  0%,
+  3% {
+    transform: translate(var(--packet-x), var(--packet-y));
+    opacity: 0;
+  }
+  7% {
+    opacity: 0.85;
+  }
+  25%,
+  35% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  57% {
+    transform: translate(var(--packet-x), var(--packet-y));
+    opacity: 0.85;
+  }
+  61%,
+  100% {
+    transform: translate(var(--packet-x), var(--packet-y));
+    opacity: 0;
+  }
+}
+
+.day0-surface-packet {
+  opacity: 0;
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  .day0-surface-orbit,
+  .day0-surface-link,
+  .day0-surface-glow,
+  .day0-surface-pulse {
+    transform-origin: 50% 50%;
+  }
   .day0-surface-orbit {
-    transform-origin: 300px 300px;
     animation: day0-surface-rotate 60s linear infinite;
   }
+  .day0-surface-orbit-inner {
+    animation-duration: 42s;
+    animation-direction: reverse;
+  }
+  .day0-surface-glow {
+    animation: day0-surface-breathe 12s ease-in-out infinite;
+  }
+  .day0-surface-node {
+    animation: day0-surface-discover 0.7s ease-out both;
+    animation-delay: var(--surface-delay);
+  }
+  .day0-surface-link {
+    animation: day0-surface-connect 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: var(--surface-delay);
+  }
+  .day0-surface-packet {
+    animation: day0-surface-packet 12s ease-in-out infinite both;
+    animation-delay: var(--packet-delay);
+  }
+  .day0-surface-packet-held {
+    animation-name: day0-surface-packet-held;
+  }
   .day0-surface-pulse {
-    animation: day0-surface-pulse 3.2s linear infinite;
+    animation: day0-surface-pulse 12s ease-in-out 4s infinite;
   }
 }

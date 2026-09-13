@@ -3,7 +3,15 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 
 /** Content stays visible until the browser can observe it; SSR needs no motion state. */
-export function PageMotion({ children, className }: { children: ReactNode; className?: string }) {
+export function PageMotion({
+  children,
+  className,
+  revealMargin = '0px',
+}: {
+  children: ReactNode;
+  className?: string;
+  revealMargin?: string;
+}) {
   const root = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -12,14 +20,17 @@ export function PageMotion({ children, className }: { children: ReactNode; class
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const targets = Array.from(container.querySelectorAll<HTMLElement>('[data-reveal]'));
-    const reveal = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        const target = entry.target as HTMLElement;
-        target.dataset.reveal = 'visible';
-        reveal.unobserve(target);
-      }
-    });
+    const reveal = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const target = entry.target as HTMLElement;
+          target.dataset.reveal = 'visible';
+          reveal.unobserve(target);
+        }
+      },
+      { rootMargin: revealMargin },
+    );
 
     if (!reducedMotion.matches) {
       for (const target of targets) {
@@ -68,7 +79,7 @@ export function PageMotion({ children, className }: { children: ReactNode; class
       for (const target of targets) target.dataset.reveal = '';
       for (const link of links) link.removeAttribute('aria-current');
     };
-  }, []);
+  }, [revealMargin]);
 
   return (
     <div ref={root} className={className}>
