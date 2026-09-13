@@ -1,5 +1,17 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../app/providers', () => ({
+  Providers: ({ children }: { children: React.ReactNode }) => children,
+}));
+vi.mock('../../app/HeaderAccount', () => ({ HeaderAccount: () => null }));
+vi.mock('../../app/WhipCursor', () => ({ WhipCursor: () => null }));
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
 
 /**
  * The header sits on every page, including the two public ones. A prefetched
@@ -26,5 +38,37 @@ describe('the focus ring', (): void => {
     for (const selector of ['a', 'summary', 'button']) {
       expect(rule.split(',').map((s) => s.trim())).toContain(selector);
     }
+  });
+});
+
+describe('documentation navigation by deployment mode', () => {
+  it('omits the link when the mode is unset', async () => {
+    vi.stubEnv('DAY0_SURFACE_MODE', '');
+    vi.resetModules();
+    const { default: Layout } = await import('../../app/layout');
+    expect(
+      renderToStaticMarkup(
+        <Layout>
+          <main>Public page</main>
+        </Layout>,
+      ),
+    ).not.toContain('href="/documentation"');
+  });
+
+  it('shows the link in local real mode', async () => {
+    vi.stubEnv('DAY0_SURFACE_MODE', 'real');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('VERCEL', '');
+    vi.stubEnv('NEXT_PUBLIC_VERCEL_ENV', '');
+    vi.resetModules();
+    const { default: Layout } = await import('../../app/layout');
+    expect(
+      renderToStaticMarkup(
+        <Layout>
+          <main>Local page</main>
+        </Layout>,
+      ),
+    ).toContain('href="/documentation"');
   });
 });
