@@ -192,16 +192,8 @@ function SurfaceOrbitSvg() {
         strokeOpacity="0.18"
         strokeWidth="1"
         strokeDasharray="3 12"
-      >
-        <animateTransform
-          attributeName="transform"
-          type="rotate"
-          from="0 300 300"
-          to="360 300 300"
-          dur="60s"
-          repeatCount="indefinite"
-        />
-      </circle>
+        className="day0-surface-orbit"
+      />
 
       <circle
         cx="300"
@@ -246,15 +238,8 @@ function SurfaceOrbitSvg() {
         stroke="#22d3ee"
         strokeOpacity="0.55"
         strokeWidth="1"
-      >
-        <animate attributeName="r" values="20;26;20" dur="3.2s" repeatCount="indefinite" />
-        <animate
-          attributeName="fill-opacity"
-          values="0.18;0.32;0.18"
-          dur="3.2s"
-          repeatCount="indefinite"
-        />
-      </circle>
+        className="day0-surface-pulse"
+      />
       <circle cx="300" cy="300" r="6" fill="#22d3ee" />
       <text
         x="300"

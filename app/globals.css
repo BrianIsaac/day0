@@ -571,3 +571,31 @@ body {
     animation: none;
   }
 }
+
+@keyframes day0-surface-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes day0-surface-pulse {
+  0%,
+  100% {
+    r: 20px;
+    fill-opacity: 0.18;
+  }
+  50% {
+    r: 26px;
+    fill-opacity: 0.32;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .day0-surface-orbit {
+    transform-origin: 300px 300px;
+    animation: day0-surface-rotate 60s linear infinite;
+  }
+  .day0-surface-pulse {
+    animation: day0-surface-pulse 3.2s linear infinite;
+  }
+}
