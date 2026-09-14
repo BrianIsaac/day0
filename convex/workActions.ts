@@ -9,7 +9,13 @@ import {
   type EvaluateLookups,
 } from '../src/work/evaluate';
 import { draftExecutionPlan, type DraftPlanArgs } from '../src/work/plan';
-import { runDependentSkill, runSkill } from '../src/work/execute-skill';
+import {
+  repairableReadFailures,
+  repairFailedReads,
+  repairToolArguments,
+  runDependentSkill,
+  runSkill,
+} from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import {
   DEPENDENT_ACTION_CAP,
@@ -950,33 +956,70 @@ export const applyApprovedActions = internalAction({
               entry && !entry.awaitingApproval ? entry : undefined,
             )
           : undefined;
-      const applied = await applySurfaceActions(
-        ctx,
-        SURFACE_MODE,
-        surfaces,
-        {
-          agentId: claim.agentId,
-          agentName: agent.name,
-          workItemId: args.workItemId,
-          runId: claim.runId,
-        },
-        output.actions ?? [],
-        {
-          deps: realAdapterDeps(
-            authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl),
-            browserMcpUrl,
-          ),
-          grants: new Set(grantRows.map((grant) => grant.scope)),
-          approvedIndexes: new Set(claim.approvedIndexes),
-          heldReasons: new Map(claim.heldReasons),
-          deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
-          priorLedger,
-          idempotencyIndexOffset: actionIndexOffset,
-          autoPhase: claim.phase === 'auto',
-          autonomousActions: claim.autonomousActions,
-          replyTarget: claim.replyTarget,
-        },
+      const run = {
+        agentId: claim.agentId,
+        agentName: agent.name,
+        workItemId: args.workItemId,
+        runId: claim.runId,
+      };
+      const deps = realAdapterDeps(
+        authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl),
+        browserMcpUrl,
       );
+      const grants = new Set(grantRows.map((grant) => grant.scope));
+      const applied = await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
+        deps,
+        grants,
+        approvedIndexes: new Set(claim.approvedIndexes),
+        heldReasons: new Map(claim.heldReasons),
+        deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
+        priorLedger,
+        idempotencyIndexOffset: actionIndexOffset,
+        autoPhase: claim.phase === 'auto',
+        autonomousActions: claim.autonomousActions,
+        replyTarget: claim.replyTarget,
+      });
+      if (
+        SURFACE_MODE === 'real' &&
+        claim.phase === 'auto' &&
+        !isDependentPendingOutput(output) &&
+        repairableReadFailures(output.actions ?? [], applied, surfaces).length > 0
+      ) {
+        const item = await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId });
+        const skills: Doc<'skills'>[] = await ctx.runQuery(internal.skills.registeredInternal, {
+          agentId: claim.agentId,
+        });
+        const skill = skills.find((row: Doc<'skills'>): boolean => row._id === item?.skillId);
+        if (item && skill) {
+          const repaired = await repairFailedReads({
+            actions: output.actions ?? [],
+            applied,
+            surfaces,
+            skill: { name: skill.name },
+            candidate: rowToCandidate(item),
+            repair: repairToolArguments,
+            apply: async (action, index): Promise<AppliedAction> => {
+              const [row] = await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, [action], {
+                deps,
+                grants,
+                approvedIndexes: new Set([0]),
+                idempotencyIndexOffset: actionIndexOffset + index,
+                autoPhase: true,
+                autonomousActions: claim.autonomousActions,
+                replyTarget: claim.replyTarget,
+              });
+              return row!;
+            },
+          });
+          return await finishRun(
+            ctx,
+            args.workItemId,
+            claim,
+            { ...output, actions: repaired.actions },
+            repaired.applied,
+          );
+        }
+      }
       return await finishRun(ctx, args.workItemId, claim, output, applied);
     } catch (err) {
       const reason = (err as Error).message;

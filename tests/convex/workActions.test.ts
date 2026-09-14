@@ -51,6 +51,9 @@ const recorded = vi.hoisted(() => ({
   dependentOutput: undefined as DependentExecutionOutput | undefined,
   dependentRuns: 0,
   additionalModelCalls: 0,
+  /** What the mocked argument repair answers; undefined means the model produced nothing usable. */
+  repairedToolArgsJson: undefined as string | undefined,
+  repairRequests: [] as Array<{ tool: string; reason: string }>,
 }));
 
 const skillOutput: ExecutionOutput = {
@@ -225,6 +228,20 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
       }
       return recorded.skillOutput ?? skillOutput;
     },
+    repairToolArguments: async (args: {
+      row: { call: { surface: string; tool: string }; reason: string };
+    }): Promise<ExecutionOutput['actions'][number] | undefined> => {
+      recorded.repairRequests.push({ tool: args.row.call.tool, reason: args.row.reason });
+      if (!recorded.repairedToolArgsJson) return undefined;
+      return {
+        tool: 'mcp.call',
+        args: {
+          surface: args.row.call.surface,
+          tool: args.row.call.tool,
+          toolArgsJson: recorded.repairedToolArgsJson,
+        },
+      };
+    },
     runDependentSkill: async (args: {
       autonomousActions?: boolean;
       plan: { steps: string[] };
@@ -317,6 +334,20 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                     content: [{ type: 'text', text: `${tool} failed: snapshot timed out` }],
                   };
                 }
+                if (tool === 'get_issue' && 'issueId' in (args as Record<string, unknown>)) {
+                  return {
+                    isError: false,
+                    content: [
+                      {
+                        type: 'text',
+                        text: JSON.stringify({
+                          error: true,
+                          message: 'Tool input validation failed: unknown argument issueId',
+                        }),
+                      },
+                    ],
+                  };
+                }
                 const text =
                   tool === 'browser_navigate'
                     ? '- Page URL: http://looker-tile:8080/'
@@ -369,6 +400,8 @@ afterEach((): void => {
   recorded.dependentOutput = undefined;
   recorded.dependentRuns = 0;
   recorded.additionalModelCalls = 0;
+  recorded.repairedToolArgsJson = undefined;
+  recorded.repairRequests.length = 0;
   restoreSurfaceMode();
 });
 
@@ -1768,6 +1801,84 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
     expect(recorded.mcp).toHaveLength(1);
     expect(recorded.http).toHaveLength(0);
+  });
+
+  it('repairs a read the provider refused for its arguments once, under standing authority', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'get_issue',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1' }),
+          },
+        },
+        skillOutput.actions[2],
+      ],
+    };
+    recorded.repairedToolArgsJson = JSON.stringify({ id: 'iss-1' });
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(recorded.repairRequests).toEqual([
+      { tool: 'get_issue', reason: 'Tool input validation failed: unknown argument issueId' },
+    ]);
+    expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([
+      ['get_issue', { issueId: 'iss-1' }],
+      ['get_issue', { id: 'iss-1' }],
+    ]);
+    expect(ledger(row)[0]).toMatchObject({
+      ok: true,
+      authority: 'standing',
+      repair: {
+        reason: 'Tool input validation failed: unknown argument issueId',
+        toolArgsJson: '{"issueId":"iss-1"}',
+      },
+    });
+    expect((row.output as { actions: Array<{ args: { toolArgsJson?: string } }> }).actions[0].args.toolArgsJson).toBe(
+      '{"id":"iss-1"}',
+    );
+    expect(ledger(row)[1]).toMatchObject({ ok: true, authority: 'standing' });
+    expect(ledger(row)[1].held).toBeUndefined();
+  });
+
+  it('keeps the refused read as a failed row when the repair produces nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'get_issue',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1' }),
+          },
+        },
+        skillOutput.actions[2],
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ ok: false });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toContain('Tool input validation failed: unknown argument issueId');
+    expect(recorded.repairRequests).toHaveLength(1);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+    expect(ledger(row)[0]).toMatchObject({ ok: false });
+    expect(ledger(row)[0].repair).toBeUndefined();
   });
 
   it('refuses retry when a provider transport fails after an approved request was sent', async (): Promise<void> => {

@@ -98,6 +98,18 @@ export interface ActionOutcome {
    */
   authority?: ActionAuthority;
   providerId?: string;
+  /**
+   * The first attempt at this row, when the provider refused its arguments
+   * and the executor re-authored them once. The row itself is the second
+   * attempt's outcome; nothing was applied twice.
+   */
+  repair?: ActionRepair;
+}
+
+/** What the provider refused before the one bounded argument repair. */
+export interface ActionRepair {
+  reason: string;
+  toolArgsJson: string;
 }
 
 /** Who or what authorised an applied surface action. */

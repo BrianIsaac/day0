@@ -15,12 +15,14 @@ import {
 } from './types';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import {
+  actionIntent,
   isAuditComment,
   isManagerDm,
   isSurfaceTool,
   parseSurfaceAction,
   targetChannel,
   targetIssueReferences,
+  type ParsedMcpCall,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
@@ -1668,9 +1670,212 @@ export function appliedLedgerPrompt(
       const target = action
         ? JSON.stringify({ tool: action.tool, args: action.args })
         : JSON.stringify({ tool: entry.tool });
-      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}`);
+      const repair = entry.repair
+        ? ` · arguments repaired once after the provider refused ${entry.repair.toolArgsJson}: ${entry.repair.reason}`
+        : '';
+      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}${repair}`);
     })
     .join('\n');
+}
+
+/**
+ * Provider wording that blames the call's arguments rather than its target,
+ * its authority or the provider's own state. Only such a refusal is worth one
+ * re-authoring of the argument object; "issue not found" is not.
+ */
+const ARGUMENT_FAILURE =
+  /validation (?:failed|error)|invalid (?:argument|input|parameter|field|key|property)s?\b|unknown (?:argument|parameter|field|key|property)|unrecogni[sz]ed (?:argument|parameter|field|key|property)|(?:required|missing) (?:argument|parameter|field|property|key)|\bis required\b|unexpected (?:argument|parameter|field|key|property)|invalid_type|expected (?:string|number|boolean|object|array)\b/i;
+
+/**
+ * Whether a failed ledger row's reason is the provider refusing the arguments.
+ *
+ * Args:
+ *   reason: The failed row's reason.
+ *
+ * Returns:
+ *   True when the wording names an argument problem.
+ */
+export function isArgumentFailure(reason: string | undefined): boolean {
+  return reason !== undefined && ARGUMENT_FAILURE.test(reason);
+}
+
+/** A phase-one read the provider refused for its arguments, with what it needs to be re-authored. */
+export interface RepairableRead {
+  index: number;
+  action: MockAction;
+  call: ParsedMcpCall;
+  surface: SurfaceRecord;
+  reason: string;
+}
+
+/**
+ * The failed rows one bounded repair may re-author: an `mcp.call` read on a
+ * connected surface whose provider refused the arguments. A write is never
+ * re-authored here; the manager approved its literal payload, and a different
+ * payload is a different action.
+ *
+ * Args:
+ *   actions: The phase's actions.
+ *   applied: The ledger, index-aligned with the actions.
+ *   surfaces: The agent's surfaces.
+ *
+ * Returns:
+ *   The repairable rows, in ledger order.
+ */
+export function repairableReadFailures(
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+  surfaces: readonly SurfaceRecord[],
+): RepairableRead[] {
+  const rows: RepairableRead[] = [];
+  applied.forEach((entry, index): void => {
+    const action = actions[index];
+    if (!action || entry.ok || entry.held || entry.repair || !isArgumentFailure(entry.reason)) {
+      return;
+    }
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || parsed.action.kind !== 'mcp.call') return;
+    if (actionIntent(parsed.action) !== 'read') return;
+    const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+    if (!surface) return;
+    rows.push({ index, action, call: parsed.action, surface, reason: entry.reason ?? '' });
+  });
+  return rows;
+}
+
+const repairedArgumentsSchema = z.object({ toolArgsJson: z.string() }).strict();
+
+export interface RepairToolArgumentsArgs {
+  skill: Pick<SelectedSkill, 'name'>;
+  candidate: WorkCandidate;
+  row: RepairableRead;
+  onAdditionalModelCall?: () => void;
+}
+
+/**
+ * Ask the model once for a corrected argument object for one refused read.
+ *
+ * The prompt carries the provider's message and the probed argument names of
+ * the tool, which are the two things the first attempt did not have in front
+ * of it. The reply replaces only `toolArgsJson`; surface and tool are fixed.
+ *
+ * Args:
+ *   args: The skill, the candidate and the refused row.
+ *
+ * Returns:
+ *   The re-authored action, or undefined when the reply was not a JSON object.
+ */
+export async function repairToolArguments(
+  args: RepairToolArgumentsArgs,
+): Promise<MockAction | undefined> {
+  const { row } = args;
+  const probed = row.surface.toolArguments?.find((entry) => entry.tool === row.call.tool);
+  const agentName = `${skillAgentName(args.skill.name, args.candidate)}-argument-repair`;
+  const agent = new Agent({
+    id: agentName,
+    name: agentName,
+    instructions: [
+      'You are an autonomous workplace agent named Day0, correcting the arguments of one tool call the provider refused.',
+      'Return only the corrected JSON object of tool arguments. Keep every value that was right; change only what the provider refused. Never invent an identifier: take it from the refused call, the candidate `Refs:` line or the candidate id.',
+      'When probed argument names are listed, use those names and no other, whatever a runbook example for a different tool shows.',
+    ].join('\n'),
+    model: MODEL_CONFIG,
+    maxRetries: MODEL_PROVIDER_MAX_RETRIES,
+  });
+  const user = [
+    `Surface: ${row.surface.slug} (${row.surface.displayName})`,
+    `Tool: ${row.call.tool}`,
+    probed
+      ? `Probed argument names: ${probed.arguments.join(', ')}`
+      : 'Probed argument names: (none recorded)',
+    `Refused arguments: ${JSON.stringify(row.call.toolArgs)}`,
+    `Provider message: ${redactTokenShapes(row.reason)}`,
+    '',
+    '--- Candidate ---',
+    `Id: ${args.candidate.externalId}`,
+    `Refs: ${args.candidate.contentRefs.length > 0 ? args.candidate.contentRefs.join(', ') : '(none)'}`,
+    '',
+    'Return the corrected argument object as `toolArgsJson` now.',
+  ].join('\n');
+  args.onAdditionalModelCall?.();
+  const raw = await agentJson<z.infer<typeof repairedArgumentsSchema>>({
+    agent,
+    user,
+    schema: repairedArgumentsSchema,
+  });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.toolArgsJson);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+  return {
+    tool: 'mcp.call',
+    args: { surface: row.call.surface, tool: row.call.tool, toolArgsJson: JSON.stringify(parsed) },
+  };
+}
+
+export interface RepairFailedReadsArgs {
+  actions: readonly MockAction[];
+  applied: readonly AppliedAction[];
+  surfaces: readonly SurfaceRecord[];
+  skill: Pick<SelectedSkill, 'name'>;
+  candidate: WorkCandidate;
+  /** Apply one re-authored action at its ledger index through the same gate as the first attempt. */
+  apply: (action: MockAction, index: number) => Promise<AppliedAction>;
+  /** The one model call per refused row; defaults to `repairToolArguments`. */
+  repair?: (args: RepairToolArgumentsArgs) => Promise<MockAction | undefined>;
+  onAdditionalModelCall?: () => void;
+}
+
+/**
+ * Give every read the provider refused for its arguments one repair.
+ *
+ * Each such row costs one model call and one re-apply, then stands as the
+ * second attempt's outcome whatever that was: a second refusal is ledgered
+ * failed with the second message, and nothing loops. A row whose repair the
+ * model could not produce, or whose repair call itself failed, keeps its first
+ * outcome. Writes are never touched.
+ *
+ * Args:
+ *   args: The phase's actions and ledger, the surfaces, and the apply hook.
+ *
+ * Returns:
+ *   The actions and ledger with the repaired rows replaced in place.
+ */
+export async function repairFailedReads(
+  args: RepairFailedReadsArgs,
+): Promise<{ actions: MockAction[]; applied: AppliedAction[]; repaired: number }> {
+  const actions = [...args.actions];
+  const applied = [...args.applied];
+  const repair = args.repair ?? repairToolArguments;
+  let repaired = 0;
+  for (const row of repairableReadFailures(args.actions, args.applied, args.surfaces)) {
+    let replacement: MockAction | undefined;
+    try {
+      replacement = await repair({
+        skill: args.skill,
+        candidate: args.candidate,
+        row,
+        onAdditionalModelCall: args.onAdditionalModelCall,
+      });
+    } catch {
+      replacement = undefined;
+    }
+    if (!replacement) continue;
+    const outcome = await args.apply(replacement, row.index);
+    actions[row.index] = replacement;
+    applied[row.index] = {
+      ...outcome,
+      repair: {
+        reason: row.reason,
+        toolArgsJson: row.action.args.toolArgsJson ?? JSON.stringify(row.call.toolArgs),
+      },
+    };
+    repaired += 1;
+  }
+  return { actions, applied, repaired };
 }
 
 /**
