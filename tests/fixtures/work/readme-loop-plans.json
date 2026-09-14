@@ -1,0 +1,28 @@
+[
+  {
+    "estimatedMinutes": 20,
+    "expectedOutputType": "message",
+    "reversibility": "Drafts and manager DMs are low risk; a public Slack confirmation can be corrected in-thread but may affect Q3 close communications, so approval is required before posting.",
+    "riskNotes": "Source lacks a concrete Slack message timestamp/permalink in the candidate payload, which is an escalation trigger. Public Slack reply and any Looker refresh are non-read writes/actions during cold start and must wait for literal manager approval.",
+    "steps": [
+      "Read the Slack mention/thread and Friday standup context to identify the exact three deals and obtain the Slack message timestamp/permalink; if unavailable, flag the missing source identifier in the manager DM.",
+      "DM the manager with the source reference, identified deals, any identifier gap, and ask for literal approval before any Looker refresh or public Slack reply.",
+      "If approved, refresh/check the Looker pipeline coverage figure via the web UI for the three deals and draft the confirmation response, preserving the Slack source identifier.",
+      "Hold the public #revops-asks reply until the manager literally approves the final wording; after approval, post it and note the approval/exception in the close-work ledger if applicable."
+    ],
+    "summary": "Handle the #revops-asks Slack mention as a bounded revops close-work request, using source `slack/event-stream from U0BTFHN6MKJ in #revops-asks`; first resolve the missing Slack message identifier, then draft a manager-approved confirmation of pipeline coverage for the three Friday standup deals."
+  },
+  {
+    "estimatedMinutes": 15,
+    "expectedOutputType": "ticket-update",
+    "reversibility": "Looker tile refresh can be rerun if needed; Linear audit comments are append-only but can be corrected with a follow-up comment preserving the audit trail.",
+    "riskNotes": "The candidate currently shows only “linear / ticket-queue” rather than a specific Linear issue ID, which is an escalation trigger. No Northstar CRM access, ownership, reconciliation, or policy decisions will be attempted.",
+    "steps": [
+      "Read the Linear ticket-queue item to capture the exact Linear issue ID, title, and any Looker tile details; if no issue ID exists, flag it as blocked in the manager DM.",
+      "Send the manager DM now with the source reference, approval request, and proposed action: refresh only the specified Looker pipeline tile via the web UI and add a formal audit comment to the originating Linear issue.",
+      "Hold all non-DM writes and the Looker refresh until the manager gives literal approval.",
+      "After approval, refresh the Looker pipeline tile via the web UI, then add the approved Linear audit/status comment preserving the source Linear identifier and approval reference."
+    ],
+    "summary": "Plan to handle Brian’s Linear ticket-queue request to refresh the Looker pipeline tile, with approval gating because autonomous actions are off and the source issue identifier is not yet explicit."
+  }
+]

@@ -1,3 +1,4 @@
+import readmePlans from '../../fixtures/work/readme-loop-plans.json';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import type { MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';
@@ -47,6 +48,7 @@ import {
   runSkill,
 } from '../../../src/work/execute-skill';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
+import { planPreconditionAudit } from '../../../src/work/plan';
 import type { ExecutionOutput, MockAction } from '../../../src/work/types';
 
 const charter: Charter = {
@@ -479,6 +481,43 @@ describe('deferral by data, not by judgement', (): void => {
         surfaces: [{ ...tile, verdict: 'absent' }, linear],
       }),
     ).toEqual([]);
+  });
+
+  it('preserves the 2 September approved plan shapes and complete browser batch', () => {
+    for (const historicalPlan of readmePlans) {
+      expect(planPreconditionAudit(historicalPlan, ticket, tileRunbook).flagged).toEqual([]);
+      expect(deferralAudit({
+        notes: '', needsDependentPhase: true,
+        actions: [getIssue, ...tileSequence], procedureTrails: [],
+      }, ticket, { ...context, plan: historicalPlan })).toEqual([]);
+    }
+  });
+
+  it('does not require browser work merely mentioned as context or explicitly excluded', async () => {
+    const referenceOnly = {
+      ...ticket,
+      title: 'Add a note quoting the Looker pipeline tile documentation',
+      contentSummary: 'Quote the documented 74% figure in a ticket comment.',
+    };
+    const referencePlan = {
+      ...plan,
+      summary: 'Comment on the ticket.',
+      steps: [
+        'Read the originating Linear issue.',
+        'Do not refresh the Looker pipeline tile.',
+        'Comment on the ticket quoting the documented figure.',
+      ],
+    };
+    const output: ExecutionOutput = {
+      draft: 'Reading the issue before commenting.', notes: '',
+      needsDependentPhase: true, actions: [getIssue], procedureTrails: [],
+    };
+    recorded.outputs.push(output, output);
+    const result = await runSkill({
+      ...runArgs, candidate: referenceOnly, plan: referencePlan, mockEnv: tileRunbook,
+    });
+    expect(result.actions).toEqual([getIssue]);
+    expect(recorded.users).toHaveLength(1);
   });
 
   it('keeps the procedure-trail check beside the deferral audit through the same one repair', async (): Promise<void> => {

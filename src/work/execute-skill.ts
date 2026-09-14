@@ -1338,7 +1338,7 @@ export interface DeferralAuditContext {
  * A dependent phase is legitimate only for payloads that consume a prior
  * result. Two things are checked in code: every DEFERRED procedure-trail row
  * must give a reason naming such a result, and every connected browser-driven
- * surface the skill, the plan or the candidate names must either have an
+ * surface an affirmative approved plan step acts on must either have an
  * action in this phase or a `notes` sentence naming the surface and the
  * result its sequence waits for. A browser sequence is the decidable case:
  * the runbook carries every literal and says the session cannot be split.
@@ -1366,7 +1366,6 @@ export function deferralAudit(
       `deferred an action with no result dependency: procedure trail ${row.trailId} is deferred for "${state.reason}", which names no prior result its payload consumes; emit it now or name the read-back, identifier or ledger outcome it waits for`,
     );
   }
-  const named = `${context.skillBody}\n${context.plan.summary}\n${context.plan.steps.join('\n')}\n${candidate.title}\n${candidate.contentSummary}`;
   const targeted = new Set(
     output.actions.flatMap((action): string[] => {
       const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
@@ -1376,7 +1375,14 @@ export function deferralAudit(
   for (const surface of context.surfaces) {
     if (surface.path !== 'browser-driven') continue;
     if (verdictFor(surface, context.now) !== 'connected') continue;
-    if (!namesSurface(named, surface) || targeted.has(surface.slug)) continue;
+    const promised = context.plan.steps.some((step) =>
+      step.split(/[.;\n]/).some((clause) => {
+        if (!namesSurface(clause, surface)) return false;
+        if (/\b(?:do not|don't|never|avoid|without|hold|withhold|skip)\b/i.test(clause)) return false;
+        return /\b(?:refresh|update|set|fill|save|navigate|open|sign in|log in|read|check|snapshot)\b/i.test(clause);
+      }),
+    );
+    if (!promised || targeted.has(surface.slug)) continue;
     if (namesSurface(output.notes, surface) && namesResultDependency(output.notes)) continue;
     issues.push(
       `deferred an action with no result dependency: the documented ${surface.displayName} (${surface.slug}) sequence has no action in this phase; its payload is fixed by the candidate and the runbook, so emit the whole sequence now, or say in notes which prior result it consumes`,
