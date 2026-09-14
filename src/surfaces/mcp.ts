@@ -118,6 +118,45 @@ export interface InterpretedToolResult {
   isError: boolean;
   text: string;
   providerId?: string;
+  /** The provider's own message when the failure was reported in the result body. */
+  errorMessage?: string;
+}
+
+/**
+ * Read a failure a server reported inside the result body rather than through
+ * the protocol's `isError` flag.
+ *
+ * Linear's MCP answers an argument validation failure as a JSON object with
+ * `error: true` and a `message`, flag unset; other servers put a top-level
+ * `validationErrors` list in the body. Either is a failure. A string-valued
+ * `error` field is data (an error category on a record, say) and is left alone.
+ *
+ * Args:
+ *   text: The first text block of the result, or the serialised body.
+ *
+ * Returns:
+ *   The provider's message, or undefined when the body reports no failure.
+ */
+export function providerErrorMessage(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+  const record = parsed as Record<string, unknown>;
+  const flagged = record.error === true;
+  const validation = record.validationErrors !== undefined && record.validationErrors !== null;
+  if (!flagged && !validation) return undefined;
+  for (const key of ['message', 'detail', 'reason']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  if (validation) return `validation failed: ${JSON.stringify(record.validationErrors)}`;
+  return 'the server reported an error';
 }
 
 /**
@@ -191,7 +230,11 @@ function firstStringDeep(value: unknown, keys: readonly string[], depth = 0): st
 export function interpretToolResult(result: unknown): InterpretedToolResult {
   const idKeys = ['id', 'identifier', 'commentId', 'issueId'];
   if (typeof result === 'string') {
-    return { isError: false, text: result, providerId: providerIdFromText(result, idKeys) };
+    return withBodyError({
+      isError: false,
+      text: result,
+      providerId: providerIdFromText(result, idKeys),
+    });
   }
   if (typeof result !== 'object' || result === null) {
     return { isError: false, text: result === undefined ? '' : String(result) };
@@ -213,10 +256,18 @@ export function interpretToolResult(result: unknown): InterpretedToolResult {
     const text = textBlock?.text ?? '';
     const providerId =
       firstStringDeep(record.structuredContent, idKeys) ?? providerIdFromText(text, idKeys);
-    return { isError: record.isError === true, text, providerId };
+    return withBodyError({ isError: record.isError === true, text, providerId });
   }
   const text = JSON.stringify(result);
-  return { isError: false, text, providerId: firstStringDeep(result, idKeys) };
+  return withBodyError({ isError: false, text, providerId: firstStringDeep(result, idKeys) });
+}
+
+/** Mark a result whose body reports a failure the flag did not. */
+function withBodyError(interpreted: InterpretedToolResult): InterpretedToolResult {
+  if (interpreted.isError) return interpreted;
+  const errorMessage = providerErrorMessage(interpreted.text);
+  if (errorMessage === undefined) return interpreted;
+  return { ...interpreted, isError: true, errorMessage };
 }
 
 function providerIdFromText(text: string, idKeys: readonly string[]): string | undefined {
@@ -502,10 +553,11 @@ export class McpAdapter implements SurfaceAdapter {
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
         const text = redactValue(result.text, bearer);
         if (result.isError) {
+          const reason = result.errorMessage ? redactValue(result.errorMessage, bearer) : text;
           return {
             tool: action.tool,
             ok: false,
-            reason: clipEffect(text || 'the server reported an error', EFFECT_LENGTH),
+            reason: clipEffect(reason || 'the server reported an error', EFFECT_LENGTH),
             idempotencyKey,
           };
         }

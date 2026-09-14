@@ -209,6 +209,55 @@ describe('MCP adapter', (): void => {
     expect(client.disconnected).toBe(1);
   });
 
+  it('treats a validation failure reported in the result body as a failed row', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        isError: false,
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: true,
+              message: 'Tool input validation failed: unknown argument issueId; expected id',
+            }),
+          },
+        ],
+      }),
+    });
+    const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
+    expect(result).toMatchObject({ ok: false, idempotencyKey: 'k' });
+    expect(result.reason).toContain('validation failed');
+    expect(result.reason).toContain('expected id');
+    expect(result.effect).toBeUndefined();
+    expect(client.disconnected).toBe(1);
+  });
+
+  it('keeps a plain text result and a JSON record without an error flag as applied rows', async (): Promise<void> => {
+    const plain = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
+    });
+    await expect(adapter(plain).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
+      ok: true,
+      effect: 'save_comment on linear · ok',
+    });
+    const record = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ id: 'c-9', issue: { identifier: 'REVOPS-7' }, error: 'none' }),
+          },
+        ],
+      }),
+    });
+    await expect(adapter(record).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
+      ok: true,
+      providerId: 'c-9',
+    });
+  });
+
   it('turns a thrown transport error into a redacted failed row', async (): Promise<void> => {
     const client = fakeClient({
       linear_save_comment: async (): Promise<unknown> => {
@@ -406,6 +455,45 @@ describe('tool result interpretation', (): void => {
     expect(
       interpretToolResult({ isError: true, content: [{ type: 'text', text: 'nope' }] }),
     ).toMatchObject({ isError: true, text: 'nope' });
+  });
+
+  it('reads a failure the server put in the body instead of the flag', (): void => {
+    const validation = JSON.stringify({
+      error: true,
+      message: 'Tool input validation failed: unknown argument issueId',
+    });
+    expect(
+      interpretToolResult({ isError: false, content: [{ type: 'text', text: validation }] }),
+    ).toEqual({
+      isError: true,
+      text: validation,
+      providerId: undefined,
+      errorMessage: 'Tool input validation failed: unknown argument issueId',
+    });
+    expect(interpretToolResult(validation)).toMatchObject({ isError: true });
+    expect(
+      interpretToolResult({ validationErrors: [{ path: 'id', message: 'required' }] }),
+    ).toMatchObject({
+      isError: true,
+      errorMessage: 'validation failed: [{"path":"id","message":"required"}]',
+    });
+    expect(interpretToolResult({ error: true })).toMatchObject({
+      isError: true,
+      errorMessage: 'the server reported an error',
+    });
+    // A string-valued error field is data on a record, not a failure; so is
+    // plain text and a record with no error field at all.
+    expect(interpretToolResult({ id: 'x1', error: 'none' })).toMatchObject({ isError: false });
+    expect(interpretToolResult('ok')).toMatchObject({ isError: false, text: 'ok' });
+    expect(
+      interpretToolResult({ content: [{ type: 'text', text: '{"issue":{"id":"i1"}}' }] }),
+    ).toMatchObject({ isError: false, providerId: 'i1' });
+    expect(interpretToolResult({ error: false, message: 'fine' })).toMatchObject({
+      isError: false,
+    });
+    expect(interpretToolResult({ validationErrors: null, id: 'i2' })).toMatchObject({
+      isError: false,
+    });
   });
 });
 
