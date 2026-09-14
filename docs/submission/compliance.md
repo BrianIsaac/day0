@@ -90,9 +90,10 @@ rotated into an approved vault.
 - Manager and IT decisions govern connection setup; credential landing and a
   successful liveness probe are separate steps.
 - Every proposed effect is materialised as a literal action before the exact-action
-  gate. With autonomous actions off, writes are held. With it on, only actions that
-  satisfy current standing grants and policy may apply automatically; boundary
-  actions are held and out-of-policy actions are refused. Public posts remain held.
+  gate. With autonomous actions off, writes including public posts are held. With
+  it on, applicable actions including public posts may apply automatically within
+  current standing grants and policy; boundary actions are held and out-of-policy
+  actions are refused.
 - Authority is re-read after credential access and immediately before transport.
   Revoked grants, disabled autonomy, a stale/dead surface or a deleted agent stop
   the provider call. A separately manager-approved literal action remains its own
@@ -197,7 +198,7 @@ workspace，三个系统经审批卡片连接，工作在操作者自有的 Line
 
 - 文档连接为只读。发现的系统名称和路径只是证据，不自动构成权限。
 - 管理者和 IT 共同控制连接设置；凭据写入与成功的存活探测是两个独立步骤。
-- 每个外部操作在 exact-action gate 之前都会具体化为 literal action。关闭自主操作时，写操作会被 hold；开启后，只有满足当前现行授权（standing grant）和 policy 的 action 才能自动执行，边界 action 会被 hold，越权 action 会被 refuse。公开发布始终保持 hold。
+- 每个外部操作在 exact-action gate 之前都会具体化为 literal action。关闭自主操作时，包括公开发布在内的写操作会被 hold；开启后，包括公开发布在内的适用 action 可在当前现行授权（standing grant）和 policy 范围内自动执行，边界 action 会被 hold，越权 action 会被 refuse。
 - 系统在读取凭据之后、发出传输请求之前重新读取授权状态。Grant 已撤销、autonomy 已关闭、surface stale/dead 或 Agent 已删除时，provider call 会被阻止。由管理者单独批准的 literal action 构成独立的授权边界；撤销 standing scope 不等同于取消该精确批准。
 - 已落地操作通过 provider state 验证，并记录脱敏后的 provider identifier 和 outcome。仅有模型叙述不能证明 action 已发生。
 - 管理者仍负责批准 held action、拒绝不合适的工作、控制凭据，并在文档没有可用 surface 时处理后续决策。
