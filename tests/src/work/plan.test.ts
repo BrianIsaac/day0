@@ -317,6 +317,41 @@ describe('charter adjectives are scope, not gates', (): void => {
     expect(planPreconditionAudit(gated, ticket, mentioning).flagged).toEqual([1]);
   });
 
+  it('reads a procedure line that forbids the check as asking for nothing', (): void => {
+    const forbidding = {
+      ...tileRunbook,
+      howToGuides: [
+        {
+          ...tileRunbook.howToGuides[0]!,
+          body: `${tileRunbook.howToGuides[0]!.body}\nNever check the assignee before refreshing the tile; the figure is the whole job.`,
+        },
+      ],
+    };
+    expect(planPreconditionAudit(gated, ticket, forbidding).flagged).toEqual([1]);
+    const withoutFirst = {
+      ...tileRunbook,
+      teamDocs: [
+        {
+          slug: 'queue-policy',
+          title: 'Queue policy',
+          body: 'Refresh the tile without first confirming the owner: ownership is settled at plan approval.',
+        },
+      ],
+    };
+    expect(planPreconditionAudit(gated, ticket, withoutFirst).flagged).toEqual([1]);
+    // A genuine ask with a negation elsewhere on the line still counts.
+    const askingFirmly = {
+      ...tileRunbook,
+      howToGuides: [
+        {
+          ...tileRunbook.howToGuides[0]!,
+          body: `${tileRunbook.howToGuides[0]!.body}\nCheck the ticket is assigned before touching the tile, and do not skip this.`,
+        },
+      ],
+    };
+    expect(planPreconditionAudit(gated, ticket, askingFirmly).flagged).toEqual([]);
+  });
+
   it('does not flag it when the candidate itself is about the property', (): void => {
     const ownershipTicket: WorkCandidate = {
       ...ticket,

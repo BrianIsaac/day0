@@ -69,7 +69,7 @@ export function planSystemPrompt(
 }
 
 const VERIFICATION_VERB =
-  /\b(?:confirm|verify|check|ensure|validate|make sure|establish|double-check)\b/i;
+  /\b(?:confirm(?:s|ed|ing)?|verif(?:y|ies|ied|ying)|check(?:s|ed|ing)?|ensur(?:e|es|ed|ing)|validat(?:e|es|ed|ing)|mak(?:e|es|ing) sure|establish(?:es|ed|ing)?|double-check(?:s|ed|ing)?)\b/i;
 
 /** A candidate property a plan may be tempted to gate on, with the words that name it. */
 const CANDIDATE_PROPERTIES: ReadonlyArray<{ property: string; words: RegExp }> = [
@@ -84,12 +84,20 @@ const CANDIDATE_PROPERTIES: ReadonlyArray<{ property: string; words: RegExp }> =
   },
 ];
 
+/** A negation that governs the verification verb it stands at most two words before. */
+const NEGATED_VERB = /\b(?:do not|don't|never|without|avoid)\s+(?:\w+\s+){0,2}$/i;
+
+/** The verification verbs of a clause that no negation governs. */
+function affirmedVerifications(clause: string): RegExpMatchArray[] {
+  return [...clause.matchAll(new RegExp(VERIFICATION_VERB.source, 'gi'))].filter(
+    (verb): boolean => !NEGATED_VERB.test(clause.slice(0, verb.index)),
+  );
+}
+
 /** A verification clause: the verb and, within the same clause, the property. */
 function verificationOf(step: string): string | undefined {
   for (const clause of step.split(/[.;\n]/)) {
-    for (const verb of clause.matchAll(new RegExp(VERIFICATION_VERB.source, 'gi'))) {
-      const prefix = clause.slice(0, verb.index);
-      if (/\b(?:do not|don't|never|without|avoid)\s+(?:\w+\s+){0,2}$/i.test(prefix)) continue;
+    for (const verb of affirmedVerifications(clause)) {
       const tail = clause.slice(verb.index);
       const found = CANDIDATE_PROPERTIES.find(({ words }) => words.test(tail));
       if (found) return found.property;
@@ -98,14 +106,18 @@ function verificationOf(step: string): string | undefined {
   return undefined;
 }
 
-/** Whether a procedure line itself asks for the property to be checked. */
+/**
+ * Whether a procedure line itself asks for the property to be checked.
+ *
+ * A line that forbids the check ("never check the assignee before
+ * refreshing") asks for nothing, whatever else it says; a line with no
+ * verification verb asks through a precondition phrase.
+ */
 function procedureAsksFor(body: string, words: RegExp): boolean {
   return body.split(/[.;\n]/).some((line: string): boolean => {
     if (!words.test(line)) return false;
-    return (
-      VERIFICATION_VERB.test(line) ||
-      /\b(?:only (?:if|when)|must be|before|first|is required|required before)\b/i.test(line)
-    );
+    if (VERIFICATION_VERB.test(line)) return affirmedVerifications(line).length > 0;
+    return /\b(?:only (?:if|when)|must be|before|first|is required|required before)\b/i.test(line);
   });
 }
 
