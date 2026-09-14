@@ -288,6 +288,43 @@ describe('charter adjectives are scope, not gates', (): void => {
     expect(planSystemPrompt(false, 'real')).toContain('that sequence is the plan');
   });
 
+  it('derives candidate properties from the charter wording', (): void => {
+    const scoped = { ...charter, proposedFunction: 'Handle unblocked, customer-facing tickets.' };
+    expect(planPreconditionAudit({ steps: ['Confirm the ticket is customer-facing.'] },
+      ticket, tileRunbook, scoped).flagged).toEqual([1]);
+  });
+
+  it('keeps charter properties scoped to candidate clauses and respects procedure requests', (): void => {
+    const scoped = { ...charter, proposedBoundaries: { ...charter.proposedBoundaries,
+      willDo: ['Handle unblocked, customer-facing requests. Read back the visible figure and audit line.'] } };
+    const step = { steps: ['Confirm the ticket is customer-facing.'] };
+    expect(planPreconditionAudit(step, ticket, tileRunbook, scoped).flagged).toEqual([1]);
+    const asking = { ...tileRunbook, howToGuides: [{ ...tileRunbook.howToGuides[0],
+      body: 'Confirm the ticket is customer-facing before refreshing the tile.' }] };
+    expect(planPreconditionAudit(step, ticket, asking, scoped).flagged).toEqual([]);
+    const forbidding = { ...asking, howToGuides: [{ ...asking.howToGuides[0],
+      body: 'Never confirm the ticket is customer-facing before refreshing.' }] };
+    expect(planPreconditionAudit(step, ticket, forbidding, scoped).flagged).toEqual([1]);
+    expect(planPreconditionAudit({ steps: ['Do not confirm the ticket is customer-facing.',
+      'Read back the visible 74% and the audit line.', 'Verify the audit line.'] },
+      ticket, undefined, scoped).flagged).toEqual([]);
+    expect(planPreconditionAudit(step, { ...ticket, title: 'Refresh a customer-facing ticket' },
+      undefined, scoped).flagged).toEqual([]);
+    expect(planPreconditionAudit(step, ticket, tileRunbook, charter).flagged).toEqual([]);
+  });
+
+  it('repairs a charter-derived gate through the real planner', async (): Promise<void> => {
+    const drafted = { summary: 'Refresh the tile.', steps: ['Confirm the ticket is customer-facing.',
+      'Refresh the tile.'], expectedOutputType: 'ticket-update', riskNotes: '',
+      reversibility: 'reversible', estimatedMinutes: 5 };
+    planRecorded.outputs.push(drafted, drafted);
+    const result = await draftExecutionPlan({ candidate: ticket,
+      charter: { ...charter, proposedFunction: 'Handle unblocked, customer-facing tickets.' },
+      autonomousActions: false, surfaceMode: 'real', documents: tileRunbook });
+    expect(planRecorded.users).toHaveLength(2);
+    expect(result.advisorySteps).toEqual([1]);
+  });
+
   it('flags a verification step when the candidate and the runbook say nothing about the property', (): void => {
     const audit = planPreconditionAudit(gated, ticket, tileRunbook);
     expect(audit.flagged).toEqual([1]);

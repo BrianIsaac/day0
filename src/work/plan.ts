@@ -84,6 +84,32 @@ const CANDIDATE_PROPERTIES: ReadonlyArray<{ property: string; words: RegExp }> =
   },
 ];
 
+type CandidateProperty = (typeof CANDIDATE_PROPERTIES)[number];
+const CANDIDATE_CLASS = /\b(?:tickets?|requests?|items?|issues?|mentions?)\b/i;
+const PROPERTY_STOP_WORDS = new Set([
+  'will', 'their', 'them', 'with', 'from', 'this', 'that', 'when', 'where',
+  'ticket', 'tickets', 'request', 'requests', 'item', 'items', 'issue', 'issues',
+  'mention', 'mentions', 'handle', 'process', 'manage', 'work', 'take', 'keep',
+  'only', 'have', 'must', 'should', 'before', 'after', 'which', 'these', 'those',
+]);
+
+function candidateProperties(charter?: Charter): readonly CandidateProperty[] {
+  if (!charter) return CANDIDATE_PROPERTIES;
+  const vocabulary = new Set<string>();
+  for (const text of [charter.proposedFunction, ...charter.proposedBoundaries.willDo]) {
+    for (const clause of text.split(/[.;\n]/)) {
+      if (!CANDIDATE_CLASS.test(clause)) continue;
+      for (const word of clause.toLowerCase().split(/\W+/)) {
+        if (word.length >= 4 && !PROPERTY_STOP_WORDS.has(word) &&
+            !CANDIDATE_PROPERTIES.some(({ words }) => words.test(word))) vocabulary.add(word);
+      }
+    }
+  }
+  return [...CANDIDATE_PROPERTIES, ...[...vocabulary].map((property) => ({
+    property, words: new RegExp(`\\b${property}\\b`, 'i'),
+  }))];
+}
+
 /** A negation that governs the verification verb it stands at most two words before. */
 const NEGATED_VERB = /\b(?:do not|don't|never|without|avoid)\s+(?:\w+\s+){0,2}$/i;
 
@@ -95,11 +121,11 @@ function affirmedVerifications(clause: string): RegExpMatchArray[] {
 }
 
 /** A verification clause: the verb and, within the same clause, the property. */
-function verificationOf(step: string): string | undefined {
+function verificationOf(step: string, properties: readonly CandidateProperty[]): string | undefined {
   for (const clause of step.split(/[.;\n]/)) {
     for (const verb of affirmedVerifications(clause)) {
       const tail = clause.slice(verb.index);
-      const found = CANDIDATE_PROPERTIES.find(({ words }) => words.test(tail));
+      const found = properties.find(({ words }) => words.test(tail));
       if (found) return found.property;
     }
   }
@@ -132,7 +158,7 @@ export interface PlanPreconditionAudit {
  * Flag plan steps that gate the work on a property of the candidate.
  *
  * A step is flagged when it pairs a verification verb with ownership,
- * priority or age, and neither the candidate's own text mentions that
+ * priority, age or a charter-derived candidate property, and neither the candidate's own text mentions that
  * property nor a loaded procedure asks for it to be checked. A read-back of a
  * figure is a procedure step, not a property check, and is never flagged.
  *
@@ -148,7 +174,9 @@ export function planPreconditionAudit(
   plan: Pick<ExecutionPlan, 'steps'>,
   candidate: Pick<WorkCandidate, 'title' | 'contentSummary'>,
   procedures: PlanDocuments | undefined,
+  charter?: Charter,
 ): PlanPreconditionAudit {
+  const properties = candidateProperties(charter);
   const candidateText = `${candidate.title}\n${candidate.contentSummary}`;
   const bodies = procedures
     ? [...procedures.howToGuides, ...procedures.teamDocs].map((document) => document.body)
@@ -156,9 +184,9 @@ export function planPreconditionAudit(
   const flagged: number[] = [];
   const issues: string[] = [];
   plan.steps.forEach((step: string, index: number): void => {
-    const property = verificationOf(step);
+    const property = verificationOf(step, properties);
     if (!property) return;
-    const { words } = CANDIDATE_PROPERTIES.find((entry) => entry.property === property)!;
+    const { words } = properties.find((entry) => entry.property === property)!;
     if (words.test(candidateText)) return;
     if (bodies.some((body: string): boolean => procedureAsksFor(body, words))) return;
     flagged.push(index + 1);
@@ -412,7 +440,7 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
 
   // Real mode only: one repair for a step that gates on a candidate property,
   // then the step is kept as advisory so the executor reports it and moves on.
-  const audit = planPreconditionAudit(plan, args.candidate, args.documents);
+  const audit = planPreconditionAudit(plan, args.candidate, args.documents, args.charter);
   if (audit.flagged.length === 0) return plan;
   const repairPrompt = [
     userPrompt,
@@ -437,7 +465,7 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
     return { ...plan, advisorySteps: audit.flagged };
   }
   const repaired = materialisePlan(repairedRaw);
-  const remaining = planPreconditionAudit(repaired, args.candidate, args.documents);
+  const remaining = planPreconditionAudit(repaired, args.candidate, args.documents, args.charter);
   return remaining.flagged.length === 0
     ? repaired
     : { ...repaired, advisorySteps: remaining.flagged };

@@ -715,9 +715,10 @@ export function advisoryPlanSteps(
   plan: ExecutionPlan,
   candidate: WorkCandidate,
   documents: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>,
+  charter?: Charter,
 ): number[] {
   const flagged = new Set<number>(plan.advisorySteps ?? []);
-  for (const step of planPreconditionAudit(plan, candidate, documents).flagged) flagged.add(step);
+  for (const step of planPreconditionAudit(plan, candidate, documents, charter).flagged) flagged.add(step);
   return [...flagged].sort((a, b) => a - b);
 }
 
@@ -2161,7 +2162,7 @@ export async function runDependentSkill(
   const { skill, plan, candidate, charter, mockEnv } = args;
   const mode: SurfaceMode = args.mode ?? 'mock';
   const procedureContract = parseProcedureContract(mockEnv);
-  const advisory = mode === 'real' ? advisoryPlanSteps(plan, candidate, mockEnv) : [];
+  const advisory = mode === 'real' ? advisoryPlanSteps(plan, candidate, mockEnv, charter) : [];
   const base = executorInstructions({
     mode,
     autonomousActions: args.autonomousActions ?? false,

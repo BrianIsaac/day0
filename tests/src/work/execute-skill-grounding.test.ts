@@ -200,6 +200,20 @@ describe('advisory steps in the closing phase', (): void => {
     ]);
   });
 
+  it('uses charter-derived properties when auditing an older approved plan', async (): Promise<void> => {
+    recorded.planStepOutcomes = [{ step: 1, status: 'blocked', evidence: 'No customer-facing field exists' }];
+    const output = await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: { summary: 'Check scope.', steps: ['Confirm the ticket is customer-facing.'],
+        expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 1 },
+      candidate, charter: { ...charter, proposedFunction: 'Handle customer-facing tickets.' },
+      mockEnv, mode: 'real', surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+    expect(output.planStepOutcomes[0].status).toBe('not-verifiable');
+  });
+
   it('keeps an unfulfilled runbook read blocked when reported as not-verifiable', async () => {
     recorded.planStepOutcomes = [
       { step: 1, status: 'not-verifiable', evidence: 'No snapshot was taken' },
