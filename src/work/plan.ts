@@ -414,11 +414,16 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
     '',
     'Draft the corrected execution plan now.',
   ].join('\n');
-  const repairedRaw = await agentJson<z.infer<typeof planSchema>>({
-    agent: planAgent,
-    user: repairPrompt,
-    schema: planSchema,
-  });
+  let repairedRaw: z.infer<typeof planSchema>;
+  try {
+    repairedRaw = await agentJson<z.infer<typeof planSchema>>({
+      agent: planAgent,
+      user: repairPrompt,
+      schema: planSchema,
+    });
+  } catch {
+    return { ...plan, advisorySteps: audit.flagged };
+  }
   const repaired = materialisePlan(repairedRaw);
   const remaining = planPreconditionAudit(repaired, args.candidate, args.documents);
   return remaining.flagged.length === 0

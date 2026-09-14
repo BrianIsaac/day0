@@ -58,6 +58,7 @@ vi.mock('../../../src/lib/mastra', () => ({
   agentJson: async <T>(args: { user: string }): Promise<T> => {
     planRecorded.users.push(args.user);
     const queued = planRecorded.outputs.shift();
+    if (queued instanceof Error) throw queued;
     return (queued ?? {
       summary: 'Refresh the tile as the runbook says.',
       steps: ['Sign in and set the figure.', 'Read the audit line back.'],
@@ -607,5 +608,23 @@ describe('negative precondition instructions', () => {
     expect(result.steps[0]).toBe(step);
     expect(planRecorded.users).toHaveLength(1);
     expect(result.advisorySteps).toBeUndefined();
+  });
+});
+
+
+describe('bounded plan correction failure', () => {
+  it('keeps the initial plan advisory when the optional correction request fails', async () => {
+    planRecorded.users.length = 0;
+    planRecorded.outputs.length = 0;
+    const initial = {
+      summary: 'Refresh the tile.',
+      steps: ['Confirm the ticket is owned.', 'Refresh the tile and read back the audit line.'],
+      expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 2,
+    };
+    planRecorded.outputs.push(initial, new Error('Correction request unavailable'));
+    await expect(draftExecutionPlan({
+      candidate, charter, autonomousActions: false, surfaceMode: 'real',
+    })).resolves.toEqual({ ...initial, advisorySteps: [1] });
+    expect(planRecorded.users).toHaveLength(2);
   });
 });
