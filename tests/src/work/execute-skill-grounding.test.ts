@@ -493,6 +493,51 @@ describe('deferral by data, not by judgement', (): void => {
     }
   });
 
+  it('recognises only the run-2 tile plan as a browser promise among the historical shapes', () => {
+    const promising = readmePlans.filter(
+      (historicalPlan) =>
+        deferralAudit(
+          { notes: '', needsDependentPhase: true, actions: [getIssue], procedureTrails: [] },
+          ticket,
+          { ...context, plan: historicalPlan },
+        ).length > 0,
+    );
+    expect(promising.map((historicalPlan) => historicalPlan.summary)).toEqual([
+      readmePlans[1]!.summary,
+    ]);
+    expect(readmePlans[1]!.steps[3]).toMatch(/^After approval, refresh the Looker pipeline tile/);
+  });
+
+  it.each([
+    'Refresh the Looker pipeline tile without changing any other field.',
+    'After approval, the Looker pipeline tile is refreshed to 74% via the web UI.',
+    'Sign in to the Looker pipeline tile, enter 74% and save, and hold the audit comment for the manager.',
+    'Bring the Looker pipeline tile to 74% as the runbook says.',
+  ])('keeps a browser promise whatever else the clause says: %s', (step): void => {
+    const issues = deferralAudit(
+      { notes: '', needsDependentPhase: true, actions: [getIssue], procedureTrails: [] },
+      ticket,
+      { ...context, plan: { ...plan, steps: ['Read REVOPS-7.', step] } },
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('Looker pipeline tile (looker-pipeline-tile)');
+  });
+
+  it.each([
+    'Do not refresh the Looker pipeline tile.',
+    'Skip the Looker pipeline tile refresh and comment only.',
+    'Never open the Looker pipeline tile for this ticket.',
+    'Comment on REVOPS-7 without opening the Looker pipeline tile.',
+  ])('lets a negated verb stand as no browser promise: %s', (step): void => {
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [getIssue], procedureTrails: [] },
+        ticket,
+        { ...context, plan: { ...plan, steps: ['Read REVOPS-7.', step] } },
+      ),
+    ).toEqual([]);
+  });
+
   it('does not require browser work merely mentioned as context or explicitly excluded', async () => {
     const referenceOnly = {
       ...ticket,

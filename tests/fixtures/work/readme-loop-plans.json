@@ -24,5 +24,83 @@
       "After approval, refresh the Looker pipeline tile via the web UI, then add the approved Linear audit/status comment preserving the source Linear identifier and approval reference."
     ],
     "summary": "Plan to handle Brian’s Linear ticket-queue request to refresh the Looker pipeline tile, with approval gating because autonomous actions are off and the source issue identifier is not yet explicit."
+  },
+  {
+    "estimatedMinutes": 10,
+    "expectedOutputType": "ticket-update",
+    "reversibility": "The draft is fully reversible before approval. Once posted, the Linear comment/status change can be corrected with a follow-up audit comment and status adjustment if approved.",
+    "riskNotes": "The candidate does not include a specific Linear issue ID, which is an escalation trigger. No public Slack reply, non-routine Linear update, or status transition will be made without manager approval.",
+    "steps": [
+      "Read the originating Linear queue item and capture the exact Linear issue identifier; if no issue ID is available, raise that blocker in the manager DM before proceeding.",
+      "Draft a concise close-summary audit comment that preserves the Linear issue identifier and summarizes the completed close checks without making new policy decisions.",
+      "Send the draft comment and proposed Done transition to the manager DM for literal approval; autonomous writes are OFF, so only reads and the manager DM can happen now.",
+      "After explicit manager approval, post the approved audit comment on the originating Linear issue and move it to Done, then record the approval/exception in the close-work ledger."
+    ],
+    "summary": "Plan to draft a close-summary audit comment for the Linear REVOPS request from Brian and move it to Done only after explicit manager approval. Source currently provided as `linear / ticket-queue`; a specific Linear issue ID is needed before any ticket write."
+  },
+  {
+    "estimatedMinutes": 10,
+    "expectedOutputType": "ticket-update",
+    "reversibility": "The Linear comment can be corrected with a follow-up audit comment, and the Done transition can be reversed if needed, though the audit trail will remain visible.",
+    "riskNotes": "No customer data is involved. Main risk is missing a specific Linear issue identifier; charter requires preserving the source issue ID and escalating missing identifiers through the manager.",
+    "steps": [
+      "Confirm the originating Linear issue ID with the manager, since the candidate source does not include a specific Linear issue key.",
+      "Draft the exact Linear comment with the Q3 close-week Monday reminder and the three handbook checklist items: audit notes on every closed ticket, pipeline coverage tile refreshed, and open asks answered in #revops-asks.",
+      "Get manager approval for both the comment text and the Done transition during cold start.",
+      "After approval, post the comment on the confirmed Linear issue, move it to Done, and add an audit note preserving the source identifier and approval reference."
+    ],
+    "summary": "For source `linear/ticket-queue` / Brian / “Add the close-week reminder note,” prepare a manager-approved Linear ticket update that adds the close-week reminder and then moves the originating issue to Done."
+  },
+  {
+    "estimatedMinutes": 6,
+    "expectedOutputType": "ticket-update",
+    "reversibility": "Linear comments/status changes are generally reversible by adding corrective audit comments and moving the issue back if needed; the approval ledger should retain both the original and correction trail.",
+    "riskNotes": "The request currently lacks a specific Linear issue identifier, which is an escalation trigger. Moving a Linear issue to Done is also a write action requiring manager approval during cold start.",
+    "steps": [
+      "Confirm the exact originating Linear issue ID/key because the current source is only `linear / ticket-queue`, then record that identifier in the approval ledger.",
+      "Draft the Linear comment: “Friday standup summary for Q3 close: pipeline coverage 74% confirmed against the Q3 close docs; three standup deals reviewed; no open blockers.”",
+      "Send the draft comment and proposed move to Done to the manager DM for explicit cold-start approval.",
+      "After approval, add the audit comment to the identified Linear issue, move it to Done, and preserve the source identifier in the ledger note."
+    ],
+    "summary": "Plan to draft the requested Linear audit comment and Done transition for source `linear / ticket-queue`, but first route the missing Linear issue identifier and cold-start approval to the manager."
+  },
+  {
+    "estimatedMinutes": 10,
+    "expectedOutputType": "ticket-update",
+    "reversibility": "Comment posting and status changes may be auditable but not fully reversible; any correction would require a follow-up Linear comment/status adjustment after approval.",
+    "riskNotes": "Do not alter Linear status or post comments before manager approval. Escalate in manager DM if close-check evidence is incomplete, the issue identifier cannot be preserved, or the status move is blocked by permissions/workflow.",
+    "steps": [
+      "Read the source Linear ticket and any linked close-check details needed to summarize only completed checks.",
+      "Draft a concise Linear audit comment that includes the source identifier: linear / ticket-queue, Brian, “Add the close-summary audit note.”",
+      "Send the draft comment and proposed move-to-Done action to the manager DM for approval.",
+      "After literal manager approval, post the approved comment to the originating Linear issue and move it to Done; otherwise make only requested revisions."
+    ],
+    "summary": "Draft a close-summary audit comment for the Linear ticket from Brian and prepare the status move to Done, preserving the source identifier. Because autonomous actions are OFF, any write beyond reads and manager DM will be held for literal manager approval."
+  },
+  {
+    "estimatedMinutes": 15,
+    "expectedOutputType": "message",
+    "reversibility": "Reads are non-destructive. Drafts can be revised before approval. Any approved posted message or Linear audit comment would be visible but can be corrected with a follow-up note if needed.",
+    "riskNotes": "If the three deals are not identifiable, Looker access is unavailable, or the work requires Northstar CRM access/ownership reconciliation, escalate in the manager DM rather than attempting a workaround. No public Slack reply during cold start without manager approval.",
+    "steps": [
+      "Read the referenced #revops-asks Slack message and any approved Friday standup deal context needed to identify the three deals; preserve the Slack source identifier in notes.",
+      "Refresh or calculate the Looker pipeline coverage figure only from the requested Friday standup deals, if available within approved access boundaries.",
+      "Draft a concise confirmation with the coverage figure and source note for manager review in the manager DM.",
+      "Hold all non-read writes, including any #revops-asks reply or Linear audit/status update, until the manager gives literal approval because autonomous actions are OFF."
+    ],
+    "summary": "Plan to handle the #revops-asks Slack mention as one bounded REVOPS request, preserving the Slack source and routing any result to the manager DM before any public update. Source identifier: slack/event-stream mention from U0BTFHN6MKJ in #revops-asks, title “Slack mention in #revops-asks.”"
+  },
+  {
+    "estimatedMinutes": 20,
+    "expectedOutputType": "ticket-update",
+    "reversibility": "Low-to-moderate risk if limited to drafting and approved routine refresh; any actual Looker or Linear write should be reversible through audit history or by restoring the prior tile/query/state, but will not be performed without manager approval.",
+    "riskNotes": "Potential blockers include missing Linear issue ID, unclear approved data source, need for Northstar CRM access, or a change that materially affects Finance-facing close records. Public Slack replies and all writes beyond reads/manager DM are not allowed without explicit approval.",
+    "steps": [
+      "Open the originating Linear ticket and capture its issue ID, current status, and any linked context so the source identifier is preserved in all notes.",
+      "Review the request details and confirm whether the refresh uses the approved Friday standup deals source for the Looker pipeline coverage figure; if anything requires Northstar CRM access or unclear ownership reconciliation, escalate in the manager DM instead of proceeding.",
+      "Draft the intended refresh note for the manager DM, including the Linear issue ID, data source to be used, proposed Looker tile update, and any blockers or assumptions.",
+      "After the manager’s literal approval, perform only the approved routine refresh/update and prepare the Linear audit comment/status update for approval or posting as instructed."
+    ],
+    "summary": "Plan to handle Linear ticket from Brian, source `linear / ticket-queue`, titled “Refresh the Looker pipeline tile,” as a bounded RevOps request. Because autonomous actions are OFF, I can read and DM the manager now, but any Looker/spreadsheet/ticket/write update will be held for the manager’s literal approval."
   }
 ]

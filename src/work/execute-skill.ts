@@ -1317,6 +1317,74 @@ export function namesResultDependency(reason: string): boolean {
   return RESULT_DEPENDENCY.test(reason);
 }
 
+/**
+ * A verb, in any of its forms, that commits a plan step to acting on a
+ * surface: "refresh the tile", "the tile is refreshed", "enter 74%".
+ */
+const SURFACE_ACTION_VERB = new RegExp(
+  `\\b(?:${[
+    'refresh(?:es|ed|ing)?',
+    'updat(?:e|es|ed|ing)',
+    'set(?:s|ting)?',
+    'fill(?:s|ed|ing)?',
+    'sav(?:e|es|ed|ing)',
+    'navigat(?:e|es|ed|ing)',
+    'open(?:s|ed|ing)?',
+    'sign(?:s|ed|ing)? in',
+    'log(?:s|ged|ging)? in',
+    'read(?:s|ing)?',
+    'check(?:s|ed|ing)?',
+    'snapshot(?:s|ted|ting)?',
+    'enter(?:s|ed|ing)?',
+    'bring(?:s|ing)?',
+    'brought',
+    'appl(?:y|ies|ied|ying)',
+    'perform(?:s|ed|ing)?',
+    'carr(?:y|ies|ied|ying) out',
+    'complet(?:e|es|ed|ing)',
+    'run(?:s|ning)?',
+    'ran',
+    'execut(?:e|es|ed|ing)',
+    'chang(?:e|es|ed|ing)',
+    'adjust(?:s|ed|ing)?',
+    'edit(?:s|ed|ing)?',
+    'submit(?:s|ted|ting)?',
+  ].join('|')})\\b`,
+  'gi',
+);
+/** A negation that governs the verb it stands at most two words before. */
+const GOVERNING_NEGATION = /\b(?:do not|don't|never|avoid|without|hold|withhold|skip|not)\s+(?:\w+\s+){0,2}$/i;
+
+/**
+ * Whether a clause commits to acting on the surface it names.
+ *
+ * A negation counts only when it governs the verb ("do not refresh",
+ * "skip the tile refresh"); one elsewhere in the clause ("refresh the tile
+ * without changing other fields") leaves the commitment standing. The
+ * surface's own name is removed first so it never pads the distance
+ * between a negation and the verb it governs.
+ *
+ * Args:
+ *   clause: One clause of a plan step.
+ *   surface: The surface the clause names.
+ *
+ * Returns:
+ *   True when an action verb in the clause is not governed by a negation.
+ */
+function affirmsSurfaceAction(
+  clause: string,
+  surface: Pick<SurfaceRecord, 'slug' | 'displayName'>,
+): boolean {
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const stripped = clause
+    .replace(new RegExp(escape(surface.displayName), 'gi'), ' ')
+    .replace(new RegExp(escape(surface.slug), 'gi'), ' ');
+  for (const verb of stripped.matchAll(SURFACE_ACTION_VERB)) {
+    if (!GOVERNING_NEGATION.test(stripped.slice(0, verb.index))) return true;
+  }
+  return false;
+}
+
 function namesSurface(text: string, surface: Pick<SurfaceRecord, 'slug' | 'displayName'>): boolean {
   const lower = text.toLowerCase();
   if (lower.includes(surface.slug.toLowerCase())) return true;
@@ -1376,11 +1444,9 @@ export function deferralAudit(
     if (surface.path !== 'browser-driven') continue;
     if (verdictFor(surface, context.now) !== 'connected') continue;
     const promised = context.plan.steps.some((step) =>
-      step.split(/[.;\n]/).some((clause) => {
-        if (!namesSurface(clause, surface)) return false;
-        if (/\b(?:do not|don't|never|avoid|without|hold|withhold|skip)\b/i.test(clause)) return false;
-        return /\b(?:refresh|update|set|fill|save|navigate|open|sign in|log in|read|check|snapshot)\b/i.test(clause);
-      }),
+      step
+        .split(/[.;\n]/)
+        .some((clause) => namesSurface(clause, surface) && affirmsSurfaceAction(clause, surface)),
     );
     if (!promised || targeted.has(surface.slug)) continue;
     if (namesSurface(output.notes, surface) && namesResultDependency(output.notes)) continue;
