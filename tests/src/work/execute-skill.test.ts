@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -198,9 +199,9 @@ describe('executor output contract', (): void => {
     for (const row of [
       { trailId: 'trail-1', state: 'mapped', actionIndex: 0 },
       { trailId: 'trail-1', state: 'inapplicable', reason: 'Not applicable here.' },
-      { trailId: 'trail-1', state: 'deferred', reason: 'A later phase is required.' },
+      { trailId: 'trail-1', state: 'deferred', reason: 'A later phase is required.', dependsOnActionIndex: null, dependsOnField: null },
     ]) {
-      expect(schema.safeParse({ ...base, procedureTrails: [row] }).success).toBe(true);
+      expect(schema.safeParse({ ...base, deferredActions: null, procedureTrails: [row] }).success).toBe(true);
     }
     expect(
       schema.safeParse({
@@ -1548,7 +1549,7 @@ describe('executor preamble by mode', (): void => {
     expect(text).toContain('A draft (human-readable)');
     expect(text).toContain('set `needsDependentPhase` to true');
     expect(text).toContain(
-      'Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a reason when a result-dependent phase is required.',
+      'Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex',
     );
     expect(text).toContain(
       'A MAPPED actionIndex must reference an action emitted in the same response.',
@@ -1727,4 +1728,9 @@ describe('manager feedback lines', (): void => {
     expect(lines[2]).toContain('cannot override');
     expect(lines[4]).toContain('Address the feedback');
   });
+});
+
+it('keeps the mock phase-one provider schema byte-identical', () => {
+  const schema = JSON.stringify(z.toJSONSchema(executeSchemaForProcedureContract({ trails: [] }, undefined, undefined, 'mock')));
+  expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(`"eeb7ba777f1f42a8ab311a70030b51ada6262e0c7fbb4894a2bd8d8542cc32d8"`);
 });

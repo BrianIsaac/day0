@@ -1026,11 +1026,15 @@ describe('real initial procedure trails', (): void => {
         {
           trailId: 'trail-1',
           state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
           reason: 'This trail depends on the result of prerequisite actions.',
         },
         {
           trailId: 'trail-2',
           state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
           reason: 'This trail depends on the result of prerequisite actions.',
         },
       ],
@@ -1063,11 +1067,15 @@ describe('real initial procedure trails', (): void => {
       {
         trailId: 'trail-1',
         state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
         reason: 'This trail depends on the result of prerequisite actions.',
       },
       {
         trailId: 'trail-2',
         state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
         reason: 'This trail depends on the result of prerequisite actions.',
       },
     ]);
@@ -1100,6 +1108,8 @@ describe('real initial procedure trails', (): void => {
         {
           trailId: 'trail-1',
           state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
           reason: 'A result-dependent phase is required.',
         },
         {
@@ -1198,12 +1208,16 @@ describe('real initial procedure trails', (): void => {
           {
             trailId: 'trail-1',
             state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
             reason: 'A result-dependent phase is required.',
           },
           ticketSource
             ? {
                 trailId: 'trail-2',
                 state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
                 reason: 'A result-dependent phase is required.',
               }
             : {

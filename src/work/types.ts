@@ -138,7 +138,7 @@ export interface MockProcedureTrailAttestation {
 export type RealProcedureTrailAttestation =
   | { trailId: string; state: 'mapped'; actionIndex: number }
   | { trailId: string; state: 'inapplicable'; reason: string }
-  | { trailId: string; state: 'deferred'; reason: string };
+  | { trailId: string; state: 'deferred'; reason: string; dependsOnActionIndex?: number | null; dependsOnField?: string | null };
 
 export type ProcedureTrailAttestation =
   | MockProcedureTrailAttestation
@@ -154,7 +154,16 @@ export interface ProcedureTrailLimitation {
   detail: string;
 }
 
+export interface DeferredActionDependency {
+  description: string;
+  reason: string;
+  dependsOnActionIndex: number | null;
+  dependsOnField: string | null;
+}
+
 export interface ExecutionOutput {
+  /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
+  deferredActions?: DeferredActionDependency[] | null;
   draft: string;
   notes: string;
   actions: MockAction[];

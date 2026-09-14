@@ -73,7 +73,7 @@ const PROCEDURE_TRAIL_OUTPUT =
   '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.';
 
 const REAL_PROCEDURE_TRAIL_OUTPUT =
-  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a reason when a result-dependent phase is required.';
+  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read or snapshot) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 
@@ -549,6 +549,8 @@ const deferredProcedureTrailSchema = z
     trailId: z.string().min(1),
     state: z.literal('deferred'),
     reason: z.string().min(1),
+    dependsOnActionIndex: z.number().int().nonnegative().nullable(),
+    dependsOnField: z.string().min(1).nullable(),
   })
   .strict();
 
@@ -654,6 +656,13 @@ function requiredActionFloor(
   return effects.size;
 }
 
+const deferredActionsSchema = z.array(z.object({
+  description: z.string().min(1),
+  reason: z.string().min(1),
+  dependsOnActionIndex: z.number().int().nonnegative().nullable(),
+  dependsOnField: z.string().min(1).nullable(),
+}).strict()).nullable();
+
 /** Bind the runtime-loaded trail ids and exact inventory size into the provider schema. */
 export function executeSchemaForProcedureContract(
   contract: ProcedureContract,
@@ -662,6 +671,7 @@ export function executeSchemaForProcedureContract(
   mode: SurfaceMode = 'mock',
 ) {
   return executeSchema.extend({
+    ...(mode === 'real' ? { deferredActions: deferredActionsSchema } : {}),
     actions:
       mode === 'mock'
         ? z.array(generatedActionSchema).min(requiredActionFloor(contract, candidate, plan))
@@ -1405,7 +1415,7 @@ export interface DeferralAuditContext {
  *
  * A dependent phase is legitimate only for payloads that consume a prior
  * result. Two things are checked in code: every DEFERRED procedure-trail row
- * must give a reason naming such a result, and every connected browser-driven
+ * must declare a read or snapshot index and the result field it consumes, and every connected browser-driven
  * surface an affirmative approved plan step acts on must either have an
  * action in this phase or a `notes` sentence naming the surface and the
  * result its sequence waits for. A browser sequence is the decidable case:
@@ -1421,17 +1431,39 @@ export interface DeferralAuditContext {
  *   One issue per unjustified deferral; empty when the output may stand.
  */
 export function deferralAudit(
-  output: Pick<ExecutionOutput, 'actions' | 'notes' | 'procedureTrails' | 'needsDependentPhase'>,
+  output: Pick<ExecutionOutput, 'actions' | 'notes' | 'procedureTrails' | 'needsDependentPhase' | 'deferredActions'>,
   candidate: WorkCandidate,
   context: DeferralAuditContext,
 ): string[] {
   if (context.mode === 'mock' || output.needsDependentPhase !== true) return [];
   const issues: string[] = [];
-  for (const row of output.procedureTrails ?? []) {
+  const fixedBrowserWork = context.surfaces.some((surface) =>
+    surface.path === 'browser-driven' &&
+    verdictFor(surface, context.now) === 'connected' &&
+    context.plan.steps.some((step) => step.split(/[.;\n]/).some((clause) =>
+      namesSurface(clause, surface) && affirmsSurfaceAction(clause, surface))) &&
+    !output.actions.some((action) => {
+      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+      return parsed?.ok && parsed.action.surface === surface.slug;
+    }),
+  );
+  const deferredRows: ProcedureTrailAttestation[] = [
+    ...(output.procedureTrails ?? []),
+    ...(output.deferredActions ?? []).map((row) => ({
+      ...row, trailId: row.description, state: 'deferred' as const,
+    })),
+  ];
+  for (const row of deferredRows) {
     const state = procedureTrailState(row);
-    if (state.state !== 'deferred' || namesResultDependency(state.reason)) continue;
+    if (state.state !== 'deferred') continue;
+    const index = 'dependsOnActionIndex' in row ? row.dependsOnActionIndex : null;
+    const field = 'dependsOnField' in row ? row.dependsOnField?.trim() : undefined;
+    const action = typeof index === 'number' && Number.isInteger(index) && index >= 0
+      ? output.actions[index] : undefined;
+    const parsed = action && isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+    if (field && parsed?.ok && actionIntent(parsed.action) === 'read' && !fixedBrowserWork) continue;
     issues.push(
-      `deferred an action with no result dependency: procedure trail ${row.trailId} is deferred for "${state.reason}", which names no prior result its payload consumes; emit it now or name the read-back, identifier or ledger outcome it waits for`,
+      `deferred an action with no result dependency: procedure trail ${row.trailId} is deferred for "${state.reason}"; declare dependsOnActionIndex pointing at a read or snapshot in this response and dependsOnField naming its result field; work whose payload is already fixed by the candidate, runbook and surface record must be emitted now`,
     );
   }
   const targeted = new Set(
@@ -1784,6 +1816,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     needsDependentPhase: raw.needsDependentPhase,
     actions: raw.actions.map(materialiseGeneratedAction),
     procedureTrails: raw.procedureTrails,
+    ...(mode === 'real' ? { deferredActions: deferredActionsSchema.parse(raw.deferredActions ?? null) } : {}),
   };
   if (mode !== 'mock') {
     const deferralContext: DeferralAuditContext = {
@@ -1829,6 +1862,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       needsDependentPhase: repairedRaw.needsDependentPhase,
       actions: repairedRaw.actions.map(materialiseGeneratedAction),
       procedureTrails: repairedRaw.procedureTrails,
+      deferredActions: deferredActionsSchema.parse(repairedRaw.deferredActions ?? null),
     };
     const remaining = procedureTrailAttentionIssues(repaired, candidate, procedureContract, {
       mode,

@@ -416,6 +416,36 @@ describe('deferral by data, not by judgement', (): void => {
     expect(recorded.users).toHaveLength(2);
   });
 
+  it('rejects result wording without a declared dependency', (): void => {
+    expect(deferralAudit({
+      notes: '', needsDependentPhase: true, actions: [getIssue, ...tileSequence],
+      procedureTrails: [{ trailId: 'trail-1', state: 'deferred', reason: 'pending confirmation of ownership' }],
+    }, ticket, context)).toHaveLength(1);
+  });
+
+  it.each([
+    [0, 'assignee', [getIssue]],
+    [5, 'visible figure', [getIssue, ...tileSequence]],
+    [99, 'visible figure', [getIssue, ...tileSequence]],
+  ])('rejects an irrelevant, write or missing dependency at index %s', (index, field, actions): void => {
+    expect(deferralAudit({
+      notes: 'looker-pipeline-tile awaits confirmation', needsDependentPhase: true, actions,
+      procedureTrails: [{ trailId: 'trail-1', state: 'deferred', reason: 'pending confirmation of ownership',
+        dependsOnActionIndex: index, dependsOnField: field }],
+    }, ticket, context).join(' ')).toContain('procedure trail trail-1');
+  });
+
+  it('audits closing work outside the parsed trail inventory', (): void => {
+    const output = {
+      notes: '', needsDependentPhase: true, actions: [getIssue, ...tileSequence],
+      deferredActions: [{ description: 'Closing comment', reason: 'Quote the observed figure',
+        dependsOnActionIndex: 6, dependsOnField: 'visible figure' }],
+    };
+    expect(deferralAudit(output, ticket, context)).toEqual([]);
+    output.deferredActions[0].dependsOnActionIndex = 5;
+    expect(deferralAudit(output, ticket, context)).toHaveLength(1);
+  });
+
   it('accepts a deferral whose reason names the read-back, and rejects one that names a judgement', (): void => {
     const trailContext = { ...context, mode: 'real' as const };
     const deferredOnData: ExecutionOutput = {
@@ -424,7 +454,7 @@ describe('deferral by data, not by judgement', (): void => {
       needsDependentPhase: true,
       actions: [getIssue, ...tileSequence],
       procedureTrails: [
-        { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure' },
+        { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure', dependsOnActionIndex: 6, dependsOnField: 'visible figure' },
       ],
     };
     expect(deferralAudit(deferredOnData, ticket, trailContext)).toEqual([]);
@@ -572,7 +602,7 @@ describe('deferral by data, not by judgement', (): void => {
       needsDependentPhase: true,
       actions: [getIssue, ...tileSequence],
       procedureTrails: [
-        { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure' },
+        { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure', dependsOnActionIndex: 6, dependsOnField: 'visible figure' },
       ],
     };
     recorded.outputs.push(wholeBatch);
