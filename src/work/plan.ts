@@ -30,6 +30,15 @@ const SYSTEM_PROMPT_HEAD = [
   "  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.",
 ];
 
+/**
+ * The scope-not-gate invariant, real mode only: the mock planner text is the
+ * hosted demo's and stays byte-identical.
+ */
+export const SCOPE_NOT_GATE_PLANNER = [
+  '  - The charter decides which work you take; it does not add verification steps to work you have taken. Do not plan a step that checks a property of the candidate (ownership, priority, assignment, age) unless the candidate or a loaded procedure asks for it. When the runbook prescribes a sequence on a connected surface, that sequence is the plan.',
+  '  - A question the data may not answer belongs in `riskNotes` for the manager to settle at approval, not in a step that stops the run.',
+];
+
 /** The run-context instruction shared by the planner and executor. */
 export function actionModeInstruction(
   autonomousActions: boolean,
@@ -48,9 +57,99 @@ export function planSystemPrompt(
   autonomousActions: boolean,
   surfaceMode: SurfaceMode = 'real',
 ): string {
-  return [...SYSTEM_PROMPT_HEAD, '', actionModeInstruction(autonomousActions, surfaceMode)].join(
-    '\n',
-  );
+  return [
+    ...SYSTEM_PROMPT_HEAD,
+    ...(surfaceMode === 'real' ? SCOPE_NOT_GATE_PLANNER : []),
+    '',
+    actionModeInstruction(autonomousActions, surfaceMode),
+  ].join('\n');
+}
+
+const VERIFICATION_VERB =
+  /\b(?:confirm|verify|check|ensure|validate|make sure|establish|double-check)\b/i;
+
+/** A candidate property a plan may be tempted to gate on, with the words that name it. */
+const CANDIDATE_PROPERTIES: ReadonlyArray<{ property: string; words: RegExp }> = [
+  {
+    property: 'ownership',
+    words: /\b(?:owner|owners|owned|ownership|assignee|assignees|assigned|assignment|unassigned)\b/i,
+  },
+  { property: 'priority', words: /\bpriorit(?:y|ies|ised|ized|ise|ize)\b/i },
+  {
+    property: 'age',
+    words: /\b(?:age|stale|staleness|days old|older than|created date|creation date)\b/i,
+  },
+];
+
+/** A verification clause: the verb and, within the same clause, the property. */
+function verificationOf(step: string): string | undefined {
+  for (const clause of step.split(/[.;\n]/)) {
+    const verb = VERIFICATION_VERB.exec(clause);
+    if (!verb) continue;
+    const tail = clause.slice(verb.index);
+    const found = CANDIDATE_PROPERTIES.find(({ words }) => words.test(tail));
+    if (found) return found.property;
+  }
+  return undefined;
+}
+
+/** Whether a procedure line itself asks for the property to be checked. */
+function procedureAsksFor(body: string, words: RegExp): boolean {
+  return body.split(/[.;\n]/).some((line: string): boolean => {
+    if (!words.test(line)) return false;
+    return (
+      VERIFICATION_VERB.test(line) ||
+      /\b(?:only (?:if|when)|must be|before|first|is required|required before)\b/i.test(line)
+    );
+  });
+}
+
+export interface PlanPreconditionAudit {
+  /** One-based steps that check a candidate property nothing asked for. */
+  flagged: number[];
+  /** One correction line per flagged step, for the planner's repair prompt. */
+  issues: string[];
+}
+
+/**
+ * Flag plan steps that gate the work on a property of the candidate.
+ *
+ * A step is flagged when it pairs a verification verb with ownership,
+ * priority or age, and neither the candidate's own text mentions that
+ * property nor a loaded procedure asks for it to be checked. A read-back of a
+ * figure is a procedure step, not a property check, and is never flagged.
+ *
+ * Args:
+ *   plan: The drafted plan.
+ *   candidate: The work candidate.
+ *   procedures: The loaded how-to guides and team docs.
+ *
+ * Returns:
+ *   The flagged step numbers and the correction lines.
+ */
+export function planPreconditionAudit(
+  plan: Pick<ExecutionPlan, 'steps'>,
+  candidate: Pick<WorkCandidate, 'title' | 'contentSummary'>,
+  procedures: PlanDocuments | undefined,
+): PlanPreconditionAudit {
+  const candidateText = `${candidate.title}\n${candidate.contentSummary}`;
+  const bodies = procedures
+    ? [...procedures.howToGuides, ...procedures.teamDocs].map((document) => document.body)
+    : [];
+  const flagged: number[] = [];
+  const issues: string[] = [];
+  plan.steps.forEach((step: string, index: number): void => {
+    const property = verificationOf(step);
+    if (!property) return;
+    const { words } = CANDIDATE_PROPERTIES.find((entry) => entry.property === property)!;
+    if (words.test(candidateText)) return;
+    if (bodies.some((body: string): boolean => procedureAsksFor(body, words))) return;
+    flagged.push(index + 1);
+    issues.push(
+      `step ${index + 1} checks the candidate's ${property}, which neither the candidate nor a loaded procedure asks you to verify; the charter decides which work you take and adds no verification step, so plan the documented sequence and put any open question in riskNotes`,
+    );
+  });
+  return { flagged, issues };
 }
 
 export const planSchema = z.object({
@@ -162,6 +261,17 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
   return lines.join('\n');
 }
 
+function materialisePlan(raw: z.infer<typeof planSchema>): ExecutionPlan {
+  return {
+    summary: raw.summary,
+    steps: raw.steps.slice(0, 8),
+    expectedOutputType: raw.expectedOutputType,
+    riskNotes: raw.riskNotes,
+    reversibility: raw.reversibility,
+    estimatedMinutes: Math.max(1, Math.floor(raw.estimatedMinutes)),
+  };
+}
+
 export async function draftExecutionPlan(args: DraftPlanArgs): Promise<ExecutionPlan> {
   const { autonomousActions, ...prompt } = args;
   const planAgent = makeAgent('day0-plan', planSystemPrompt(autonomousActions, args.surfaceMode));
@@ -172,14 +282,35 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
     user: userPrompt,
     schema: planSchema,
   });
-  return {
-    summary: raw.summary,
-    steps: raw.steps.slice(0, 8),
-    expectedOutputType: raw.expectedOutputType,
-    riskNotes: raw.riskNotes,
-    reversibility: raw.reversibility,
-    estimatedMinutes: Math.max(1, Math.floor(raw.estimatedMinutes)),
-  };
+  const plan = materialisePlan(raw);
+  if (args.surfaceMode !== 'real') return plan;
+
+  // Real mode only: one repair for a step that gates on a candidate property,
+  // then the step is kept as advisory so the executor reports it and moves on.
+  const audit = planPreconditionAudit(plan, args.candidate, args.documents);
+  if (audit.flagged.length === 0) return plan;
+  const repairPrompt = [
+    userPrompt,
+    '',
+    '--- Required plan correction ---',
+    'Your previous plan was not stored. Return one full replacement plan that fixes every issue below and keeps every other step as it was.',
+    ...audit.issues.map((issue) => `- ${issue}`),
+    '',
+    'Previous plan:',
+    JSON.stringify(raw),
+    '',
+    'Draft the corrected execution plan now.',
+  ].join('\n');
+  const repairedRaw = await agentJson<z.infer<typeof planSchema>>({
+    agent: planAgent,
+    user: repairPrompt,
+    schema: planSchema,
+  });
+  const repaired = materialisePlan(repairedRaw);
+  const remaining = planPreconditionAudit(repaired, args.candidate, args.documents);
+  return remaining.flagged.length === 0
+    ? repaired
+    : { ...repaired, advisorySteps: remaining.flagged };
 }
 
 export function renderPlanSummary(plan: ExecutionPlan): string {

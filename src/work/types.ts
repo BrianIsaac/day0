@@ -67,6 +67,12 @@ export interface ExecutionPlan {
   riskNotes: string;
   reversibility: string;
   estimatedMinutes: number;
+  /**
+   * One-based steps the precondition audit flagged as checks of a candidate
+   * property nothing asked for, kept after the planner's one repair. The
+   * executor reports them, never gates on them.
+   */
+  advisorySteps?: number[];
 }
 
 /** The four verbs that write to the per-agent mock environment. */
@@ -171,7 +177,11 @@ export const DEPENDENT_ACTION_CAP = 4;
 export interface PlanStepOutcome {
   /** One-based position in the approved plan. */
   step: number;
-  status: 'satisfied' | 'blocked';
+  /**
+   * `not-verifiable` is an advisory step, or a check of a property the
+   * ledger cannot carry: reported, never a reason to withhold the work.
+   */
+  status: 'satisfied' | 'blocked' | 'not-verifiable';
   /** A ledger effect, provider failure or explicit reason the step could not run. */
   evidence: string;
 }

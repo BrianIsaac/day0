@@ -5,8 +5,10 @@ import type { WorkCandidate } from '../../../src/work/types';
 import {
   actionModeInstruction,
   draftExecutionPlan,
+  planPreconditionAudit,
   planSystemPrompt,
   planUserPrompt,
+  SCOPE_NOT_GATE_PLANNER,
 } from '../../../src/work/plan';
 
 describe('plan drafter action mode', (): void => {
@@ -39,7 +41,11 @@ describe('plan drafter action mode', (): void => {
   });
 });
 
-const planRecorded = vi.hoisted(() => ({ users: [] as string[], instructions: [] as string[] }));
+const planRecorded = vi.hoisted(() => ({
+  users: [] as string[],
+  instructions: [] as string[],
+  outputs: [] as unknown[],
+}));
 
 vi.mock('../../../src/lib/mastra', () => ({
   makeAgent: (_name: string, instructions: string) => {
@@ -48,14 +54,15 @@ vi.mock('../../../src/lib/mastra', () => ({
   },
   agentJson: async <T>(args: { user: string }): Promise<T> => {
     planRecorded.users.push(args.user);
-    return {
+    const queued = planRecorded.outputs.shift();
+    return (queued ?? {
       summary: 'Refresh the tile as the runbook says.',
       steps: ['Sign in and set the figure.', 'Read the audit line back.'],
       expectedOutputType: 'ticket-update',
       riskNotes: '',
       reversibility: 'reversible',
       estimatedMinutes: 5,
-    } as T;
+    }) as T;
   },
 }));
 
@@ -228,5 +235,184 @@ describe('frozen planner text', (): void => {
 
       Draft the execution plan now."
     `);
+  });
+});
+
+describe('charter adjectives are scope, not gates', (): void => {
+  const tileRunbook = {
+    howToGuides: [
+      {
+        slug: 'how-to-refresh-the-tile',
+        title: 'How to refresh the dashboard tile',
+        body: 'Sign in, set the coverage figure to 74%, save, then read back the visible figure and the audit line.',
+      },
+    ],
+    teamDocs: [
+      {
+        slug: 'queue',
+        title: 'Queue',
+        body: 'REVOPS-7 - Priority: Medium. Request: refresh the dashboard tile.',
+      },
+    ],
+  };
+  const ticket: WorkCandidate = {
+    ...candidate,
+    externalId: 'REVOPS-7',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Set the pipeline coverage tile to 74% and read the audit line back.',
+  };
+  const gated = {
+    steps: [
+      'Open REVOPS-7 in connected Linear to confirm it is owned and prioritized.',
+      'Sign in to the tile and set the figure to 74%.',
+      'Read back the visible 74% and the audit line.',
+    ],
+  };
+
+  beforeEach((): void => {
+    planRecorded.users.length = 0;
+    planRecorded.instructions.length = 0;
+    planRecorded.outputs.length = 0;
+  });
+
+  it('puts the invariant in the real planner prompt and keeps it out of the mock one', (): void => {
+    for (const line of SCOPE_NOT_GATE_PLANNER) {
+      expect(planSystemPrompt(false, 'real')).toContain(line);
+      expect(planSystemPrompt(true, 'real')).toContain(line);
+      expect(planSystemPrompt(false, 'mock')).not.toContain(line);
+    }
+    expect(planSystemPrompt(false, 'real')).toContain('that sequence is the plan');
+  });
+
+  it('flags a verification step when the candidate and the runbook say nothing about the property', (): void => {
+    const audit = planPreconditionAudit(gated, ticket, tileRunbook);
+    expect(audit.flagged).toEqual([1]);
+    expect(audit.issues).toHaveLength(1);
+    expect(audit.issues[0]).toContain("step 1 checks the candidate's ownership");
+    expect(audit.issues[0]).toContain('adds no verification step');
+  });
+
+  it('does not flag it when a loaded procedure asks for the check', (): void => {
+    const asking = {
+      ...tileRunbook,
+      howToGuides: [
+        {
+          ...tileRunbook.howToGuides[0]!,
+          body: `${tileRunbook.howToGuides[0]!.body}\nCheck the ticket is assigned before touching the tile.`,
+        },
+      ],
+    };
+    expect(planPreconditionAudit(gated, ticket, asking).flagged).toEqual([]);
+    // A procedure that merely mentions the word does not ask for a check.
+    const mentioning = {
+      ...tileRunbook,
+      teamDocs: [
+        { slug: 'onboarding', title: 'Onboarding', body: 'Raise unclear ownership in the manager DM.' },
+      ],
+    };
+    expect(planPreconditionAudit(gated, ticket, mentioning).flagged).toEqual([1]);
+  });
+
+  it('does not flag it when the candidate itself is about the property', (): void => {
+    const ownershipTicket: WorkCandidate = {
+      ...ticket,
+      title: 'Reconcile Northstar CRM ownership',
+      contentSummary: 'Inspect the CRM for the owner of the opportunity and add the owner to the issue.',
+    };
+    expect(
+      planPreconditionAudit(
+        { steps: ['Confirm the current owner in the CRM.', 'Add the owner to the issue.'] },
+        ownershipTicket,
+        tileRunbook,
+      ).flagged,
+    ).toEqual([]);
+  });
+
+  it('never flags a read-back or a step with no verification verb', (): void => {
+    expect(
+      planPreconditionAudit(
+        {
+          steps: [
+            'Read back the visible 74% and the audit line.',
+            'Comment on the ticket with the priority of the refresh.',
+            'Verify the audit line appears under the tile.',
+            'Check the figure reads 74%.',
+          ],
+        },
+        ticket,
+        tileRunbook,
+      ).flagged,
+    ).toEqual([]);
+    expect(planPreconditionAudit(gated, ticket, undefined).flagged).toEqual([1]);
+  });
+
+  it('asks the planner once for a plan without the gate, then keeps a stubborn step as advisory', async (): Promise<void> => {
+    const gatedPlan = {
+      summary: 'Confirm, then refresh.',
+      steps: gated.steps,
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+    };
+    const cleanPlan = {
+      ...gatedPlan,
+      summary: 'Refresh the tile.',
+      steps: gated.steps.slice(1),
+      riskNotes: 'REVOPS-7 shows no assignee; the manager may want to assign it.',
+    };
+    planRecorded.outputs.push(gatedPlan, cleanPlan);
+    const repaired = await draftExecutionPlan({
+      candidate: ticket,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      surfaces,
+      documents: tileRunbook,
+      now,
+    });
+    expect(planRecorded.users).toHaveLength(2);
+    const correction = planRecorded.users[1]!.split('--- Required plan correction ---')[1]!;
+    expect(correction).toContain("step 1 checks the candidate's ownership");
+    expect(correction).toContain('Previous plan:');
+    expect(correction).toContain('Draft the corrected execution plan now.');
+    expect(repaired.steps).toEqual(gated.steps.slice(1));
+    expect(repaired.advisorySteps).toBeUndefined();
+    expect(repaired.riskNotes).toContain('no assignee');
+
+    planRecorded.users.length = 0;
+    planRecorded.outputs.push(gatedPlan, gatedPlan);
+    const stubborn = await draftExecutionPlan({
+      candidate: ticket,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      surfaces,
+      documents: tileRunbook,
+      now,
+    });
+    expect(planRecorded.users).toHaveLength(2);
+    expect(stubborn.steps).toEqual(gated.steps);
+    expect(stubborn.advisorySteps).toEqual([1]);
+  });
+
+  it('runs no audit in mock mode', async (): Promise<void> => {
+    planRecorded.outputs.push({
+      summary: 'Confirm, then refresh.',
+      steps: gated.steps,
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+    });
+    const plan = await draftExecutionPlan({
+      candidate: ticket,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'mock',
+    });
+    expect(planRecorded.users).toHaveLength(1);
+    expect(plan.steps).toEqual(gated.steps);
+    expect(plan.advisorySteps).toBeUndefined();
   });
 });

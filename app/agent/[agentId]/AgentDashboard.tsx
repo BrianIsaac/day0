@@ -1061,7 +1061,7 @@ interface LedgerRow {
 
 interface PlanStepOutcomeRow {
   step: number;
-  status: 'satisfied' | 'blocked';
+  status: 'satisfied' | 'blocked' | 'not-verifiable';
   evidence: string;
 }
 

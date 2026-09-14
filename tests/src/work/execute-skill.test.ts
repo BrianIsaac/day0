@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
+  advisoryPlanSteps,
   managerFeedbackLines,
   appliedLedgerPrompt,
   dependentExecuteSchema,
+  dependentExecuteSchemaForProcedureContract,
+  normalisePlanStepOutcomes,
   executeSchema,
   executeSchemaForProcedureContract,
   executorInstructions,
@@ -1368,6 +1371,80 @@ describe('probed argument names in the surface list', (): void => {
 
   it('adds no guidance line when no surface carries probed names', (): void => {
     expect(surfaceInstructions([linear, slack], now)).not.toContain('probed argument names');
+  });
+});
+
+describe('advisory plan steps in the closing phase', (): void => {
+  const plan = {
+    summary: 'Confirm, then refresh.',
+    steps: [
+      'Open REVOPS-7 in connected Linear to confirm it is owned and prioritized.',
+      'Sign in to the tile and set the figure to 74%.',
+      'Read back the visible 74% and the audit line.',
+    ],
+    expectedOutputType: 'ticket-update' as const,
+    riskNotes: '',
+    reversibility: 'reversible',
+    estimatedMinutes: 5,
+  };
+  const ticket = {
+    sourceCategory: 'ticket-queue' as const,
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-7',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Set the pipeline coverage tile to 74%.',
+    contentRefs: ['ticket://REVOPS-7'],
+    observedAt: new Date(0),
+  };
+
+  it('extends the real preamble with the no-invented-prerequisites invariant and leaves the mock one alone', (): void => {
+    expect(executorPreamble('real')).toContain(
+      'The charter decides which work you take; it adds no verification step.',
+    );
+    expect(executorPreamble('real')).toContain('is advisory: report what the data shows');
+    expect(executorPreamble('mock')).not.toContain('adds no verification step');
+    expect(executorPreamble('mock')).not.toContain('advisory');
+  });
+
+  it('accepts not-verifiable only in the real closing schema', (): void => {
+    const row = {
+      draft: 'd',
+      notes: 'n',
+      actions: [],
+      procedureTrails: [],
+      planStepOutcomes: [{ step: 1, status: 'not-verifiable', evidence: 'no assignee field' }],
+    };
+    expect(
+      dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real').safeParse(row).success,
+    ).toBe(true);
+    expect(
+      dependentExecuteSchemaForProcedureContract({ trails: [] }, 'mock').safeParse(row).success,
+    ).toBe(false);
+    expect(dependentExecuteSchema.safeParse(row).success).toBe(false);
+  });
+
+  it('reads the planner audit and the plan mark as the same advisory set', (): void => {
+    expect(advisoryPlanSteps(plan, ticket, emptyMock)).toEqual([1]);
+    expect(advisoryPlanSteps({ ...plan, advisorySteps: [3] }, ticket, emptyMock)).toEqual([1, 3]);
+    expect(advisoryPlanSteps({ ...plan, steps: plan.steps.slice(1) }, ticket, emptyMock)).toEqual(
+      [],
+    );
+  });
+
+  it('reports an advisory step the model blocked on an unassigned record as not verifiable, leaving the runbook steps alone', (): void => {
+    const outcomes = normalisePlanStepOutcomes(
+      [
+        { step: 1, status: 'blocked', evidence: 'get_issue returned no assignee field' },
+        { step: 2, status: 'satisfied', evidence: 'ledger rows 1-5 landed' },
+        { step: 3, status: 'blocked', evidence: 'browser_snapshot failed: timed out' },
+      ],
+      [1],
+    );
+    expect(outcomes).toEqual([
+      { step: 1, status: 'not-verifiable', evidence: 'get_issue returned no assignee field' },
+      { step: 2, status: 'satisfied', evidence: 'ledger rows 1-5 landed' },
+      { step: 3, status: 'blocked', evidence: 'browser_snapshot failed: timed out' },
+    ]);
   });
 });
 

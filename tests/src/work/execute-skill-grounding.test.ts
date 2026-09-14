@@ -5,6 +5,9 @@ import type { MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types
 const recorded = vi.hoisted(() => ({
   users: [] as string[],
   instructions: [] as string[],
+  planStepOutcomes: undefined as
+    | Array<{ step: number; status: string; evidence: string }>
+    | undefined,
 }));
 
 vi.mock('@mastra/core/agent', () => ({
@@ -27,7 +30,9 @@ vi.mock('../../../src/lib/mastra', () => ({
       notes: '',
       actions: [],
       procedureTrails: [],
-      planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'ledger row 0' }],
+      planStepOutcomes: recorded.planStepOutcomes ?? [
+        { step: 1, status: 'satisfied', evidence: 'ledger row 0' },
+      ],
     } as T;
   },
 }));
@@ -136,5 +141,72 @@ describe('documentation grounding in the executor prompts', (): void => {
     }).catch((): undefined => undefined);
 
     expect(recorded.instructions[0]).toContain('emitted in this response is satisfied');
+  });
+});
+
+describe('advisory steps in the closing phase', (): void => {
+  beforeEach((): void => {
+    recorded.users.length = 0;
+    recorded.instructions.length = 0;
+    recorded.planStepOutcomes = undefined;
+  });
+
+  it('names the advisory steps to the closing phase and reports a blocked one as not verifiable', async (): Promise<void> => {
+    recorded.planStepOutcomes = [
+      { step: 1, status: 'blocked', evidence: 'get_issue returned no assignee field' },
+      { step: 2, status: 'satisfied', evidence: 'ledger rows 1 to 6 landed; audit line read back' },
+    ];
+    const output = await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      // The handbook here asks for an owner check, so the audit alone would not
+      // flag step 1; the planner's mark carries it into the closing phase.
+      plan: {
+        summary: 'Confirm, then refresh.',
+        steps: [
+          'Open T-1 in the tracker to confirm it is owned and prioritized.',
+          'Sign in to the tile, set 74%, save and read back the audit line.',
+        ],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+        advisorySteps: [1],
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+    expect(recorded.instructions[0]).toContain('Advisory plan steps: 1.');
+    expect(recorded.instructions[0]).toContain('Report such a step as not-verifiable');
+    expect(output.planStepOutcomes).toEqual([
+      { step: 1, status: 'not-verifiable', evidence: 'get_issue returned no assignee field' },
+      { step: 2, status: 'satisfied', evidence: 'ledger rows 1 to 6 landed; audit line read back' },
+    ]);
+  });
+
+  it('names no advisory step when the plan has none', async (): Promise<void> => {
+    await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: {
+        summary: 'Comment.',
+        steps: ['Comment on the ticket.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+    expect(recorded.instructions[0]).not.toContain('Advisory plan steps');
   });
 });

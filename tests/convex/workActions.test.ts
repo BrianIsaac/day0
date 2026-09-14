@@ -651,6 +651,46 @@ describe('work action completion evidence', (): void => {
     ).toThrow('promised a Looker pipeline tile read');
   });
 
+  it('accepts a not-verifiable outcome with evidence for a promised read, and never lets it withhold the close or fail the run', (): void => {
+    const plan = {
+      summary: 'Confirm, then comment and close.',
+      steps: [
+        'Check REVOPS-7 in Linear is owned and prioritized.',
+        'Comment on the ticket and close it.',
+      ],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const surfaces = [{ slug: 'linear', displayName: 'Linear' }];
+    const outcomes = [
+      { step: 1, status: 'not-verifiable' as const, evidence: 'get_issue carries no assignee field' },
+      { step: 2, status: 'satisfied' as const, evidence: 'comment and Done' },
+    ];
+    expect(() =>
+      validatePlanStepOutcomes({ plan, outcomes, initialActions: [], initialLedger: [], surfaces }),
+    ).not.toThrow();
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan,
+        outcomes: [{ ...outcomes[0], evidence: ' ' }, outcomes[1]],
+        initialActions: [],
+        initialLedger: [],
+        surfaces,
+      }),
+    ).toThrow('promised a Linear read');
+    const comment = skillOutput.actions[0];
+    const done = skillOutput.actions[1];
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment, done], planStepOutcomes: outcomes }),
+    ).toBeUndefined();
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment], planStepOutcomes: outcomes }),
+    ).toContain('omitted the approved ticket state transition');
+    expect(blockedPlanReason(outcomes)).toBeUndefined();
+  });
+
   it('does not read a compound noun such as close-week as a promise to close the ticket', (): void => {
     const comment = skillOutput.actions[0];
     const satisfied = [

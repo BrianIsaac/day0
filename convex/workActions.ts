@@ -657,7 +657,7 @@ export function validatePlanStepOutcomes(args: {
     for (const surface of named) {
       if (reads.has(surface.slug.toLowerCase())) continue;
       const outcome = ordered[index];
-      if (outcome.status !== 'blocked' || outcome.evidence.trim() === '') {
+      if (outcome.status === 'satisfied' || outcome.evidence.trim() === '') {
         throw new Error(
           `approved plan step ${index + 1} promised a ${surface.displayName} read, but no landed read or blocking ledger reason was recorded`,
         );

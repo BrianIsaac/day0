@@ -9,6 +9,7 @@ import {
   type ExecutionPlan,
   type MockAction,
   type MockSurfaceSnapshot,
+  type PlanStepOutcome,
   type ProcedureTrailAttestation,
   type ProcedureTrailLimitation,
   type WorkCandidate,
@@ -26,7 +27,7 @@ import {
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
-import { actionModeInstruction } from './plan';
+import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { replyTargetLine } from './reply-target';
 
@@ -393,6 +394,7 @@ const REAL_PREAMBLE = [
   '  - Stay inside charter boundaries.',
   '  - Two kinds of evidence: the applied ledger is the only evidence of what happened, and the loaded documentation below is citable for documented facts, procedures and checklists. When the candidate, the plan or the manager\'s feedback asks for documented content, quote it from the loaded documentation and name the page; say in `notes` when the documentation does not contain it.',
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
+  '  - The charter decides which work you take; it adds no verification step. Do not invent source-evidence, ownership, priority or duplicate-check prerequisites that the candidate, the plan or a loaded procedure does not require. A plan step that checks such a property of the candidate is advisory: report what the data shows and never let it hold back the documented sequence.',
   "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
   '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
   '',
@@ -560,21 +562,30 @@ export const executeSchema = z
   })
   .strict();
 
+const planStepOutcomeSchema = z
+  .object({
+    step: z.number().int().positive(),
+    status: z.enum(['satisfied', 'blocked']),
+    evidence: z.string().min(1),
+  })
+  .strict();
+
+/** The real closing phase may also report a step as not verifiable from the ledger. */
+const realPlanStepOutcomeSchema = z
+  .object({
+    step: z.number().int().positive(),
+    status: z.enum(['satisfied', 'blocked', 'not-verifiable']),
+    evidence: z.string().min(1),
+  })
+  .strict();
+
 export const dependentExecuteSchema = z
   .object({
     draft: z.string(),
     notes: z.string(),
     actions: z.array(generatedActionSchema).max(DEPENDENT_ACTION_CAP),
     procedureTrails: z.array(procedureTrailAttestationSchema),
-    planStepOutcomes: z.array(
-      z
-        .object({
-          step: z.number().int().positive(),
-          status: z.enum(['satisfied', 'blocked']),
-          evidence: z.string().min(1),
-        })
-        .strict(),
-    ),
+    planStepOutcomes: z.array(planStepOutcomeSchema),
   })
   .strict();
 
@@ -672,7 +683,58 @@ export function dependentExecuteSchemaForProcedureContract(
       mode === 'mock'
         ? procedureTrailInventorySchema(contract)
         : realProcedureTrailInventorySchema(contract),
+    planStepOutcomes:
+      mode === 'mock' ? z.array(planStepOutcomeSchema) : z.array(realPlanStepOutcomeSchema),
   });
+}
+
+/**
+ * The plan steps the closing phase reports on without gating: those the
+ * planner's audit kept as advisory, and those the same audit flags now, so a
+ * plan drafted before the audit existed is read the same way.
+ *
+ * Args:
+ *   plan: The approved plan.
+ *   candidate: The work candidate.
+ *   documents: The loaded procedures.
+ *
+ * Returns:
+ *   Sorted one-based step numbers.
+ */
+export function advisoryPlanSteps(
+  plan: ExecutionPlan,
+  candidate: WorkCandidate,
+  documents: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>,
+): number[] {
+  const flagged = new Set<number>(plan.advisorySteps ?? []);
+  for (const step of planPreconditionAudit(plan, candidate, documents).flagged) flagged.add(step);
+  return [...flagged].sort((a, b) => a - b);
+}
+
+/**
+ * Report an advisory step the model called blocked as not verifiable instead.
+ *
+ * The evidence is kept: the manager still reads what the data showed. Only
+ * the status changes, so the step can no longer fail the run or withhold a
+ * transition the documented sequence earned.
+ *
+ * Args:
+ *   outcomes: The closing phase's plan-step outcomes.
+ *   advisorySteps: One-based advisory step numbers.
+ *
+ * Returns:
+ *   The outcomes with advisory blocks reported as not verifiable.
+ */
+export function normalisePlanStepOutcomes(
+  outcomes: readonly PlanStepOutcome[],
+  advisorySteps: readonly number[],
+): PlanStepOutcome[] {
+  const advisory = new Set(advisorySteps);
+  return outcomes.map((outcome: PlanStepOutcome): PlanStepOutcome =>
+    outcome.status === 'blocked' && advisory.has(outcome.step)
+      ? { ...outcome, status: 'not-verifiable' }
+      : outcome,
+  );
 }
 
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
@@ -1889,6 +1951,7 @@ export async function runDependentSkill(
   const { skill, plan, candidate, charter, mockEnv } = args;
   const mode: SurfaceMode = args.mode ?? 'mock';
   const procedureContract = parseProcedureContract(mockEnv);
+  const advisory = mode === 'real' ? advisoryPlanSteps(plan, candidate, mockEnv) : [];
   const base = executorInstructions({
     mode,
     autonomousActions: args.autonomousActions ?? false,
@@ -1908,6 +1971,11 @@ export async function runDependentSkill(
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
+    ...(advisory.length > 0
+      ? [
+          `Advisory plan steps: ${advisory.join(', ')}. Each checks a property of the candidate (ownership, priority, age) that the ledger cannot carry and nothing asked for. Report such a step as not-verifiable with what the data showed, never as blocked, and never let it hold back the documented steps, the audit comment or the state change the work earned.`,
+        ]
+      : []),
   ].join('\n');
 
   const agentName = skillAgentName(skill.name, candidate, 'dependent');
@@ -1964,7 +2032,7 @@ export async function runDependentSkill(
       notes: raw.notes,
       actions: raw.actions.map(materialiseGeneratedAction),
       procedureTrails: raw.procedureTrails,
-      planStepOutcomes: ordered,
+      planStepOutcomes: normalisePlanStepOutcomes(ordered, advisory),
     };
   }
 
