@@ -96,6 +96,13 @@ describe('skill author prompts', (): void => {
     expect(prompt.endsWith('Author SKILL.md and smoke.py now.')).toBe(true);
   });
 
+  it('preserves the mock author prompt with persisted probed surfaces', () => {
+    const probed = { ...linear, toolArguments: [{ tool: 'save_comment', arguments: ['issueId', 'body'] }] };
+    expect(buildAuthorPrompt(skill, [probed], now, [], 'mock')).toBe(
+      buildAuthorPrompt(skill, [linear], now, [], 'mock'),
+    );
+  });
+
   it('carries the probed argument names into the author prompt so authored skills use the right keys', (): void => {
     const prompt = buildAuthorPrompt(
       { ...skill, targetSurface: 'linear' },

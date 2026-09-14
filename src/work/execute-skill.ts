@@ -1478,7 +1478,11 @@ export function mockActionContractIssues(
  * Returns:
  *   Prompt lines, or an empty string when no surface is connected.
  */
-export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: number): string {
+export function surfaceInstructions(
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+  mode: SurfaceMode = 'real',
+): string {
   const connected = surfaces.filter((surface) => verdictFor(surface, now) === 'connected');
   if (connected.length === 0) return '';
   const lines: string[] = [
@@ -1490,7 +1494,9 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
     if (surface.path) detail.push(`path ${surface.path}`);
     if (surface.endpoint) detail.push(`endpoint ${surface.endpoint}`);
     const tools = (surface.toolAllowlist ?? []).map((tool: string): string => {
-      const probed = surface.toolArguments?.find((entry) => entry.tool === tool);
+      const probed = mode === 'real'
+        ? surface.toolArguments?.find((entry) => entry.tool === tool)
+        : undefined;
       if (!probed) return tool;
       argumentNamesShown = true;
       return `${tool}(${probed.arguments.join(', ')})`;
@@ -1615,7 +1621,7 @@ export function executorInstructions(args: {
   now: number;
   procedureContract?: ProcedureContract;
 }): string {
-  const surfaceGuidance = surfaceInstructions(args.surfaces, args.now);
+  const surfaceGuidance = surfaceInstructions(args.surfaces, args.now, args.mode);
   const procedureContract = args.procedureContract ?? parseProcedureContract(args.mockEnv);
   return [
     executorPreamble(args.mode, args.autonomousActions),

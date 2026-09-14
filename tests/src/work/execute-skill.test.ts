@@ -1357,6 +1357,16 @@ describe('probed argument names in the surface list', (): void => {
     );
   });
 
+  it('preserves mock instructions even when persisted surfaces carry probed arguments', () => {
+    const args = {
+      mode: 'mock' as const, autonomousActions: false, skillBody: 'Read the issue.',
+      mockEnv: emptyMock, now,
+    };
+    expect(executorInstructions({ ...args, surfaces: [probed] })).toBe(
+      executorInstructions({ ...args, surfaces: [{ ...probed, toolArguments: undefined }] }),
+    );
+  });
+
   it('reaches the closing phase through the same instructions', (): void => {
     const instructions = executorInstructions({
       mode: 'real',
