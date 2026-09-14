@@ -198,6 +198,26 @@ describe('advisory steps in the closing phase', (): void => {
     ]);
   });
 
+  it('keeps an unfulfilled runbook read blocked when reported as not-verifiable', async () => {
+    recorded.planStepOutcomes = [
+      { step: 1, status: 'not-verifiable', evidence: 'No snapshot was taken' },
+    ];
+    const output = await runDependentSkill({
+      skill: { name: 'tile-readback', description: 'Read back the tile.', body: '# Skill' },
+      plan: {
+        summary: 'Read back the tile.',
+        steps: ['Read back the visible 74% and audit line from the Looker pipeline tile.'],
+        expectedOutputType: 'message', riskNotes: '', reversibility: '', estimatedMinutes: 1,
+      },
+      candidate, charter, mockEnv, mode: 'real', surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+    expect(output.planStepOutcomes).toEqual([
+      { step: 1, status: 'blocked', evidence: 'No snapshot was taken' },
+    ]);
+  });
+
   it('names no advisory step when the plan has none', async (): Promise<void> => {
     await runDependentSkill({
       skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },

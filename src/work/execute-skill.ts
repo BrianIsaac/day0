@@ -394,7 +394,7 @@ const REAL_PREAMBLE = [
   '  - Stay inside charter boundaries.',
   '  - Two kinds of evidence: the applied ledger is the only evidence of what happened, and the loaded documentation below is citable for documented facts, procedures and checklists. When the candidate, the plan or the manager\'s feedback asks for documented content, quote it from the loaded documentation and name the page; say in `notes` when the documentation does not contain it.',
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
-  '  - The charter decides which work you take; it adds no verification step. Do not invent source-evidence, ownership, priority or duplicate-check prerequisites that the candidate, the plan or a loaded procedure does not require. A plan step that checks such a property of the candidate is advisory: report what the data shows and never let it hold back the documented sequence.',
+  '  - The charter decides which work you take; it adds no verification step. Do not invent source-evidence, ownership, priority or duplicate-check prerequisites that the candidate, the plan or a loaded procedure does not require. Only a plan step marked advisory or checking a candidate property that neither the candidate nor a loaded procedure requires is advisory: report what the data shows and never let it hold back the documented sequence.',
   "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
   '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
   '',
@@ -730,11 +730,15 @@ export function normalisePlanStepOutcomes(
   advisorySteps: readonly number[],
 ): PlanStepOutcome[] {
   const advisory = new Set(advisorySteps);
-  return outcomes.map((outcome: PlanStepOutcome): PlanStepOutcome =>
-    outcome.status === 'blocked' && advisory.has(outcome.step)
-      ? { ...outcome, status: 'not-verifiable' }
-      : outcome,
-  );
+  return outcomes.map((outcome: PlanStepOutcome): PlanStepOutcome => {
+    if (outcome.status === 'blocked' && advisory.has(outcome.step)) {
+      return { ...outcome, status: 'not-verifiable' };
+    }
+    if (outcome.status === 'not-verifiable' && !advisory.has(outcome.step)) {
+      return { ...outcome, status: 'blocked' };
+    }
+    return outcome;
+  });
 }
 
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
