@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { redactCredentials } from '../../../src/docs/redaction';
 import {
   containsTokenShape,
   redactSecret,
@@ -11,6 +12,11 @@ const SLACK = ['xoxb', '1234567890', 'ReviewValue'].join('-');
 const OPENAI = ['sk', 'proj', 'ReviewValue0123456789'].join('-');
 
 describe('surface credential redaction', (): void => {
+  it('preserves ordinary labelled ticket values', (): void => {
+    const text = 'Ticket key: REVOPS-7\nStatus: Backlog';
+    expect(redactTokenShapes(text)).toBe(text);
+  });
+
   it('replaces provider-prefixed values wherever they occur', (): void => {
     expect(redactTokenShapes(`key ${LINEAR}, token ${SLACK}, provider ${OPENAI}.`)).toBe(
       'key <redacted>, token <redacted>, provider <redacted>.',
@@ -27,10 +33,31 @@ describe('surface credential redaction', (): void => {
       '- Service token (RevOps automation): <redacted>',
     );
     expect(redactTokenShapes('Password: hunter2\nNext line')).toBe(
-      'Password: <redacted>\nNext line',
+      'Password: hunter2\nNext line',
     );
     const prose = 'using a bot token Bearer header. It names the usable methods.';
     expect(redactTokenShapes(prose)).toBe(prose);
+  });
+
+  it('redacts high-entropy labelled values and exact credentials of any length', (): void => {
+    expect(redactTokenShapes('API key: q7Mz2Kv9Tx4Wp6Rn8Js3')).toBe('API key: <redacted>');
+    expect(redactTokenShapes('API key: aaaaaaaaaaaaaaaaaaaa')).toBe('API key: aaaaaaaaaaaaaaaaaaaa');
+    for (const secret of ['x', 'hunter2', 'q7Mz2Kv9Tx4Wp6Rn8Js3']) {
+      expect(redactSecret(`Password: ${secret}`, secret)).toBe('Password: <redacted>');
+    }
+  });
+
+  it('keeps explicit credential rules independent of labelled entropy', (): void => {
+    const connection = redactCredentials('Password: postgres://app:hunter2@db/app', 'Database');
+    expect(connection.credentials).toEqual([{ label: 'postgres connection secret', plaintext: 'hunter2' }]);
+    expect(redactTokenShapes(connection.markdown)).toContain('postgres://app:<credential: postgres connection secret, stored>@db/app');
+    for (const value of ['x', 'hunter2']) {
+      const declared = redactCredentials(`Password: \`${value}\``, 'Dashboard');
+      expect(declared.credentials).toMatchObject([{ plaintext: value }]);
+      expect(redactTokenShapes(declared.markdown)).toContain('<credential:');
+    }
+    expect(redactTokenShapes('Bearer aaaaaaaaaaaa')).toBe('Bearer <redacted>');
+    expect(redactTokenShapes(['lin', 'api', 'aaaaaa'].join('_'))).toBe('<redacted>');
   });
 
   it('leaves a stored marker and ordinary prose alone', (): void => {

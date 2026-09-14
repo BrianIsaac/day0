@@ -1,3 +1,5 @@
+import { LABELLED_ENTROPY_FLOOR_BITS, shannonBits } from '../docs/redaction';
+
 /**
  * Defence in depth for credential material in surface metadata.
  *
@@ -39,8 +41,10 @@ export function redactTokenShapes(text: string): string {
     .replace(BEARER, `Bearer ${REDACTED}`)
     .replace(
       LABELLED_VALUE,
-      (_match: string, lineStart: string, label: string): string =>
-        `${lineStart}${label}${REDACTED}`,
+      (match: string, lineStart: string, label: string, value: string): string =>
+        shannonBits(value) >= LABELLED_ENTROPY_FLOOR_BITS
+          ? `${lineStart}${label}${REDACTED}`
+          : match,
     );
 }
 
