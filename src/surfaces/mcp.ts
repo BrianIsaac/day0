@@ -246,20 +246,29 @@ export function interpretToolResult(result: unknown): InterpretedToolResult {
   };
   const blocks = Array.isArray(record.content) ? record.content : undefined;
   if (blocks) {
-    const textBlock = blocks.find(
+    const textBlocks = blocks.filter(
       (block): block is { type: string; text: string } =>
         typeof block === 'object' &&
         block !== null &&
         (block as { type?: unknown }).type === 'text' &&
         typeof (block as { text?: unknown }).text === 'string',
     );
-    const text = textBlock?.text ?? '';
+    const text = textBlocks[0]?.text ?? '';
+    const errorMessage =
+      providerErrorMessage(JSON.stringify(record.structuredContent) ?? '') ??
+      textBlocks.map((block) => providerErrorMessage(block.text)).find((message) => message !== undefined);
     const providerId =
       firstStringDeep(record.structuredContent, idKeys) ?? providerIdFromText(text, idKeys);
-    return withBodyError({ isError: record.isError === true, text, providerId });
+    return withBodyError({ isError: record.isError === true || errorMessage !== undefined, text, providerId, errorMessage });
   }
   const text = JSON.stringify(result);
-  return withBodyError({ isError: false, text, providerId: firstStringDeep(result, idKeys) });
+  const errorMessage = providerErrorMessage(JSON.stringify(record.structuredContent) ?? '');
+  return withBodyError({
+    isError: record.isError === true || errorMessage !== undefined,
+    text,
+    providerId: firstStringDeep(result, idKeys),
+    errorMessage,
+  });
 }
 
 /** Mark a result whose body reports a failure the flag did not. */

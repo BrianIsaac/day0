@@ -976,3 +976,19 @@ describe('the browser floor across one run', (): void => {
     expect(calls.map((c) => c.tool)).toEqual(['browser_navigate']);
   });
 });
+
+
+describe('provider error envelope variants', () => {
+  it.each([
+    { content: [], structuredContent: { error: true, message: 'validation failed: id required' } },
+    { content: [{ type: 'text', text: 'Request received' }, { type: 'text', text: '{"validationErrors":["id required"]}' }] },
+  ])('never ledgers a failure body as a successful read', async (result) => {
+    const client = fakeClient({ 'linear_list_issues': async () => result });
+    const outcome = await adapter(client).apply(ctx, run, {
+      tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues', toolArgsJson: '{}' },
+    }, 0, 'review:read:0');
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toContain('id required');
+    expect(outcome.effect).toBeUndefined();
+  });
+});
