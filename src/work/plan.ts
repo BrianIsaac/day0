@@ -85,29 +85,75 @@ const CANDIDATE_PROPERTIES: ReadonlyArray<{ property: string; words: RegExp }> =
 ];
 
 type CandidateProperty = (typeof CANDIDATE_PROPERTIES)[number];
-const CANDIDATE_CLASS = /\b(?:tickets?|requests?|items?|issues?|mentions?)\b/i;
-const PROPERTY_STOP_WORDS = new Set([
-  'will', 'their', 'them', 'with', 'from', 'this', 'that', 'when', 'where',
-  'ticket', 'tickets', 'request', 'requests', 'item', 'items', 'issue', 'issues',
-  'mention', 'mentions', 'handle', 'process', 'manage', 'work', 'take', 'keep',
-  'only', 'have', 'must', 'should', 'before', 'after', 'which', 'these', 'those',
+const CANDIDATE_CLASS = /\b(?:tickets?|requests?|items?|issues?|mentions?)\b/gi;
+const PREMODIFIER_WORD = /^[a-z]+(?:-[a-z]+)*$/;
+const PREMODIFIER_CONNECTOR = new Set(['and', 'or', 'plus']);
+/** Where a run of candidate premodifiers ends: determiners, prepositions and the verbs a charter clause opens with. */
+const PREMODIFIER_STOP = new Set([
+  'a', 'an', 'the', 'every', 'each', 'all', 'any', 'some', 'no', 'this', 'that', 'these', 'those',
+  'its', 'their', 'our', 'your', 'my', 'his', 'her', 'such', 'other', 'more', 'most', 'few', 'many',
+  'from', 'with', 'for', 'in', 'on', 'of', 'to', 'at', 'by', 'into', 'over', 'about', 'after', 'before',
+  'when', 'where', 'which', 'while', 'than', 'as', 'via', 'through', 'per', 'under', 'within', 'without',
+  'handle', 'handles', 'handling', 'process', 'processes', 'processing', 'manage', 'manages', 'managing',
+  'take', 'takes', 'taking', 'keep', 'keeps', 'keeping', 'move', 'moves', 'moving', 'own', 'owns', 'owning',
+  'work', 'works', 'working', 'answer', 'answers', 'answering', 'refresh', 'refreshes', 'refreshing',
+  'read', 'reads', 'reading', 'draft', 'drafts', 'drafting', 'post', 'posts', 'posting', 'add', 'adds',
+  'adding', 'close', 'closes', 'closing', 'hold', 'holds', 'holding', 'review', 'reviews', 'reviewing',
+  'triage', 'triages', 'triaging', 'pick', 'picks', 'picking', 'pull', 'pulls', 'pulling', 'watch',
+  'watches', 'watching', 'monitor', 'monitors', 'monitoring', 'resolve', 'resolves', 'resolving',
+  'route', 'routes', 'routing', 'clear', 'clears', 'clearing', 'act', 'acts', 'acting', 'respond',
+  'responds', 'responding', 'reply', 'replies', 'replying', 'is', 'are', 'was', 'were', 'be', 'being',
+  'been', 'has', 'have', 'had', 'will', 'would', 'can', 'could', 'may', 'might', 'must', 'should',
+  'only', 'also', 'not', 'never', 'always', 'then', 'there', 'here', 'it', 'they', 'we', 'you',
 ]);
 
-function candidateProperties(charter?: Charter): readonly CandidateProperty[] {
+function systemWords(charter: Charter, sourceSystem: string | undefined): Set<string> {
+  const words = new Set<string>();
+  for (const name of [...(charter.namedSystems ?? []).map((system) => system.name), sourceSystem ?? '']) {
+    for (const word of name.toLowerCase().split(/[^a-z0-9]+/)) if (word) words.add(word);
+  }
+  return words;
+}
+
+/**
+ * The words a charter uses to describe the candidates it takes.
+ *
+ * Only the premodifiers of a candidate class noun count ("owned, prioritized
+ * Linear tickets" yields owned and prioritized): the run of words directly
+ * before the noun, joined across commas, "and" and hyphens, ending at the
+ * first determiner, preposition or verb. Words that name a system, including
+ * the candidate's own source system, describe where the work lives rather
+ * than the candidate and are left out. The three fixed classes are always
+ * kept as a floor, so a charter with no class noun changes nothing.
+ */
+function candidateProperties(
+  charter?: Charter,
+  sourceSystem?: string,
+): readonly CandidateProperty[] {
   if (!charter) return CANDIDATE_PROPERTIES;
+  const systems = systemWords(charter, sourceSystem);
   const vocabulary = new Set<string>();
-  for (const text of [charter.proposedFunction, ...charter.proposedBoundaries.willDo]) {
-    for (const clause of text.split(/[.;\n]/)) {
-      if (!CANDIDATE_CLASS.test(clause)) continue;
-      for (const word of clause.toLowerCase().split(/\W+/)) {
-        if (word.length >= 4 && !PROPERTY_STOP_WORDS.has(word) &&
-            !CANDIDATE_PROPERTIES.some(({ words }) => words.test(word))) vocabulary.add(word);
+  for (const text of [charter.proposedFunction, ...(charter.proposedBoundaries?.willDo ?? [])]) {
+    for (const clause of text.replace(/\s+/g, ' ').split(/[.;]/)) {
+      for (const match of clause.matchAll(CANDIDATE_CLASS)) {
+        const tokens = clause.slice(0, match.index).trim().split(' ');
+        for (let position = tokens.length - 1; position >= 0; position -= 1) {
+          const token = tokens[position]!.replace(/[,:]+$/, '').toLowerCase();
+          if (PREMODIFIER_CONNECTOR.has(token)) continue;
+          if (!PREMODIFIER_WORD.test(token) || PREMODIFIER_STOP.has(token)) break;
+          if (systems.has(token) || CANDIDATE_PROPERTIES.some(({ words }) => words.test(token))) continue;
+          vocabulary.add(token);
+        }
       }
     }
   }
-  return [...CANDIDATE_PROPERTIES, ...[...vocabulary].map((property) => ({
-    property, words: new RegExp(`\\b${property}\\b`, 'i'),
-  }))];
+  return [
+    ...CANDIDATE_PROPERTIES,
+    ...[...vocabulary].map((property) => ({
+      property,
+      words: new RegExp(`\\b${property.split('-').join('[-\\s]?')}\\b`, 'i'),
+    })),
+  ];
 }
 
 /** A negation that governs the verification verb it stands at most two words before. */
@@ -172,11 +218,11 @@ export interface PlanPreconditionAudit {
  */
 export function planPreconditionAudit(
   plan: Pick<ExecutionPlan, 'steps'>,
-  candidate: Pick<WorkCandidate, 'title' | 'contentSummary'>,
+  candidate: Pick<WorkCandidate, 'title' | 'contentSummary'> & Partial<Pick<WorkCandidate, 'sourceSystem'>>,
   procedures: PlanDocuments | undefined,
   charter?: Charter,
 ): PlanPreconditionAudit {
-  const properties = candidateProperties(charter);
+  const properties = candidateProperties(charter, candidate.sourceSystem);
   const candidateText = `${candidate.title}\n${candidate.contentSummary}`;
   const bodies = procedures
     ? [...procedures.howToGuides, ...procedures.teamDocs].map((document) => document.body)

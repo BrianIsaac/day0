@@ -313,6 +313,46 @@ describe('charter adjectives are scope, not gates', (): void => {
     expect(planPreconditionAudit(step, ticket, tileRunbook, charter).flagged).toEqual([]);
   });
 
+  it('reads only the words that describe the candidate, never the systems or the work around it', (): void => {
+    const runThrough: Charter = {
+      ...charter,
+      proposedFunction:
+        'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.',
+      proposedBoundaries: {
+        ...charter.proposedBoundaries,
+        willDo: ['Handle owned, prioritized Linear tickets in the Q3 close project.'],
+      },
+      namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'day-1 1:1' }],
+    };
+    const linearTicket = { ...ticket, sourceSystem: 'linear' };
+    const plan = {
+      steps: [
+        'Confirm the originating Linear issue ID with the manager.',
+        'After approval, post the comment on the confirmed Linear issue, move it to Done, and add an audit note.',
+        'Ensure the Q3 close project ticket is moved to Done.',
+        'Verify the revenue figure matches the standup deals.',
+        'Confirm the RevOps team was told.',
+        'Confirm it is owned and prioritized.',
+      ],
+    };
+    expect(planPreconditionAudit(plan, linearTicket, undefined, runThrough).flagged).toEqual([6]);
+    const unnamed = { ...runThrough, namedSystems: [] };
+    expect(planPreconditionAudit(plan, linearTicket, undefined, unnamed).flagged).toEqual([6]);
+    expect(planPreconditionAudit(plan, ticket, undefined, unnamed).flagged).toEqual([1, 2, 6]);
+  });
+
+  it('joins premodifiers across commas, and, hyphens and lines, and keeps the floor without a class word', (): void => {
+    const scoped = {
+      ...charter,
+      proposedFunction: 'Handle unblocked and customer-facing\nrequests, plus stale ones.',
+    };
+    expect(planPreconditionAudit({ steps: ['Check the ticket is unblocked.'] }, ticket, undefined, scoped).flagged).toEqual([1]);
+    expect(planPreconditionAudit({ steps: ['Check the ticket is customer facing.'] }, ticket, undefined, scoped).flagged).toEqual([1]);
+    expect(planPreconditionAudit({ steps: ['Verify the tile is stale.'] }, ticket, undefined, scoped).flagged).toEqual([1]);
+    const wordless = { ...charter, proposedFunction: 'Keep the close moving.' };
+    expect(planPreconditionAudit(gated, ticket, undefined, wordless).flagged).toEqual([1]);
+  });
+
   it('repairs a charter-derived gate through the real planner', async (): Promise<void> => {
     const drafted = { summary: 'Refresh the tile.', steps: ['Confirm the ticket is customer-facing.',
       'Refresh the tile.'], expectedOutputType: 'ticket-update', riskNotes: '',

@@ -528,8 +528,18 @@ describe('deferral by data, not by judgement', (): void => {
   });
 
   it('preserves the 2 September approved plan shapes and complete browser batch', () => {
+    const runThrough: Charter = {
+      ...charter,
+      proposedFunction:
+        'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.',
+      proposedBoundaries: {
+        ...charter.proposedBoundaries,
+        willDo: ['Handle owned, prioritized Linear tickets in the Q3 close project.'],
+      },
+    };
     for (const historicalPlan of readmePlans) {
       expect(planPreconditionAudit(historicalPlan, ticket, tileRunbook).flagged).toEqual([]);
+      expect(planPreconditionAudit(historicalPlan, ticket, tileRunbook, runThrough).flagged).toEqual([]);
       expect(deferralAudit({
         notes: '', needsDependentPhase: true,
         actions: [getIssue, ...tileSequence], procedureTrails: [],
