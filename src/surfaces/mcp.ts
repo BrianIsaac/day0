@@ -123,6 +123,26 @@ export interface InterpretedToolResult {
 }
 
 /**
+ * Whether a `validationErrors` field carries a failure.
+ *
+ * A server that reports validation on every response answers a good call
+ * with an empty list or object; only a populated value names a failure.
+ *
+ * Args:
+ *   value: The field's value.
+ *
+ * Returns:
+ *   True when at least one validation error is reported.
+ */
+function hasValidationErrors(value: unknown): boolean {
+  if (value === undefined || value === null || value === false) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+/**
  * Read a failure a server reported inside the result body rather than through
  * the protocol's `isError` flag.
  *
@@ -149,7 +169,7 @@ export function providerErrorMessage(text: string): string | undefined {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
   const record = parsed as Record<string, unknown>;
   const flagged = record.error === true;
-  const validation = record.validationErrors !== undefined && record.validationErrors !== null;
+  const validation = hasValidationErrors(record.validationErrors);
   if (!flagged && !validation) return undefined;
   for (const key of ['message', 'detail', 'reason']) {
     const value = record[key];

@@ -6,6 +6,7 @@ import {
   EFFECT_LENGTH,
   interpretToolResult,
   McpAdapter,
+  providerErrorMessage,
   type McpClientLike,
   type McpClientOptions,
 } from '../../../src/surfaces/mcp';
@@ -990,5 +991,38 @@ describe('provider error envelope variants', () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.reason).toContain('id required');
     expect(outcome.effect).toBeUndefined();
+  });
+});
+
+
+describe('an empty validation report', (): void => {
+  it('is not a failure at interpretation', (): void => {
+    expect(providerErrorMessage('{"success":true,"validationErrors":[]}')).toBeUndefined();
+    expect(providerErrorMessage('{"validationErrors":{}}')).toBeUndefined();
+    expect(providerErrorMessage('{"validationErrors":""}')).toBeUndefined();
+    expect(providerErrorMessage('{"validationErrors":["id required"]}')).toBe(
+      'validation failed: ["id required"]',
+    );
+    expect(
+      interpretToolResult({ content: [{ type: 'text', text: '{"id":"iss-1","validationErrors":[]}' }] }),
+    ).toMatchObject({ isError: false, providerId: 'iss-1' });
+  });
+
+  it('is ledgered as the successful read it is', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_list_issues: async () => ({
+        content: [{ type: 'text', text: '{"id":"iss-1","identifier":"REVOPS-7","validationErrors":[]}' }],
+      }),
+    });
+    const outcome = await adapter(client).apply(
+      ctx,
+      run,
+      { tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues', toolArgsJson: '{}' } },
+      0,
+      'review:read:0',
+    );
+    expect(outcome.ok).toBe(true);
+    expect(outcome.providerId).toBe('iss-1');
+    expect(outcome.effect).toContain('REVOPS-7');
   });
 });
