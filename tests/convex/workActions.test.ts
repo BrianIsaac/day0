@@ -39,6 +39,7 @@ const recorded = vi.hoisted(() => ({
   http: [] as Array<{ url: string; authorization: string; body: unknown }>,
   failMcpAfterRequest: false,
   failedMcpTool: undefined as string | undefined,
+  issueRecordText: undefined as string | undefined,
   afterCredentialRead: undefined as (() => Promise<void>) | undefined,
   afterToolList: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
@@ -351,6 +352,9 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                     ],
                   };
                 }
+                if (tool === 'get_issue' && recorded.issueRecordText !== undefined) {
+                  return { content: [{ type: 'text', text: recorded.issueRecordText }] };
+                }
                 const text =
                   tool === 'browser_navigate'
                     ? '- Page URL: http://looker-tile:8080/'
@@ -391,6 +395,7 @@ afterEach((): void => {
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
   recorded.failedMcpTool = undefined;
+  recorded.issueRecordText = undefined;
   recorded.afterCredentialRead = undefined;
   recorded.afterToolList = undefined;
   recorded.skillSwitches.length = 0;
@@ -1599,6 +1604,23 @@ describe('executing an approved plan through the gate', (): void => {
         applied: { ok: true, authority: 'standing', tool: 'mcp.call' },
       });
       expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    });
+
+    it('redacts ticket credentials before persisting the grounding ledger or handing off the record', async () => {
+      useSurfaceMode('real');
+      const password = 'Zq9!vT2#kL8mNp4rXs7wYb3e';
+      recorded.issueRecordText = JSON.stringify({
+        id: 'iss-1', description: `Refresh the tile.\nService password: ${password}`,
+      });
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+      await harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId });
+      const events = await groundingEvents(harness);
+      expect(events).toHaveLength(1);
+      expect(JSON.stringify(events)).not.toContain(password);
+      expect(JSON.stringify(recorded.planRecords)).not.toContain(password);
+      expect(events[0]!.payload).toMatchObject({ applied: { ok: true, authority: 'standing' } });
     });
 
     it('reads nothing for a chat candidate', async (): Promise<void> => {

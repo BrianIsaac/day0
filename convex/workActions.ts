@@ -10,6 +10,7 @@ import {
 } from '../src/work/evaluate';
 import {
   candidateRecordRead,
+  redactCandidateRecordText,
   draftExecutionPlan,
   type CandidateRecord,
   type DraftPlanArgs,
@@ -1232,7 +1233,7 @@ async function readCandidateRecord(
       { agentId: args.agentId },
     );
     const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
-    const [applied] = await applySurfaceActions(
+    const [rawApplied] = await applySurfaceActions(
       ctx,
       SURFACE_MODE,
       args.surfaces,
@@ -1254,6 +1255,12 @@ async function readCandidateRecord(
         autonomousActions: args.autonomousActions,
       },
     );
+    const applied = rawApplied ? {
+      ...rawApplied,
+      ...(rawApplied.effect !== undefined ? { effect: redactCandidateRecordText(rawApplied.effect) } : {}),
+      ...(rawApplied.reason !== undefined ? { reason: redactCandidateRecordText(rawApplied.reason) } : {}),
+      ...(rawApplied.providerId !== undefined ? { providerId: redactCandidateRecordText(rawApplied.providerId) } : {}),
+    } : undefined;
     await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
     if (!applied || !applied.ok || applied.held) {
       return {

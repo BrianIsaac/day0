@@ -253,6 +253,12 @@ export function candidateRecordRead(
 export function renderCandidateRecord(record: CandidateRecord): string[] {
   const heading = `--- Candidate record, read from ${record.surface} (${record.tool}) ---`;
   const text = 'unavailable' in record ? record.unavailable : record.text;
+  const bounded = redactCandidateRecordText(text);
+  return [heading, 'unavailable' in record ? `record unavailable: ${bounded}` : bounded];
+}
+
+/** Redact and bound a grounding result before persistence or prompt construction. */
+export function redactCandidateRecordText(text: string): string {
   const redact = (value: string): string =>
     redactTokenShapes(redactCredentials(value, 'Candidate record').markdown);
   // Provider records are JSON inside an effect string. Decode string values
@@ -267,11 +273,9 @@ export function renderCandidateRecord(record: CandidateRecord): string[] {
   // The adapter may truncate a record inside a JSON string.
   const redacted = redact(decoded.replace(/\\[nr]/g, '\n'));
 
-  const bounded =
-    redacted.length > CANDIDATE_RECORD_LENGTH
-      ? `${redacted.slice(0, CANDIDATE_RECORD_LENGTH)}…`
-      : redacted;
-  return [heading, 'unavailable' in record ? `record unavailable: ${bounded}` : bounded];
+  return redacted.length > CANDIDATE_RECORD_LENGTH
+    ? `${redacted.slice(0, CANDIDATE_RECORD_LENGTH)}…`
+    : redacted;
 }
 
 export interface DraftPlanArgs {
