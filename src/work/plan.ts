@@ -3,9 +3,12 @@ import { agentJson, makeAgent } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import type { SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
+import { redactTokenShapes } from '../surfaces/redact';
+import { redactCredentials } from '../docs/redaction';
 import { renderHowTos, renderTeamDocs } from './documents';
+import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
-import type { ExecutionPlan, MockSurfaceSnapshot, WorkCandidate } from './types';
+import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 
 /**
  * Layer-3 plan drafter. Lifted from Protean's `src/work/plan.ts` and
@@ -170,6 +173,96 @@ export const planSchema = z.object({
 /** The documentation the planner may plan from: the same pages the executor cites. */
 export type PlanDocuments = Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>;
 
+/**
+ * The candidate's own record, read from its source surface before the plan
+ * is drafted, or the reason it could not be.
+ */
+export type CandidateRecord =
+  | { surface: string; tool: string; text: string }
+  | { surface: string; tool: string; unavailable: string };
+
+/** The most a record contributes to the plan prompt. */
+export const CANDIDATE_RECORD_LENGTH = 4_000;
+
+const RECORD_READ_TOOL = /^(?:get|fetch|read|show)[_-]?(?:issue|ticket)$/i;
+const RECORD_ID_ARGUMENTS = ['id', 'issueId', 'identifier', 'issue', 'ticketId', 'key'];
+
+/**
+ * The one read that grounds a plan in the candidate's record.
+ *
+ * A ticket-queue candidate whose source surface is connected over MCP and
+ * allows a single-record read tool (`get_issue`, or a tool of that shape)
+ * gets that tool called with the candidate's external id under the probed
+ * id argument. Anything else, a chat ask say, has no record to read.
+ *
+ * Args:
+ *   candidate: The work candidate.
+ *   surfaces: The agent's surfaces.
+ *   now: The clock the connection verdict is resolved against.
+ *
+ * Returns:
+ *   The read action with its surface and tool, or undefined.
+ */
+export function candidateRecordRead(
+  candidate: Pick<WorkCandidate, 'sourceCategory' | 'sourceSystem' | 'externalId'>,
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+): { surface: string; tool: string; action: MockAction } | undefined {
+  if (candidate.sourceCategory !== 'ticket-queue') return undefined;
+  const slug = surfaceSlug(candidate.sourceSystem);
+  const surface = surfaces.find((row) => row.slug === slug);
+  if (!surface || surface.path !== 'mcp' || verdictFor(surface, now) !== 'connected') {
+    return undefined;
+  }
+  const allowlist = surface.toolAllowlist ?? [];
+  const tool =
+    allowlist.find((name) => name === 'get_issue') ??
+    allowlist.find((name) => RECORD_READ_TOOL.test(name));
+  if (!tool) return undefined;
+  const probed = surface.toolArguments?.find((entry) => entry.tool === tool)?.arguments;
+  const argument = probed
+    ? RECORD_ID_ARGUMENTS.find((name) => probed.includes(name))
+    : RECORD_ID_ARGUMENTS[0];
+  if (!argument) return undefined;
+  return {
+    surface: surface.slug,
+    tool,
+    action: {
+      tool: 'mcp.call',
+      args: {
+        surface: surface.slug,
+        tool,
+        toolArgsJson: JSON.stringify({ [argument]: candidate.externalId }),
+      },
+    },
+  };
+}
+
+/**
+ * Render the candidate record for the planner, redacted the way the loaded
+ * documentation is and bounded.
+ *
+ * Args:
+ *   record: The record read, or its unavailability.
+ *
+ * Returns:
+ *   Prompt lines.
+ */
+export function renderCandidateRecord(record: CandidateRecord): string[] {
+  const heading = `--- Candidate record, read from ${record.surface} (${record.tool}) ---`;
+  if ('unavailable' in record) {
+    return [heading, `record unavailable: ${redactTokenShapes(record.unavailable)}`];
+  }
+  const redacted = redactTokenShapes(
+    redactCredentials(record.text, 'Candidate record').markdown,
+  );
+  const bounded =
+    redacted.length > CANDIDATE_RECORD_LENGTH
+      ? `${redacted.slice(0, CANDIDATE_RECORD_LENGTH)}…`
+      : redacted;
+  return [heading, bounded];
+}
+
 export interface DraftPlanArgs {
   candidate: WorkCandidate;
   charter: Charter;
@@ -179,6 +272,8 @@ export interface DraftPlanArgs {
   surfaces?: readonly SurfaceRecord[];
   /** The loaded documentation; omitted, the prompt carries no documentation sections. */
   documents?: PlanDocuments;
+  /** The candidate's record as read before drafting; omitted, the prompt carries no record section. */
+  record?: CandidateRecord;
   /** The clock the surface verdicts are resolved against; defaults to now. */
   now?: number;
 }
@@ -239,6 +334,9 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     `Body:`,
     candidate.contentSummary,
   ];
+  if (args.record) {
+    lines.push('', ...renderCandidateRecord(args.record));
+  }
   if (args.surfaces) {
     lines.push(
       '',

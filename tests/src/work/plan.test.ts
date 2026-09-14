@@ -4,10 +4,13 @@ import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { WorkCandidate } from '../../../src/work/types';
 import {
   actionModeInstruction,
+  CANDIDATE_RECORD_LENGTH,
+  candidateRecordRead,
   draftExecutionPlan,
   planPreconditionAudit,
   planSystemPrompt,
   planUserPrompt,
+  renderCandidateRecord,
   SCOPE_NOT_GATE_PLANNER,
 } from '../../../src/work/plan';
 
@@ -414,5 +417,156 @@ describe('charter adjectives are scope, not gates', (): void => {
     expect(planRecorded.users).toHaveLength(1);
     expect(plan.steps).toEqual(gated.steps);
     expect(plan.advisorySteps).toBeUndefined();
+  });
+});
+
+describe('the candidate record read before the plan', (): void => {
+  const linear: SurfaceRecord = {
+    slug: 'linear',
+    displayName: 'Linear',
+    class: 'kanban',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now - 60_000,
+    path: 'mcp',
+    endpoint: 'https://mcp.linear.app/mcp',
+    toolAllowlist: ['save_comment', 'save_issue', 'get_issue'],
+    toolArguments: [
+      { tool: 'get_issue', arguments: ['id', 'includeRelations'] },
+      { tool: 'save_comment', arguments: ['issueId', 'body'] },
+    ],
+  };
+  const ticket: WorkCandidate = {
+    ...candidate,
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-7',
+    contentRefs: ['ticket://REVOPS-7'],
+  };
+
+  beforeEach((): void => {
+    planRecorded.users.length = 0;
+    planRecorded.outputs.length = 0;
+  });
+
+  it('reads a ticket-queue candidate with the documented single-record tool under its probed id argument', (): void => {
+    expect(candidateRecordRead(ticket, [linear], now)).toEqual({
+      surface: 'linear',
+      tool: 'get_issue',
+      action: {
+        tool: 'mcp.call',
+        args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
+      },
+    });
+    const issueIdOnly: SurfaceRecord = {
+      ...linear,
+      toolArguments: [{ tool: 'get_issue', arguments: ['issueId'] }],
+    };
+    expect(candidateRecordRead(ticket, [issueIdOnly], now)?.action.args.toolArgsJson).toBe(
+      '{"issueId":"REVOPS-7"}',
+    );
+    const unprobed: SurfaceRecord = { ...linear, toolArguments: undefined };
+    expect(candidateRecordRead(ticket, [unprobed], now)?.action.args.toolArgsJson).toBe(
+      '{"id":"REVOPS-7"}',
+    );
+    const fetchTicket: SurfaceRecord = {
+      ...linear,
+      toolAllowlist: ['fetch_ticket', 'save_comment'],
+      toolArguments: [{ tool: 'fetch_ticket', arguments: ['key'] }],
+    };
+    expect(candidateRecordRead(ticket, [fetchTicket], now)).toMatchObject({
+      tool: 'fetch_ticket',
+      action: { args: { toolArgsJson: '{"key":"REVOPS-7"}' } },
+    });
+  });
+
+  it('reads nothing for a chat ask, a browser surface, a disconnected surface or a surface with no record tool', (): void => {
+    expect(
+      candidateRecordRead(
+        { ...ticket, sourceCategory: 'inbox', sourceSystem: 'slack' },
+        [linear, { ...linear, slug: 'slack', displayName: 'Slack', class: 'chat' }],
+        now,
+      ),
+    ).toBeUndefined();
+    expect(candidateRecordRead(ticket, [{ ...linear, path: 'browser-driven' }], now)).toBeUndefined();
+    expect(candidateRecordRead(ticket, [{ ...linear, verdict: 'absent' }], now)).toBeUndefined();
+    expect(
+      candidateRecordRead(ticket, [{ ...linear, toolAllowlist: ['save_comment', 'list_issues'] }], now),
+    ).toBeUndefined();
+    expect(
+      candidateRecordRead(
+        ticket,
+        [{ ...linear, toolArguments: [{ tool: 'get_issue', arguments: ['includeRelations'] }] }],
+        now,
+      ),
+    ).toBeUndefined();
+    expect(candidateRecordRead(ticket, [], now)).toBeUndefined();
+  });
+
+  it('renders the record after the candidate and before the surfaces, and the plan is still drafted when it is unavailable', async (): Promise<void> => {
+    await draftExecutionPlan({
+      candidate: ticket,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      surfaces,
+      documents,
+      record: {
+        surface: 'linear',
+        tool: 'get_issue',
+        text: 'get_issue on linear · {"identifier":"REVOPS-7","state":"Todo","description":""}',
+      },
+      now,
+    });
+    const user = planRecorded.users[0]!;
+    expect(user).toContain('--- Candidate record, read from linear (get_issue) ---');
+    expect(user).toContain('"identifier":"REVOPS-7","state":"Todo"');
+    expect(user.indexOf('--- Candidate ---')).toBeLessThan(user.indexOf('--- Candidate record'));
+    expect(user.indexOf('--- Candidate record')).toBeLessThan(user.indexOf('--- Surfaces ---'));
+
+    planRecorded.users.length = 0;
+    const plan = await draftExecutionPlan({
+      candidate: ticket,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      surfaces,
+      documents,
+      record: {
+        surface: 'linear',
+        tool: 'get_issue',
+        unavailable: 'Tool input validation failed: unknown argument issueId',
+      },
+      now,
+    });
+    expect(planRecorded.users[0]).toContain(
+      'record unavailable: Tool input validation failed: unknown argument issueId',
+    );
+    expect(plan.steps).toHaveLength(2);
+    expect(planUserPrompt({ candidate: ticket, charter })).not.toContain('Candidate record');
+  });
+
+  it('redacts a token-shaped value in the record the way documentation is redacted, and bounds it', (): void => {
+    const text = [
+      'get_issue on linear · {"identifier":"REVOPS-7",',
+      '"description":"api token: lin_api_0123456789abcdefghijklmnopqrstuvwxyz\nservice password: Zq9!vT2#kL8mNp4rXs7wYb3e"}',
+    ].join('');
+    const rendered = renderCandidateRecord({ surface: 'linear', tool: 'get_issue', text }).join('\n');
+    expect(rendered).not.toContain('lin_api_0123456789');
+    expect(rendered).not.toContain('Zq9!vT2#kL8mNp4rXs7wYb3e');
+    expect(rendered).toContain('"identifier":"REVOPS-7"');
+    const long = renderCandidateRecord({
+      surface: 'linear',
+      tool: 'get_issue',
+      text: 'x'.repeat(CANDIDATE_RECORD_LENGTH + 500),
+    }).join('\n');
+    expect(long.length).toBeLessThan(CANDIDATE_RECORD_LENGTH + 100);
+    expect(long.endsWith('…')).toBe(true);
+    expect(
+      renderCandidateRecord({
+        surface: 'linear',
+        tool: 'get_issue',
+        unavailable: 'refused: Bearer lin_api_0123456789abcdefghijklmnop was rejected',
+      }).join('\n'),
+    ).not.toContain('lin_api_0123456789');
   });
 });

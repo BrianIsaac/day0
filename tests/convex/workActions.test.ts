@@ -47,6 +47,7 @@ const recorded = vi.hoisted(() => ({
   dependentSwitches: [] as Array<boolean | undefined>,
   planSwitches: [] as boolean[],
   planContexts: [] as Array<{ surfaces?: string[]; documents?: string[] }>,
+  planRecords: [] as unknown[],
   skillOutput: undefined as ExecutionOutput | undefined,
   dependentOutput: undefined as DependentExecutionOutput | undefined,
   dependentRuns: 0,
@@ -272,12 +273,14 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
       autonomousActions: boolean;
       surfaces?: Array<{ slug: string }>;
       documents?: { howToGuides: unknown[]; teamDocs: unknown[] };
+      record?: unknown;
     }) => {
       recorded.planSwitches.push(args.autonomousActions);
       recorded.planContexts.push({
         surfaces: args.surfaces?.map((surface) => surface.slug).sort(),
         documents: args.documents ? Object.keys(args.documents).sort() : undefined,
       });
+      recorded.planRecords.push(args.record);
       return {
         summary: 'Comment then close.',
         steps: ['comment', 'close'],
@@ -394,6 +397,7 @@ afterEach((): void => {
   recorded.dependentSwitches.length = 0;
   recorded.planSwitches.length = 0;
   recorded.planContexts.length = 0;
+  recorded.planRecords.length = 0;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
   recorded.skillOutput = undefined;
@@ -1555,6 +1559,96 @@ describe('executing an approved plan through the gate', (): void => {
     expect(row.state).toBe('plan-pending');
     expect(row.plan).toMatchObject({ summary: 'Comment then close.' });
     expect(await scheduled(off)).toContain('managerChannelActions:requestDecision');
+  });
+
+  describe('the grounding read before the plan', (): void => {
+    const toClaimed = async (
+      harness: Harness,
+      workItemId: Id<'workItems'>,
+      patch: Partial<Doc<'workItems'>> = {},
+    ): Promise<void> => {
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(workItemId, { state: 'claimed', plan: undefined, ...patch });
+      });
+    };
+    const groundingEvents = async (harness: Harness) =>
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+        (event) => event.type === 'work.plan-grounding-read',
+      );
+
+    it('reads the ticket once under standing authority, writes nothing, and hands the record to the planner', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([
+        ['get_issue', { id: 'iss-1' }],
+      ]);
+      expect(recorded.http).toHaveLength(0);
+      expect(recorded.planRecords).toEqual([
+        { surface: 'linear', tool: 'get_issue', text: 'get_issue on linear · {"id":"get_issue-id"}' },
+      ]);
+      const events = await groundingEvents(harness);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload).toMatchObject({
+        workItemId,
+        action: { tool: 'mcp.call', args: { tool: 'get_issue', toolArgsJson: '{"id":"iss-1"}' } },
+        applied: { ok: true, authority: 'standing', tool: 'mcp.call' },
+      });
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    });
+
+    it('reads nothing for a chat candidate', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId, {
+        sourceCategory: 'inbox',
+        sourceSystem: 'slack',
+        externalId: 'C0PUBLIC:1787.0001',
+      });
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp).toHaveLength(0);
+      expect(recorded.planRecords).toEqual([undefined]);
+      expect(await groundingEvents(harness)).toHaveLength(0);
+    });
+
+    it('still drafts the plan when the read fails, with the reason in the record section', async (): Promise<void> => {
+      useSurfaceMode('real');
+      recorded.failedMcpTool = 'get_issue';
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+      expect(recorded.planRecords).toEqual([
+        { surface: 'linear', tool: 'get_issue', unavailable: 'get_issue failed: snapshot timed out' },
+      ]);
+      const events = await groundingEvents(harness);
+      expect(events[0]!.payload).toMatchObject({ applied: { ok: false } });
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    });
+
+    it('reports an ungranted read as unavailable without calling the provider', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real', ['boss:message', 'linear:write', 'slack:read']);
+      await toClaimed(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp).toHaveLength(0);
+      expect(recorded.planRecords).toEqual([
+        { surface: 'linear', tool: 'get_issue', unavailable: 'no grant (linear:read)' },
+      ]);
+    });
   });
 
   it('pauses a real-mode run at actions-pending with nothing but the DM applied', async (): Promise<void> => {

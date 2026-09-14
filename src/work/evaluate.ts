@@ -9,6 +9,7 @@ import {
 } from './types';
 import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
 import type { SurfaceMode } from '../surfaces/types';
+import { surfaceSlug } from '../surfaces/slug';
 import {
   documentedSystemIdentity,
   sameSystemForHostlessMention,
@@ -147,23 +148,8 @@ function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
   });
 }
 
-/**
- * Convert a provider or candidate label to the surface slug convention.
- *
- * Args:
- *   value: Provider or candidate label.
- *
- * Returns:
- *   A lowercase URL-safe surface slug.
- */
-export function evaluationSurfaceSlug(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || 'system'
-  );
-}
+/** The surface slug convention, shared with the planner. */
+export const evaluationSurfaceSlug = surfaceSlug;
 
 /**
  * Normalise prose for whole-phrase surface matching.

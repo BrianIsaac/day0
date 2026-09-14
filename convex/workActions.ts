@@ -8,7 +8,12 @@ import {
   inferRequiredPermissions,
   type EvaluateLookups,
 } from '../src/work/evaluate';
-import { draftExecutionPlan, type DraftPlanArgs } from '../src/work/plan';
+import {
+  candidateRecordRead,
+  draftExecutionPlan,
+  type CandidateRecord,
+  type DraftPlanArgs,
+} from '../src/work/plan';
 import {
   repairableReadFailures,
   repairFailedReads,
@@ -297,12 +302,26 @@ export const draftPlan = action({
     });
     if (!charterRow) return { ok: false, reason: 'no charter' };
     const agent = await ctx.runQuery(api.agents.get, { agentId });
+    const candidate = rowToCandidate(item);
+    const grounding = await planGrounding(ctx, agentId);
+    const record =
+      SURFACE_MODE === 'real' && agent
+        ? await readCandidateRecord(ctx, {
+            workItemId: args.workItemId,
+            agentId,
+            agentName: agent.name,
+            autonomousActions: autonomousActionsOn(agent),
+            candidate,
+            surfaces: grounding.surfaces ?? [],
+          })
+        : undefined;
     const plan = await draftExecutionPlan({
-      candidate: rowToCandidate(item),
+      candidate,
       charter: charterRow.body as Charter,
       autonomousActions: autonomousActionsOn(agent),
       surfaceMode: SURFACE_MODE,
-      ...(await planGrounding(ctx, agentId)),
+      ...grounding,
+      ...(record ? { record } : {}),
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -1173,6 +1192,84 @@ async function planGrounding(
     surfaces,
     documents: { howToGuides: snapshot.howToGuides, teamDocs: snapshot.teamDocs },
   };
+}
+
+/**
+ * Read the candidate's own record before the plan is drafted.
+ *
+ * One standing-authority read through the same registry, rules and adapter as
+ * an executed action, keyed on an event minted for it so the ledger row is on
+ * the timeline. A failed read, including a provider error body, becomes
+ * "record unavailable" with the reason; nothing here stops the plan.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: The work item, agent, candidate and surfaces.
+ *
+ * Returns:
+ *   The record or its unavailability, or undefined when there is no record to read.
+ */
+async function readCandidateRecord(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    agentId: Id<'agents'>;
+    agentName: string;
+    autonomousActions: boolean;
+    candidate: WorkCandidate;
+    surfaces: readonly SurfaceRecord[];
+  },
+): Promise<CandidateRecord | undefined> {
+  const read = candidateRecordRead(args.candidate, args.surfaces, Date.now());
+  if (!read) return undefined;
+  try {
+    const eventId = await ctx.runMutation(internal.work.beginPlanGroundingRead, {
+      workItemId: args.workItemId,
+      action: read.action,
+    });
+    const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(
+      internal.agents.grantedScopes,
+      { agentId: args.agentId },
+    );
+    const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
+    const [applied] = await applySurfaceActions(
+      ctx,
+      SURFACE_MODE,
+      args.surfaces,
+      {
+        agentId: args.agentId,
+        agentName: args.agentName,
+        workItemId: args.workItemId,
+        runId: eventId,
+      },
+      [read.action],
+      {
+        deps: realAdapterDeps(
+          authorityBeforeTransport(ctx, args.agentId, 'auto', browserMcpUrl),
+          browserMcpUrl,
+        ),
+        grants: new Set(grantRows.map((grant) => grant.scope)),
+        approvedIndexes: new Set([0]),
+        autoPhase: true,
+        autonomousActions: args.autonomousActions,
+      },
+    );
+    await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
+    if (!applied || !applied.ok || applied.held) {
+      return {
+        surface: read.surface,
+        tool: read.tool,
+        unavailable: applied?.reason ?? 'the read did not land',
+      };
+    }
+    return { surface: read.surface, tool: read.tool, text: applied.effect ?? '(empty record)' };
+  } catch (error) {
+    return {
+      surface: read.surface,
+      tool: read.tool,
+      unavailable: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {
