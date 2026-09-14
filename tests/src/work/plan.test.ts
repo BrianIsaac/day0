@@ -570,3 +570,20 @@ describe('the candidate record read before the plan', (): void => {
     ).not.toContain('lin_api_0123456789');
   });
 });
+
+
+describe('serialized candidate record credentials', () => {
+  it.each(['text', 'unavailable'] as const)('redacts escaped description lines in %s', (field) => {
+    const password = 'Zq9!vT2#kL8mNp4rXs7wYb3e';
+    const body = `get_issue on linear · ${JSON.stringify({
+      identifier: 'REVOPS-7',
+      description: `Refresh the tile.\nService password: ${password}`,
+    })}`;
+    const record = field === 'text'
+      ? { surface: 'linear', tool: 'get_issue', text: body }
+      : { surface: 'linear', tool: 'get_issue', unavailable: body };
+    const prompt = renderCandidateRecord(record).join('\n');
+    expect(prompt).not.toContain(password);
+    expect(prompt).toContain('REVOPS-7');
+  });
+});

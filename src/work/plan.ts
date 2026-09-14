@@ -250,17 +250,26 @@ export function candidateRecordRead(
  */
 export function renderCandidateRecord(record: CandidateRecord): string[] {
   const heading = `--- Candidate record, read from ${record.surface} (${record.tool}) ---`;
-  if ('unavailable' in record) {
-    return [heading, `record unavailable: ${redactTokenShapes(record.unavailable)}`];
-  }
-  const redacted = redactTokenShapes(
-    redactCredentials(record.text, 'Candidate record').markdown,
-  );
+  const text = 'unavailable' in record ? record.unavailable : record.text;
+  const redact = (value: string): string =>
+    redactTokenShapes(redactCredentials(value, 'Candidate record').markdown);
+  // Provider records are JSON inside an effect string. Decode string values
+  // before applying the documentation redactor's line-based rules.
+  const decoded = text.replace(/"(?:[^"\\]|\\.)*"/g, (literal): string => {
+    try {
+      return JSON.stringify(redact(JSON.parse(literal) as string));
+    } catch {
+      return literal;
+    }
+  });
+  // The adapter may truncate a record inside a JSON string.
+  const redacted = redact(decoded.replace(/\\[nr]/g, '\n'));
+
   const bounded =
     redacted.length > CANDIDATE_RECORD_LENGTH
       ? `${redacted.slice(0, CANDIDATE_RECORD_LENGTH)}…`
       : redacted;
-  return [heading, bounded];
+  return [heading, 'unavailable' in record ? `record unavailable: ${bounded}` : bounded];
 }
 
 export interface DraftPlanArgs {
