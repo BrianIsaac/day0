@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { WorkCandidate } from '../../../src/work/types';
-import { actionModeInstruction, draftExecutionPlan, planSystemPrompt } from '../../../src/work/plan';
+import {
+  actionModeInstruction,
+  draftExecutionPlan,
+  planSystemPrompt,
+  planUserPrompt,
+} from '../../../src/work/plan';
 
 describe('plan drafter action mode', (): void => {
   it('states the autonomous mode without supervised approval language', (): void => {
@@ -180,5 +185,48 @@ describe('plan drafter grounding', (): void => {
     expect(user).not.toContain('--- Team docs');
     expect(user).not.toContain('--- How-to guides ---');
     expect(user.endsWith('Draft the execution plan now.')).toBe(true);
+  });
+});
+
+describe('frozen planner text', (): void => {
+  // The hosted demo plans in mock mode from the charter and the candidate
+  // alone; both halves of that prompt are byte-for-byte what the recorded
+  // beds saw.
+  it('keeps the mock planner system prompt byte-identical', (): void => {
+    expect(planSystemPrompt(false, 'mock')).toMatchInlineSnapshot(`
+      "You are an autonomous workplace agent named Day0.
+      You have a charter that defines your role + boundaries.
+      A candidate piece of work has landed in front of you and Layer-2 evaluation said it is worth claiming.
+      Draft a short execution plan. The live action mode below tells you whether later writes need another manager decision.
+
+      Discipline:
+        - Stay inside the charter willDo / willNotDo boundaries. If borderline, narrow the plan to the safest interpretation.
+        - Describe review and approval according to the live action mode; never assume the supervised mode.
+        - 2-5 short concrete steps.
+        - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.
+
+      Mock comparison mode: every emitted action is held for the manager's literal approval and only applied after that decision."
+    `);
+  });
+
+  it('keeps the ungrounded planner user prompt byte-identical', (): void => {
+    expect(planUserPrompt({ candidate, charter })).toMatchInlineSnapshot(`
+      "Role: Operations coordination
+
+      --- Charter boundaries ---
+      willDo: Keep the tracker current.
+      willNotDo: 
+      escalationTriggers: 
+
+      --- Candidate ---
+      Source: tracker / ticket-queue
+      From: Manager
+      Title: Refresh the dashboard tile
+      Refs: ticket://T-2
+      Body:
+
+
+      Draft the execution plan now."
+    `);
   });
 });

@@ -1317,6 +1317,112 @@ describe('surface guidance in the executor prompt', (): void => {
   });
 });
 
+describe('probed argument names in the surface list', (): void => {
+  const probed: SurfaceRecord = {
+    ...linear,
+    toolAllowlist: ['get_issue', 'save_comment'],
+    toolArguments: [
+      {
+        tool: 'get_issue',
+        arguments: ['id', 'includeCustomerNeeds', 'includeRelations', 'includeReleases'],
+      },
+      { tool: 'save_comment', arguments: ['issueId', 'body', 'id', 'parentId'] },
+      { tool: 'delete_issue', arguments: ['id'] },
+    ],
+  };
+
+  it('renders each allowlisted tool with its probed argument names', (): void => {
+    const text = surfaceInstructions([probed, slack], now);
+    expect(text).toContain(
+      'allowed tools: get_issue(id, includeCustomerNeeds, includeRelations, includeReleases), save_comment(issueId, body, id, parentId)',
+    );
+    expect(text).toContain('keys of `toolArgsJson` for that tool are drawn from that list');
+    expect(text).toContain('allowed tools: (none) · manager DM channel id: D0MANAGER');
+  });
+
+  it('renders nothing for a tool outside the allowlist', (): void => {
+    expect(surfaceInstructions([probed], now)).not.toContain('delete_issue');
+  });
+
+  it('renders a tool without a probed record as its bare name', (): void => {
+    const partial: SurfaceRecord = {
+      ...probed,
+      toolArguments: [{ tool: 'get_issue', arguments: ['id'] }],
+    };
+    expect(surfaceInstructions([partial], now)).toContain(
+      'allowed tools: get_issue(id), save_comment',
+    );
+  });
+
+  it('reaches the closing phase through the same instructions', (): void => {
+    const instructions = executorInstructions({
+      mode: 'real',
+      autonomousActions: false,
+      skillBody: 'Read the issue.',
+      surfaces: [probed],
+      mockEnv: emptyMock,
+      now,
+    });
+    expect(instructions).toContain('get_issue(id, includeCustomerNeeds, includeRelations, includeReleases)');
+  });
+
+  it('adds no guidance line when no surface carries probed names', (): void => {
+    expect(surfaceInstructions([linear, slack], now)).not.toContain('probed argument names');
+  });
+});
+
+describe('frozen prompt text', (): void => {
+  // The hosted demo and the frozen evaluation beds run the mock executor.
+  // Its preamble, and the surface list rendered without probed argument
+  // names, are byte-for-byte what they were when those beds were recorded.
+  it('keeps the mock executor preamble byte-identical', (): void => {
+    expect(executorPreamble('mock')).toMatchInlineSnapshot(`
+      "You are an autonomous workplace agent named Day0.
+      A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.
+      Apply the skill to the candidate. Produce three things:
+        1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.
+        2. Notes — short assumptions or open questions (single sentence).
+        3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
+        4. Procedure trails — one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
+
+      The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:
+        - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three \`spreadsheet.appendRow\` actions, not one action and a sentence saying three.
+        - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a \`slack.postMessage\` in this response says it.
+        - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in \`notes\` rather than describing the work as finished.
+        - Emit every action in this response and set \`needsDependentPhase\` to false: the mock environment treats it as one approval set and runs no second authoring phase.
+
+      Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:
+        - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }
+        - slack.postMessage    — { channelSlug, threadKey: string or null, body }
+        - twitter.reply        — { tweetSlug, body }
+        - ticket.update        — { slug, status: value or null, comment: string or null }
+
+      Discipline:
+        - Mock comparison mode: every emitted action is held for the manager's literal approval and only applied after that decision.
+        - Stay inside charter boundaries.
+        - Never invent values you do not have. If a cell value is unknown, leave it blank in \`cells\` and flag the gap in \`notes\`.
+        - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy."
+    `);
+  });
+
+  it('keeps the connected-surfaces list byte-identical when no argument names are probed', (): void => {
+    expect(surfaceInstructions([linear, slack], now)).toMatchInlineSnapshot(`
+      "Connected real surfaces (name each exactly as listed; take the action shape from its runbook):
+        - linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: save_comment, save_issue
+        - slack (Slack) - class chat · path documented-api · endpoint https://slack.com/api/ · allowed tools: (none) · manager DM channel id: D0MANAGER
+
+      Two verbs reach a real surface. Their structured arguments travel as JSON strings:
+        - mcp.call     - { surface, tool, toolArgsJson }: \`tool\` must be in the surface allowlist; \`toolArgsJson\` is the JSON object of tool arguments.
+        - http.request - { surface, method, path, headersJson, body }: \`path\` is relative to the surface endpoint; \`headersJson\` is a JSON object of headers; \`body\` is the request body.
+        - Write \`{{secret}}\` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.
+        - You may only target a surface listed above. A system without a connected surface gets no action; say so in \`notes\`.
+        - A manager DM on a connected chat surface is an \`http.request\` to \`chat.postMessage\` with \`channel\` set to the manager DM channel id above. Posts to any other channel are held for the manager's approval unless autonomous actions are on.
+        - Do not add a provenance trailer or a \`username\`: the server appends the employee name and run id to every comment or message sent through a shared credential.
+        - A status change on a ticket must be preceded, in the same response, by a comment on that ticket."
+    `);
+  });
+});
+
 describe('executor preamble by mode', (): void => {
   it('teaches the four mock verbs without embedding the seeded office procedure', (): void => {
     const text = executorPreamble('mock');

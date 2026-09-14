@@ -1328,17 +1328,27 @@ export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: num
   const lines: string[] = [
     'Connected real surfaces (name each exactly as listed; take the action shape from its runbook):',
   ];
+  let argumentNamesShown = false;
   for (const surface of connected) {
     const detail: string[] = [`class ${surface.class}`];
     if (surface.path) detail.push(`path ${surface.path}`);
     if (surface.endpoint) detail.push(`endpoint ${surface.endpoint}`);
-    detail.push(
-      `allowed tools: ${surface.toolAllowlist?.length ? surface.toolAllowlist.join(', ') : '(none)'}`,
-    );
+    const tools = (surface.toolAllowlist ?? []).map((tool: string): string => {
+      const probed = surface.toolArguments?.find((entry) => entry.tool === tool);
+      if (!probed) return tool;
+      argumentNamesShown = true;
+      return `${tool}(${probed.arguments.join(', ')})`;
+    });
+    detail.push(`allowed tools: ${tools.length ? tools.join(', ') : '(none)'}`);
     if (surface.managerDmChannelId) {
       detail.push(`manager DM channel id: ${surface.managerDmChannelId}`);
     }
     lines.push(`  - ${surface.slug} (${surface.displayName}) - ${detail.join(' · ')}`);
+  }
+  if (argumentNamesShown) {
+    lines.push(
+      "  The names in parentheses after a tool are its probed argument names: the keys of `toolArgsJson` for that tool are drawn from that list and no other, whatever a runbook example for a different tool shows.",
+    );
   }
   lines.push(
     '',
