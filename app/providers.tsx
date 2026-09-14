@@ -24,12 +24,14 @@ export function Providers({ children }: { children: ReactNode }) {
   }, []);
 
   // Prerender can run before local setup; backend-dependent children need
-  // both providers and must wait until a configured build serves them.
+  // both providers and must wait until a configured build serves them. The
+  // address is inlined at build time, so a production build needs rebuilding,
+  // not restarting, once the setup has written it.
   if (!client) {
     return (
       <main className="min-h-screen grid place-items-center px-6">
         <p className="max-w-md text-center text-sm text-[var(--color-muted)]">
-          Day0 is not configured yet. Complete the local setup, then restart the app.
+          Day0 is not configured yet. Complete the local setup, then build and start the app again.
         </p>
       </main>
     );

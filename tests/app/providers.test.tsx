@@ -31,6 +31,7 @@ describe('application providers', () => {
     const NeedsBackend = (): never => { throw new Error('Backend-dependent children must wait'); };
     const html = renderToStaticMarkup(<Providers><NeedsBackend /></Providers>);
     expect(html).toContain('Day0');
+    expect(html).toContain('build and start the app again');
     expect(recorded.clients).toHaveLength(0);
   });
 
