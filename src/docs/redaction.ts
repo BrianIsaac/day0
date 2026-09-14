@@ -71,7 +71,7 @@ const SHAPED_VALUE = new RegExp(
  * stay in the clear: they are the address the runbook needs, and only the
  * password is the credential.
  */
-const CONNECTION_PASSWORD = /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*):\/\/[^\s/:@`'"<>]*:([^\s/@`'"<>]+)@/gi;
+export const CONNECTION_PASSWORD = /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*):\/\/[^\s/:@`'"<>]*:([^\s/@`'"<>]+)@/gi;
 /**
  * The value after the `Bearer` scheme word. Twelve characters keeps
  * "Bearer header." in prose out, and the value must still look like a secret
@@ -97,9 +97,9 @@ const DECLARED_VALUE =
 const GENERIC_CANDIDATE = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])/g;
 const MARKER = /<credential:[^>]*>/g;
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}'"_-]+$/;
-const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+export const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 /** A value that refers to a secret rather than carrying one: `<password>`, `${VAR}`, `{{ secret }}`. */
-const REFERENCE_START = /^[<${]/;
+export const REFERENCE_START = /^[<${]/;
 
 /**
  * Total Shannon entropy, in bits, a labelled value must carry to be a secret.

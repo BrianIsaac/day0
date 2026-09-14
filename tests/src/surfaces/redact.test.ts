@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { redactCredentials } from '../../../src/docs/redaction';
+import { redactCandidateRecordText } from '../../../src/work/plan';
 import {
   containsTokenShape,
   redactSecret,
@@ -33,7 +34,7 @@ describe('surface credential redaction', (): void => {
       '- Service token (RevOps automation): <redacted>',
     );
     expect(redactTokenShapes('Password: hunter2\nNext line')).toBe(
-      'Password: hunter2\nNext line',
+      'Password: <redacted>\nNext line',
     );
     const prose = 'using a bot token Bearer header. It names the usable methods.';
     expect(redactTokenShapes(prose)).toBe(prose);
@@ -45,6 +46,35 @@ describe('surface credential redaction', (): void => {
     for (const secret of ['x', 'hunter2', 'q7Mz2Kv9Tx4Wp6Rn8Js3']) {
       expect(redactSecret(`Password: ${secret}`, secret)).toBe('Password: <redacted>');
     }
+  });
+
+  it('applies the entropy floor to token and key labels only', (): void => {
+    for (const line of [
+      'Password: hunter2',
+      'Looker password: revops2026',
+      'Password: P@ssw0rd!',
+      'Secret: Tr0ub4dor&3',
+      'Client secret: abc123',
+    ]) {
+      const label = line.slice(0, line.lastIndexOf(':') + 1);
+      expect(redactTokenShapes(line)).toBe(`${label} <redacted>`);
+      expect(redactCandidateRecordText(line)).toBe(`${label} <redacted>`);
+    }
+    for (const line of ['Password: <password>', 'Password: {{secret}}', 'Password: ${LOOKER_PASSWORD}']) {
+      expect(redactTokenShapes(line)).toBe(line);
+    }
+    for (const line of ['token: abc123', 'api key: sk-test', 'Token budget: none', 'Key contacts: Alice']) {
+      expect(redactTokenShapes(line)).toBe(line);
+    }
+    expect(redactTokenShapes('Password: postgres://app:hunter2@db/app')).toBe(
+      'Password: postgres://app:<redacted>@db/app',
+    );
+    expect(redactTokenShapes('could not reach postgres://app:hunter2@db/app: timeout')).toBe(
+      'could not reach postgres://app:<redacted>@db/app: timeout',
+    );
+    expect(redactTokenShapes('Database: postgres://app:${DB_PASSWORD}@db/app')).toBe(
+      'Database: postgres://app:${DB_PASSWORD}@db/app',
+    );
   });
 
   it('keeps explicit credential rules independent of labelled entropy', (): void => {

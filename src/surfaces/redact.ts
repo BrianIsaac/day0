@@ -1,4 +1,10 @@
-import { LABELLED_ENTROPY_FLOOR_BITS, shannonBits } from '../docs/redaction';
+import {
+  CONNECTION_PASSWORD,
+  LABELLED_ENTROPY_FLOOR_BITS,
+  REFERENCE_START,
+  URL_SCHEME,
+  shannonBits,
+} from '../docs/redaction';
 
 /**
  * Defence in depth for credential material in surface metadata.
@@ -18,16 +24,27 @@ const TOKEN_SHAPE =
 const BEARER = /\bBearer\s+(?=[^\s,;"'`<>]{12,})[^\s,;"'`<>]+/gi;
 const LABELLED_VALUE =
   /(^|\n)([^\n:]{0,48}\b(?:token|key|secret|password)\b[^\n:]{0,32}:[ \t]*)`?([^\s`<]+)`?/gi;
+// A password or secret label names a credential outright, and real passwords
+// are short ("hunter2"), so the value is redacted at any entropy. A token or
+// key label also introduces identifiers ("Ticket key: REVOPS-7") and counts,
+// and a URL on any line is a location whose password segment is handled on
+// its own, so those values must clear the documentation redactor's floor.
+const CREDENTIAL_LABEL = /\b(?:secret|password)\b/i;
 
 export const REDACTED = '<redacted>';
 
 /**
  * Replace every recognisable credential shape in a text.
  *
- * Three shapes are covered: provider-prefixed tokens wherever they occur,
- * the value after `Bearer`, and the value on a line that labels itself as a
- * token, key, secret or password. A `<credential: ..., stored>` marker is
- * left alone, because it is already the safe form.
+ * Four shapes are covered: provider-prefixed tokens wherever they occur,
+ * the value after `Bearer`, the password segment of a connection string,
+ * and the value on a line that labels itself as a
+ * token, key, secret or password. A password or secret value is redacted
+ * whatever its length; a token or key value only when it clears the
+ * documentation redactor's entropy floor, so an issue key or a budget on
+ * such a line survives. A reference (`<password>`, `${VAR}`) and a
+ * `<credential: ..., stored>` marker are left alone, because they are
+ * already the safe form.
  *
  * Args:
  *   text: Untrusted text from a page, a provider or a model.
@@ -39,12 +56,20 @@ export function redactTokenShapes(text: string): string {
   return text
     .replace(TOKEN_SHAPE, REDACTED)
     .replace(BEARER, `Bearer ${REDACTED}`)
+    .replace(CONNECTION_PASSWORD, (match: string, _scheme: string, password: string): string =>
+      REFERENCE_START.test(password)
+        ? match
+        : `${match.slice(0, match.lastIndexOf(`${password}@`))}${REDACTED}@`,
+    )
     .replace(
       LABELLED_VALUE,
-      (match: string, lineStart: string, label: string, value: string): string =>
-        shannonBits(value) >= LABELLED_ENTROPY_FLOOR_BITS
-          ? `${lineStart}${label}${REDACTED}`
-          : match,
+      (match: string, lineStart: string, label: string, value: string): string => {
+        if (REFERENCE_START.test(value)) return match;
+        const credential =
+          (CREDENTIAL_LABEL.test(label) && !URL_SCHEME.test(value)) ||
+          shannonBits(value) >= LABELLED_ENTROPY_FLOOR_BITS;
+        return credential ? `${lineStart}${label}${REDACTED}` : match;
+      },
     );
 }
 
