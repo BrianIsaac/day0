@@ -8,6 +8,7 @@ const recorded = vi.hoisted(() => ({
   planStepOutcomes: undefined as
     | Array<{ step: number; status: string; evidence: string }>
     | undefined,
+  outputs: [] as unknown[],
 }));
 
 vi.mock('@mastra/core/agent', () => ({
@@ -25,6 +26,8 @@ vi.mock('../../../src/lib/mastra', () => ({
   MODEL_PROVIDER_MAX_RETRIES: 2,
   agentJson: async <T>(args: { user: string }): Promise<T> => {
     recorded.users.push(args.user);
+    const queued = recorded.outputs.shift();
+    if (queued) return queued as T;
     return {
       draft: 'Closing draft.',
       notes: '',
@@ -37,7 +40,14 @@ vi.mock('../../../src/lib/mastra', () => ({
   },
 }));
 
-import { executorPreamble, runDependentSkill } from '../../../src/work/execute-skill';
+import {
+  deferralAudit,
+  executorPreamble,
+  runDependentSkill,
+  runSkill,
+} from '../../../src/work/execute-skill';
+import type { SurfaceRecord } from '../../../src/surfaces/types';
+import type { ExecutionOutput, MockAction } from '../../../src/work/types';
 
 const charter: Charter = {
   version: '0.0',
@@ -208,5 +218,262 @@ describe('advisory steps in the closing phase', (): void => {
       initialLedger: [],
     });
     expect(recorded.instructions[0]).not.toContain('Advisory plan steps');
+  });
+});
+
+describe('deferral by data, not by judgement', (): void => {
+  const now = 1;
+  const tile: SurfaceRecord = {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    path: 'browser-driven',
+    endpoint: 'http://looker-tile:8080/',
+    toolAllowlist: [
+      'browser_navigate',
+      'browser_fill_form',
+      'browser_click',
+      'browser_snapshot',
+      'browser_hover',
+    ],
+  };
+  const linear: SurfaceRecord = {
+    slug: 'linear',
+    displayName: 'Linear',
+    class: 'kanban',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    path: 'mcp',
+    endpoint: 'https://mcp.linear.app/mcp',
+    toolAllowlist: ['get_issue', 'save_comment', 'save_issue'],
+  };
+  const ticket: WorkCandidate = {
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-7',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Set the pipeline coverage tile to 74% and quote the audit line.',
+    contentRefs: ['ticket://REVOPS-7'],
+    observedAt: new Date(0),
+  };
+  const plan = {
+    summary: 'Confirm the ticket, refresh the tile, record the result.',
+    steps: [
+      'Open REVOPS-7 in connected Linear to confirm it is owned and prioritized.',
+      'Sign in to the Looker pipeline tile, set 74%, save and snapshot the audit line.',
+      'Comment on REVOPS-7 quoting the read-back figure and audit line, then move it to Done.',
+    ],
+    expectedOutputType: 'ticket-update' as const,
+    riskNotes: '',
+    reversibility: 'reversible',
+    estimatedMinutes: 5,
+  };
+  const tileRunbook = {
+    ...mockEnv,
+    teamDocs: [],
+    howToGuides: [
+      {
+        slug: 'how-to-refresh-the-tile',
+        title: 'How to refresh the Looker pipeline tile',
+        body: 'Use the `looker-pipeline-tile` surface: browser_navigate to http://looker-tile:8080/, browser_fill_form the login with {{secret}}, browser_click Sign in, browser_fill_form Pipeline coverage 74%, browser_click Save, browser_snapshot and quote the audit line.',
+      },
+    ],
+  } as MockSurfaceSnapshot;
+  const ticketTrailEnv = {
+    ...tileRunbook,
+    howToGuides: [
+      ...tileRunbook.howToGuides,
+      {
+        slug: 'how-to-update-ticket',
+        title: 'How to update a ticket (action guide)',
+        body: 'For work from the `ticket-queue`, call `ticket.update` on the originating ticket: use `status: "done"` for full closure, `"in-progress"` for partial; add a one-line `comment` summarising what you did.',
+      },
+    ],
+  } as MockSurfaceSnapshot;
+  const skillBody = 'Refresh the looker-pipeline-tile as the runbook says, then record the result on linear.';
+  const getIssue: MockAction = {
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
+  };
+  const browser = (tool: string, toolArgsJson: string): MockAction => ({
+    tool: 'mcp.call',
+    args: { surface: 'looker-pipeline-tile', tool, toolArgsJson },
+  });
+  const tileSequence: MockAction[] = [
+    browser('browser_navigate', '{"url":"http://looker-tile:8080/"}'),
+    browser(
+      'browser_fill_form',
+      '{"fields":[{"name":"Username","value":"revops"},{"name":"Password","value":"{{secret}}"}]}',
+    ),
+    browser('browser_click', '{"element":"Sign in"}'),
+    browser('browser_fill_form', '{"fields":[{"name":"Pipeline coverage","value":"74%"}]}'),
+    browser('browser_click', '{"element":"Save"}'),
+    browser('browser_snapshot', '{}'),
+  ];
+  const context = {
+    mode: 'real' as const,
+    plan,
+    surfaces: [tile, linear],
+    skillBody,
+    now,
+  };
+  const runArgs = {
+    skill: { name: 'refresh-tile', description: 'Refresh the tile.', body: skillBody },
+    plan,
+    candidate: ticket,
+    charter,
+    surfaces: [tile, linear],
+    mode: 'real' as const,
+    now,
+  };
+
+  beforeEach((): void => {
+    recorded.users.length = 0;
+    recorded.instructions.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('rejects a phase one that holds only the ticket read and defers the tile on ownership, then accepts the batch after one repair', async (): Promise<void> => {
+    const gatedOutput: ExecutionOutput = {
+      draft: 'Confirming ownership before touching the tile.',
+      notes: 'The tile refresh waits for the ownership verification.',
+      needsDependentPhase: true,
+      actions: [getIssue],
+      procedureTrails: [],
+    };
+    expect(deferralAudit(gatedOutput, ticket, context)).toEqual([
+      expect.stringContaining('deferred an action with no result dependency'),
+    ]);
+    expect(deferralAudit(gatedOutput, ticket, context)[0]).toContain(
+      'Looker pipeline tile (looker-pipeline-tile) sequence has no action in this phase',
+    );
+
+    const batch: ExecutionOutput = {
+      draft: 'Refreshing the tile and reading the ticket.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [getIssue, ...tileSequence],
+      procedureTrails: [],
+    };
+    expect(deferralAudit(batch, ticket, context)).toEqual([]);
+
+    let additionalModelCalls = 0;
+    recorded.outputs.push(gatedOutput, batch);
+    const output = await runSkill({
+      ...runArgs,
+      mockEnv: tileRunbook,
+      onAdditionalModelCall: (): void => {
+        additionalModelCalls += 1;
+      },
+    });
+    expect(recorded.users).toHaveLength(2);
+    expect(additionalModelCalls).toBe(1);
+    const correction = recorded.users[1]!.split('--- Required procedure-trail correction ---')[1]!;
+    expect(correction).toContain('deferred an action with no result dependency');
+    expect(correction).toContain('Looker pipeline tile');
+    expect(output.actions).toHaveLength(7);
+    expect(output.needsDependentPhase).toBe(true);
+  });
+
+  it('fails the run with the reason when the repair defers the tile again', async (): Promise<void> => {
+    const gatedOutput: ExecutionOutput = {
+      draft: 'Confirming ownership.',
+      notes: 'Pending ownership verification.',
+      needsDependentPhase: true,
+      actions: [getIssue],
+      procedureTrails: [],
+    };
+    recorded.outputs.push(gatedOutput, gatedOutput);
+    await expect(runSkill({ ...runArgs, mockEnv: tileRunbook })).rejects.toThrow(
+      /remained invalid after one repair: deferred an action with no result dependency/,
+    );
+    expect(recorded.users).toHaveLength(2);
+  });
+
+  it('accepts a deferral whose reason names the read-back, and rejects one that names a judgement', (): void => {
+    const trailContext = { ...context, mode: 'real' as const };
+    const deferredOnData: ExecutionOutput = {
+      draft: 'Refreshing the tile; the comment follows the read-back.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [getIssue, ...tileSequence],
+      procedureTrails: [
+        { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure' },
+      ],
+    };
+    expect(deferralAudit(deferredOnData, ticket, trailContext)).toEqual([]);
+
+    const deferredOnJudgement: ExecutionOutput = {
+      ...deferredOnData,
+      procedureTrails: [
+        { trailId: 'trail-1', state: 'deferred', reason: 'pending ownership verification' },
+      ],
+    };
+    const issues = deferralAudit(deferredOnJudgement, ticket, trailContext);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('procedure trail trail-1 is deferred for "pending ownership verification"');
+  });
+
+  it('lets a browser sequence wait when the notes name the surface and the result it consumes', (): void => {
+    const waiting: ExecutionOutput = {
+      draft: 'Reading the ticket first.',
+      notes: 'The Looker pipeline tile fill uses the figure returned by get_issue.',
+      needsDependentPhase: true,
+      actions: [getIssue],
+      procedureTrails: [],
+    };
+    expect(deferralAudit(waiting, ticket, context)).toEqual([]);
+    const notesWithoutResult: ExecutionOutput = {
+      ...waiting,
+      notes: 'The Looker pipeline tile refresh follows the ownership check.',
+    };
+    expect(deferralAudit(notesWithoutResult, ticket, context)).toHaveLength(1);
+  });
+
+  it('runs no audit in mock mode, without a dependent phase, or for a surface nothing names', (): void => {
+    const gatedOutput: ExecutionOutput = {
+      draft: 'd',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [getIssue],
+      procedureTrails: [],
+    };
+    expect(deferralAudit(gatedOutput, ticket, { ...context, mode: 'mock' })).toEqual([]);
+    expect(
+      deferralAudit({ ...gatedOutput, needsDependentPhase: false }, ticket, context),
+    ).toEqual([]);
+    const unnamed = {
+      ...context,
+      skillBody: 'Comment on the ticket.',
+      plan: { summary: 'Comment.', steps: ['Comment on REVOPS-7.'] },
+    };
+    const commentOnly: WorkCandidate = { ...ticket, title: 'Add a note', contentSummary: 'Add a note.' };
+    expect(deferralAudit(gatedOutput, commentOnly, unnamed)).toEqual([]);
+    expect(
+      deferralAudit(gatedOutput, ticket, {
+        ...context,
+        surfaces: [{ ...tile, verdict: 'absent' }, linear],
+      }),
+    ).toEqual([]);
+  });
+
+  it('keeps the procedure-trail check beside the deferral audit through the same one repair', async (): Promise<void> => {
+    const wholeBatch: ExecutionOutput = {
+      draft: 'Refreshing the tile.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [getIssue, ...tileSequence],
+      procedureTrails: [
+        { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure' },
+      ],
+    };
+    recorded.outputs.push(wholeBatch);
+    const output = await runSkill({ ...runArgs, mockEnv: ticketTrailEnv });
+    expect(recorded.users).toHaveLength(1);
+    expect(output.actions).toHaveLength(7);
   });
 });

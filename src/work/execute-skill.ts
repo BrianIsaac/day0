@@ -1299,6 +1299,88 @@ function procedureTrailAttentionIssues(
   return { issues, limitations };
 }
 
+/**
+ * Words that name a value only a prior result can supply: a read-back figure,
+ * a provider id, an audit line, a returned identifier or timestamp, a
+ * ledger outcome. A deferral reason that names none of these defers on
+ * judgement, not on data.
+ */
+const RESULT_DEPENDENCY =
+  /\b(?:read[- ]?back|figure|result|results|returned|return value|provider id|identifier|audit line|snapshot|ledger|landed|applied|outcome|response|confirmation|comment id|issue id|message id|timestamp|thread_ts|(?:once|after|when) [^.;]{0,60}\b(?:lands?|succeeds?|completes?|returns?|applied|landed))\b/i;
+
+/** Whether a deferral reason names a prior result the deferred payload consumes. */
+export function namesResultDependency(reason: string): boolean {
+  return RESULT_DEPENDENCY.test(reason);
+}
+
+function namesSurface(text: string, surface: Pick<SurfaceRecord, 'slug' | 'displayName'>): boolean {
+  const lower = text.toLowerCase();
+  if (lower.includes(surface.slug.toLowerCase())) return true;
+  const phrase = surface.displayName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return phrase.length > 0 && ` ${lower.replace(/[^a-z0-9]+/g, ' ')} `.includes(` ${phrase} `);
+}
+
+export interface DeferralAuditContext {
+  mode: SurfaceMode;
+  plan: Pick<ExecutionPlan, 'summary' | 'steps'>;
+  surfaces: readonly SurfaceRecord[];
+  skillBody: string;
+  now: number;
+}
+
+/**
+ * Refuse a phase-one output that defers work on judgement rather than on data.
+ *
+ * A dependent phase is legitimate only for payloads that consume a prior
+ * result. Two things are checked in code: every DEFERRED procedure-trail row
+ * must give a reason naming such a result, and every connected browser-driven
+ * surface the skill, the plan or the candidate names must either have an
+ * action in this phase or a `notes` sentence naming the surface and the
+ * result its sequence waits for. A browser sequence is the decidable case:
+ * the runbook carries every literal and says the session cannot be split.
+ * Mock mode emits everything in one phase and is never audited.
+ *
+ * Args:
+ *   output: The phase-one output as the model returned it.
+ *   candidate: The work candidate.
+ *   context: Mode, plan, surfaces, skill body and clock.
+ *
+ * Returns:
+ *   One issue per unjustified deferral; empty when the output may stand.
+ */
+export function deferralAudit(
+  output: Pick<ExecutionOutput, 'actions' | 'notes' | 'procedureTrails' | 'needsDependentPhase'>,
+  candidate: WorkCandidate,
+  context: DeferralAuditContext,
+): string[] {
+  if (context.mode === 'mock' || output.needsDependentPhase !== true) return [];
+  const issues: string[] = [];
+  for (const row of output.procedureTrails ?? []) {
+    const state = procedureTrailState(row);
+    if (state.state !== 'deferred' || namesResultDependency(state.reason)) continue;
+    issues.push(
+      `deferred an action with no result dependency: procedure trail ${row.trailId} is deferred for "${state.reason}", which names no prior result its payload consumes; emit it now or name the read-back, identifier or ledger outcome it waits for`,
+    );
+  }
+  const named = `${context.skillBody}\n${context.plan.summary}\n${context.plan.steps.join('\n')}\n${candidate.title}\n${candidate.contentSummary}`;
+  const targeted = new Set(
+    output.actions.flatMap((action): string[] => {
+      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+      return parsed?.ok ? [parsed.action.surface] : [];
+    }),
+  );
+  for (const surface of context.surfaces) {
+    if (surface.path !== 'browser-driven') continue;
+    if (verdictFor(surface, context.now) !== 'connected') continue;
+    if (!namesSurface(named, surface) || targeted.has(surface.slug)) continue;
+    if (namesSurface(output.notes, surface) && namesResultDependency(output.notes)) continue;
+    issues.push(
+      `deferred an action with no result dependency: the documented ${surface.displayName} (${surface.slug}) sequence has no action in this phase; its payload is fixed by the candidate and the runbook, so emit the whole sequence now, or say in notes which prior result it consumes`,
+    );
+  }
+  return issues;
+}
+
 export function mockActionContractIssues(
   output: ExecutionOutput,
   candidate: WorkCandidate,
@@ -1622,12 +1704,20 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     procedureTrails: raw.procedureTrails,
   };
   if (mode !== 'mock') {
+    const deferralContext: DeferralAuditContext = {
+      mode,
+      plan,
+      surfaces: args.surfaces ?? [],
+      skillBody: skill.body,
+      now: args.now ?? Date.now(),
+    };
     const trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
       mode,
       surfaces: args.surfaces ?? [],
       phase: 'initial',
     });
-    if (trailAttention.issues.length === 0) {
+    const issues = [...trailAttention.issues, ...deferralAudit(output, candidate, deferralContext)];
+    if (issues.length === 0) {
       return trailAttention.limitations.length > 0
         ? { ...output, procedureTrailLimitations: trailAttention.limitations }
         : output;
@@ -1638,7 +1728,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       '--- Required procedure-trail correction ---',
       'Your previous structured response was not applied and none of its actions reached the gate.',
       'Return one full replacement response that fixes every invariant below.',
-      ...trailAttention.issues.map((issue) => `- ${issue}`),
+      ...issues.map((issue) => `- ${issue}`),
       '',
       'Previous structured response:',
       JSON.stringify(output),
@@ -1663,9 +1753,13 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       surfaces: args.surfaces ?? [],
       phase: 'initial',
     });
-    if (remaining.issues.length > 0) {
+    const remainingIssues = [
+      ...remaining.issues,
+      ...deferralAudit(repaired, candidate, deferralContext),
+    ];
+    if (remainingIssues.length > 0) {
       throw new Error(
-        `executor procedure contract remained invalid after one repair: ${remaining.issues.join('; ')}`,
+        `executor procedure contract remained invalid after one repair: ${remainingIssues.join('; ')}`,
       );
     }
     return remaining.limitations.length > 0
