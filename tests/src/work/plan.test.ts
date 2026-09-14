@@ -587,3 +587,25 @@ describe('serialized candidate record credentials', () => {
     expect(prompt).toContain('REVOPS-7');
   });
 });
+
+
+describe('negative precondition instructions', () => {
+  it.each([
+    'Do not verify ownership before refreshing the tile.',
+    'Never check assignment or priority as a prerequisite.',
+    'Do not confirm the owner; follow the tile runbook.',
+  ])('does not repair a plan that forbids an invented gate: %s', async (step) => {
+    planRecorded.users.length = 0;
+    planRecorded.outputs.length = 0;
+    planRecorded.outputs.push({
+      summary: 'Refresh the tile.', steps: [step, 'Read back the 74% figure and audit line.'],
+      expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 2,
+    });
+    const result = await draftExecutionPlan({
+      candidate, charter, autonomousActions: false, surfaceMode: 'real',
+    });
+    expect(result.steps[0]).toBe(step);
+    expect(planRecorded.users).toHaveLength(1);
+    expect(result.advisorySteps).toBeUndefined();
+  });
+});

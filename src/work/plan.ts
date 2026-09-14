@@ -87,11 +87,13 @@ const CANDIDATE_PROPERTIES: ReadonlyArray<{ property: string; words: RegExp }> =
 /** A verification clause: the verb and, within the same clause, the property. */
 function verificationOf(step: string): string | undefined {
   for (const clause of step.split(/[.;\n]/)) {
-    const verb = VERIFICATION_VERB.exec(clause);
-    if (!verb) continue;
-    const tail = clause.slice(verb.index);
-    const found = CANDIDATE_PROPERTIES.find(({ words }) => words.test(tail));
-    if (found) return found.property;
+    for (const verb of clause.matchAll(new RegExp(VERIFICATION_VERB.source, 'gi'))) {
+      const prefix = clause.slice(0, verb.index);
+      if (/\b(?:do not|don't|never|without|avoid)\s+(?:\w+\s+){0,2}$/i.test(prefix)) continue;
+      const tail = clause.slice(verb.index);
+      const found = CANDIDATE_PROPERTIES.find(({ words }) => words.test(tail));
+      if (found) return found.property;
+    }
   }
   return undefined;
 }
