@@ -258,6 +258,13 @@ export function effectiveCharter(charter: Charter): Charter {
  */
 export function withoutClauseWording(charter: Charter, phrases: readonly string[]): Charter {
   if (phrases.length === 0) return charter;
+  for (const clause of charter.proposedBoundaries.willNotDo) {
+    if (!phrases.some((phrase) => wordingPresent(phrase, [clause]))) continue;
+    const remaining = withoutPhrases(clause, phrases);
+    if (remaining !== clause && /[A-Za-z0-9]/.test(remaining)) {
+      throw new Error('strike or edit the whole will-not-do clause; removing only part could change its boundary');
+    }
+  }
   const list = (clauses: readonly string[]): string[] =>
     clauses
       .map((clause: string): string => withoutPhrases(clause, phrases))

@@ -199,3 +199,10 @@ describe('effectiveCharter', (): void => {
     expect(effectiveCharter(charter).proposedFunction).toBe(charter.proposedFunction);
   });
 });
+
+it('refuses a partial strike that would broaden a will-not-do clause', () => {
+  const body = runThrough([{ kind: 'candidate-property', quote: 'Tickets have an owner.',
+    wording: ['owned'], origin: 'derived', struck: true }]);
+  body.proposedBoundaries.willNotDo = ['Change owned tickets outside Q3 close.'];
+  expect(() => effectiveCharter(body)).toThrow('whole will-not-do clause');
+});
