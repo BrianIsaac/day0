@@ -51,6 +51,21 @@ describe('the shape of the skill a candidate needs', (): void => {
     }), [sheet], 'real')).toEqual({ surfaceClass: 'spreadsheet', operation: 'read' });
   });
 
+  it('keeps the write procedure when a read-only boundary sits beside a requested write', () => {
+    const readThenWrite = candidate({
+      sourceSystem: 'close-tracker',
+      title: 'Check the Close tracker and append the weekly row',
+      contentSummary: 'Read the current figure and append a new row with it. Do not change existing rows.',
+    });
+    expect(skillShapeFor(readThenWrite, [sheet], 'real')).toEqual({
+      surfaceClass: 'spreadsheet', operation: 'append-row',
+    });
+    expect(skillShapeFor(candidate({
+      title: 'Review the Looker pipeline tile',
+      contentSummary: 'Refresh the figure to 74%; do not modify anything else on the dashboard.',
+    }), [linear, tile], 'real')).toEqual({ surfaceClass: 'analytics', operation: 'refresh-value' });
+  });
+
   it('maps every mock source system to its surface class and documented operation', (): void => {
     const shapes = ['ticket', 'slack', 'spreadsheet', 'social', 'docs', 'calendar'].map(
       (sourceSystem) => skillShapeFor(candidate({ sourceSystem }), [], 'mock'),

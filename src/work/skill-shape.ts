@@ -153,6 +153,36 @@ export function targetSurfaceFor<T extends ShapeSurface>(
   return source;
 }
 
+const READ_REQUEST = /^(?:read|inspect|list|show|summari[sz]e|report|review|check)\b/i;
+/** A boundary that rules writing out, with the rest of its clause. */
+const READ_ONLY_BOUNDARY =
+  /\b(?:read[- ]only|do not (?:change|write|update|edit|modify)|without (?:changing|writing|updating|editing|modifying))\b[^.;\n]*/i;
+/** A verb that asks for a write on a surface. */
+const WRITE_REQUEST =
+  /\b(?:append|add|updat(?:e|es)|refresh|set|enter|fill|post|repl(?:y|ies)|comment|creat(?:e|es)|mov(?:e|es)|clos(?:e|es)|writ(?:e|es)|edit|modif(?:y|ies)|chang(?:e|es)|record|log|sav(?:e|es)|delet(?:e|es)|remov(?:e|es)|assign|transition|mark)\b/i;
+
+/**
+ * Whether the candidate asks for a read and nothing else: a read verb opens
+ * the title, the summary rules writing out, and neither asks for a write
+ * outside that boundary. "Check the tracker and append the row; do not
+ * change existing rows" still wants the append.
+ */
+function isReadOnlyRequest(
+  candidate: Pick<WorkCandidate, 'title' | 'contentSummary'>,
+  surfaces: readonly ShapeSurface[],
+): boolean {
+  if (!READ_REQUEST.test(candidate.title.trim())) return false;
+  if (!READ_ONLY_BOUNDARY.test(candidate.contentSummary)) return false;
+  // A surface name is not a request ("Close tracker" asks for no close).
+  const names = namedSurfacesFor(candidate, surfaces).flatMap((surface) => [surface.displayName, surface.slug]);
+  const outsideBoundary = names.reduce(
+    (text: string, name: string): string =>
+      text.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' '),
+    candidateText(candidate).replace(new RegExp(READ_ONLY_BOUNDARY.source, 'gi'), ' '),
+  );
+  return !WRITE_REQUEST.test(outsideBoundary);
+}
+
 /**
  * The shape of the skill this candidate needs.
  *
@@ -177,9 +207,7 @@ export function skillShapeFor(
     target && isSystemClass(target.class)
       ? target.class
       : (SOURCE_CLASS_BY_NAME[candidate.sourceSystem.toLowerCase()] ?? 'other');
-  const readRequest = /^(?:read|inspect|list|show|summari[sz]e|report|review|check)\b/i.test(candidate.title.trim());
-  const readOnlyBoundary = /\b(?:read[- ]only|do not (?:change|write|update|edit|modify)|without (?:changing|writing|updating|editing|modifying))\b/i.test(candidate.contentSummary);
-  if (mode === 'real' && readRequest && readOnlyBoundary && !['chat', 'social', 'docs'].includes(surfaceClass)) {
+  if (mode === 'real' && isReadOnlyRequest(candidate, surfaces) && !['chat', 'social', 'docs'].includes(surfaceClass)) {
     return { surfaceClass, operation: 'read' };
   }
   return { surfaceClass, operation: OPERATION_BY_CLASS[surfaceClass].operation };
