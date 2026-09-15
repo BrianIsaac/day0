@@ -30,8 +30,25 @@ import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { replyTargetLine } from './reply-target';
+import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 
 export { replyTargetLine };
+
+/**
+ * The `Skill inputs for this run` block of the executor user prompt: the
+ * inputs the skill body declares, bound from the candidate where the row
+ * settles them. Absent for a body that declares none, so the prompts of the
+ * builtin skill and of every recorded bed are the prompts they were.
+ */
+function skillInputLines(skillBody: string, candidate: WorkCandidate): string[] {
+  const bindings = bindSkillInputs(skillBody, candidate);
+  if (bindings.length === 0) return [];
+  return [
+    '--- Skill inputs for this run (bind every declared input before acting) ---',
+    ...renderSkillInputs(bindings),
+    '',
+  ];
+}
 
 /**
  * Skill executor. Lifted from Protean's `src/work/execute-skill.ts`
@@ -1790,6 +1807,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Body:`,
     candidate.contentSummary,
     '',
+    ...skillInputLines(skill.body, candidate),
     'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
     '',
     '--- Procedure trail applicability for this candidate ---',
@@ -2213,6 +2231,7 @@ export async function runDependentSkill(
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
     `Body: ${candidate.contentSummary}`,
     '',
+    ...skillInputLines(skill.body, candidate),
     'Preserve every explicitly requested identifier and quoted string byte-for-byte in the primary action payload.',
     '',
     '--- Procedure trail applicability for this candidate ---',
