@@ -600,9 +600,12 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual([
       'D0MANAGER',
     ]);
+    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: runId, approvedIndexes: [1],
+    })).rejects.toThrow('pending run changed');
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
       workItemId,
-      pendingRunId: runId,
+      pendingRunId: closingHeld.pendingRunId!,
       approvedIndexes: [0, 1],
     });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });

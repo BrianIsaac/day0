@@ -2738,6 +2738,9 @@ describe('the exact-action gate', (): void => {
         output: { ...pendingOutput, phase: 'dependent', actionIndexOffset: 0, planStepOutcomes: [], initial: {} },
       }),
     ).resolves.toEqual({ pending: true, phase: 'manager' });
+    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: runId, approvedIndexes: [0],
+    })).rejects.toThrow('pending run changed');
     // The closing set is now pending; a second phase cannot be prepared behind it.
     await expect(
       harness.mutation(internal.work.prepareDependentPhase, {

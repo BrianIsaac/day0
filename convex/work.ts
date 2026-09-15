@@ -2333,6 +2333,8 @@ export const setActionsPending = internalMutation({
       return { pending: false };
     }
     const dependent = args.authoringAttemptId !== undefined;
+    // A closing set must not accept a delayed approval of phase one's indexes.
+    const pendingId = args.authoringAttemptId ?? args.runId;
     if (
       dependent
         ? row.applyAttemptId !== args.authoringAttemptId ||
@@ -2368,7 +2370,7 @@ export const setActionsPending = internalMutation({
     if (autoIndexes.length > 0) {
       await ctx.db.patch(args.workItemId, {
         output: args.output,
-        pendingRunId: args.runId,
+        pendingRunId: pendingId,
         approvedIndexes: autoIndexes,
         applyPhase: 'auto',
         actionVerdicts,
@@ -2381,13 +2383,13 @@ export const setActionsPending = internalMutation({
         payload,
         createdAt: Date.now(),
       });
-      await scheduleApply(ctx, args.workItemId, args.runId, 'auto');
+      await scheduleApply(ctx, args.workItemId, pendingId, 'auto');
       return { pending: true, phase: 'auto' };
     }
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       output: args.output,
-      pendingRunId: args.runId,
+      pendingRunId: pendingId,
       approvedIndexes: undefined,
       applyPhase: undefined,
       actionVerdicts,
@@ -2926,6 +2928,7 @@ export const claimApprovedActions = internalMutation({
         claimed: true;
         agentId: Id<'agents'>;
         runId: Id<'events'>;
+        pendingRunId: Id<'events'>;
         applyAttemptId: Id<'events'>;
         phase: 'auto' | 'approved';
         approvedIndexes: number[];
@@ -2954,7 +2957,7 @@ export const claimApprovedActions = internalMutation({
       type: 'work.actions-applying',
       payload: {
         workItemId: args.workItemId,
-        runId: row.pendingRunId,
+        runId: row.executionRunId ?? row.pendingRunId,
         phase: autoPhase ? 'auto' : 'approved',
       },
       createdAt: Date.now(),
@@ -2968,7 +2971,8 @@ export const claimApprovedActions = internalMutation({
     return {
       claimed: true,
       agentId: row.agentId,
-      runId: row.pendingRunId,
+      runId: row.executionRunId ?? row.pendingRunId,
+      pendingRunId: row.pendingRunId,
       applyAttemptId,
       phase: autoPhase ? 'auto' : 'approved',
       approvedIndexes: row.approvedIndexes,
@@ -3001,7 +3005,7 @@ export const recoverInterruptedApply = internalMutation({
     args,
   ): Promise<{ recovered: 'ignored' | 'rescheduled' | 'outcome-unknown' }> => {
     const row = await ctx.db.get(args.workItemId);
-    if (!row || row.executionRunId !== args.pendingRunId || row.applyPhase !== args.phase) {
+    if (!row || row.pendingRunId !== args.pendingRunId || row.applyPhase !== args.phase) {
       return { recovered: 'ignored' };
     }
     const unclaimedAuto =
@@ -3048,7 +3052,7 @@ export const recoverInterruptedApply = internalMutation({
           : { held: true, reason: heldReasonFor(index) }),
         idempotencyKey: actionIdempotencyKey({
           workItemId: args.workItemId,
-          runId: args.pendingRunId,
+          runId: row.executionRunId ?? args.pendingRunId,
           actionIndex: index + actionIndexOffset,
         }),
       };
@@ -3066,7 +3070,7 @@ export const recoverInterruptedApply = internalMutation({
       type: 'work.actions-interrupted',
       payload: {
         workItemId: args.workItemId,
-        runId: args.pendingRunId,
+        runId: row.executionRunId ?? args.pendingRunId,
         applyAttemptId: row.applyAttemptId,
       },
       createdAt: Date.now(),

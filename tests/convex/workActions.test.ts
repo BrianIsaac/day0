@@ -1388,7 +1388,7 @@ describe('executing an approved plan through the gate', (): void => {
 
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
       workItemId,
-      pendingRunId: runId,
+      pendingRunId: pending.pendingRunId!,
       approvedIndexes: [0, 1],
     });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
