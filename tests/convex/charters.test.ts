@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -242,8 +242,77 @@ describe('amending an approved charter', (): void => {
     );
     expect(await workspaceFile(harness, agentId, 'TOOLS.md')).toContain('# TOOLS');
     expect(await scheduledJobs(harness)).toEqual([
-      { name: 'work:reevaluatePending', args: [{ agentId, reason: 'charter.amended v0.1' }] },
+      { name: 'work:reevaluatePending', args: [{ agentId, trigger: 'charter', key: result.charterId }] },
     ]);
+  });
+
+  it('re-admits the work parked under the previous version through the intake trigger, keyed on the new row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    const parked = await harness.run(async (ctx) => {
+      const insert = async (externalId: string, reason: string): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: `Item ${externalId}`,
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'skipped',
+          verdict: { decision: 'skip', reason },
+          skipReason: reason,
+        });
+      return {
+        outOfScope: await insert('REVOPS-10', 'out-of-scope: no charter or current documented-system overlap'),
+        lowValue: await insert('REVOPS-12', 'low-value: 10'),
+      };
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+    vi.useFakeTimers();
+    let result: { charterId: Id<'charters'> };
+    try {
+      result = await owner.mutation(api.charters.amend, {
+        agentId,
+        changes: [{ kind: 'edit-function', text: 'Own routine revenue operations work from Linear tickets for the RevOps team.' }],
+      });
+
+      // The amendment schedules the intake stage's one trigger with the new
+      // charter row as its idempotency key, and that job re-admits only the
+      // skips the charter can change.
+      expect(await scheduledJobs(harness)).toEqual([
+        { name: 'work:reevaluatePending', args: [{ agentId, trigger: 'charter', key: result.charterId }] },
+      ]);
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    } finally {
+      vi.useRealTimers();
+    }
+    const rows = await harness.run(async (ctx) => ({
+      outOfScope: await ctx.db.get(parked.outOfScope),
+      lowValue: await ctx.db.get(parked.lowValue),
+    }));
+    expect(rows.outOfScope).toMatchObject({
+      state: 'discovered',
+      reevaluation: { trigger: 'charter', key: result.charterId, at: expect.any(Number) },
+    });
+    expect(rows.outOfScope?.verdict).toBeUndefined();
+    expect(rows.lowValue).toMatchObject({ state: 'skipped', skipReason: 'low-value: 10' });
+    const events = await eventsOf(harness, agentId);
+    expect(events.map((event) => event.type)).not.toContain('charter.reevaluation-unscheduled');
+    expect(events.find((event) => event.type === 'work.requeued')?.payload).toEqual({
+      workItemId: parked.outOfScope,
+      trigger: 'charter',
+      key: result.charterId,
+      previousState: 'skipped',
+    });
+    expect(events.find((event) => event.type === 'work.reevaluation')?.payload).toEqual({
+      trigger: 'charter',
+      key: result.charterId,
+      readmitted: 1,
+      examined: 2,
+    });
   });
 
   it('numbers a second amendment v0.2 over v0.1', async (): Promise<void> => {
@@ -342,7 +411,7 @@ describe('amending the named systems', (): void => {
     });
     expect(await scheduledJobs(harness)).toEqual([]);
 
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+    const result = await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
       agentId,
       changes: [
         { kind: 'add-system', system: { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile is in Looker.' } },
@@ -366,7 +435,7 @@ describe('amending the named systems', (): void => {
     expect(jobs).toEqual(
       expect.arrayContaining([
         { name: 'orientationActions:orientOne', args: [{ surfaceId: looker?._id }] },
-        { name: 'work:reevaluatePending', args: [{ agentId, reason: 'charter.amended v0.1' }] },
+        { name: 'work:reevaluatePending', args: [{ agentId, trigger: 'charter', key: result.charterId }] },
       ]),
     );
     expect(jobs).toHaveLength(2);

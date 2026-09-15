@@ -1,4 +1,3 @@
-import { makeFunctionReference } from 'convex/server';
 import { v } from 'convex/values';
 import {
   mutation,
@@ -8,6 +7,7 @@ import {
   type MutationCtx,
 } from './_generated/server';
 import type { Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsCharter } from './ownership';
 import { writeFileImpl } from './workspace';
 import { declareCharterSystem, retireCharterSystem, scheduleOrientationFor } from './surfaces';
@@ -275,16 +275,6 @@ export const charterChangeValidator = v.union(
 /** Who sent an amendment. */
 export type AmendmentVia = 'dashboard' | 'plan-approval' | 'channel';
 
-/**
- * The re-evaluation trigger the intake stage owns, named here so an
- * amendment schedules it without depending on it. Parked work is
- * re-evaluated against the current charter, never reconciled against the
- * diff.
- */
-export const REEVALUATE_PENDING = makeFunctionReference<
-  'mutation',
-  { agentId: Id<'agents'>; reason: string }
->('work:reevaluatePending');
 
 /**
  * Amend the agent's approved charter: one new version, one event, the
@@ -374,31 +364,27 @@ export async function amendCharterInTransaction(
     }
   }
 
-  await scheduleReevaluation(ctx, args.agentId, `charter.amended v${version}`, now);
+  await scheduleReevaluation(ctx, args.agentId, charterId);
   return { charterId, version, previousVersion: previous.version };
 }
 
 /**
- * Place the re-evaluation job. The amendment has landed by the time this
- * runs, so a deployment without the trigger records that it could not be
- * scheduled rather than losing the amendment.
+ * Send the work parked under the previous version back for evaluation.
+ *
+ * The new charter row is the trigger's idempotency key: one amendment
+ * re-admits a parked row once, and the row's verdict is judged again
+ * against the current charter, never reconciled against the diff.
  */
 async function scheduleReevaluation(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
-  reason: string,
-  now: number,
+  charterId: Id<'charters'>,
 ): Promise<void> {
-  try {
-    await ctx.scheduler.runAfter(0, REEVALUATE_PENDING, { agentId, reason });
-  } catch (error) {
-    await ctx.db.insert('events', {
-      agentId,
-      type: 'charter.reevaluation-unscheduled',
-      payload: { reason, error: (error as Error).message ?? String(error) },
-      createdAt: now,
-    });
-  }
+  await ctx.scheduler.runAfter(0, internal.work.reevaluatePending, {
+    agentId,
+    trigger: 'charter',
+    key: charterId,
+  });
 }
 
 /** Amend the owner's approved charter from the dashboard. */
