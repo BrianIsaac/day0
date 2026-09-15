@@ -152,8 +152,8 @@ function skipped(reason: string): SkillSandboxRun {
  * signals: execution success (no exception), environment success (the world
  * state we intended to change actually changed), and a critic (a model judges
  * whether the output looks right). Day0 implements signal 1 directly here
- * (sandbox exit 0 + non-empty stdout); signals 2 and 3 are surfaced by the
- * caller comparing the stdout against expected fixtures.
+ * (sandbox exit 0 + one distinct stdout line per input set); signals 2 and 3
+ * are surfaced by the caller comparing the stdout against expected fixtures.
  *
  * Sandbox verification is an optional capability. With neither backend the run
  * is reported as skipped instead of throwing - the skill keeps its body, stays
