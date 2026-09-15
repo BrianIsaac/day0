@@ -3,6 +3,7 @@ import { Agent } from '@mastra/core/agent';
 import { agentJson, MODEL_CONFIG, MODEL_PROVIDER_MAX_RETRIES } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import {
+  type ArgumentRepairAttempt,
   CLOSING_SET_CAP,
   DEFERRED_SEQUENCE_ALLOWANCE,
   DEPENDENT_ACTION_CAP,
@@ -2174,13 +2175,161 @@ export function isArgumentFailure(reason: string | undefined): boolean {
   return reason !== undefined && ARGUMENT_FAILURE.test(reason);
 }
 
-/** A phase-one read the provider refused for its arguments, with what it needs to be re-authored. */
-export interface RepairableRead {
+/** One MCP call refused for its argument names, with what its one repair needs. */
+export interface RepairableCall {
   index: number;
   action: MockAction;
   call: ParsedMcpCall;
   surface: SurfaceRecord;
   reason: string;
+}
+
+/** A phase-one read the provider refused for its arguments, with what it needs to be re-authored. */
+export type RepairableRead = RepairableCall;
+
+/**
+ * Why the probed schema of a tool refuses a call's argument names, if it does.
+ *
+ * Orientation records the top-level argument names of every allowed tool.
+ * A call carrying a name the schema does not list is a validation error the
+ * provider would return after approval; deciding it here, before the hold,
+ * costs no transport. A tool with no probed names cannot be checked.
+ *
+ * Args:
+ *   call: The parsed MCP call.
+ *   surface: Its surface, with the probed argument names.
+ *
+ * Returns:
+ *   The refusal, worded as the provider words one, or undefined.
+ */
+export function probedArgumentIssue(
+  call: ParsedMcpCall,
+  surface: Pick<SurfaceRecord, 'slug' | 'toolArguments'>,
+): string | undefined {
+  const probed = surface.toolArguments?.find((entry) => entry.tool === call.tool)?.arguments;
+  if (!probed || probed.length === 0) return undefined;
+  const unknown = Object.keys(call.toolArgs).filter((key) => !probed.includes(key));
+  if (unknown.length === 0) return undefined;
+  return `Tool input validation failed against the probed schema: unknown argument${unknown.length === 1 ? '' : 's'} ${unknown.join(', ')} for ${call.tool} on ${surface.slug}; the schema accepts ${probed.join(', ')}`;
+}
+
+/**
+ * The writes about to be held whose argument names the probed schema
+ * refuses. Reads are the provider's to refuse after they run; a write that
+ * would be refused is caught here so the manager approves a payload that
+ * can land.
+ *
+ * Args:
+ *   actions: The phase's actions.
+ *   surfaces: The agent's surfaces.
+ *
+ * Returns:
+ *   The repairable rows, in action order.
+ */
+export function repairableWriteArguments(
+  actions: readonly MockAction[],
+  surfaces: readonly SurfaceRecord[],
+): RepairableCall[] {
+  const rows: RepairableCall[] = [];
+  actions.forEach((action, index): void => {
+    if (!isSurfaceTool(action.tool)) return;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || parsed.action.kind !== 'mcp.call') return;
+    if (actionIntent(parsed.action) !== 'write') return;
+    const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+    if (!surface) return;
+    const reason = probedArgumentIssue(parsed.action, surface);
+    if (reason) rows.push({ index, action, call: parsed.action, surface, reason });
+  });
+  return rows;
+}
+
+export interface RepairHeldWriteArgumentsArgs {
+  actions: readonly MockAction[];
+  surfaces: readonly SurfaceRecord[];
+  skill: Pick<SelectedSkill, 'name'>;
+  candidate: WorkCandidate;
+  /** The one model call per refused row; defaults to `repairToolArguments`. */
+  repair?: (args: RepairToolArgumentsArgs) => Promise<MockAction | undefined>;
+  onAdditionalModelCall?: () => void;
+}
+
+/**
+ * Give every write the probed schema refuses one repair before it is held.
+ *
+ * Each row costs one model call and nothing else: the corrected payload
+ * replaces the first attempt in the set the manager sees, and the attempt
+ * is recorded beside it. A repair the schema still refuses, or that the
+ * model could not produce, leaves the first attempt in place and records
+ * that the repair failed, so the manager decides with that in view. Nothing
+ * here reaches a surface.
+ *
+ * Args:
+ *   args: The phase's actions, the surfaces, the skill and the candidate.
+ *
+ * Returns:
+ *   The actions with repaired rows replaced, and every attempt made.
+ */
+export async function repairHeldWriteArguments(
+  args: RepairHeldWriteArgumentsArgs,
+): Promise<{ actions: MockAction[]; argumentRepairs: ArgumentRepairAttempt[] }> {
+  const actions = [...args.actions];
+  const argumentRepairs: ArgumentRepairAttempt[] = [];
+  const repair = args.repair ?? repairToolArguments;
+  for (const row of repairableWriteArguments(args.actions, args.surfaces)) {
+    const attempt: ArgumentRepairAttempt = {
+      index: row.index,
+      reason: row.reason,
+      toolArgsJson: row.action.args.toolArgsJson ?? JSON.stringify(row.call.toolArgs),
+      repaired: false,
+    };
+    let replacement: MockAction | undefined;
+    try {
+      replacement = await repair({
+        skill: args.skill,
+        candidate: args.candidate,
+        row,
+        onAdditionalModelCall: args.onAdditionalModelCall,
+      });
+    } catch {
+      replacement = undefined;
+    }
+    const parsed = replacement ? parseSurfaceAction(replacement) : undefined;
+    if (
+      parsed?.ok &&
+      parsed.action.kind === 'mcp.call' &&
+      probedArgumentIssue(parsed.action, row.surface) === undefined
+    ) {
+      actions[row.index] = replacement!;
+      attempt.repaired = true;
+    }
+    argumentRepairs.push(attempt);
+  }
+  return { actions, argumentRepairs };
+}
+
+/**
+ * Carry each pre-hold repair onto the ledger row it produced, once that row
+ * has an outcome, so the ledger shows the attempt the way it shows a read
+ * repaired after the provider refused it.
+ *
+ * Args:
+ *   applied: The ledger, index-aligned with the phase's actions.
+ *   repairs: The attempts recorded when the phase was held.
+ *
+ * Returns:
+ *   The ledger with the repairs attached.
+ */
+export function withArgumentRepairs(
+  applied: readonly AppliedAction[],
+  repairs: readonly ArgumentRepairAttempt[] | undefined,
+): AppliedAction[] {
+  if (!repairs || repairs.length === 0) return [...applied];
+  return applied.map((row, index): AppliedAction => {
+    const attempt = repairs.find((entry) => entry.index === index && entry.repaired);
+    if (!attempt || row.awaitingApproval || row.repair) return row;
+    return { ...row, repair: { reason: attempt.reason, toolArgsJson: attempt.toolArgsJson } };
+  });
 }
 
 /**
@@ -2223,7 +2372,7 @@ const repairedArgumentsSchema = z.object({ toolArgsJson: z.string() }).strict();
 export interface RepairToolArgumentsArgs {
   skill: Pick<SelectedSkill, 'name'>;
   candidate: WorkCandidate;
-  row: RepairableRead;
+  row: RepairableCall;
   onAdditionalModelCall?: () => void;
 }
 

@@ -247,8 +247,10 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     },
     repairToolArguments: async (args: {
       row: { call: { surface: string; tool: string }; reason: string };
+      onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput['actions'][number] | undefined> => {
       recorded.repairRequests.push({ tool: args.row.call.tool, reason: args.row.reason });
+      args.onAdditionalModelCall?.();
       if (!recorded.repairedToolArgsJson) return undefined;
       return {
         tool: 'mcp.call',
@@ -2147,6 +2149,118 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
     expect(recorded.mcp).toHaveLength(1);
     expect(recorded.http).toHaveLength(0);
+  });
+
+  describe('a held write repaired once before the hold', (): void => {
+    const WRONG = JSON.stringify({ issueId: 'iss-1', comment: 'Prepared the close summary.' });
+    const RIGHT = JSON.stringify({ issueId: 'iss-1', body: 'Prepared the close summary.' });
+    const wrongKeyOutput: ExecutionOutput = {
+      ...skillOutput,
+      actions: [
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: WRONG } },
+        skillOutput.actions[1],
+        skillOutput.actions[2],
+      ],
+    };
+    const probeSaveComment = async (harness: Harness): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const linear = (await ctx.db.query('surfaces').collect()).find((row) => row.slug === 'linear');
+        if (!linear) throw new Error('linear surface missing');
+        await ctx.db.patch(linear._id, {
+          toolArguments: [{ tool: 'save_comment', arguments: ['issueId', 'body'] }],
+        });
+      });
+    };
+
+    it('holds a save_comment with a wrong key as its corrected payload, applies nothing in the repair, and shows the attempt in the ledger', async (): Promise<void> => {
+      useSurfaceMode('real');
+      recorded.skillOutput = wrongKeyOutput;
+      recorded.repairedToolArgsJson = RIGHT;
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await probeSaveComment(harness);
+      const result = await harness
+        .withIdentity(OWNER)
+        .action(api.workActions.executeApprovedPlan, { workItemId });
+      expect(result).toEqual({ ok: true, reason: 'automatic actions applying', additionalModelCalls: 1 });
+      expect(recorded.repairRequests).toEqual([
+        { tool: 'save_comment', reason: expect.stringContaining('unknown argument comment for save_comment on linear') },
+      ]);
+      // The repair re-authored the payload; nothing reached Linear.
+      expect(recorded.mcp).toHaveLength(0);
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      const pending = await readItem(harness, workItemId);
+      expect(pending.state).toBe('actions-pending');
+      const held = pending.output as ExecutionOutput;
+      expect(held.actions[0]!.args.toolArgsJson).toBe(RIGHT);
+      expect(held.argumentRepairs).toEqual([
+        {
+          index: 0,
+          reason: expect.stringContaining('the schema accepts issueId, body'),
+          toolArgsJson: WRONG,
+          repaired: true,
+        },
+      ]);
+      expect(pending.actionVerdicts![0]).toEqual({ disposition: 'held', reason: HELD_MUTATION });
+      expect(recorded.mcp).toHaveLength(0);
+      const runId = pending.pendingRunId;
+      if (!runId) throw new Error('pending run missing');
+      await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0, 1],
+      });
+      await expect(
+        harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      const row = await readItem(harness, workItemId);
+      expect(row.state).toBe('completed');
+      expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
+      expect(recorded.mcp[0]!.args).toMatchObject({
+        issueId: 'iss-1',
+        body: expect.stringContaining('Prepared the close summary.'),
+      });
+      expect(recorded.mcp[0]!.args).not.toHaveProperty('comment');
+      expect(ledger(row)[0]).toMatchObject({
+        ok: true,
+        authority: 'manager',
+        repair: { reason: expect.stringContaining('unknown argument comment'), toolArgsJson: WRONG },
+      });
+      expect(ledger(row)[1]!.repair).toBeUndefined();
+      expect(ledger(row)[2]!.repair).toBeUndefined();
+    });
+
+    it('holds the first attempt and records that the repair failed when the model produces nothing usable', async (): Promise<void> => {
+      useSurfaceMode('real');
+      recorded.skillOutput = wrongKeyOutput;
+      recorded.repairedToolArgsJson = undefined;
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await probeSaveComment(harness);
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      const pending = await readItem(harness, workItemId);
+      expect(recorded.repairRequests).toHaveLength(1);
+      const held = pending.output as ExecutionOutput;
+      expect(held.actions[0]!.args.toolArgsJson).toBe(WRONG);
+      expect(held.argumentRepairs).toEqual([
+        { index: 0, reason: expect.stringContaining('unknown argument comment'), toolArgsJson: WRONG, repaired: false },
+      ]);
+    });
+
+    it('makes no attempt when the write matches its probed names or the tool was never probed', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await probeSaveComment(harness);
+      const result = await harness
+        .withIdentity(OWNER)
+        .action(api.workActions.executeApprovedPlan, { workItemId });
+      expect(result).toEqual({ ok: true, reason: 'automatic actions applying' });
+      expect(recorded.repairRequests).toEqual([]);
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      expect((await readItem(harness, workItemId)).output).not.toHaveProperty('argumentRepairs');
+    });
   });
 
   it('repairs a read the provider refused for its arguments once, under standing authority', async (): Promise<void> => {

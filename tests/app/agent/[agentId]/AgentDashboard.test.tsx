@@ -12,7 +12,9 @@ import {
   ActionPayload,
   DashboardHeader,
   DraftDetails,
+  PendingActions,
   PlanExecutionLedger,
+  RepairNote,
   WorkItemCard,
   eventLabel,
   phasedLedger,
@@ -61,6 +63,52 @@ describe('held action payload', (): void => {
     expect(markup).not.toContain('channelSlug');
     expect(markup).not.toContain('&quot;status&quot;');
     expect(markup).not.toContain('cells');
+  });
+});
+
+describe('a write re-authored once before the hold', (): void => {
+  const reason =
+    'Tool input validation failed against the probed schema: unknown argument comment for save_comment on linear; the schema accepts issueId, body';
+  const first = '{"issueId":"REVOPS-7","comment":"Set to 74%."}';
+  const held = {
+    tool: 'mcp.call' as const,
+    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-7","body":"Set to 74%."}' },
+  };
+  const resolved = async (): Promise<void> => undefined;
+
+  it('tells the manager the held payload is the second attempt and shows the first beside it', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[held]}
+        verdicts={[{ disposition: 'held', reason: 'held for approval' }]}
+        surfaces={[]}
+        repairs={[{ index: 0, reason, toolArgsJson: first, repaired: true }]}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain('arguments re-authored once before the hold · this payload is the second attempt');
+    expect(markup).toContain('the schema accepts issueId, body');
+    expect(markup).toContain('first attempt: {&quot;issueId&quot;:&quot;REVOPS-7&quot;,&quot;comment&quot;');
+    expect(markup).toContain('Set to 74%.');
+  });
+
+  it('says when the one repair produced nothing and the first attempt stands, and stays silent with no repair', (): void => {
+    const failed = renderToStaticMarkup(
+      <RepairNote repair={{ reason, toolArgsJson: first, repaired: false }} />,
+    );
+    expect(failed).toContain('the one repair produced nothing usable · first attempt stands');
+    expect(renderToStaticMarkup(<RepairNote repair={undefined} />)).toBe('');
+    const untouched = renderToStaticMarkup(
+      <PendingActions
+        actions={[held]}
+        verdicts={[{ disposition: 'held', reason: 'held for approval' }]}
+        surfaces={[]}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(untouched).not.toContain('re-authored');
   });
 });
 
@@ -162,6 +210,26 @@ describe('sending a finished item back', (): void => {
         onResendDecision={resolved}
       />,
     );
+
+  it('shows a landed row that was re-authored before the hold with its first attempt', (): void => {
+    const row = item('completed');
+    const markup = render({
+      ...row,
+      output: {
+        ...landedDm,
+        applied: [
+          {
+            ...landedDm.applied[0]!,
+            repair: { reason: 'unknown argument comment for save_comment on linear', toolArgsJson: '{"comment":"x"}' },
+          },
+        ],
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(markup).toContain('arguments re-authored once before the hold');
+    expect(markup).toContain('unknown argument comment for save_comment on linear');
+    expect(markup).toContain('first attempt: {&quot;comment&quot;:&quot;x&quot;}');
+    expect(render(row)).not.toContain('re-authored');
+  });
 
   it('distinguishes degraded provider evidence in both successful and failed runs', () => {
     for (const state of ['completed', 'failed'] as const) {

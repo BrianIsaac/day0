@@ -33,7 +33,7 @@ import {
   retryRequiresProviderReconciliation,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
-import type { MockAction } from '../../../src/work/types';
+import type { ArgumentRepairAttempt, MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import type { AgentMetrics } from '../../../convex/metrics';
@@ -1058,6 +1058,8 @@ interface LedgerRow {
   outcomeUnknown?: boolean;
   idempotencyKey?: string;
   redaction?: 'structural-only';
+  /** The first attempt at this row's arguments, when one bounded repair re-authored them. */
+  repair?: { reason: string; toolArgsJson: string };
 }
 
 interface PlanStepOutcomeRow {
@@ -1074,6 +1076,35 @@ interface RunOutput {
   applied?: LedgerRow[];
   initial?: { applied?: LedgerRow[] };
   planStepOutcomes?: PlanStepOutcomeRow[];
+  /** The one repair each held write earned before the hold, by action index. */
+  argumentRepairs?: ArgumentRepairAttempt[];
+}
+
+/**
+ * The note beside a held or applied row whose arguments were re-authored once:
+ * why the first attempt was refused and what it was, so the manager judges the
+ * payload in front of them knowing it is the second.
+ */
+export function RepairNote({
+  repair,
+}: {
+  repair: { reason: string; toolArgsJson: string; repaired?: boolean } | undefined;
+}) {
+  if (!repair) return null;
+  const stands = repair.repaired === false;
+  return (
+    <details className="mt-0.5">
+      <summary className="text-[10px] text-[var(--color-warn)] cursor-pointer select-none">
+        {stands
+          ? 'argument names refused by the probed schema · the one repair produced nothing usable · first attempt stands'
+          : 'arguments re-authored once before the hold · this payload is the second attempt'}
+      </summary>
+      <p className="text-[10px] text-[var(--color-muted)] break-words">{repair.reason}</p>
+      <code className="block font-mono text-[10px] whitespace-pre-wrap break-words text-[var(--color-muted)]">
+        first attempt: {repair.toolArgsJson}
+      </code>
+    </details>
+  );
 }
 
 type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
@@ -1279,6 +1310,7 @@ export function PendingActions({
   surfaces,
   replyTarget,
   autonomousActions = false,
+  repairs,
   onApprove,
   onReject,
 }: {
@@ -1288,6 +1320,8 @@ export function PendingActions({
   replyTarget?: ReplyTarget;
   /** Whether the agent's switch is on now; the card says why the rows are waiting either way. */
   autonomousActions?: boolean;
+  /** The one repair each held write earned before the hold, by action index. */
+  repairs?: ArgumentRepairAttempt[];
   onApprove: (approvedIndexes: number[]) => Promise<unknown>;
   onReject: (reason: string) => Promise<unknown>;
 }) {
@@ -1379,6 +1413,7 @@ export function PendingActions({
                     </summary>
                     <ActionPayload action={action} />
                   </details>
+                  <RepairNote repair={repairs?.find((attempt) => attempt.index === index)} />
                   <div className="flex items-center gap-2 mt-0.5">
                     {!refused && !on ? (
                       <span className="text-[10px] text-[var(--color-muted)]">held · will not be sent</span>
@@ -1641,6 +1676,7 @@ export function WorkItemCard({
           surfaces={surfaces}
           replyTarget={replyTargetFor(item)}
           autonomousActions={autonomousActions}
+          repairs={output.argumentRepairs}
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />
@@ -1674,6 +1710,7 @@ export function WorkItemCard({
                   </span>
                 ) : null}
                 <PhaseLabel phase={a.phase} />
+                <RepairNote repair={a.repair} />
               </li>
             ))}
           </ul>
@@ -1695,6 +1732,7 @@ export function WorkItemCard({
                 {a.effect ? (
                   <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">{a.effect}</code>
                 ) : null}
+                <RepairNote repair={a.repair} />
               </li>
             ))}
           </ul>
@@ -1719,6 +1757,7 @@ export function WorkItemCard({
               <li key={i}>
                 {a.tool} - {a.reason ?? 'unknown reason'}
                 <PhaseLabel phase={a.phase} />
+                <RepairNote repair={a.repair} />
               </li>
             ))}
           </ul>

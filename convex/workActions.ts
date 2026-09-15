@@ -20,14 +20,18 @@ import {
   dependentActionCap,
   repairableReadFailures,
   repairFailedReads,
+  repairHeldWriteArguments,
   repairToolArguments,
+  withArgumentRepairs,
   runDependentSkill,
   runSkill,
 } from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import {
+  type ArgumentRepairAttempt,
   type DependentExecutionOutput,
   type ExecutionPlan,
+  type MockAction,
   type PlanStepOutcome,
   type WorkCandidate,
   type WorkSourceCategory,
@@ -472,10 +476,24 @@ async function holdDay0Actions(
         additionalModelCalls += 1;
       },
     });
-    const stagedOutput =
+    const staged =
       SURFACE_MODE === 'real'
         ? prerequisiteOutput(output, args.plan)
         : { ...output, needsDependentPhase: false };
+    // A write whose argument names the probed schema refuses is re-authored
+    // once here, so the payload the manager approves is one the provider
+    // can accept; nothing reaches a surface in the repair.
+    const stagedOutput =
+      SURFACE_MODE === 'real'
+        ? await repairedForHold(staged, {
+            surfaces,
+            skill: { name: args.skill.name },
+            candidate: args.candidate,
+            onAdditionalModelCall: () => {
+              additionalModelCalls += 1;
+            },
+          })
+        : staged;
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
       // Nothing to wait for is not a failed prerequisite: the closing phase
       // authors the whole set and accounts for every plan step, and a step
@@ -531,6 +549,38 @@ async function holdDay0Actions(
 
 /** A ledger as the row carries it between the two phases. */
 type LedgerOutput = ExecutionOutput & { applied?: Array<AppliedAction | undefined> };
+
+/**
+ * The phase's actions with every write the probed schema refuses given its
+ * one repair, and the attempts recorded on the output for the card.
+ *
+ * Args:
+ *   output: The phase's output as the executor returned it.
+ *   context: The surfaces, the skill, the candidate and the model-call hook.
+ *
+ * Returns:
+ *   The output the gate holds.
+ */
+async function repairedForHold<T extends { actions: MockAction[] }>(
+  output: T,
+  context: {
+    surfaces: readonly SurfaceRecord[];
+    skill: { name: string };
+    candidate: WorkCandidate;
+    onAdditionalModelCall: () => void;
+  },
+): Promise<T & { argumentRepairs?: ArgumentRepairAttempt[] }> {
+  const repaired = await repairHeldWriteArguments({
+    actions: output.actions,
+    surfaces: context.surfaces,
+    skill: context.skill,
+    candidate: context.candidate,
+    repair: repairToolArguments,
+    onAdditionalModelCall: context.onAdditionalModelCall,
+  });
+  if (repaired.argumentRepairs.length === 0) return output;
+  return { ...output, actions: repaired.actions, argumentRepairs: repaired.argumentRepairs };
+}
 
 interface DependentAuthoringOutput extends ExecutionOutput {
   phase: 'dependent-authoring';
@@ -820,8 +870,14 @@ export const authorDependentActions = internalAction({
         initialFailure: initial.initialFailure,
       });
       if (transitionRefusal) throw new Error(transitionRefusal);
+      const held = await repairedForHold(output, {
+        surfaces,
+        skill: { name: skill.name },
+        candidate: rowToCandidate(item),
+        onAdditionalModelCall: (): void => {},
+      });
       const dependent: DependentPendingOutput = {
-        ...output,
+        ...held,
         phase: 'dependent',
         actionIndexOffset: initial.actions.length,
         initial,
@@ -934,18 +990,21 @@ export const applyApprovedActions = internalAction({
         knownValues,
       );
       const grants = new Set(grantRows.map((grant) => grant.scope));
-      const applied = await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
-        deps,
-        grants,
-        approvedIndexes: new Set(claim.approvedIndexes),
-        heldReasons: new Map(claim.heldReasons),
-        deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
-        priorLedger,
-        idempotencyIndexOffset: actionIndexOffset,
-        autoPhase: claim.phase === 'auto',
-        autonomousActions: claim.autonomousActions,
-        replyTarget: claim.replyTarget,
-      });
+      const applied = withArgumentRepairs(
+        await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
+          deps,
+          grants,
+          approvedIndexes: new Set(claim.approvedIndexes),
+          heldReasons: new Map(claim.heldReasons),
+          deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
+          priorLedger,
+          idempotencyIndexOffset: actionIndexOffset,
+          autoPhase: claim.phase === 'auto',
+          autonomousActions: claim.autonomousActions,
+          replyTarget: claim.replyTarget,
+        }),
+        output.argumentRepairs,
+      );
       if (
         SURFACE_MODE === 'real' &&
         claim.phase === 'auto' &&
