@@ -86,9 +86,9 @@ describe('selections over the backend rows', (): void => {
     expect(landingRefusal(surface('linear', 'proposed'))).toBeUndefined();
     const fromDocs = { ...surface('linear', 'proposed'), credentialId: 'c1', credentialKind: 'location', credentialLocation: 'team docs / runbooks/how-to-update-ticket.md' };
     expect(landingRefusal(fromDocs)).toBe(
-      'linear carries a credential stored from documentation (team docs / runbooks/how-to-update-ticket.md), so the card shows it masked and offers no landing form; the run cannot type the real key.',
+      'linear carries a credential stored from documentation (team docs / runbooks/how-to-update-ticket.md, kind location), so the card shows it masked and offers no landing form; the run cannot type the real key.',
     );
-    expect(landingRefusal({ ...surface('slack', 'proposed'), credentialId: 'c2', credentialKind: 'value' })).toContain('already stored (value)');
+    expect(landingRefusal({ ...surface('slack', 'proposed'), credentialId: 'c2', credentialKind: 'value' })).toContain('already stored (kind value)');
   });
 
   it('tells the closing hold from the phase-one hold by the tile actions in the current set', (): void => {

@@ -313,8 +313,8 @@ export function closingHeld(item: WorkItemView & Pick<WorkItemRow, 'state'>, til
  */
 export function landingRefusal(surface: SurfaceRow): string | undefined {
   if (!surface.credentialId) return undefined;
-  const origin = surface.credentialKind === 'location' && surface.credentialLocation
-    ? `stored from documentation (${surface.credentialLocation})`
-    : `already stored (${surface.credentialKind ?? 'unknown kind'})`;
+  const origin = surface.credentialLocation
+    ? `stored from documentation (${surface.credentialLocation}, kind ${surface.credentialKind ?? 'unknown'})`
+    : `already stored (kind ${surface.credentialKind ?? 'unknown'})`;
   return `${surface.slug} carries a credential ${origin}, so the card shows it masked and offers no landing form; the run cannot type the real key.`;
 }
