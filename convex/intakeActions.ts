@@ -435,19 +435,20 @@ export function mcpIssuePage(value: unknown): McpPage {
 }
 
 /**
- * Read who asked for an issue, in the shapes providers use.
+ * Read a person field in the shapes providers use.
  *
  * Linear's MCP server returns `createdBy` and `assignee` as display names;
  * GraphQL-shaped payloads nest a `creator` or `assignee` object.
  *
  * Args:
  *   issue: Provider issue object.
+ *   keys: Field names to try, in order.
  *
  * Returns:
- *   The creator's or assignee's name or email, or undefined.
+ *   The first name or email found, or undefined.
  */
-function requesterOf(issue: Record<string, unknown>): string | undefined {
-  for (const key of ['creator', 'createdBy', 'assignee']) {
+function personOf(issue: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
     const value = issue[key];
     if (typeof value === 'string' && value.trim()) return value;
     const record = asRecord(value);
@@ -492,7 +493,8 @@ export function linearCandidate(
         : typeof priorityObject?.name === 'string'
           ? priorityObject.name
           : undefined;
-  const requesterLabel = requesterOf(issue);
+  const requester = personOf(issue, ['creator', 'createdBy']);
+  const owner = personOf(issue, ['assignee']);
   return {
     sourceCategory: 'ticket-queue',
     sourceSystem: surface.slug,
@@ -502,7 +504,9 @@ export function linearCandidate(
     contentRefs: [url],
     observedAt: new Date(observedAt),
     priority,
-    requesterLabel,
+    requesterLabel: requester ?? owner,
+    ...(owner === undefined ? {} : { owner }),
+    ...(requester === undefined ? {} : { requester }),
   };
 }
 
@@ -952,6 +956,7 @@ export function slackCandidate(
     contentRefs: [`https://app.slack.com/client/${teamId}/${channel.id}/thread/${threadKey}`],
     observedAt: new Date(observedAt),
     requesterLabel: message.user,
+    requester: message.user,
     // A reply belongs in the ask's thread: under the mention itself, or under
     // the parent when the mention was already a threaded message.
     replyTarget: {
@@ -1120,6 +1125,8 @@ async function seedCandidate(
     contentRefs: candidate.contentRefs,
     priority: candidate.priority,
     requesterLabel: candidate.requesterLabel,
+    owner: candidate.owner,
+    requester: candidate.requester,
     replyTarget: candidate.replyTarget,
   });
 }

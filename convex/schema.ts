@@ -391,6 +391,8 @@ export default defineSchema({
     contentRefs: v.array(v.string()),
     priority: v.optional(v.string()),
     requesterLabel: v.optional(v.string()),
+    owner: v.optional(v.string()),
+    requester: v.optional(v.string()),
     state: v.union(
       v.literal('discovered'),
       v.literal('claimed'),

@@ -233,6 +233,8 @@ export const workItemSeedFields = {
   contentRefs: v.array(v.string()),
   priority: v.optional(v.string()),
   requesterLabel: v.optional(v.string()),
+  owner: v.optional(v.string()),
+  requester: v.optional(v.string()),
   replyTarget: v.optional(
     v.object({
       channel: v.string(),
@@ -252,6 +254,8 @@ export interface WorkItemSeedInput {
   contentRefs: string[];
   priority?: string;
   requesterLabel?: string;
+  owner?: string;
+  requester?: string;
   replyTarget?: { channel: string; channelName?: string; threadTs?: string };
 }
 

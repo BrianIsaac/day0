@@ -474,6 +474,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
     `From: ${candidate.requesterLabel ?? '(unknown)'}`,
+    ...(candidate.owner ? [`Owner: ${candidate.owner}`] : []),
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),

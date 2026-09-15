@@ -191,6 +191,15 @@ describe('plan drafter grounding', (): void => {
     expect(user.indexOf('Refs:')).toBeLessThan(user.indexOf('Body:'));
   });
 
+  it('names the owner the provider returned beside the requester, and nothing when it returned none', (): void => {
+    const withOwner = planUserPrompt({
+      candidate: { ...candidate, owner: 'Ana', requester: 'Manager' },
+      charter,
+    });
+    expect(withOwner).toContain('From: Manager\nOwner: Ana\nTitle: Refresh the dashboard tile');
+    expect(planUserPrompt({ candidate, charter })).not.toContain('Owner:');
+  });
+
   it('keeps the prompt as it was when no surfaces or documentation are given', async (): Promise<void> => {
     await draftExecutionPlan({ candidate, charter, autonomousActions: false, surfaceMode: 'mock' });
     const user = planRecorded.users[0];

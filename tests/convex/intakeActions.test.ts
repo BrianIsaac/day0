@@ -1627,15 +1627,51 @@ describe('intake provider contracts', (): void => {
       observedAt: new Date(observedAt),
       priority: 'Urgent',
       requesterLabel: 'Brian',
+      requester: 'Brian',
     });
-    expect(
-      linearCandidate(
-        { id: 'REVOPS-6', title: 'Reconcile', url: 'https://linear.app/x', assignee: { email: 'a@day0.local' } },
-        surface,
-        observedAt,
-      ),
-    ).toMatchObject({ contentSummary: 'Reconcile', requesterLabel: 'a@day0.local', priority: undefined });
+    const assigneeOnly = linearCandidate(
+      { id: 'REVOPS-6', title: 'Reconcile', url: 'https://linear.app/x', assignee: { email: 'a@day0.local' } },
+      surface,
+      observedAt,
+    );
+    expect(assigneeOnly).toMatchObject({
+      contentSummary: 'Reconcile',
+      requesterLabel: 'a@day0.local',
+      owner: 'a@day0.local',
+      priority: undefined,
+    });
+    expect(assigneeOnly).not.toHaveProperty('requester');
     expect(linearCandidate({ id: 'REVOPS-7', title: '  ', url: 'https://linear.app/x' }, surface, observedAt)).toBeUndefined();
+  });
+
+  it('carries the assignee as the owner and the creator as the requester, each only when the provider returns it', (): void => {
+    const surface = surfaceRow('linear', 'Linear', 'kanban', {
+      credentialId: id<'credentials'>('credential-linear'),
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues'],
+    });
+    const observedAt = Date.parse('2026-09-15T02:00:00.000Z');
+    const both = linearCandidate(
+      {
+        id: 'REVOPS-8',
+        title: 'Reconcile the close ledger',
+        url: 'https://linear.app/day00/issue/REVOPS-8',
+        creator: { name: 'Brian' },
+        assignee: { name: 'Ana' },
+      },
+      surface,
+      observedAt,
+    );
+    expect(both).toMatchObject({ owner: 'Ana', requester: 'Brian', requesterLabel: 'Brian' });
+
+    const neither = linearCandidate(
+      { id: 'REVOPS-9', title: 'Unassigned', url: 'https://linear.app/day00/issue/REVOPS-9' },
+      surface,
+      observedAt,
+    );
+    expect(neither).not.toHaveProperty('owner');
+    expect(neither).not.toHaveProperty('requester');
+    expect(neither?.requesterLabel).toBeUndefined();
   });
 
   it('decodes structured and text MCP results and reads only policy channel rows', (): void => {

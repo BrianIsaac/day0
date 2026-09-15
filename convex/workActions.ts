@@ -159,6 +159,8 @@ function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
     observedAt: new Date(row.observedAt),
     priority: row.priority,
     requesterLabel: row.requesterLabel,
+    owner: row.owner,
+    requester: row.requester,
     replyTarget: replyTargetFor(row),
   };
 }
