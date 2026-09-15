@@ -186,3 +186,24 @@ it('keeps a word-shaped value in every credential assignment form a runbook uses
     expect(result.markdown, form).not.toContain('sunshine');
   }
 });
+
+it('does not store manifest scopes even when every scope and a dotted prefix are flagged', async () => {
+  const markdown = readFileSync('tests/fixtures/slack-manifest-scopes.md', 'utf8');
+  const model = new ScriptedSpanModel((text) => [...text.matchAll(/[a-z]+:[a-z]+(?:\.[a-z]+)?/g)].flatMap((match) => {
+    const span = { start: match.index!, end: match.index! + match[0].length, label: 'credential', score: 0.99 };
+    return match[0].includes('.') ? [span, { ...span, end: span.end - 6 }] : [span];
+  }));
+  const result = await redactCredentials(markdown, 'Slack automation policy', { model });
+  expect(result.credentials).toEqual([]);
+  expect(result.markdown).toBe(markdown);
+});
+
+it('retains protection for assignments, bearer headers and userinfo', async () => {
+  for (const [text, value] of [
+    ['password: hunter2', 'hunter2'], ['token: abc123', 'abc123'],
+    ['Authorization: Bearer x', 'x'], ['https://user:password@host/path', 'password'],
+  ]) {
+    const result = await redactCredentials(text, 'Access', { model: new ScriptedSpanModel(() => [{ start: text.indexOf(value), end: text.indexOf(value) + value.length, label: 'credential', score: 0.99 }]) });
+    expect(result.credentials.map((credential) => credential.plaintext), text).toContain(value);
+  }
+});

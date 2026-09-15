@@ -22,8 +22,26 @@ export interface NeverASecret {
   pattern: RegExp;
 }
 
+const PERMISSION_SCOPE = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_.-]*$/;
+
+/** Scope segments are names; long, varied opaque segments can still be secrets. */
+function isPermissionScope(value: string): boolean {
+  if (!PERMISSION_SCOPE.test(value)) return false;
+  return value.split(/[:_.-]/).every((part) => {
+    if (part.length < 16) return true;
+    const counts = new Map<string, number>();
+    for (const character of part) counts.set(character, (counts.get(character) ?? 0) + 1);
+    const entropy = [...counts.values()].reduce((sum, count) => {
+      const probability = count / part.length;
+      return sum - probability * Math.log2(probability);
+    }, 0);
+    return entropy < 3.5;
+  });
+}
+
 /** Shapes a secret value never has, tried against the trimmed span text. */
 export const NEVER_A_SECRET: readonly NeverASecret[] = [
+  { name: 'permission scope', pattern: PERMISSION_SCOPE },
   { name: 'reference', pattern: /^(?:<[^>]*>|\$\{[^}]*\}|\{\{[^}]*\}\})$/ },
   { name: 'marker or placeholder inside', pattern: /<credential:|\{\{|\$\{/ },
   { name: 'upper-case name', pattern: /^[A-Z][A-Z_]{2,}$/ },
@@ -122,6 +140,14 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const trailing = TRAILING_PUNCTUATION.exec(value);
   if (trailing) end -= trailing[0].length;
   value = text.slice(start, end);
+  // Inspect the whole token so a partial span in `users:read.email` cannot
+  // turn either half into a secret or an assignment value.
+  const tokenStart = start - (text.slice(0, start).match(/[A-Za-z0-9_:.-]+$/)?.[0].length ?? 0);
+  const tokenEnd = end + (text.slice(end).match(/^[A-Za-z0-9_:.-]+/)?.[0].length ?? 0);
+  const scope = isPermissionScope(text.slice(tokenStart, tokenEnd));
+  const scopeContext = /[\[,'"`]\s*$/.test(text.slice(0, tokenStart)) ||
+    /^\s*[\],'"`]/.test(text.slice(tokenEnd));
+  if (scope && scopeContext && text[tokenEnd] !== '@') return undefined;
   // Some detectors return the assignment label rather than its value.
   // Only extend a password label across explicit assignment syntax.
   if (label === 'password' && PASSWORD_LABEL.test(value)) {
@@ -160,6 +186,7 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   }
   if (NEVER_REDACT.has(value)) return undefined;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
+    if (shape.name === 'permission scope') return false;
     if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
       return false;
     }
@@ -268,7 +295,9 @@ export function personalDataGuardReason(kind: string, value: string): string | u
  *   The rule name, or undefined when the value passes.
  */
 export function guardReason(value: string): string | undefined {
-  const shape = NEVER_A_SECRET.find((candidate: NeverASecret): boolean => candidate.pattern.test(value))?.name;
+  const shape = NEVER_A_SECRET.find((candidate: NeverASecret): boolean =>
+    candidate.pattern.test(value) && (candidate.name !== 'permission scope' || isPermissionScope(value)),
+  )?.name;
   if (shape) return shape;
   return NEVER_REDACT.has(value) ? 'never-redact list' : undefined;
 }

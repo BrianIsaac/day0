@@ -88,6 +88,7 @@ const JSON_WEB_TOKEN = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]
  * "Bearer header." in prose out; a placeholder (`Bearer <token>`,
  * `Bearer {{secret}}`, `Bearer YOUR_TOKEN`) is left as the safe form it is.
  */
+const AUTHORIZATION_VALUE = /\bAuthorization\s*:\s*(?:Bearer|Basic)\s+([^\s,;"'`<>\\]+)/gi;
 const HEADER_VALUE = /\b(?:Bearer|Basic)\s+([^\s,;"'`<>\\]{8,})/g;
 /** A named credential header: `X-Api-Key: value`, `Api-Key: value`, `X-Auth-Token: value`. */
 const CREDENTIAL_HEADER = /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\]{8,})/gi;
@@ -180,7 +181,7 @@ export function structuralSpans(text: string): StructuralSpan[] {
     const label = PROVIDER_SHAPES[Math.max(group, 0)].label;
     spans.push({ start: match.index, end: match.index + match[0].length, label, kind: 'secret' });
   }
-  for (const pattern of [HEADER_VALUE, CREDENTIAL_HEADER, CURL_USER]) {
+  for (const pattern of [AUTHORIZATION_VALUE, HEADER_VALUE, CREDENTIAL_HEADER, CURL_USER]) {
     for (const match of text.matchAll(pattern)) {
       if (match.index === undefined) continue;
       const value = match[1].replace(TRAILING_PUNCTUATION, '');
