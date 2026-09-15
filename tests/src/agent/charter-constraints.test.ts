@@ -112,6 +112,9 @@ describe('stripProvenanceSuffix', (): void => {
       'Attend the weekly 1:1 (Fridays).',
       'Read the day-1 notes (onboarding page).',
       'Meet Priya (pipeline) before the Friday standup.',
+      'Raise blockers in the 1:1 (the Monday 1:1 with Brian).',
+      'Ask Brian before touching the tile (1:1 with the CRM owner).',
+      'Prepare the agenda [day-1 review].',
     ]) {
       expect(stripProvenanceSuffix(clause)).toBe(clause);
     }

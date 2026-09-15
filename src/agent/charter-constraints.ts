@@ -51,15 +51,18 @@ function escapeRegExp(value: string): string {
 }
 
 /**
- * A provenance suffix a model may append to a clause: a bracketed note naming
- * the 1:1 or day 1, or a dashed "from manager 1:1" tail, at the end of the
+ * A provenance suffix a model may append to a clause: a bracketed note that
+ * names the 1:1 or day 1 and says where it came from (from, per, source,
+ * manager, boss), or a dashed "from manager 1:1" tail, at the end of the
  * clause before any closing punctuation. The card shows provenance beside
  * each clause and evidence rows carry it in `source`, so a suffix in the
  * clause text is noise the reader sees twice. GLM 5.3 Flash wrote
- * "(from manager 1:1 day-1)" on every clause of one 16 September draft.
+ * "(from manager 1:1 day-1)" on every clause of one 16 September draft. A
+ * bracket that merely mentions the 1:1 ("(the Monday 1:1 with Brian)") is
+ * clause text and stays.
  */
 const PROVENANCE_SUFFIX =
-  /\s*(?:[(\[][^()[\]]*\b(?:1:1|day[- ]?(?:1|one))\b[^()[\]]*[)\]]|[-\u2013\u2014]\s*(?:from|per|source:?)\s+(?:the\s+)?manager(?:'s)?\s+1:1[^.;]*?)\s*(?=[.;,]?\s*$)/i;
+  /\s*(?:[(\[](?=[^()[\]]*\b(?:from|per|source|manager|boss)\b)[^()[\]]*\b(?:1:1|day[- ]?(?:1|one))\b[^()[\]]*[)\]]|[-\u2013\u2014]\s*(?:from|per|source:?)\s+(?:the\s+)?manager(?:'s)?\s+1:1[^.;]*?)\s*(?=[.;,]?\s*$)/i;
 
 /**
  * Remove every trailing provenance suffix from a clause.
