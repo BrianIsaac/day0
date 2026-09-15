@@ -101,6 +101,26 @@ const noop = (): void => undefined;
 const resolved = async (): Promise<void> => undefined;
 
 describe('a question asked at the plan, answered with the approval', (): void => {
+  it('refuses an obsolete approval answer atomically after the charter has answered it', async () => {
+    useSurfaceMode('real');
+    const t = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(t);
+    const owner = t.withIdentity(OWNER);
+    await t.mutation(internal.work.setPlan, { workItemId, plan });
+    const [question] = await owner.query(api.managerQuestions.openForAgent, { agentId });
+    await owner.mutation(api.charters.amend, {
+      agentId, changes: [{ kind: 'answer-question', question: QUESTION, answer: 'Priya owns it.' }],
+    });
+    await expect(owner.mutation(api.work.approvePlan, planApprovalRequest(workItemId, {
+      answers: [{ questionId: question._id, text: 'Aman owns it.' }],
+    }))).rejects.toThrow('no longer open');
+    const item = await owner.query(api.work.get, { workItemId });
+    expect(item?.state).toBe('plan-pending');
+    expect(item?.managerAnswers).toBeUndefined();
+    expect(await owner.query(api.managerQuestions.openForAgent, { agentId })).toEqual([]);
+    expect(await owner.query(api.charters.listForAgent, { agentId })).toHaveLength(2);
+  });
+
   it('reads the merged record on the form and carries the answer to the executor prompt and the charter amendment', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

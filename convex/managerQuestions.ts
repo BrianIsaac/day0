@@ -129,6 +129,11 @@ export async function answerQuestionInTransaction(
   const stillOpen = ((latest?.body as Charter | undefined)?.openQuestions ?? []).some(
     (question: string): boolean => questionKey(question) === record.key,
   );
+  const currentBody = latest?.body as Charter | undefined;
+  const priorAnswer = currentBody?.answeredQuestions?.find((entry) => questionKey(entry.question) === record.key);
+  if (!latest?.approved || (!stillOpen && priorAnswer?.answer.replace(/\s+/g, ' ').trim() !== answer)) {
+    throw new Error('that question is no longer open on the current charter; refresh the plan');
+  }
   let amendedCharterId: Id<'charters'> | null = null;
   if (latest?.approved && stillOpen) {
     const amended = await amendCharterInTransaction(ctx, {
@@ -172,7 +177,11 @@ export const openForAgent = query({
       .query('managerQuestions')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .collect();
-    return rows.filter((row) => !row.answer);
+    const charter = await ctx.db.query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId)).order('desc').first();
+    const open = new Set(charter?.approved
+      ? ((charter.body as Charter).openQuestions ?? []).map(questionKey) : []);
+    return rows.filter((row) => !row.answer && open.has(row.key));
   },
 });
 

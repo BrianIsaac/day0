@@ -263,12 +263,12 @@ describe('answering a question', (): void => {
     });
     const result = await owner.mutation(api.managerQuestions.answer, {
       questionId: asked!._id,
-      text: 'Priya, as I said.',
+      text: 'Priya.',
     });
     expect(result.amendedCharterId).toBeNull();
     expect(await owner.query(api.charters.listForAgent, { agentId })).toHaveLength(2);
     const [answered] = await questions(harness, agentId);
-    expect(answered?.answer).toMatchObject({ text: 'Priya, as I said.', via: 'dashboard' });
+    expect(answered?.answer).toMatchObject({ text: 'Priya.', via: 'dashboard' });
     expect(answered?.answer?.amendedCharterId).toBeUndefined();
   });
 });
