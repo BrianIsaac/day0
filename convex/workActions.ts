@@ -72,6 +72,7 @@ import {
   describeAction,
   isAutomatic,
   isAuditComment,
+  isManagerDm,
   isStatusChange,
   needsStandingGrant,
   NOT_AUTOMATIC,
@@ -956,6 +957,13 @@ export function closingStopReason(run: {
     run.surfaces,
   );
   if (landed.length > 0) return undefined;
+  const escalationOnly = run.closingActions.length > 0 && run.closingActions.every(action => {
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok) return false;
+    const surface = run.surfaces.find(row => row.slug === parsed.action.surface);
+    return surface !== undefined && isManagerDm(parsed.action, surface);
+  });
+  if (escalationOnly) return undefined;
   if (run.initialFailure) return run.initialFailure;
   const asIfLanded = run.closingActions.map((): Partial<AppliedAction> => ({ ok: true }));
   return blockedPlanReason(run.outcomes, {

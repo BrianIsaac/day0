@@ -425,6 +425,7 @@ const REAL_PREAMBLE = [
   'Closing the loop:',
   "  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook's comment tool, and only after it, if the work is complete, the state change with the runbook's state argument. A status change is never the only trace of who acted.",
   '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
+  '  - When blocked work needs a manager answer, emit only the question or escalation DM in the closing set; do not bundle it with a failure audit comment or a completion note.',
   '  - When a chat surface is connected and you have a question or an escalation for the manager, send it as the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id; with nothing to ask, send no DM. When none is connected, put the question in `notes` instead of substituting another channel.',
   '  - Each provider mutation is its own action so it can be decided and applied on its own.',
 ].join('\n');

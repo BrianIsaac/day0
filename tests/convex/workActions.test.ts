@@ -1918,6 +1918,64 @@ describe('executing an approved plan through the gate', (): void => {
     expect(await scheduledNames(harness)).not.toContain('managerChannelActions:requestDecision');
   });
 
+  it('delivers an escalation-only closing set when the plan remains blocked', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+        },
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'REVOPS-7 has no owner, so I cannot close it.',
+      notes: '',
+      actions: [{
+        tool: 'http.request', args: {
+          surface: 'slack', method: 'POST', path: '/chat.postMessage',
+          headersJson: '{"Authorization":"Bearer {{secret}}"}',
+          body: JSON.stringify({ channel: 'D0MANAGER', text: 'Who should own REVOPS-7 so I can continue?' }),
+        },
+      }],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', evidence: 'get_issue shows no assignee.' },
+        { step: 2, status: 'blocked', evidence: 'Nothing to close without an owner.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Confirm the owner, then add the audit note and close.',
+          steps: ['Confirm REVOPS-7 has an owner', 'Comment and close REVOPS-7'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await expect(
+      harness.action(internal.workActions.authorDependentActions, { workItemId, runId }),
+    ).resolves.toMatchObject({ ok: true });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(recorded.http.filter(call => call.url.endsWith('/chat.postMessage'))).toHaveLength(1);
+    expect(recorded.mcp.map(call => call.tool)).toEqual(['get_issue']);
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+  });
+
   it('completes a retry whose note settles a plan step, on the manager\'s word and in the record', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = {
