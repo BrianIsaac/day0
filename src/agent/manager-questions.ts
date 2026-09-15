@@ -8,6 +8,8 @@
  * mutations.
  */
 
+import type { Charter } from './charter';
+
 /** Which side of the plan approval touched the question. */
 export type QuestionTouchedBy = 'plan' | 'candidate';
 
@@ -42,6 +44,60 @@ export interface ManagerQuestionRecord {
   /** The charter version whose open question this was. */
   charterId: string;
   answer?: ManagerQuestionAnswer;
+}
+
+/**
+ * How the evidence guard opens its note about a clause it dropped. Charters
+ * drafted before `synthesisNotes` existed filed that note under the open
+ * questions, and the planning pane asked it at plan approval on 16 September.
+ */
+const SYNTHESIS_NOTE = /^\s*evidence check:/i;
+
+/**
+ * Whether a charter row is the synthesis talking about its own drafting.
+ *
+ * Args:
+ *   text: A row from the charter's open questions or notes.
+ *
+ * Returns:
+ *   True for a note; false for a question the 1:1 left open.
+ */
+export function isSynthesisNote(text: string): boolean {
+  return SYNTHESIS_NOTE.test(text);
+}
+
+/**
+ * The questions the manager may be asked: what the 1:1 left open or could
+ * not settle, without any note the synthesis filed among them.
+ *
+ * Args:
+ *   charter: The charter, or the part of it that carries the questions.
+ *
+ * Returns:
+ *   The open questions in charter order.
+ */
+export function managerOpenQuestions(charter: Pick<Charter, 'openQuestions'>): string[] {
+  return (charter.openQuestions ?? []).filter((question: string): boolean => !isSynthesisNote(question));
+}
+
+/**
+ * The synthesis's notes about its own drafting: the notes field first, then
+ * any note an older charter recorded as an open question, each once.
+ *
+ * Args:
+ *   charter: The charter, or the part of it that carries the questions and notes.
+ *
+ * Returns:
+ *   The notes in order; empty when the draft needed none.
+ */
+export function synthesisNotes(
+  charter: Pick<Charter, 'openQuestions'> & Partial<Pick<Charter, 'synthesisNotes'>>,
+): string[] {
+  const out: string[] = [];
+  for (const note of [...(charter.synthesisNotes ?? []), ...(charter.openQuestions ?? []).filter(isSynthesisNote)]) {
+    if (!out.includes(note)) out.push(note);
+  }
+  return out;
 }
 
 /**

@@ -4,9 +4,18 @@ import {
   normaliseNamedSystems,
   renderCharter,
   toolsFromCharter,
+  withoutAgentQuotedEvidence,
   type Charter,
   type NamedSystem,
 } from '../../../src/agent/charter';
+import {
+  AGENT_QUOTED_CLAUSE_2026_09_16,
+  AGENT_TURN_2026_09_16,
+  MANAGER_ANSWER_2026_09_16,
+  MANAGER_CLAUSE_2026_09_16,
+  OPEN_QUESTIONS_2026_09_16,
+  SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
+} from '../../fixtures/charter-synthesis-notes-2026-09-16';
 
 const base = {
   whyThisHire: 'Own triage.',
@@ -158,5 +167,46 @@ describe('charter named systems', (): void => {
     expect(rendered.match(/Slack \(chat\)/g)).toHaveLength(1);
     expect(toolsFile.match(/Slack \(chat\)/g)).toHaveLength(1);
     expect(rendered).not.toContain('#revops-asks (chat)');
+  });
+});
+
+describe('the evidence guard', (): void => {
+  const charter: Charter = {
+    ...base,
+    version: '0.0',
+    source: 'day-1 manager 1:1',
+    evidence: [
+      { text: AGENT_QUOTED_CLAUSE_2026_09_16, source: 'from manager 1:1 day-1' },
+      { text: MANAGER_CLAUSE_2026_09_16, source: 'from manager 1:1 day-1' },
+    ],
+    namedSystems: [],
+    openQuestions: [...OPEN_QUESTIONS_2026_09_16],
+    createdAt: '2026-09-16T09:00:00.000Z',
+  };
+  const turns = { agent: [AGENT_TURN_2026_09_16], manager: [MANAGER_ANSWER_2026_09_16] };
+
+  it('records its own note beside the rules, never as a question for the manager', (): void => {
+    const { charter: reviewed, rejected } = withoutAgentQuotedEvidence(charter, turns);
+    expect(rejected.map((e) => e.text)).toEqual([AGENT_QUOTED_CLAUSE_2026_09_16]);
+    expect(reviewed.evidence.map((e) => e.text)).toEqual([MANAGER_CLAUSE_2026_09_16]);
+    expect(reviewed.openQuestions).toEqual(OPEN_QUESTIONS_2026_09_16);
+    expect(reviewed.synthesisNotes).toEqual([SYNTHESIS_SELF_CHECK_NOTE_2026_09_16]);
+  });
+
+  it('leaves the notes field absent when nothing was dropped', (): void => {
+    const { charter: reviewed } = withoutAgentQuotedEvidence(charter, { agent: [], manager: [] });
+    expect(reviewed.synthesisNotes).toBeUndefined();
+    expect(reviewed.openQuestions).toEqual(OPEN_QUESTIONS_2026_09_16);
+  });
+
+  it('renders the notes in their own section, apart from the open questions', (): void => {
+    const { charter: reviewed } = withoutAgentQuotedEvidence(charter, turns);
+    const rendered = renderCharter(reviewed, new Date('2026-09-16T09:00:00.000Z'));
+    const questions = rendered.slice(rendered.indexOf('OPEN QUESTIONS'), rendered.indexOf('SYNTHESIS NOTES'));
+    expect(questions).not.toContain('Evidence check');
+    expect(rendered.slice(rendered.indexOf('SYNTHESIS NOTES'))).toContain(
+      `  - ${SYNTHESIS_SELF_CHECK_NOTE_2026_09_16}`,
+    );
+    expect(renderCharter(charter)).not.toContain('SYNTHESIS NOTES');
   });
 });

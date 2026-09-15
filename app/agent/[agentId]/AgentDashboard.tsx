@@ -39,6 +39,7 @@ import {
   type ListClauseField,
 } from '../../../src/agent/charter-amendment';
 import { SYSTEM_CLASSES, type SystemClass } from '../../../src/agent/system-classes';
+import { managerOpenQuestions, synthesisNotes } from '../../../src/agent/manager-questions';
 import { replyTargetFor } from '../../../src/work/reply-target';
 import {
   providerReconciliationEntries,
@@ -592,6 +593,7 @@ export interface CharterCardBody {
   openQuestions: string[];
   constraints?: CharterConstraint[];
   answeredQuestions?: Array<{ question: string; answer: string; answeredAt: string }>;
+  synthesisNotes?: string[];
 }
 
 const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
@@ -789,7 +791,7 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
               items={body.namedCollaborators.map((c) => `${c.name} — ${c.topic}`)}
             />
             <BoundaryList label="Priority reading" items={body.priorityReading} />
-            <BoundaryList label="Open questions" items={body.openQuestions} />
+            <BoundaryList label="Open questions" items={managerOpenQuestions(body)} />
           </div>
         </details>
         <ConstraintList
@@ -804,6 +806,7 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
           previewStrike={(index) => strikePreview(body, index)}
         />
         {strikeError ? <p className="text-xs text-[var(--color-danger)]">{strikeError}</p> : null}
+        <SynthesisNotes notes={synthesisNotes(body)} />
         {charter.approved ? (
           <AmendCharterPanel
             charter={charter}
@@ -939,6 +942,7 @@ export function AmendCharterPanel({
     whereMentioned: '',
   });
   const answered = body.answeredQuestions ?? [];
+  const openQuestions = managerOpenQuestions(body);
   return (
     <details className="text-xs">
       <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
@@ -978,11 +982,11 @@ export function AmendCharterPanel({
             </div>
           </div>
         ))}
-        {body.openQuestions.length > 0 || answered.length > 0 ? (
+        {openQuestions.length > 0 || answered.length > 0 ? (
           <div>
             <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Open questions</div>
             <div className="space-y-1.5">
-              {body.openQuestions.map((question) => (
+              {openQuestions.map((question) => (
                 <div key={question}>
                   <p className="text-[var(--color-fg)] mb-0.5">{question}</p>
                   <AddLine
@@ -1127,6 +1131,26 @@ function Goal({ label, text }: { label: string; text: string }) {
     <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-2">
       <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">{label}</div>
       <div className="text-[var(--color-fg)] leading-snug">{text}</div>
+    </div>
+  );
+}
+
+/**
+ * What the synthesis said about its own drafting, under the rules. Read-only:
+ * a note is not a question for the manager and offers no answer box.
+ */
+function SynthesisNotes({ notes }: { notes: string[] }) {
+  if (notes.length === 0) return null;
+  return (
+    <div className="text-xs">
+      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Notes from drafting</div>
+      <ul className="space-y-0.5">
+        {notes.map((note) => (
+          <li key={note} className="text-[var(--color-muted)]">
+            – {note}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

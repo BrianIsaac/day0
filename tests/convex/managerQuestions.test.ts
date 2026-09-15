@@ -8,6 +8,10 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import type { Charter } from '../../src/agent/charter';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
+import {
+  RECORDED_QUESTIONS_2026_09_16,
+  SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
+} from '../fixtures/charter-synthesis-notes-2026-09-16';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -183,6 +187,37 @@ describe('asking open questions at plan approval', (): void => {
       context: { touchedBy: 'candidate', words: ['northstar'] },
       workItemId: byCandidate,
     });
+  });
+
+  it("never asks the synthesiser's own note, whether the charter filed it as a note or as a question", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedAgent(harness);
+    const later =
+      'Evidence check: 2 clauses in this draft quoted my own words back as if they were yours, so I dropped them. Which of this is actually what you told me?';
+    await harness.run(async (ctx) =>
+      await ctx.db.patch(charterId, {
+        body: {
+          ...runThroughBody(),
+          openQuestions: [...RECORDED_QUESTIONS_2026_09_16],
+          synthesisNotes: [later],
+        },
+      }),
+    );
+    const workItemId = await seedClaimed(harness, agentId, 'Audit note for the checklist');
+    await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: {
+        ...plainPlan,
+        summary: 'Read the tile back and quote its audit line as evidence.',
+        steps: ['Read the tile back.', 'Quote the words of the audit line as evidence; drop nothing you were not told.'],
+      },
+    });
+    const asked = await questions(harness, agentId);
+    expect(asked.map((row) => row.question)).not.toContain(SYNTHESIS_SELF_CHECK_NOTE_2026_09_16);
+    expect(asked.map((row) => row.question)).not.toContain(later);
+    expect(asked).toEqual([]);
+    const owner = harness.withIdentity(OWNER);
+    expect(await owner.query(api.managerQuestions.openForAgent, { agentId })).toEqual([]);
   });
 
   it('asks nothing while the charter is not approved', async (): Promise<void> => {
