@@ -100,6 +100,11 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   } else if (/\s/.test(value) && label !== 'private key' && !wrappedPassword) {
     return undefined;
   }
+  const padding = /^={1,2}(?![=A-Za-z0-9+/])/.exec(text.slice(end));
+  if (padding && /^[A-Za-z0-9+/]{8,}$/.test(value) && (value.length + padding[0].length) % 4 === 0) {
+    end += padding[0].length;
+    value = text.slice(start, end);
+  }
   if (end <= start) return undefined;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
     if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {

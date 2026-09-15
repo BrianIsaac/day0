@@ -89,3 +89,9 @@ describe('explicit password assignments', () => {
     },
   );
 });
+
+it('retains base64 padding when a detected credential ends immediately before it', () => {
+  const text = 'Credential: cmV2b3BzMjAyNg==';
+  expect(guardSecretSpan(text, spanOf(text, 'cmV2b3BzMjAyNg'), 'credential'))
+    .toEqual(spanOf(text, 'cmV2b3BzMjAyNg=='));
+});
