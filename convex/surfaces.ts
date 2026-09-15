@@ -17,6 +17,8 @@ import {
   stableSlug,
   type DocumentedSystemIdentity,
 } from '../src/docs/system-discovery';
+import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
+import { reevaluatePendingInTransaction } from './work';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -72,14 +74,6 @@ export function surfaceSlug(name: string): string {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '') || 'system'
   );
-}
-
-function surfaceIdentity(surface: Doc<'surfaces'>): DocumentedSystemIdentity {
-  return documentedSystemIdentity({
-    name: surface.displayName,
-    quotes: (surface.discoveryEvidence ?? []).map((item) => item.quote),
-    endpoints: surface.endpoint ? [surface.endpoint] : [],
-  });
 }
 
 /**
@@ -997,15 +991,6 @@ type DeferredSurfaceVerdict = {
   missingPermissions?: string[];
 };
 
-function sameSurfaceSystem(left: Doc<'surfaces'>, right: Doc<'surfaces'>): boolean {
-  const leftIdentity = surfaceIdentity(left);
-  const rightIdentity = surfaceIdentity(right);
-  return (
-    sameSystemForHostlessMention(left.class, leftIdentity, right.class, rightIdentity) ||
-    sameSystemForHostlessMention(right.class, rightIdentity, left.class, leftIdentity)
-  );
-}
-
 async function requeueDeferredWork(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
@@ -1082,48 +1067,13 @@ async function requeueWorkAfterRejection(
   );
 }
 
-async function requeueWorkAwaitingSurface(
-  ctx: MutationCtx,
-  surface: Doc<'surfaces'>,
-  now: number,
-): Promise<Id<'workItems'>[]> {
-  const readScope = `${surface.slug}:read`;
-  const surfaces = await ctx.db
-    .query('surfaces')
-    .withIndex('by_agent', (index) => index.eq('agentId', surface.agentId))
-    .collect();
-  const missingSurfaceResolvesHere = (missingSlug: string): boolean => {
-    if (missingSlug === surface.slug) return true;
-    const persisted = surfaces.find((candidate) => candidate.slug === missingSlug);
-    if (persisted) return sameSurfaceSystem(persisted, surface);
-    const mention = documentedSystemIdentity({ name: missingSlug.replace(/-/g, ' ') });
-    return sameSystemForHostlessMention(
-      surface.class,
-      mention,
-      surface.class,
-      surfaceIdentity(surface),
-    );
-  };
-  return await requeueDeferredWork(
-    ctx,
-    surface,
-    (verdict) =>
-      (verdict.reason === 'awaiting-connection' &&
-        verdict.missingSurface !== undefined &&
-        missingSurfaceResolvesHere(verdict.missingSurface)) ||
-      (verdict.reason === 'awaiting-permission' &&
-        (verdict.missingPermissions ?? []).includes(readScope)),
-    now,
-  );
-}
-
 /**
  * Persist one successful provider probe and its discovered safe metadata.
  *
- * The first transition to `connected` also grants `<slug>:read` and requeues
- * the work that was deferred on this surface, in the same transaction, so a
- * connected surface can never exist without its grant and the hourly
- * re-probe never grants again.
+ * The first transition to `connected` also grants `<slug>:read` and re-admits
+ * the work parked on this surface or skipped as out of scope, in the same
+ * transaction, so a connected surface can never exist without its grant and
+ * the hourly re-probe never grants again.
  */
 export const recordConnected = internalMutation({
   args: {
@@ -1178,7 +1128,13 @@ export const recordConnected = internalMutation({
     });
     if (transitioned) {
       await grantScopeInTransaction(ctx, surface.agentId, `${surface.slug}:read`, 'surface');
-      await requeueWorkAwaitingSurface(ctx, surface, args.verifiedAt);
+      await reevaluatePendingInTransaction(ctx, {
+        agentId: surface.agentId,
+        trigger: 'surface',
+        key: `surface:${surface._id}:${args.verifiedAt}`,
+        surfaceId: surface._id,
+        now: args.verifiedAt,
+      });
       // The work the surface already holds is read now rather than at the
       // next scheduled sweep; the cron remains the steady state.
       await ctx.scheduler.runAfter(0, internal.intakeActions.pollSurface, {

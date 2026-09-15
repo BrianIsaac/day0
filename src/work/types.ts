@@ -241,3 +241,5 @@ export const VALUE_THRESHOLD = 30;
 
 /** Prefix of the skip reason the quality-fit filter writes. */
 export const QUALITY_FIT_SKIP_PREFIX = 'quality-fit-fail: ';
+/** Prefix of the skip reason the scope judgement writes. */
+export const OUT_OF_SCOPE_SKIP_PREFIX = 'out-of-scope: ';

@@ -428,6 +428,14 @@ export default defineSchema({
      * the next evaluation leaves that filter out; plan approval still applies.
      */
     qualityFitWaivedAt: v.optional(v.number()),
+    /**
+     * The last policy change that sent this row back to `discovered`: the
+     * trigger, its idempotency key and when. The same key never re-admits the
+     * row twice.
+     */
+    reevaluation: v.optional(
+      v.object({ trigger: v.string(), key: v.string(), at: v.number() }),
+    ),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),

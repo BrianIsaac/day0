@@ -6,7 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { PLAN_CANCELLED_REASON } from '../../convex/work';
+import { PLAN_CANCELLED_REASON, REEVALUATION_BATCH } from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { autonomousActionsOn } from '../../src/work/autonomy';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -2414,5 +2414,254 @@ describe('sending a completed item back with a note', (): void => {
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
     ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
+  });
+});
+
+describe('re-admitting pending work when the policy changes', (): void => {
+  type Seeded = { agentId: Id<'agents'>; ids: Record<string, Id<'workItems'>> };
+
+  /** One agent with a connected Linear and one parked row per verdict kind. */
+  async function seedParked(harness: Harness): Promise<Seeded> {
+    const { agentId } = await seed(harness, 'completed');
+    const ids = await harness.run(async (ctx): Promise<Record<string, Id<'workItems'>>> => {
+      const insert = async (
+        externalId: string,
+        state: Doc<'workItems'>['state'],
+        verdict: Record<string, unknown>,
+      ): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: `Item ${externalId}`,
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state,
+          verdict,
+          ...(state === 'skipped' ? { skipReason: String(verdict.reason) } : {}),
+        });
+      return {
+        outOfScope: await insert('REVOPS-10', 'skipped', {
+          decision: 'skip',
+          reason: 'out-of-scope: no charter or current documented-system overlap',
+        }),
+        qualityFit: await insert('REVOPS-11', 'skipped', {
+          decision: 'skip',
+          reason: 'quality-fit-fail: the request is too thin',
+        }),
+        lowValue: await insert('REVOPS-12', 'skipped', { decision: 'skip', reason: 'low-value: 10' }),
+        awaitingConnection: await insert('REVOPS-13', 'deferred', {
+          decision: 'defer',
+          reason: 'awaiting-connection',
+          missingSurface: 'northstar-crm',
+        }),
+        awaitingPermission: await insert('REVOPS-14', 'deferred', {
+          decision: 'defer',
+          reason: 'awaiting-permission',
+          missingPermissions: ['northstar-crm:read'],
+        }),
+      };
+    });
+    return { agentId, ids };
+  }
+
+  async function states(harness: Harness, ids: Record<string, Id<'workItems'>>): Promise<Record<string, string>> {
+    return await harness.run(async (ctx): Promise<Record<string, string>> => {
+      const out: Record<string, string> = {};
+      for (const [name, id] of Object.entries(ids)) out[name] = (await ctx.db.get(id))?.state ?? 'missing';
+      return out;
+    });
+  }
+
+  async function requeuedEvents(harness: Harness, agentId: Id<'agents'>): Promise<Array<Record<string, unknown>>> {
+    return await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect())
+          .filter((event) => event.type === 'work.requeued')
+          .map((event) => event.payload as Record<string, unknown>),
+    );
+  }
+
+  it('re-admits the skips a charter amendment can change, once per amendment, and records each', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, ids } = await seedParked(harness);
+
+    const first = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v2',
+    });
+
+    expect(first).toEqual({ readmitted: 2, examined: 5, continued: false });
+    expect(await states(harness, ids)).toEqual({
+      outOfScope: 'discovered',
+      qualityFit: 'discovered',
+      lowValue: 'skipped',
+      awaitingConnection: 'deferred',
+      awaitingPermission: 'deferred',
+    });
+    const row = await readItem(harness, ids.outOfScope);
+    expect(row.verdict).toBeUndefined();
+    expect(row.skipReason).toBeUndefined();
+    expect(row.reevaluation).toEqual({ trigger: 'charter', key: 'charter:v2', at: expect.any(Number) });
+    expect(await requeuedEvents(harness, agentId)).toEqual([
+      { workItemId: ids.outOfScope, trigger: 'charter', key: 'charter:v2', previousState: 'skipped' },
+      { workItemId: ids.qualityFit, trigger: 'charter', key: 'charter:v2', previousState: 'skipped' },
+    ]);
+
+    // The evaluator skips it again; the same amendment firing twice is a no-op.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(ids.outOfScope, {
+        state: 'skipped',
+        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+      });
+    });
+    const again = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v2',
+    });
+    expect(again).toEqual({ readmitted: 0, examined: 4, continued: false });
+    expect((await states(harness, ids)).outOfScope).toBe('skipped');
+
+    // The next amendment is a new decision and re-admits it again.
+    const next = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v3',
+    });
+    expect(next).toEqual({ readmitted: 1, examined: 4, continued: false });
+    expect((await states(harness, ids)).outOfScope).toBe('discovered');
+    expect(await requeuedEvents(harness, agentId)).toHaveLength(3);
+  });
+
+  it('re-admits only out-of-scope skips when the documentation changes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, ids } = await seedParked(harness);
+
+    const result = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'documentation',
+      key: 'documentation:source-1:abc',
+    });
+
+    expect(result).toEqual({ readmitted: 1, examined: 5, continued: false });
+    expect(await states(harness, ids)).toMatchObject({
+      outOfScope: 'discovered',
+      qualityFit: 'skipped',
+      lowValue: 'skipped',
+      awaitingConnection: 'deferred',
+      awaitingPermission: 'deferred',
+    });
+  });
+
+  it('re-admits out-of-scope skips and the work parked on a surface when that surface connects', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, ids } = await seedParked(harness);
+    const surfaceId = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'northstar-crm',
+          displayName: 'Northstar CRM',
+          class: 'crm',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          lastVerifiedAt: 1,
+          createdAt: 1,
+        }),
+    );
+
+    const result = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'surface',
+      key: `surface:${surfaceId}:100`,
+      surfaceId,
+    });
+
+    expect(result).toEqual({ readmitted: 3, examined: 5, continued: false });
+    expect(await states(harness, ids)).toEqual({
+      outOfScope: 'discovered',
+      qualityFit: 'skipped',
+      lowValue: 'skipped',
+      awaitingConnection: 'discovered',
+      awaitingPermission: 'discovered',
+    });
+    const events = await requeuedEvents(harness, agentId);
+    expect(events.find((event) => event.workItemId === ids.awaitingConnection)).toEqual({
+      workItemId: ids.awaitingConnection,
+      trigger: 'surface',
+      key: `surface:${surfaceId}:100`,
+      previousState: 'deferred',
+      surfaceId,
+      slug: 'northstar-crm',
+      previousMissingSurface: 'northstar-crm',
+    });
+  });
+
+  it('examines a bounded batch per call and continues by scheduling itself', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seed(harness, 'completed');
+    const total = REEVALUATION_BATCH + 3;
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < total; index += 1) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${1000 + index}`,
+          title: `Item ${index}`,
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'skipped',
+          verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+        });
+      }
+    });
+
+    const first = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v2',
+    });
+    expect(first).toEqual({ readmitted: REEVALUATION_BATCH, examined: REEVALUATION_BATCH, continued: true });
+    const pending = await harness.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (job) => job.state.kind === 'pending' && job.name === 'work:reevaluatePending',
+        ),
+    );
+    expect(pending).toHaveLength(1);
+    expect((pending[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v2',
+      after: { skipped: expect.any(Number) },
+    });
+
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const remaining = await harness.run(
+      async (ctx) =>
+        (
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'skipped'))
+            .collect()
+        ).length,
+    );
+    expect(remaining).toBe(0);
+    expect(await requeuedEvents(harness, agentId)).toHaveLength(total);
+    vi.useRealTimers();
   });
 });
