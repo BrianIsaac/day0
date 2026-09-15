@@ -160,3 +160,29 @@ it('preserves runbook words while extracting an explicitly assigned word passwor
     expect(secret.markdown).not.toContain(`Password: ${value}`);
   }
 });
+
+it('keeps a word-shaped value in every credential assignment form a runbook uses', async () => {
+  const detector = new ScriptedSpanModel((text) =>
+    [...text.matchAll(/\bsunshine\b/g)].map((match) => ({
+      start: match.index, end: match.index + match[0].length, label: 'password', score: 0.97,
+    })),
+  );
+  const forms = [
+    'login: sunshine',
+    'Passphrase: sunshine',
+    'Secret key: sunshine',
+    '凭证：sunshine',
+    '秘钥：sunshine',
+    '{\\"password\\":\\"sunshine\\"}',
+    '"body":"{\\"token\\":\\"sunshine\\"}"',
+    '| Password | sunshine |',
+    '| Service | Username | Password |\n|---|---|---|\n| Looker tile | revops | sunshine |',
+    '```\nexport KEY=sunshine\n```',
+    '```\nexport GH_PAT=sunshine\n```',
+  ];
+  for (const form of forms) {
+    const result = await redactCredentials(form, 'Ticket runbook', { model: detector });
+    expect(result.credentials.map((row) => row.plaintext), form).toEqual(['sunshine']);
+    expect(result.markdown, form).not.toContain('sunshine');
+  }
+});
