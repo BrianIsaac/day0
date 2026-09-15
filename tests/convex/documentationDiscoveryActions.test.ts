@@ -3,7 +3,7 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -184,6 +184,118 @@ describe('the documentation discovery action', (): void => {
     expect(failed?.lastDiscoveryError).toContain('exceeds 500 pages');
     expect(failed?.lastDiscoverySyncId).toBeUndefined();
     expect(model.calls).toBe(0);
+  });
+
+  it('re-admits the out-of-scope skips of every reading agent once per changed generation', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness, 1);
+    const { agentId, outOfScope, lowValue } = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Reader',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const row = async (externalId: string, reason: string): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: `Item ${externalId}`,
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'skipped',
+          verdict: { decision: 'skip', reason },
+          skipReason: reason,
+        });
+      return {
+        agentId,
+        outOfScope: await row('REVOPS-1', 'out-of-scope: no charter or current documented-system overlap'),
+        lowValue: await row('REVOPS-2', 'low-value: 10'),
+      };
+    });
+    const state = async (id: Id<'workItems'>): Promise<Doc<'workItems'> | null> =>
+      await harness.run(async (ctx) => await ctx.db.get(id));
+    const requeued = async (): Promise<number> =>
+      await harness.run(
+        async (ctx) =>
+          (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+            (event) => event.type === 'work.requeued',
+          ).length,
+      );
+
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+    ).resolves.toMatchObject({ applied: true });
+    const fingerprint = (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.discoveryFingerprint;
+    expect(fingerprint).toEqual(expect.any(String));
+    expect(await state(outOfScope)).toMatchObject({
+      state: 'discovered',
+      reevaluation: { trigger: 'documentation', key: `documentation:${sourceId}:${fingerprint}` },
+    });
+    expect((await state(lowValue))?.state).toBe('skipped');
+    expect(await requeued()).toBe(1);
+
+    // The evaluator skips it again under the same documentation: an unchanged
+    // generation re-admits nothing.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(outOfScope, {
+        state: 'skipped',
+        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+      });
+    });
+    const unchangedRun = await harness.run(async (ctx): Promise<Id<'docSyncRuns'>> => {
+      const id = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        refs: [],
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+        completedAt: 2,
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: id });
+      return id;
+    });
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId: unchangedRun }),
+    ).resolves.toMatchObject({ unchanged: true });
+    expect((await state(outOfScope))?.state).toBe('skipped');
+    expect(await requeued()).toBe(1);
+
+    // A generation with a changed page is a new decision.
+    const changedRun = await harness.run(async (ctx): Promise<Id<'docSyncRuns'>> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'systems.md',
+        title: 'Systems',
+        markdown: '| System | Use | Owner |\n|---|---|---|\n| Linear | Work queue | IT |',
+        updatedAt: 3,
+      });
+      const id = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        refs: [],
+        credentialRefs: [],
+        pageCount: 2,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 3,
+        completedAt: 3,
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: id });
+      return id;
+    });
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId: changedRun }),
+    ).resolves.toMatchObject({ applied: true });
+    expect((await state(outOfScope))?.state).toBe('discovered');
+    expect((await state(outOfScope))?.reevaluation?.key).not.toBe(`documentation:${sourceId}:${fingerprint}`);
+    expect(await requeued()).toBe(2);
   });
 
   it('reads a generation inside the cap and stamps it discovered', async (): Promise<void> => {
