@@ -121,6 +121,28 @@ describe('a question asked at the plan, answered with the approval', (): void =>
     expect(await owner.query(api.charters.listForAgent, { agentId })).toHaveLength(2);
   });
 
+  it('accepts the approval answer after an amendment that does not touch the question', async () => {
+    useSurfaceMode('real');
+    const t = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(t);
+    const owner = t.withIdentity(OWNER);
+    await t.mutation(internal.work.setPlan, { workItemId, plan });
+    const [question] = await owner.query(api.managerQuestions.openForAgent, { agentId });
+    await owner.mutation(api.charters.amend, {
+      agentId, changes: [{ kind: 'edit-clause', field: 'willNotDo', index: 0, text: '' }],
+    });
+    expect(await owner.query(api.managerQuestions.openForAgent, { agentId })).toHaveLength(1);
+    await owner.mutation(api.work.approvePlan, planApprovalRequest(workItemId, {
+      answers: [{ questionId: question._id, text: 'Priya owns it.' }],
+    }));
+    const item = await owner.query(api.work.get, { workItemId });
+    expect(item?.state).toBe('plan-approved');
+    expect(item?.managerAnswers).toMatchObject([{ answer: 'Priya owns it.' }]);
+    const charters = await owner.query(api.charters.listForAgent, { agentId });
+    expect(charters).toHaveLength(3);
+    expect((charters[0]?.body as Charter).answeredQuestions).toMatchObject([{ answer: 'Priya owns it.' }]);
+  });
+
   it('reads the merged record on the form and carries the answer to the executor prompt and the charter amendment', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
