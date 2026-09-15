@@ -21,16 +21,19 @@ import {
   actionIntent,
   isAuditComment,
   isManagerDm,
+  isStatusChange,
   isSurfaceTool,
   parseSurfaceAction,
   targetChannel,
   targetIssueReferences,
   type ParsedMcpCall,
+  type ParsedSurfaceAction,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
+import { promisesResult } from './plan-steps';
 import { replyTargetLine } from './reply-target';
 
 export { replyTargetLine };
@@ -1509,6 +1512,35 @@ function fixesRecordPayload(
   return fixedPayloadLiterals(clause, candidate)[0];
 }
 
+/**
+ * Whether an action closes the work: the audit comment on the originating
+ * issue, its state change, or the reply into the candidate's source thread.
+ */
+function isClosingAction(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  candidate: Pick<WorkCandidate, 'replyTarget'>,
+): boolean {
+  if (actionIntent(parsed) !== 'write') return false;
+  if (isAuditComment(parsed) || isStatusChange(parsed)) return true;
+  if (surface.class !== 'chat' || isManagerDm(parsed, surface)) return false;
+  const channel = targetChannel(parsed);
+  return channel !== undefined && channel === candidate.replyTarget?.channel;
+}
+
+/** The serialised payload of a surface action, for literal matching. */
+function actionPayloadText(action: MockAction): string {
+  return [action.args.toolArgsJson, action.args.body, action.args.path]
+    .filter((value): value is string => typeof value === 'string')
+    .join('\n');
+}
+
+function describeSurfaceAction(parsed: ParsedSurfaceAction): string {
+  return parsed.kind === 'mcp.call'
+    ? `${parsed.surface} ${parsed.tool}`
+    : `${parsed.surface} ${parsed.method} ${parsed.path}`;
+}
+
 function namesSurface(text: string, surface: Pick<SurfaceRecord, 'slug' | 'displayName'>): boolean {
   const lower = text.toLowerCase();
   if (lower.includes(surface.slug.toLowerCase())) return true;
@@ -1603,6 +1635,32 @@ export function deferralAudit(
       `deferred an action with no result dependency: the documented ${surface.displayName} (${surface.slug}) sequence has no action in this phase; its payload is fixed by the candidate and the runbook, so emit the whole sequence now, or say in notes which prior result it consumes`,
     );
   }
+  // A closing action consumes this phase's results by definition: the audit
+  // comment on the originating issue, its state change and the reply into
+  // the source thread report what happened. Written now, before anything
+  // has, they are predictions; the closing phase authors them from the
+  // ledger. The manager DM is the escalation channel and may go now. A
+  // closing action whose value the plan fixes is the one exception: that
+  // value existed before the run.
+  const fixedLiterals = context.surfaces.flatMap((surface) =>
+    context.plan.steps
+      .flatMap((step) => step.split(/[.;\n]/))
+      .filter((clause) => namesSurface(clause, surface))
+      .flatMap((clause) =>
+        NOT_A_WRITE.test(clause) ? [] : fixedPayloadLiterals(clause, candidate),
+      ),
+  );
+  output.actions.forEach((action, index): void => {
+    const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+    if (!parsed?.ok) return;
+    const surface = context.surfaces.find((row) => row.slug === parsed.action.surface);
+    if (!surface || !isClosingAction(parsed.action, surface, candidate)) return;
+    const payload = actionPayloadText(action);
+    if (fixedLiterals.some((literal) => payload.includes(literal))) return;
+    issues.push(
+      `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan promises a result), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
+    );
+  });
   // The same rule on every other transport, in the code-decidable form: a
   // write whose value the approved plan quotes is fixed before any result
   // exists, and the gate holds it like any other write.
@@ -1950,10 +2008,15 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     user: userPrompt,
     schema: runtimeSchema,
   });
+  // In real mode a plan that promises a read, a check or a result gives the
+  // run its closing phase whatever the model said, so the audit below sees
+  // the phase as the gate will stage it.
+  const closingPhase = (flag: boolean): boolean =>
+    mode === 'real' ? flag || plan.steps.some(promisesResult) : flag;
   const output: ExecutionOutput = {
     draft: raw.draft,
     notes: raw.notes,
-    needsDependentPhase: raw.needsDependentPhase,
+    needsDependentPhase: closingPhase(raw.needsDependentPhase),
     actions: raw.actions.map(materialiseGeneratedAction),
     procedureTrails: raw.procedureTrails,
     ...(mode === 'real' ? { deferredActions: deferredActionsSchema.parse(raw.deferredActions ?? null) } : {}),
@@ -1999,7 +2062,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     const repaired: ExecutionOutput = {
       draft: repairedRaw.draft,
       notes: repairedRaw.notes,
-      needsDependentPhase: repairedRaw.needsDependentPhase,
+      needsDependentPhase: closingPhase(repairedRaw.needsDependentPhase),
       actions: repairedRaw.actions.map(materialiseGeneratedAction),
       procedureTrails: repairedRaw.procedureTrails,
       deferredActions: deferredActionsSchema.parse(repairedRaw.deferredActions ?? null),

@@ -611,30 +611,55 @@ describe('work action completion evidence', (): void => {
     ).toBeUndefined();
   });
 
-  it('removes a prewritten closing comment after the last prerequisite read', (): void => {
-    const snapshot: ExecutionOutput['actions'][number] = {
+  it('keeps every audited phase-one action, the browser batch and its snapshot included, wherever the last read sits', (): void => {
+    const browser = (tool: string, toolArgsJson: string): ExecutionOutput['actions'][number] => ({
       tool: 'mcp.call',
-      args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+      args: { surface: 'looker', tool, toolArgsJson },
+    });
+    const read: ExecutionOutput['actions'][number] = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
     };
-    const stale = skillOutput.actions[0];
+    // The 2 September batch: the read, then the six-step tile sequence ending in the snapshot.
+    const batch = [
+      read,
+      browser('browser_navigate', '{"url":"http://looker-tile:8080/"}'),
+      browser('browser_fill_form', '{"fields":[{"name":"Username","value":"revops"},{"name":"Password","value":"{{secret}}"}]}'),
+      browser('browser_click', '{"element":"Sign in"}'),
+      browser('browser_fill_form', '{"fields":[{"name":"Pipeline coverage","value":"74%"}]}'),
+      browser('browser_click', '{"element":"Save"}'),
+      browser('browser_snapshot', '{}'),
+    ];
+    const plan = {
+      summary: 'Refresh the tile, read it back, then close the ticket.',
+      steps: ['Refresh the tile', 'Read back the figure and the audit line', 'Comment and close REVOPS-7'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const staged = prerequisiteOutput(
+      { draft: 'd', notes: '', needsDependentPhase: true, actions: batch },
+      plan,
+    );
+    expect(staged.needsDependentPhase).toBe(true);
+    expect(staged.actions).toEqual(batch);
+    // The audit, not the position of the last read, decides what phase one carries:
+    // a sequence whose snapshot is not its last action is kept whole too.
+    const snapshotFirst = [read, batch[6], ...batch.slice(1, 6)];
     expect(
       prerequisiteOutput(
-        {
-          draft: 'd',
-          notes: '',
-          needsDependentPhase: true,
-          actions: [snapshot, stale],
-        },
-        {
-          summary: 'Read then close.',
-          steps: ['Read the evidence', 'Close the ticket'],
-          expectedOutputType: 'ticket-update',
-          riskNotes: '',
-          reversibility: '',
-          estimatedMinutes: 1,
-        },
-      ).actions,
-    ).toEqual([snapshot]);
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: snapshotFirst },
+        plan,
+      ),
+    ).toEqual({ draft: 'd', notes: '', needsDependentPhase: true, actions: snapshotFirst });
+    // A plan that promises no result and an output that asked for no closing phase stay single-phase.
+    expect(
+      prerequisiteOutput(
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: [read] },
+        { ...plan, steps: ['Comment on REVOPS-7'] },
+      ).needsDependentPhase,
+    ).toBe(false);
   });
 
   it('refuses to call a promised Linear read satisfied when no such ledger row landed', (): void => {
@@ -864,19 +889,10 @@ describe('executing an approved plan through the gate', (): void => {
           tool: 'mcp.call',
           args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
         },
-        {
-          tool: 'mcp.call',
-          args: {
-            surface: 'linear',
-            tool: 'save_comment',
-            toolArgsJson: JSON.stringify({
-              issueId: 'iss-1',
-              body: 'The evidence is not yet available, so I am not moving the issue to Done.',
-            }),
-          },
-        },
       ],
     };
+    // A comment written before the read-back exists never reaches the gate:
+    // the executor's deferral audit refuses it and the closing phase authors it.
     const auditLine = 'visible figure 74% · Last updated by revops at 2026-08-29 17:24:02 UTC';
     recorded.dependentOutput = {
       draft: `The tile was read back as ${auditLine} and REVOPS-7 is ready to close.`,
@@ -1418,26 +1434,15 @@ describe('executing an approved plan through the gate', (): void => {
 
   it('records why promised Linear reads were not made instead of silently answering the Slack ask', async (): Promise<void> => {
     useSurfaceMode('real');
+    // The executor emitted no read and set no closing phase; a reply written
+    // before the promised reads is refused by the deferral audit, so nothing
+    // reaches the gate from phase one. The plan's promised reads give the run
+    // its closing phase regardless.
     recorded.skillOutput = {
       draft: 'The Slack reply is ready.',
       notes: '',
       needsDependentPhase: false,
-      actions: [
-        {
-          tool: 'http.request',
-          args: {
-            surface: 'slack',
-            method: 'POST',
-            path: '/chat.postMessage',
-            headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
-            body: JSON.stringify({
-              channel: 'C0PUBLIC',
-              thread_ts: '1787746453.202809',
-              text: 'The three deals are covered.',
-            }),
-          },
-        },
-      ],
+      actions: [],
     };
     recorded.dependentOutput = {
       draft: 'I could not answer because the promised Linear reads were never emitted.',
@@ -1520,11 +1525,13 @@ describe('executing an approved plan through the gate', (): void => {
 
   it('completes a ticket update whose plan says read but whose evidence is the ticket itself', async (): Promise<void> => {
     useSurfaceMode('real');
+    // The plan promises a read, so the run has a closing phase whatever the
+    // executor said; the comment and Done are authored there, never in phase one.
     recorded.skillOutput = {
       draft: 'Adding the audit note.',
       notes: '',
       needsDependentPhase: false,
-      actions: skillOutput.actions.slice(0, 3),
+      actions: [],
     };
     recorded.dependentOutput = {
       draft: 'Audit note added and the issue closed.',

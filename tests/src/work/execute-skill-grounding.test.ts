@@ -728,6 +728,159 @@ describe('deferral by data, not by judgement', (): void => {
     expect(output.actions).toEqual([getIssue, comment]);
   });
 
+  const auditComment: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-7","body":"Refreshed the tile to 74%; audit line quoted."}',
+    },
+  };
+  const done: MockAction = {
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"REVOPS-7","state":"Done"}' },
+  };
+  const post = (channel: string, text: string, threadTs?: string): MockAction => ({
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel, text, ...(threadTs ? { thread_ts: threadTs } : {}) }),
+    },
+  });
+  const readBackPlan = {
+    ...plan,
+    steps: [
+      'Read REVOPS-7 in Linear.',
+      'Comment on REVOPS-7 in Linear quoting the read-back figure, then move it to Done.',
+    ],
+  };
+
+  it('refuses a closing action prewritten in phase one before its result exists', (): void => {
+    const issues = deferralAudit(
+      {
+        notes: '',
+        needsDependentPhase: true,
+        actions: [getIssue, auditComment, done],
+        procedureTrails: [],
+      },
+      ticket,
+      { ...recordContext, plan: readBackPlan },
+    );
+    expect(issues).toHaveLength(2);
+    expect(issues[0]).toContain('prewrote a closing action');
+    expect(issues[0]).toContain('linear save_comment');
+    expect(issues[1]).toContain('linear save_issue');
+    expect(issues[0]).toContain('closing phase');
+  });
+
+  it('lets the manager DM and a fixed-payload comment stand in phase one, and refuses a prewritten thread reply', (): void => {
+    expect(
+      deferralAudit(
+        {
+          notes: '',
+          needsDependentPhase: true,
+          actions: [getIssue, post('D0MANAGER', 'Reading REVOPS-7 now; the tile refresh is next.')],
+          procedureTrails: [],
+        },
+        ticket,
+        { ...recordContext, plan: readBackPlan },
+      ),
+    ).toEqual([]);
+    const kickOff: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-9","body":"Kick-off scheduled for Monday"}',
+      },
+    };
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [getIssue, kickOff], procedureTrails: [] },
+        ticket,
+        {
+          ...recordContext,
+          plan: {
+            ...plan,
+            steps: ['Read REVOPS-9 in Linear.', 'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.'],
+          },
+        },
+      ),
+    ).toEqual([]);
+    const ask: WorkCandidate = {
+      ...ticket,
+      sourceCategory: 'event-stream',
+      sourceSystem: 'slack',
+      externalId: 'C0PUBLIC:1787.0001',
+      replyTarget: { channel: 'C0PUBLIC', channelName: 'revops-asks', threadTs: '1787.0001' },
+    };
+    const replyIssues = deferralAudit(
+      {
+        notes: '',
+        needsDependentPhase: true,
+        actions: [getIssue, post('C0PUBLIC', 'Coverage is 74%.', '1787.0001')],
+        procedureTrails: [],
+      },
+      ask,
+      {
+        ...recordContext,
+        plan: { ...plan, steps: ['Read REVOPS-7 in Linear.', 'Reply in the thread with the figure once the read lands.'] },
+      },
+    );
+    expect(replyIssues).toHaveLength(1);
+    expect(replyIssues[0]).toContain('prewrote a closing action');
+    expect(replyIssues[0]).toContain('slack POST /chat.postMessage');
+  });
+
+  it('gives a run whose plan promises a result its closing phase, and moves a prewritten close there through the one repair', async (): Promise<void> => {
+    const prewritten = {
+      draft: 'Read, commented and closed.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue, auditComment, done],
+      procedureTrails: [],
+      deferredActions: null,
+    };
+    const corrected = { ...prewritten, needsDependentPhase: true, actions: [getIssue] };
+    recorded.outputs.push(prewritten, corrected);
+    let additional = 0;
+    const output = await runSkill({
+      ...runArgs,
+      plan: readBackPlan,
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      onAdditionalModelCall: (): void => {
+        additional += 1;
+      },
+    });
+    expect(additional).toBe(1);
+    expect(recorded.users[1]).toContain('prewrote a closing action');
+    expect(recorded.users[1]).toContain('linear save_comment');
+    expect(output.needsDependentPhase).toBe(true);
+    expect(output.actions).toEqual([getIssue]);
+  });
+
+  it('leaves the flag alone in mock mode and when the plan promises no result', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'd',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue],
+      procedureTrails: [],
+      deferredActions: null,
+    });
+    const single = await runSkill({
+      ...runArgs,
+      plan: { ...plan, steps: ['Comment on REVOPS-7 in Linear.'] },
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+    });
+    expect(single.needsDependentPhase).toBe(false);
+  });
+
   it('preserves the 2 September approved plan shapes and complete browser batch', () => {
     const runThrough: Charter = {
       ...charter,
