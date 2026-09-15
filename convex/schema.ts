@@ -436,6 +436,13 @@ export default defineSchema({
      * the next evaluation leaves that filter out; plan approval still applies.
      */
     qualityFitWaivedAt: v.optional(v.number()),
+    /**
+     * When the manager retried this item after the scope judgement skipped it
+     * as out of scope. The retry is the manager's decision that the work is
+     * theirs to give, so the next evaluation treats the item as in scope; the
+     * plan gate still applies.
+     */
+    scopeWaivedAt: v.optional(v.number()),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),

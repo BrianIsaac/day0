@@ -217,6 +217,54 @@ describe('header state pill', (): void => {
   });
 });
 
+describe('retrying a skipped item', (): void => {
+  const skipped = (reason: string): Doc<'workItems'> =>
+    ({
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'skipped',
+      title: 'Reconcile the partner invoice',
+      contentSummary: 'A finance ask.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'FIN-3',
+      observedAt: 1,
+      contentRefs: [],
+      verdict: { decision: 'skip', reason },
+      skipReason: reason,
+    }) as unknown as Doc<'workItems'>;
+  const noop = (): void => undefined;
+  const resolved = async (): Promise<void> => undefined;
+  const render = (row: Doc<'workItems'>): string =>
+    renderToStaticMarkup(
+      <WorkItemCard
+        item={row}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={noop}
+        onCancelPlan={noop}
+        onRetryFailed={noop}
+        onReconcileFailed={resolved}
+        onApproveActions={resolved}
+        onRejectActions={resolved}
+        onResendDecision={resolved}
+      />,
+    );
+
+  it('offers Retry on an out-of-scope skip as the manager\'s scope decision', (): void => {
+    const markup = render(skipped('out-of-scope: no charter or current documented-system overlap'));
+    expect(markup).toContain('Retry');
+    expect(markup).toContain('Retry re-evaluates this item as in scope, on your decision');
+    expect(markup).not.toContain('without the quality-fit filter');
+  });
+
+  it('keeps Retry off a skip that is neither the quality-fit filter nor the scope judgement', (): void => {
+    const markup = render(skipped('already-claimed: state=executing'));
+    expect(markup).not.toContain('>Retry<');
+  });
+});
+
 describe('phone approval delivery', (): void => {
   const parked = (decision: Record<string, unknown>): Doc<'workItems'> =>
     ({

@@ -26,6 +26,7 @@ import {
   COLD_START_WIP_LIMIT,
   type MockAction,
   type ReplyTarget,
+  OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
 import {
@@ -1044,6 +1045,13 @@ export const retryFailed = mutation({
       row.state === 'skipped' &&
       typeof verdict?.reason === 'string' &&
       verdict.reason.startsWith(QUALITY_FIT_SKIP_PREFIX);
+    // Retrying an item skipped as out of scope is the manager's decision that
+    // the work is theirs to give; the re-evaluation reads it as in scope.
+    const waivesScope =
+      row.state === 'skipped' &&
+      typeof verdict?.reason === 'string' &&
+      verdict.reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX);
+    const waived = waivesQualityFit ? 'quality-fit' : waivesScope ? 'scope' : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
       skipReason: undefined,
@@ -1053,6 +1061,7 @@ export const retryFailed = mutation({
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
       ...(waivesQualityFit ? { qualityFitWaivedAt: Date.now() } : {}),
+      ...(waivesScope ? { scopeWaivedAt: Date.now() } : {}),
       ...(feedback
         ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'retry-note' as const } }
         : {}),
@@ -1064,7 +1073,7 @@ export const retryFailed = mutation({
         workItemId: args.workItemId,
         resumeState: next,
         fromState: row.state,
-        ...(waivesQualityFit ? { waived: 'quality-fit' } : {}),
+        ...(waived ? { waived } : {}),
         ...(feedback ? { feedback } : {}),
       },
       createdAt: Date.now(),

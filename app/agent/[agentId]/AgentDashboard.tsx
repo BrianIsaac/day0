@@ -1,6 +1,6 @@
 'use client';
 
-import { QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
+import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
@@ -1536,10 +1536,15 @@ export function WorkItemCard({
   const retryBlocked = needsProviderReconciliation && !item.providerReconciliation;
   // The quality-fit filter's skip is the agent's judgement, not the manager's;
   // Retry hands the item back with that filter waived.
-  const qualityFitSkipped =
-    item.state === 'skipped' &&
-    typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string' &&
-    ((verdict as { reason: string }).reason).startsWith(QUALITY_FIT_SKIP_PREFIX);
+  const skipVerdictReason =
+    item.state === 'skipped' && typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string'
+      ? (verdict as { reason: string }).reason
+      : undefined;
+  const qualityFitSkipped = skipVerdictReason?.startsWith(QUALITY_FIT_SKIP_PREFIX) === true;
+  // The scope judgement is the agent's reading of the charter and the
+  // documented systems; Retry is the manager saying the work is theirs to give.
+  const outOfScopeSkipped = skipVerdictReason?.startsWith(OUT_OF_SCOPE_SKIP_PREFIX) === true;
+  const skipWaivable = qualityFitSkipped || outOfScopeSkipped;
   const [retryNote, setRetryNote] = useState('');
   const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   const awaitingSurface =
@@ -1758,7 +1763,7 @@ export function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' || item.state === 'completed' || qualityFitSkipped ? (
+      {item.state === 'failed' || item.state === 'completed' || skipWaivable ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
@@ -1816,6 +1821,12 @@ export function WorkItemCard({
           {qualityFitSkipped ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry re-evaluates this item without the quality-fit filter; its plan still needs
+              your approval.
+            </p>
+          ) : null}
+          {outOfScopeSkipped ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry re-evaluates this item as in scope, on your decision; its plan still needs
               your approval.
             </p>
           ) : null}
