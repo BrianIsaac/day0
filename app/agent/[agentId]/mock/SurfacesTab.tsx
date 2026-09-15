@@ -498,6 +498,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
               : undefined;
           const provisioning = surface.provisioning as SurfaceProvisioning | undefined;
           const presentation = presentSurfaceCredential({
+            verdict: surface.verdict,
             credential: request?.credential,
             credentialId: surface.credentialId ? String(surface.credentialId) : undefined,
             credentialLocation: surface.credentialLocation,

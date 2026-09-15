@@ -97,6 +97,8 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     lastUsedAt: v.optional(v.number()),
+    status: v.optional(v.union(v.literal('suspect'), v.literal('superseded'))),
+    statusReason: v.optional(v.string()),
     revokedAt: v.optional(v.number()),
   })
     .index('by_userId', ['userId'])

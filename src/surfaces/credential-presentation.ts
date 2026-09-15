@@ -72,6 +72,7 @@ export const PROVISION_NOTE =
   'immediately afterwards; it is never kept for the twelve hours it would otherwise live.';
 
 export interface CredentialPresentationInput {
+  verdict?: string;
   credential?: SurfaceCredentialFinding;
   credentialId?: string;
   credentialLocation?: string;
@@ -203,6 +204,15 @@ export function presentSurfaceCredential(
   input: CredentialPresentationInput,
 ): CredentialPresentation {
   const governanceFinding = input.credential?.governanceFinding;
+  if (input.verdict === 'ungranted' && input.credentialId) {
+    return {
+      canLand: true,
+      kind: 'landing',
+      label: input.summary?.label,
+      governanceFinding,
+      text: 'The connection was not granted. Ask the system administrator to land a valid credential with the documented permissions.',
+    };
+  }
   if (input.credential?.method === 'oauth' && !input.credentialId) {
     const procedure = input.credential.location;
     const summary = input.credentialLocation ?? procedure;
@@ -261,7 +271,7 @@ export function presentSurfaceCredential(
     };
   }
 
-  if (input.credential?.found === 'value') {
+  if (input.credential?.found === 'value' && !input.credentialLocation) {
     return {
       canLand: false,
       governanceFinding,
