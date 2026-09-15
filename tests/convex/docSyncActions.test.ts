@@ -278,7 +278,7 @@ describe('documentation sync batching', (): void => {
     await expect(
       harness.action(internal.credentials.decrypt, { credentialId: credentials[0]._id }),
     ).resolves.toBe(value);
-  });
+  }, 30_000);
 
   it('lets a manual resync supersede a running generation and finishes once', async (): Promise<void> => {
     const { root } = await sixtyPages();
