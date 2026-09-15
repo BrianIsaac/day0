@@ -127,6 +127,18 @@ describe('what counts as support', (): void => {
   it('accepts a sentence that says what it could not confirm, or asks', (): void => {
     expect(unsupportedClaims('The reconciliation is not confirmed; I could not verify it.', evidence)).toEqual([]);
     expect(unsupportedClaims('Is the reconciliation complete?', evidence)).toEqual([]);
+    expect(unsupportedClaims('Could you confirm the reconciliation is complete?', evidence)).toEqual([]);
+    expect(unsupportedClaims('Has the tile been refreshed on your side?', evidence)).toEqual([]);
+  });
+
+  it('does not let a question mark rescue an assertion with a question tagged on', (): void => {
+    for (const text of [
+      'All three checks are complete, can you confirm?',
+      'The reconciliation is complete, right?',
+      'The tile is refreshed and the audit line is posted - shall I move this to Done?',
+    ]) {
+      expect(unsupportedClaims(text, evidence), text).toEqual([text]);
+    }
   });
 
   it('leaves sentences that assert no settled state alone', (): void => {
