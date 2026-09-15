@@ -4,7 +4,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 import { amendCharterInTransaction, type AmendmentVia } from './charters';
 import type { Charter } from '../src/agent/charter';
-import { questionKey, sharedContentWords } from '../src/agent/manager-questions';
+import { managerOpenQuestions, questionKey, sharedContentWords } from '../src/agent/manager-questions';
 
 /**
  * Questions for the manager: the charter's open questions, asked once each
@@ -61,7 +61,7 @@ export async function askOpenQuestionsAtPlan(
   const drafted = planText(plan);
   const now = Date.now();
   const created: Id<'managerQuestions'>[] = [];
-  for (const question of body.openQuestions ?? []) {
+  for (const question of managerOpenQuestions(body)) {
     const key = questionKey(question);
     if (!key) continue;
     const planWords = sharedContentWords(question, drafted);
@@ -126,7 +126,7 @@ export async function answerQuestionInTransaction(
     .withIndex('by_agent', (q) => q.eq('agentId', record.agentId))
     .order('desc')
     .first();
-  const stillOpen = ((latest?.body as Charter | undefined)?.openQuestions ?? []).some(
+  const stillOpen = managerOpenQuestions((latest?.body as Charter | undefined) ?? { openQuestions: [] }).some(
     (question: string): boolean => questionKey(question) === record.key,
   );
   const currentBody = latest?.body as Charter | undefined;
@@ -180,7 +180,7 @@ export const openForAgent = query({
     const charter = await ctx.db.query('charters')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId)).order('desc').first();
     const open = new Set(charter?.approved
-      ? ((charter.body as Charter).openQuestions ?? []).map(questionKey) : []);
+      ? managerOpenQuestions(charter.body as Charter).map(questionKey) : []);
     return rows.filter((row) => !row.answer && open.has(row.key));
   },
 });

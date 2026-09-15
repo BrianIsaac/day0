@@ -286,7 +286,7 @@ export type SynthesisOutcome =
 
 /**
  * What the guard found, in the feed. A clause that quoted the agent is dropped
- * from the charter and an open question says so, but neither says it happened
+ * from the charter and a synthesis note says so, but neither says it happened
  * *again* — and a model doing this on every run is a different fault from one
  * doing it once, with a different fix.
  */

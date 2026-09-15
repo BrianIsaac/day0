@@ -759,7 +759,7 @@ describe('real dependent procedure trails', (): void => {
             tool: 'save_comment',
             toolArgsJson: JSON.stringify({
               issueId: 'CASE-REFRESH-7',
-              body: 'Verified the refreshed figure and audit line.',
+              body: 'Tile read-back recorded on this item; the figure and audit line are in the browser_snapshot in this response.',
             }),
           },
         },

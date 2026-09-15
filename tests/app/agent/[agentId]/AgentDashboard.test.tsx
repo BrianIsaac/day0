@@ -28,6 +28,11 @@ import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-chann
 import { strikeOutcome, strikePreview } from '../../../../src/agent/charter-constraints';
 import type { Charter } from '../../../../src/agent/charter';
 import { strikeRefusalBody } from '../../../fixtures/charter-strike-refusal-2026-09-15';
+import {
+  OPEN_QUESTIONS_2026_09_16,
+  RECORDED_QUESTIONS_2026_09_16,
+  SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
+} from '../../../fixtures/charter-synthesis-notes-2026-09-16';
 
 describe('live event labels', (): void => {
   it('marks a failure whose run stopped', (): void => {
@@ -675,6 +680,57 @@ describe('the charter card and the strikes approval can honour', (): void => {
         expect(strikePreview(body, index).refusal !== undefined).toBe(refusedAtApproval[index]);
       });
     }
+  });
+});
+
+describe("the synthesiser's notes on the charter card", (): void => {
+  const charter = {
+    _id: 'charter-3',
+    _creationTime: 3,
+    agentId: 'agent-1',
+    version: '0.0',
+    approved: true,
+    approvedAt: 3,
+    createdAt: 3,
+    body: {
+      whyThisHire: 'Close week.',
+      proposedFunction: 'Own routine revenue operations work from Linear tickets.',
+      shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+      namedCollaborators: [],
+      priorityReading: [],
+      openQuestions: [...OPEN_QUESTIONS_2026_09_16],
+      synthesisNotes: [SYNTHESIS_SELF_CHECK_NOTE_2026_09_16],
+      constraints: [
+        {
+          kind: 'system-boundary',
+          quote: 'Never post to public channels.',
+          wording: ['Post to public Slack channels.'],
+          origin: 'synthesis',
+        },
+      ],
+    },
+  } as unknown as Doc<'charters'>;
+
+  it('shows each note under the rules and offers no answer box for it', (): void => {
+    const markup = renderToStaticMarkup(<CharterCard charter={charter} />);
+    const rules = markup.indexOf('Rules this charter enforces');
+    const notes = markup.indexOf('Notes from drafting');
+    expect(rules).toBeGreaterThan(-1);
+    expect(notes).toBeGreaterThan(rules);
+    expect(markup.slice(notes)).toContain('Evidence check: 1 clause in this draft');
+    const answerBoxes = markup.split('>Answer<').length - 1;
+    expect(answerBoxes).toBe(OPEN_QUESTIONS_2026_09_16.length);
+  });
+
+  it('files a note an older charter recorded as a question under the notes, not the questions', (): void => {
+    const legacy = {
+      ...charter,
+      body: { ...(charter.body as object), openQuestions: [...RECORDED_QUESTIONS_2026_09_16], synthesisNotes: undefined },
+    } as unknown as Doc<'charters'>;
+    const markup = renderToStaticMarkup(<CharterCard charter={legacy} />);
+    expect(markup.split('>Answer<').length - 1).toBe(OPEN_QUESTIONS_2026_09_16.length);
+    expect(markup.slice(markup.indexOf('Notes from drafting'))).toContain('Evidence check: 1 clause');
   });
 });
 

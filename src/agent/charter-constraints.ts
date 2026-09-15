@@ -50,6 +50,67 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * A provenance suffix a model may append to a clause: a bracketed note naming
+ * the 1:1 or day 1, or a dashed "from manager 1:1" tail, at the end of the
+ * clause before any closing punctuation. The card shows provenance beside
+ * each clause and evidence rows carry it in `source`, so a suffix in the
+ * clause text is noise the reader sees twice. GLM 5.3 Flash wrote
+ * "(from manager 1:1 day-1)" on every clause of one 16 September draft.
+ */
+const PROVENANCE_SUFFIX =
+  /\s*(?:[(\[][^()[\]]*\b(?:1:1|day[- ]?(?:1|one))\b[^()[\]]*[)\]]|[-\u2013\u2014]\s*(?:from|per|source:?)\s+(?:the\s+)?manager(?:'s)?\s+1:1[^.;]*?)\s*(?=[.;,]?\s*$)/i;
+
+/**
+ * Remove every trailing provenance suffix from a clause.
+ *
+ * Args:
+ *   text: A clause as the model wrote it.
+ *
+ * Returns:
+ *   The clause with its suffixes gone and its closing punctuation kept.
+ */
+export function stripProvenanceSuffix(text: string): string {
+  let current = text;
+  for (;;) {
+    const next = current.replace(PROVENANCE_SUFFIX, '');
+    if (next === current) return current.trim();
+    current = next;
+  }
+}
+
+/**
+ * The charter with every prose clause stripped of provenance suffixes: the
+ * function, the three boundary lists, the hire reason, the goals, the
+ * reading list and the evidence texts. Everything else is returned as is.
+ *
+ * Args:
+ *   charter: The assembled charter.
+ *
+ * Returns:
+ *   The same charter with clean clauses; a clean charter comes back equal.
+ */
+export function withoutProvenanceSuffixes(charter: Charter): Charter {
+  const list = (items: readonly string[]): string[] => items.map(stripProvenanceSuffix);
+  return {
+    ...charter,
+    whyThisHire: stripProvenanceSuffix(charter.whyThisHire),
+    proposedFunction: stripProvenanceSuffix(charter.proposedFunction),
+    evidence: charter.evidence.map((item) => ({ ...item, text: stripProvenanceSuffix(item.text) })),
+    shortTermGoals: {
+      day30: stripProvenanceSuffix(charter.shortTermGoals.day30),
+      day60: stripProvenanceSuffix(charter.shortTermGoals.day60),
+      day90: stripProvenanceSuffix(charter.shortTermGoals.day90),
+    },
+    proposedBoundaries: {
+      willDo: list(charter.proposedBoundaries.willDo),
+      willNotDo: list(charter.proposedBoundaries.willNotDo),
+      escalationTriggers: list(charter.proposedBoundaries.escalationTriggers),
+    },
+    priorityReading: list(charter.priorityReading),
+  };
+}
+
 /** Every clause string the constraints may name. */
 export function clauseTexts(charter: Charter): string[] {
   const boundaries = charter.proposedBoundaries;
@@ -118,6 +179,7 @@ export function removeWording(text: string, phrase: string): string {
  * A constraint without a quote is nothing the manager can confirm and is
  * dropped. Wording the clauses do not carry is dropped from the constraint,
  * because striking it would then change nothing while looking as if it had.
+ * Wording is stripped of any provenance suffix first, as the clauses were.
  *
  * Args:
  *   raw: The constraints as the model returned them.
@@ -138,7 +200,7 @@ export function normaliseConstraints(
     const wording = [
       ...new Set(
         item.wording
-          .map((phrase: string): string => phrase.trim())
+          .map((phrase: string): string => stripProvenanceSuffix(phrase))
           .filter((phrase: string): boolean => wordingPresent(phrase, clauses)),
       ),
     ];

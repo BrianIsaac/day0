@@ -55,6 +55,16 @@ import {
   type ExecutionOutput,
   type MockAction,
 } from '../../../src/work/types';
+import {
+  AUDIT_NOTE_CANDIDATE_SUMMARY,
+  CHECKLIST_PAGE,
+  LEDGER_2026_09_15,
+  LEDGER_2026_09_16,
+  MANAGER_FEEDBACK_2026_09_15,
+  SUPPORTED_ACTION_2026_09_16,
+  UNSUPPORTED_ACTION_2026_09_15,
+  UNSUPPORTED_CLAIM_2026_09_15,
+} from '../../fixtures/work/closing-comments-2026-09-15';
 
 const charter: Charter = {
   version: '0.0',
@@ -1212,5 +1222,112 @@ describe('deferral by data, not by judgement', (): void => {
     const output = await runSkill({ ...runArgs, mockEnv: ticketTrailEnv });
     expect(recorded.users).toHaveLength(1);
     expect(output.actions).toHaveLength(7);
+  });
+});
+
+describe('the evidence invariant in the closing phase', (): void => {
+  const auditPlan = {
+    summary: 'Record each check of the Q3 close checklist on REVOPS-5.',
+    steps: ['Read the checklist page.', 'Comment on REVOPS-5 with each check in checklist order.'],
+    expectedOutputType: 'ticket-update' as const,
+    riskNotes: '',
+    reversibility: '',
+    estimatedMinutes: 2,
+  };
+  const auditCandidate: WorkCandidate = {
+    ...candidate,
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-5',
+    title: 'Add the close-summary audit note',
+    contentSummary: AUDIT_NOTE_CANDIDATE_SUMMARY,
+    contentRefs: ['linear://REVOPS-5'],
+  };
+  const withChecklist = { ...mockEnv, teamDocs: [CHECKLIST_PAGE] } as MockSurfaceSnapshot;
+  const outcomes = [
+    { step: 1, status: 'satisfied', evidence: 'ledger row 0', basis: 'ledger' },
+    { step: 2, status: 'satisfied', evidence: 'this response', basis: 'ledger' },
+  ];
+
+  beforeEach((): void => {
+    recorded.users.length = 0;
+    recorded.instructions.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('is stated to the real executor and absent from the mock preamble', (): void => {
+    expect(executorPreamble('real')).toContain('quote the ledger row, the page or the manager');
+    expect(executorPreamble('mock')).not.toContain('quote the ledger row, the page or the manager');
+  });
+
+  it('refuses the 15 September comment with a reason naming the unsupported claim, once, then fails', async (): Promise<void> => {
+    const revision = {
+      draft: 'Close checks complete.',
+      notes: '',
+      actions: [UNSUPPORTED_ACTION_2026_09_15],
+      procedureTrails: [],
+      planStepOutcomes: outcomes,
+    };
+    recorded.outputs.push(revision, revision);
+    let additionalCalls = 0;
+    await expect(
+      runDependentSkill({
+        skill: { name: 'linear-audit-note', description: 'Audit note.', body: '# Skill' },
+        plan: auditPlan,
+        candidate: auditCandidate,
+        charter,
+        mockEnv: withChecklist,
+        mode: 'real',
+        surfaces: [],
+        managerFeedback: MANAGER_FEEDBACK_2026_09_15,
+        initialOutput: {
+          draft: '',
+          notes: '',
+          needsDependentPhase: true,
+          actions: LEDGER_2026_09_15.actions,
+          procedureTrails: [],
+        },
+        initialLedger: LEDGER_2026_09_15.applied,
+        onAdditionalModelCall: () => {
+          additionalCalls += 1;
+        },
+      }),
+    ).rejects.toThrow(UNSUPPORTED_CLAIM_2026_09_15);
+    expect(additionalCalls).toBe(1);
+    expect(recorded.users).toHaveLength(2);
+    expect(recorded.users[1]).toContain('--- Required procedure-trail correction ---');
+    expect(recorded.users[1]).toContain(`"${UNSUPPORTED_CLAIM_2026_09_15}"`);
+    expect(recorded.users[1]).toContain('could not confirm');
+  });
+
+  it('passes the 16 September audit note without a repair call', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Audit note posted.',
+      notes: 'Northstar CRM is not connected; check 2 is reported as not confirmed.',
+      actions: [SUPPORTED_ACTION_2026_09_16],
+      procedureTrails: [],
+      planStepOutcomes: outcomes,
+    });
+    const output = await runDependentSkill({
+      skill: { name: 'linear-audit-note', description: 'Audit note.', body: '# Skill' },
+      plan: auditPlan,
+      candidate: auditCandidate,
+      charter,
+      mockEnv: withChecklist,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: LEDGER_2026_09_16.actions,
+        procedureTrails: [],
+      },
+      initialLedger: LEDGER_2026_09_16.applied,
+      onAdditionalModelCall: () => {
+        throw new Error('no repair call was expected');
+      },
+    });
+    expect(recorded.users).toHaveLength(1);
+    expect(output.actions).toEqual([SUPPORTED_ACTION_2026_09_16]);
   });
 });

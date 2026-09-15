@@ -8,6 +8,12 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { DAY_ONE_TRANSCRIPT_2026_09_14 } from '../fixtures/day-one-transcript-2026-09-14';
+import type { Charter } from '../../src/agent/charter';
+import {
+  CLEAN_CLAUSES_2026_09_16,
+  GLM_DRAFT_2026_09_16,
+  PROVENANCE_SUFFIX_2026_09_16,
+} from '../fixtures/charter-glm-draft-2026-09-16';
 
 /**
  * The model, scripted per agent: the labeller files the seven questions in
@@ -17,10 +23,16 @@ import { DAY_ONE_TRANSCRIPT_2026_09_14 } from '../fixtures/day-one-transcript-20
 const scripted = vi.hoisted(() => ({
   constraints: [] as Array<{ kind: string; quote: string; wording: string[] }>,
   charterPrompts: [] as string[],
+  systemPrompts: {} as Record<string, string>,
+  /** When set, the charter agent answers with this payload instead of the 14 September clauses. */
+  draft: undefined as unknown,
 }));
 
 vi.mock('../../src/lib/mastra', () => ({
-  makeAgent: (name: string): { name: string } => ({ name }),
+  makeAgent: (name: string, instructions: string): { name: string } => {
+    scripted.systemPrompts[name] = instructions;
+    return { name };
+  },
   agentJson: async ({ agent, user }: { agent: { name: string }; user: string }): Promise<unknown> => {
     if (agent.name === 'day0-question-labeller') {
       const topics = [
@@ -36,6 +48,7 @@ vi.mock('../../src/lib/mastra', () => ({
     }
     if (agent.name === 'day0-charter') {
       scripted.charterPrompts.push(user);
+      if (scripted.draft) return scripted.draft;
       return {
         whyThisHire: 'A small RevOps team is drowning in tier-2 asks during the Q3 close.',
         proposedFunction:
@@ -67,6 +80,7 @@ vi.mock('../../src/lib/mastra', () => ({
 afterEach((): void => {
   scripted.constraints = [];
   scripted.charterPrompts = [];
+  scripted.draft = undefined;
   restoreSurfaceMode();
 });
 
@@ -148,5 +162,38 @@ describe('charter synthesis from the 14 September transcript', (): void => {
         origin: 'derived',
       },
     ]);
+  });
+});
+
+describe('provenance suffixes on clauses', (): void => {
+  it('tells the synthesiser that clauses carry no provenance suffix', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    await synthesise();
+    expect(scripted.systemPrompts['day0-charter']).toContain('no provenance suffix');
+    expect(scripted.systemPrompts['day0-charter']).toContain('(from manager 1:1 day-1)');
+  });
+
+  it('strips the suffix GLM wrote on every clause of the 16 September draft and still verifies the constraint', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    scripted.draft = GLM_DRAFT_2026_09_16;
+    const charter = await synthesise();
+    const body = charter.body as Charter;
+    expect(body.proposedFunction).toBe(CLEAN_CLAUSES_2026_09_16.proposedFunction);
+    expect(body.whyThisHire).toBe(CLEAN_CLAUSES_2026_09_16.whyThisHire);
+    expect(body.proposedBoundaries).toEqual({
+      willDo: CLEAN_CLAUSES_2026_09_16.willDo,
+      willNotDo: CLEAN_CLAUSES_2026_09_16.willNotDo,
+      escalationTriggers: CLEAN_CLAUSES_2026_09_16.escalationTriggers,
+    });
+    expect(body.evidence).toEqual([{ text: CLEAN_CLAUSES_2026_09_16.evidenceText, source: 'from manager 1:1 day-1' }]);
+    expect(body.shortTermGoals).toEqual(CLEAN_CLAUSES_2026_09_16.shortTermGoals);
+    expect(body.priorityReading).toEqual(CLEAN_CLAUSES_2026_09_16.priorityReading);
+    expect(JSON.stringify(body)).not.toContain(PROVENANCE_SUFFIX_2026_09_16.trim());
+    expect(body.constraints?.[0]).toEqual({
+      kind: 'system-boundary',
+      quote: 'Never post to public channels.',
+      wording: ['Post to public Slack channels.'],
+      origin: 'synthesis',
+    });
   });
 });

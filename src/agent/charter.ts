@@ -6,6 +6,7 @@ import {
   CONSTRAINT_KINDS,
   deriveConstraints,
   normaliseConstraints,
+  withoutProvenanceSuffixes,
   type CharterConstraint,
 } from './charter-constraints';
 export type { CharterConstraint } from './charter-constraints';
@@ -91,6 +92,13 @@ export interface Charter {
    * charter by an amendment. Absent until the first answer.
    */
   answeredQuestions?: AnsweredQuestion[];
+  /**
+   * What the synthesis said about its own drafting, such as the evidence
+   * guard reporting a clause it dropped. Shown on the card under the rules;
+   * never a question for the manager, so never asked at plan approval.
+   * Absent when the draft needed no note.
+   */
+  synthesisNotes?: string[];
   createdAt: string;
 }
 
@@ -118,6 +126,7 @@ const SYSTEM_PROMPT = [
   'You captured seven free-form answers from the manager. Distil them into a structured charter the manager can approve in under 10 minutes of cognitive load.',
   '',
   'Provenance discipline: every evidence clause carries source "from manager 1:1 day-1" because v0.0 has no other source.',
+  'Clauses carry no provenance suffix: never append "(from manager 1:1 day-1)" or any similar note to the function, a boundary, a goal, a reading item or an evidence text. Provenance is the source field on evidence rows and is shown beside each clause by the card.',
   'Conservative defaults: in proposedBoundaries.willDo, prefer concrete narrow actions; in willNotDo, list adjacent roles you must NOT step on.',
   'If the manager left a topic vague (e.g. "figure it out"), capture it under openQuestions instead of inventing a goal.',
   'List every product or service the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
@@ -358,7 +367,9 @@ export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSys
 }
 
 function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt: string): Charter {
-  const charter: Charter = {
+  // Stripped before the constraints are verified, so wording is matched
+  // against the clauses the manager will read.
+  const charter: Charter = withoutProvenanceSuffixes({
     version: args.version,
     source: 'day-1 manager 1:1',
     whyThisHire: raw.whyThisHire,
@@ -376,7 +387,7 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
     },
     openQuestions: raw.openQuestions,
     createdAt,
-  };
+  });
   const listed = normaliseConstraints(raw.constraints ?? [], charter);
   return {
     ...charter,
@@ -434,9 +445,14 @@ export interface TranscriptSides {
  * prompt. Dropped rather than fatal: the rest of the charter came from the
  * manager's answers and refusing to produce one would leave a finished 1:1 with
  * nothing to show for it — and the retry would spend two more model calls to
- * arrive at the same place. So the clause goes, and an open question says it
+ * arrive at the same place. So the clause goes, and a synthesis note says it
  * went, because a charter that quietly lost its evidence is the same silent
  * failure in a smaller size.
+ *
+ * A note, not an open question: the open questions are what the manager left
+ * open or the 1:1 could not settle, and the planning pane asks each of them
+ * once at plan approval. The guard's remark about its own drafting was asked
+ * that way on 16 September; the card shows it under the rules instead.
  */
 export function withoutAgentQuotedEvidence(
   charter: Charter,
@@ -455,8 +471,8 @@ export function withoutAgentQuotedEvidence(
     charter: {
       ...charter,
       evidence: kept,
-      openQuestions: [
-        ...charter.openQuestions,
+      synthesisNotes: [
+        ...(charter.synthesisNotes ?? []),
         `Evidence check: ${rejected.length} ${
           rejected.length === 1 ? 'clause' : 'clauses'
         } in this draft quoted my own words back as if they were yours, so I dropped ${
@@ -533,6 +549,9 @@ export function renderCharter(c: Charter, date = new Date()): string {
           ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} — ${q.answer}`),
           '',
         ]
+      : []),
+    ...((c.synthesisNotes ?? []).length > 0
+      ? ['SYNTHESIS NOTES                                            [from the draft itself]', ...renderBullets(c.synthesisNotes ?? [], '  '), '']
       : []),
   ];
   return lines.join('\n');
