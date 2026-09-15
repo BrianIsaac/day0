@@ -1606,13 +1606,6 @@ function isClosingAction(
   return channel !== undefined && channel === candidate.replyTarget?.channel;
 }
 
-/** The serialised payload of a surface action, for literal matching. */
-function actionPayloadText(action: MockAction): string {
-  return [action.args.toolArgsJson, action.args.body, action.args.path]
-    .filter((value): value is string => typeof value === 'string')
-    .join('\n');
-}
-
 function describeSurfaceAction(parsed: ParsedSurfaceAction): string {
   return parsed.kind === 'mcp.call'
     ? `${parsed.surface} ${parsed.tool}`
@@ -1720,21 +1713,21 @@ export function deferralAudit(
   // ledger. The manager DM is the escalation channel and may go now. A
   // closing action whose value the plan fixes is the one exception: that
   // value existed before the run.
-  const fixedLiterals = context.surfaces.flatMap((surface) =>
-    context.plan.steps
-      .flatMap((step) => step.split(/[.;\n]/))
-      .filter((clause) => namesSurface(clause, surface))
-      .flatMap((clause) =>
-        NOT_A_WRITE.test(clause) ? [] : fixedPayloadLiterals(clause, candidate),
-      ),
-  );
   output.actions.forEach((action, index): void => {
     const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
     if (!parsed?.ok) return;
     const surface = context.surfaces.find((row) => row.slug === parsed.action.surface);
     if (!surface || !isClosingAction(parsed.action, surface, candidate)) return;
-    const payload = actionPayloadText(action);
-    if (fixedLiterals.some((literal) => payload.includes(literal))) return;
+    const body = parsed.action.kind === 'mcp.call'
+      ? parsed.action.toolArgs.body
+      : parsed.action.bodyJson?.text;
+    const fixedBody = !isStatusChange(parsed.action) && typeof body === 'string' &&
+      context.plan.steps
+        .flatMap((step) => step.split(/[.;\n]|,?\s+then\s+/i))
+        .some((clause) => namesSurface(clause, surface) &&
+          !namesResultDependency(clause) && !/\b(?:after|once|until)\b/i.test(clause) &&
+          fixesRecordPayload(clause, surface, candidate) === body);
+    if (fixedBody) return;
     issues.push(
       `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan promises a result), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
     );

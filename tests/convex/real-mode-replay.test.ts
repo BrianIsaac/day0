@@ -51,6 +51,7 @@ const recorded = vi.hoisted(() => ({
   model: [] as Array<{ agent: string; user: string }>,
   instructions: [] as Array<{ agent: string; instructions: string }>,
   planCalls: 0,
+  prewritten: false,
 }));
 
 const gatedPlan = {
@@ -138,7 +139,11 @@ const closing = {
   procedureTrails: [],
   planStepOutcomes: [
     { step: 1, status: 'satisfied', evidence: 'ledger rows 1 to 5 landed on the tile' },
-    { step: 2, status: 'satisfied', evidence: 'ledger row 6: visible figure 74% and the audit line' },
+    {
+      step: 2,
+      status: 'satisfied',
+      evidence: 'ledger row 6: visible figure 74% and the audit line',
+    },
     { step: 3, status: 'satisfied', evidence: 'the comment, Done and DM in this response' },
   ],
 };
@@ -159,7 +164,32 @@ vi.mock('../../src/lib/mastra', () => ({
     }
     if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
     if (name.endsWith('-dependent')) return closing as T;
-    if (name.endsWith('-initial')) return phaseOne as T;
+    if (name.endsWith('-initial'))
+      return (
+        recorded.prewritten
+          ? {
+              ...phaseOne,
+              actions: [
+                {
+                  ...phaseOne.actions[0],
+                  args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
+                },
+                {
+                  tool: 'mcp.call',
+                  args: {
+                    surface: 'linear',
+                    tool: 'save_comment',
+                    toolArgsJson: JSON.stringify({
+                      issueId: 'REVOPS-7',
+                      body: 'Done after checking the result.',
+                    }),
+                  },
+                },
+                closing.actions[1],
+              ],
+            }
+          : phaseOne
+      ) as T;
     throw new Error(`unscripted agent ${name}`);
   },
   agentText: async (): Promise<string> => '',
@@ -197,14 +227,18 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                 const record = args as Record<string, unknown>;
                 if (tool === 'get_issue') {
                   return 'issueId' in record
-                    ? { isError: false, ...text(JSON.stringify({ error: true, message: VALIDATION })) }
+                    ? {
+                        isError: false,
+                        ...text(JSON.stringify({ error: true, message: VALIDATION })),
+                      }
                     : text(JSON.stringify(UNASSIGNED_ISSUE));
                 }
                 if (tool === 'save_comment') return text(JSON.stringify({ id: 'comment-91' }));
                 if (tool === 'save_issue') {
                   return text(JSON.stringify({ id: 'lin-7f3a', state: { name: 'Done' } }));
                 }
-                if (tool === 'browser_navigate') return text('- Page URL: http://looker-tile:8080/');
+                if (tool === 'browser_navigate')
+                  return text('- Page URL: http://looker-tile:8080/');
                 if (tool === 'browser_snapshot') return text(SNAPSHOT);
                 return text('ok');
               },
@@ -224,7 +258,9 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 type Harness = TestConvex<typeof schema>;
 const OWNER = { subject: 'owner' };
 
-async function seed(harness: Harness): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
+async function seed(
+  harness: Harness,
+): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -386,8 +422,34 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     recorded.model.length = 0;
     recorded.instructions.length = 0;
     recorded.planCalls = 0;
+    recorded.prewritten = false;
     restoreSurfaceMode();
   });
+
+  it('refuses a prewritten Done transition under autonomy through the real executor', async () => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(t);
+    recorded.prewritten = true;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+      await ctx.db.patch(workItemId, {
+        state: 'plan-approved',
+        plan: {
+          ...cleanPlan,
+          steps: [
+            'Read the Linear issue.',
+            'After the read-back, move the Linear issue to "Done".',
+          ],
+        },
+      });
+    });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishInProgressScheduledFunctions();
+    expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toEqual([]);
+    expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
+    expect(recorded.model.filter((call) => call.agent.endsWith('-initial'))).toHaveLength(2);
+  }, 30_000);
 
   it('plans without the ownership gate, holds the tile batch in phase one, repairs the read once, and closes from the read-back', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -404,7 +466,9 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     ]);
     const planPrompts = recorded.model.filter((call) => call.agent === 'day0-plan');
     expect(planPrompts).toHaveLength(2);
-    expect(planPrompts[0]!.user).toContain('--- Candidate record, read from linear (get_issue) ---');
+    expect(planPrompts[0]!.user).toContain(
+      '--- Candidate record, read from linear (get_issue) ---',
+    );
     expect(planPrompts[0]!.user).toContain('"identifier":"REVOPS-7"');
     expect(planPrompts[0]!.user).not.toContain('assignee');
     expect(planPrompts[1]!.user).toContain("step 1 checks the candidate's ownership");
@@ -429,7 +493,9 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const executorPrompt = recorded.model.find((call) => call.agent.endsWith('-initial'));
-    expect(executorPrompt?.user).toContain(`Plan steps: ${cleanPlan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`);
+    expect(executorPrompt?.user).toContain(
+      `Plan steps: ${cleanPlan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
+    );
     const held = await readItem(harness, workItemId);
     expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual([
       'auto',
@@ -460,7 +526,11 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       authority: 'standing',
       repair: { reason: VALIDATION, toolArgsJson: '{"issueId":"REVOPS-7"}' },
     });
-    expect(ledger(parked).slice(1).every((row) => row.held && row.awaitingApproval)).toBe(true);
+    expect(
+      ledger(parked)
+        .slice(1)
+        .every((row) => row.held && row.awaitingApproval),
+    ).toBe(true);
     const runId = parked.executionRunId;
     if (!runId) throw new Error('execution run missing');
 
@@ -475,7 +545,9 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     const authoring = await readItem(harness, workItemId);
     expect(authoring.output).toMatchObject({ phase: 'dependent-authoring' });
     expect(
-      recorded.mcp.filter((call) => call.server === 'looker-pipeline-tile').map((call) => call.tool),
+      recorded.mcp
+        .filter((call) => call.server === 'looker-pipeline-tile')
+        .map((call) => call.tool),
     ).toEqual([
       'browser_navigate',
       'browser_snapshot',
@@ -544,12 +616,10 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     expect(dependentActionCap(phaseOne)).toBe(CLOSING_SET_CAP);
     // One more model call than the happy path: the planner repair and the
     // argument repair, and no third attempt at anything.
-    expect(recorded.model.map((call) => call.agent.replace(/^day0-skill-.*-(initial|dependent|argument-repair)$/, '$1'))).toEqual([
-      'day0-plan',
-      'day0-plan',
-      'initial',
-      'argument-repair',
-      'dependent',
-    ]);
+    expect(
+      recorded.model.map((call) =>
+        call.agent.replace(/^day0-skill-.*-(initial|dependent|argument-repair)$/, '$1'),
+      ),
+    ).toEqual(['day0-plan', 'day0-plan', 'initial', 'argument-repair', 'dependent']);
   }, 30_000);
 });
