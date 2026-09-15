@@ -50,6 +50,14 @@ const LABEL_THEN_VALUE =
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
 const PASSWORD_ASSIGNMENT = /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
 const ASSIGNED_VALUE = /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
+/**
+ * A label with a short phrase before its separator ("PIN for the shared
+ * phone: 0419"); only a value with a digit is taken this way, so "password
+ * policy: rotate quarterly" stays prose.
+ */
+const PHRASED_ASSIGNED_VALUE = /^(?:[ \t]+[^\s:=：]+){1,4}[ \t]*[:=：][ \t]*([^\s`'"，。<>\\]*\d[^\s`'"，。<>\\]*)/i;
+/** `user / password` in one span: the model read the pair as one name. */
+const USER_PASSWORD_PAIR = /^([^\s/`'"]+)[ \t]*\/[ \t]*([^\s/`'"]+)$/;
 const LEADING_PUNCTUATION = /^[(\[{'"`]+/;
 /** Sentence punctuation a model swallows; `!` and `?` stay, a password may end in one. */
 const TRAILING_PUNCTUATION = /[.,;:)\]}'"`]+$/;
@@ -84,10 +92,13 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   // Some detectors return the assignment label rather than its value.
   // Only extend a password label across explicit assignment syntax.
   if (label === 'password' && PASSWORD_LABEL.test(value)) {
-    const assigned = ASSIGNED_VALUE.exec(text.slice(end));
+    const rest = text.slice(end);
+    const assigned = ASSIGNED_VALUE.exec(rest) ?? PHRASED_ASSIGNED_VALUE.exec(rest);
     if (!assigned) return undefined;
+    const assignedValue = assigned[1].replace(TRAILING_PUNCTUATION, '');
+    if (!assignedValue) return undefined;
     start = end + assigned[0].indexOf(assigned[1]);
-    end = start + assigned[1].length;
+    end = start + assignedValue.length;
     value = text.slice(start, end);
   }
   const explicitPassword = label === 'password' && PASSWORD_ASSIGNMENT.test(text.slice(0, start));
@@ -113,6 +124,28 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     return shape.pattern.test(value);
   });
   return rejected ? undefined : { start, end };
+}
+
+/**
+ * Read a span the model called a username as a `user / password` pair.
+ *
+ * "revops / hunter2" in a table cell or after "login:" is one name to the
+ * model and two things to a reader: the half before the slash is the
+ * username and stays, the half after it is the password and goes.
+ *
+ * Args:
+ *   value: The trimmed span text.
+ *
+ * Returns:
+ *   The two halves, or undefined when the span is not such a pair or the
+ *   password half is a shape a secret never has.
+ */
+export function splitUserPasswordPair(value: string): { username: string; password: string } | undefined {
+  const pair = USER_PASSWORD_PAIR.exec(value);
+  if (!pair) return undefined;
+  const password = pair[2].replace(TRAILING_PUNCTUATION, '');
+  if (!password || guardReason(password)) return undefined;
+  return { username: pair[1], password };
 }
 
 /** Shapes an identifier has and personal data does not: the working ids of a ticket queue. */

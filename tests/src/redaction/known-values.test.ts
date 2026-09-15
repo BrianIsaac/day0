@@ -249,10 +249,10 @@ describe.each(STATES)('an unrelated stored password with the redaction component
 describe('the exact-value layer inside redactText', (): void => {
   it('turns a known value into a removal span on the original text, in every representation, and masks it from the model', async (): Promise<void> => {
     const value = 'opaque+value/with=chars';
-    const text = `raw ${value} · json ${JSON.stringify(value).slice(1, -1)} · url ${encodeURIComponent(value)} · password: hunter2`;
+    const text = `raw ${value} · json ${JSON.stringify(value).slice(1, -1)} · url ${encodeURIComponent(value)} · the password is hunter2`;
     const model = new ScriptedSpanModel((): never[] => []);
     const result = await redactText(text, 'outcome', { known: [value], model, onUnavailable: 'structural' });
-    expect(result.text).toBe('raw <redacted> · json <redacted> · url <redacted> · password: hunter2');
+    expect(result.text).toBe('raw <redacted> · json <redacted> · url <redacted> · the password is hunter2');
     expect(result.degraded).toBeUndefined();
     expect(result.findings.filter((finding) => finding.label === 'known credential')).toHaveLength(3);
     expect(model.calls).toHaveLength(1);

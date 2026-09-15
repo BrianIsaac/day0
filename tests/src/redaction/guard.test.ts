@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { guardReason, guardSecretSpan } from '../../../src/redaction/guard';
+import { guardReason, guardSecretSpan, splitUserPasswordPair } from '../../../src/redaction/guard';
 
 function spanOf(text: string, value: string): { start: number; end: number } {
   const start = text.indexOf(value);
@@ -95,3 +95,23 @@ it('retains base64 padding when a detected credential ends immediately before it
   expect(guardSecretSpan(text, spanOf(text, 'cmV2b3BzMjAyNg'), 'credential'))
     .toEqual(spanOf(text, 'cmV2b3BzMjAyNg=='));
 });
+
+describe('label-only spans and pairs', (): void => {
+  it('extends a PIN or passcode label across a short phrase to a numeric value, and stops at sentence punctuation', (): void => {
+    const pin = 'PIN for the shared phone: 0419, rotated monthly';
+    expect(guardSecretSpan(pin, spanOf(pin, 'PIN'), 'password')).toEqual(spanOf(pin, '0419'));
+    const prose = 'The tile login is revops and the password is hunter2; the operations lead rotates it.';
+    expect(guardSecretSpan(prose, spanOf(prose, 'password'), 'password')).toEqual(spanOf(prose, 'hunter2'));
+    const policy = 'password policy: rotate quarterly';
+    expect(guardSecretSpan(policy, spanOf(policy, 'password'), 'password')).toBeUndefined();
+  });
+
+  it('reads a user / password pair as a username and a secret', (): void => {
+    expect(splitUserPasswordPair('revops / hunter2')).toEqual({ username: 'revops', password: 'hunter2' });
+    expect(splitUserPasswordPair('revops/Sunny-Day-42')).toEqual({ username: 'revops', password: 'Sunny-Day-42' });
+    expect(splitUserPasswordPair('docs / runbooks / archive')).toBeUndefined();
+    expect(splitUserPasswordPair('Looker tile')).toBeUndefined();
+    expect(splitUserPasswordPair('revops / {{secret}}')).toBeUndefined();
+  });
+});
+

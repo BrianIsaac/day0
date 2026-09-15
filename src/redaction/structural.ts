@@ -2,19 +2,27 @@
  * The structural grammar: formats that carry a secret by construction.
  *
  * These are not heuristics about what a secret looks like; they are the
- * syntax of five formats in which the secret's position is fixed. A URL's
+ * syntax of six formats in which the secret's position is fixed. A URL's
  * userinfo password, the body of a PEM private-key block, the three segments
- * of a JSON web token, the value after an `Authorization` scheme word and a
- * provider token with a fixed prefix and alphabet are secrets wherever they
- * occur, whatever a model thinks. The grammar is synchronous and
+ * of a JSON web token, the value after an `Authorization` scheme word, a
+ * provider token with a fixed prefix and alphabet, and the value a line
+ * assigns to a password-class label (`pwd: …`, `Passcode = …`, `Dashboard
+ * login (Looker tile): \`…\``, the second half of `login: user / pass`) are
+ * secrets wherever they occur, whatever a model thinks. The last one is a
+ * grammar and not a guess only because the label is the line's own word for
+ * it; a value that names a reference, a placeholder or a plain lowercase word
+ * is left to the model. The grammar is synchronous and
  * dependency-free, which is why it is also the floor applied where no model
  * can be called: a Convex query rendering an export, and the prompt text
  * assembled from material that was redacted when stored. What is gone is
  * every rule that judged a value by how random it looked.
  */
 
+import { guardReason } from './guard';
+
 export type StructuralLabel =
   | 'connection password'
+  | 'password'
   | 'private key'
   | 'json web token'
   | 'header value'
@@ -80,7 +88,24 @@ const HEADER_VALUE = /\b(?:Bearer|Basic)\s+([^\s,;"'`<>\\]{8,})/g;
 const CREDENTIAL_HEADER = /\b(?:X-Api-Key|Api-Key|X-Auth-Token|X-Access-Token)\s*:\s*([^\s,;"'`<>\\]{8,})/gi;
 /** curl's `-u user:password` and `--user user:password`. */
 const CURL_USER = /(?:^|\s)(?:-u|--user)\s+[^\s:@"']+:([^\s"']+)/g;
+/**
+ * A line that assigns a value to a password-class label. The label must sit
+ * directly before the separator (an optional parenthetical allowed), so
+ * "password policy: rotate quarterly" is prose and "PIN for the phone: 0419"
+ * is the model's to find. A quoted value is taken whole; a bare value stops
+ * at whitespace and closing punctuation, and is not taken when it starts a
+ * `user / password` pair, which `LOGIN_PAIR` reads instead.
+ */
+const LABELLED_PASSWORD =
+  /(?<![A-Za-z0-9_])(?:dashboard login|login|password|passwd|pwd|passcode|passphrase|pin|密码|口令)(?:[ \t]*\([^)\n]{0,60}\))?[ \t]*[:=：][ \t]*(?:`([^`\n]+)`|"([^"\n]+)"|'([^'\n]+)'|([^\s`'",;)]+)(?![ \t]*\/[ \t]*[^\s/]))/gi;
+/** `login: user / password`, `credentials: user/password`: the second half is the secret. */
+const LOGIN_PAIR =
+  /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)]+)/gi;
+/** A bare value that is only lowercase letters is a word before it is a password. */
+const LOWERCASE_WORD = /^[a-z]+$/;
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}'"]+$/;
+/** What a labelled password sheds at its end; `!` and `?` stay, a password may end in one. */
+const PASSWORD_TRAILING = /[.,;:)\]}'"]+$/;
 /** A value that refers to a secret rather than carrying one: `<password>`, `${VAR}`, `{{ secret }}`. */
 export const REFERENCE_START = /^[<${]/;
 export const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -126,6 +151,22 @@ export function structuralSpans(text: string): StructuralSpan[] {
       const start = match.index + match[0].lastIndexOf(match[1]);
       spans.push({ start, end: start + value.length, label: 'header value' });
     }
+  }
+  for (const match of text.matchAll(LOGIN_PAIR)) {
+    if (match.index === undefined) continue;
+    const value = match[2].replace(PASSWORD_TRAILING, '');
+    if (!value || guardReason(value)) continue;
+    const start = match.index + match[0].lastIndexOf(match[2]);
+    spans.push({ start, end: start + value.length, label: 'password' });
+  }
+  for (const match of text.matchAll(LABELLED_PASSWORD)) {
+    if (match.index === undefined) continue;
+    const quoted = match[1] ?? match[2] ?? match[3];
+    const raw = quoted ?? match[4] ?? '';
+    const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
+    if (!value || guardReason(value) || (quoted === undefined && LOWERCASE_WORD.test(value))) continue;
+    const start = match.index + match[0].lastIndexOf(raw);
+    spans.push({ start, end: start + value.length, label: 'password' });
   }
   return mergeSpans(spans);
 }

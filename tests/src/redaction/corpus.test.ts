@@ -29,14 +29,6 @@ const PII_KINDS: Readonly<Record<string, EntityKind>> = {
  * is a change to this list and a reader sees exactly what is not caught.
  */
 const EXPECTED_MISSES: string[] = [
-  // The tile password inside the sentence that also quotes its own marker.
-  'docs-local-refresh-runbook:password',
-  // `revops / hunter2` in a table cell with no label word at all.
-  'review-miss-password-in-parenthetical:password',
-  // A six-digit passcode, a four-digit PIN and a hyphenated passphrase after their labels.
-  'password-keyword-variants:password',
-  'password-keyword-variants:password',
-  'password-keyword-variants:password',
   // A Singapore NRIC in an HR note.
   'pii-personal-record:id-number',
 ];

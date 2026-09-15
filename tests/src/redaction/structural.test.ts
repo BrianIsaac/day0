@@ -103,3 +103,38 @@ describe('the structural grammar', (): void => {
     expect(replaceSpans('abcdefghij', [{ start: 1, end: 3 }, { start: 5, end: 6 }], (): string => '_')).toBe('a_de_ghij');
   });
 });
+
+describe('the labelled password grammar', (): void => {
+  it('takes the value after a password-class label, quoted or bare, and the password half of a login pair', (): void => {
+    const cases: Array<[string, string[]]> = [
+      ['Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`)', ['pipeline-tile-local']],
+      ['pwd: Winter2026!', ['Winter2026!']],
+      ['Passcode = 482913', ['482913']],
+      ['login: revops / Sunny-Day-42', ['Sunny-Day-42']],
+      ['Credentials: revops/hunter2 (rotated quarterly)', ['hunter2']],
+      ['密码：revops2026', ['revops2026']],
+    ];
+    for (const [text, values] of cases) {
+      const spans = structuralSpans(text);
+      expect(spans.map((span) => text.slice(span.start, span.end)), text).toEqual(values);
+      expect(spans.every((span) => span.label === 'password'), text).toBe(true);
+    }
+  });
+
+  it('leaves placeholders, references, label words, prose and a bare lowercase word to the model', (): void => {
+    for (const text of [
+      'Password: {{secret}}',
+      'password: <redacted>',
+      'Password: ${LOOKER_PASSWORD}',
+      'Password: YOUR_PASSWORD',
+      'password: password',
+      'Password: see the vault item',
+      'password: sunshine',
+      'password policy: rotate quarterly',
+      'The tile login is revops and the password is hunter2',
+      'PIN for the shared phone: 0419',
+    ]) {
+      expect(structuralSpans(text), text).toEqual([]);
+    }
+  });
+});

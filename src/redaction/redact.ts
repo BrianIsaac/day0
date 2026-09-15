@@ -16,7 +16,7 @@
  * closed, a ledger outcome degrades to the first two layers and says so.
  */
 import { RedactorUnavailableError, type ModelSpan, type SpanModel } from './client';
-import { guardSecretSpan, personalDataGuardReason } from './guard';
+import { guardSecretSpan, personalDataGuardReason, splitUserPasswordPair } from './guard';
 import {
   dispositionFor,
   MODEL_LABELS,
@@ -139,8 +139,16 @@ function classify(text: string, spans: ModelSpan[]): Array<Omit<Finding, 'redact
       continue;
     }
     const value = text.slice(span.start, span.end).trim();
-    if (!value || personalDataGuardReason(kind, value)) continue;
+    if (!value) continue;
     const start = span.start + text.slice(span.start, span.end).indexOf(value);
+    const pair = kind === 'username' ? splitUserPasswordPair(value) : undefined;
+    if (pair) {
+      const passwordStart = start + value.lastIndexOf(pair.password);
+      findings.push({ kind, label: span.label, start, end: start + pair.username.length, value: pair.username });
+      findings.push({ kind: 'secret', label: 'password', start: passwordStart, end: passwordStart + pair.password.length, value: pair.password });
+      continue;
+    }
+    if (personalDataGuardReason(kind, value)) continue;
     findings.push({ kind, label: span.label, start, end: start + value.length, value });
   }
   return findings;

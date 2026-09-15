@@ -25,10 +25,12 @@ describe('redactText', (): void => {
   });
 
   it('degrades to the structural floor and says so when the model cannot be reached', async (): Promise<void> => {
-    const text = `password: hunter2 and DSN postgres://app:${CORPUS_SLOTS.db_password}@db/x`;
+    // "the password is hunter2" has no separator, so only the model would find
+    // it; "password: hunter2" is the grammar's now and would not show the floor.
+    const text = `the password is hunter2 and DSN postgres://app:${CORPUS_SLOTS.db_password}@db/x`;
     const result = await redactText(text, 'outcome', { model: new UnreachableSpanModel(), onUnavailable: 'structural' });
     expect(result.degraded).toBe('structural-only');
-    expect(result.text).toBe('password: hunter2 and DSN postgres://app:<redacted>@db/x');
+    expect(result.text).toBe('the password is hunter2 and DSN postgres://app:<redacted>@db/x');
     expect(result.findings.map((finding) => finding.label)).toEqual(['connection password']);
   });
 
@@ -73,10 +75,10 @@ describe('redactText', (): void => {
   });
 
   it('drops a span below its kind threshold and one whose label the policy does not know', async (): Promise<void> => {
-    const text = 'password: hunter2 for Priya';
+    const text = 'the password is hunter2 for Priya';
     const model = new ScriptedSpanModel((): ModelSpan[] => [
-      { start: 10, end: 17, label: 'password', score: 0.35 },
-      { start: 22, end: 27, label: 'organisation', score: 0.9 },
+      { start: 16, end: 23, label: 'password', score: 0.35 },
+      { start: 28, end: 33, label: 'organisation', score: 0.9 },
     ]);
     const result = await redactText(text, 'outcome', { model, onUnavailable: 'throw' });
     expect(result.text).toBe(text);
@@ -112,8 +114,9 @@ describe('redactText', (): void => {
 describe('redactStructural', (): void => {
   it('is the synchronous floor: exact values and the grammar, nothing else', (): void => {
     expect(redactStructural(`x ${CORPUS_SLOTS.slack_bot_token} y`, [])).toBe('x <redacted> y');
-    expect(redactStructural('Password: hunter2', ['hunter2'])).toBe('Password: <redacted>');
-    expect(redactStructural('Password: hunter2')).toBe('Password: hunter2');
+    expect(redactStructural('The password is hunter2', ['hunter2'])).toBe('The password is <redacted>');
+    expect(redactStructural('The password is hunter2')).toBe('The password is hunter2');
+    expect(redactStructural('Password: hunter2')).toBe('Password: <redacted>');
     expect(redactStructural('Ticket key: REVOPS-7\nToken budget: none')).toBe('Ticket key: REVOPS-7\nToken budget: none');
   });
 });
