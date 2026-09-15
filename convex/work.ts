@@ -1053,7 +1053,9 @@ export const retryFailed = mutation({
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
       ...(waivesQualityFit ? { qualityFitWaivedAt: Date.now() } : {}),
-      ...(feedback ? { managerFeedback: { reason: feedback, at: Date.now() } } : {}),
+      ...(feedback
+        ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'retry-note' as const } }
+        : {}),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1063,7 +1065,7 @@ export const retryFailed = mutation({
         resumeState: next,
         fromState: row.state,
         ...(waivesQualityFit ? { waived: 'quality-fit' } : {}),
-        ...(feedback ? { feedback: true } : {}),
+        ...(feedback ? { feedback } : {}),
       },
       createdAt: Date.now(),
     });
@@ -1407,7 +1409,11 @@ export const setCompleted = internalMutation({
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
-      managerFeedback: undefined,
+      // The feedback this run answered stays on the item as its record; the
+      // mark keeps a later run from reading it as a live direction.
+      ...(row.managerFeedback && row.managerFeedback.addressedAt === undefined
+        ? { managerFeedback: { ...row.managerFeedback, addressedAt: Date.now() } }
+        : {}),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1910,7 +1916,14 @@ async function rejectActionsInTransaction(
     skipReason,
     ...(output !== undefined ? { output } : {}),
     ...(feedback
-      ? { managerFeedback: { reason: feedback, at: Date.now(), runId: args.pendingRunId } }
+      ? {
+          managerFeedback: {
+            reason: feedback,
+            at: Date.now(),
+            runId: args.pendingRunId,
+            kind: 'rejection' as const,
+          },
+        }
       : {}),
     pendingRunId: undefined,
     approvedIndexes: undefined,

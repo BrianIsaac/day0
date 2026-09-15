@@ -420,7 +420,15 @@ export default defineSchema({
      * the truncated skip reason.
      */
     managerFeedback: v.optional(
-      v.object({ reason: v.string(), at: v.number(), runId: v.optional(v.id('events')) }),
+      v.object({
+        reason: v.string(),
+        at: v.number(),
+        runId: v.optional(v.id('events')),
+        /** A rejection reason or a note given with Retry; absent rows predate the kind and are rejections. */
+        kind: v.optional(v.union(v.literal('rejection'), v.literal('retry-note'))),
+        /** Set when a run completed with this feedback as its direction; it is then a record, not an instruction. */
+        addressedAt: v.optional(v.number()),
+      }),
     ),
     /**
      * When the manager retried this item after the quality-fit filter skipped

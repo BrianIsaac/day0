@@ -1187,15 +1187,25 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
 
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-approved');
-    expect(row.managerFeedback?.reason).toBe('The three checks are done; propose Done.');
+    expect(row.managerFeedback).toMatchObject({
+      reason: 'The three checks are done; propose Done.',
+      kind: 'retry-note',
+    });
+    expect(row.managerFeedback?.addressedAt).toBeUndefined();
     const retries = await harness.run(
       async (ctx) =>
         (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
           (event) => event.type === 'work.retry',
         ),
     );
+    // The note itself is in the ledger: the manager's direction is part of the record of the run.
     expect(retries.map((event) => event.payload)).toEqual([
-      { workItemId, resumeState: 'plan-approved', fromState: 'failed', feedback: true },
+      {
+        workItemId,
+        resumeState: 'plan-approved',
+        fromState: 'failed',
+        feedback: 'The three checks are done; propose Done.',
+      },
     ]);
   });
 
@@ -2318,18 +2328,18 @@ describe('manager feedback kept for the retry', (): void => {
     await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason });
     const failed = await readItem(harness, workItemId);
     expect(failed.skipReason).toBe(`rejected by the manager: ${reason.slice(0, 200)}`);
-    expect(failed.managerFeedback).toMatchObject({ reason, runId });
+    expect(failed.managerFeedback).toMatchObject({ reason, runId, kind: 'rejection' });
     await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
     expect((await readItem(harness, workItemId)).managerFeedback?.reason).toBe(reason);
   });
 
-  it('clears the previous rejection feedback when the retried run completes', async (): Promise<void> => {
+  it('keeps the feedback the completed run addressed, marked as addressed', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await seed(harness, 'executing');
     await harness.run(async (ctx) => {
       await ctx.db.patch(workItemId, {
-        managerFeedback: { reason: 'Rewrite this as a close summary.', at: 2, runId },
+        managerFeedback: { reason: 'Rewrite this as a close summary.', at: 2, runId, kind: 'rejection' },
       });
     });
     await harness.mutation(internal.work.setCompleted, {
@@ -2341,7 +2351,16 @@ describe('manager feedback kept for the retry', (): void => {
       },
     });
 
-    expect((await readItem(harness, workItemId)).managerFeedback).toBeUndefined();
+    // The reason stays readable on the finished item; the mark says the run
+    // that completed is the one that answered it, so no later run reads it as
+    // a live direction.
+    expect((await readItem(harness, workItemId)).managerFeedback).toEqual({
+      reason: 'Rewrite this as a close summary.',
+      at: 2,
+      runId,
+      kind: 'rejection',
+      addressedAt: expect.any(Number),
+    });
   });
 });
 
@@ -2366,7 +2385,10 @@ describe('sending a completed item back with a note', (): void => {
     expect(result).toEqual({ ok: true, resumeState: 'plan-approved' });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-approved');
-    expect(row.managerFeedback?.reason).toBe('Draft the reply for the thread and hold it.');
+    expect(row.managerFeedback).toMatchObject({
+      reason: 'Draft the reply for the thread and hold it.',
+      kind: 'retry-note',
+    });
     const retries = await harness.run(
       async (ctx) =>
         (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
@@ -2374,7 +2396,12 @@ describe('sending a completed item back with a note', (): void => {
         ),
     );
     expect(retries.map((event) => event.payload)).toEqual([
-      { workItemId, resumeState: 'plan-approved', fromState: 'completed', feedback: true },
+      {
+        workItemId,
+        resumeState: 'plan-approved',
+        fromState: 'completed',
+        feedback: 'Draft the reply for the thread and hold it.',
+      },
     ]);
   });
 

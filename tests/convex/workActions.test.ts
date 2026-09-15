@@ -59,6 +59,7 @@ const recorded = vi.hoisted(() => ({
   skillRuns: 0,
   skillModes: [] as Array<string | undefined>,
   skillSwitches: [] as Array<boolean | undefined>,
+  skillFeedback: [] as Array<string | undefined>,
   dependentSwitches: [] as Array<boolean | undefined>,
   planSwitches: [] as boolean[],
   planContexts: [] as Array<{ surfaces?: string[]; documents?: string[] }>,
@@ -234,11 +235,13 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     runSkill: async (args: {
       mode?: string;
       autonomousActions?: boolean;
+      managerFeedback?: string;
       onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
       recorded.skillModes.push(args.mode);
       recorded.skillSwitches.push(args.autonomousActions);
+      recorded.skillFeedback.push(args.managerFeedback);
       for (let call = 0; call < recorded.additionalModelCalls; call += 1) {
         args.onAdditionalModelCall?.();
       }
@@ -422,6 +425,7 @@ afterEach((): void => {
   recorded.planRecords.length = 0;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
+  recorded.skillFeedback.length = 0;
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
   recorded.dependentRuns = 0;
@@ -1690,6 +1694,36 @@ describe('executing an approved plan through the gate', (): void => {
         { surface: 'linear', tool: 'get_issue', unavailable: 'no grant (linear:read)' },
       ]);
     });
+  });
+
+  it('hands live manager feedback to the run and keeps addressed feedback out of it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        managerFeedback: { reason: 'REVOPS-7 is owned by Priya.', at: 2, kind: 'retry-note' },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    // Take the apply this run scheduled, so it does not run into a later test.
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(recorded.skillFeedback).toEqual(['REVOPS-7 is owned by Priya.']);
+
+    const { workItemId: finished } = await seed(harness, 'real');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(finished, {
+        managerFeedback: {
+          reason: 'Rewrite this as a close summary.',
+          at: 2,
+          kind: 'rejection',
+          addressedAt: 3,
+        },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId: finished });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId: finished });
+    expect(recorded.skillFeedback).toEqual(['REVOPS-7 is owned by Priya.', undefined]);
   });
 
   it('pauses a real-mode run at actions-pending with nothing but the DM applied', async (): Promise<void> => {

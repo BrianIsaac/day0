@@ -36,6 +36,7 @@ import {
 import type { MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
+import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
 import type { AgentMetrics } from '../../../convex/metrics';
 
 interface Props {
@@ -1130,6 +1131,33 @@ export function DraftDetails({ output }: { output: RunOutput }) {
 }
 
 /** The approved plan's result-aware accounting, including promised work that could not run. */
+/**
+ * The manager's written word on the item, in every state.
+ *
+ * A rejection reason or a retry note is the direction the next run reads,
+ * and the record of why the item went the way it did; it is shown whether
+ * the item is failed, running, held or finished, and says when a run
+ * completed with it.
+ */
+export function ManagerFeedbackNote({ feedback }: { feedback: ManagerFeedback }) {
+  return (
+    <div className="mt-2 p-2 rounded-md bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/30 text-xs">
+      <p className="text-[var(--color-accent)] font-medium mb-0.5">
+        {managerFeedbackLabel(feedback)}
+        <span className="ml-1 font-normal text-[10px] text-[var(--color-muted)]" title={clockTimeWithSeconds(feedback.at)}>
+          {clockTimeWithSeconds(feedback.at)}
+        </span>
+      </p>
+      <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">{feedback.reason}</p>
+      {feedback.addressedAt !== undefined ? (
+        <p className="mt-0.5 text-[10px] text-[var(--color-muted)]">
+          addressed by the run that completed {clockTimeWithSeconds(feedback.addressedAt)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
   if (outcomes.length === 0) return null;
   return (
@@ -1619,6 +1647,8 @@ export function WorkItemCard({
         </div>
       ) : null}
 
+      {item.managerFeedback ? <ManagerFeedbackNote feedback={item.managerFeedback} /> : null}
+
       {item.state === 'executing' && item.applyPhase === 'auto' ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">
           applying {item.approvedIndexes?.length ?? 0}{' '}
@@ -1730,7 +1760,10 @@ export function WorkItemCard({
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
               no registered skill, a model error, a mid-run throw, a rejection. */}
-          {item.state === 'failed' && failedActions.length === 0 && failedItemReason(item) ? (
+          {item.state === 'failed' &&
+          failedActions.length === 0 &&
+          failedItemReason(item) &&
+          !(item.managerFeedback && item.skipReason?.startsWith('rejected by the manager')) ? (
             <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">
               {failedItemReason(item)}
             </p>

@@ -49,6 +49,7 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponent } from '../src/surfaces/browser';
 import type { ExecutionOutput } from '../src/work/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
+import { liveManagerFeedback } from '../src/work/manager-feedback';
 import {
   grantRefusal,
   actionIntent,
@@ -396,7 +397,7 @@ async function executeApprovedPlanHandler(
     candidate,
     charter,
     internalCaller,
-    managerFeedback: item.managerFeedback?.reason,
+    managerFeedback: liveManagerFeedback(item.managerFeedback),
   });
 }
 
@@ -854,7 +855,7 @@ export const authorDependentActions = internalAction({
         surfaces,
         mode: 'real',
         autonomousActions: autonomousActionsOn(agent),
-        managerFeedback: item.managerFeedback?.reason,
+        managerFeedback: liveManagerFeedback(item.managerFeedback),
         initialOutput: initial,
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,

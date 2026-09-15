@@ -17,6 +17,7 @@ import {
   failedItemReason,
   formatMetricDuration,
   landedHeadline,
+  ManagerFeedbackNote,
   MetricsCard,
   PendingActions,
   pendingHeadline,
@@ -413,5 +414,38 @@ describe('judge-facing dashboard evidence', (): void => {
     expect(html).toContain('at its final authority check');
     expect(html).toContain('Actions already approved by you keep their exact approval');
     expect(html).not.toContain('role="dialog"');
+  });
+});
+
+describe('manager feedback on the card', (): void => {
+  it('shows a rejection reason and a retry note in every state, and says when a run addressed it', (): void => {
+    const rejection = renderToStaticMarkup(
+      createElement(ManagerFeedbackNote, {
+        feedback: { reason: 'Quote the three checks.', at: Date.parse('2026-09-14T12:55:00Z'), kind: 'rejection' },
+      }),
+    );
+    expect(rejection).toContain('Rejection reason');
+    expect(rejection).toContain('Quote the three checks.');
+    expect(rejection).not.toContain('addressed');
+
+    const note = renderToStaticMarkup(
+      createElement(ManagerFeedbackNote, {
+        feedback: {
+          reason: 'REVOPS-7 is owned by Priya.',
+          at: Date.parse('2026-09-14T12:56:00Z'),
+          kind: 'retry-note',
+          addressedAt: Date.parse('2026-09-14T13:10:00Z'),
+        },
+      }),
+    );
+    expect(note).toContain('Retry note');
+    expect(note).toContain('REVOPS-7 is owned by Priya.');
+    expect(note).toContain('addressed by the run that completed');
+
+    // A row written before the kind existed is a rejection reason: that was the only source then.
+    const legacy = renderToStaticMarkup(
+      createElement(ManagerFeedbackNote, { feedback: { reason: 'Too thin.', at: 1 } }),
+    );
+    expect(legacy).toContain('Rejection reason');
   });
 });
