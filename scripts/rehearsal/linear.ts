@@ -209,3 +209,27 @@ export function issueRestoreSteps(
   }
   return steps;
 }
+
+/** Workflow states in which the ticket is not at rest for a rehearsal. */
+const BUSY_STATES: readonly string[] = ['In Progress', 'Done', 'Canceled', 'Cancelled', 'Duplicate'];
+
+/**
+ * Why the ticket cannot be rehearsed on as found, if it cannot: an earlier
+ * run's leftovers are reported for the operator to put back, never repaired
+ * here, because this run did not make them.
+ *
+ * Args:
+ *   snapshot: The ticket as read before the run.
+ *
+ * Returns:
+ *   The refusal, or undefined when the ticket is unassigned and open.
+ */
+export function ticketRestRefusal(snapshot: IssueSnapshot): string | undefined {
+  if (snapshot.assigneeId) {
+    return `${snapshot.identifier} is already assigned (${snapshot.assigneeId}); an earlier run's leftover, unassign it first.`;
+  }
+  if (BUSY_STATES.includes(snapshot.stateName)) {
+    return `${snapshot.identifier} is ${snapshot.stateName}, not an open ticket; move it back to Backlog or Todo first.`;
+  }
+  return undefined;
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ticketRestRefusal,
   assignIssue,
   deleteComment,
   issueRestoreSteps,
@@ -133,5 +134,16 @@ describe('putting an issue back', (): void => {
     expect(
       issueRestoreSteps(before, { stateId: 's-backlog', assigneeId: null, commentIds: ['c1'] }),
     ).toEqual([]);
+  });
+});
+
+describe('the ticket at rest', (): void => {
+  const base = { id: 'i1', identifier: 'REVOPS-7', stateId: 's', commentIds: [] as string[] };
+  it('accepts an unassigned open ticket and refuses leftovers from an earlier run', (): void => {
+    expect(ticketRestRefusal({ ...base, stateName: 'Backlog', assigneeId: null })).toBeUndefined();
+    expect(ticketRestRefusal({ ...base, stateName: 'Todo', assigneeId: null })).toBeUndefined();
+    expect(ticketRestRefusal({ ...base, stateName: 'Backlog', assigneeId: 'u1' })).toContain('already assigned');
+    expect(ticketRestRefusal({ ...base, stateName: 'Done', assigneeId: null })).toContain('is Done');
+    expect(ticketRestRefusal({ ...base, stateName: 'In Progress', assigneeId: null })).toContain('In Progress');
   });
 });
