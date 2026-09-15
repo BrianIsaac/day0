@@ -10,6 +10,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
+import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
@@ -154,6 +155,37 @@ export const bySourceForStore = internalQuery({
           .eq('source.ref', args.ref),
       )
       .unique(),
+});
+
+/**
+ * The owner's active, value-bearing rows for the exact-value layer.
+ *
+ * Only the fields the Node action needs to decrypt leave this query, and
+ * only to that action: it is internal, and the plaintext never comes back
+ * through a query. One row past the cap is read so the action can tell a
+ * full list from an overflowing one; the count is of every row the owner
+ * holds, revoked or not, because a list read through a bound is only
+ * complete when the bound was not reached.
+ */
+export const activeValuesForOwner = internalQuery({
+  args: { userId: v.string() },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ overflow: boolean; rows: Array<{ _id: Id<'credentials'>; ciphertext: string; iv: string }> }> => {
+    const rows = await ctx.db
+      .query('credentials')
+      .withIndex('by_userId', (index) => index.eq('userId', args.userId))
+      .take(OWNER_KNOWN_VALUE_CAP + 1);
+    return {
+      overflow: rows.length > OWNER_KNOWN_VALUE_CAP,
+      rows: rows.flatMap((row) =>
+        !row.revokedAt && row.ciphertext !== undefined && row.iv !== undefined
+          ? [{ _id: row._id, ciphertext: row.ciphertext, iv: row.iv }]
+          : [],
+      ),
+    };
+  },
 });
 
 /** Read one credential for an internal decrypt action. */
