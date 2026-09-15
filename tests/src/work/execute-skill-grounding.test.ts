@@ -937,6 +937,37 @@ describe('deferral by data, not by judgement', (): void => {
     expect(replyIssues[0]).toContain('slack POST /chat.postMessage');
   });
 
+  it('lets a fixed-payload comment stand when the body differs from the quoted literal only by sentence punctuation or edge whitespace', (): void => {
+    const fixedPlan = {
+      ...plan,
+      steps: ['Read REVOPS-9 in Linear.', 'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.'],
+    };
+    const comment = (body: string): MockAction => ({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-9', body }) },
+    });
+    for (const body of ['Kick-off scheduled for Monday.', ' Kick-off scheduled for Monday', 'Kick-off scheduled for Monday!\n']) {
+      expect(
+        deferralAudit(
+          { notes: '', needsDependentPhase: true, actions: [getIssue, comment(body)], procedureTrails: [] },
+          ticket,
+          { ...recordContext, plan: fixedPlan },
+        ),
+        body,
+      ).toEqual([]);
+    }
+    for (const body of ['Kick-off scheduled for Monday, done', 'Kick-off scheduled', 'Done']) {
+      expect(
+        deferralAudit(
+          { notes: '', needsDependentPhase: true, actions: [getIssue, comment(body)], procedureTrails: [] },
+          ticket,
+          { ...recordContext, plan: fixedPlan },
+        ),
+        body,
+      ).toHaveLength(1);
+    }
+  });
+
   it('gives a run whose plan promises a result its closing phase, and moves a prewritten close there through the one repair', async (): Promise<void> => {
     const prewritten = {
       draft: 'Read, commented and closed.',

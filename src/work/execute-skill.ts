@@ -1592,6 +1592,16 @@ function fixesRecordPayload(
 }
 
 /**
+ * Whether a body is the value a plan clause fixed: the same text once edge
+ * whitespace and a closing full stop or exclamation mark are set aside. A
+ * body that adds, drops or changes a word is a different value.
+ */
+function sameFixedValue(literal: string, body: string): boolean {
+  const settle = (value: string): string => value.trim().replace(/[.!]+$/, '');
+  return settle(literal) === settle(body);
+}
+
+/**
  * Whether an action closes the work: the audit comment on the originating
  * issue, its state change, or the reply into the candidate's source thread.
  */
@@ -1725,9 +1735,12 @@ export function deferralAudit(
     const fixedBody = !isStatusChange(parsed.action) && typeof body === 'string' &&
       context.plan.steps
         .flatMap((step) => step.split(/[.;\n]|,?\s+then\s+/i))
-        .some((clause) => namesSurface(clause, surface) &&
-          !namesResultDependency(clause) && !/\b(?:after|once|until)\b/i.test(clause) &&
-          fixesRecordPayload(clause, surface, candidate) === body);
+        .some((clause) => {
+          if (!namesSurface(clause, surface) || namesResultDependency(clause)) return false;
+          if (/\b(?:after|once|until)\b/i.test(clause)) return false;
+          const fixed = fixesRecordPayload(clause, surface, candidate);
+          return fixed !== undefined && sameFixedValue(fixed, body);
+        });
     if (fixedBody) return;
     issues.push(
       `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan promises a result), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
