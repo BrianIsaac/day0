@@ -17,14 +17,20 @@ import {
   failedItemReason,
   formatMetricDuration,
   landedHeadline,
+  ManagerFeedbackNote,
   MetricsCard,
+  NotificationModeControl,
   PendingActions,
+  pendingDecisionMembers,
+  PendingDecisionsPanel,
   pendingHeadline,
+  PlanExecutionLedger,
   pendingVerdicts,
   PermissionRows,
   ProviderReconciliationControl,
 } from '../../app/agent/[agentId]/AgentDashboard';
 import type { AgentMetrics } from '../../convex/metrics';
+import type { Doc } from '../../convex/_generated/dataModel';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
 import { AUTONOMY_WARNING, HELD_BEFORE_AUTONOMY_NOTE, HELD_WHILE_SUPERVISED_NOTE } from '../../src/work/autonomy';
 import type { SurfaceRecord } from '../../src/surfaces/types';
@@ -413,5 +419,140 @@ describe('judge-facing dashboard evidence', (): void => {
     expect(html).toContain('at its final authority check');
     expect(html).toContain('Actions already approved by you keep their exact approval');
     expect(html).not.toContain('role="dialog"');
+  });
+});
+
+describe('the cross-item approval panel', (): void => {
+  const parked = (id: string, title: string, verdicts: ActionVerdict[]): Doc<'workItems'> =>
+    ({
+      _id: id,
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'actions-pending',
+      pendingRunId: `run-${id}`,
+      title,
+      contentSummary: '',
+      sourceSystem: 'slack',
+      sourceCategory: 'event-stream',
+      externalId: id,
+      observedAt: 1,
+      contentRefs: [],
+      output: { draft: '', notes: '', actions: [dm, { ...dm, args: { ...dm.args, body: JSON.stringify({ channel: 'C0PUBLIC', text: `Reply for ${title}` }) } }] },
+      actionVerdicts: verdicts,
+    }) as unknown as Doc<'workItems'>;
+  const heldPost: ActionVerdict = { disposition: 'held', reason: HELD_PUBLIC_POST };
+  const auto: ActionVerdict = { disposition: 'auto' };
+
+  it('reads one member per parked item with held rows, keeping the run and the indexes', (): void => {
+    const members = pendingDecisionMembers([
+      parked('w1', 'Answer #revops', [auto, heldPost]),
+      parked('w2', 'Answer #finance', [{ disposition: 'refused', reason: 'no grant (slack:write)' }, heldPost]),
+      { ...parked('w3', 'Done already', [auto, heldPost]), approvedIndexes: [1] } as Doc<'workItems'>,
+      { ...parked('w4', 'Not parked', [auto, heldPost]), state: 'executing' } as Doc<'workItems'>,
+    ]);
+    expect(members.map((member) => [member.workItemId, member.pendingRunId, member.heldIndexes, member.refused])).toEqual([
+      ['w1', 'run-w1', [1], 0],
+      ['w2', 'run-w2', [1], 1],
+    ]);
+  });
+
+  it('lists every member with its literal payloads and approves the eligible ones exactly as shown', (): void => {
+    const onApproveBatch = vi.fn(async (): Promise<void> => {});
+    const members = pendingDecisionMembers([
+      parked('w1', 'Answer #revops', [auto, heldPost]),
+      parked('w2', 'Answer #finance', [{ disposition: 'refused', reason: 'no grant (slack:write)' }, heldPost]),
+    ]);
+    const html = renderToStaticMarkup(
+      createElement(PendingDecisionsPanel, { members, surfaces: [connectedSlack], onApproveBatch }),
+    );
+    expect(html).toContain('2 items have actions awaiting your approval');
+    expect(html).toContain('Answer #revops');
+    expect(html).toContain('Post to Slack channel C0PUBLIC: &quot;Reply for Answer #revops&quot;');
+    expect(html).toContain('1 row is refused by the gate; decide this one on its card.');
+    expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
+    expect(html).toContain('Approve 1 held action across 1 item');
+    expect(html).toContain('Each item is approved exactly as shown');
+  });
+
+  it('stays out of the way while only one item is waiting', (): void => {
+    const members = pendingDecisionMembers([parked('w1', 'Answer #revops', [auto, heldPost])]);
+    const html = renderToStaticMarkup(
+      createElement(PendingDecisionsPanel, { members, surfaces: [connectedSlack], onApproveBatch: vi.fn(async (): Promise<void> => {}) }),
+    );
+    expect(html).toBe('');
+  });
+});
+
+describe('the manager DM mode control', (): void => {
+  it('offers per-run and hourly digest, with the current mode selected', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(NotificationModeControl, { mode: 'digest', onChange: async (): Promise<void> => undefined }),
+    );
+    expect(html).toContain('Manager DMs');
+    expect(html).toContain('<option value="per-run">per run</option>');
+    expect(html).toContain('<option value="digest" selected="">hourly digest</option>');
+    expect(html).toContain('Decision requests are always sent at once');
+  });
+});
+
+describe('the failed item reason', (): void => {
+  it('reads a stop as a stop, without the prefix', (): void => {
+    expect(failedItemReason({ skipReason: 'stopped: the read did not land' })).toBe(
+      'stopped, nothing landed and nothing to decide: the read did not land',
+    );
+    expect(failedItemReason({ skipReason: 'no registered skill' })).toBe('no registered skill');
+  });
+});
+
+describe('manager feedback on the card', (): void => {
+  it('shows a rejection reason and a retry note in every state, and says when a run addressed it', (): void => {
+    const rejection = renderToStaticMarkup(
+      createElement(ManagerFeedbackNote, {
+        feedback: { reason: 'Quote the three checks.', at: Date.parse('2026-09-14T12:55:00Z'), kind: 'rejection' },
+      }),
+    );
+    expect(rejection).toContain('Rejection reason');
+    expect(rejection).toContain('Quote the three checks.');
+    expect(rejection).not.toContain('addressed');
+
+    const note = renderToStaticMarkup(
+      createElement(ManagerFeedbackNote, {
+        feedback: {
+          reason: 'REVOPS-7 is owned by Priya.',
+          at: Date.parse('2026-09-14T12:56:00Z'),
+          kind: 'retry-note',
+          addressedAt: Date.parse('2026-09-14T13:10:00Z'),
+        },
+      }),
+    );
+    expect(note).toContain('Retry note');
+    expect(note).toContain('REVOPS-7 is owned by Priya.');
+    expect(note).toContain('addressed by the run that completed');
+
+    // A row written before the kind existed is a rejection reason: that was the only source then.
+    const legacy = renderToStaticMarkup(
+      createElement(ManagerFeedbackNote, { feedback: { reason: 'Too thin.', at: 1 } }),
+    );
+    expect(legacy).toContain('Rejection reason');
+  });
+});
+
+describe('plan execution ledger on the card', (): void => {
+  it('says when a step was satisfied on the manager\'s word', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(PlanExecutionLedger, {
+        outcomes: [
+          {
+            step: 1,
+            status: 'satisfied',
+            evidence: 'Manager: REVOPS-7 is owned by Priya.',
+            basis: 'manager-feedback',
+          },
+          { step: 2, status: 'satisfied', evidence: 'save_comment landed.' },
+        ],
+      }),
+    );
+    expect(html).toContain('Step 1 · satisfied by manager feedback - Manager: REVOPS-7 is owned by Priya.');
+    expect(html).toContain('Step 2 · satisfied - save_comment landed.');
   });
 });

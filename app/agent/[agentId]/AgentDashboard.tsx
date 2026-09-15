@@ -1,6 +1,6 @@
 'use client';
 
-import { QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
+import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
@@ -44,6 +44,13 @@ import {
 import type { ArgumentRepairAttempt, MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
+import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
+import { isStopped, stopDetail } from '../../../src/work/stop';
+import {
+  managerNotificationMode,
+  NOTIFICATION_MODE_LABELS,
+  type ManagerNotificationMode,
+} from '../../../src/work/manager-notes';
 import type { AgentMetrics } from '../../../convex/metrics';
 
 interface Props {
@@ -368,6 +375,51 @@ export function AutonomyControl({
   );
 }
 
+/**
+ * How the manager hears about run outcomes over the chat surface: as each
+ * run finishes, or in one hourly digest. Decision requests are sent at once
+ * in either mode, so the choice only quietens what is for information.
+ */
+export function NotificationModeControl({
+  mode,
+  onChange,
+}: {
+  mode: ManagerNotificationMode;
+  onChange: (mode: ManagerNotificationMode) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <label
+      className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
+      title="Decision requests are always sent at once. This sets how you hear that work landed or a run stopped."
+    >
+      <span>Manager DMs</span>
+      <select
+        aria-label="Manager DMs"
+        value={mode}
+        disabled={busy}
+        onChange={(event) => {
+          const next = event.target.value as ManagerNotificationMode;
+          setBusy(true);
+          setError(null);
+          onChange(next)
+            .catch((err: unknown) => setError((err as Error).message))
+            .finally(() => setBusy(false));
+        }}
+        className="bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
+      >
+        {(Object.keys(NOTIFICATION_MODE_LABELS) as ManagerNotificationMode[]).map((option) => (
+          <option key={option} value={option}>
+            {NOTIFICATION_MODE_LABELS[option]}
+          </option>
+        ))}
+      </select>
+      {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
+    </label>
+  );
+}
+
 export function DashboardHeader({
   agent,
   charter,
@@ -378,6 +430,7 @@ export function DashboardHeader({
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
+  const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
     'day-one-in-progress': {
@@ -416,6 +469,12 @@ export function DashboardHeader({
           {/* In real mode the chip is the manager's autonomous-actions
               switch; the hosted mock has no gate for the switch to change, so
               it keeps the static label. */}
+          {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
+            <NotificationModeControl
+              mode={managerNotificationMode(agent)}
+              onChange={(mode) => setManagerNotifications({ agentId: agent._id, mode })}
+            />
+          ) : null}
           {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
             <AutonomyControl
               on={autonomousActionsOn(agent)}
@@ -1361,6 +1420,7 @@ function WorkQueue({
   const retryFailed = useMutation(api.work.retryFailed);
   const reconcileFailed = useMutation(api.work.reconcileFailed);
   const approveActions = useMutation(api.work.approveActions);
+  const approveActionsBatch = useMutation(api.work.approveActionsBatch);
   const rejectActions = useMutation(api.work.rejectActions);
   const resendDecision = useMutation(api.work.resendDecisionRequest);
 
@@ -1431,6 +1491,11 @@ function WorkQueue({
         </p>
       ) : (
         <div className="space-y-3">
+          <PendingDecisionsPanel
+            members={pendingDecisionMembers(items)}
+            surfaces={surfaces}
+            onApproveBatch={(members) => approveActionsBatch({ members })}
+          />
           {items.map((item) => (
             <WorkItemCard
               key={item._id}
@@ -1477,6 +1542,7 @@ function WorkQueue({
 
 function stateColor(state: string): string {
   if (state === 'completed') return 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]';
+  if (state === 'stopped') return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
   if (state === 'plan-pending' || state === 'needs-skill' || state === 'actions-pending') {
     return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
   }
@@ -1507,6 +1573,7 @@ interface PlanStepOutcomeRow {
   step: number;
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   evidence: string;
+  basis?: 'manager-feedback';
 }
 
 /** A run's persisted output as the card reads it, in either of its two phases. */
@@ -1602,6 +1669,33 @@ export function DraftDetails({ output }: { output: RunOutput }) {
 }
 
 /** The approved plan's result-aware accounting, including promised work that could not run. */
+/**
+ * The manager's written word on the item, in every state.
+ *
+ * A rejection reason or a retry note is the direction the next run reads,
+ * and the record of why the item went the way it did; it is shown whether
+ * the item is failed, running, held or finished, and says when a run
+ * completed with it.
+ */
+export function ManagerFeedbackNote({ feedback }: { feedback: ManagerFeedback }) {
+  return (
+    <div className="mt-2 p-2 rounded-md bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/30 text-xs">
+      <p className="text-[var(--color-accent)] font-medium mb-0.5">
+        {managerFeedbackLabel(feedback)}
+        <span className="ml-1 font-normal text-[10px] text-[var(--color-muted)]" title={clockTimeWithSeconds(feedback.at)}>
+          {clockTimeWithSeconds(feedback.at)}
+        </span>
+      </p>
+      <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">{feedback.reason}</p>
+      {feedback.addressedAt !== undefined ? (
+        <p className="mt-0.5 text-[10px] text-[var(--color-muted)]">
+          addressed by the run that completed {clockTimeWithSeconds(feedback.addressedAt)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
   if (outcomes.length === 0) return null;
   return (
@@ -1610,7 +1704,9 @@ export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow
       <ol className="space-y-0.5 text-[var(--color-muted)]">
         {outcomes.map((outcome) => (
           <li key={outcome.step}>
-            Step {outcome.step} · {outcome.status} - {outcome.evidence}
+            {`Step ${outcome.step} · ${outcome.status}${
+              outcome.basis === 'manager-feedback' ? ' by manager feedback' : ''
+            } - ${outcome.evidence}`}
           </li>
         ))}
       </ol>
@@ -1674,6 +1770,9 @@ export function failedItemReason(item: {
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
+  }
+  if (item.skipReason && isStopped(item.skipReason)) {
+    return `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;
 }
@@ -2030,6 +2129,134 @@ export function PlanApprovalForm({
   );
 }
 
+/** One member of the cross-item approval: the held rows of a parked run. */
+export interface PendingDecisionMember {
+  workItemId: Id<'workItems'>;
+  pendingRunId: Id<'events'>;
+  title: string;
+  actions: MockAction[];
+  heldIndexes: number[];
+  refused: number;
+}
+
+/**
+ * The held action sets open across the queue, read from each parked item.
+ *
+ * Args:
+ *   items: The work items.
+ *
+ * Returns:
+ *   One member per item whose run is parked with rows awaiting the manager.
+ */
+export function pendingDecisionMembers(items: readonly Doc<'workItems'>[]): PendingDecisionMember[] {
+  return items.flatMap((item): PendingDecisionMember[] => {
+    if (item.state !== 'actions-pending' || !item.pendingRunId || item.approvedIndexes !== undefined) {
+      return [];
+    }
+    const actions = ((item.output ?? {}) as RunOutput).actions ?? [];
+    const verdicts = pendingVerdicts(item.actionVerdicts, actions.length);
+    const heldIndexes = verdicts.flatMap((verdict, index) => (verdict.disposition === 'held' ? [index] : []));
+    if (heldIndexes.length === 0) return [];
+    return [
+      {
+        workItemId: item._id,
+        pendingRunId: item.pendingRunId,
+        title: item.title,
+        actions,
+        heldIndexes,
+        refused: verdicts.filter((verdict) => verdict.disposition === 'refused').length,
+      },
+    ];
+  });
+}
+
+/**
+ * Every held action set across the queue, approvable from one place.
+ *
+ * Each member is shown with the same literal payloads its own card shows,
+ * and the one button sends the same exact approval per member that the
+ * card's "Approve all" sends: the parked run and its held indexes. A member
+ * with a refused row is listed but left to its card, as the card's own rule
+ * is. Shown only when more than one item is waiting; one item is its card.
+ */
+export function PendingDecisionsPanel({
+  members,
+  surfaces,
+  onApproveBatch,
+}: {
+  members: PendingDecisionMember[];
+  surfaces: SurfaceRecord[];
+  onApproveBatch: (
+    members: Array<{ workItemId: Id<'workItems'>; pendingRunId: Id<'events'>; approvedIndexes: number[] }>,
+  ) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (members.length < 2) return null;
+  const eligible = members.filter((member) => member.refused === 0);
+  const heldCount = eligible.reduce((sum, member) => sum + member.heldIndexes.length, 0);
+  return (
+    <div className="mb-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
+      <p className="text-[var(--color-warn)] font-medium mb-1">
+        {members.length} items have actions awaiting your approval
+      </p>
+      <ul className="space-y-1.5">
+        {members.map((member) => (
+          <li key={member.workItemId}>
+            <p className="text-[var(--color-fg)] font-medium">{member.title}</p>
+            {member.refused > 0 ? (
+              <p className="text-[10px] text-[var(--color-muted)]">
+                {member.refused} {member.refused === 1 ? 'row is' : 'rows are'} refused by the gate; decide this
+                one on its card.
+              </p>
+            ) : null}
+            <ul className="ml-3 space-y-0.5">
+              {member.heldIndexes.map((index) => (
+                <li key={index} className="text-[var(--color-fg)] break-words">
+                  {summariseAction(member.actions[index], surfaces)}
+                  <details className="mt-0.5">
+                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                      exact payload
+                    </summary>
+                    <ActionPayload action={member.actions[index]} />
+                  </details>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center gap-2 mt-2">
+        <button
+          type="button"
+          disabled={busy || eligible.length === 0}
+          onClick={() => {
+            setBusy(true);
+            setError(null);
+            onApproveBatch(
+              eligible.map((member) => ({
+                workItemId: member.workItemId,
+                pendingRunId: member.pendingRunId,
+                approvedIndexes: member.heldIndexes,
+              })),
+            )
+              .catch((err: unknown) => setError((err as Error).message))
+              .finally(() => setBusy(false));
+          }}
+          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
+        >
+          Approve {heldCount} held {heldCount === 1 ? 'action' : 'actions'} across {eligible.length}{' '}
+          {eligible.length === 1 ? 'item' : 'items'}
+        </button>
+        <span className="text-[10px] text-[var(--color-muted)]">
+          Each item is approved exactly as shown; if one has moved on, nothing is approved and the list refreshes.
+        </span>
+      </div>
+      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
 export function WorkItemCard({
   item,
   surfaces,
@@ -2085,10 +2312,15 @@ export function WorkItemCard({
   const retryBlocked = needsProviderReconciliation && !item.providerReconciliation;
   // The quality-fit filter's skip is the agent's judgement, not the manager's;
   // Retry hands the item back with that filter waived.
-  const qualityFitSkipped =
-    item.state === 'skipped' &&
-    typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string' &&
-    ((verdict as { reason: string }).reason).startsWith(QUALITY_FIT_SKIP_PREFIX);
+  const skipVerdictReason =
+    item.state === 'skipped' && typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string'
+      ? (verdict as { reason: string }).reason
+      : undefined;
+  const qualityFitSkipped = skipVerdictReason?.startsWith(QUALITY_FIT_SKIP_PREFIX) === true;
+  // The scope judgement is the agent's reading of the charter and the
+  // documented systems; Retry is the manager saying the work is theirs to give.
+  const outOfScopeSkipped = skipVerdictReason?.startsWith(OUT_OF_SCOPE_SKIP_PREFIX) === true;
+  const skipWaivable = qualityFitSkipped || outOfScopeSkipped;
   const [retryNote, setRetryNote] = useState('');
   const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   const awaitingSurface =
@@ -2103,15 +2335,18 @@ export function WorkItemCard({
     item.state === 'plan-pending' || item.state === 'actions-pending'
       ? undeliveredDecisionReason(item.decision, now)
       : undefined;
+  // A failed item whose run landed nothing and left nothing to decide is
+  // shown as stopped: Retry stands, and the badge says no harm was done.
+  const shownState = item.state === 'failed' && isStopped(item.skipReason) ? 'stopped' : item.state;
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
             <span
-              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(item.state)}`}
+              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shownState)}`}
             >
-              {item.state}
+              {shownState}
             </span>
             <span className="text-[10px] text-[var(--color-muted)]">
               {item.sourceSystem}/{item.sourceCategory}
@@ -2203,6 +2438,8 @@ export function WorkItemCard({
           ) : null}
         </div>
       ) : null}
+
+      {item.managerFeedback ? <ManagerFeedbackNote feedback={item.managerFeedback} /> : null}
 
       {item.state === 'executing' && item.applyPhase === 'auto' ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">
@@ -2314,12 +2551,15 @@ export function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' || item.state === 'completed' || qualityFitSkipped ? (
+      {item.state === 'failed' || item.state === 'completed' || skipWaivable ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
               no registered skill, a model error, a mid-run throw, a rejection. */}
-          {item.state === 'failed' && failedActions.length === 0 && failedItemReason(item) ? (
+          {item.state === 'failed' &&
+          failedActions.length === 0 &&
+          failedItemReason(item) &&
+          !(item.managerFeedback && item.skipReason?.startsWith('rejected by the manager')) ? (
             <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">
               {failedItemReason(item)}
             </p>
@@ -2369,6 +2609,12 @@ export function WorkItemCard({
           {qualityFitSkipped ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry re-evaluates this item without the quality-fit filter; its plan still needs
+              your approval.
+            </p>
+          ) : null}
+          {outOfScopeSkipped ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry re-evaluates this item as in scope, on your decision; its plan still needs
               your approval.
             </p>
           ) : null}
@@ -2704,6 +2950,9 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
 }
 
 export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): string {
+  if (event.type === 'work.failed' && (event.payload as { stopped?: unknown })?.stopped === true) {
+    return 'work.failed · stopped';
+  }
   if (event.type !== 'surface.charter-match-ambiguous') return event.type;
   const candidateSlugs = (event.payload as { candidateSlugs?: unknown }).candidateSlugs;
   if (!Array.isArray(candidateSlugs) || !candidateSlugs.every((slug) => typeof slug === 'string')) {

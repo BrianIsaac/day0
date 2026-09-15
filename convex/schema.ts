@@ -40,6 +40,11 @@ export default defineSchema({
      * actions; skill and surface approval are unchanged. See
      * `src/work/autonomy.ts`. */
     autonomousActions: v.optional(v.boolean()),
+    /** How the manager hears about run outcomes over the chat surface.
+     * Absent reads as `per-run`: the landed note goes out as it happens and
+     * a stop is never sent. `digest` keeps both for one hourly message.
+     * Decision requests are sent at once in either mode. */
+    managerNotifications: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
     /** REMOVED 26 Aug (late): the posture ladder this toggle replaced. Kept
      * optional for one more deployment so rows the ladder wrote still
      * validate at push; nothing reads or writes it. Delete once the primary
@@ -425,7 +430,15 @@ export default defineSchema({
      * the truncated skip reason.
      */
     managerFeedback: v.optional(
-      v.object({ reason: v.string(), at: v.number(), runId: v.optional(v.id('events')) }),
+      v.object({
+        reason: v.string(),
+        at: v.number(),
+        runId: v.optional(v.id('events')),
+        /** A rejection reason or a note given with Retry; absent rows predate the kind and are rejections. */
+        kind: v.optional(v.union(v.literal('rejection'), v.literal('retry-note'))),
+        /** Set when a run completed with this feedback as its direction; it is then a record, not an instruction. */
+        addressedAt: v.optional(v.number()),
+      }),
     ),
     /**
      * What the manager answered when approving the plan: the charter's open
@@ -452,10 +465,10 @@ export default defineSchema({
     /**
      * When the manager retried this item after the scope judgement skipped it
      * as out of scope. The retry is the manager's decision that the work is
-     * theirs to give, so the next evaluation leaves the eligibility rule out;
-     * plan approval still applies.
+     * theirs to give, so the next evaluation leaves the scope rule out; the
+     * plan gate still applies.
      */
-    eligibilityWaivedAt: v.optional(v.number()),
+    scopeWaivedAt: v.optional(v.number()),
     /**
      * The last policy change that sent this row back to `discovered`: the
      * trigger, its idempotency key and when. The same key never re-admits the
@@ -594,6 +607,49 @@ export default defineSchema({
     .index('by_agent', ['agentId'])
     .index('by_agent_key', ['agentId', 'key'])
     .index('by_work_item', ['workItemId']),
+
+  /**
+   * One code that decides every held action set open on the manager's
+   * channel at the moment it was issued. Each member is named by its item,
+   * its own decision code and the run whose literal payloads were shown, so
+   * the batch decides exactly what the manager was sent and nothing that
+   * moved on since.
+   */
+  decisionBatches: defineTable({
+    agentId: v.id('agents'),
+    id: v.string(),
+    surfaceSlug: v.string(),
+    channel: v.string(),
+    members: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        decisionId: v.string(),
+        pendingRunId: v.id('events'),
+      }),
+    ),
+    requestedAt: v.number(),
+    decidedAt: v.optional(v.number()),
+    outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
+    decidedTs: v.optional(v.string()),
+  }).index('by_agent_id', ['agentId', 'id']),
+
+  /**
+   * What the gate tells the manager about a finished run: that work landed,
+   * or that the run stopped. Sent one per run or gathered into a digest,
+   * claimed once either way, with the provider ts as delivery evidence.
+   */
+  managerNotes: defineTable({
+    agentId: v.id('agents'),
+    workItemId: v.id('workItems'),
+    kind: v.union(v.literal('landed'), v.literal('stopped')),
+    text: v.string(),
+    createdAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    /** The digest send that claimed this note, when it went out in one. */
+    digestId: v.optional(v.id('events')),
+    providerTs: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  }).index('by_agent', ['agentId']),
 
   /** One idempotent manager-DM acknowledgement per parsed provider reply. */
   managerDecisionNotices: defineTable({

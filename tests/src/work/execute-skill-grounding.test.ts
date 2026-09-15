@@ -220,6 +220,71 @@ describe('documentation grounding in the executor prompts', (): void => {
     expect(recorded.users[1]).toContain('Owner: Ana\nTitle:');
   });
 
+  it('treats a fact the manager states as approved evidence in the closing phase', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Closing draft.',
+      notes: '',
+      actions: [],
+      procedureTrails: [],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'Manager: REVOPS-7 is owned by Priya.', basis: 'manager-feedback' },
+        { step: 2, status: 'satisfied', evidence: 'ledger row 0', basis: 'ledger' },
+      ],
+    });
+    const output = await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: {
+        summary: 'Confirm the owner, then comment.',
+        steps: ['Confirm REVOPS-7 has an owner.', 'Comment on the ticket.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      managerFeedback: 'REVOPS-7 is owned by Priya.',
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+
+    // The rule is in the closing instructions and the fact is in the prompt, so
+    // the step the manager settled is reported on their word, and the record says so.
+    expect(recorded.instructions[0]).toContain("A fact the manager's feedback states is approved evidence");
+    expect(recorded.instructions[0]).toContain('`manager-feedback`');
+    expect(recorded.users[0]).toContain(JSON.stringify('REVOPS-7 is owned by Priya.'));
+    expect(output.planStepOutcomes).toEqual([
+      { step: 1, status: 'satisfied', evidence: 'Manager: REVOPS-7 is owned by Priya.', basis: 'manager-feedback' },
+      { step: 2, status: 'satisfied', evidence: 'ledger row 0' },
+    ]);
+  });
+
+  it('gives the closing phase no feedback rule when the run carries none', async (): Promise<void> => {
+    await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: {
+        summary: 'Comment on the ticket.',
+        steps: ['Comment on the ticket.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+    expect(recorded.instructions[0]).not.toContain("A fact the manager's feedback states");
+    expect(recorded.instructions[0]).toContain('Every plan step outcome has basis `ledger`');
+  });
+
   it('tells the closing phase that a step it fulfils by an action emitted now is satisfied', async (): Promise<void> => {
     await runDependentSkill({
       skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },

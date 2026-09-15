@@ -62,9 +62,13 @@ import {
   type ShapeSurface,
 } from '../src/work/skill-shape';
 import { autonomousActionsOn } from '../src/work/autonomy';
+import { liveManagerFeedback } from '../src/work/manager-feedback';
+import { landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
+import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   grantRefusal,
   actionIntent,
+  describeAction,
   isAutomatic,
   isAuditComment,
   isStatusChange,
@@ -487,7 +491,7 @@ async function executeApprovedPlanHandler(
     candidate,
     charter,
     internalCaller,
-    managerFeedback: item.managerFeedback?.reason,
+    managerFeedback: liveManagerFeedback(item.managerFeedback),
     managerAnswers: managerAnswersOf(item),
   });
 }
@@ -747,6 +751,8 @@ export function validatePlanStepOutcomes(args: {
   initialActions: readonly ExecutionOutput['actions'][number][];
   initialLedger: readonly AppliedAction[];
   surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
+  /** The manager's live feedback on the run; a step may rest on it only when it is here. */
+  managerFeedback?: string;
 }): void {
   const ordered = [...args.outcomes].sort((a, b) => a.step - b.step);
   if (
@@ -754,6 +760,14 @@ export function validatePlanStepOutcomes(args: {
     ordered.some((outcome, index) => outcome.step !== index + 1)
   ) {
     throw new Error('dependent phase did not account for every approved plan step exactly once');
+  }
+  if (!args.managerFeedback?.trim()) {
+    const cited = ordered.find((outcome) => outcome.basis === 'manager-feedback');
+    if (cited) {
+      throw new Error(
+        `approved plan step ${cited.step} cites manager feedback the run does not carry`,
+      );
+    }
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
   for (const [index, rawStep] of args.plan.steps.entries()) {
@@ -866,7 +880,7 @@ export function blockedPlanReason(
   run?: {
     plan: ExecutionPlan;
     actions: readonly ExecutionOutput['actions'][number][];
-    applied: readonly (AppliedAction | undefined)[];
+    applied: readonly (Partial<AppliedAction> | undefined)[];
   },
 ): string | undefined {
   const blocked = outcomes.filter((outcome) => outcome.status === 'blocked');
@@ -900,6 +914,46 @@ export function blockedPlanReason(
   return `${blocked.length} approved plan step(s) remained blocked: ${blocked
     .map((outcome) => `step ${outcome.step} (${outcome.evidence})`)
     .join('; ')}`;
+}
+
+/**
+ * Why the run stops before its closing actions reach the gate, if it does.
+ *
+ * A run stops when nothing has landed and no decision could still complete
+ * the plan: the prerequisite phase failed, or a plan step is blocked in a way
+ * the closing actions would not settle even if every one of them landed.
+ * Putting the closing set to the manager then would ask for a decision that
+ * changes nothing; the record carries the reason instead and no message is
+ * sent for it. Once work has landed the run goes on as before, because the
+ * closing set may be the audit of what landed.
+ *
+ * Args:
+ *   run: The prerequisite ledger, the closing actions and the outcomes.
+ *
+ * Returns:
+ *   The stop reason, or undefined when the closing set should reach the gate.
+ */
+export function closingStopReason(run: {
+  plan: ExecutionPlan;
+  outcomes: readonly PlanStepOutcome[];
+  initialActions: readonly ExecutionOutput['actions'][number][];
+  initialApplied: readonly AppliedAction[];
+  closingActions: readonly ExecutionOutput['actions'][number][];
+  initialFailure?: string;
+  surfaces: readonly SurfaceRecord[];
+}): string | undefined {
+  const landed = landedWork(
+    { actions: run.initialActions, applied: run.initialApplied },
+    run.surfaces,
+  );
+  if (landed.length > 0) return undefined;
+  if (run.initialFailure) return run.initialFailure;
+  const asIfLanded = run.closingActions.map((): Partial<AppliedAction> => ({ ok: true }));
+  return blockedPlanReason(run.outcomes, {
+    plan: run.plan,
+    actions: [...run.initialActions, ...run.closingActions],
+    applied: [...run.initialApplied, ...asIfLanded],
+  });
 }
 
 /** Author the one bounded closing action set from the persisted prerequisite ledger. */
@@ -939,7 +993,7 @@ export const authorDependentActions = internalAction({
         surfaces,
         mode: 'real',
         autonomousActions: autonomousActionsOn(agent),
-        managerFeedback: item.managerFeedback?.reason,
+        managerFeedback: liveManagerFeedback(item.managerFeedback),
         managerAnswers: managerAnswersOf(item),
         initialOutput: initial,
         initialLedger: initial.applied,
@@ -960,6 +1014,7 @@ export const authorDependentActions = internalAction({
           slug: surface.slug,
           displayName: surface.displayName,
         })),
+        managerFeedback: liveManagerFeedback(item.managerFeedback),
       });
       const transitionRefusal = dependentTransitionRefusal({
         plan,
@@ -980,6 +1035,37 @@ export const authorDependentActions = internalAction({
         actionIndexOffset: initial.actions.length,
         initial,
       };
+      const stop = closingStopReason({
+        plan,
+        outcomes: output.planStepOutcomes,
+        initialActions: initial.actions,
+        initialApplied: initial.applied,
+        closingActions: output.actions,
+        initialFailure: initial.initialFailure,
+        surfaces,
+      });
+      if (stop) {
+        const offset = initial.actions.length;
+        const withheld: AppliedAction[] = output.actions.map((action, index) => ({
+          tool: action.tool,
+          ok: true,
+          held: true,
+          reason: WITHHELD_ON_STOP,
+          effect: describeAction(action),
+          idempotencyKey: actionIdempotencyKey({
+            workItemId: args.workItemId,
+            runId: args.runId,
+            actionIndex: offset + index,
+          }),
+        }));
+        await ctx.runMutation(internal.work.setFailed, {
+          workItemId: args.workItemId,
+          runId: args.runId,
+          reason: stop,
+          output: flattenedDependentOutput(dependent, withheld),
+        });
+        return { ok: false, reason: stop };
+      }
       if (dependent.actions.length === 0) {
         const finalOutput = flattenedDependentOutput(dependent, []);
         const reason = initial.initialFailure ?? blockedPlanReason(output.planStepOutcomes);
@@ -1142,10 +1228,11 @@ export const applyApprovedActions = internalAction({
             { ...output, actions: repaired.actions },
             repaired.applied,
             knownValues,
+            surfaces,
           );
         }
       }
-      return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues);
+      return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues, surfaces);
     } catch (err) {
       const reason = (err as Error).message;
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
@@ -1439,6 +1526,7 @@ async function finishRun(
   rawOutput: LedgerOutput | DependentPendingOutput,
   rawApplied: AppliedAction[],
   knownValues: readonly string[] = [],
+  surfaces: readonly SurfaceRecord[] = [],
 ): Promise<{ ok: boolean; reason?: string }> {
   // The whole persisted record passes the exact-value layer once more here:
   // the adapters already applied it to provider text, and this covers every
@@ -1523,6 +1611,17 @@ async function finishRun(
         ok: true,
         reason: "automatic actions applied; the rest await the manager's approval",
       };
+    }
+    // A prerequisite failure with nothing landed leaves the closing phase
+    // nothing to audit and the manager nothing to decide: the run stops here.
+    if (reason && landedWork({ ...output, applied: settled }, surfaces).length === 0) {
+      await ctx.runMutation(internal.work.setFailed, {
+        workItemId,
+        reason,
+        runId: claim.runId,
+        output: { ...output, applied: settled },
+      });
+      return { ok: false, reason };
     }
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
       workItemId,

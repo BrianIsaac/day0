@@ -11,6 +11,11 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
+import {
+  managerNotificationMode,
+  NOTIFICATIONS_CHANGE_REASON,
+  type ManagerNotificationMode,
+} from '../src/work/manager-notes';
 
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
 export type PermissionGrantSource = (typeof PERMISSION_GRANT_SOURCES)[number];
@@ -339,6 +344,31 @@ export const grantScope = internalMutation({
  * reads as off). Every change that changes anything is an event; setting
  * the value the row already has records nothing.
  */
+/**
+ * Choose how the manager hears about run outcomes: as each run finishes, or
+ * in one hourly digest. Decision requests are sent at once either way.
+ */
+export const setManagerNotifications = mutation({
+  args: { agentId: v.id('agents'), mode: v.union(v.literal('per-run'), v.literal('digest')) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ ok: true; managerNotifications: ManagerNotificationMode; changed: boolean }> => {
+    assertRealMode('Manager notifications');
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const from = managerNotificationMode(agent);
+    if (from === args.mode) return { ok: true, managerNotifications: from, changed: false };
+    await ctx.db.patch(args.agentId, { managerNotifications: args.mode });
+    await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'agent.notifications-changed',
+      payload: { from, to: args.mode, reason: NOTIFICATIONS_CHANGE_REASON },
+      createdAt: Date.now(),
+    });
+    return { ok: true, managerNotifications: args.mode, changed: true };
+  },
+});
+
 export const setAutonomousActions = mutation({
   args: { agentId: v.id('agents'), on: v.boolean() },
   handler: async (

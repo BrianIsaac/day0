@@ -31,6 +31,7 @@ import {
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
 import {
+  batchDecisionNoticeText,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
   undeliveredDecisionReason,
@@ -47,6 +48,14 @@ import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
+import { landedWork, stopDetail, stoppedReason } from '../src/work/stop';
+import {
+  digestText,
+  landedNoteText,
+  managerNotificationMode,
+  stoppedNoteText,
+  type ManagerNoteKind,
+} from '../src/work/manager-notes';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /** Parked rows examined per state in one re-evaluation call; the rest continue by schedule. */
@@ -730,6 +739,42 @@ export const prepareDecisionRequest = internalMutation({
     if (args.kind === 'actions' && heldIndexes.length === 0) {
       return { prepared: false as const, reason: 'no held actions need a decision' };
     }
+    // The other held action sets already asked on this channel, so the
+    // request can offer one code for all of them.
+    const openActionDecisions =
+      args.kind === 'actions'
+        ? (
+            await ctx.db
+              .query('workItems')
+              .withIndex('by_agent_state', (q) =>
+                q.eq('agentId', row.agentId).eq('state', 'actions-pending'),
+              )
+              .collect()
+          ).flatMap((other) => {
+            const decision = other.decision;
+            if (
+              other._id === row._id ||
+              !decision ||
+              decision.kind !== 'actions' ||
+              !decision.ts ||
+              decision.decidedAt ||
+              decision.surfaceSlug !== chat.slug ||
+              decision.channel !== chat.managerDmChannelId ||
+              !other.pendingRunId ||
+              other.approvedIndexes !== undefined
+            ) {
+              return [];
+            }
+            return [
+              {
+                workItemId: other._id,
+                decisionId: decision.id,
+                pendingRunId: other.pendingRunId,
+                title: other.title,
+              },
+            ];
+          })
+        : [];
     const requestRunId = await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.decision-requesting',
@@ -769,6 +814,8 @@ export const prepareDecisionRequest = internalMutation({
       surface: toSurfaceRecord(chat),
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      pendingRunId: row.pendingRunId,
+      openActionDecisions,
     };
   },
 });
@@ -1077,6 +1124,113 @@ export const recordManagerReplyNotice = internalMutation({
   },
 });
 
+/**
+ * Decide every member of a batch that is still exactly as it was sent.
+ *
+ * A member counts as open only while its own code is undecided, its item is
+ * still parked and its pending run is the one whose payloads the request
+ * showed; anything else is left as it is and named in the acknowledgement.
+ * Each open member goes through the same transaction as a single reply, so
+ * its apply keeps its own idempotency keys.
+ */
+async function resolveChannelBatch(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  batch: Doc<'decisionBatches'>,
+  args: { userId: string; messageTs: string; reply: { verb: 'approve' | 'reject'; id: string; reason?: string } },
+) {
+  if (batch.surfaceSlug !== surface.slug || batch.channel !== surface.managerDmChannelId) {
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'work.decision-ignored',
+      payload: {
+        surfaceId: surface._id,
+        messageTs: args.messageTs,
+        userId: args.userId,
+        reason: 'batch belongs to another manager channel',
+      },
+      createdAt: Date.now(),
+    });
+    return { status: 'ignored' as const, reason: 'batch belongs to another manager channel' };
+  }
+  const anchor = batch.members[0]?.workItemId;
+  if (batch.decidedAt) {
+    if (batch.decidedTs === args.messageTs) return { status: 'already-decided' as const, notified: false };
+    const notified = anchor
+      ? await queueManagerReplyNotice(ctx, {
+          surfaceId: surface._id,
+          workItemId: anchor,
+          decisionId: batch.id,
+          messageTs: args.messageTs,
+          kind: 'received',
+          text: `Batch ${batch.id} was already ${batch.outcome ?? 'decided'}.`,
+        })
+      : false;
+    return { status: 'already-decided' as const, notified };
+  }
+  const decided: string[] = [];
+  const skipped: Array<{ decisionId: string; reason: string }> = [];
+  for (const member of batch.members) {
+    const item = await ctx.db.get(member.workItemId);
+    const decision = item?.decision;
+    if (!item || !decision || decision.id !== member.decisionId) {
+      skipped.push({ decisionId: member.decisionId, reason: 'no longer open' });
+      continue;
+    }
+    if (decision.decidedAt) {
+      skipped.push({ decisionId: member.decisionId, reason: `already ${decision.outcome ?? 'decided'}` });
+      continue;
+    }
+    if (
+      item.state !== 'actions-pending' ||
+      item.pendingRunId !== member.pendingRunId ||
+      item.approvedIndexes !== undefined
+    ) {
+      skipped.push({ decisionId: member.decisionId, reason: 'the run moved on' });
+      continue;
+    }
+    if (args.reply.verb === 'approve') {
+      const actionCount = actionsOf(item.output).length;
+      const heldIndexes = indexesWith(verdictList(item.actionVerdicts, actionCount), 'held');
+      await approveActionsInTransaction(
+        ctx,
+        item,
+        { workItemId: item._id, pendingRunId: member.pendingRunId, approvedIndexes: heldIndexes },
+        'channel',
+        args.messageTs,
+      );
+    } else {
+      await rejectActionsInTransaction(
+        ctx,
+        item,
+        { workItemId: item._id, pendingRunId: member.pendingRunId, reason: args.reply.reason ?? '' },
+        'channel',
+        args.messageTs,
+      );
+    }
+    decided.push(member.decisionId);
+  }
+  const outcome = args.reply.verb === 'approve' ? 'approved' : 'rejected';
+  await ctx.db.patch(batch._id, { decidedAt: Date.now(), outcome, decidedTs: args.messageTs });
+  await ctx.db.insert('events', {
+    agentId: surface.agentId,
+    type: 'work.decision-batch-decided',
+    payload: { batchId: batch.id, outcome, decided, skipped, messageTs: args.messageTs },
+    createdAt: Date.now(),
+  });
+  if (anchor) {
+    await queueManagerReplyNotice(ctx, {
+      surfaceId: surface._id,
+      workItemId: anchor,
+      decisionId: batch.id,
+      messageTs: args.messageTs,
+      kind: 'received',
+      text: batchDecisionNoticeText({ id: batch.id, verb: args.reply.verb, decided, skipped }),
+    });
+  }
+  return { status: 'decided' as const, outcome: args.reply.verb, decided, skipped };
+}
+
 async function queueManagerReplyNotice(
   ctx: MutationCtx,
   args: {
@@ -1324,12 +1478,12 @@ export const retryFailed = mutation({
     // the work is theirs to give. The re-evaluation leaves that one rule out.
     const skipReason =
       row.state === 'skipped' && typeof verdict?.reason === 'string' ? verdict.reason : '';
-    const waived: 'quality-fit' | 'eligibility' | undefined = skipReason.startsWith(
+    const waived: 'quality-fit' | 'scope' | undefined = skipReason.startsWith(
       QUALITY_FIT_SKIP_PREFIX,
     )
       ? 'quality-fit'
       : skipReason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)
-        ? 'eligibility'
+        ? 'scope'
         : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
@@ -1340,8 +1494,10 @@ export const retryFailed = mutation({
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
       ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
-      ...(waived === 'eligibility' ? { eligibilityWaivedAt: Date.now() } : {}),
-      ...(feedback ? { managerFeedback: { reason: feedback, at: Date.now() } } : {}),
+      ...(waived === 'scope' ? { scopeWaivedAt: Date.now() } : {}),
+      ...(feedback
+        ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'retry-note' as const } }
+        : {}),
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,
@@ -1351,7 +1507,7 @@ export const retryFailed = mutation({
         resumeState: next,
         fromState: row.state,
         ...(waived ? { waived } : {}),
-        ...(feedback ? { feedback: true } : {}),
+        ...(feedback ? { feedback } : {}),
       },
       createdAt: Date.now(),
     });
@@ -1695,7 +1851,11 @@ export const setCompleted = internalMutation({
       executionRunId: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
-      managerFeedback: undefined,
+      // The feedback this run answered stays on the item as its record; the
+      // mark keeps a later run from reading it as a live direction.
+      ...(row.managerFeedback && row.managerFeedback.addressedAt === undefined
+        ? { managerFeedback: { ...row.managerFeedback, addressedAt: Date.now() } }
+        : {}),
       managerAnswers: undefined,
     });
     await ctx.db.insert('events', {
@@ -1704,6 +1864,18 @@ export const setCompleted = internalMutation({
       payload: { workItemId: args.workItemId, output: args.output },
       createdAt: Date.now(),
     });
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect()
+    ).map(toSurfaceRecord);
+    const landed = landedWork(args.output, surfaces);
+    if (landed.length > 0) {
+      await queueManagerNote(ctx, row, 'landed', (agentName) =>
+        landedNoteText({ agentName, title: row.title, landed, outcome: 'completed' }),
+      );
+    }
   },
 });
 
@@ -1715,6 +1887,12 @@ export const setFailed = internalMutation({
     // the boss can read what was written before deciding whether to retry.
     output: v.optional(v.any()),
     runId: v.optional(v.id('events')),
+    /**
+     * Whether the run stopped: nothing landed and nothing is left to decide.
+     * Read from the ledger when absent; the comparison arm passes false, since
+     * it has no gate and no manager loop for a stop to mean anything to.
+     */
+    stopped: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
@@ -1725,9 +1903,20 @@ export const setFailed = internalMutation({
     // record for a failure the winner already wrote.
     const terminal = ['completed', 'failed', 'cancelled', 'skipped'];
     if (terminal.includes(row.state)) return;
+    // A run that landed nothing and left nothing to decide stopped: the
+    // record says so, Retry stands, and nothing pages the manager for it.
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect()
+    ).map(toSurfaceRecord);
+    const landed = landedWork(args.output, surfaces);
+    const stopped = args.stopped ?? landed.length === 0;
+    const reason = stopped ? stoppedReason(args.reason) : args.reason;
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
-      skipReason: args.reason,
+      skipReason: reason,
       pendingRunId: undefined,
       approvedIndexes: undefined,
       actionVerdicts: undefined,
@@ -1742,11 +1931,226 @@ export const setFailed = internalMutation({
       type: 'work.failed',
       payload: {
         workItemId: args.workItemId,
-        reason: args.reason,
+        reason,
+        ...(stopped ? { stopped: true } : {}),
         ...(args.output !== undefined ? { output: args.output } : {}),
       },
       createdAt: Date.now(),
     });
+    if (args.stopped === false) return;
+    if (stopped) {
+      await queueManagerNote(ctx, row, 'stopped', (agentName) =>
+        stoppedNoteText({ agentName, title: row.title, reason: stopDetail(reason) }),
+      );
+    } else {
+      await queueManagerNote(ctx, row, 'landed', (agentName) =>
+        landedNoteText({ agentName, title: row.title, landed, outcome: 'failed', reason }),
+      );
+    }
+  },
+});
+
+/**
+ * Keep a note for the manager about a finished run, and send it when the
+ * mode says so.
+ *
+ * Per run, a landed note is sent at once and a stop is not kept at all:
+ * nothing needs deciding, and the card and the ledger already say so. In
+ * digest mode both are kept for the hourly send. Without a manager channel
+ * there is nowhere to send, so nothing is kept.
+ */
+async function queueManagerNote(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  kind: ManagerNoteKind,
+  text: (agentName: string) => string,
+): Promise<void> {
+  const agent = await ctx.db.get(row.agentId);
+  if (!agent) return;
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .collect();
+  if (!surfaces.some(isManagerChannel)) return;
+  const mode = managerNotificationMode(agent);
+  if (kind === 'stopped' && mode === 'per-run') return;
+  const noteId = await ctx.db.insert('managerNotes', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    kind,
+    text: text(agent.name),
+    createdAt: Date.now(),
+  });
+  if (mode === 'per-run') {
+    await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerNote, { noteId });
+  }
+}
+
+/** The delivery fields every manager message needs, for one agent's manager channel. */
+async function managerDelivery(ctx: MutationCtx, agentId: Id<'agents'>) {
+  const [agent, surfaceRows, grants] = await Promise.all([
+    ctx.db.get(agentId),
+    ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .collect(),
+    ctx.db
+      .query('permissionGrants')
+      .withIndex('by_agent_scope', (q) => q.eq('agentId', agentId))
+      .collect(),
+  ]);
+  const chat = surfaceRows
+    .filter(isManagerChannel)
+    .sort(
+      (left, right) =>
+        (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
+          (right.waterfallPosition ?? Number.MAX_SAFE_INTEGER) || left.createdAt - right.createdAt,
+    )[0];
+  if (!agent || !chat) return undefined;
+  return {
+    agentId,
+    agentName: agent.name,
+    surface: toSurfaceRecord(chat),
+    surfaces: surfaceRows.map(toSurfaceRecord),
+    grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+  };
+}
+
+/** Claim one per-run note for sending. */
+export const prepareManagerNote = internalMutation({
+  args: { noteId: v.id('managerNotes') },
+  handler: async (ctx, args) => {
+    const note = await ctx.db.get(args.noteId);
+    if (!note || note.claimedAt !== undefined || note.providerTs !== undefined) {
+      return { prepared: false as const };
+    }
+    const delivery = await managerDelivery(ctx, note.agentId);
+    if (!delivery) return { prepared: false as const };
+    const requestRunId = await ctx.db.insert('events', {
+      agentId: note.agentId,
+      type: 'work.manager-note-sending',
+      payload: { workItemId: note.workItemId, noteId: note._id, kind: note.kind },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(note._id, { claimedAt: Date.now() });
+    return {
+      prepared: true as const,
+      ...delivery,
+      requestRunId,
+      workItemId: note.workItemId,
+      text: note.text,
+    };
+  },
+});
+
+export const recordManagerNote = internalMutation({
+  args: {
+    noteId: v.id('managerNotes'),
+    ts: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const note = await ctx.db.get(args.noteId);
+    if (!note) return;
+    const failure = args.failure?.slice(0, 240);
+    await ctx.db.patch(note._id, {
+      ...(args.ts ? { providerTs: args.ts } : {}),
+      ...(failure ? { failure } : {}),
+    });
+    if (failure) {
+      await ctx.db.insert('events', {
+        agentId: note.agentId,
+        type: 'work.manager-note-failed',
+        payload: { workItemId: note.workItemId, noteId: note._id, kind: note.kind, reason: failure },
+        createdAt: Date.now(),
+      });
+    }
+  },
+});
+
+/** The agents whose kept notes are due in a digest. */
+export const digestCandidates = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Id<'agents'>[]> => {
+    const agents = await ctx.db.query('agents').collect();
+    const due: Id<'agents'>[] = [];
+    for (const agent of agents) {
+      if (managerNotificationMode(agent) !== 'digest') continue;
+      const notes = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+        .collect();
+      if (notes.some((note) => note.claimedAt === undefined && note.providerTs === undefined)) {
+        due.push(agent._id);
+      }
+    }
+    return due;
+  },
+});
+
+/** Claim every kept note of one agent for a single digest send. */
+export const prepareManagerDigest = internalMutation({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent || managerNotificationMode(agent) !== 'digest') return { prepared: false as const };
+    const notes = (
+      await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+        .collect()
+    )
+      .filter((note) => note.claimedAt === undefined && note.providerTs === undefined)
+      .sort((left, right) => left.createdAt - right.createdAt);
+    if (notes.length === 0) return { prepared: false as const };
+    const delivery = await managerDelivery(ctx, args.agentId);
+    if (!delivery) return { prepared: false as const };
+    const digestId = await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'work.manager-digest-sending',
+      payload: { noteIds: notes.map((note) => note._id), count: notes.length },
+      createdAt: Date.now(),
+    });
+    for (const note of notes) {
+      await ctx.db.patch(note._id, { claimedAt: Date.now(), digestId });
+    }
+    return {
+      prepared: true as const,
+      ...delivery,
+      requestRunId: digestId,
+      workItemId: notes[0].workItemId,
+      noteIds: notes.map((note) => note._id),
+      text: digestText({ agentName: agent.name, notes }),
+    };
+  },
+});
+
+export const recordManagerDigest = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    noteIds: v.array(v.id('managerNotes')),
+    ts: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const failure = args.failure?.slice(0, 240);
+    for (const noteId of args.noteIds) {
+      const note = await ctx.db.get(noteId);
+      if (!note) continue;
+      // A digest that did not land releases its notes for the next one.
+      await ctx.db.patch(noteId, {
+        ...(args.ts ? { providerTs: args.ts } : { claimedAt: undefined, digestId: undefined }),
+        ...(failure ? { failure } : {}),
+      });
+    }
+    if (failure) {
+      await ctx.db.insert('events', {
+        agentId: args.agentId,
+        type: 'work.manager-digest-failed',
+        payload: { noteIds: args.noteIds, reason: failure },
+        createdAt: Date.now(),
+      });
+    }
   },
 });
 
@@ -2085,6 +2489,92 @@ export const approveActions = mutation({
   },
 });
 
+/**
+ * Approve held actions across several items in one transaction.
+ *
+ * Each member is the same exact approval the single-item control sends: the
+ * run whose literal payloads were shown fences it, and the indexes name the
+ * rows. The batch is all or nothing, so a member whose run moved on refuses
+ * the whole batch and the manager decides again from a fresh list; every
+ * member's apply keeps its own idempotency keys, keyed by its item and run.
+ */
+export const approveActionsBatch = mutation({
+  args: {
+    members: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        pendingRunId: v.id('events'),
+        approvedIndexes: v.array(v.number()),
+      }),
+    ),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ ok: true; approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }> }> => {
+    if (args.members.length === 0) throw new Error('a batch approves at least one item');
+    const seen = new Set<string>();
+    const approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }> = [];
+    for (const member of args.members) {
+      if (seen.has(member.workItemId)) throw new Error('an item appears twice in the batch');
+      seen.add(member.workItemId);
+      const row = await assertOwnsWorkItem(ctx, member.workItemId);
+      const result = await approveActionsInTransaction(ctx, row, member, 'dashboard');
+      approved.push({ workItemId: member.workItemId, approvedIndexes: result.approvedIndexes });
+    }
+    return { ok: true, approved };
+  },
+});
+
+/** Record one batch code over the open action decisions it was issued for. */
+export const prepareDecisionBatch = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    batchId: v.string(),
+    surfaceSlug: v.string(),
+    channel: v.string(),
+    members: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        decisionId: v.string(),
+        pendingRunId: v.id('events'),
+      }),
+    ),
+  },
+  handler: async (ctx, args): Promise<{ prepared: boolean; reason?: string }> => {
+    if (!/^[23456789abcdefghjkmnpqrstuvwxyz]{6}$/.test(args.batchId)) {
+      throw new Error('batch id is not a six-character random token');
+    }
+    if (args.members.length < 2) return { prepared: false, reason: 'a batch names at least two decisions' };
+    const [itemCollision, batchCollision] = await Promise.all([
+      ctx.db
+        .query('workItems')
+        .withIndex('by_agent_decision', (q) => q.eq('agentId', args.agentId).eq('decision.id', args.batchId))
+        .first(),
+      ctx.db
+        .query('decisionBatches')
+        .withIndex('by_agent_id', (q) => q.eq('agentId', args.agentId).eq('id', args.batchId))
+        .first(),
+    ]);
+    if (itemCollision || batchCollision) return { prepared: false, reason: 'batch id collision' };
+    await ctx.db.insert('decisionBatches', {
+      agentId: args.agentId,
+      id: args.batchId,
+      surfaceSlug: args.surfaceSlug,
+      channel: args.channel,
+      members: args.members,
+      requestedAt: Date.now(),
+    });
+    await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'work.decision-batch-issued',
+      payload: { batchId: args.batchId, members: args.members },
+      createdAt: Date.now(),
+    });
+    return { prepared: true };
+  },
+});
+
 async function approveActionsInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
@@ -2199,7 +2689,14 @@ async function rejectActionsInTransaction(
     skipReason,
     ...(output !== undefined ? { output } : {}),
     ...(feedback
-      ? { managerFeedback: { reason: feedback, at: Date.now(), runId: args.pendingRunId } }
+      ? {
+          managerFeedback: {
+            reason: feedback,
+            at: Date.now(),
+            runId: args.pendingRunId,
+            kind: 'rejection' as const,
+          },
+        }
       : {}),
     pendingRunId: undefined,
     approvedIndexes: undefined,
@@ -2303,7 +2800,14 @@ export const resolveChannelDecision = internalMutation({
         q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
       )
       .first();
-    if (!row?.decision) return await unknown('unknown decision id');
+    if (!row?.decision) {
+      const batch = await ctx.db
+        .query('decisionBatches')
+        .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
+        .first();
+      if (!batch) return await unknown('unknown decision id');
+      return await resolveChannelBatch(ctx, surface, batch, args);
+    }
     if (
       row.decision.surfaceSlug !== surface.slug ||
       row.decision.channel !== surface.managerDmChannelId

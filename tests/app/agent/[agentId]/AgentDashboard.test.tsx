@@ -26,6 +26,13 @@ import {
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
 
 describe('live event labels', (): void => {
+  it('marks a failure whose run stopped', (): void => {
+    expect(
+      eventLabel({ type: 'work.failed', payload: { workItemId: 'w1', stopped: true, reason: 'stopped: x' } }),
+    ).toBe('work.failed · stopped');
+    expect(eventLabel({ type: 'work.failed', payload: { workItemId: 'w1', reason: 'x' } })).toBe('work.failed');
+  });
+
   it('shows every candidate slug when a charter surface match is ambiguous', (): void => {
     expect(
       eventLabel({
@@ -352,6 +359,67 @@ describe('header state pill', (): void => {
     expect(markup).toContain('Active · Supervised');
     expect(markup).not.toContain('cold-start');
     expect(markup).not.toContain('posture');
+  });
+});
+
+describe('retrying a skipped item', (): void => {
+  const skipped = (reason: string): Doc<'workItems'> =>
+    ({
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'skipped',
+      title: 'Reconcile the partner invoice',
+      contentSummary: 'A finance ask.',
+      sourceSystem: 'linear',
+      sourceCategory: 'ticket-queue',
+      externalId: 'FIN-3',
+      observedAt: 1,
+      contentRefs: [],
+      verdict: { decision: 'skip', reason },
+      skipReason: reason,
+    }) as unknown as Doc<'workItems'>;
+  const noop = (): void => undefined;
+  const resolved = async (): Promise<void> => undefined;
+  const render = (row: Doc<'workItems'>): string =>
+    renderToStaticMarkup(
+      <WorkItemCard
+        item={row}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={noop}
+        onCancelPlan={noop}
+        onRetryFailed={noop}
+        onReconcileFailed={resolved}
+        onApproveActions={resolved}
+        onRejectActions={resolved}
+        onResendDecision={resolved}
+      />,
+    );
+
+  it('shows a stopped run as stopped, with the reason and Retry', (): void => {
+    const markup = render({
+      ...skipped('unused'),
+      state: 'failed',
+      verdict: undefined,
+      skipReason: 'stopped: 1 of 1 actions did not change the work environment: mcp.call (snapshot timed out)',
+    } as unknown as Doc<'workItems'>);
+    expect(markup).toContain('>stopped<');
+    expect(markup).not.toContain('>failed<');
+    expect(markup).toContain('stopped, nothing landed and nothing to decide: 1 of 1 actions did not change');
+    expect(markup).toContain('Retry');
+  });
+
+  it('offers Retry on an out-of-scope skip as the manager\'s scope decision', (): void => {
+    const markup = render(skipped('out-of-scope: no charter or current documented-system overlap'));
+    expect(markup).toContain('Retry');
+    expect(markup).toContain('Retry re-evaluates this item as in scope, on your decision');
+    expect(markup).not.toContain('without the quality-fit filter');
+  });
+
+  it('keeps Retry off a skip that is neither the quality-fit filter nor the scope judgement', (): void => {
+    const markup = render(skipped('already-claimed: state=executing'));
+    expect(markup).not.toContain('>Retry<');
   });
 });
 

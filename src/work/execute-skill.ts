@@ -420,12 +420,12 @@ const REAL_PREAMBLE = [
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
   '  - The charter decides which work you take; it adds no verification step. Do not invent source-evidence, ownership, priority or duplicate-check prerequisites that the candidate, the plan or a loaded procedure does not require. Only a plan step marked advisory or checking a candidate property that neither the candidate nor a loaded procedure requires is advisory: report what the data shows and never let it hold back the documented sequence.',
   "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
-  '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
+  '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it. The gate itself tells the manager what needs their decision and what landed, so never send a note that only reports what the actions do.',
   '',
   'Closing the loop:',
   "  - Every surface that originated this work item sees the work happen: when the candidate `Source` line contains `ticket-queue`, add the audit comment on the originating issue through `mcp.call` with the runbook's comment tool, and only after it, if the work is complete, the state change with the runbook's state argument. A status change is never the only trace of who acted.",
   '  - When the candidate carries a `Reply target:` line, the reply into that channel or thread is the deliverable: emit it as the `chat.postMessage` action described above.',
-  '  - When a chat surface is connected, ALSO send the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id: a question or escalation when you have one, else a one-line note of what the actions in this response do. When none is connected, say so in `notes` instead of substituting another channel.',
+  '  - When a chat surface is connected and you have a question or an escalation for the manager, send it as the manager DM through `http.request` to `chat.postMessage` with the manager DM channel id; with nothing to ask, send no DM. When none is connected, put the question in `notes` instead of substituting another channel.',
   '  - Each provider mutation is its own action so it can be decided and applied on its own.',
 ].join('\n');
 
@@ -596,12 +596,17 @@ const planStepOutcomeSchema = z
   })
   .strict();
 
-/** The real closing phase may also report a step as not verifiable from the ledger. */
+/**
+ * The real closing phase may also report a step as not verifiable from the
+ * ledger, and says what each outcome rests on: the ledger, or a fact the
+ * manager's feedback stated.
+ */
 const realPlanStepOutcomeSchema = z
   .object({
     step: z.number().int().positive(),
     status: z.enum(['satisfied', 'blocked', 'not-verifiable']),
     evidence: z.string().min(1),
+    basis: z.enum(['ledger', 'manager-feedback']),
   })
   .strict();
 
@@ -802,6 +807,14 @@ export function normalisePlanStepOutcomes(
   });
 }
 
+/** The persisted outcome names its basis only when it is not the ledger. */
+function recordedPlanStepBasis(
+  outcome: PlanStepOutcome | (Omit<PlanStepOutcome, 'basis'> & { basis?: 'ledger' | 'manager-feedback' }),
+): PlanStepOutcome {
+  const { basis, ...rest } = outcome;
+  return basis === 'manager-feedback' ? { ...rest, basis } : rest;
+}
+
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
 
 function materialiseGeneratedAction(action: GeneratedAction): MockAction {
@@ -919,6 +932,26 @@ export function managerFeedbackLines(feedback: string | undefined): string[] {
     JSON.stringify(reason),
     'Address the feedback before anything else: where it states a fact, treat that fact as approved evidence for this work item; where it asks for a change, make that change. Do not repeat the rejected draft.',
   ];
+}
+
+/**
+ * The closing-phase rule for what a plan step outcome may rest on.
+ *
+ * With feedback on the run, the fact the manager stated is evidence on the
+ * manager's word, and the row says so; without it, every row rests on the
+ * ledger and a row claiming otherwise is refused at the gate.
+ *
+ * Args:
+ *   feedback: The manager's feedback the run carries, or undefined.
+ *
+ * Returns:
+ *   One instruction line.
+ */
+export function planStepBasisRule(feedback: string | undefined): string {
+  if (!feedback?.trim()) {
+    return 'Every plan step outcome has basis `ledger`; no manager feedback is on this run, so no step may rest on `manager-feedback`.';
+  }
+  return "A fact the manager's feedback states is approved evidence for this work item: a plan step that fact settles is satisfied with basis `manager-feedback` and evidence quoting the fact, even when the ledger does not show it. Every other outcome has basis `ledger`. A promised read the ledger lacks stays blocked; the manager's word settles a fact, never a read the plan promised.";
 }
 
 export interface RunDependentSkillArgs extends RunSkillArgs {
@@ -2581,6 +2614,7 @@ export async function runDependentSkill(
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
+    ...(mode === 'real' ? [planStepBasisRule(args.managerFeedback)] : []),
     ...(advisory.length > 0
       ? [
           `Advisory plan steps: ${advisory.join(', ')}. Each checks a property of the candidate (ownership, priority, age) that the ledger cannot carry and nothing asked for. Report such a step as not-verifiable with what the data showed, never as blocked, and never let it hold back the documented steps, the audit comment or the state change the work earned.`,
@@ -2645,7 +2679,7 @@ export async function runDependentSkill(
       notes: raw.notes,
       actions: raw.actions.map(materialiseGeneratedAction),
       procedureTrails: raw.procedureTrails,
-      planStepOutcomes: normalisePlanStepOutcomes(ordered, advisory),
+      planStepOutcomes: normalisePlanStepOutcomes(ordered.map(recordedPlanStepBasis), advisory),
     };
   }
 
