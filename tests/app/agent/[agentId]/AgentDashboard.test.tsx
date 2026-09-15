@@ -24,6 +24,9 @@ import {
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
+import { strikeOutcome, strikePreview } from '../../../../src/agent/charter-constraints';
+import type { Charter } from '../../../../src/agent/charter';
+import { strikeRefusalBody } from '../../../fixtures/charter-strike-refusal-2026-09-15';
 
 describe('live event labels', (): void => {
   it('marks a failure whose run stopped', (): void => {
@@ -561,7 +564,116 @@ describe('charter confirm-or-strike list', (): void => {
       },
     } as unknown as Doc<'charters'>;
     const markup = renderToStaticMarkup(<CharterCard charter={charter} />);
-    expect(markup).toContain('Approve without 1 struck rule');
+    expect(markup).toContain('>Approve, 1 rule struck<');
+    const twoStruck = {
+      ...charter,
+      body: { ...charter.body, constraints: constraints.map((c) => ({ ...c, struck: true })) },
+    } as unknown as Doc<'charters'>;
+    expect(renderToStaticMarkup(<CharterCard charter={twoStruck} />)).toContain(
+      '>Approve, 2 rules struck<',
+    );
+  });
+
+  it('says what a strike removes, and disables one the effective charter refuses with the reason', (): void => {
+    const markup = renderToStaticMarkup(
+      <ConstraintList
+        constraints={constraints}
+        approved={false}
+        onStrike={() => undefined}
+        previewStrike={(index) =>
+          index === 0
+            ? { removedClauses: ['Handle owned, prioritized Linear tickets.'] }
+            : { removedClauses: [] }
+        }
+      />,
+    );
+    expect(markup).toContain('strikes the clause: “Handle owned, prioritized Linear tickets.”');
+    expect(markup).not.toContain('disabled=""');
+
+    const refused = renderToStaticMarkup(
+      <ConstraintList
+        constraints={constraints}
+        approved={false}
+        onStrike={() => undefined}
+        previewStrike={() => ({ removedClauses: [], refusal: 'strike refused: the only clause that bounds Linear' })}
+      />,
+    );
+    expect(refused).toContain('cannot be struck: strike refused: the only clause that bounds Linear');
+    expect(refused).toMatch(/<button[^>]*disabled=""[^>]*title="strike refused: the only clause that bounds Linear"[^>]*>Strike<\/button>/);
+
+    const plain = renderToStaticMarkup(
+      <ConstraintList
+        constraints={constraints}
+        approved={false}
+        onStrike={() => undefined}
+        previewStrike={() => ({ removedClauses: [] })}
+      />,
+    );
+    expect(plain).not.toContain('strikes the clause');
+    expect(plain).not.toContain('cannot be struck');
+  });
+});
+
+describe('the charter card and the strikes approval can honour', (): void => {
+  function draft(body: Charter): Doc<'charters'> {
+    return {
+      _id: 'charter-3',
+      _creationTime: 3,
+      agentId: 'agent-1',
+      version: '0.0',
+      approved: false,
+      createdAt: 3,
+      body,
+    } as unknown as Doc<'charters'>;
+  }
+
+  /** The Strike buttons in order, with whether each is disabled. */
+  function strikeButtons(markup: string): boolean[] {
+    return [...markup.matchAll(/<button([^>]*)>Strike<\/button>/g)].map((match) =>
+      match[1]!.includes('disabled=""'),
+    );
+  }
+
+  it('offers the 15 September strike as the clause it removes, and disables the one strike that was always refused', (): void => {
+    const markup = renderToStaticMarkup(<CharterCard charter={draft(strikeRefusalBody(false))} />);
+    expect(markup).toContain(
+      'strikes the clause: “Take ownership of Northstar CRM-dependent work that Brain must handle.”',
+    );
+    expect(markup).toContain(
+      'cannot be struck: strike or edit the whole will-not-do clause; removing only part could change its boundary',
+    );
+    expect(strikeButtons(markup)).toEqual([false, true, false]);
+  });
+
+  it('refuses up front the strike that would drop the only clause bounding a system', (): void => {
+    const body = strikeRefusalBody(false);
+    body.proposedBoundaries.willNotDo = ['Take ownership of Northstar CRM-dependent work that Brain must handle.'];
+    body.proposedBoundaries.escalationTriggers = [];
+    const markup = renderToStaticMarkup(<CharterCard charter={draft(body)} />);
+    expect(markup).toContain(
+      'cannot be struck: strike refused: “Take ownership of Northstar CRM-dependent work that Brain must handle.” is the only clause that bounds Northstar CRM',
+    );
+    expect(strikeButtons(markup)[2]).toBe(true);
+  });
+
+  it('enables exactly the strikes whose toggled charter approval would apply', (): void => {
+    const bounded = strikeRefusalBody(false);
+    bounded.proposedBoundaries.willNotDo = ['Take ownership of Northstar CRM-dependent work that Brain must handle.'];
+    bounded.proposedBoundaries.escalationTriggers = [];
+    for (const body of [strikeRefusalBody(false), bounded]) {
+      const markup = renderToStaticMarkup(<CharterCard charter={draft(body)} />);
+      const refusedAtApproval = body.constraints!.map((_, index) => {
+        const toggled = {
+          ...body,
+          constraints: body.constraints!.map((c, i) => (i === index ? { ...c, struck: true } : c)),
+        };
+        return !strikeOutcome(toggled).ok;
+      });
+      expect(strikeButtons(markup)).toEqual(refusedAtApproval);
+      body.constraints!.forEach((_, index) => {
+        expect(strikePreview(body, index).refusal !== undefined).toBe(refusedAtApproval[index]);
+      });
+    }
   });
 });
 
