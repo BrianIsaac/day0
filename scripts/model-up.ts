@@ -3,6 +3,7 @@
  * Starts the bundled model service, on the GPU wherever there is one to use.
  *
  *   pnpm model:up
+ *   pnpm redactor:up      # the same decision for the redaction component
  *
  * A device reservation cannot be written into docker-compose.yml as a default,
  * because a machine that cannot satisfy one does not ignore it: the container
@@ -31,6 +32,11 @@ const ENV_FILE = '.env.local';
 const BASE_FILE = 'docker-compose.yml';
 const GPU_FILE = 'docker-compose.gpu.yml';
 
+/** The services docker-compose.gpu.yml knows how to reserve a device for. */
+const GPU_SERVICES = ['model', 'redactor'] as const;
+type GpuService = (typeof GPU_SERVICES)[number];
+const SERVICE: GpuService = resolveService(process.argv[2]);
+
 type Mode = 'auto' | 'on' | 'off';
 
 /** Docker's refusals when it has no device to give, none of which are transient. */
@@ -45,15 +51,15 @@ async function main(): Promise<void> {
   const wantsGpu = mode === 'on' || (mode === 'auto' && hasNvidiaDriver());
 
   if (mode === 'off') {
-    console.log('model: MODEL_GPU=off, starting on the CPU.');
+    console.log(`${SERVICE}: MODEL_GPU=off, starting on the CPU.`);
   } else if (wantsGpu) {
     console.log(
       mode === 'on'
-        ? `model: MODEL_GPU=on, reserving ${deviceCount()} with ${GPU_FILE}.`
-        : `model: NVIDIA driver found, reserving ${deviceCount()} with ${GPU_FILE}.`,
+        ? `${SERVICE}: MODEL_GPU=on, reserving ${deviceCount()} with ${GPU_FILE}.`
+        : `${SERVICE}: NVIDIA driver found, reserving ${deviceCount()} with ${GPU_FILE}.`,
     );
   } else {
-    console.log('model: no NVIDIA driver on this machine, starting on the CPU.');
+    console.log(`${SERVICE}: no NVIDIA driver on this machine, starting on the CPU.`);
   }
 
   const first = await up(wantsGpu);
@@ -79,11 +85,17 @@ async function main(): Promise<void> {
   // request that failed. Compose would recreate it for the changed config,
   // but leaving that to inference is how a second run inherits the first
   // one's failure.
-  compose(false, ['--profile', 'model', 'rm', '-sf', 'model']);
+  compose(false, ['--profile', SERVICE, 'rm', '-sf', SERVICE]);
 
   const second = await up(false);
   if (second.code !== 0) process.exitCode = second.code;
   else report(false);
+}
+
+function resolveService(argument: string | undefined): GpuService {
+  const name = (argument ?? 'model').trim();
+  if ((GPU_SERVICES as readonly string[]).includes(name)) return name as GpuService;
+  fail(`"${name}" is not a service ${GPU_FILE} reserves a device for: ${GPU_SERVICES.join(', ')}.`);
 }
 
 function resolveMode(): Mode {
@@ -111,7 +123,7 @@ function hasNvidiaDriver(): boolean {
 
 function up(gpu: boolean): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn('docker', composeArgs(gpu, ['--profile', 'model', 'up', '-d', 'model']), {
+    const child = spawn('docker', composeArgs(gpu, ['--profile', SERVICE, 'up', '-d', SERVICE]), {
       stdio: ['inherit', 'inherit', 'pipe'],
     });
     let stderr = '';
@@ -154,7 +166,7 @@ function compose(gpu: boolean, rest: string[]): string {
  */
 function report(gpu: boolean): void {
   if (gpu) {
-    const devices = compose(true, ['exec', '-T', 'model', 'nvidia-smi', '-L']);
+    const devices = compose(true, ['exec', '-T', SERVICE, 'nvidia-smi', '-L']);
     const found = firstLines(devices, 4).filter((line) => line.startsWith('GPU '));
     if (found.length > 0) {
       console.log('');
@@ -162,6 +174,12 @@ function report(gpu: boolean): void {
     }
   }
   console.log('');
+  if (SERVICE === 'redactor') {
+    console.log('The first start installs the pinned wheels and fetches the model into their');
+    console.log('volumes, which takes minutes; the healthcheck turns healthy once the model is');
+    console.log('loaded and verified against redactor/models.sha256. `pnpm check:setup` reports it.');
+    return;
+  }
   console.log('Pull a model to serve, if you have not already:');
   console.log('  pnpm model:pull qwen3:8b');
   console.log('');

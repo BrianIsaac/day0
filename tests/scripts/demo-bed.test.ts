@@ -146,6 +146,7 @@ describe('the compose file is pinned to digests', (): void => {
       'looker-tile',
       'model',
       'playwright-mcp',
+      'redactor',
       'sandbox',
     ]);
     for (const image of images) {

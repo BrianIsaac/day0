@@ -68,6 +68,8 @@ const schema = z.object({
   // The bundled browser driver, used only by a `browser-driven` surface. Like
   // the bundled documentation reader, it is configuration, not discovery.
   DAY0_BROWSER_MCP_URL: z.string().optional(),
+  /** The redaction component as the backend reaches it; unset means none. */
+  DAY0_REDACTOR_URL: z.string().optional(),
 });
 
 /**
@@ -114,6 +116,7 @@ const OPTIONAL_STRINGS = [
   'DAY0_NOTION_MCP_AUTH_TOKEN',
   'DAY0_PUBLIC_URL',
   'DAY0_BROWSER_MCP_URL',
+  'DAY0_REDACTOR_URL',
 ] as const;
 
 /**
@@ -173,5 +176,6 @@ export const env = schema.parse(
     DAY0_NOTION_MCP_AUTH_TOKEN: process.env.DAY0_NOTION_MCP_AUTH_TOKEN,
     DAY0_PUBLIC_URL: process.env.DAY0_PUBLIC_URL,
     DAY0_BROWSER_MCP_URL: process.env.DAY0_BROWSER_MCP_URL,
+    DAY0_REDACTOR_URL: process.env.DAY0_REDACTOR_URL,
   }),
 );

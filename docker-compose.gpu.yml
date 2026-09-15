@@ -1,4 +1,4 @@
-# GPU overlay for the bundled `model` service.
+# GPU overlay for the bundled `model` and `redactor` services.
 #
 # `pnpm model:up` layers this file on top of docker-compose.yml whenever this
 # machine has an NVIDIA driver, and drops back to the base file alone when
@@ -15,10 +15,21 @@
 # stays startable everywhere and the acceleration is layered on.
 #
 # MODEL_GPU_COUNT selects how many devices to reserve; `all` is the default and
-# a number picks that many on a multi-GPU machine.
+# a number picks that many on a multi-GPU machine. The redaction component
+# takes the same reservation and, with it, the CUDA build of its wheels.
 
 services:
   model:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${MODEL_GPU_COUNT:-all}
+              capabilities: [gpu]
+  redactor:
+    environment:
+      - REDACTOR_DEVICE=cuda
     deploy:
       resources:
         reservations:

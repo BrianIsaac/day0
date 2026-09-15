@@ -59,6 +59,11 @@ const COMPONENTS = [
   },
   { service: 'looker-tile', profile: 'demo', purpose: 'the synthetic web-UI system' },
   { service: 'fake-slack', profile: 'test', purpose: 'the Slack provider double' },
+  {
+    service: 'redactor',
+    profile: 'redactor',
+    purpose: 'the span model documentation sync and the ledger redact with',
+  },
   { service: 'dashboard', profile: 'dev', purpose: 'the Convex dashboard' },
 ] as const;
 
@@ -97,6 +102,7 @@ const WATCHED = [
   'DAY0_DOCS_ROOT',
   'DAY0_CREDENTIAL_KEY',
   'DAY0_BROWSER_MCP_URL',
+  'DAY0_REDACTOR_URL',
   'DAY0_PUBLIC_URL',
   'COMPOSE_PROJECT_NAME',
 ] as const;
@@ -571,6 +577,31 @@ function componentsSection(
       'still proposed and still shows its evidence; its card says the component is not',
       'running and holds approval. That is a complete installation if none of your systems',
       'need a browser.',
+    );
+  }
+  const redactorRunning = services.includes('redactor');
+  const redactorConfigured = Boolean(values.DAY0_REDACTOR_URL);
+  const realMode = values.DAY0_SURFACE_MODE === 'real';
+  if (redactorConfigured && !redactorRunning) {
+    status = 'warn';
+    lines.push(
+      `DAY0_REDACTOR_URL names ${values.DAY0_REDACTOR_URL} and nothing is running there.`,
+      'Every documentation sync will refuse to persist and every provider outcome will be',
+      'recorded as structural-only. Start it with `pnpm redactor:up`, or clear the variable.',
+    );
+  } else if (!redactorConfigured && redactorRunning) {
+    status = 'warn';
+    lines.push(
+      'redactor is running and DAY0_REDACTOR_URL is unset, so day0 will not use it.',
+      `Set DAY0_REDACTOR_URL=http://redactor:8000 in ${ENV_FILE} and re-run \`pnpm sync:env\`,`,
+      'or stop the component.',
+    );
+  } else if (!redactorConfigured && realMode) {
+    status = 'warn';
+    lines.push(
+      'No redaction component. Documentation sync refuses to persist a page without one, and',
+      'provider outcomes record that only the exact-value and structural layers ran.',
+      'Start it with `pnpm redactor:up` and set DAY0_REDACTOR_URL=http://redactor:8000.',
     );
   }
   const kinds = linkedDocSourceKinds(values);

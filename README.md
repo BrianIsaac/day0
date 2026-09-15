@@ -437,6 +437,7 @@ Real mode adds optional components, and each one is a Compose profile. `real` is
 | `browser` | Playwright MCP, day0's browser floor | a system your documentation records has a web UI and no API |
 | `demo` | a synthetic Looker-style pipeline tile with a login | you want a web-UI-only system to drive without pointing day0 at a real one |
 | `sandbox` | the networkless skill sandbox | always, unless you have a `DAYTONA_API_KEY` |
+| `redactor` | the span model that redacts documentation and the ledger | always in real mode: documentation sync refuses to store a page without it, and provider outcomes record that only the exact-value and structural layers ran |
 
 What each is for, and what it never sees, is in [`docs/running/components.md`](docs/running/components.md).
 
@@ -464,6 +465,7 @@ DAY0_SURFACE_MODE=real
 NEXT_PUBLIC_DEMO_BOSS_EMAIL=you@example.com         # your Slack address; stored on the agent at deploy
 DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
 DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile browser
+DAY0_REDACTOR_URL=http://redactor:8000              # paired with pnpm redactor:up
 ```
 
 and bring the stack up:
@@ -471,6 +473,7 @@ and bring the stack up:
 ```bash
 pnpm convex:up --profile docs-notion --profile browser --profile demo
 pnpm sandbox:up                  # verifies authored skills; no port, no account
+pnpm redactor:up                 # the span model documentation sync and the ledger redact with; on the GPU if you have one
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY in .env.local
 
 pnpm sync:env                    # pushes the no-auth JWKS, the key and every DAY0_* value
@@ -595,6 +598,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `DAY0_CREDENTIAL_KEY` | Encrypts every stored credential. Written by `pnpm dev:no-auth-key` and pushed to the deployment; `pnpm sync:env` refuses real mode without it |
 | `DAY0_NOTION_MCP_AUTH_TOKEN` | Authenticates the private hop to the bundled Notion component. Written by `pnpm dev:no-auth-key`; `--profile docs-notion` refuses to start without it |
 | `DAY0_BROWSER_MCP_URL` | The switch that tells day0 it has a browser component. `http://playwright-mcp:8931/mcp` for the bundled one, paired with `--profile browser`. Unset means this deployment has no browser, and every browser action is refused with `BROWSER_DRIVER_ABSENT` |
+| `DAY0_REDACTOR_URL` | The redaction component as the backend reaches it: `http://redactor:8000` for the bundled one, paired with `pnpm redactor:up`. Unset means no component: a documentation sync refuses to persist, and a provider outcome is recorded as `structural-only` |
 | `DAY0_PUBLIC_URL` | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead |
 
 Convex Node actions read their settings from the Convex deployment env, which is a separate store from `.env.local`: the model keys (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_JSON_MODE`), `EXA_API_KEY`, `DAYTONA_API_KEY`, `SKILL_SANDBOX_SOCKET` and every real-mode `DAY0_*` value bar `DAY0_DOCS_HOST_DIR`, which is Compose's alone. `./scripts/sync-convex-env.sh` pushes exactly that list and is the only thing that should write it; it also pushes `OPENAI_BASE_URL` under the deployment's name for it, taking the value from `CONVEX_OPENAI_BASE_URL`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
@@ -1312,6 +1316,7 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 | `browser` | Playwright MCP，day0 的浏览器执行层 | 文档记录的系统只有 Web UI 而没有 API |
 | `demo` | 带登录的合成 Looker 风格 pipeline tile | 想演示浏览器执行层，但不希望指向真实系统 |
 | `sandbox` | 无网络的技能沙箱 | 除非配置了 `DAYTONA_API_KEY`，否则始终需要 |
+| `redactor` | 对文档和 ledger 做脱敏的 span 模型 | 真实模式下始终需要：没有它，文档同步会拒绝存储页面，provider 结果只会记录结构层脱敏 |
 
 每个组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。
 
@@ -1339,6 +1344,7 @@ DAY0_SURFACE_MODE=real
 NEXT_PUBLIC_DEMO_BOSS_EMAIL=you@example.com         # your Slack address; stored on the agent at deploy
 DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
 DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile browser
+DAY0_REDACTOR_URL=http://redactor:8000              # paired with pnpm redactor:up
 ```
 
 随后启动整套服务：
@@ -1346,6 +1352,7 @@ DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile brow
 ```bash
 pnpm convex:up --profile docs-notion --profile browser --profile demo
 pnpm sandbox:up                  # verifies authored skills; no port, no account
+pnpm redactor:up                 # 文档同步和 ledger 使用的脱敏模型；有 GPU 时自动使用
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY in .env.local
 
 pnpm sync:env                    # pushes the no-auth JWKS, the key and every DAY0_* value

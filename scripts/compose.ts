@@ -46,6 +46,7 @@ export const PROFILES: Readonly<Record<string, string>> = {
   dev: 'the Convex dashboard',
   model: 'a bundled OpenAI-compatible model server',
   sandbox: 'the local sandbox that verifies an authored skill',
+  redactor: 'the span model that redacts documentation and the ledger (redactor)',
 };
 
 export interface ComposeInvocation {

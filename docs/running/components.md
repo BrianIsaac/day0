@@ -195,6 +195,51 @@ starts by default.
 
 ---
 
+## `redactor` - the redaction component
+
+**What it is.** A small span model (`urchade/gliner_multi_pii-v1`, Apache-2.0,
+289M parameters) behind a two-endpoint HTTP API, run from the same pinned
+`python:3.12-slim` image the sandbox uses. Its wheels are installed into a cache
+volume at first start and its model snapshot is fetched into another and
+verified file by file against `redactor/models.sha256` before it is served; a
+file that does not match refuses to start, and the health check says so. It
+calls nothing hosted.
+
+**What day0 uses it for.** Every text that is persisted after being read from
+somewhere else goes through it first: a documentation page at sync, a provider's
+effect, reason or id before the ledger keeps it, and the ticket record the
+planner reads. The model finds spans; what happens to each kind of span in each
+place is data in `src/redaction/policy.ts`. A secret is always removed (and, on a
+page, stored as an encrypted credential with a marker left behind). A coworker's
+name, a username, a channel, a ticket id, a date, a figure or an audit line is
+never removed: it is the material the work is about. Phone numbers, personal
+addresses, government and account identifiers and dates of birth are removed
+everywhere; an email address is kept on a page that says who to ask and removed
+from what a provider echoed back. A deterministic guard keeps the model from
+taking a placeholder, a stored marker or an identifier for a secret.
+
+**When you need it.** Always in real mode. Without it a documentation sync
+refuses to persist a page rather than store it in the clear, and a provider
+outcome is recorded with `redaction: structural-only`, meaning only the exact
+credential the transport sent and the structural grammar (connection-string
+passwords, key blocks, JSON web tokens, header values, fixed-prefix provider
+tokens) protected it.
+
+**When you do not.** Mock mode, which reads nothing from outside the repository.
+
+**What it never sees.** Anything but the text it is handed. It has no
+credential, no database access and no host port; the backend reaches it at
+`http://redactor:8000` on the compose network and nothing else needs to. It
+keeps no log of what it was sent.
+
+**The GPU.** `pnpm redactor:up` reserves the GPU the way `pnpm model:up` does
+and installs the CUDA build of its wheels; `pnpm convex:up --profile redactor`
+is the CPU configuration and runs anywhere. Measured on the demonstration
+laptop: a typical provider outcome takes under 200 ms on the CPU and under 20 ms
+on the GPU; a long documentation page up to 2 s and 30 ms.
+
+---
+
 ## The other two
 
 `--profile model` runs a bundled model server for the account-free path, and
