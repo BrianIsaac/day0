@@ -1139,6 +1139,94 @@ describe('surface probe generations', (): void => {
     expect(grants).toHaveLength(1);
   });
 
+  it('schedules one intake poll of the surface the moment it first connects', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const pendingPolls = async (): Promise<Array<Record<string, unknown>>> =>
+      await harness.run(
+        async (ctx) =>
+          (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+            (job) => job.name === 'intakeActions:pollSurface',
+          ) as unknown as Array<Record<string, unknown>>,
+      );
+    const connect = async (): Promise<void> => {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: probe.generation,
+        toolAllowlist: ['list_issues'],
+        toolArguments: [],
+        verifiedAt: 100,
+      });
+    };
+
+    await connect();
+    const scheduled = await pendingPolls();
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0].args).toEqual([{ surfaceId }]);
+
+    // The hourly re-probe of a connected surface is not a new connection.
+    await connect();
+    expect(await pendingPolls()).toHaveLength(1);
+  });
+
+  it('re-admits an out-of-scope skip through the re-evaluation trigger when a surface connects', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const itemId = await harness.run(
+      async (ctx): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-1',
+          title: 'Audit note',
+          contentSummary: 'Add the audit note.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'skipped',
+          verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+          skipReason: 'out-of-scope: no charter or current documented-system overlap',
+        }),
+    );
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: probe.generation,
+      toolAllowlist: ['list_issues'],
+      toolArguments: [],
+      verifiedAt: 100,
+    });
+    const row = await harness.run(async (ctx) => await ctx.db.get(itemId));
+    expect(row).toMatchObject({
+      state: 'discovered',
+      reevaluation: { trigger: 'surface', key: `surface:${surfaceId}:100`, at: 100 },
+    });
+    expect(row?.skipReason).toBeUndefined();
+    const requeued = await harness.run(
+      async (ctx) => (await ctx.db.query('events').collect()).filter((event) => event.type === 'work.requeued'),
+    );
+    expect(requeued.map((event) => event.payload)).toEqual([
+      {
+        workItemId: itemId,
+        trigger: 'surface',
+        key: `surface:${surfaceId}:100`,
+        previousState: 'skipped',
+        surfaceId,
+        slug: 'linear',
+      },
+    ]);
+  });
+
   it('grants the read scope and requeues deferred work in the connecting write', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);

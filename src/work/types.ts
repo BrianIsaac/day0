@@ -40,7 +40,12 @@ export interface WorkCandidate {
   contentRefs: string[];
   observedAt: Date;
   priority?: string;
+  /** Display label of who asked: the requester, else the owner. */
   requesterLabel?: string;
+  /** The person the provider shows the item assigned to, when it returns one. */
+  owner?: string;
+  /** The person the provider shows as having raised the item, when it returns one. */
+  requester?: string;
   replyTarget?: ReplyTarget;
 }
 
@@ -299,3 +304,5 @@ export const VALUE_THRESHOLD = 30;
 
 /** Prefix of the skip reason the quality-fit filter writes. */
 export const QUALITY_FIT_SKIP_PREFIX = 'quality-fit-fail: ';
+/** Prefix of the skip reason the scope judgement writes. */
+export const OUT_OF_SCOPE_SKIP_PREFIX = 'out-of-scope: ';

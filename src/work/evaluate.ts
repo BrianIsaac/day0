@@ -1,4 +1,4 @@
-import { qualityFit } from './quality-fit';
+import { judgeScope, type ScopeJudgement } from './scope';
 import {
   AUTONOMOUS_WIP_LIMIT,
   COLD_START_WIP_LIMIT,
@@ -26,9 +26,8 @@ import {
 
 /**
  * Layer-2 evaluator. Lifted from Protean's `src/work/evaluate.ts`.
- * Same seven-criterion sequence — eligibility, permission, ownership,
- * quality fit, value, risk (informational), capacity. The two
- * differences for Day0:
+ * Same criterion sequence — scope, connection, permission, ownership,
+ * value, risk (informational), capacity. The three differences for Day0:
  *
  *   1. The DB lookups (permission grants, existing claims, open-claim
  *      count) are passed in as `Lookups` callbacks instead of imported
@@ -39,6 +38,11 @@ import {
  *      surface this as a propose-new-skill flow rather than
  *      hard-skipping. Capability is meant to grow in place, so an
  *      unmatched candidate is a gap to fill rather than a dead end.
+ *
+ *   3. Scope is one judgement (`./scope`), with the lexical eligibility
+ *      rule and the quality-fit filter as its inputs rather than verdicts
+ *      of their own, so a card carries one description of why it was
+ *      or was not the agent's work.
  */
 
 export interface EvaluateLookups {
@@ -65,6 +69,8 @@ export interface EvaluateLookups {
 
 export interface EvaluateOptions {
   wipLimit?: number;
+  /** Observes the scope judgement, admitted or not, before the rest of the chain runs. */
+  onScopeJudgement?: (judgement: ScopeJudgement) => void;
 }
 
 export interface EvaluationSurface extends SurfaceLiveness {
@@ -86,9 +92,14 @@ export interface EvalContext extends AgentContext {
    * left out and the plan gate still stands.
    */
   qualityFitWaived?: boolean;
+  /**
+   * The manager retried this candidate after it was skipped as out of scope,
+   * which is their decision that the work is theirs to give; the eligibility
+   * rule is left out and the plan gate still stands.
+   */
+  eligibilityWaived?: boolean;
 }
 
-import { QUALITY_FIT_SKIP_PREFIX } from './types';
 export { QUALITY_FIT_SKIP_PREFIX } from './types';
 
 export type EvaluationVerdict =
@@ -103,17 +114,6 @@ export function inferRequiredPermissions(candidate: WorkCandidate): string[] {
     required.add(`${candidate.sourceSystem}:read`);
   }
   return [...required];
-}
-
-function tokenise(text: string): Set<string> {
-  const out = new Set<string>();
-  for (const w of text
-    .toLowerCase()
-    .split(/\W+/)
-    .filter((s) => s.length >= 4)) {
-    out.add(w);
-  }
-  return out;
 }
 
 /**
@@ -139,22 +139,22 @@ function eligibleByProvenance(candidate: WorkCandidate, ctx: EvalContext): boole
   return source.discoveryEvidence?.some((evidence): boolean => evidence.current) === true;
 }
 
-function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
-  if (eligibleByProvenance(candidate, ctx)) return true;
-  const bodyTokens = tokenise(`${candidate.title}\n${candidate.contentSummary}`);
-  const charterTokens = new Set<string>();
-  for (const w of tokenise(ctx.charter.proposedFunction)) charterTokens.add(w);
-  for (const clause of ctx.charter.proposedBoundaries.willDo) {
-    for (const w of tokenise(clause)) charterTokens.add(w);
-  }
-  for (const stop of ['will', 'their', 'them', 'with', 'from', 'this', 'that', 'when', 'where']) {
-    charterTokens.delete(stop);
-  }
-  for (const t of charterTokens) {
-    if (bodyTokens.has(t)) return true;
-  }
+/**
+ * Whether the candidate names a declared surface that is currently documented.
+ *
+ * Args:
+ *   candidate: Work candidate being evaluated.
+ *   surfaces: Declared surfaces with their discovery evidence.
+ *
+ * Returns:
+ *   True when a currently named surface appears in the item as a whole phrase.
+ */
+function namesDocumentedSystem(
+  candidate: WorkCandidate,
+  surfaces: readonly EvaluationSurface[],
+): boolean {
   const candidateText = `${candidate.title}\n${candidate.contentSummary}`;
-  return ctx.surfaces.some((surface): boolean => {
+  return surfaces.some((surface): boolean => {
     const currentlyNamed = surface.discoveryEvidence?.some((evidence): boolean => evidence.current);
     if (!currentlyNamed) return false;
     return candidateNamesSurface(candidateText, surface);
@@ -315,11 +315,13 @@ export async function evaluateCandidate(
   lookups: EvaluateLookups,
   opts: EvaluateOptions = {},
 ): Promise<EvaluationVerdict> {
-  if (!isEligible(candidate, ctx)) {
-    return {
-      decision: 'skip',
-      reason: 'out-of-scope: no charter or current documented-system overlap',
-    };
+  const scope = await judgeScope(candidate, ctx, {
+    provenance: eligibleByProvenance(candidate, ctx),
+    namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
+  });
+  opts.onScopeJudgement?.(scope);
+  if (!scope.admitted) {
+    return { decision: 'skip', reason: scope.reason };
   }
 
   const missingSurface = missingConnectionSurface(candidate, ctx);
@@ -340,17 +342,6 @@ export async function evaluateCandidate(
   const existing = await lookups.findExistingClaim(candidate.sourceSystem, candidate.externalId);
   if (existing) {
     return { decision: 'skip', reason: `already-claimed: state=${existing.state}` };
-  }
-
-  if (!ctx.qualityFitWaived) {
-    const fit = await qualityFit({
-      candidate,
-      agentsMd: ctx.agentsMd,
-      role: ctx.charter.proposedFunction,
-    });
-    if (!fit.pass) {
-      return { decision: 'skip', reason: `${QUALITY_FIT_SKIP_PREFIX}${fit.reason}` };
-    }
   }
 
   const value = scoreValue(candidate);

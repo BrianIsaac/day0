@@ -394,6 +394,8 @@ export default defineSchema({
     contentRefs: v.array(v.string()),
     priority: v.optional(v.string()),
     requesterLabel: v.optional(v.string()),
+    owner: v.optional(v.string()),
+    requester: v.optional(v.string()),
     state: v.union(
       v.literal('discovered'),
       v.literal('claimed'),
@@ -447,6 +449,21 @@ export default defineSchema({
      * the next evaluation leaves that filter out; plan approval still applies.
      */
     qualityFitWaivedAt: v.optional(v.number()),
+    /**
+     * When the manager retried this item after the scope judgement skipped it
+     * as out of scope. The retry is the manager's decision that the work is
+     * theirs to give, so the next evaluation leaves the eligibility rule out;
+     * plan approval still applies.
+     */
+    eligibilityWaivedAt: v.optional(v.number()),
+    /**
+     * The last policy change that sent this row back to `discovered`: the
+     * trigger, its idempotency key and when. The same key never re-admits the
+     * row twice.
+     */
+    reevaluation: v.optional(
+      v.object({ trigger: v.string(), key: v.string(), at: v.number() }),
+    ),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),

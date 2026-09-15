@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ToolExecutionContext } from '@mastra/core/tools';
 import type { FunctionReference } from 'convex/server';
-import type { GenericId } from 'convex/values';
+import { v, type GenericId } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
@@ -95,6 +95,11 @@ export interface IntakeDependencies {
   now?: () => number;
   /** This deployment's browser driver address; absent means no browser component. */
   browserMcpUrl?: string;
+  /**
+   * Poll this one surface and record nothing for the rest of its agent's
+   * waterfall; the poll a fresh connection schedules for itself.
+   */
+  surfaceId?: Id<'surfaces'>;
 }
 
 export interface IntakeSweepResult {
@@ -430,19 +435,20 @@ export function mcpIssuePage(value: unknown): McpPage {
 }
 
 /**
- * Read who asked for an issue, in the shapes providers use.
+ * Read a person field in the shapes providers use.
  *
  * Linear's MCP server returns `createdBy` and `assignee` as display names;
  * GraphQL-shaped payloads nest a `creator` or `assignee` object.
  *
  * Args:
  *   issue: Provider issue object.
+ *   keys: Field names to try, in order.
  *
  * Returns:
- *   The creator's or assignee's name or email, or undefined.
+ *   The first name or email found, or undefined.
  */
-function requesterOf(issue: Record<string, unknown>): string | undefined {
-  for (const key of ['creator', 'createdBy', 'assignee']) {
+function personOf(issue: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
     const value = issue[key];
     if (typeof value === 'string' && value.trim()) return value;
     const record = asRecord(value);
@@ -487,7 +493,8 @@ export function linearCandidate(
         : typeof priorityObject?.name === 'string'
           ? priorityObject.name
           : undefined;
-  const requesterLabel = requesterOf(issue);
+  const requester = personOf(issue, ['creator', 'createdBy']);
+  const owner = personOf(issue, ['assignee']);
   return {
     sourceCategory: 'ticket-queue',
     sourceSystem: surface.slug,
@@ -497,7 +504,9 @@ export function linearCandidate(
     contentRefs: [url],
     observedAt: new Date(observedAt),
     priority,
-    requesterLabel,
+    requesterLabel: requester ?? owner,
+    ...(owner === undefined ? {} : { owner }),
+    ...(requester === undefined ? {} : { requester }),
   };
 }
 
@@ -947,6 +956,7 @@ export function slackCandidate(
     contentRefs: [`https://app.slack.com/client/${teamId}/${channel.id}/thread/${threadKey}`],
     observedAt: new Date(observedAt),
     requesterLabel: message.user,
+    requester: message.user,
     // A reply belongs in the ask's thread: under the mention itself, or under
     // the parent when the mention was already a threaded message.
     replyTarget: {
@@ -1115,6 +1125,8 @@ async function seedCandidate(
     contentRefs: candidate.contentRefs,
     priority: candidate.priority,
     requesterLabel: candidate.requesterLabel,
+    owner: candidate.owner,
+    requester: candidate.requester,
     replyTarget: candidate.replyTarget,
   });
 }
@@ -1159,6 +1171,9 @@ export async function runIntakeSweep(
     dependencies.browserMcpUrl ?? process.env.DAY0_BROWSER_MCP_URL,
   );
   const surfaces = await runtime.listSurfaces();
+  const target = dependencies.surfaceId;
+  const inScope = (surface: Doc<'surfaces'>): boolean =>
+    target === undefined || surface._id === target;
   const byAgent = new Map<Id<'agents'>, Doc<'surfaces'>[]>();
   for (const surface of surfaces) {
     const rows = byAgent.get(surface.agentId) ?? [];
@@ -1170,6 +1185,7 @@ export async function runIntakeSweep(
   let polled = 0;
   let skipped = 0;
   for (const [agentId, agentSurfaces] of byAgent) {
+    if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
     const pages = await runtime.listPages(agentId);
@@ -1181,6 +1197,7 @@ export async function runIntakeSweep(
     );
     const ordered = orderSurfaceWaterfall(agentSurfaces, documentedNames);
     for (const [index, surface] of ordered.entries()) {
+      if (!inScope(surface)) continue;
       const waterfallPosition = index + 1;
       if (surface.verdict !== 'connected') {
         await runtime.recordIntake({
@@ -1272,7 +1289,7 @@ export async function runIntakeSweep(
       }
     }
   }
-  return { candidates, mode, polled, skipped, surfaces: surfaces.length };
+  return { candidates, mode, polled, skipped, surfaces: surfaces.filter(inScope).length };
 }
 
 /** Poll only manager decision replies, without touching discovery checkpoints. */
@@ -1376,6 +1393,16 @@ export const pollAll = internalAction({
   args: {},
   handler: async (ctx): Promise<IntakeSweepResult> =>
     await runIntakeSweep(convexRuntime(ctx), { mode: SURFACE_MODE }),
+});
+
+/**
+ * Poll one surface as soon as it connects, so the work it already holds does
+ * not wait for the next scheduled sweep. The cron remains the steady state.
+ */
+export const pollSurface = internalAction({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<IntakeSweepResult> =>
+    await runIntakeSweep(convexRuntime(ctx), { mode: SURFACE_MODE, surfaceId: args.surfaceId }),
 });
 
 /** Poll manager decisions on the latency-sensitive schedule. */

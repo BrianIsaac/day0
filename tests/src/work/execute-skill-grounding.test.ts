@@ -183,6 +183,43 @@ describe('documentation grounding in the executor prompts', (): void => {
     );
   });
 
+  it('names the owner the provider returned to both executor phases', async (): Promise<void> => {
+    const plan = {
+      summary: 'Comment on the ticket.',
+      steps: ['Comment on the ticket with the checklist review.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const owned: WorkCandidate = { ...candidate, owner: 'Ana', requester: 'Manager' };
+    recorded.outputs.push({ draft: 'Commented.', notes: '', actions: [], procedureTrails: [] });
+    await runSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan,
+      candidate: owned,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+    });
+    await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan,
+      candidate: owned,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+
+    expect(recorded.users).toHaveLength(2);
+    expect(recorded.users[0]).toContain('From: Manager\nOwner: Ana\nTitle:');
+    expect(recorded.users[1]).toContain('Owner: Ana\nTitle:');
+  });
+
   it('tells the closing phase that a step it fulfils by an action emitted now is satisfied', async (): Promise<void> => {
     await runDependentSkill({
       skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },

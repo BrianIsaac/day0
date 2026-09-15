@@ -219,6 +219,8 @@ function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
     observedAt: new Date(row.observedAt),
     priority: row.priority,
     requesterLabel: row.requesterLabel,
+    owner: row.owner,
+    requester: row.requester,
     replyTarget: replyTargetFor(row),
   };
 }
@@ -304,6 +306,7 @@ export const evaluateWorkItem = action({
       grantedScopes,
     });
     const candidate = rowToCandidate(item);
+    let scopeJudgementUnavailable: string | undefined;
     const verdict = await evaluateCandidate(
       candidate,
       {
@@ -315,9 +318,24 @@ export const evaluateWorkItem = action({
         surfaceMode: surfaceConfig.mode,
         surfaces,
         qualityFitWaived: item.qualityFitWaivedAt !== undefined,
+        eligibilityWaived: item.eligibilityWaivedAt !== undefined,
       },
       lookups,
+      {
+        onScopeJudgement: (judgement): void => {
+          if (judgement.admitted && judgement.failedOpen !== undefined) {
+            scopeJudgementUnavailable = judgement.failedOpen;
+          }
+        },
+      },
     );
+    if (scopeJudgementUnavailable !== undefined) {
+      await ctx.runMutation(internal.events.log, {
+        agentId,
+        type: 'work.scope-judgement-unavailable',
+        payload: { workItemId: args.workItemId, cause: scopeJudgementUnavailable },
+      });
+    }
     const storedVerdict: { decision: string } = await ctx.runMutation(internal.work.setVerdict, {
       workItemId: args.workItemId,
       verdict,

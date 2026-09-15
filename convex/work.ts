@@ -27,6 +27,7 @@ import {
   COLD_START_WIP_LIMIT,
   type MockAction,
   type ReplyTarget,
+  OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
 import {
@@ -39,6 +40,7 @@ import {
   withBrowserComponentState,
 } from '../src/surfaces/browser';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
 import {
   INTERRUPTED_APPLY_REASON,
   OUTCOME_UNKNOWN_REASON,
@@ -47,6 +49,8 @@ import {
 } from '../src/work/reconciliation';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
+/** Parked rows examined per state in one re-evaluation call; the rest continue by schedule. */
+export const REEVALUATION_BATCH = 100;
 /** The longest rejection reason kept in full for the retry to read. */
 export const MANAGER_FEEDBACK_MAX_CHARS = 1000;
 export { INTERRUPTED_APPLY_REASON };
@@ -230,6 +234,8 @@ export const workItemSeedFields = {
   contentRefs: v.array(v.string()),
   priority: v.optional(v.string()),
   requesterLabel: v.optional(v.string()),
+  owner: v.optional(v.string()),
+  requester: v.optional(v.string()),
   replyTarget: v.optional(
     v.object({
       channel: v.string(),
@@ -249,6 +255,8 @@ export interface WorkItemSeedInput {
   contentRefs: string[];
   priority?: string;
   requesterLabel?: string;
+  owner?: string;
+  requester?: string;
   replyTarget?: { channel: string; channelName?: string; threadTs?: string };
 }
 
@@ -284,6 +292,195 @@ export const seedItem = internalMutation({
   args: { agentId: v.id('agents'), ...workItemSeedFields },
   handler: async (ctx, args): Promise<Id<'workItems'>> =>
     await seedItemInTransaction(ctx, args),
+});
+
+/** What changed, for a re-evaluation of the work parked under the old policy. */
+export type ReevaluationTrigger = 'charter' | 'documentation' | 'surface';
+
+const reevaluationTriggerValidator = v.union(
+  v.literal('charter'),
+  v.literal('documentation'),
+  v.literal('surface'),
+);
+
+export interface ReevaluatePendingArgs {
+  agentId: Id<'agents'>;
+  trigger: ReevaluationTrigger;
+  /** One value per policy change; the same key never re-admits a row twice. */
+  key: string;
+  /** The surface that connected, for the `surface` trigger. */
+  surfaceId?: Id<'surfaces'>;
+  /** Creation-time watermarks a continuation resumes from, per state. */
+  after?: { skipped?: number; deferred?: number };
+  now?: number;
+}
+
+export interface ReevaluatePendingResult {
+  readmitted: number;
+  examined: number;
+  /** True when a batch filled and the rest was scheduled. */
+  continued: boolean;
+}
+
+type ParkedVerdict = {
+  decision?: string;
+  reason?: string;
+  missingSurface?: string;
+  missingPermissions?: string[];
+};
+
+interface SurfaceTrigger {
+  surface: Doc<'surfaces'>;
+  siblings: Doc<'surfaces'>[];
+}
+
+/**
+ * Whether a parked row's verdict can change under this trigger.
+ *
+ * An out-of-scope skip reads the charter, the documented systems and the
+ * connected surfaces, so any of the three sends it back. A quality-fit skip
+ * reads the charter's role. A deferral waits on one surface or one grant and
+ * returns when that surface connects. A low-value or already-claimed skip
+ * reads none of these and stays where it is.
+ */
+function verdictReturnsOn(
+  row: Doc<'workItems'>,
+  trigger: ReevaluationTrigger,
+  surface: SurfaceTrigger | undefined,
+): boolean {
+  const verdict = (row.verdict ?? {}) as ParkedVerdict;
+  const reason = typeof verdict.reason === 'string' ? verdict.reason : (row.skipReason ?? '');
+  if (row.state === 'skipped') {
+    if (reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)) return true;
+    if (reason.startsWith(QUALITY_FIT_SKIP_PREFIX)) return trigger === 'charter';
+    return false;
+  }
+  if (row.state !== 'deferred' || trigger !== 'surface' || !surface) return false;
+  if (reason === 'awaiting-connection' && verdict.missingSurface !== undefined) {
+    return missingSurfaceResolvedBy(verdict.missingSurface, surface.surface, surface.siblings);
+  }
+  if (reason === 'awaiting-permission') {
+    return (verdict.missingPermissions ?? []).includes(`${surface.surface.slug}:read`);
+  }
+  return false;
+}
+
+/**
+ * Send the work parked under the old policy back for a fresh evaluation.
+ *
+ * Skipped and deferred rows whose verdict read the thing that changed return
+ * to `discovered` with the verdict cleared; the row identity, its waivers and
+ * its history stay. Each row is stamped with the trigger key, so the same
+ * change firing twice re-admits nothing the second time. A batch of
+ * `REEVALUATION_BATCH` rows per state is examined here; when a batch fills,
+ * the rest is scheduled as a continuation carrying only ids and watermarks.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   args: The trigger, its key and, for a surface, which one connected.
+ *
+ * Returns:
+ *   How many rows were re-admitted and examined, and whether a continuation was scheduled.
+ */
+export async function reevaluatePendingInTransaction(
+  ctx: MutationCtx,
+  args: ReevaluatePendingArgs,
+): Promise<ReevaluatePendingResult> {
+  const now = args.now ?? Date.now();
+  let surface: SurfaceTrigger | undefined;
+  if (args.trigger === 'surface') {
+    const row = args.surfaceId ? await ctx.db.get(args.surfaceId) : null;
+    if (!row || row.agentId !== args.agentId) {
+      throw new Error('a surface trigger names a surface of the agent');
+    }
+    const siblings = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
+      .collect();
+    surface = { surface: row, siblings };
+  }
+
+  const after: { skipped?: number; deferred?: number } = { ...args.after };
+  let readmitted = 0;
+  let examined = 0;
+  let continued = false;
+  for (const state of ['skipped', 'deferred'] as const) {
+    const watermark = after[state];
+    const rows = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (index) => {
+        const range = index.eq('agentId', args.agentId).eq('state', state);
+        return watermark === undefined ? range : range.gt('_creationTime', watermark);
+      })
+      .take(REEVALUATION_BATCH);
+    for (const row of rows) {
+      examined += 1;
+      if (row.reevaluation?.key === args.key) continue;
+      if (!verdictReturnsOn(row, args.trigger, surface)) continue;
+      const previous = (row.verdict ?? {}) as ParkedVerdict;
+      await ctx.db.patch(row._id, {
+        state: 'discovered',
+        verdict: undefined,
+        skipReason: undefined,
+        reevaluation: { trigger: args.trigger, key: args.key, at: now },
+      });
+      await ctx.db.insert('events', {
+        agentId: args.agentId,
+        type: 'work.requeued',
+        payload: {
+          workItemId: row._id,
+          trigger: args.trigger,
+          key: args.key,
+          previousState: row.state,
+          ...(surface ? { surfaceId: surface.surface._id, slug: surface.surface.slug } : {}),
+          ...(previous.missingSurface ? { previousMissingSurface: previous.missingSurface } : {}),
+        },
+        createdAt: now,
+      });
+      readmitted += 1;
+    }
+    if (rows.length === REEVALUATION_BATCH) {
+      after[state] = rows[rows.length - 1]._creationTime;
+      continued = true;
+    } else {
+      delete after[state];
+    }
+  }
+  if (continued) {
+    await ctx.scheduler.runAfter(0, internal.work.reevaluatePending, {
+      agentId: args.agentId,
+      trigger: args.trigger,
+      key: args.key,
+      ...(args.surfaceId ? { surfaceId: args.surfaceId } : {}),
+      after,
+    });
+  }
+  if (readmitted > 0) {
+    await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'work.reevaluation',
+      payload: { trigger: args.trigger, key: args.key, readmitted, examined },
+      createdAt: now,
+    });
+  }
+  return { readmitted, examined, continued };
+}
+
+/**
+ * The one entry point for a policy change: the charter pane on an amendment,
+ * documentation sync on a changed page, and (in the connecting write itself)
+ * a surface that connects.
+ */
+export const reevaluatePending = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    trigger: reevaluationTriggerValidator,
+    key: v.string(),
+    surfaceId: v.optional(v.id('surfaces')),
+    after: v.optional(v.object({ skipped: v.optional(v.number()), deferred: v.optional(v.number()) })),
+  },
+  handler: async (ctx, args): Promise<ReevaluatePendingResult> =>
+    await reevaluatePendingInTransaction(ctx, args),
 });
 
 /**
@@ -1122,12 +1319,18 @@ export const retryFailed = mutation({
       : verdict?.decision === 'claim'
         ? 'claimed'
         : 'discovered';
-    // Retrying an item the quality-fit filter skipped is the manager saying the
-    // work is worth doing; the re-evaluation leaves that filter out.
-    const waivesQualityFit =
-      row.state === 'skipped' &&
-      typeof verdict?.reason === 'string' &&
-      verdict.reason.startsWith(QUALITY_FIT_SKIP_PREFIX);
+    // Retrying a skip is the manager overruling the agent's judgement: a
+    // quality-fit skip says the work is worth doing, an out-of-scope skip says
+    // the work is theirs to give. The re-evaluation leaves that one rule out.
+    const skipReason =
+      row.state === 'skipped' && typeof verdict?.reason === 'string' ? verdict.reason : '';
+    const waived: 'quality-fit' | 'eligibility' | undefined = skipReason.startsWith(
+      QUALITY_FIT_SKIP_PREFIX,
+    )
+      ? 'quality-fit'
+      : skipReason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)
+        ? 'eligibility'
+        : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
       skipReason: undefined,
@@ -1136,7 +1339,8 @@ export const retryFailed = mutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
-      ...(waivesQualityFit ? { qualityFitWaivedAt: Date.now() } : {}),
+      ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
+      ...(waived === 'eligibility' ? { eligibilityWaivedAt: Date.now() } : {}),
       ...(feedback ? { managerFeedback: { reason: feedback, at: Date.now() } } : {}),
     });
     await ctx.db.insert('events', {
@@ -1146,7 +1350,7 @@ export const retryFailed = mutation({
         workItemId: args.workItemId,
         resumeState: next,
         fromState: row.state,
-        ...(waivesQualityFit ? { waived: 'quality-fit' } : {}),
+        ...(waived ? { waived } : {}),
         ...(feedback ? { feedback: true } : {}),
       },
       createdAt: Date.now(),
