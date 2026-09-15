@@ -82,6 +82,7 @@
     "convex-test": "^0.0.54",
     "eslint": "^9.16.0",
     "eslint-config-next": "^16.2.6",
+    "playwright": "1.63.0",
     "postcss": "^8.5.0",
     "prettier": "^3.4.2",
     "tailwindcss": "^4.2.4",
