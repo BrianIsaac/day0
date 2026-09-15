@@ -226,6 +226,38 @@ describe('the static gate on an authored skill, through the authoring action', (
     expect(modelFailed.refusedSmokeTest).toBeUndefined();
   });
 
+  it('removes a markdown fence from the smoke test before the gate and says so in the log', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({ body: reusableBody, smokeTest: '```python\n' + smokeTest + '\n```' });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    expect(recorded.sandboxRuns).toBe(1);
+    const registered = await readSkill(harness, skillId);
+    expect(registered.verificationLog).toContain('markdown fence');
+    expect(registered.verificationLog).toContain('ran in the local sandbox');
+  });
+
+  it('keeps the unfenced smoke test when a fenced one is refused, with the fence note on the reason', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    const broken = 'def run(inputs: dict) -> dict:\n    return {"actions": [}\nprint(run({}))';
+    recorded.outputs.push({ body: reusableBody, smokeTest: '```\n' + broken + '\n```' });
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('does not parse at line 2, column');
+    const failed = await readSkill(harness, skillId);
+    expect(failed.refusedSmokeTest).toBe(broken);
+    expect(failed.verificationLog).toContain('markdown fence');
+    expect(failed.verificationLog).toContain('does not parse at line 2, column');
+  });
+
   it('refuses a smoke test whose representative input is the first work item', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);

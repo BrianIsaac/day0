@@ -155,7 +155,32 @@ describe('the static gate on an authored skill', (): void => {
         body: `${reusableBody}\nPost to <audit-channel> as well.`,
         smokeTest: reusableSmoke,
       }),
-    ).toEqual(['SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`']);
+    ).toEqual([
+      'SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`; declare it there as a line starting with `<audit-channel>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+    ]);
+  });
+
+  it('says how to declare each undeclared placeholder and quotes the taught example line once', (): void => {
+    const body = [
+      '# Value refresh on an analytics surface',
+      '## Inputs',
+      '- analytics-surface: the tile the work names.',
+      '- requested-value: the figure the candidate names.',
+      '## Procedure',
+      'Open <analytics-surface>, enter <requested-value>, comment on <record-id>.',
+    ].join('\n');
+    const issues = authoredSkillIssues({ body, smokeTest: reusableSmoke });
+    expect(issues).toHaveLength(3);
+    expect(issues[0]).toBe(
+      'SKILL.md uses `<analytics-surface>` without declaring it under `## Inputs`; declare it there as a line starting with `<analytics-surface>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+    );
+    expect(issues[1]).toBe(
+      'SKILL.md uses `<requested-value>` without declaring it under `## Inputs`; declare it there as a line starting with `<requested-value>`',
+    );
+    expect(issues[2]).toBe(
+      'SKILL.md uses `<record-id>` without declaring it under `## Inputs`; declare it there as a line starting with `<record-id>`',
+    );
+    expect(issues.filter((issue) => issue.includes('as in:'))).toHaveLength(1);
   });
 
   it('keeps {{secret}} as the only double-brace placeholder', (): void => {

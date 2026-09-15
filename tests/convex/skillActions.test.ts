@@ -250,6 +250,47 @@ describe('skill author prompts', (): void => {
     expect(verify).not.toHaveBeenCalled();
   });
 
+  it('unwraps a smoke test that arrived in a markdown fence and verifies the program inside', async (): Promise<void> => {
+    const sandboxResult: SkillSandboxRun = {
+      backend: 'local',
+      sandboxId: 'local:run-3',
+      stdout: 'ok\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+    const verify = vi.fn(async (): Promise<SkillSandboxRun> => sandboxResult);
+    const program = 'def run(inputs: dict) -> dict:\n    return {"actions": []}\nprint("ok", run({}))';
+
+    await expect(
+      verifyAuthoredSkill(
+        { skillName: 'update-spreadsheet', skillBody: '# Update spreadsheet', smokeTest: '```python\n' + program + '\n```' },
+        verify,
+      ),
+    ).resolves.toEqual({ ok: true, result: sandboxResult, smokeTest: program, unwrapped: true });
+    expect(verify).toHaveBeenCalledWith({
+      skillName: 'update-spreadsheet',
+      skillBody: '# Update spreadsheet',
+      smokeTest: program,
+    });
+  });
+
+  it('reports the line and column of an unfenced program that does not parse', async (): Promise<void> => {
+    const verify = vi.fn<() => Promise<SkillSandboxRun>>();
+    const broken = 'def run(inputs: dict) -> dict:\n    return {"actions": [}\nprint(run({}))';
+
+    const result = await verifyAuthoredSkill(
+      { skillName: 'update-spreadsheet', skillBody: '# Update spreadsheet', smokeTest: broken },
+      verify,
+    );
+
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toContain('smoke test rejected before sandbox');
+    expect((result as { reason: string }).reason).toContain('does not parse at line 2, column');
+    expect((result as { reason: string }).reason).toContain('`    return {"actions": [}`');
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it('passes a valid Python smoke program to verification', async (): Promise<void> => {
     const sandboxResult: SkillSandboxRun = {
       backend: 'local',
@@ -273,7 +314,7 @@ describe('skill author prompts', (): void => {
         { skillName: 'update-spreadsheet', skillBody: '# Update spreadsheet', smokeTest },
         verify,
       ),
-    ).resolves.toEqual({ ok: true, result: sandboxResult });
+    ).resolves.toEqual({ ok: true, result: sandboxResult, smokeTest, unwrapped: false });
     expect(verify).toHaveBeenCalledOnce();
   });
 
@@ -313,7 +354,7 @@ describe('skill author prompts', (): void => {
         { skillName: 'update-spreadsheet', skillBody: '# Update spreadsheet', smokeTest },
         verify,
       ),
-    ).resolves.toEqual({ ok: true, result: sandboxResult });
+    ).resolves.toEqual({ ok: true, result: sandboxResult, smokeTest, unwrapped: false });
     expect(verify).toHaveBeenCalledOnce();
   });
 

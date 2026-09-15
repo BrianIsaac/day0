@@ -1,4 +1,4 @@
-import { undeclaredSkillInputs, declaredSkillInputs } from './skill-inputs';
+import { EXECUTION_INPUT_LINES, undeclaredSkillInputs, declaredSkillInputs } from './skill-inputs';
 
 /**
  * The static gate on an authored skill, run before any sandbox spends a run.
@@ -23,6 +23,9 @@ export interface AuthoredSkillInstance {
   contentRefs: readonly string[];
   replyTarget?: { channel: string; threadTs?: string };
 }
+
+/** One correct `## Inputs` line from the taught contract, quoted on the first undeclared placeholder. */
+const DECLARATION_EXAMPLE = EXECUTION_INPUT_LINES[0]!.trim();
 
 const DOUBLE_BRACE = /\{\{\s*([^}]*?)\s*\}\}/g;
 const SECRET_PLACEHOLDER = /^secret(?:[:.][A-Za-z0-9_-]+)?$/;
@@ -127,10 +130,11 @@ export function authoredSkillIssues(args: {
       'SKILL.md declares no `## Inputs` section; every value that varies per run is an angle-bracket input declared there',
     );
   }
-  for (const name of undeclaredSkillInputs(args.body)) {
-    if (declared === undefined) break;
-    issues.push(`SKILL.md uses \`<${name}>\` without declaring it under \`## Inputs\``);
-  }
+  const undeclared = declared === undefined ? [] : undeclaredSkillInputs(args.body);
+  undeclared.forEach((name: string, index: number): void => {
+    const form = `SKILL.md uses \`<${name}>\` without declaring it under \`## Inputs\`; declare it there as a line starting with \`<${name}>\``;
+    issues.push(index === 0 ? `${form}, as in: ${DECLARATION_EXAMPLE}` : form);
+  });
 
   if (args.instance) {
     const found = instanceLiterals(args.instance, args.documentedProcedure)

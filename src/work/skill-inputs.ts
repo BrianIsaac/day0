@@ -20,6 +20,22 @@ const PLACEHOLDER = /<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>/g;
 /** The `## Inputs` section: from its heading to the next level-two heading or the end. */
 const INPUTS_SECTION = /^##\s+Inputs\b[^\n]*\n([\s\S]*?)(?=^##\s|(?![\s\S]))/im;
 
+/**
+ * The inputs an executor can bind at run time, as the author is taught them.
+ * The list is the contract the executor prompt already carries (candidate id
+ * and refs, quoted request, reply target, record, runbook, surface record); a
+ * skill declares the ones its procedure needs and may add more from those
+ * same sources. Each line is a correct `## Inputs` declaration, which is why
+ * the gate quotes the first one when it refuses an undeclared placeholder.
+ */
+export const EXECUTION_INPUT_LINES: readonly string[] = [
+  '  - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+  '  - `<requested-value>`: the figure or text the candidate or the runbook names for this run; never a constant in the skill.',
+  '  - `<reply-channel>` and `<reply-thread>`: the `Reply target:` line when the work came from a chat channel or thread.',
+  '  - `<originating-surface>`: the slug of the surface the work came from; its runbook says how the loop is closed there (an audit comment then a state change on a ticket, a reply in the thread on chat).',
+  '  - `<audit-expectation>`: the read-back the runbook prescribes as evidence (an audit line, a returned identifier, a snapshot).',
+];
+
 /** One declared input and where this run's value comes from. */
 export interface SkillInputBinding {
   name: string;
