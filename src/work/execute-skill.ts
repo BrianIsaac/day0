@@ -1424,6 +1424,91 @@ function affirmsSurfaceAction(
   return false;
 }
 
+/**
+ * A verb, in any of its forms, that commits a plan step to writing a record
+ * or a message on a system-of-record or chat surface.
+ */
+const RECORD_ACTION_VERB = new RegExp(
+  `\\b(?:${[
+    'post(?:s|ed|ing)?',
+    'add(?:s|ed|ing)?',
+    'comment(?:s|ed|ing)?',
+    'repl(?:y|ies|ied|ying)',
+    'send(?:s|ing)?',
+    'sent',
+    'creat(?:e|es|ed|ing)',
+    'mov(?:e|es|ed|ing)',
+    'transition(?:s|ed|ing)?',
+    'clos(?:e|es|ed|ing)',
+    'mark(?:s|ed|ing)?',
+    'resolv(?:e|es|ed|ing)',
+    'updat(?:e|es|ed|ing)',
+    'set(?:s|ting)?',
+    'chang(?:e|es|ed|ing)',
+    'edit(?:s|ed|ing)?',
+    'submit(?:s|ted|ting)?',
+    'assign(?:s|ed|ing)?',
+  ].join('|')})\\b`,
+  'gi',
+);
+
+/** A quoted span: the value a plan fixes for a payload. */
+const QUOTED_LITERAL = /"([^"\n]{2,})"|\u201c([^\u201d\n]{2,})\u201d|\u2018([^\u2019\n]{2,})\u2019|(?<![A-Za-z])'([^'\n]{2,})'(?![A-Za-z])/g;
+/** A quoted span that names a record rather than carrying a value. */
+const TITLE_BEFORE = /\b(?:ticket|issue|request|message|thread|page|channel)\s+(?:(?:titled|called|named)\s+)?$/i;
+const TITLE_AFTER = /^\s+(?:ticket|issue|request|message|thread|page|channel|title)\b/i;
+/** A step that only drafts or holds text does not commit to sending it. */
+const NOT_A_WRITE = /\b(?:draft(?:s|ed|ing)?|prepar(?:e|es|ed|ing)|propos(?:e|es|ed|ing)|hold(?:s|ing)?|held|wait(?:s|ed|ing)?)\b/i;
+
+/**
+ * The values a plan clause fixes for a write: its quoted spans, less those
+ * that name a record (a title) or the candidate itself.
+ */
+function fixedPayloadLiterals(clause: string, candidate: Pick<WorkCandidate, 'externalId'>): string[] {
+  const literals: string[] = [];
+  for (const match of clause.matchAll(QUOTED_LITERAL)) {
+    const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? '';
+    const before = clause.slice(0, match.index);
+    const after = clause.slice(match.index + match[0].length);
+    if (TITLE_BEFORE.test(before) || TITLE_AFTER.test(after)) continue;
+    if (value.trim() === candidate.externalId) continue;
+    literals.push(value);
+  }
+  return literals;
+}
+
+/**
+ * Whether a clause commits to a write on a record or chat surface whose
+ * payload it fixes: an ungoverned record verb, a quoted value that is not a
+ * reference, no result vocabulary and no drafting or holding verb. Such a
+ * payload is determined before any result exists, so it belongs in phase
+ * one whatever the transport carries it.
+ *
+ * Args:
+ *   clause: One clause of a plan step.
+ *   surface: The surface the clause names.
+ *   candidate: The work candidate, whose own id is a reference.
+ *
+ * Returns:
+ *   The fixed literal, or undefined when the clause fixes nothing.
+ */
+function fixesRecordPayload(
+  clause: string,
+  surface: Pick<SurfaceRecord, 'slug' | 'displayName'>,
+  candidate: Pick<WorkCandidate, 'externalId'>,
+): string | undefined {
+  if (namesResultDependency(clause) || NOT_A_WRITE.test(clause)) return undefined;
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const stripped = clause
+    .replace(new RegExp(escape(surface.displayName), 'gi'), ' ')
+    .replace(new RegExp(escape(surface.slug), 'gi'), ' ');
+  const committed = [...stripped.matchAll(RECORD_ACTION_VERB)].some(
+    (verb) => !GOVERNING_NEGATION.test(stripped.slice(0, verb.index)),
+  );
+  if (!committed) return undefined;
+  return fixedPayloadLiterals(clause, candidate)[0];
+}
+
 function namesSurface(text: string, surface: Pick<SurfaceRecord, 'slug' | 'displayName'>): boolean {
   const lower = text.toLowerCase();
   if (lower.includes(surface.slug.toLowerCase())) return true;
@@ -1443,13 +1528,16 @@ export interface DeferralAuditContext {
  * Refuse a phase-one output that defers work on judgement rather than on data.
  *
  * A dependent phase is legitimate only for payloads that consume a prior
- * result. Two things are checked in code: every DEFERRED procedure-trail row
- * must declare a read or snapshot index and the result field it consumes, and every connected browser-driven
- * surface an affirmative approved plan step acts on must either have an
- * action in this phase or a `notes` sentence naming the surface and the
- * result its sequence waits for. A browser sequence is the decidable case:
- * the runbook carries every literal and says the session cannot be split.
- * Mock mode emits everything in one phase and is never audited.
+ * result. Three things are checked in code: every DEFERRED procedure-trail
+ * row must declare a read or snapshot index and the result field it
+ * consumes; every connected browser-driven surface an affirmative approved
+ * plan step acts on must either have an action in this phase or a `notes`
+ * sentence naming the surface and the result its sequence waits for (the
+ * runbook carries every literal and says the session cannot be split); and
+ * every connected MCP or HTTP surface a plan clause commits to write with a
+ * quoted value must have a write in this phase, because that payload was
+ * fixed before any result existed. Mock mode emits everything in one phase
+ * and is never audited.
  *
  * Args:
  *   output: The phase-one output as the model returned it.
@@ -1513,6 +1601,29 @@ export function deferralAudit(
     if (namesSurface(output.notes, surface) && namesResultDependency(output.notes)) continue;
     issues.push(
       `deferred an action with no result dependency: the documented ${surface.displayName} (${surface.slug}) sequence has no action in this phase; its payload is fixed by the candidate and the runbook, so emit the whole sequence now, or say in notes which prior result it consumes`,
+    );
+  }
+  // The same rule on every other transport, in the code-decidable form: a
+  // write whose value the approved plan quotes is fixed before any result
+  // exists, and the gate holds it like any other write.
+  const written = new Set(
+    output.actions.flatMap((action): string[] => {
+      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+      return parsed?.ok && actionIntent(parsed.action) === 'write' ? [parsed.action.surface] : [];
+    }),
+  );
+  for (const surface of context.surfaces) {
+    if (surface.path !== 'mcp' && surface.path !== 'documented-api') continue;
+    if (verdictFor(surface, context.now) !== 'connected') continue;
+    if (written.has(surface.slug)) continue;
+    const fixed = context.plan.steps
+      .flatMap((step) => step.split(/[.;\n]/))
+      .filter((clause) => namesSurface(clause, surface))
+      .map((clause) => fixesRecordPayload(clause, surface, candidate))
+      .find((literal): literal is string => literal !== undefined);
+    if (fixed === undefined) continue;
+    issues.push(
+      `deferred an action with no result dependency: the documented ${surface.displayName} (${surface.slug}) write carrying "${fixed}" has no action in this phase; its payload is fixed by the plan, the candidate and the runbook, so emit it now`,
     );
   }
   return issues;

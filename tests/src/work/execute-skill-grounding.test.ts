@@ -578,6 +578,156 @@ describe('deferral by data, not by judgement', (): void => {
     ).toEqual([]);
   });
 
+  const slack: SurfaceRecord = {
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage', 'conversations.replies'],
+    managerDmChannelId: 'D0MANAGER',
+  };
+  const recordContext = { ...context, surfaces: [tile, linear, slack] };
+  const readOnly = (steps: string[]): string[] =>
+    deferralAudit(
+      { notes: '', needsDependentPhase: true, actions: [getIssue], procedureTrails: [] },
+      ticket,
+      { ...recordContext, plan: { ...plan, steps } },
+    );
+
+  it('requires a record write whose payload the plan fixes to be emitted in phase one, whatever the transport', (): void => {
+    const linearIssues = readOnly([
+      'Read REVOPS-9 in Linear.',
+      'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear and move it to In Progress.',
+    ]);
+    expect(linearIssues).toHaveLength(1);
+    expect(linearIssues[0]).toContain('deferred an action with no result dependency');
+    expect(linearIssues[0]).toContain('Linear (linear)');
+    expect(linearIssues[0]).toContain('"Kick-off scheduled for Monday"');
+    const slackIssues = readOnly([
+      'Read the thread.',
+      'Post "Standup moved to 10:00" in #revops-asks on Slack.',
+    ]);
+    expect(slackIssues).toHaveLength(1);
+    expect(slackIssues[0]).toContain('Slack (slack)');
+    // The same plans pass once the fixed-payload writes are in the phase; the gate holds them.
+    const comment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-9","body":"Kick-off scheduled for Monday"}',
+      },
+    };
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [getIssue, comment], procedureTrails: [] },
+        ticket,
+        {
+          ...recordContext,
+          plan: {
+            ...plan,
+            steps: [
+              'Read REVOPS-9 in Linear.',
+              'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear and move it to In Progress.',
+            ],
+          },
+        },
+      ),
+    ).toEqual([]);
+    const reply: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: '{"Authorization":"Bearer {{secret}}"}',
+        body: '{"channel":"C0PUBLIC","text":"Standup moved to 10:00"}',
+      },
+    };
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [getIssue, reply], procedureTrails: [] },
+        ticket,
+        {
+          ...recordContext,
+          plan: { ...plan, steps: ['Read the thread.', 'Post "Standup moved to 10:00" in #revops-asks on Slack.'] },
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    'Comment on REVOPS-7 in Linear quoting the read-back figure, then move it to Done.',
+    'After the snapshot lands, post "done" in the Slack thread.',
+    'Move the Linear issue titled "Refresh the tile" to Done.',
+    'Comment on "REVOPS-7" in Linear with the outcome.',
+    'Draft the Linear comment: "Friday standup summary for Q3 close" for the manager to approve.',
+    'Do not post "done" in Slack until the manager approves.',
+  ])('leaves a record write alone when its payload consumes a result, is a reference, a draft, or is withheld: %s', (step): void => {
+    expect(readOnly(['Read REVOPS-7 in Linear.', step])).toEqual([]);
+  });
+
+  it('never audits a fixed-payload write on a surface that is not connected', (): void => {
+    const disconnected = { ...linear, verdict: 'absent' as const, credentialLanded: false };
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+        ticket,
+        {
+          ...context,
+          surfaces: [disconnected],
+          plan: { ...plan, steps: ['Add the comment "Kick-off" to REVOPS-9 in Linear.'] },
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it('sends a fixed-payload MCP write left out of phase one through the same one repair', async (): Promise<void> => {
+    const literalPlan = {
+      ...plan,
+      steps: [
+        'Read REVOPS-9 in Linear.',
+        'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear.',
+      ],
+    };
+    const comment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-9","body":"Kick-off scheduled for Monday"}',
+      },
+    };
+    const gated = {
+      draft: 'Reading first.',
+      notes: 'The comment waits for the manager.',
+      needsDependentPhase: true,
+      actions: [getIssue],
+      procedureTrails: [],
+      deferredActions: null,
+    };
+    const corrected = { ...gated, actions: [getIssue, comment] };
+    recorded.outputs.push(gated, corrected);
+    let additional = 0;
+    const output = await runSkill({
+      ...runArgs,
+      plan: literalPlan,
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      onAdditionalModelCall: (): void => {
+        additional += 1;
+      },
+    });
+    expect(additional).toBe(1);
+    expect(recorded.users[1]).toContain('"Kick-off scheduled for Monday"');
+    expect(recorded.users[1]).toContain('Linear (linear)');
+    expect(output.actions).toEqual([getIssue, comment]);
+  });
+
   it('preserves the 2 September approved plan shapes and complete browser batch', () => {
     const runThrough: Charter = {
       ...charter,
