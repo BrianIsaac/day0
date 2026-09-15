@@ -170,6 +170,24 @@ it.each(['channels:history', 'im:write', 'im:history', 'users:read.email', 'line
   },
 );
 
+it('keeps a scope-shaped value under an explicit password or secret assignment as the credential', () => {
+  for (const [text, value, label] of [
+    ["password: 'ops:hunter2'", 'ops:hunter2', 'password'],
+    ['Looker password: `tile:q3close`', 'tile:q3close', 'password'],
+    ['token: "svc:hunter2"', 'svc:hunter2', 'credential'],
+    ['PIN = "door:4412"', 'door:4412', 'password'],
+  ] as const) {
+    expect(guardSecretSpan(text, spanOf(text, value), label), text).toEqual(spanOf(text, value));
+  }
+  expect(guardReason('ops:hunter2')).toBe('permission scope');
+  expect(guardReason('ops:hunter2', { assigned: true })).toBeUndefined();
+  expect(guardReason('users:read.email', { assigned: true })).toBeUndefined();
+  expect(guardReason('<password>', { assigned: true })).toBe('reference');
+  // A scope in a list stays a scope whatever a nearby label says about the list.
+  const listed = 'scopes: ["chat:write", "users:read"]';
+  expect(guardSecretSpan(listed, spanOf(listed, 'chat:write'), 'credential')).toBeUndefined();
+});
+
 it('keeps long and versioned permission identifiers without treating opaque halves as scopes', () => {
   for (const value of ['organization:read_all_repository_members_and_permissions', 'version2026:read']) {
     const text = `["${value}"]`;

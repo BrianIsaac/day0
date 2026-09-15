@@ -39,6 +39,37 @@ function isPermissionScope(value: string): boolean {
   });
 }
 
+/**
+ * What a guard knows about where a value sits.
+ *
+ * A scope identifier is a name, and a name-shaped value is not a secret
+ * unless something says it is: an explicit password or secret assignment
+ * ("password: 'ops:hunter2'", "login: svc / ops:hunter2") does, so under one
+ * the scope shape does not apply. A stored row carries that context as a
+ * password-class label.
+ */
+export interface GuardContext {
+  /** The value sits under an explicit credential assignment. */
+  assigned?: boolean;
+}
+
+/** A stored row's label that records an explicit password assignment on the page. */
+const PASSWORD_CLASS_LABEL = /\b(?:password|passwd|pwd|passcode|passphrase|pin|login)\b/i;
+
+/**
+ * Whether a stored credential's label says it was read from an explicit
+ * password assignment, so a name-shaped value is still the credential.
+ *
+ * Args:
+ *   label: The label stored beside the ciphertext.
+ *
+ * Returns:
+ *   True for a password-class label.
+ */
+export function assignedByLabel(label: string): boolean {
+  return PASSWORD_CLASS_LABEL.test(label);
+}
+
 /** Shapes a secret value never has, tried against the trimmed span text. */
 export const NEVER_A_SECRET: readonly NeverASecret[] = [
   { name: 'permission scope', pattern: PERMISSION_SCOPE },
@@ -147,7 +178,9 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const scope = isPermissionScope(text.slice(tokenStart, tokenEnd));
   const scopeContext = /[\[,'"`]\s*$/.test(text.slice(0, tokenStart)) ||
     /^\s*[\],'"`]/.test(text.slice(tokenEnd));
-  if (scope && scopeContext && text[tokenEnd] !== '@') return undefined;
+  const assigned =
+    SECRET_ASSIGNMENT.test(text.slice(0, tokenStart)) || PASSWORD_ASSIGNMENT.test(text.slice(0, tokenStart));
+  if (scope && scopeContext && !assigned && text[tokenEnd] !== '@') return undefined;
   // Some detectors return the assignment label rather than its value.
   // Only extend a password label across explicit assignment syntax.
   if (label === 'password' && PASSWORD_LABEL.test(value)) {
@@ -290,13 +323,16 @@ export function personalDataGuardReason(kind: string, value: string): string | u
  *
  * Args:
  *   value: A candidate value.
+ *   context: Where the value sits; under an explicit assignment the scope
+ *     shape does not apply.
  *
  * Returns:
  *   The rule name, or undefined when the value passes.
  */
-export function guardReason(value: string): string | undefined {
+export function guardReason(value: string, context: GuardContext = {}): string | undefined {
   const shape = NEVER_A_SECRET.find((candidate: NeverASecret): boolean =>
-    candidate.pattern.test(value) && (candidate.name !== 'permission scope' || isPermissionScope(value)),
+    candidate.pattern.test(value) &&
+    (candidate.name !== 'permission scope' || (!context.assigned && isPermissionScope(value))),
   )?.name;
   if (shape) return shape;
   return NEVER_REDACT.has(value) ? 'never-redact list' : undefined;

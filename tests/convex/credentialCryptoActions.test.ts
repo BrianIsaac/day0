@@ -137,6 +137,26 @@ describe('the public API surface and decryption', (): void => {
   });
 });
 
+it('keeps a page-derived password that happens to look like a scope, by its label', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const passwordId = await insertRow(harness, { userId: 'owner', label: 'looker password', plaintext: 'ops:hunter2' });
+  const scopeId = await insertRow(harness, { userId: 'owner', label: 'slack credential', plaintext: 'chat:write' });
+  await harness.run(async (ctx) => {
+    const sourceId = await ctx.db.insert('docSources', {
+      userId: 'owner', label: 'Handbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+    });
+    await ctx.db.patch(passwordId, { source: { sourceId, ref: 'looker.md' } });
+    await ctx.db.patch(scopeId, { source: { sourceId, ref: 'slack.md' } });
+  });
+  expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual(['ops:hunter2']);
+  const rows = await harness.run(async (ctx) => ({
+    password: (await ctx.db.get(passwordId))!,
+    scope: (await ctx.db.get(scopeId))!,
+  }));
+  expect(cryptoActions.storedCredentialGuardReason(rows.password)).toBeUndefined();
+  expect(cryptoActions.storedCredentialGuardReason(rows.scope)).toBe('permission scope');
+});
+
 it('lets resync repair an old scope row instead of redacting it as a known value forever', async () => {
   const harness = convexTest(schema, allConvexModules());
   const credentialId = await insertRow(harness, { userId: 'owner', label: 'Slack credential', plaintext: 'users:read' });
