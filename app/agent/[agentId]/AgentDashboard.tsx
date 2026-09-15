@@ -1457,12 +1457,8 @@ function WorkQueue({
   // item; once a verdict comes back, draft a plan if claim, etc.
   useEffect(() => {
     if (!charterApproved) return;
-    for (const it of workItems) {
-      if (it.state === 'discovered') {
-        once('evaluate', it._id, () => evaluate({ workItemId: it._id }));
-        break;
-      }
-    }
+    const next = nextItemToEvaluate(workItems);
+    if (next) once('evaluate', next._id, () => evaluate({ workItemId: next._id }));
   }, [charterApproved, workItems, evaluate, once]);
 
   useEffect(() => {
@@ -1511,9 +1507,7 @@ function WorkQueue({
                 })
               }
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
-              onRetryFailed={(feedback) =>
-                retryFailed({ workItemId: item._id, ...(feedback?.trim() ? { feedback } : {}) })
-              }
+              onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
               onReconcileFailed={(confirmed) =>
                 reconcileFailed({ workItemId: item._id, confirmed })
               }
@@ -1763,6 +1757,33 @@ export function clipLedgerRow(text: string | undefined): string | undefined {
 }
 
 const LEDGER_ROW_LENGTH = 180;
+
+/**
+ * The next item the queue evaluates on its own: the first discovered one.
+ *
+ * A retried item returns to `discovered`, so the manager's Retry reaches the
+ * evaluator through this same pick.
+ */
+export function nextItemToEvaluate(items: readonly Doc<'workItems'>[]): Doc<'workItems'> | undefined {
+  return items.find((item) => item.state === 'discovered');
+}
+
+/**
+ * What the card's Retry sends: the item and, when the manager wrote one, the note.
+ *
+ * Args:
+ *   workItemId: The item being retried.
+ *   feedback: The retry note as typed; a blank note is not sent.
+ *
+ * Returns:
+ *   The arguments for `work.retryFailed`.
+ */
+export function retryRequest(
+  workItemId: Id<'workItems'>,
+  feedback?: string,
+): { workItemId: Id<'workItems'>; feedback?: string } {
+  return { workItemId, ...(feedback?.trim() ? { feedback } : {}) };
+}
 
 export function failedItemReason(item: {
   skipReason?: string;
