@@ -567,6 +567,57 @@ export const migrateSandboxIdField = internalMutation({
 });
 
 /**
+ * Retire a registered skill that predates shapes.
+ *
+ * A skill proposed before shapes existed carries no `surfaceClass` and was
+ * named after the work item that first needed it (`linear-action-revops-7`),
+ * with that item's values in its body. The matcher still serves such a row
+ * through the name-token path while no shaped skill covers the shape, so it
+ * keeps working; it also keeps the reusable procedure from being proposed for
+ * that shape. Retiring it is the operator's decision, made once per row:
+ *
+ *   npx convex run skills:retireUnshaped '{"skillId":"<id>"}'
+ *
+ * Nothing is deleted. The row moves to `rejected`, which no panel lists and
+ * the executor never picks from, its history stays readable under every run
+ * that named it, and the next work item of its shape proposes the shaped
+ * skill. A shaped row and a builtin row are refused: the first is the
+ * reusable procedure for its shape, the second is installed, not authored.
+ */
+export const retireUnshaped = internalMutation({
+  args: { skillId: v.id('skills') },
+  handler: async (ctx, args): Promise<{ retired: boolean; reason?: string }> => {
+    const row = await ctx.db.get(args.skillId);
+    if (!row) throw new Error('skill not found');
+    if (row.state === 'rejected') return { retired: false, reason: 'already retired' };
+    if (row.state !== 'registered') {
+      throw new Error(`skill state is ${row.state}; only a registered skill is retired`);
+    }
+    if (row.sourceType !== 'agent-authored') {
+      throw new Error('a builtin skill is installed, not authored, and is not retired');
+    }
+    if (row.surfaceClass !== undefined && row.operation !== undefined) {
+      throw new Error(
+        `skill ${row.name} is the reusable procedure for ${row.surfaceClass}/${row.operation}, not a legacy row`,
+      );
+    }
+    await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'skill.retired',
+      payload: {
+        skillId: args.skillId,
+        name: row.name,
+        reason:
+          'proposed before skills were shaped; the next work item of its shape proposes the reusable procedure',
+      },
+      createdAt: Date.now(),
+    });
+    return { retired: true };
+  },
+});
+
+/**
  * Take exclusive ownership of a skill for one authoring run, or report that
  * somebody else has it.
  *
