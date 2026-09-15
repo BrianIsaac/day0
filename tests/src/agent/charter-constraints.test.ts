@@ -296,20 +296,44 @@ describe('striking a derived constraint', (): void => {
     origin: 'derived',
   };
 
-  it('drops every list clause carrying its word whole, never a word of one', (): void => {
+  it('drops every bounding clause carrying its word whole and keeps a will-do minus the word', (): void => {
     const charter = runThrough([{ ...ownership, struck: true }]);
     charter.proposedBoundaries.willNotDo = [
       'Change owned tickets outside Q3 close.',
       'Change Northstar CRM records.',
     ];
     const result = effectiveCharter(charter);
-    expect(result.proposedBoundaries.willDo).toEqual(['Draft replies to asks in #revops-asks.']);
+    expect(result.proposedBoundaries.willDo).toEqual([
+      'Handle prioritized Linear tickets in the Q3 close project.',
+      'Draft replies to asks in #revops-asks.',
+    ]);
     expect(result.proposedBoundaries.willNotDo).toEqual(['Change Northstar CRM records.']);
     expect(result.proposedBoundaries.escalationTriggers).toEqual(['A ticket with priority P0.']);
     expect(result.proposedFunction).toBe(
       'Own routine revenue operations work from prioritized Linear tickets for the RevOps team.',
     );
     expect(clauseTexts(result).join('\n')).not.toMatch(/owned/i);
+  });
+
+  it('keeps a will-do the function does not restate, minus the word, rather than dropping the scope', (): void => {
+    const charter = runThrough([{ ...ownership, struck: true }]);
+    charter.proposedFunction = 'Keep the RevOps team unblocked during the Q3 close.';
+    const result = effectiveCharter(charter);
+    expect(result.proposedBoundaries.willDo).toEqual([
+      'Handle prioritized Linear tickets in the Q3 close project.',
+      'Draft replies to asks in #revops-asks.',
+    ]);
+    expect(result.proposedFunction).toBe(charter.proposedFunction);
+    expect(clauseTexts(result).join('\n')).not.toMatch(/owned/i);
+    expect(strikePreview({ ...charter, constraints: [ownership] }, 0)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [
+        {
+          from: 'Handle owned, prioritized Linear tickets in the Q3 close project.',
+          to: 'Handle prioritized Linear tickets in the Q3 close project.',
+        },
+      ],
+    });
   });
 
   it('approves the 15 September fixture with the will-not-do reduced to the sibling clause', (): void => {
@@ -327,6 +351,7 @@ describe('striking a derived constraint', (): void => {
   it('previews the fixture strike as the clause it removes', (): void => {
     expect(strikePreview(strikeRefusalBody(false), 2)).toEqual({
       removedClauses: ['Take ownership of Northstar CRM-dependent work that Brain must handle.'],
+      rewrittenClauses: [],
     });
     expect(strikePreview(strikeRefusalBody(false), 0)).toEqual({
       removedClauses: [
@@ -334,14 +359,16 @@ describe('striking a derived constraint', (): void => {
         'Access or execute work in Northstar CRM.',
         'A request requires access to Northstar CRM; route it to Brain.',
       ],
+      rewrittenClauses: [],
     });
     // "Brain" is a word inside both will-not-do clauses, so this strike was
     // always refused; now the card learns that before the manager presses it.
     expect(strikePreview(strikeRefusalBody(false), 1)).toEqual({
       removedClauses: [],
+      rewrittenClauses: [],
       refusal: 'strike or edit the whole will-not-do clause; removing only part could change its boundary',
     });
-    expect(strikePreview(strikeRefusalBody(false), 7)).toEqual({ removedClauses: [] });
+    expect(strikePreview(strikeRefusalBody(false), 7)).toEqual({ removedClauses: [], rewrittenClauses: [] });
   });
 
   it('refuses to drop the only clause bounding a named system, with the reason', (): void => {
@@ -353,10 +380,16 @@ describe('striking a derived constraint', (): void => {
     expect(() => effectiveCharter(charter)).toThrow(reason);
     expect(strikeOutcome(charter)).toEqual({ ok: false, reason });
     expect(strikePreview(runThrough([ownership]), 0)).toEqual({
-      removedClauses: ['Handle owned, prioritized Linear tickets in the Q3 close project.'],
+      removedClauses: [],
+      rewrittenClauses: [
+        {
+          from: 'Handle owned, prioritized Linear tickets in the Q3 close project.',
+          to: 'Handle prioritized Linear tickets in the Q3 close project.',
+        },
+      ],
     });
     const draft = { ...charter, constraints: [ownership] };
-    expect(strikePreview(draft, 0)).toEqual({ removedClauses: [], refusal: reason });
+    expect(strikePreview(draft, 0)).toEqual({ removedClauses: [], rewrittenClauses: [], refusal: reason });
   });
 
   it('refuses to drop the only clause enforcing an unstruck system boundary', (): void => {

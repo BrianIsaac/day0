@@ -686,6 +686,16 @@ export function ConstraintList({
                   {quotedClauses(preview.removedClauses)}
                 </p>
               ) : null}
+              {preview && !preview.refusal
+                ? preview.rewrittenClauses.map((pair, i) => (
+                    <p key={i} className="text-[10px] text-[var(--color-muted)] mt-0.5">
+                      {'rewrites the clause: '}
+                      {quotedClauses([pair.from])}
+                      {' to '}
+                      {quotedClauses([pair.to])}
+                    </p>
+                  ))
+                : null}
             </div>
             {!constraint.struck && onStrike ? (
               <button

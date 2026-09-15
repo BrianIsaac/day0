@@ -588,12 +588,16 @@ describe('charter confirm-or-strike list', (): void => {
         onStrike={() => undefined}
         previewStrike={(index) =>
           index === 0
-            ? { removedClauses: ['Handle owned, prioritized Linear tickets.'] }
-            : { removedClauses: [] }
+            ? {
+                removedClauses: ['Handle owned, prioritized Linear tickets.'],
+                rewrittenClauses: [{ from: 'Own the close checklist.', to: 'Run the close checklist.' }],
+              }
+            : { removedClauses: [], rewrittenClauses: [] }
         }
       />,
     );
     expect(markup).toContain('strikes the clause: “Handle owned, prioritized Linear tickets.”');
+    expect(markup).toContain('rewrites the clause: “Own the close checklist.” to “Run the close checklist.”');
     expect(markup).not.toContain('disabled=""');
 
     const refused = renderToStaticMarkup(
@@ -601,7 +605,7 @@ describe('charter confirm-or-strike list', (): void => {
         constraints={constraints}
         approved={false}
         onStrike={() => undefined}
-        previewStrike={() => ({ removedClauses: [], refusal: 'strike refused: the only clause that bounds Linear' })}
+        previewStrike={() => ({ removedClauses: [], rewrittenClauses: [], refusal: 'strike refused: the only clause that bounds Linear' })}
       />,
     );
     expect(refused).toContain('cannot be struck: strike refused: the only clause that bounds Linear');
@@ -612,7 +616,7 @@ describe('charter confirm-or-strike list', (): void => {
         constraints={constraints}
         approved={false}
         onStrike={() => undefined}
-        previewStrike={() => ({ removedClauses: [] })}
+        previewStrike={() => ({ removedClauses: [], rewrittenClauses: [] })}
       />,
     );
     expect(plain).not.toContain('strikes the clause');

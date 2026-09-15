@@ -288,21 +288,23 @@ export type ClauseCharter = Pick<Charter, 'proposedFunction' | 'proposedBoundari
   namedSystems?: ReadonlyArray<{ name: string }>;
 };
 
-/** The list clauses a strike may drop whole; the function is a sentence and never one of them. */
+/** The list clauses a preview reports on; the function is a sentence and never one of them. */
 const LIST_FIELDS = ['willDo', 'willNotDo', 'escalationTriggers'] as const;
 
 /** The clauses that bound the agent: a will-not-do or an escalation trigger, never a will-do. */
 const BOUNDING_FIELDS = ['willNotDo', 'escalationTriggers'] as const;
 
 /**
- * Whether a strike removes each clause that carries the constraint, whole.
+ * Whether a strike removes each bounding clause that carries the constraint, whole.
  *
  * A derived candidate-property constraint is one word this module found in
- * a clause, so the rule the manager is striking is the clause itself:
+ * a clause, so the bound the manager is striking is the clause itself:
  * "ownership" struck from "Take ownership of Northstar CRM-dependent work"
- * would leave a sentence saying something else. A listed constraint names
- * phrases the synthesis call or the manager chose, which come out as
- * phrases.
+ * would leave a prohibition saying something else. A will-do is scope, not
+ * a bound: a property strike widens what qualifies and never narrows where
+ * the agent acts, so a will-do keeps its sentence minus the word, as the
+ * function does. A listed constraint names phrases the synthesis call or the
+ * manager chose, which come out as phrases.
  */
 function strikesWholeClause(constraint: CharterConstraint): boolean {
   return constraint.kind === 'candidate-property' && constraint.origin === 'derived';
@@ -375,11 +377,12 @@ function assertBoundariesKept(
 /**
  * The charter with the given constraints struck.
  *
- * A derived candidate-property constraint drops, whole, every list clause
- * that carries its wording, and loses its wording from the proposed function,
- * which is never dropped. Every other constraint has its wording removed
- * from the four clause fields as `withoutClauseWording` does. A
- * candidate-property strike may not drop the last clause bounding a system.
+ * A derived candidate-property constraint drops, whole, every will-not-do
+ * and escalation clause that carries its wording, and loses its wording
+ * from the proposed function and the will-do clauses, which keep their
+ * sentences. Every other constraint has its wording removed from the four
+ * clause fields as `withoutClauseWording` does. A candidate-property strike
+ * may not drop the last clause bounding a system.
  *
  * Args:
  *   charter: The charter to edit.
@@ -418,7 +421,11 @@ export function withoutConstraints<T extends ClauseCharter>(
   return result;
 }
 
-/** Drop every list clause carrying a whole-clause constraint's wording; the function keeps its sentence minus the words. */
+/**
+ * Drop every bounding clause carrying a whole-clause constraint's wording;
+ * the function and the will-do clauses keep their sentences minus the words,
+ * a will-do emptied by that going with them.
+ */
 function withoutClauses<T extends ClauseCharter>(charter: T, struck: readonly CharterConstraint[]): T {
   if (struck.length === 0) return charter;
   const phrases = struck.flatMap((constraint: CharterConstraint): string[] => constraint.wording);
@@ -426,7 +433,10 @@ function withoutClauses<T extends ClauseCharter>(charter: T, struck: readonly Ch
     phrases.some((phrase: string): boolean => wordingPresent(phrase, [clause]));
   const proposedFunction = withoutPhrases(charter.proposedFunction, phrases);
   const boundaries = { ...charter.proposedBoundaries };
-  for (const field of LIST_FIELDS) {
+  boundaries.willDo = charter.proposedBoundaries.willDo
+    .map((clause: string): string => withoutPhrases(clause, phrases))
+    .filter((clause: string): boolean => /[A-Za-z0-9]/.test(clause));
+  for (const field of BOUNDING_FIELDS) {
     boundaries[field] = charter.proposedBoundaries[field].filter(
       (clause: string): boolean => !carries(clause),
     );
@@ -494,6 +504,8 @@ export function strikeOutcome<T extends ClauseCharter>(charter: T): StrikeOutcom
 export interface StrikePreview {
   /** List clauses the strike removes whole, beyond what is already struck. */
   removedClauses: string[];
+  /** Will-do clauses the strike keeps with the wording gone, as they read before and after. */
+  rewrittenClauses: Array<{ from: string; to: string }>;
   /** Why the strike cannot be applied; when set, nothing is removed. */
   refusal?: string;
 }
@@ -519,15 +531,37 @@ function listClauses(charter: ClauseCharter): string[] {
 export function strikePreview(charter: ClauseCharter, index: number): StrikePreview {
   const constraints = [...(charter.constraints ?? [])];
   const target = constraints[index];
-  if (!target) return { removedClauses: [] };
+  if (!target) return { removedClauses: [], rewrittenClauses: [] };
   constraints[index] = { ...target, struck: true };
   const before = strikeOutcome(charter);
   const after = strikeOutcome({ ...charter, constraints });
-  if (!after.ok) return { removedClauses: [], refusal: after.reason };
-  const base = listClauses(before.ok ? before.charter : charter);
+  if (!after.ok) return { removedClauses: [], rewrittenClauses: [], refusal: after.reason };
+  const base = before.ok ? before.charter : charter;
   const remaining = listClauses(after.charter);
+  const kept = new Set(remaining);
+  const gone = listClauses(base).filter((clause: string): boolean => !kept.has(clause));
+  // Only a will-do is rewritten rather than dropped, and rewriting keeps
+  // order, so each will-do that changed lines up with the clause in its
+  // place afterwards.
+  const willDoBefore = base.proposedBoundaries.willDo;
+  const willDoAfter = after.charter.proposedBoundaries.willDo;
+  const rewrittenClauses: Array<{ from: string; to: string }> = [];
+  let position = 0;
+  for (const clause of willDoBefore) {
+    if (willDoAfter[position] === clause) {
+      position += 1;
+      continue;
+    }
+    const to = willDoAfter[position];
+    if (to !== undefined && !willDoBefore.includes(to)) {
+      rewrittenClauses.push({ from: clause, to });
+      position += 1;
+    }
+  }
+  const rewritten = new Set(rewrittenClauses.map((pair): string => pair.from));
   return {
-    removedClauses: base.filter((clause: string): boolean => !remaining.includes(clause)),
+    removedClauses: gone.filter((clause: string): boolean => !rewritten.has(clause)),
+    rewrittenClauses,
   };
 }
 
