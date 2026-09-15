@@ -4,6 +4,8 @@
  * (which checks the closing phase against the plan).
  */
 
+import type { ExecutionPlan } from './types';
+
 /** A verb that reads, checks or captures something the closing phase reasons from. */
 const RESULT_VERB =
   /\b(read|check|identify|inspect|verify|validate|find|look up|snapshot)\b/gi;
@@ -24,6 +26,9 @@ const PERIOD_LABEL = /\b(?:q[1-4]|h[12]|fy\s?\d{2,4}|(?:19|20)\d\d|(?:month|quar
 /** A noun after a close term makes it an adjunct ("close project", "close checklist"). */
 const CLOSE_NOUN_HEAD =
   /^\s+(?:projects?|checklists?|checks|process|calendar|timeline|package|summary|summaries|tasks?|items?|work|notes?|reports?|board|window|meetings?|status)\b/i;
+/** A plan's own words for leaving the ticket state where it is. */
+const NO_TRANSITION =
+  /\bno (?:status|state) (?:change|transition)\b|\b(?:status|state) (?:is )?(?:unchanged|stays|remains)\b|\bleave (?:\S+\s+){0,3}(?:open|unchanged|as is|in progress|to the manager)\b/i;
 const QUOTED_SPAN = /"[^"\n]*"|“[^”\n]*”/g;
 
 /** Titles are references; quoted surface names and target states still impose obligations. */
@@ -62,13 +67,20 @@ function clauseEnd(after: string): number {
   return separator ? separator.index : after.length;
 }
 
+interface OccurrenceOptions {
+  /** A noun that makes the term before it an adjunct ("close project"). */
+  nounHead?: RegExp;
+  /** Whether a determiner before the term makes it vocabulary; a withheld "the Done transition" is still about the close. */
+  determinerIsVocabulary?: boolean;
+}
+
 /**
  * Every occurrence of a term used as a word of its own. A term inside a
  * hyphenated compound on either side ("read-back", "close-week"), after a
  * determiner, "end" or a period label, or followed by a period noun is
  * vocabulary, not an instruction, and is left out.
  */
-function occurrences(rawStep: string, terms: RegExp, nounHead?: RegExp): TermOccurrence[] {
+function occurrences(rawStep: string, terms: RegExp, options: OccurrenceOptions = {}): TermOccurrence[] {
   const step = instructionText(rawStep);
   const found: TermOccurrence[] = [];
   terms.lastIndex = 0;
@@ -76,9 +88,10 @@ function occurrences(rawStep: string, terms: RegExp, nounHead?: RegExp): TermOcc
     if (step[match.index - 1] === '-') continue;
     const after = step.slice(match.index + match[0].length);
     if (after.startsWith('-') || PERIOD_NOUN.test(after)) continue;
-    if (nounHead?.test(after)) continue;
+    if (options.nounHead?.test(after)) continue;
     const prefix = step.slice(0, match.index);
-    if (NOUN_MARKER.test(prefix) || PERIOD_LABEL.test(prefix)) continue;
+    if (PERIOD_LABEL.test(prefix)) continue;
+    if (options.determinerIsVocabulary !== false && NOUN_MARKER.test(prefix)) continue;
     const start = clauseStart(prefix);
     const clausePrefix = prefix.slice(start);
     found.push({
@@ -133,5 +146,28 @@ export function promisesWrite(step: string): boolean {
 
 /** Whether a step promises to close, complete or resolve the ticket. */
 export function promisesClose(step: string): boolean {
-  return occurrences(step, CLOSE_STEP, CLOSE_NOUN_HEAD).some(affirmed);
+  return occurrences(step, CLOSE_STEP, { nounHead: CLOSE_NOUN_HEAD }).some(affirmed);
+}
+
+/**
+ * Whether a step, or the plan's summary, says in its own words that the
+ * ticket state is left where it is: a close term under a negation ("do not
+ * move REVOPS-5 to Done"), or a phrase such as "no status change".
+ */
+export function withholdsClose(text: string): boolean {
+  if (NO_TRANSITION.test(instructionText(text))) return true;
+  return occurrences(text, CLOSE_STEP, { nounHead: CLOSE_NOUN_HEAD, determinerIsVocabulary: false }).some(
+    (occurrence) => !affirmed(occurrence),
+  );
+}
+
+/**
+ * Whether a plan commits the run to the ticket's state transition: a step
+ * promises the close and neither the summary nor any step withholds it. A
+ * plan that withholds the transition in its own words never promised it,
+ * so a closing phase that leaves the state alone satisfies that plan.
+ */
+export function planPromisesClose(plan: Pick<ExecutionPlan, 'summary' | 'steps'>): boolean {
+  if (!plan.steps.some(promisesClose)) return false;
+  return !withholdsClose(plan.summary) && !plan.steps.some(withholdsClose);
 }

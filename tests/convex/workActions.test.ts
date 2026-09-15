@@ -49,6 +49,7 @@ import {
   refreshPlan,
   refreshPrerequisiteLedger,
   refreshPrerequisites,
+  REVOPS_5_STEP_5,
 } from './fixtures/closing-gates-2026-09-16';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
@@ -4580,6 +4581,71 @@ describe('the closing gates against the 16 September plans', (): void => {
     { slug: 'slack', displayName: 'Slack' },
     { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' },
   ];
+
+  it('honours a plan that withholds Done in its own words, whatever another step completes', (): void => {
+    const plan = {
+      summary: 'Run the checks and record the note.',
+      steps: [
+        'Complete the three checks in checklist order and quote the evidence.',
+        'Add an audit comment on REVOPS-5 via linear save_comment with the three checks.',
+        REVOPS_5_STEP_5,
+      ],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const satisfied: PlanStepOutcome[] = [
+      { step: 1, status: 'satisfied', evidence: 'the three checks in the comment' },
+      { step: 2, status: 'satisfied', evidence: 'the audit comment in this response' },
+      { step: 3, status: 'satisfied', evidence: 'no status change emitted, as the plan says' },
+    ];
+    expect(
+      dependentTransitionRefusal({ plan, actions: auditNoteClosing.actions, planStepOutcomes: satisfied }),
+    ).toBeUndefined();
+    // A withheld transition is not a missing one when a step stays blocked either.
+    expect(
+      blockedPlanReason([{ ...satisfied[0]!, status: 'blocked', evidence: 'check 2 had no source' }, satisfied[1]!, satisfied[2]!], {
+        plan,
+        actions: auditNoteClosing.actions,
+        applied: [{ tool: 'mcp.call', ok: true, effect: 'comment-16', idempotencyKey: 'run:0' }],
+      }),
+    ).toBeUndefined();
+    // Without the withholding step the same wording still promises the close.
+    expect(
+      dependentTransitionRefusal({
+        plan: { ...plan, steps: plan.steps.slice(0, 2) },
+        actions: auditNoteClosing.actions,
+        planStepOutcomes: satisfied.slice(0, 2),
+      }),
+    ).toContain('omitted the approved ticket state transition');
+  });
+
+  it('names a write step by what it promised, never as a promised read', (): void => {
+    const reason = (step: string): string => {
+      try {
+        validatePlanStepOutcomes({
+          plan: { summary: 'Comment after a check.', steps: [step], expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 1 },
+          outcomes: [{ step: 1, status: 'satisfied', evidence: 'the comment in this response' }],
+          initialActions: [],
+          initialLedger: [],
+          surfaces,
+        });
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      return '';
+    };
+    const write = reason('Add an audit comment on REVOPS-7 via linear save_comment once you verify the visible figure in Linear.');
+    expect(write).toBe('approved plan step 1 is a write step that also promised to verify on Linear, but no landed Linear read or blocking ledger reason was recorded');
+    expect(write).not.toContain('promised a Linear read');
+    expect(reason('Capture evidence from Linear; then add an audit comment on REVOPS-7.')).toBe(
+      'approved plan step 1 is a write step that also promised Linear evidence, but no landed Linear read or blocking ledger reason was recorded',
+    );
+    expect(reason('Verify the visible figure in Linear.')).toBe(
+      'approved plan step 1 promised a Linear read, but no landed Linear read or blocking ledger reason was recorded',
+    );
+  });
 
   it('accepts the REVOPS-7 closing set: step 3 is a write quoting the read-back as evidence, not a Linear read', (): void => {
     expect(() =>
