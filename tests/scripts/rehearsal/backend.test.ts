@@ -6,6 +6,7 @@ import {
   closingHeld,
   competingClaims,
   failedSource,
+  landingRefusal,
   orientationDone,
   skipKind,
   surfaceSummary,
@@ -79,6 +80,15 @@ describe('selections over the backend rows', (): void => {
     expect(batchHeld({ state: 'actions-pending', actionVerdicts: [{ disposition: 'auto' }, { disposition: 'held' }] })).toBe(true);
     expect(batchHeld({ state: 'actions-pending', actionVerdicts: [{ disposition: 'auto' }] })).toBe(false);
     expect(batchHeld({ state: 'executing', actionVerdicts: [{ disposition: 'held' }] })).toBe(false);
+  });
+
+  it('refuses to land on a card that already carries a stored credential', (): void => {
+    expect(landingRefusal(surface('linear', 'proposed'))).toBeUndefined();
+    const fromDocs = { ...surface('linear', 'proposed'), credentialId: 'c1', credentialKind: 'location', credentialLocation: 'team docs / runbooks/how-to-update-ticket.md' };
+    expect(landingRefusal(fromDocs)).toBe(
+      'linear carries a credential stored from documentation (team docs / runbooks/how-to-update-ticket.md), so the card shows it masked and offers no landing form; the run cannot type the real key.',
+    );
+    expect(landingRefusal({ ...surface('slack', 'proposed'), credentialId: 'c2', credentialKind: 'value' })).toContain('already stored (value)');
   });
 
   it('tells the closing hold from the phase-one hold by the tile actions in the current set', (): void => {

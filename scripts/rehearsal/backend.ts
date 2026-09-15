@@ -27,6 +27,10 @@ export interface SurfaceRow {
   managerApprovedAt?: number;
   itApprovedAt?: number;
   reason?: string;
+  credentialId?: string;
+  credentialKind?: string;
+  credentialLocation?: string;
+  managerDmChannelId?: string;
 }
 
 export interface DocSourceRow {
@@ -294,4 +298,23 @@ export function batchHeld(item: Pick<WorkItemRow, 'state' | 'actionVerdicts'>): 
  */
 export function closingHeld(item: WorkItemView & Pick<WorkItemRow, 'state'>, tileSlug: string = TILE_SLUG): boolean {
   return batchHeld(item) && browserSequenceOf(item, tileSlug).length === 0;
+}
+
+/**
+ * Why a card cannot take the credential the run has to type in, if it cannot:
+ * a card that already carries a stored credential shows it masked and offers
+ * no landing form, so the only value it will probe with is the stored one.
+ *
+ * Args:
+ *   surface: The card's row.
+ *
+ * Returns:
+ *   The refusal naming where the stored credential came from, or undefined.
+ */
+export function landingRefusal(surface: SurfaceRow): string | undefined {
+  if (!surface.credentialId) return undefined;
+  const origin = surface.credentialKind === 'location' && surface.credentialLocation
+    ? `stored from documentation (${surface.credentialLocation})`
+    : `already stored (${surface.credentialKind ?? 'unknown kind'})`;
+  return `${surface.slug} carries a credential ${origin}, so the card shows it masked and offers no landing form; the run cannot type the real key.`;
 }

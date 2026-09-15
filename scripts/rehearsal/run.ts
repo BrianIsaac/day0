@@ -16,6 +16,7 @@ import {
   closingHeld,
   competingClaims,
   failedSource,
+  landingRefusal,
   orientationDone,
   skipKind,
   surfaceBySlug,
@@ -423,6 +424,16 @@ const cards: Phase = {
     const agentId = requireState(ctx.state, 'agentId');
     const outcomes: string[] = [];
     await dashboard.openSurfaces();
+    const rows = await backend.surfaces(agentId);
+    for (const card of CARDS) {
+      if (card.credential === 'none') continue;
+      const row = surfaceBySlug(rows, card.slug);
+      const refused = row ? landingRefusal(row) : `no ${card.slug} card was proposed`;
+      if (refused) {
+        await shot(ctx, `${card.slug}-not-landable`);
+        throw new StopRun(refused);
+      }
+    }
     for (const card of CARDS) {
       if (card.credential === 'linear') await dashboard.landCredential(card.slug, ctx.secrets.linearApiKey ?? '');
       if (card.credential === 'slack') {
