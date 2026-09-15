@@ -3,7 +3,7 @@ import { SYSTEM_CLASSES } from './system-classes';
 import {
   CONSTRAINT_KINDS,
   clauseTexts,
-  withoutClauseWording,
+  withoutConstraints,
   wordingPresent,
   type CharterConstraint,
   type ConstraintKind,
@@ -221,7 +221,7 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       if (target.struck) throw new Error('that constraint is already struck');
       constraints[change.index] = { ...target, struck: true };
       return {
-        charter: { ...withoutClauseWording(charter, target.wording), constraints },
+        charter: { ...withoutConstraints(charter, [target]), constraints },
         systemsAdded: added,
         systemsRemoved: removed,
       };

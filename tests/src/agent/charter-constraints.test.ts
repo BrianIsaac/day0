@@ -6,8 +6,12 @@ import {
   effectiveCharter,
   normaliseConstraints,
   removeWording,
+  strikeOutcome,
+  strikePreview,
+  withoutConstraints,
   type CharterConstraint,
 } from '../../../src/agent/charter-constraints';
+import { strikeRefusalBody } from '../../fixtures/charter-strike-refusal-2026-09-15';
 
 /** The 14 September wording: one manager phrase became two premodifiers. */
 function runThrough(constraints: CharterConstraint[] = []): Charter {
@@ -200,9 +204,155 @@ describe('effectiveCharter', (): void => {
   });
 });
 
-it('refuses a partial strike that would broaden a will-not-do clause', () => {
+it('refuses a partial strike of listed wording that would broaden a will-not-do clause', () => {
   const body = runThrough([{ kind: 'candidate-property', quote: 'Tickets have an owner.',
-    wording: ['owned'], origin: 'derived', struck: true }]);
+    wording: ['owned'], origin: 'synthesis', struck: true }]);
   body.proposedBoundaries.willNotDo = ['Change owned tickets outside Q3 close.'];
   expect(() => effectiveCharter(body)).toThrow('whole will-not-do clause');
+  expect(strikeOutcome(body)).toEqual({
+    ok: false,
+    reason: 'strike or edit the whole will-not-do clause; removing only part could change its boundary',
+  });
+});
+
+describe('striking a derived constraint', (): void => {
+  const ownership: CharterConstraint = {
+    kind: 'candidate-property',
+    quote: 'Tickets have an owner.',
+    wording: ['owned'],
+    origin: 'derived',
+  };
+
+  it('drops every list clause carrying its word whole, never a word of one', (): void => {
+    const charter = runThrough([{ ...ownership, struck: true }]);
+    charter.proposedBoundaries.willNotDo = [
+      'Change owned tickets outside Q3 close.',
+      'Change Northstar CRM records.',
+    ];
+    const result = effectiveCharter(charter);
+    expect(result.proposedBoundaries.willDo).toEqual(['Draft replies to asks in #revops-asks.']);
+    expect(result.proposedBoundaries.willNotDo).toEqual(['Change Northstar CRM records.']);
+    expect(result.proposedBoundaries.escalationTriggers).toEqual(['A ticket with priority P0.']);
+    expect(result.proposedFunction).toBe(
+      'Own routine revenue operations work from prioritized Linear tickets for the RevOps team.',
+    );
+    expect(clauseTexts(result).join('\n')).not.toMatch(/owned/i);
+  });
+
+  it('approves the 15 September fixture with the will-not-do reduced to the sibling clause', (): void => {
+    const result = effectiveCharter(strikeRefusalBody());
+    expect(result.proposedBoundaries.willNotDo).toEqual(['Access or execute work in Northstar CRM.']);
+    expect(clauseTexts(result).join('\n')).not.toMatch(/ownership/i);
+    expect(result.proposedBoundaries.willDo).toEqual(strikeRefusalBody().proposedBoundaries.willDo);
+    expect(result.proposedBoundaries.escalationTriggers).toEqual(
+      strikeRefusalBody().proposedBoundaries.escalationTriggers,
+    );
+    expect(result.proposedFunction).toBe(strikeRefusalBody().proposedFunction);
+    expect(result.constraints).toEqual(strikeRefusalBody().constraints);
+  });
+
+  it('previews the fixture strike as the clause it removes', (): void => {
+    expect(strikePreview(strikeRefusalBody(false), 2)).toEqual({
+      removedClauses: ['Take ownership of Northstar CRM-dependent work that Brain must handle.'],
+    });
+    expect(strikePreview(strikeRefusalBody(false), 0)).toEqual({
+      removedClauses: [
+        'Route Northstar CRM-dependent requests to Brain.',
+        'Access or execute work in Northstar CRM.',
+        'A request requires access to Northstar CRM; route it to Brain.',
+      ],
+    });
+    // "Brain" is a word inside both will-not-do clauses, so this strike was
+    // always refused; now the card learns that before the manager presses it.
+    expect(strikePreview(strikeRefusalBody(false), 1)).toEqual({
+      removedClauses: [],
+      refusal: 'strike or edit the whole will-not-do clause; removing only part could change its boundary',
+    });
+    expect(strikePreview(strikeRefusalBody(false), 7)).toEqual({ removedClauses: [] });
+  });
+
+  it('refuses to drop the only clause bounding a named system, with the reason', (): void => {
+    const charter = runThrough([{ ...ownership, struck: true }]);
+    charter.proposedBoundaries.willNotDo = ['Change owned Linear tickets outside Q3 close.'];
+    charter.proposedBoundaries.escalationTriggers = [];
+    const reason =
+      'strike refused: \u201cChange owned Linear tickets outside Q3 close.\u201d is the only clause that bounds Linear';
+    expect(() => effectiveCharter(charter)).toThrow(reason);
+    expect(strikeOutcome(charter)).toEqual({ ok: false, reason });
+    expect(strikePreview(runThrough([ownership]), 0)).toEqual({
+      removedClauses: ['Handle owned, prioritized Linear tickets in the Q3 close project.'],
+    });
+    const draft = { ...charter, constraints: [ownership] };
+    expect(strikePreview(draft, 0)).toEqual({ removedClauses: [], refusal: reason });
+  });
+
+  it('refuses to drop the only clause enforcing an unstruck system boundary', (): void => {
+    const boundary: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Stay out of the public channels.',
+      wording: ['Post owned drafts to public channels.'],
+      origin: 'synthesis',
+    };
+    const charter = runThrough([boundary, { ...ownership, struck: true }]);
+    charter.proposedBoundaries.willNotDo = [
+      'Post owned drafts to public channels.',
+      'Change Northstar CRM records.',
+    ];
+    expect(() => effectiveCharter(charter)).toThrow(
+      'strike refused: \u201cPost owned drafts to public channels.\u201d is the only clause that enforces \u201cStay out of the public channels.\u201d',
+    );
+    const lifted = runThrough([{ ...boundary, struck: true }, { ...ownership, struck: true }]);
+    lifted.proposedBoundaries.willNotDo = charter.proposedBoundaries.willNotDo;
+    expect(effectiveCharter(lifted).proposedBoundaries.willNotDo).toEqual([
+      'Change Northstar CRM records.',
+    ]);
+  });
+
+  it('lets a system-boundary strike drop its own clause', (): void => {
+    const charter = runThrough([
+      {
+        kind: 'system-boundary',
+        quote: 'Never post to public channels.',
+        wording: ['Post to public Slack channels.'],
+        origin: 'synthesis',
+        struck: true,
+      },
+    ]);
+    expect(effectiveCharter(charter).proposedBoundaries.willNotDo).toEqual([
+      'Change Northstar CRM records.',
+    ]);
+  });
+
+  it('applies the same rule to a strike after approval', (): void => {
+    const charter = runThrough([ownership]);
+    charter.proposedBoundaries.willNotDo = [
+      'Change owned tickets outside Q3 close.',
+      'Change Northstar CRM records.',
+    ];
+    expect(withoutConstraints(charter, [ownership]).proposedBoundaries.willNotDo).toEqual([
+      'Change Northstar CRM records.',
+    ]);
+  });
+
+  it('previews a refusal exactly when the toggled state would be refused', (): void => {
+    const charters = [strikeRefusalBody(false), runThrough([ownership])];
+    const bounded = runThrough([ownership]);
+    bounded.proposedBoundaries.willNotDo = ['Change owned Linear tickets outside Q3 close.'];
+    bounded.proposedBoundaries.escalationTriggers = [];
+    charters.push(bounded);
+    for (const charter of charters) {
+      (charter.constraints ?? []).forEach((constraint, index): void => {
+        const toggled = {
+          ...charter,
+          constraints: charter.constraints!.map((c, i) =>
+            i === index ? { ...c, struck: true } : c,
+          ),
+        };
+        const outcome = strikeOutcome(toggled);
+        const preview = strikePreview(charter, index);
+        expect(preview.refusal).toBe(outcome.ok ? undefined : outcome.reason);
+        void constraint;
+      });
+    }
+  });
 });
