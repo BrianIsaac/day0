@@ -229,8 +229,10 @@ and account identifiers and dates of birth; it keeps email addresses in stored
 pages and removes them from provider outcomes. Detection still has misses and
 false positives; these policy choices are not a guarantee of complete redaction. A deterministic guard keeps the model from
 taking a placeholder, a stored marker or an identifier for a secret. The guard also preserves ordinary
-runbook words and tool identifiers outside explicit credential assignments;
-a value explicitly assigned as a password or token still counts as a secret.
+runbook words and tool identifiers outside credential assignments; a value
+assigned under a credential label (password, passphrase, token, key, secret,
+login or their Chinese equivalents), in prose, an environment line, a JSON
+body, a labelled table cell or a credential column, still counts as a secret.
 Known stored credentials remain subject to the separate exact-value scrub.
 This does not repair pages or credentials stored before the guard changed:
 those need operator reconciliation and a fresh sync.
@@ -286,7 +288,8 @@ stops at the first provider write, after the bring-up, the 1:1, the charter,
 orientation and the cards; a live run assigns the demonstration ticket, drives
 the work through the dashboard, checks the ledger and attempts to undo attributable writes
 before it removes the project and the clone. Deletion requires this work item's
-server provenance; state restoration requires a matching successful receipt,
-and an assignment changed by someone else is left alone. Unknown effects need
+server provenance; state restoration requires a matching successful receipt or
+the provider's own history showing this run's key made the move, and an
+assignment changed by someone else is left alone. Unknown effects need
 reconciliation. Use the demonstration ticket exclusively during the run. `--warm-from <project>` copies the
 redactor's wheel and model volumes from a project that already has them.
