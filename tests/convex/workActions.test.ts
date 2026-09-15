@@ -2381,6 +2381,33 @@ describe('the autonomous-actions switch through the gate', (): void => {
     });
   });
 
+  it('admits a real-mode item on the lexical inputs and records it when the charter judgement is unavailable', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        state: 'discovered',
+        plan: undefined,
+        title: 'Triage the Linear close summary',
+        contentSummary: 'Triage this Linear close summary revenue operations hand-off.',
+      });
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'claim' });
+    const unavailable = (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+      )
+    ).filter((event) => event.type === 'work.scope-judgement-unavailable');
+    expect(unavailable.map((event) => event.payload)).toEqual([
+      { workItemId, cause: 'model unavailable in tests' },
+    ]);
+  });
+
   it('re-evaluates an out-of-scope skip the manager retried without the eligibility rule and records the decision', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(contractSchema(), allConvexModules());

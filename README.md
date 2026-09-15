@@ -862,6 +862,7 @@ The schema contains 23 tables: 18 carry per-agent or agent-owned runtime state, 
 | `src/surfaces/` | Real/mock adapter registry, exact-action policy, MCP/HTTP/browser transports, secret injection/redaction, Slack identity and connection presentation |
 | `src/work/types.ts` | Domain types; constants `COLD_START_WIP_LIMIT = 1`, `VALUE_THRESHOLD = 30` |
 | `src/work/evaluate.ts` | `evaluateCandidate` — 7-criterion sequential evaluator |
+| `src/work/scope.ts` | `judgeScope` — the one scope judgement; lexical rule and quality fit as inputs, the charter judgement model call in real mode |
 | `src/work/quality-fit.ts` | `qualityFit` — short-circuits if `AGENTS.md` has no good-habits section |
 | `src/work/plan.ts` | `draftExecutionPlan` |
 | `src/work/execute-skill.ts` | Per-invocation skill agents, procedure contracts and mock/real action schemas, including dependent closing actions |

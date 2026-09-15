@@ -17,6 +17,7 @@ import {
 } from '../../../src/work/execute-skill';
 import { planSchema } from '../../../src/work/plan';
 import { qualityFitSchema } from '../../../src/work/quality-fit';
+import { scopeJudgementSchema } from '../../../src/work/scope';
 import { questionLabelSchema } from '../../../convex/onboarding';
 import { orientationSchema } from '../../../convex/orientationActions';
 import { authorSchema } from '../../../convex/skillActions';
@@ -184,6 +185,7 @@ const MODEL_FACING_SCHEMAS: Array<{ agent: string; schema: unknown }> = [
   { agent: 'day0-documentation-discovery', schema: discoveryModelSchema },
   { agent: 'day0-orientation', schema: orientationSchema },
   { agent: 'day0-quality-fit', schema: qualityFitSchema },
+  { agent: 'day0-scope-judgement', schema: scopeJudgementSchema },
   { agent: 'day0-plan', schema: planSchema },
   { agent: 'day0-work-generator', schema: workGenSchema },
   { agent: 'day0-skill-author', schema: authorSchema },

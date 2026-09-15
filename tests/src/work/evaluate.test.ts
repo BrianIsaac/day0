@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import {
   evaluateCandidate,
@@ -8,6 +8,16 @@ import {
   type EvaluationSurface,
 } from '../../../src/work/evaluate';
 import type { AgentContext, WorkCandidate } from '../../../src/work/types';
+
+const model = vi.hoisted(() => ({ calls: [] as string[] }));
+
+vi.mock('../../../src/lib/mastra', () => ({
+  makeAgent: (name: string): { name: string } => ({ name }),
+  agentJson: async (args: { agent: { name: string } }): Promise<unknown> => {
+    model.calls.push(args.agent.name);
+    return { inScope: true, fit: true, reason: 'inside the role' };
+  },
+}));
 
 const NOW = Date.parse('2026-08-26T12:00:00.000Z');
 
@@ -110,6 +120,21 @@ function lookups(
 }
 
 describe('work surface enablement', (): void => {
+  beforeEach((): void => {
+    model.calls.length = 0;
+  });
+
+  it('asks the charter judgement once for a real-mode candidate and never in mock mode', async (): Promise<void> => {
+    await expect(
+      evaluateCandidate(candidate('ticket'), context('mock', []), lookups()),
+    ).resolves.toMatchObject({ decision: 'claim' });
+    expect(model.calls).toEqual([]);
+    await expect(
+      evaluateCandidate(candidate(), context('real', [surface('linear')]), lookups()),
+    ).resolves.toMatchObject({ decision: 'claim' });
+    expect(model.calls).toEqual(['day0-scope-judgement']);
+  });
+
   it('reports a missing skill without asserting in-scope', async (): Promise<void> => {
     const verdict = await evaluateCandidate(candidate('ticket'), context('mock', []), {
       ...lookups(),
