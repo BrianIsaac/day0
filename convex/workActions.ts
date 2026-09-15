@@ -497,7 +497,8 @@ async function executeApprovedPlanHandler(
 }
 
 /** The manager's answers at approval, as the executor reads them. */
-function managerAnswersOf(item: Doc<'workItems'>): ManagerAnswer[] | undefined {
+/** The answers the manager gave at approval, as the executor reads them. */
+export function managerAnswersOf(item: Doc<'workItems'>): ManagerAnswer[] | undefined {
   const rows = item.managerAnswers;
   if (!rows || rows.length === 0) return undefined;
   return rows.map((row) => ({ question: row.question, answer: row.answer }));

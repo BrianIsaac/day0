@@ -1499,13 +1499,7 @@ function WorkQueue({
               surfaces={surfaces}
               autonomousActions={autonomousActions}
               questions={openQuestions.filter((question) => question.workItemId === item._id)}
-              onApprovePlan={(decision) =>
-                approvePlan({
-                  workItemId: item._id,
-                  ...(decision.answers.length > 0 ? { answers: decision.answers } : {}),
-                  ...(decision.note ? { note: decision.note } : {}),
-                })
-              }
+              onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
               onReconcileFailed={(confirmed) =>
@@ -2053,6 +2047,27 @@ export function PendingActions({
 export interface PlanApproval {
   answers: Array<{ questionId: Id<'managerQuestions'>; text: string }>;
   note?: string;
+}
+
+/**
+ * What the approval form sends: the item, the answers given and the note.
+ *
+ * Args:
+ *   workItemId: The plan-pending item.
+ *   decision: The answers and note as the form collected them.
+ *
+ * Returns:
+ *   The arguments for `work.approvePlan`; nothing optional is sent empty.
+ */
+export function planApprovalRequest(
+  workItemId: Id<'workItems'>,
+  decision: PlanApproval,
+): { workItemId: Id<'workItems'>; answers?: PlanApproval['answers']; note?: string } {
+  return {
+    workItemId,
+    ...(decision.answers.length > 0 ? { answers: decision.answers } : {}),
+    ...(decision.note ? { note: decision.note } : {}),
+  };
 }
 
 /**
