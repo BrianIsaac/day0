@@ -9,6 +9,9 @@ import {
 import type { Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsCharter } from './ownership';
 import { writeFileImpl } from './workspace';
+import type { Charter } from '../src/agent/charter';
+import { effectiveCharter, type CharterConstraint } from '../src/agent/charter-constraints';
+import { identityFromCharter, toolsFromCharter } from '../src/agent/charter-workspace';
 
 /**
  * Charter CRUD + binary-plus-edit approval mutation. Every public
@@ -130,19 +133,86 @@ export const commit = internalMutation({
   },
 });
 
+/**
+ * Re-render the two workspace files a charter body decides.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   agentId: Agent whose workspace to write.
+ *   charter: The body to render from.
+ */
+export async function renderWorkspaceFromCharter(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  charter: Charter,
+): Promise<void> {
+  await writeFileImpl(ctx, { agentId, fileName: 'IDENTITY.md', content: identityFromCharter(charter) });
+  await writeFileImpl(ctx, { agentId, fileName: 'TOOLS.md', content: toolsFromCharter(charter) });
+}
+
+/**
+ * Strike or restore one constraint on a drafted charter.
+ *
+ * The draft's clauses are left as synthesised until approval, so a strike
+ * costs nothing to reverse and the manager reads the same draft throughout;
+ * `approve` is where the struck wording leaves the clauses.
+ */
+export const setConstraintStruck = mutation({
+  args: { charterId: v.id('charters'), index: v.number(), struck: v.boolean() },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const charter = await assertOwnsCharter(ctx, args.charterId);
+    if (charter.approved) {
+      throw new Error('the charter is approved; amend it to strike a constraint');
+    }
+    const body = charter.body as Charter;
+    const constraints = [...(body.constraints ?? [])];
+    const target = constraints[args.index];
+    if (!Number.isInteger(args.index) || !target) {
+      throw new Error(`no constraint at index ${args.index}`);
+    }
+    constraints[args.index] = { ...target, struck: args.struck };
+    await ctx.db.patch(args.charterId, { body: { ...body, constraints } });
+    return { ok: true };
+  },
+});
+
 export const approve = mutation({
   args: { charterId: v.id('charters') },
   handler: async (ctx, args) => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
-    await ctx.db.patch(args.charterId, {
-      approved: true,
-      approvedAt: Date.now(),
-    });
+    const drafted = charter.body as Charter;
+    const struck = (drafted.constraints ?? []).filter(
+      (constraint: CharterConstraint): boolean => constraint.struck === true,
+    );
+    // A strike changes the body, and the body is what every downstream
+    // reader and the two workspace files are rendered from. With nothing
+    // struck the row is patched for approval only and the draft stays
+    // byte-identical.
+    if (struck.length > 0) {
+      const approved = effectiveCharter(drafted);
+      await ctx.db.patch(args.charterId, {
+        body: approved,
+        approved: true,
+        approvedAt: Date.now(),
+      });
+      await renderWorkspaceFromCharter(ctx, charter.agentId, approved);
+    } else {
+      await ctx.db.patch(args.charterId, {
+        approved: true,
+        approvedAt: Date.now(),
+      });
+    }
     await ctx.db.patch(charter.agentId, { state: 'active' });
     await ctx.db.insert('events', {
       agentId: charter.agentId,
       type: 'charter.approved',
-      payload: { charterId: args.charterId, version: charter.version },
+      payload: {
+        charterId: args.charterId,
+        version: charter.version,
+        ...(struck.length > 0
+          ? { struckConstraints: struck.map((constraint: CharterConstraint): string => constraint.quote) }
+          : {}),
+      },
       createdAt: Date.now(),
     });
     return { ok: true };
