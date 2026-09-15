@@ -315,6 +315,41 @@ describe('amending an approved charter', (): void => {
     });
   });
 
+  it('keeps an execution claim stable through amendment and refuses a mid-run retry', async () => {
+    const t = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(t);
+    const ids = await t.run(async ctx => {
+      const skillId = await ctx.db.insert('skills', {
+        agentId, name: 'ticket-read', description: 'Read ticket', body: 'Read ticket',
+        sourceType: 'agent-authored', state: 'registered', createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: 'REVOPS-7',
+        title: 'Read ticket', contentSummary: 'Read ticket', contentRefs: [],
+        observedAt: 1, createdAt: 1, state: 'plan-approved',
+        plan: { summary: 'Read', steps: ['Read ticket'], expectedOutputType: 'draft',
+          riskNotes: '', reversibility: 'read-only', estimatedMinutes: 1 },
+      });
+      return { workItemId, skillId };
+    });
+    const owner = t.withIdentity({ subject: 'owner' });
+    const claim = await t.mutation(internal.work.claimForExecution, ids);
+    expect(claim.claimed).toBe(true);
+    const before = await t.run(ctx => ctx.db.get(ids.workItemId));
+    vi.useFakeTimers();
+    try {
+      await owner.mutation(api.charters.amend, {
+        agentId, changes: [{ kind: 'edit-function', text: 'Read the revenue documentation.' }],
+      });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+    } finally { vi.useRealTimers(); }
+    await expect(owner.mutation(api.work.retryFailed, {
+      workItemId: ids.workItemId, feedback: 'Try again now',
+    })).rejects.toThrow('workItem state is executing');
+    expect(await t.run(ctx => ctx.db.get(ids.workItemId))).toEqual(before);
+    expect(await t.mutation(internal.work.claimForExecution, ids)).toMatchObject({ claimed: false });
+  });
+
   it('numbers a second amendment v0.2 over v0.1', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId } = await seedApproved(harness);

@@ -122,7 +122,7 @@ describe('the outbound manager-channel action', (): void => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('sends once through the connected adapter and records provider evidence', async (): Promise<void> => {
+  it('sends a decision immediately in digest mode and records provider evidence', async (): Promise<void> => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
@@ -142,6 +142,7 @@ describe('the outbound manager-channel action', (): void => {
       const agentId = await ctx.db.insert('agents', {
         bossEmail: 'boss@day0.local',
         name: 'ops worker',
+        managerNotifications: 'digest',
         userId: 'owner',
         state: 'active',
         createdAt: 1,

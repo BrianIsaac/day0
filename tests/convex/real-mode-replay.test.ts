@@ -83,6 +83,7 @@ const phaseOne = {
   draft: 'Reading REVOPS-7, then signing in to the tile, entering 74%, saving and reading it back.',
   notes: '',
   needsDependentPhase: true,
+  deferredActions: [],
   actions: [
     {
       tool: 'mcp.call' as const,
@@ -139,13 +140,24 @@ const closing = {
   ],
   procedureTrails: [],
   planStepOutcomes: [
-    { step: 1, status: 'satisfied', evidence: 'ledger rows 1 to 5 landed on the tile' },
+    {
+      step: 1,
+      status: 'satisfied',
+      basis: 'ledger',
+      evidence: 'ledger rows 1 to 5 landed on the tile',
+    },
     {
       step: 2,
+      basis: 'ledger',
       status: 'satisfied',
       evidence: 'ledger row 6: visible figure 74% and the audit line',
     },
-    { step: 3, status: 'satisfied', evidence: 'the comment, Done and DM in this response' },
+    {
+      step: 3,
+      status: 'satisfied',
+      basis: 'ledger',
+      evidence: 'the comment, Done and DM in this response',
+    },
   ],
 };
 
@@ -156,44 +168,73 @@ vi.mock('../../src/lib/mastra', () => ({
     recorded.instructions.push({ agent: name, instructions });
     return { name };
   },
-  agentJson: async <T>(args: { agent: { name: string }; user: string }): Promise<T> => {
+  agentJson: async <T>(args: {
+    agent: { name: string };
+    user: string;
+    schema: { parse(value: unknown): unknown };
+  }): Promise<T> => {
     recorded.model.push({ agent: args.agent.name, user: args.user });
     const name = args.agent.name;
-    if (name === 'day0-plan') {
-      recorded.planCalls += 1;
-      return (recorded.planCalls === 1 ? gatedPlan : cleanPlan) as T;
-    }
-    if (recorded.repairClosing && name.endsWith('-argument-repair')) return { toolArgsJson: '{"issueId":"REVOPS-7","body":"Checked and finished."}' } as T;
-    if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
-    if (name.endsWith('-dependent')) return closing as T;
-    if (recorded.repairClosing && name.endsWith('-initial')) return { ...phaseOne, actions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } }, { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-7","comment":"Checked and finished."}' } }] } as T;
-    if (name.endsWith('-initial'))
-      return (
-        recorded.prewritten
-          ? {
-              ...phaseOne,
-              actions: [
-                {
-                  ...phaseOne.actions[0],
-                  args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
-                },
-                {
-                  tool: 'mcp.call',
-                  args: {
-                    surface: 'linear',
-                    tool: 'save_comment',
-                    toolArgsJson: JSON.stringify({
-                      issueId: 'REVOPS-7',
-                      body: 'Done after checking the result.',
-                    }),
+    const reply = (): unknown => {
+      if (name === 'day0-plan') {
+        recorded.planCalls += 1;
+        return (recorded.planCalls === 1 ? gatedPlan : cleanPlan) as T;
+      }
+      if (recorded.repairClosing && name.endsWith('-argument-repair'))
+        return { toolArgsJson: '{"issueId":"REVOPS-7","body":"Checked and finished."}' } as T;
+      if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
+      if (name.endsWith('-dependent')) return closing as T;
+      if (recorded.repairClosing && name.endsWith('-initial'))
+        return {
+          ...phaseOne,
+          actions: [
+            {
+              tool: 'mcp.call',
+              args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
+            },
+            {
+              tool: 'mcp.call',
+              args: {
+                surface: 'linear',
+                tool: 'save_comment',
+                toolArgsJson: '{"issueId":"REVOPS-7","comment":"Checked and finished."}',
+              },
+            },
+          ],
+        } as T;
+      if (name.endsWith('-initial'))
+        return (
+          recorded.prewritten
+            ? {
+                ...phaseOne,
+                actions: [
+                  {
+                    ...phaseOne.actions[0],
+                    args: {
+                      surface: 'linear',
+                      tool: 'get_issue',
+                      toolArgsJson: '{"id":"REVOPS-7"}',
+                    },
                   },
-                },
-                closing.actions[1],
-              ],
-            }
-          : phaseOne
-      ) as T;
-    throw new Error(`unscripted agent ${name}`);
+                  {
+                    tool: 'mcp.call',
+                    args: {
+                      surface: 'linear',
+                      tool: 'save_comment',
+                      toolArgsJson: JSON.stringify({
+                        issueId: 'REVOPS-7',
+                        body: 'Done after checking the result.',
+                      }),
+                    },
+                  },
+                  closing.actions[1],
+                ],
+              }
+            : phaseOne
+        ) as T;
+      throw new Error(`unscripted agent ${name}`);
+    };
+    return args.schema.parse(reply()) as T;
   },
   agentText: async (): Promise<string> => '',
 }));
@@ -461,9 +502,13 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     recorded.repairClosing = true;
     await t.run(async (ctx) => {
       await ctx.db.patch(agentId, { autonomousActions: true });
-      await ctx.db.patch(workItemId, { state: 'plan-approved', plan: {
-        ...cleanPlan, steps: ['Read the Linear issue.', 'Comment on Linear with the result.'],
-      } });
+      await ctx.db.patch(workItemId, {
+        state: 'plan-approved',
+        plan: {
+          ...cleanPlan,
+          steps: ['Read the Linear issue.', 'Comment on Linear with the result.'],
+        },
+      });
     });
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -517,6 +562,12 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     expect(executorPrompt?.user).toContain(
       `Plan steps: ${cleanPlan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
     );
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, {
+        workItemId,
+        feedback: 'Repeat the current work',
+      }),
+    ).rejects.toThrow('expected one of failed, skipped, cancelled, completed');
     const held = await readItem(harness, workItemId);
     expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual([
       'auto',
@@ -600,9 +651,13 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual([
       'D0MANAGER',
     ]);
-    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, {
-      workItemId, pendingRunId: runId, approvedIndexes: [1],
-    })).rejects.toThrow('pending run changed');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [1],
+      }),
+    ).rejects.toThrow('pending run changed');
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
       workItemId,
       pendingRunId: closingHeld.pendingRunId!,
