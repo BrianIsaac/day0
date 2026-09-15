@@ -615,6 +615,13 @@ export default defineSchema({
     /** The surface slug a real-mode skill acts on; approval refuses the skill
      * while that surface is not connected. Absent for mock-only skills. */
     targetSurface: v.optional(v.string()),
+    /** The shape the skill was proposed for: one documented operation on one
+     * surface class. A registered skill is matched to later work by this pair,
+     * never by the item that first needed it. Absent on builtin rows and on
+     * rows proposed before shapes existed, which the legacy token matcher
+     * still serves. */
+    surfaceClass: v.optional(v.string()),
+    operation: v.optional(v.string()),
     /** The authoring run that currently holds this skill, and when it took it.
      * Authoring is an exclusive, fenced run: a second run cannot start while
      * this is set and unexpired, and a run may only write its result while this
