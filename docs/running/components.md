@@ -228,14 +228,12 @@ material. It removes detected phone numbers, personal addresses, government
 and account identifiers and dates of birth; it keeps email addresses in stored
 pages and removes them from provider outcomes. Detection still has misses and
 false positives; these policy choices are not a guarantee of complete redaction. A deterministic guard keeps the model from
-taking a placeholder, a stored marker or an identifier for a secret. One false
-positive is known on this tree: a runbook that names its tools in prose (a bare
-product name such as `linear`, a snake_case tool name such as `save_comment`)
-can have those words stored as credentials and replaced by markers in the
-stored page, so the executor reads a how-to with its tool names redacted and
-the system's card shows a stored credential instead of a landing form. The
-real-mode rehearsal records that as a stop; the guard does not yet exempt those
-shapes.
+taking a placeholder, a stored marker or an identifier for a secret. The guard also preserves ordinary
+runbook words and tool identifiers outside explicit credential assignments;
+a value explicitly assigned as a password or token still counts as a secret.
+Known stored credentials remain subject to the separate exact-value scrub.
+This does not repair pages or credentials stored before the guard changed:
+those need operator reconciliation and a fresh sync.
 
 **When you need it.** Always in real mode. Without it a documentation sync
 refuses to persist a page rather than store it in the clear, and a provider
@@ -286,6 +284,9 @@ folder mounted read-only, and the Linear key and Slack bot token typed into the
 connection cards by a browser from a separate 0600 secrets file. `--dry-run`
 stops at the first provider write, after the bring-up, the 1:1, the charter,
 orientation and the cards; a live run assigns the demonstration ticket, drives
-the work through the dashboard, checks the ledger and undoes every write it made
-before it removes the project and the clone. `--warm-from <project>` copies the
+the work through the dashboard, checks the ledger and attempts to undo attributable writes
+before it removes the project and the clone. Deletion requires this work item's
+server provenance; state restoration requires a matching successful receipt,
+and an assignment changed by someone else is left alone. Unknown effects need
+reconciliation. Use the demonstration ticket exclusively during the run. `--warm-from <project>` copies the
 redactor's wheel and model volumes from a project that already has them.
