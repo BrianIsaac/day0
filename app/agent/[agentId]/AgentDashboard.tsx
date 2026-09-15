@@ -27,7 +27,11 @@ import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
 import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
-import type { CharterConstraint } from '../../../src/agent/charter-constraints';
+import {
+  strikePreview,
+  type CharterConstraint,
+  type StrikePreview,
+} from '../../../src/agent/charter-constraints';
 import {
   LIST_CLAUSE_FIELDS,
   nextCharterVersion,
@@ -596,6 +600,11 @@ const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
   'reporting-line': 'who I report to',
 };
 
+/** The clauses a strike removes, quoted for the card. */
+function quotedClauses(clauses: readonly string[]): string {
+  return clauses.map((clause: string): string => `\u201c${clause}\u201d`).join('; ');
+}
+
 /**
  * The confirm-or-strike list: every rule the draft will enforce, in the
  * manager's own words, beside the clause phrases that encode it.
@@ -603,13 +612,16 @@ const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
  * Before approval each row can be struck or restored; the clauses on the card
  * stay as drafted until Approve, which is when struck wording leaves them.
  * After approval the list is the record of what was confirmed and what was
- * struck.
+ * struck. With `previewStrike` each row says what its strike would remove,
+ * and a strike the effective charter refuses is disabled with the reason, so
+ * nothing the card offers can fail at approval.
  */
 export function ConstraintList({
   constraints,
   approved,
   onStrike,
   onRestore,
+  previewStrike,
 }: {
   constraints: CharterConstraint[];
   approved: boolean;
@@ -617,6 +629,8 @@ export function ConstraintList({
   onStrike?: (index: number) => void;
   /** Restore a struck rule; only a draft can, because a strike after approval has already left the clauses. */
   onRestore?: (index: number) => void;
+  /** What striking a rule would do, computed as approval computes it. */
+  previewStrike?: (index: number) => StrikePreview;
 }) {
   if (constraints.length === 0) return null;
   return (
@@ -625,7 +639,10 @@ export function ConstraintList({
         {approved ? 'Rules this charter enforces' : 'These words will limit the work. Confirm or strike each one.'}
       </div>
       <ul className="space-y-1.5">
-        {constraints.map((constraint, index) => (
+        {constraints.map((constraint, index) => {
+          const preview =
+            !constraint.struck && onStrike && previewStrike ? previewStrike(index) : undefined;
+          return (
           <li
             key={index}
             className={`flex items-start gap-2 p-2 rounded-md border ${
@@ -657,11 +674,23 @@ export function ConstraintList({
                 {constraint.origin === 'manager' ? ' · added by you' : ''}
                 {constraint.struck ? ' · struck' : ''}
               </p>
+              {preview?.refusal ? (
+                <p className="text-[10px] text-[var(--color-warn)] mt-0.5">
+                  cannot be struck: {preview.refusal}
+                </p>
+              ) : preview && preview.removedClauses.length > 0 ? (
+                <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
+                  {preview.removedClauses.length === 1 ? 'strikes the clause: ' : 'strikes the clauses: '}
+                  {quotedClauses(preview.removedClauses)}
+                </p>
+              ) : null}
             </div>
             {!constraint.struck && onStrike ? (
               <button
                 onClick={() => onStrike(index)}
-                className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)]"
+                disabled={preview?.refusal !== undefined}
+                title={preview?.refusal}
+                className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)]"
               >
                 Strike
               </button>
@@ -674,7 +703,8 @@ export function ConstraintList({
               </button>
             ) : null}
           </li>
-        ))}
+          );
+        })}
       </ul>
     </div>
   );
@@ -688,9 +718,16 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
   const postApproval = useAction(api.onboarding.postCharterApproval);
   const [posting, setPosting] = useState(false);
   const [amendError, setAmendError] = useState<string | null>(null);
+  const [strikeError, setStrikeError] = useState<string | null>(null);
   const body = charter.body as CharterCardBody;
   const constraints = body.constraints ?? [];
   const struckCount = constraints.filter((constraint) => constraint.struck).length;
+
+  async function toggleStrike(index: number, struck: boolean): Promise<void> {
+    setStrikeError(null);
+    const result = await setConstraintStruck({ charterId: charter._id, index, struck });
+    if (!result.ok) setStrikeError(result.reason);
+  }
 
   async function sendAmendment(change: CharterChange): Promise<boolean> {
     setAmendError(null);
@@ -705,7 +742,13 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
 
   async function onApprove() {
     setPosting(true);
-    await approve({ charterId: charter._id });
+    setStrikeError(null);
+    const result = await approve({ charterId: charter._id });
+    if (!result.ok) {
+      setStrikeError(result.reason);
+      setPosting(false);
+      return;
+    }
     // Kick off good-habits research right after approval — the AGENTS.md
     // section then lights up the workspace panel live.
     postApproval({ agentId: charter.agentId, charterId: charter._id }).catch(() => {});
@@ -755,14 +798,12 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
           onStrike={(index) =>
             charter.approved
               ? void sendAmendment({ kind: 'strike-constraint', index })
-              : void setConstraintStruck({ charterId: charter._id, index, struck: true })
+              : void toggleStrike(index, true)
           }
-          onRestore={
-            charter.approved
-              ? undefined
-              : (index) => void setConstraintStruck({ charterId: charter._id, index, struck: false })
-          }
+          onRestore={charter.approved ? undefined : (index) => void toggleStrike(index, false)}
+          previewStrike={(index) => strikePreview(body, index)}
         />
+        {strikeError ? <p className="text-xs text-[var(--color-danger)]">{strikeError}</p> : null}
         {charter.approved ? (
           <AmendCharterPanel
             charter={charter}
@@ -779,7 +820,7 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
               className="px-4 py-2 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
             >
               {struckCount > 0
-                ? `Approve without ${struckCount} struck ${struckCount === 1 ? 'rule' : 'rules'}`
+                ? `Approve, ${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`
                 : 'Approve'}
             </button>
             <button

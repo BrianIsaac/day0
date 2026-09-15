@@ -218,36 +218,263 @@ function withoutPhrases(clause: string, phrases: readonly string[]): string {
 }
 
 /**
+ * The charter fields a strike reads and rewrites. A full charter fits, and so
+ * does the body the dashboard card holds, which types the same fields.
+ */
+export type ClauseCharter = Pick<Charter, 'proposedFunction' | 'proposedBoundaries'> & {
+  constraints?: CharterConstraint[];
+  namedSystems?: ReadonlyArray<{ name: string }>;
+};
+
+/** The list clauses a strike may drop whole; the function is a sentence and never one of them. */
+const LIST_FIELDS = ['willDo', 'willNotDo', 'escalationTriggers'] as const;
+
+/** The clauses that bound the agent: a will-not-do or an escalation trigger, never a will-do. */
+const BOUNDING_FIELDS = ['willNotDo', 'escalationTriggers'] as const;
+
+/**
+ * Whether a strike removes each clause that carries the constraint, whole.
+ *
+ * A derived candidate-property constraint is one word this module found in
+ * a clause, so the rule the manager is striking is the clause itself:
+ * "ownership" struck from "Take ownership of Northstar CRM-dependent work"
+ * would leave a sentence saying something else. A listed constraint names
+ * phrases the synthesis call or the manager chose, which come out as
+ * phrases.
+ */
+function strikesWholeClause(constraint: CharterConstraint): boolean {
+  return constraint.kind === 'candidate-property' && constraint.origin === 'derived';
+}
+
+function boundingClauses(charter: ClauseCharter): string[] {
+  return BOUNDING_FIELDS.flatMap((field): string[] => charter.proposedBoundaries[field]);
+}
+
+/**
+ * Refuse a candidate-property strike that would drop the last clause bounding a system.
+ *
+ * A candidate-property strike is about which work qualifies, never about
+ * where the agent may act, so it may not be the change that lets the agent
+ * into a system. A clause bounds a system when it names one of the charter's
+ * named systems or carries the wording of a system-boundary constraint the
+ * manager has not struck; if no remaining will-not-do or escalation clause
+ * bounds that system, the strike is refused. Striking the system-boundary
+ * constraint itself is the manager lifting the boundary and is not checked.
+ *
+ * Args:
+ *   charter: The charter before the strikes.
+ *   lifted: The charter with only the non-property strikes applied.
+ *   result: The charter with every strike applied.
+ *   struck: The constraints being struck.
+ *
+ * Raises:
+ *   Error: Naming the clause and the system it alone bounded.
+ */
+function assertBoundariesKept(
+  charter: ClauseCharter,
+  lifted: ClauseCharter,
+  result: ClauseCharter,
+  struck: readonly CharterConstraint[],
+): void {
+  const remaining = boundingClauses(result);
+  const dropped = boundingClauses(lifted).filter(
+    (clause: string): boolean => !remaining.includes(clause),
+  );
+  if (dropped.length === 0) return;
+  const keptBoundaries = (charter.constraints ?? []).filter(
+    (constraint: CharterConstraint): boolean =>
+      constraint.kind === 'system-boundary' &&
+      constraint.struck !== true &&
+      !struck.includes(constraint),
+  );
+  for (const clause of dropped) {
+    for (const system of charter.namedSystems ?? []) {
+      if (!wordingPresent(system.name, [clause])) continue;
+      if (remaining.some((other: string): boolean => wordingPresent(system.name, [other]))) continue;
+      throw new Error(
+        `strike refused: \u201c${clause}\u201d is the only clause that bounds ${system.name}`,
+      );
+    }
+    for (const boundary of keptBoundaries) {
+      if (!boundary.wording.some((phrase: string): boolean => wordingPresent(phrase, [clause]))) {
+        continue;
+      }
+      const elsewhere = boundary.wording.some((phrase: string): boolean =>
+        wordingPresent(phrase, remaining),
+      );
+      if (elsewhere) continue;
+      throw new Error(
+        `strike refused: \u201c${clause}\u201d is the only clause that enforces \u201c${boundary.quote}\u201d`,
+      );
+    }
+  }
+}
+
+/**
+ * The charter with the given constraints struck.
+ *
+ * A derived candidate-property constraint drops, whole, every list clause
+ * that carries its wording, and loses its wording from the proposed function,
+ * which is never dropped. Every other constraint has its wording removed
+ * from the four clause fields as `withoutClauseWording` does. A
+ * candidate-property strike may not drop the last clause bounding a system.
+ *
+ * Args:
+ *   charter: The charter to edit.
+ *   struck: The constraints whose strike to apply.
+ *
+ * Returns:
+ *   A copy with the strikes applied; the same charter when there are none.
+ *
+ * Raises:
+ *   Error: When a strike would rewrite part of a will-not-do clause, or drop
+ *     the only clause bounding a system.
+ */
+export function withoutConstraints<T extends ClauseCharter>(
+  charter: T,
+  struck: readonly CharterConstraint[],
+): T {
+  if (struck.length === 0) return charter;
+  const isProperty = (constraint: CharterConstraint): boolean =>
+    constraint.kind === 'candidate-property';
+  const apply = (target: T, constraints: readonly CharterConstraint[]): T => {
+    const whole = constraints.filter(strikesWholeClause);
+    const phrased = constraints.filter(
+      (constraint: CharterConstraint): boolean => !strikesWholeClause(constraint),
+    );
+    return withoutClauseWording(
+      withoutClauses(target, whole),
+      phrased.flatMap((constraint: CharterConstraint): string[] => constraint.wording),
+    );
+  };
+  const lifted = apply(
+    charter,
+    struck.filter((constraint: CharterConstraint): boolean => !isProperty(constraint)),
+  );
+  const result = apply(lifted, struck.filter(isProperty));
+  assertBoundariesKept(charter, lifted, result, struck);
+  return result;
+}
+
+/** Drop every list clause carrying a whole-clause constraint's wording; the function keeps its sentence minus the words. */
+function withoutClauses<T extends ClauseCharter>(charter: T, struck: readonly CharterConstraint[]): T {
+  if (struck.length === 0) return charter;
+  const phrases = struck.flatMap((constraint: CharterConstraint): string[] => constraint.wording);
+  const carries = (clause: string): boolean =>
+    phrases.some((phrase: string): boolean => wordingPresent(phrase, [clause]));
+  const proposedFunction = withoutPhrases(charter.proposedFunction, phrases);
+  const boundaries = { ...charter.proposedBoundaries };
+  for (const field of LIST_FIELDS) {
+    boundaries[field] = charter.proposedBoundaries[field].filter(
+      (clause: string): boolean => !carries(clause),
+    );
+  }
+  return {
+    ...charter,
+    proposedFunction: /[A-Za-z0-9]/.test(proposedFunction)
+      ? proposedFunction
+      : charter.proposedFunction,
+    proposedBoundaries: boundaries,
+  };
+}
+
+/**
  * The charter as its struck constraints leave it.
  *
- * Every struck constraint's wording is removed from the four clause fields; a
- * list clause emptied by that is dropped, and a proposed function that would
- * be emptied is kept as it was, because a charter with no function is not a
- * charter. The constraints themselves stay, struck flags included.
+ * The rules are those of `withoutConstraints`, applied to every constraint
+ * flagged `struck`. The constraints themselves stay, struck flags included.
+ * This is the one function that turns strikes into clauses: approval,
+ * amendment and the card's strike toggle all read it, so a strike the card
+ * allows is one approval can honour.
  *
  * Args:
  *   charter: A charter whose constraints may carry `struck`.
  *
  * Returns:
  *   The same charter when nothing is struck, otherwise a copy with the
- *   struck wording gone.
+ *   strikes applied.
+ *
+ * Raises:
+ *   Error: As `withoutConstraints`.
  */
-export function effectiveCharter(charter: Charter): Charter {
-  const struck = (charter.constraints ?? []).filter(
-    (constraint: CharterConstraint): boolean => constraint.struck === true,
-  );
-  if (struck.length === 0) return charter;
-  return withoutClauseWording(
+export function effectiveCharter<T extends ClauseCharter>(charter: T): T {
+  return withoutConstraints(
     charter,
-    struck.flatMap((constraint: CharterConstraint): string[] => constraint.wording),
+    (charter.constraints ?? []).filter(
+      (constraint: CharterConstraint): boolean => constraint.struck === true,
+    ),
   );
+}
+
+/** What `effectiveCharter` makes of a charter: the result, or the refusal as a reason. */
+export type StrikeOutcome<T extends ClauseCharter> =
+  | { ok: true; charter: T }
+  | { ok: false; reason: string };
+
+/**
+ * `effectiveCharter` as a result rather than a throw, for the strike toggle.
+ *
+ * Args:
+ *   charter: A charter whose constraints may carry `struck`.
+ *
+ * Returns:
+ *   The effective charter, or the reason the strikes cannot be applied.
+ */
+export function strikeOutcome<T extends ClauseCharter>(charter: T): StrikeOutcome<T> {
+  try {
+    return { ok: true, charter: effectiveCharter(charter) };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** What striking one more constraint would do, for the card to say before the manager does it. */
+export interface StrikePreview {
+  /** List clauses the strike removes whole, beyond what is already struck. */
+  removedClauses: string[];
+  /** Why the strike cannot be applied; when set, nothing is removed. */
+  refusal?: string;
+}
+
+function listClauses(charter: ClauseCharter): string[] {
+  return LIST_FIELDS.flatMap((field): string[] => charter.proposedBoundaries[field]);
+}
+
+/**
+ * Preview striking the constraint at `index` on top of the strikes already made.
+ *
+ * Computed with `strikeOutcome`, the function the toggle and approval use, so
+ * a refusal here is the refusal the toggle would give and a strike previewed
+ * as allowed is one approval will apply.
+ *
+ * Args:
+ *   charter: The charter as drafted, other strikes flagged.
+ *   index: The constraint to strike.
+ *
+ * Returns:
+ *   The clauses the strike would remove, or the reason it is refused.
+ */
+export function strikePreview(charter: ClauseCharter, index: number): StrikePreview {
+  const constraints = [...(charter.constraints ?? [])];
+  const target = constraints[index];
+  if (!target) return { removedClauses: [] };
+  constraints[index] = { ...target, struck: true };
+  const before = strikeOutcome(charter);
+  const after = strikeOutcome({ ...charter, constraints });
+  if (!after.ok) return { removedClauses: [], refusal: after.reason };
+  const base = listClauses(before.ok ? before.charter : charter);
+  const remaining = listClauses(after.charter);
+  return {
+    removedClauses: base.filter((clause: string): boolean => !remaining.includes(clause)),
+  };
 }
 
 /**
  * The charter with the given phrases removed from its four clause fields.
  *
- * The rules are those of `effectiveCharter`: a list clause emptied by the
- * removal is dropped and the proposed function is never emptied.
+ * A list clause emptied by the removal is dropped and the proposed function
+ * is never emptied. A phrase that is only part of a will-not-do clause is
+ * refused, because a prohibition minus a qualifier is a wider prohibition.
  *
  * Args:
  *   charter: The charter to edit.
@@ -255,8 +482,14 @@ export function effectiveCharter(charter: Charter): Charter {
  *
  * Returns:
  *   A copy with the phrases gone; the same charter when there are none.
+ *
+ * Raises:
+ *   Error: When a phrase is only part of a will-not-do clause.
  */
-export function withoutClauseWording(charter: Charter, phrases: readonly string[]): Charter {
+export function withoutClauseWording<T extends ClauseCharter>(
+  charter: T,
+  phrases: readonly string[],
+): T {
   if (phrases.length === 0) return charter;
   for (const clause of charter.proposedBoundaries.willNotDo) {
     if (!phrases.some((phrase) => wordingPresent(phrase, [clause]))) continue;
