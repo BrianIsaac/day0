@@ -117,3 +117,21 @@ describe('redactStructural', (): void => {
     expect(redactStructural('Ticket key: REVOPS-7\nToken budget: none')).toBe('Ticket key: REVOPS-7\nToken budget: none');
   });
 });
+
+describe('overlapping classifications', () => {
+  it('never lets a kept person span suppress a structural secret', async () => {
+    const text = `Priya ${CORPUS_SLOTS.slack_bot_token}`;
+    const model = new ScriptedSpanModel(() => [{ start: 0, end: text.length, label: 'person', score: 0.99 }]);
+    const result = await redactText(text, 'outcome', { model, onUnavailable: 'throw' });
+    expect(result.text).toBe('Priya <redacted>');
+  });
+
+  it('redacts the union of partly overlapping secret spans', async () => {
+    const text = 'abcdefghijklmnop';
+    const model = new ScriptedSpanModel(() => [
+      { start: 0, end: 10, label: 'password', score: 0.99 },
+      { start: 6, end: 16, label: 'password', score: 0.99 },
+    ]);
+    expect((await redactText(text, 'outcome', { model, onUnavailable: 'throw' })).text).toBe('<redacted>');
+  });
+});

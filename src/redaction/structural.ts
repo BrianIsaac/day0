@@ -130,7 +130,7 @@ export function structuralSpans(text: string): StructuralSpan[] {
   return mergeSpans(spans);
 }
 
-/** Drop spans inside an earlier one and sort the rest by position. */
+/** Merge overlapping coverage so a later span cannot expose a trailing suffix. */
 export function mergeSpans<T extends { start: number; end: number }>(spans: T[]): T[] {
   const sorted = [...spans].sort(
     (left, right): number => left.start - right.start || right.end - left.end,
@@ -138,7 +138,10 @@ export function mergeSpans<T extends { start: number; end: number }>(spans: T[])
   const kept: T[] = [];
   for (const span of sorted) {
     const last = kept[kept.length - 1];
-    if (last && span.start < last.end) continue;
+    if (last && span.start < last.end) {
+      kept[kept.length - 1] = { ...last, end: Math.max(last.end, span.end) };
+      continue;
+    }
     kept.push(span);
   }
   return kept;

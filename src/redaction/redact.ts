@@ -142,9 +142,13 @@ export async function redactText(
       degraded = 'structural-only';
     }
   }
-  const findings: Finding[] = mergeSpans([...structural, ...modelFindings]).map(
-    (finding): Finding => ({ ...finding, redacted: dispositionFor(context, finding.kind) === 'redact' }),
-  );
+  const candidates = [...structural, ...modelFindings];
+  const removed = mergeSpans(candidates.filter((finding) => dispositionFor(context, finding.kind) === 'redact'));
+  const findings: Finding[] = [
+    ...removed.map((finding): Finding => ({ ...finding, value: base.slice(finding.start, finding.end), redacted: true })),
+    ...candidates.filter((finding) => dispositionFor(context, finding.kind) === 'keep')
+      .map((finding): Finding => ({ ...finding, redacted: false })),
+  ].sort((left, right) => left.start - right.start);
   const marker = options.secretMarker ?? ((): string => REDACTED);
   const redacted = replaceSpans(
     base,
