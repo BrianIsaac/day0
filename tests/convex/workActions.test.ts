@@ -38,6 +38,18 @@ import {
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import {
+  auditNoteClosing,
+  auditNoteOutcomes,
+  auditNotePlan,
+  auditNotePrerequisiteLedger,
+  auditNotePrerequisites,
+  refreshClosing,
+  refreshOutcomes,
+  refreshPlan,
+  refreshPrerequisiteLedger,
+  refreshPrerequisites,
+} from './fixtures/closing-gates-2026-09-16';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -4558,6 +4570,71 @@ describe('plan-step accounting after the loop ran live', (): void => {
         [{ step: 1, status: 'blocked', evidence: 'The state change was deliberately not emitted.' }],
         { plan, actions: [skillOutput.actions[0]], applied: [landed] },
       ),
+    ).toBeUndefined();
+  });
+});
+
+describe('the closing gates against the 16 September plans', (): void => {
+  const surfaces = [
+    { slug: 'linear', displayName: 'Linear' },
+    { slug: 'slack', displayName: 'Slack' },
+    { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' },
+  ];
+
+  it('accepts the REVOPS-7 closing set: step 3 is a write quoting the read-back as evidence, not a Linear read', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: refreshPlan,
+        outcomes: refreshOutcomes,
+        initialActions: refreshPrerequisites,
+        initialLedger: refreshPrerequisiteLedger,
+        surfaces,
+      }),
+    ).not.toThrow();
+    expect(
+      dependentTransitionRefusal({
+        plan: refreshPlan,
+        actions: refreshClosing.actions,
+        planStepOutcomes: refreshOutcomes,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('accepts the REVOPS-5 closing set: "Q3 close project" names a project, and the plan withholds Done', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: auditNotePlan,
+        outcomes: auditNoteOutcomes,
+        initialActions: auditNotePrerequisites,
+        initialLedger: auditNotePrerequisiteLedger,
+        surfaces,
+      }),
+    ).not.toThrow();
+    expect(
+      dependentTransitionRefusal({
+        plan: auditNotePlan,
+        actions: auditNoteClosing.actions,
+        planStepOutcomes: auditNoteOutcomes,
+      }),
+    ).toBeUndefined();
+    expect(
+      closingStopReason({
+        plan: auditNotePlan,
+        outcomes: auditNoteOutcomes,
+        initialActions: auditNotePrerequisites,
+        initialApplied: auditNotePrerequisiteLedger,
+        closingActions: auditNoteClosing.actions,
+        surfaces: surfaces.map((surface) => ({
+          ...surface,
+          class: surface.slug === 'linear' ? 'kanban' : surface.slug === 'slack' ? 'chat' : 'analytics',
+          verdict: 'connected',
+          credentialLanded: true,
+          lastVerifiedAt: 1,
+          path: surface.slug === 'looker-pipeline-tile' ? 'browser-driven' : surface.slug === 'slack' ? 'documented-api' : 'mcp',
+          endpoint: 'https://example.test/',
+          toolAllowlist: [],
+        })),
+      }),
     ).toBeUndefined();
   });
 });
