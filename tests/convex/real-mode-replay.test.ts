@@ -7,7 +7,8 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import type { AppliedAction } from '../../src/surfaces/types';
-import type { ExecutionOutput, ExecutionPlan } from '../../src/work/types';
+import { dependentActionCap } from '../../src/work/execute-skill';
+import { CLOSING_SET_CAP, type ExecutionOutput, type ExecutionPlan } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -537,6 +538,10 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       'satisfied',
     ]);
     expect(ledger(done).filter((row) => row.ok && !row.held)).toHaveLength(10);
+    // The closing set (comment, Done, DM) fits the runbook closing-set cap
+    // without the deferred-sequence allowance, which this phase one never declared.
+    expect(closing.actions.length).toBeLessThanOrEqual(CLOSING_SET_CAP);
+    expect(dependentActionCap(phaseOne)).toBe(CLOSING_SET_CAP);
     // One more model call than the happy path: the planner repair and the
     // argument repair, and no third attempt at anything.
     expect(recorded.model.map((call) => call.agent.replace(/^day0-skill-.*-(initial|dependent|argument-repair)$/, '$1'))).toEqual([

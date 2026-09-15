@@ -3,6 +3,8 @@ import { Agent } from '@mastra/core/agent';
 import { agentJson, MODEL_CONFIG, MODEL_PROVIDER_MAX_RETRIES } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import {
+  CLOSING_SET_CAP,
+  DEFERRED_SEQUENCE_ALLOWANCE,
   DEPENDENT_ACTION_CAP,
   type DependentExecutionOutput,
   type ExecutionOutput,
@@ -683,12 +685,38 @@ export function executeSchemaForProcedureContract(
   });
 }
 
+/**
+ * How many closing actions this run's closing phase may emit.
+ *
+ * The closing set is always allowed. A deferred sequence is allowed on top
+ * only when phase one declared a deferral: a deferred procedure-trail row or
+ * a `deferredActions` row, each of which the deferral audit has already tied
+ * to a read in that phase. A phase one that declared nothing gets no room for
+ * work it did not say it was leaving.
+ *
+ * Args:
+ *   initial: The phase-one output as persisted.
+ *
+ * Returns:
+ *   The cap for the closing phase.
+ */
+export function dependentActionCap(
+  initial: Pick<ExecutionOutput, 'deferredActions' | 'procedureTrails'>,
+): number {
+  const declared =
+    (initial.deferredActions ?? []).length > 0 ||
+    (initial.procedureTrails ?? []).some((row) => procedureTrailState(row).state === 'deferred');
+  return declared ? CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE : CLOSING_SET_CAP;
+}
+
 /** Use the same runtime trail inventory contract in the dependent phase. */
 export function dependentExecuteSchemaForProcedureContract(
   contract: ProcedureContract,
   mode: SurfaceMode = 'mock',
+  cap: number = DEPENDENT_ACTION_CAP,
 ) {
   return dependentExecuteSchema.extend({
+    actions: z.array(generatedActionSchema).max(cap),
     procedureTrails:
       mode === 'mock'
         ? procedureTrailInventorySchema(contract)
@@ -2163,6 +2191,7 @@ export async function runDependentSkill(
   const mode: SurfaceMode = args.mode ?? 'mock';
   const procedureContract = parseProcedureContract(mockEnv);
   const advisory = mode === 'real' ? advisoryPlanSteps(plan, candidate, mockEnv, charter) : [];
+  const cap = dependentActionCap(args.initialOutput);
   const base = executorInstructions({
     mode,
     autonomousActions: args.autonomousActions ?? false,
@@ -2178,7 +2207,7 @@ export async function runDependentSkill(
     '--- Result-dependent phase (second and final phase) ---',
     "The prerequisite actions have finished. This is the run's only dependent phase; there is no third turn and no loop.",
     'The earlier needsDependentPhase instruction no longer applies; this final schema has no continuation flag.',
-    `Emit at most ${DEPENDENT_ACTION_CAP} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
+    `Emit at most ${cap} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
@@ -2197,7 +2226,7 @@ export async function runDependentSkill(
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
-  const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode);
+  const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode, cap);
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
     '',

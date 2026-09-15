@@ -26,10 +26,11 @@ import {
   HELD_WRITE,
 } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
-import type {
-  DependentExecutionOutput,
-  ExecutionOutput,
-  PlanStepOutcome,
+import {
+  CLOSING_SET_CAP,
+  type DependentExecutionOutput,
+  type ExecutionOutput,
+  type PlanStepOutcome,
 } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
@@ -984,6 +985,86 @@ describe('executing an approved plan through the gate', (): void => {
       Array.from({ length: 8 }, (_, index) => `${workItemId}:${runId}:${index}`),
     );
     expect(recorded.dependentRuns).toBe(1);
+  });
+
+  it('lets the closing phase carry the whole closing set, and a deferred sequence only when phase one declared one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const linearRead = (tool: string): ExecutionOutput['actions'][number] => ({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool, toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+    });
+    const closingSet: ExecutionOutput['actions'] = [
+      skillOutput.actions[0],
+      skillOutput.actions[1],
+      skillOutput.actions[2],
+      linearRead('list_comments'),
+      linearRead('get_issue'),
+    ];
+    expect(closingSet).toHaveLength(CLOSING_SET_CAP);
+    const closing = (actions: ExecutionOutput['actions']): DependentExecutionOutput => ({
+      draft: 'Closing the ticket from the read-back.',
+      notes: '',
+      actions,
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'ledger row 0' },
+        { step: 2, status: 'satisfied', evidence: 'the comment and Done in this response' },
+      ],
+    });
+    const prepare = async (initial: ExecutionOutput): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'>; harness: Harness }> => {
+      recorded.skillOutput = initial;
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      const prepared = await readItem(harness, workItemId);
+      expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+      const runId = prepared.executionRunId;
+      if (!runId) throw new Error('execution run missing');
+      return { workItemId, runId, harness };
+    };
+    const undeclared: ExecutionOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [linearRead('get_issue')],
+    };
+
+    // The closing set fits without any declared deferral. The auto rows are
+    // applied here rather than left to the scheduler, so no call from this
+    // run lands in a later test.
+    recorded.dependentOutput = closing(closingSet);
+    let run = await prepare(undeclared);
+    await expect(
+      run.harness.action(internal.workActions.authorDependentActions, { workItemId: run.workItemId, runId: run.runId }),
+    ).resolves.toEqual({ ok: true, reason: 'dependent actions applying' });
+    await run.harness.action(internal.workActions.applyApprovedActions, { workItemId: run.workItemId });
+    expect((await readItem(run.harness, run.workItemId)).state).toBe('actions-pending');
+
+    // A sixth closing action needs the allowance phase one did not declare.
+    recorded.dependentOutput = closing([...closingSet, linearRead('get_issue')]);
+    run = await prepare(undeclared);
+    await expect(
+      run.harness.action(internal.workActions.authorDependentActions, { workItemId: run.workItemId, runId: run.runId }),
+    ).resolves.toEqual({ ok: false, reason: `dependent phase emitted 6 actions; cap is ${CLOSING_SET_CAP}` });
+    expect((await readItem(run.harness, run.workItemId)).state).toBe('failed');
+
+    // Phase one declared a deferral against its read: the closing phase may carry it.
+    run = await prepare({
+      ...undeclared,
+      deferredActions: [
+        {
+          description: 'the documented tile sequence, whose figure the record read returns',
+          reason: 'the fill value is the figure in the record',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
+        },
+      ],
+    });
+    await expect(
+      run.harness.action(internal.workActions.authorDependentActions, { workItemId: run.workItemId, runId: run.runId }),
+    ).resolves.toEqual({ ok: true, reason: 'dependent actions applying' });
+    await run.harness.action(internal.workActions.applyApprovedActions, { workItemId: run.workItemId });
+    expect((await readItem(run.harness, run.workItemId)).state).toBe('actions-pending');
   });
 
   it('holds the dependent comment and Done transition together under one supervised decision', async (): Promise<void> => {

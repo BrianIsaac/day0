@@ -179,8 +179,23 @@ export interface ExecutionOutput {
   needsDependentPhase?: boolean;
 }
 
-/** The fixed upper bound on the one result-dependent phase of a run. */
-export const DEPENDENT_ACTION_CAP = 4;
+/**
+ * The closing set a runbook prescribes once the results exist: the audit
+ * comment on the originating issue, its state change, the manager DM, the
+ * reply into the source thread, and one read-back of what landed.
+ */
+export const CLOSING_SET_CAP = 5;
+
+/**
+ * Room for a documented sequence phase one legitimately deferred because a
+ * value in it comes from a phase-one read. The longest such sequence in the
+ * runbooks is the six-step tile refresh: navigate, sign in, fill, click,
+ * save, snapshot. Granted only when phase one declared a deferral.
+ */
+export const DEFERRED_SEQUENCE_ALLOWANCE = 6;
+
+/** The fixed upper bound on the one result-dependent phase of a run: the closing set plus one deferred sequence. */
+export const DEPENDENT_ACTION_CAP = CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE;
 
 /** How one approved plan step is accounted for after real action results exist. */
 export interface PlanStepOutcome {

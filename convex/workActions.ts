@@ -17,6 +17,7 @@ import {
   type DraftPlanArgs,
 } from '../src/work/plan';
 import {
+  dependentActionCap,
   repairableReadFailures,
   repairFailedReads,
   repairToolArguments,
@@ -25,7 +26,6 @@ import {
 } from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import {
-  DEPENDENT_ACTION_CAP,
   type DependentExecutionOutput,
   type ExecutionPlan,
   type PlanStepOutcome,
@@ -859,9 +859,10 @@ export const authorDependentActions = internalAction({
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,
       });
-      if (output.actions.length > DEPENDENT_ACTION_CAP) {
+      const cap = dependentActionCap(initial);
+      if (output.actions.length > cap) {
         throw new Error(
-          `dependent phase emitted ${output.actions.length} actions; cap is ${DEPENDENT_ACTION_CAP}`,
+          `dependent phase emitted ${output.actions.length} actions; cap is ${cap}`,
         );
       }
       validatePlanStepOutcomes({

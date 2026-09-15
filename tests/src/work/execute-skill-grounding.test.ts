@@ -49,7 +49,12 @@ import {
 } from '../../../src/work/execute-skill';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import { planPreconditionAudit } from '../../../src/work/plan';
-import type { ExecutionOutput, MockAction } from '../../../src/work/types';
+import {
+  CLOSING_SET_CAP,
+  DEFERRED_SEQUENCE_ALLOWANCE,
+  type ExecutionOutput,
+  type MockAction,
+} from '../../../src/work/types';
 
 const charter: Charter = {
   version: '0.0',
@@ -130,6 +135,52 @@ describe('documentation grounding in the executor prompts', (): void => {
     expect(recorded.users[0]).toContain('--- Team docs (read-only context) ---');
     expect(recorded.users[0]).toContain('Close checklist: reconcile the ledger, confirm the owner, file the summary.');
     expect(recorded.instructions[0]).toContain('citable');
+  });
+
+  it('tells the closing phase the cap for this run: the closing set, plus a deferred sequence only when phase one declared one', async (): Promise<void> => {
+    const closingArgs = {
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: {
+        summary: 'Comment on the ticket.',
+        steps: ['Comment on the ticket with the checklist review.'],
+        expectedOutputType: 'ticket-update' as const,
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real' as const,
+      surfaces: [],
+      initialLedger: [],
+    };
+    await runDependentSkill({
+      ...closingArgs,
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+    });
+    expect(recorded.instructions[0]).toContain(`Emit at most ${CLOSING_SET_CAP} closing actions.`);
+    await runDependentSkill({
+      ...closingArgs,
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [{ tool: 'mcp.call', args: { surface: 'tracker', tool: 'get_issue', toolArgsJson: '{"id":"T-1"}' } }],
+        procedureTrails: [],
+        deferredActions: [
+          {
+            description: 'the tile refresh, whose figure the record read returns',
+            reason: 'the fill value is the figure in the record',
+            dependsOnActionIndex: 0,
+            dependsOnField: 'record',
+          },
+        ],
+      },
+    });
+    expect(recorded.instructions[1]).toContain(
+      `Emit at most ${CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE} closing actions.`,
+    );
   });
 
   it('tells the closing phase that a step it fulfils by an action emitted now is satisfied', async (): Promise<void> => {
