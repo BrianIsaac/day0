@@ -177,6 +177,11 @@ export function skillShapeFor(
     target && isSystemClass(target.class)
       ? target.class
       : (SOURCE_CLASS_BY_NAME[candidate.sourceSystem.toLowerCase()] ?? 'other');
+  const readRequest = /^(?:read|inspect|list|show|summari[sz]e|report|review|check)\b/i.test(candidate.title.trim());
+  const readOnlyBoundary = /\b(?:read[- ]only|do not (?:change|write|update|edit|modify)|without (?:changing|writing|updating|editing|modifying))\b/i.test(candidate.contentSummary);
+  if (mode === 'real' && readRequest && readOnlyBoundary && !['chat', 'social', 'docs'].includes(surfaceClass)) {
+    return { surfaceClass, operation: 'read' };
+  }
   return { surfaceClass, operation: OPERATION_BY_CLASS[surfaceClass].operation };
 }
 

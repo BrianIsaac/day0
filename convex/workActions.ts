@@ -166,6 +166,7 @@ export function findMatchingSkillForCandidate<T extends MatchableSkill>(
       sameSkillShape({ surfaceClass: skill.surfaceClass, operation: skill.operation }, shape),
   );
   if (shaped) return shaped;
+  if (shape.operation === 'read') return undefined;
 
   const source = candidate.sourceSystem.toLowerCase();
   const sourceTokens = tokens(candidate.sourceSystem);

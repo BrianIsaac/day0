@@ -303,6 +303,13 @@ describe('skill selection by shape', (): void => {
     ).toBeUndefined();
   });
 
+  it('does not use a legacy write procedure for a read-only shape', () => {
+    expect(findMatchingSkillForCandidate({
+      ...secondRefresh, title: 'Read the Looker pipeline tile',
+      contentSummary: 'Report the figure; do not change anything.',
+    }, [legacyTicketSkill, tileSkill], { surfaceClass: 'analytics', operation: 'read' })).toBeUndefined();
+  });
+
   it('keeps serving a legacy per-ticket row through the token path when no shaped skill covers the shape', (): void => {
     expect(
       findMatchingSkillForCandidate(secondRefresh, [legacyTicketSkill], {

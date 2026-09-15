@@ -37,6 +37,20 @@ function candidate(overrides: Partial<WorkCandidate> = {}): WorkCandidate {
 }
 
 describe('the shape of the skill a candidate needs', (): void => {
+  it('does not select a write procedure for an explicitly read-only request', () => {
+    const readOnly = candidate({
+      title: 'Read the Looker pipeline tile',
+      contentSummary: 'Report the current coverage figure. Do not change anything.',
+    });
+    expect(skillShapeFor(readOnly, [linear, tile], 'real')).toEqual({
+      surfaceClass: 'analytics', operation: 'read',
+    });
+    expect(skillShapeFor(candidate({
+      sourceSystem: 'close-tracker', title: 'Read the Close tracker',
+      contentSummary: 'List the rows. Do not write to the spreadsheet.',
+    }), [sheet], 'real')).toEqual({ surfaceClass: 'spreadsheet', operation: 'read' });
+  });
+
   it('maps every mock source system to its surface class and documented operation', (): void => {
     const shapes = ['ticket', 'slack', 'spreadsheet', 'social', 'docs', 'calendar'].map(
       (sourceSystem) => skillShapeFor(candidate({ sourceSystem }), [], 'mock'),
