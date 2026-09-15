@@ -14,6 +14,7 @@ import {
 } from '../src/lib/skill-sandbox';
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { skillNameFor, skillOperationLabel, skillSurfacePhrase } from '../src/work/skill-shape';
+import { authoredSkillIssues } from '../src/work/authored-skill';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -28,10 +29,15 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
  *   3. A sandbox runs the smoke test — Daytona where a key is configured,
  *      the bundled local service otherwise. `src/lib/skill-sandbox.ts`
  *      picks, and reports the same shape whichever ran.
- *   4. If the sandbox exits 0 with non-empty stdout, we register the
- *      skill so it becomes available to the agent. If no sandbox ran at
- *      all, the skill stops at `authoring` and stays uncallable: the
- *      register step is what claims the body was checked.
+ *   4. If the sandbox exits 0 having printed one line per representative
+ *      input set, we register the skill so it becomes available to the
+ *      agent. If no sandbox ran at all, the skill stops at `authoring` and
+ *      stays uncallable: the register step is what claims the body was
+ *      checked.
+ *
+ * Before the sandbox, a static gate (`src/work/authored-skill.ts`) refuses a
+ * body or smoke test that repeats the first work item's values or breaks the
+ * placeholder contract; the reasons land on the row for the retry.
  *
  * The Python smoke is a Voyager-style execution-success signal —
  * sandbox exit 0 means the body is internally consistent. Plan 2 / 3
@@ -42,7 +48,7 @@ export const AUTHOR_SYSTEM = [
   'You are an autonomous workplace agent named Day0, authoring a new skill for yourself.',
   'A skill is a SKILL.md document that describes (a) when to invoke it, (b) the inputs it expects, (c) the procedure it follows step-by-step, (d) the format of its output, (e) the structured `actions[]` it MUST emit at the end, (f) the verification the executor reads back. SKILL.md is loaded as a behavioural prior at execution time — write it as if instructing a junior practitioner who has never seen the system before.',
   '',
-  'Reusable procedure: A skill is a reusable procedure for one operation on one surface class. It serves every later work item of that shape, so it carries no percentage, amount, identifier, channel, thread or quoted request from any single work item. Everything that varies per run is a named input, written as an angle-bracket placeholder such as `<record-id>`, `<requested-value>`, `<reply-channel>` or `<reply-thread>`, and declared under a `## Inputs` heading with where the executor reads it: the candidate identifier and `Refs:` line, the quoted request in the candidate body, the `Reply target:` line, the candidate record, the approved figure the runbook or the candidate names for that run, the surface record. Every placeholder the body uses is declared there. `{{secret}}` stays the only double-brace placeholder; it is the credential and nothing else is written that way.',
+  'Reusable procedure: A skill is a reusable procedure for one operation on one surface class. It serves every later work item of that shape, so it carries no percentage, amount, identifier, channel, thread or quoted request from any single work item. Everything that varies per run is a named input, written as an angle-bracket placeholder such as `<record-id>`, `<requested-value>`, `<reply-channel>` or `<reply-thread>`, and declared under a `## Inputs` heading with where the executor reads it: the candidate identifier and `Refs:` line, the quoted request in the candidate body, the `Reply target:` line, the candidate record, the approved figure the runbook or the candidate names for that run, the surface record. Every placeholder the body uses is declared there. `{{secret}}` stays the only double-brace placeholder; it is the credential and nothing else is written that way. A body or smoke test that repeats any identifier, figure, channel, thread or quoted phrase of the first work item, or uses a placeholder it does not declare, is refused before any sandbox runs and the refusal names the value.',
   '`## When to invoke` describes the operation and its preconditions as the runbook states them: the source category of the work, the surface class, what the candidate must carry. It never restates the charter or its adjectives (owned, prioritised, assigned): the evaluator decides scope before a skill is invoked, and a skill that repeats scope as a precondition blocks work already judged in scope.',
   'Argument names: the probed argument names in the Surfaces list are the authority for every tool\'s `toolArgsJson` keys, over any example in a runbook; the runbook is the authority for the sequence, the element names and the verification (the read-back, the audit line, the returned identifier), and the skill states that verification under `## Verification`.',
   '',
@@ -347,6 +353,23 @@ export const authorAndRegisterSkill = action({
     const smokeTest = authored.smokeTest.trim();
     if (!body || !smokeTest) {
       const reason = 'the model returned an empty SKILL.md body or smoke test';
+      return await recordAuthoringFailure(ctx, args.skillId, runId, {
+        rowReason: reason,
+        reason,
+        eventType: 'skill.author-failed',
+      });
+    }
+
+    // The static gate before any sandbox spends a run: a body that repeats
+    // the first work item's values, or breaks the placeholder contract the
+    // executor binds by, is not a reusable procedure whatever its smoke test
+    // prints. The reasons go on the row, so the retry is told what to change.
+    const instance: Doc<'workItems'> | null = skill.proposedFor
+      ? await ctx.runQuery(internal.work.getInternal, { workItemId: skill.proposedFor })
+      : null;
+    const issues = authoredSkillIssues({ body, smokeTest, instance });
+    if (issues.length > 0) {
+      const reason = `the authored skill is not a reusable procedure: ${issues.join('; ')}`;
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
         rowReason: reason,
         reason,
