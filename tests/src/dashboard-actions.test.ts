@@ -418,6 +418,15 @@ describe('judge-facing dashboard evidence', (): void => {
   });
 });
 
+describe('the failed item reason', (): void => {
+  it('reads a stop as a stop, without the prefix', (): void => {
+    expect(failedItemReason({ skipReason: 'stopped: the read did not land' })).toBe(
+      'stopped, nothing landed and nothing to decide: the read did not land',
+    );
+    expect(failedItemReason({ skipReason: 'no registered skill' })).toBe('no registered skill');
+  });
+});
+
 describe('manager feedback on the card', (): void => {
   it('shows a rejection reason and a retry note in every state, and says when a run addressed it', (): void => {
     const rejection = renderToStaticMarkup(

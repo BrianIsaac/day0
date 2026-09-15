@@ -1864,6 +1864,74 @@ describe('the exact-action gate', (): void => {
     ]);
   });
 
+  it('records a failure with nothing landed as stopped, and one after a landed write as failed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', undefined, { withSlack: true });
+    const read = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+    };
+    const dm = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'Which figure?' }),
+      },
+    };
+    const comment = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x' }) },
+    };
+    // A read and the manager DM landed; neither is work.
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      runId,
+      reason: 'the closing phase could not settle the owner',
+      output: {
+        draft: '',
+        notes: '',
+        actions: [read, dm, comment],
+        applied: [
+          { tool: 'mcp.call', ok: true, idempotencyKey: 'a' },
+          { tool: 'http.request', ok: true, idempotencyKey: 'b' },
+          { tool: 'mcp.call', ok: false, reason: 'provider refused', idempotencyKey: 'c' },
+        ],
+      },
+    });
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe('stopped: the closing phase could not settle the owner');
+    await expect(eventsOfType(harness, agentId, 'work.failed')).resolves.toMatchObject([
+      { payload: { workItemId, stopped: true, reason: 'stopped: the closing phase could not settle the owner' } },
+    ]);
+
+    // A landed comment is work: the failure is a failure, and Retry reconciles it.
+    const { agentId: other, workItemId: landedItem, runId: landedRun } = await seed(harness, 'executing');
+    await harness.mutation(internal.work.setFailed, {
+      workItemId: landedItem,
+      runId: landedRun,
+      reason: 'the status change was refused',
+      output: {
+        draft: '',
+        notes: '',
+        actions: [comment, comment],
+        applied: [
+          { tool: 'mcp.call', ok: true, idempotencyKey: 'a' },
+          { tool: 'mcp.call', ok: false, reason: 'provider refused', idempotencyKey: 'b' },
+        ],
+      },
+    });
+    const failed = await readItem(harness, landedItem);
+    expect(failed.skipReason).toBe('the status change was refused');
+    const events = await eventsOfType(harness, other, 'work.failed');
+    expect(events).toHaveLength(1);
+    expect((events[0].payload as { stopped?: boolean }).stopped).toBeUndefined();
+  });
+
   it('permits retry after only reads landed and every write failed or stayed held', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

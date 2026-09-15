@@ -31,13 +31,14 @@ interface LedgerEntry {
   idempotencyKey?: unknown;
 }
 
-interface LedgerPhase {
+export interface LedgerPhase {
   phase: ReconciliationPhase;
   actions: MockAction[];
   applied: LedgerEntry[];
 }
 
-function phasesOf(output: unknown): LedgerPhase[] {
+/** A run's ledger by phase: one for a single-phase run, two once it has a closing phase. */
+export function ledgerPhases(output: unknown): LedgerPhase[] {
   const top = (output ?? {}) as {
     actions?: MockAction[];
     applied?: LedgerEntry[];
@@ -81,7 +82,7 @@ function landedWrite(action: MockAction | undefined, entry: LedgerEntry): boolea
 }
 
 export function providerReconciliationEntries(output: unknown): ReconciliationEntry[] {
-  return phasesOf(output).flatMap(({ phase, actions, applied }) =>
+  return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     applied.flatMap((entry, actionIndex): ReconciliationEntry[] => {
       const tool = optionalString(entry.tool) ?? actions[actionIndex]?.tool ?? 'unknown';
       const outcomeUnknown =

@@ -37,6 +37,7 @@ import type { MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
+import { isStopped, stopDetail } from '../../../src/work/stop';
 import type { AgentMetrics } from '../../../convex/metrics';
 
 interface Props {
@@ -1037,6 +1038,7 @@ function WorkQueue({
 
 function stateColor(state: string): string {
   if (state === 'completed') return 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]';
+  if (state === 'stopped') return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
   if (state === 'plan-pending' || state === 'needs-skill' || state === 'actions-pending') {
     return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
   }
@@ -1233,6 +1235,9 @@ export function failedItemReason(item: {
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
+  }
+  if (item.skipReason && isStopped(item.skipReason)) {
+    return `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;
 }
@@ -1559,15 +1564,18 @@ export function WorkItemCard({
     item.state === 'plan-pending' || item.state === 'actions-pending'
       ? undeliveredDecisionReason(item.decision, now)
       : undefined;
+  // A failed item whose run landed nothing and left nothing to decide is
+  // shown as stopped: Retry stands, and the badge says no harm was done.
+  const shownState = item.state === 'failed' && isStopped(item.skipReason) ? 'stopped' : item.state;
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
             <span
-              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(item.state)}`}
+              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shownState)}`}
             >
-              {item.state}
+              {shownState}
             </span>
             <span className="text-[10px] text-[var(--color-muted)]">
               {item.sourceSystem}/{item.sourceCategory}
@@ -2162,6 +2170,9 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
 }
 
 export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): string {
+  if (event.type === 'work.failed' && (event.payload as { stopped?: unknown })?.stopped === true) {
+    return 'work.failed · stopped';
+  }
   if (event.type !== 'surface.charter-match-ambiguous') return event.type;
   const candidateSlugs = (event.payload as { candidateSlugs?: unknown }).candidateSlugs;
   if (!Array.isArray(candidateSlugs) || !candidateSlugs.every((slug) => typeof slug === 'string')) {

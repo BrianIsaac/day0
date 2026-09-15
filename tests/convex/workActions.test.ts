@@ -26,6 +26,7 @@ import {
   HELD_WRITE,
 } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
+import { STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
 import type {
   DependentExecutionOutput,
   ExecutionOutput,
@@ -579,6 +580,14 @@ async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<
 
 function ledger(row: Doc<'workItems'>): AppliedAction[] {
   return ((row.output ?? {}) as { applied?: AppliedAction[] }).applied ?? [];
+}
+
+async function scheduledNames(harness: Harness): Promise<string[]> {
+  return (
+    await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+  )
+    .map((row) => row.name)
+    .sort();
 }
 
 describe('work action completion evidence', (): void => {
@@ -1164,7 +1173,7 @@ describe('executing an approved plan through the gate', (): void => {
     ).toEqual(['save_comment', 'save_issue']);
   });
 
-  it('applies a truthful closing comment and withholds Done when the manager left a prerequisite out', async (): Promise<void> => {
+  it('stops without a second decision when the manager left the prerequisite out, and withholds the closing comment', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
     recorded.skillOutput = {
@@ -1261,34 +1270,33 @@ describe('executing an approved plan through the gate', (): void => {
       phase: 'dependent-authoring',
     });
     await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
-    // With the switch off the closing comment is itself held; the manager sends it.
-    const closing = await readItem(harness, workItemId);
-    expect(closing.state).toBe('actions-pending');
-    expect((closing.output as ExecutionOutput).actions?.map((action) => action.args.tool)).toEqual([
-      'save_comment',
-    ]);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
-      workItemId,
-      pendingRunId: runId,
-      approvedIndexes: [0],
-    });
-    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
-
+    // The manager already decided the Save; nothing landed and no approval of
+    // the closing comment could complete the plan, so the run stops with the
+    // comment on the record rather than asking a second time.
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
+    expect(failed.skipReason?.startsWith(STOPPED_PREFIX)).toBe(true);
     expect(failed.skipReason).toContain('2 approved plan step(s) remained blocked');
     expect(failed.skipReason).toContain('browser_click Save was held and not approved.');
-    // The snapshot shares the browser session with the held Save, so neither
-    // reached the provider; only the truthful closing comment did.
-    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual([]);
     expect(ledger(failed).map((entry) => [entry.tool, entry.ok, entry.held ?? false])).toEqual([
       ['mcp.call', true, true],
       ['mcp.call', true, true],
-      ['mcp.call', true, false],
+      ['mcp.call', true, true],
     ]);
+    expect(ledger(failed)[2].reason).toBe(WITHHELD_ON_STOP);
+    expect((failed.output as ExecutionOutput).actions?.map((action) => action.args.tool)).toEqual([
+      'browser_click',
+      'browser_snapshot',
+      'save_comment',
+    ]);
+    const stops = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+      (event) => event.type === 'work.failed',
+    );
+    expect(stops.map((event) => (event.payload as { stopped?: boolean }).stopped)).toEqual([true]);
   });
 
-  it('reports a failed snapshot truthfully and never emits the Done transition', async (): Promise<void> => {
+  it('stops on a failed snapshot before any closing action, with the failure on the record', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
     recorded.failedMcpTool = 'browser_snapshot';
@@ -1366,26 +1374,18 @@ describe('executing an approved plan through the gate', (): void => {
 
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
-    const prepared = await readItem(harness, workItemId);
-    const runId = prepared.executionRunId;
-    if (!runId) throw new Error('execution run missing');
-    expect((prepared.output as { initialFailure?: string }).initialFailure).toContain(
-      'browser_snapshot failed: snapshot timed out',
-    );
-    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
-    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
 
+    // A provider failure with nothing landed leaves nothing to audit and
+    // nothing to decide: the run stops here, without a closing phase.
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
+    expect(failed.skipReason?.startsWith(STOPPED_PREFIX)).toBe(true);
     expect(failed.skipReason).toContain('browser_snapshot failed: snapshot timed out');
-    const linearCalls = recorded.mcp.filter((call) => call.server === 'linear');
-    expect(linearCalls.map((call) => call.tool)).toEqual(['save_comment']);
-    expect(linearCalls[0].args).toMatchObject({
-      body: expect.stringContaining('browser_snapshot timed out'),
-    });
-    expect(JSON.stringify(linearCalls)).not.toContain('save_issue');
-    expect(JSON.stringify(linearCalls)).not.toContain('"state":"Done"');
-    expect((failed.output as { planStepOutcomes?: unknown[] }).planStepOutcomes).toHaveLength(2);
+    expect(recorded.dependentRuns).toBe(0);
+    expect(recorded.mcp.filter((call) => call.server === 'linear')).toEqual([]);
+    expect(JSON.stringify(recorded.mcp)).not.toContain('"state":"Done"');
+    expect(ledger(failed).map((entry) => [entry.tool, entry.ok])).toEqual([['mcp.call', false]]);
+    expect(await scheduledNames(harness)).not.toContain('workActions:authorDependentActions');
   });
 
   it('records why promised Linear reads were not made instead of silently answering the Slack ask', async (): Promise<void> => {
@@ -1481,7 +1481,7 @@ describe('executing an approved plan through the gate', (): void => {
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
     expect(failed.skipReason).toBe(
-      '3 approved plan step(s) remained blocked: step 1 (No Linear list or get action exists in the ledger.); step 2 (No Linear read exists in the ledger.); step 3 (The evidence prerequisite was not met.)',
+      `${STOPPED_PREFIX}3 approved plan step(s) remained blocked: step 1 (No Linear list or get action exists in the ledger.); step 2 (No Linear read exists in the ledger.); step 3 (The evidence prerequisite was not met.)`,
     );
     expect(recorded.mcp.filter((call) => call.server === 'linear')).toHaveLength(0);
     expect(recorded.http).toHaveLength(0);
@@ -1543,6 +1543,86 @@ describe('executing an approved plan through the gate', (): void => {
       `${workItemId}:${runId}:1`,
       `${workItemId}:${runId}:2`,
     ]);
+  });
+
+  it('stops a blocked closing phase with its comment and DM withheld, and sends nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+        },
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'REVOPS-7 has no owner, so I cannot close it.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Blocked: no owner is set.' }),
+          },
+        },
+        skillOutput.actions[2],
+      ],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', evidence: 'get_issue shows no assignee.' },
+        { step: 2, status: 'blocked', evidence: 'Nothing to close without an owner.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Confirm the owner, then add the audit note and close.',
+          steps: ['Confirm REVOPS-7 has an owner', 'Comment and close REVOPS-7'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await expect(
+      harness.action(internal.workActions.authorDependentActions, { workItemId, runId }),
+    ).resolves.toMatchObject({ ok: false, reason: expect.stringContaining('remained blocked') });
+
+    // The read landed, but a read is not work: the run stops, the comment
+    // never reaches the manager for a decision and the DM is never sent.
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason?.startsWith(STOPPED_PREFIX)).toBe(true);
+    expect(stopped.skipReason).toContain('step 1 (get_issue shows no assignee.)');
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+    expect(recorded.http.filter((call) => call.url.endsWith('/chat.postMessage'))).toEqual([]);
+    expect(ledger(stopped).map((entry) => [entry.tool, entry.ok, entry.held ?? false, entry.reason])).toEqual([
+      ['mcp.call', true, false, undefined],
+      ['mcp.call', true, true, WITHHELD_ON_STOP],
+      ['http.request', true, true, WITHHELD_ON_STOP],
+    ]);
+    expect((stopped.output as { planStepOutcomes?: PlanStepOutcome[] }).planStepOutcomes).toEqual(
+      recorded.dependentOutput.planStepOutcomes,
+    );
+    const types = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).map(
+      (event) => event.type,
+    );
+    expect(types.filter((type) => type === 'work.actions-pending')).toEqual([]);
+    expect(await scheduledNames(harness)).not.toContain('managerChannelActions:requestDecision');
   });
 
   it('completes a retry whose note settles a plan step, on the manager\'s word and in the record', async (): Promise<void> => {

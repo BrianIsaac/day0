@@ -45,6 +45,7 @@ import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
+import { landedWork, stoppedReason } from '../src/work/stop';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /** The longest rejection reason kept in full for the retry to read. */
@@ -1441,6 +1442,12 @@ export const setFailed = internalMutation({
     // the boss can read what was written before deciding whether to retry.
     output: v.optional(v.any()),
     runId: v.optional(v.id('events')),
+    /**
+     * Whether the run stopped: nothing landed and nothing is left to decide.
+     * Read from the ledger when absent; the comparison arm passes false, since
+     * it has no gate and no manager loop for a stop to mean anything to.
+     */
+    stopped: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.workItemId);
@@ -1451,9 +1458,19 @@ export const setFailed = internalMutation({
     // record for a failure the winner already wrote.
     const terminal = ['completed', 'failed', 'cancelled', 'skipped'];
     if (terminal.includes(row.state)) return;
+    // A run that landed nothing and left nothing to decide stopped: the
+    // record says so, Retry stands, and nothing pages the manager for it.
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect()
+    ).map(toSurfaceRecord);
+    const stopped = args.stopped ?? landedWork(args.output, surfaces).length === 0;
+    const reason = stopped ? stoppedReason(args.reason) : args.reason;
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
-      skipReason: args.reason,
+      skipReason: reason,
       pendingRunId: undefined,
       approvedIndexes: undefined,
       actionVerdicts: undefined,
@@ -1468,7 +1485,8 @@ export const setFailed = internalMutation({
       type: 'work.failed',
       payload: {
         workItemId: args.workItemId,
-        reason: args.reason,
+        reason,
+        ...(stopped ? { stopped: true } : {}),
         ...(args.output !== undefined ? { output: args.output } : {}),
       },
       createdAt: Date.now(),

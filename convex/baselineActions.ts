@@ -126,6 +126,7 @@ export const executeTask = action({
           runId: claim.runId,
           reason,
           output,
+          stopped: false,
         });
         return { ok: false, reason, modelCalls: result.modelCalls, toolCalls };
       }
@@ -139,6 +140,7 @@ export const executeTask = action({
           runId: claim.runId,
           reason,
           output,
+          stopped: false,
         });
         return { ok: false, reason, modelCalls: result.modelCalls, toolCalls };
       }
@@ -160,6 +162,7 @@ export const executeTask = action({
           actions,
           applied,
         },
+        stopped: false,
       });
       return { ok: false, reason, toolCalls };
     }

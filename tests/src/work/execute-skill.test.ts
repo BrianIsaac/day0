@@ -1578,6 +1578,10 @@ describe('executor preamble by mode', (): void => {
       'The manager DM through the connected chat surface is for questions and escalation',
     );
     expect(text).toContain('It never carries a draft that belongs in a channel or thread');
+    // The gate reports decisions and landed work itself; the DM is only for what the model must ask.
+    expect(text).not.toContain('one-line note');
+    expect(text).toContain('with nothing to ask, send no DM');
+    expect(text).toContain('never send a note that only reports what the actions do');
     expect(text).toContain(
       "Autonomous actions are OFF: reads and the manager DM land now; every other write is held for the manager's literal approval - say so.",
     );
