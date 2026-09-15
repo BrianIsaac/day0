@@ -162,6 +162,102 @@ describe('the static gate on an authored skill, through the authoring action', (
     expect(registered.body).toBe(reusableBody);
   });
 
+  it('keeps a refused draft on the row, redacted and bounded, and clears it once a later attempt registers', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    const padding = `\n${'The audit line is read back after the save. '.repeat(400)}`;
+    const refusedBody = `${reusableBody}\nPost to <audit-channel> with Authorization: Bearer xoxb-1234567890-abcdefghijkl.${padding}`;
+    recorded.outputs.push({ body: refusedBody, smokeTest });
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+
+    expect(result.ok).toBe(false);
+    expect(recorded.sandboxRuns).toBe(0);
+    const failed = await readSkill(harness, skillId);
+    expect(failed.state).toBe('failed');
+    expect(failed.body).toBe('');
+    expect(failed.refusedBody).toContain('Post to <audit-channel>');
+    expect(failed.refusedBody).toContain('<redacted>');
+    expect(failed.refusedBody).not.toContain('xoxb-');
+    expect(failed.refusedBody!.length).toBeLessThan(refusedBody.length);
+    expect(failed.refusedBody).toContain('more characters not kept');
+    expect(failed.refusedSmokeTest).toBe(smokeTest);
+
+    recorded.outputs.push({ body: reusableBody, smokeTest });
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    const registered = await readSkill(harness, skillId);
+    expect(registered.refusedBody).toBeUndefined();
+    expect(registered.refusedSmokeTest).toBeUndefined();
+
+    const retryPrompt = recorded.users[1]!;
+    expect(retryPrompt).toContain('SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`');
+    expect(retryPrompt).toContain('--- Required correction ---');
+    expect(retryPrompt).toContain(`Refused SKILL.md:\n${failed.refusedBody}`);
+    expect(retryPrompt).toContain(`Refused smoke.py:\n${smokeTest}`);
+    expect(retryPrompt).not.toContain('xoxb-');
+  });
+
+  it('keeps the draft a smoke-test preflight refuses, and drops it again when the model itself fails', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    const broken = 'def run(inputs: dict) -> dict:\n    return {"actions": [}\nprint(run({}))\n';
+    recorded.outputs.push({ body: reusableBody, smokeTest: broken });
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('smoke test rejected before sandbox');
+    const failed = await readSkill(harness, skillId);
+    expect(failed.refusedBody).toBe(reusableBody);
+    expect(failed.refusedSmokeTest).toBe(broken.trim());
+
+    const again = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(again.reason).toContain('authoring failed before any sandbox ran');
+    const modelFailed = await readSkill(harness, skillId);
+    expect(modelFailed.refusedBody).toBeUndefined();
+    expect(modelFailed.refusedSmokeTest).toBeUndefined();
+  });
+
+  it('removes a markdown fence from the smoke test before the gate and says so in the log', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({ body: reusableBody, smokeTest: '```python\n' + smokeTest + '\n```' });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    expect(recorded.sandboxRuns).toBe(1);
+    const registered = await readSkill(harness, skillId);
+    expect(registered.verificationLog).toContain('markdown fence');
+    expect(registered.verificationLog).toContain('ran in the local sandbox');
+  });
+
+  it('keeps the unfenced smoke test when a fenced one is refused, with the fence note on the reason', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    const broken = 'def run(inputs: dict) -> dict:\n    return {"actions": [}\nprint(run({}))';
+    recorded.outputs.push({ body: reusableBody, smokeTest: '```\n' + broken + '\n```' });
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('does not parse at line 2, column');
+    const failed = await readSkill(harness, skillId);
+    expect(failed.refusedSmokeTest).toBe(broken);
+    expect(failed.verificationLog).toContain('markdown fence');
+    expect(failed.verificationLog).toContain('does not parse at line 2, column');
+  });
+
   it('refuses a smoke test whose representative input is the first work item', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   authoredSkillIssues,
+  clipRefusedDraft,
   instanceLiterals,
+  REFUSED_DRAFT_CHARS,
   type AuthoredSkillInstance,
 } from '../../../src/work/authored-skill';
 
@@ -153,7 +155,47 @@ describe('the static gate on an authored skill', (): void => {
         body: `${reusableBody}\nPost to <audit-channel> as well.`,
         smokeTest: reusableSmoke,
       }),
-    ).toEqual(['SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`']);
+    ).toEqual([
+      'SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`; declare it there as a line starting with `<audit-channel>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+    ]);
+  });
+
+  it('passes the 16 Sep body once its bare declarations name the placeholders the body uses, and still refuses one it does not declare', (): void => {
+    const body = [
+      '# Value refresh on an analytics surface',
+      '## Inputs',
+      '- analytics-surface: the tile the work names.',
+      '- `requested-value`: the figure the candidate names.',
+      '| `<record-id>` | the candidate id |',
+      '## Procedure',
+      'Open <analytics-surface>, enter <requested-value>, comment on <record-id>.',
+    ].join('\n');
+    expect(authoredSkillIssues({ body, smokeTest: reusableSmoke })).toEqual([]);
+    expect(authoredSkillIssues({ body: `${body}\nThen post to <reply-channel>.`, smokeTest: reusableSmoke })).toEqual([
+      'SKILL.md uses `<reply-channel>` without declaring it under `## Inputs`; declare it there as a line starting with `<reply-channel>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+    ]);
+  });
+
+  it('says how to declare each undeclared placeholder and quotes the taught example line once', (): void => {
+    const body = [
+      '# Value refresh on an analytics surface',
+      '## Inputs',
+      'The tile the work names is analytics-surface and the figure it states is requested-value.',
+      '## Procedure',
+      'Open <analytics-surface>, enter <requested-value>, comment on <record-id>.',
+    ].join('\n');
+    const issues = authoredSkillIssues({ body, smokeTest: reusableSmoke });
+    expect(issues).toHaveLength(3);
+    expect(issues[0]).toBe(
+      'SKILL.md uses `<analytics-surface>` without declaring it under `## Inputs`; declare it there as a line starting with `<analytics-surface>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+    );
+    expect(issues[1]).toBe(
+      'SKILL.md uses `<requested-value>` without declaring it under `## Inputs`; declare it there as a line starting with `<requested-value>`',
+    );
+    expect(issues[2]).toBe(
+      'SKILL.md uses `<record-id>` without declaring it under `## Inputs`; declare it there as a line starting with `<record-id>`',
+    );
+    expect(issues.filter((issue) => issue.includes('as in:'))).toHaveLength(1);
   });
 
   it('keeps {{secret}} as the only double-brace placeholder', (): void => {
@@ -171,5 +213,21 @@ describe('the static gate on an authored skill', (): void => {
   it('checks the placeholder contract alone when the first work item is unknown', (): void => {
     const body = reusableBody.replace('## Procedure', '## Procedure\nEnter 74% on REVOPS-7.');
     expect(authoredSkillIssues({ body, smokeTest: reusableSmoke, instance: null })).toEqual([]);
+  });
+});
+
+describe('the refused draft kept on the row', (): void => {
+  it('keeps a draft within the bound as it is', (): void => {
+    expect(clipRefusedDraft(reusableBody)).toBe(reusableBody);
+    expect(clipRefusedDraft('')).toBe('');
+  });
+
+  it('cuts a draft above the bound and says how much was not kept', (): void => {
+    const long = 'x'.repeat(REFUSED_DRAFT_CHARS + 250);
+    const clipped = clipRefusedDraft(long);
+    expect(clipped.startsWith('x'.repeat(REFUSED_DRAFT_CHARS))).toBe(true);
+    expect(clipped).toContain('(250 more characters not kept)');
+    expect(clipped.length).toBeLessThan(REFUSED_DRAFT_CHARS + 60);
+    expect(clipRefusedDraft('abcdef', 4)).toBe('abcd\n… (2 more characters not kept)');
   });
 });

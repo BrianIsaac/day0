@@ -717,6 +717,13 @@ export default defineSchema({
      * `skills.migrateSandboxIdField`. */
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
+    /** The draft a static-gate or preflight refusal turned away before any
+     * sandbox ran, kept so the manager can read what was refused and the
+     * retry can correct it rather than start again. Redacted through the
+     * outcome redactor and bounded before it is written; never registered.
+     * Cleared by every later exit that stores or verifies a body. */
+    refusedBody: v.optional(v.string()),
+    refusedSmokeTest: v.optional(v.string()),
     /** REMOVED 26 Aug (late): the posture ladder's per-skill supervised-run
      * counter, replaced by `agents.autonomousActions`. Kept optional for one
      * more deployment so rows the ladder wrote still validate at push;

@@ -64,6 +64,66 @@ describe('skill input placeholders', (): void => {
     expect(declaredSkillInputs('## Inputs\n(none)\n## Procedure\n<record-id>')).toEqual([]);
   });
 
+  it('accepts a list item or table row whose first token is the placeholder in any of the four forms', (): void => {
+    const procedure = [
+      '## Procedure',
+      'Open <analytics-surface>, enter <requested-value>, comment on <record-id>, post to <reply-channel>.',
+    ].join('\n');
+    const listed = [
+      '# Skill',
+      '## Inputs',
+      '- <analytics-surface>: the tile the work names.',
+      '- `<requested-value>`: the figure the candidate names.',
+      '- `record-id`: the ticket identifier from the candidate id.',
+      '- reply-channel: the Reply target line.',
+      procedure,
+    ].join('\n');
+    expect(declaredSkillInputs(listed)).toEqual([
+      'analytics-surface',
+      'requested-value',
+      'record-id',
+      'reply-channel',
+    ]);
+    expect(undeclaredSkillInputs(listed)).toEqual([]);
+
+    const table = [
+      '# Skill',
+      '## Inputs',
+      '| Input | Where the executor reads it |',
+      '|---|---|',
+      '| <analytics-surface> | the surface record |',
+      '| `<requested-value>` | the candidate body |',
+      '| `record-id` | the candidate id |',
+      '| reply-channel | the Reply target line |',
+      procedure,
+    ].join('\n');
+    expect(declaredSkillInputs(table)).toEqual([
+      'analytics-surface',
+      'requested-value',
+      'record-id',
+      'reply-channel',
+    ]);
+    expect(undeclaredSkillInputs(table)).toEqual([]);
+
+    const numbered = ['# Skill', '## Inputs', '1. analytics-surface - the tile', '2) `record-id` the ticket', procedure].join('\n');
+    expect(declaredSkillInputs(numbered)).toEqual(['analytics-surface', 'record-id']);
+  });
+
+  it('declares a bare or backticked name only when the body uses it as a placeholder, and only as the first token', (): void => {
+    const unused = ['# Skill', '## Inputs', '- record-id: the ticket.', '- `audit-expectation`: the read-back.', '## Procedure', 'Comment on <record-id>.'].join('\n');
+    expect(declaredSkillInputs(unused)).toEqual(['record-id']);
+
+    const midLine = ['# Skill', '## Inputs', '- the surface analytics-surface: the tile.', '## Procedure', 'Open <analytics-surface>.'].join('\n');
+    expect(declaredSkillInputs(midLine)).toEqual([]);
+    expect(undeclaredSkillInputs(midLine)).toEqual(['analytics-surface']);
+
+    const prose = ['# Skill', '## Inputs', 'analytics-surface is the tile.', '## Procedure', 'Open <analytics-surface>.'].join('\n');
+    expect(undeclaredSkillInputs(prose)).toEqual(['analytics-surface']);
+
+    const bracketUnused = ['# Skill', '## Inputs', '- <reply-thread>: the thread.', '## Procedure', 'Nothing varies.'].join('\n');
+    expect(declaredSkillInputs(bracketUnused)).toEqual(['reply-thread']);
+  });
+
   it('names every placeholder used without a declaration', (): void => {
     expect(undeclaredSkillInputs(body)).toEqual([]);
     expect(undeclaredSkillInputs(`${body}\nAlso post to <audit-channel>.`)).toEqual(['audit-channel']);
@@ -114,6 +174,9 @@ describe('binding skill inputs from the candidate', (): void => {
 
   it('binds nothing for a body that declares no inputs', (): void => {
     expect(bindSkillInputs('Comment, then close.', candidate)).toEqual([]);
+    expect(
+      bindSkillInputs('## Inputs\n- record-id: the ticket.\n## Procedure\nComment on <record-id>.', candidate),
+    ).toEqual([{ name: 'record-id', value: 'REVOPS-11', source: 'the candidate id' }]);
     expect(renderSkillInputs([])).toEqual([]);
   });
 

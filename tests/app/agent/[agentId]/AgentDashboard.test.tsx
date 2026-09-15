@@ -18,6 +18,7 @@ import {
   PendingActions,
   PlanApprovalForm,
   PlanExecutionLedger,
+  RefusedDraftDetails,
   RepairNote,
   WorkItemCard,
   eventLabel,
@@ -740,5 +741,30 @@ describe('amending an approved charter from the card', (): void => {
     const markup = renderToStaticMarkup(<CharterCard charter={draft} />);
     expect(markup).not.toContain('Amend this charter');
     expect(markup).toContain('>Approve<');
+  });
+});
+
+describe('the refused skill draft', (): void => {
+  it('shows the refused SKILL.md and smoke test behind a disclosure', (): void => {
+    const markup = renderToStaticMarkup(
+      <RefusedDraftDetails
+        skill={{
+          refusedBody: '# Refresh\n## Inputs\n- analytics-surface: the tile',
+          refusedSmokeTest: 'def run(inputs: dict) -> dict:\n    return {}',
+        }}
+      />,
+    );
+    expect(markup).toContain('<details');
+    expect(markup).toContain('Refused draft');
+    expect(markup).toContain('SKILL.md');
+    expect(markup).toContain('smoke.py');
+    expect(markup).toContain('- analytics-surface: the tile');
+    expect(markup).toContain('def run(inputs: dict) -&gt; dict:');
+    expect(markup).toContain('not registered');
+  });
+
+  it('renders nothing for a row that kept no draft', (): void => {
+    expect(renderToStaticMarkup(<RefusedDraftDetails skill={{}} />)).toBe('');
+    expect(renderToStaticMarkup(<RefusedDraftDetails skill={{ refusedBody: '' }} />)).toBe('');
   });
 });

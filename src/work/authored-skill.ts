@@ -1,4 +1,4 @@
-import { undeclaredSkillInputs, declaredSkillInputs } from './skill-inputs';
+import { EXECUTION_INPUT_LINES, undeclaredSkillInputs, declaredSkillInputs } from './skill-inputs';
 
 /**
  * The static gate on an authored skill, run before any sandbox spends a run.
@@ -23,6 +23,9 @@ export interface AuthoredSkillInstance {
   contentRefs: readonly string[];
   replyTarget?: { channel: string; threadTs?: string };
 }
+
+/** One correct `## Inputs` line from the taught contract, quoted on the first undeclared placeholder. */
+const DECLARATION_EXAMPLE = EXECUTION_INPUT_LINES[0]!.trim();
 
 const DOUBLE_BRACE = /\{\{\s*([^}]*?)\s*\}\}/g;
 const SECRET_PLACEHOLDER = /^secret(?:[:.][A-Za-z0-9_-]+)?$/;
@@ -127,10 +130,11 @@ export function authoredSkillIssues(args: {
       'SKILL.md declares no `## Inputs` section; every value that varies per run is an angle-bracket input declared there',
     );
   }
-  for (const name of undeclaredSkillInputs(args.body)) {
-    if (declared === undefined) break;
-    issues.push(`SKILL.md uses \`<${name}>\` without declaring it under \`## Inputs\``);
-  }
+  const undeclared = declared === undefined ? [] : undeclaredSkillInputs(args.body);
+  undeclared.forEach((name: string, index: number): void => {
+    const form = `SKILL.md uses \`<${name}>\` without declaring it under \`## Inputs\`; declare it there as a line starting with \`<${name}>\``;
+    issues.push(index === 0 ? `${form}, as in: ${DECLARATION_EXAMPLE}` : form);
+  });
 
   if (args.instance) {
     const found = instanceLiterals(args.instance, args.documentedProcedure)
@@ -156,4 +160,23 @@ export function authoredSkillIssues(args: {
     }
   }
   return issues;
+}
+
+/** Upper bound on each refused draft kept on the row; a prompt carries it back on retry. */
+export const REFUSED_DRAFT_CHARS = 16_000;
+
+/**
+ * Bound a refused draft before it is stored.
+ *
+ * Args:
+ *   text: The draft, already redacted.
+ *   limit: The most characters to keep.
+ *
+ * Returns:
+ *   The draft as it is when it fits, else its first `limit` characters and a
+ *   line saying how much was not kept.
+ */
+export function clipRefusedDraft(text: string, limit: number = REFUSED_DRAFT_CHARS): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n… (${text.length - limit} more characters not kept)`;
 }

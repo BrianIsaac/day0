@@ -20,6 +20,32 @@ const PLACEHOLDER = /<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>/g;
 /** The `## Inputs` section: from its heading to the next level-two heading or the end. */
 const INPUTS_SECTION = /^##\s+Inputs\b[^\n]*\n([\s\S]*?)(?=^##\s|(?![\s\S]))/im;
 
+/** A list item (`-`, `*`, `+`, `1.`, `1)`) or table row (`|`) up to its first token. */
+const DECLARATION_LEAD = /^\s*(?:[-*+]|\d+[.)]|\|)\s*/;
+
+/**
+ * A declaration's first token: the placeholder name with or without
+ * backticks and with or without angle brackets, followed by the end of the
+ * line, whitespace, a colon, a comma, a pipe or a backtick.
+ */
+const DECLARED_NAME = /^`?<?([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>?`?(?=$|[\s:,|`])/;
+
+/**
+ * The inputs an executor can bind at run time, as the author is taught them.
+ * The list is the contract the executor prompt already carries (candidate id
+ * and refs, quoted request, reply target, record, runbook, surface record); a
+ * skill declares the ones its procedure needs and may add more from those
+ * same sources. Each line is a correct `## Inputs` declaration, which is why
+ * the gate quotes the first one when it refuses an undeclared placeholder.
+ */
+export const EXECUTION_INPUT_LINES: readonly string[] = [
+  '  - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+  '  - `<requested-value>`: the figure or text the candidate or the runbook names for this run; never a constant in the skill.',
+  '  - `<reply-channel>` and `<reply-thread>`: the `Reply target:` line when the work came from a chat channel or thread.',
+  '  - `<originating-surface>`: the slug of the surface the work came from; its runbook says how the loop is closed there (an audit comment then a state change on a ticket, a reply in the thread on chat).',
+  '  - `<audit-expectation>`: the read-back the runbook prescribes as evidence (an audit line, a returned identifier, a snapshot).',
+];
+
 /** One declared input and where this run's value comes from. */
 export interface SkillInputBinding {
   name: string;
@@ -45,17 +71,34 @@ export function skillInputPlaceholders(text: string): string[] {
 /**
  * The inputs a skill body declares under `## Inputs`.
  *
+ * A placeholder written in its angle-bracket form anywhere in the section
+ * is declared. So is a list item or table row whose first token is the name
+ * without brackets, with or without backticks, when the body uses that name
+ * as a placeholder: the author who wrote `- analytics-surface: …` and then
+ * `<analytics-surface>` in the procedure has declared the input, in one of
+ * the forms markdown makes natural. Prose that merely mentions a name, or a
+ * name that is not the first token of its line, declares nothing; the body's
+ * own uses must still be `<name>`.
+ *
  * Args:
  *   body: SKILL.md markdown.
  *
  * Returns:
- *   The declared placeholder names, or undefined when the body has no
- *   `## Inputs` section at all.
+ *   The declared placeholder names in declaration order, or undefined when
+ *   the body has no `## Inputs` section at all.
  */
 export function declaredSkillInputs(body: string): string[] | undefined {
   const section = INPUTS_SECTION.exec(body);
   if (!section) return undefined;
-  return skillInputPlaceholders(section[1]!);
+  const used = new Set(skillInputPlaceholders(body));
+  const declared: string[] = [];
+  for (const line of section[1]!.split('\n')) {
+    const lead = DECLARATION_LEAD.exec(line);
+    const first = lead ? DECLARED_NAME.exec(line.slice(lead[0].length)) : null;
+    if (first && used.has(first[1]!)) declared.push(first[1]!);
+    declared.push(...skillInputPlaceholders(line));
+  }
+  return [...new Set(declared)];
 }
 
 /**

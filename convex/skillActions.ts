@@ -2,7 +2,6 @@
 
 import { v } from 'convex/values';
 import { z } from 'zod';
-import { parser as pythonParser } from '@lezer/python';
 import { action, type ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -14,10 +13,19 @@ import {
 } from '../src/lib/skill-sandbox';
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { skillNameFor, skillOperationLabel, skillSurfacePhrase } from '../src/work/skill-shape';
-import { authoredSkillIssues } from '../src/work/authored-skill';
+import { authoredSkillIssues, clipRefusedDraft } from '../src/work/authored-skill';
+import { EXECUTION_INPUT_LINES } from '../src/work/skill-inputs';
+import {
+  FENCE_REMOVED_NOTE,
+  smokeTestPreflightReason,
+  unwrapMarkdownFence,
+} from '../src/work/smoke-test';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { redactOutcome } from '../src/surfaces/redact';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { spanModelFromEnv } from '../src/redaction/client';
+import { ownerKnownValues } from '../src/redaction/known-values';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -88,22 +96,9 @@ export interface AuthorPromptSkill {
   surfaceClass?: string;
   operation?: string;
   previousAuthoringFailure?: string;
+  /** The draft the previous attempt's refusal kept, as stored: redacted and bounded. */
+  previousAuthoringDraft?: { body: string; smokeTest: string };
 }
-
-/**
- * The inputs an executor can bind at run time, named for the author. The
- * list is the contract the executor prompt already carries (candidate id and
- * refs, quoted request, reply target, record, runbook, surface record); a
- * skill declares the ones its procedure needs and may add more from those
- * same sources.
- */
-const EXECUTION_INPUTS = [
-  '  - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
-  '  - `<requested-value>`: the figure or text the candidate or the runbook names for this run; never a constant in the skill.',
-  '  - `<reply-channel>` and `<reply-thread>`: the `Reply target:` line when the work came from a chat channel or thread.',
-  '  - `<originating-surface>`: the slug of the surface the work came from; its runbook says how the loop is closed there (an audit comment then a state change on a ticket, a reply in the thread on chat).',
-  '  - `<audit-expectation>`: the read-back the runbook prescribes as evidence (an audit line, a returned identifier, a snapshot).',
-];
 
 function shapeSection(skill: AuthorPromptSkill): string[] {
   if (!skill.surfaceClass || !skill.operation) return [];
@@ -113,7 +108,7 @@ function shapeSection(skill: AuthorPromptSkill): string[] {
     'The rationale names the first work item; it is an instance, and none of its identifiers, figures or quoted words belong in the skill.',
     '',
     'Execution inputs the executor can supply, to declare under `## Inputs` as the procedure needs them:',
-    ...EXECUTION_INPUTS,
+    ...EXECUTION_INPUT_LINES,
   ];
 }
 
@@ -202,17 +197,47 @@ export function buildAuthorPrompt(
     ...(shape.length > 0 ? ['', ...shape] : []),
     ...(surfaceGuidance ? ['', surfaceGuidance] : []),
     ...(runbookGuidance ? ['', runbookGuidance] : []),
-    ...(skill.previousAuthoringFailure
-      ? [
-          '',
-          'Previous authoring attempt failed before registration:',
-          skill.previousAuthoringFailure,
-          'Correct that failure in this attempt; do not repeat the rejected output.',
-        ]
-      : []),
+    ...previousAttemptSection(skill),
     '',
     'Author SKILL.md and smoke.py now.',
   ].join('\n');
+}
+
+/**
+ * What the retry is told about the attempt before it.
+ *
+ * With the refused draft in hand the retry is a correction, as the executor's
+ * repair is: one full replacement that fixes every reason and keeps the rest,
+ * rather than a fresh attempt that may fail some other way. Without a draft
+ * (the model failed, or the row predates kept drafts) the notice is the
+ * reason alone, as it always was.
+ */
+function previousAttemptSection(skill: AuthorPromptSkill): string[] {
+  if (!skill.previousAuthoringFailure) return [];
+  const draft = skill.previousAuthoringDraft;
+  if (!draft) {
+    return [
+      '',
+      'Previous authoring attempt failed before registration:',
+      skill.previousAuthoringFailure,
+      'Correct that failure in this attempt; do not repeat the rejected output.',
+    ];
+  }
+  return [
+    '',
+    'Previous authoring attempt failed before registration:',
+    skill.previousAuthoringFailure,
+    '',
+    '--- Required correction ---',
+    'The draft below was refused for the reasons above and nothing in it was registered or run.',
+    'Return one corrected full replacement of both SKILL.md and smoke.py that fixes every reason above. Keep every part of the refused draft the reasons do not implicate: the same procedure, tools, verification and inputs, corrected rather than rewritten from nothing.',
+    '',
+    'Refused SKILL.md:',
+    draft.body,
+    '',
+    'Refused smoke.py:',
+    draft.smokeTest,
+  ];
 }
 
 export const authorSchema = z.object({
@@ -230,36 +255,24 @@ export const authorSchema = z.object({
 
 type SkillVerifier = (args: AuthorSkillArgs) => Promise<SkillSandboxRun>;
 
-function smokeTestPreflightReason(source: string): string | undefined {
-  const tree = pythonParser.parse(source);
-  const cursor = tree.cursor();
-  do {
-    if (cursor.type.isError) {
-      return 'smoke test is not valid Python 3.12 source: its syntax does not parse';
-    }
-  } while (cursor.next());
-  const dictAnnotation = String.raw`dict(?:\s*\[[^\]]*\])?`;
-  const runSignature = new RegExp(
-    String.raw`^\s*(?:async\s+)?def\s+run\s*\(\s*inputs\s*:\s*${dictAnnotation}\s*\)\s*->\s*${dictAnnotation}\s*:`,
-    'm',
-  );
-  if (!runSignature.test(source)) {
-    return 'smoke test is not valid Python 3.12 source: it must define run(inputs: dict) -> dict';
-  }
-  if (!/\bprint\s*\(|\bsys\.stdout\.write\s*\(/.test(source)) {
-    return 'smoke test is not valid Python 3.12 source: it must print a success line';
-  }
-  return undefined;
-}
-
-/** Reject malformed model output before either verification backend spends a run. */
+/**
+ * Reject malformed model output before either verification backend spends a
+ * run. A smoke test that arrived wrapped in a markdown fence is unwrapped
+ * first rather than refused; the result says so, and carries the program the
+ * sandbox actually ran.
+ */
 export async function verifyAuthoredSkill(
   args: AuthorSkillArgs,
   verify: SkillVerifier = authorAndVerifySkill,
-): Promise<{ ok: true; result: SkillSandboxRun } | { ok: false; reason: string }> {
-  const reason = smokeTestPreflightReason(args.smokeTest);
+): Promise<
+  | { ok: true; result: SkillSandboxRun; smokeTest: string; unwrapped: boolean }
+  | { ok: false; reason: string }
+> {
+  const fence = unwrapMarkdownFence(args.smokeTest);
+  const reason = smokeTestPreflightReason(fence.source);
   if (reason) return { ok: false, reason: `smoke test rejected before sandbox: ${reason}` };
-  return { ok: true, result: await verify(args) };
+  const result = await verify({ ...args, smokeTest: fence.source });
+  return { ok: true, result, smokeTest: fence.source, unwrapped: fence.unwrapped };
 }
 
 /**
@@ -284,14 +297,51 @@ async function recordAuthoringFailure(
   ctx: ActionCtx,
   skillId: Id<'skills'>,
   runId: Id<'events'>,
-  args: { rowReason: string; reason: string; eventType: string },
+  args: {
+    rowReason: string;
+    reason: string;
+    eventType: string;
+    refusedDraft?: { body: string; smokeTest: string };
+  },
 ): Promise<{ ok: false; reason: string }> {
+  const { refusedDraft, ...failure } = args;
   const { recorded } = await ctx.runMutation(internal.skills.failAuthoringRun, {
     skillId,
     runId,
-    ...args,
+    ...failure,
+    ...(refusedDraft
+      ? { refusedBody: refusedDraft.body, refusedSmokeTest: refusedDraft.smokeTest }
+      : {}),
   });
   return { ok: false, reason: recorded ? args.reason : SUPERSEDED };
+}
+
+/**
+ * A draft turned away before any sandbox ran, made safe to keep on the row.
+ *
+ * The draft is model output about the owner's own systems, so it goes through
+ * the outcome redactor like a provider outcome would: the owner's stored
+ * values exactly, the structural grammar, and the span model where one is
+ * configured. Bounded afterwards, so a cut can never expose what the redactor
+ * removed. Never registered: it is there to be read and corrected.
+ */
+async function keepRefusedDraft(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  draft: { body: string; smokeTest: string },
+): Promise<{ body: string; smokeTest: string }> {
+  let known: readonly string[] = [];
+  let model = undefined;
+  if (SURFACE_MODE === 'real') {
+    const agent: Doc<'agents'> | null = await ctx.runQuery(internal.agents.getInternal, { agentId });
+    if (agent?.userId) known = await ownerKnownValues(ctx, agent.userId);
+    model = spanModelFromEnv();
+  }
+  const [body, smokeTest] = await Promise.all([
+    redactOutcome(draft.body, '', model, known),
+    redactOutcome(draft.smokeTest, '', model, known),
+  ]);
+  return { body: clipRefusedDraft(body.text), smokeTest: clipRefusedDraft(smokeTest.text) };
 }
 
 export const authorAndRegisterSkill = action({
@@ -321,6 +371,10 @@ export const authorAndRegisterSkill = action({
       {
         ...skill,
         previousAuthoringFailure: skill.verificationLog,
+        previousAuthoringDraft:
+          skill.refusedBody || skill.refusedSmokeTest
+            ? { body: skill.refusedBody ?? '', smokeTest: skill.refusedSmokeTest ?? '' }
+            : undefined,
       },
       surfaceRows.map(toSurfaceRecord),
       Date.now(),
@@ -350,7 +404,13 @@ export const authorAndRegisterSkill = action({
     }
 
     const body = authored.body.trim();
-    const smokeTest = authored.smokeTest.trim();
+    // A fenced smoke test is a program with a wrapper, not a refusal: the
+    // wrapper comes off here, before the gate reads it, and every log written
+    // after this point says so.
+    const fence = unwrapMarkdownFence(authored.smokeTest.trim());
+    const smokeTest = fence.source.trim();
+    const notes: string[] = fence.unwrapped ? [FENCE_REMOVED_NOTE] : [];
+    const noted = (log: string): string => (notes.length > 0 ? `${notes.join('\n')}\n\n${log}` : log);
     if (!body || !smokeTest) {
       const reason = 'the model returned an empty SKILL.md body or smoke test';
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
@@ -374,9 +434,10 @@ export const authorAndRegisterSkill = action({
     if (issues.length > 0) {
       const reason = `the authored skill is not a reusable procedure: ${issues.join('; ')}`;
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: reason,
+        rowReason: noted(reason),
         reason,
         eventType: 'skill.author-failed',
+        refusedDraft: await keepRefusedDraft(ctx, skill.agentId, { body, smokeTest }),
       });
     }
 
@@ -400,9 +461,10 @@ export const authorAndRegisterSkill = action({
       });
       if (!verification.ok) {
         return await recordAuthoringFailure(ctx, args.skillId, runId, {
-          rowReason: verification.reason,
+          rowReason: noted(verification.reason),
           reason: verification.reason,
           eventType: 'skill.author-failed',
+          refusedDraft: await keepRefusedDraft(ctx, skill.agentId, { body, smokeTest }),
         });
       }
       const result = verification.result;
@@ -437,7 +499,7 @@ export const authorAndRegisterSkill = action({
     // reported as the sandbox throwing.
     if (verificationFailure) {
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: `verification in ${backend} failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`,
+        rowReason: noted(`verification in ${backend} failed - ${verificationFailure}. ${verificationLog.slice(0, 400)}`),
         reason: `skill authored but verification failed - ${verificationFailure}`,
         eventType: 'skill.verification-failed',
       });
@@ -449,7 +511,7 @@ export const authorAndRegisterSkill = action({
         runId,
         sandboxId,
         body,
-        verificationLog,
+        verificationLog: noted(verificationLog),
         reason: skipReason,
       });
       if (!recorded) return { ok: false, reason: SUPERSEDED };
@@ -464,7 +526,7 @@ export const authorAndRegisterSkill = action({
       skillId: args.skillId,
       runId,
       body,
-      verificationLog,
+      verificationLog: noted(verificationLog),
     });
     if (!registered) return { ok: false, reason: SUPERSEDED };
 
