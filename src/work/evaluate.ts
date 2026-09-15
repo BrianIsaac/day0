@@ -16,6 +16,7 @@ import {
   skillNameFor,
   skillOperationLabel,
   skillShapeFor,
+  skillSurfacePhrase,
 } from './skill-shape';
 import {
   documentedSystemIdentity,
@@ -302,7 +303,7 @@ function inferSkillRationale(
   const name = skillNameFor(shape);
   const label = skillOperationLabel(shape);
   const rationale = [
-    `No registered skill covers ${label} on a ${shape.surfaceClass} surface.`,
+    `No registered skill covers ${label} on ${skillSurfacePhrase(shape)}.`,
     `First needed by "${candidate.title}" from ${candidate.sourceSystem}; the skill is a reusable procedure for every later work item of this shape, taking each run's values from that item and its runbook.`,
   ].join(' ');
   return { name, rationale };
@@ -377,7 +378,7 @@ export async function evaluateCandidate(
     const { name, rationale } = inferSkillRationale(candidate, shape);
     return {
       decision: 'needs-skill',
-      reason: `no registered skill covers ${skillOperationLabel(shape)} on a ${shape.surfaceClass} surface; agent will propose "${name}"`,
+      reason: `no registered skill covers ${skillOperationLabel(shape)} on ${skillSurfacePhrase(shape)}; agent will propose "${name}"`,
       suggestedSkillName: name,
       suggestedSkillRationale: rationale,
       suggestedSkillShape: shape,

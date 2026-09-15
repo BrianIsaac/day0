@@ -211,6 +211,21 @@ export function skillOperationLabel(shape: SkillShape): string {
 }
 
 /**
+ * The surface class as a noun phrase with its article, for prose.
+ *
+ * Args:
+ *   shape: Surface class and operation.
+ *
+ * Returns:
+ *   `a kanban surface`, `an analytics surface`, `an unclassified surface`.
+ */
+export function skillSurfacePhrase(shape: Pick<SkillShape, 'surfaceClass'>): string {
+  const noun = shape.surfaceClass === 'other' ? 'unclassified' : shape.surfaceClass;
+  const article = /^[aeiou]/.test(noun) ? 'an' : 'a';
+  return `${article} ${noun} surface`;
+}
+
+/**
  * Whether two shapes are the same skill.
  *
  * Args:

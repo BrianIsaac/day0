@@ -4,6 +4,7 @@ import {
   skillNameFor,
   skillOperationLabel,
   skillShapeFor,
+  skillSurfacePhrase,
   targetSurfaceFor,
   type ShapeSurface,
 } from '../../../src/work/skill-shape';
@@ -135,6 +136,9 @@ describe('the shape of the skill a candidate needs', (): void => {
     expect(skillNameFor(shape)).toBe('analytics-refresh-value');
     expect(skillNameFor(shape)).not.toContain('revops');
     expect(skillOperationLabel(shape)).toBe('value refresh');
+    expect(skillSurfacePhrase(shape)).toBe('an analytics surface');
+    expect(skillSurfacePhrase({ surfaceClass: 'kanban' })).toBe('a kanban surface');
+    expect(skillSurfacePhrase({ surfaceClass: 'other' })).toBe('an unclassified surface');
     expect(skillNameFor({ surfaceClass: 'kanban', operation: 'comment-and-close' })).toBe(
       'kanban-comment-and-close',
     );

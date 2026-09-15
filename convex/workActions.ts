@@ -52,6 +52,7 @@ import {
   sameSkillShape,
   skillOperationLabel,
   skillShapeFor,
+  skillSurfacePhrase,
   type ShapeSurface,
 } from '../src/work/skill-shape';
 import { autonomousActionsOn } from '../src/work/autonomy';
@@ -198,7 +199,7 @@ export function findMatchingSkillForCandidate<T extends MatchableSkill>(
  */
 export function skillDescriptionFor(shape: SkillShape): string {
   const label = skillOperationLabel(shape);
-  return `${label.charAt(0).toUpperCase()}${label.slice(1)} on a ${shape.surfaceClass} surface, parameterised from each work item and its runbook.`;
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)} on ${skillSurfacePhrase(shape)}, parameterised from each work item and its runbook.`;
 }
 
 function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
