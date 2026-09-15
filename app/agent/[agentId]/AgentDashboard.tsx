@@ -1065,6 +1065,7 @@ interface PlanStepOutcomeRow {
   step: number;
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   evidence: string;
+  basis?: 'manager-feedback';
 }
 
 /** A run's persisted output as the card reads it, in either of its two phases. */
@@ -1166,7 +1167,9 @@ export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow
       <ol className="space-y-0.5 text-[var(--color-muted)]">
         {outcomes.map((outcome) => (
           <li key={outcome.step}>
-            Step {outcome.step} · {outcome.status} - {outcome.evidence}
+            {`Step ${outcome.step} · ${outcome.status}${
+              outcome.basis === 'manager-feedback' ? ' by manager feedback' : ''
+            } - ${outcome.evidence}`}
           </li>
         ))}
       </ol>

@@ -21,6 +21,7 @@ import {
   MetricsCard,
   PendingActions,
   pendingHeadline,
+  PlanExecutionLedger,
   pendingVerdicts,
   PermissionRows,
   ProviderReconciliationControl,
@@ -447,5 +448,25 @@ describe('manager feedback on the card', (): void => {
       createElement(ManagerFeedbackNote, { feedback: { reason: 'Too thin.', at: 1 } }),
     );
     expect(legacy).toContain('Rejection reason');
+  });
+});
+
+describe('plan execution ledger on the card', (): void => {
+  it('says when a step was satisfied on the manager\'s word', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(PlanExecutionLedger, {
+        outcomes: [
+          {
+            step: 1,
+            status: 'satisfied',
+            evidence: 'Manager: REVOPS-7 is owned by Priya.',
+            basis: 'manager-feedback',
+          },
+          { step: 2, status: 'satisfied', evidence: 'save_comment landed.' },
+        ],
+      }),
+    );
+    expect(html).toContain('Step 1 · satisfied by manager feedback - Manager: REVOPS-7 is owned by Priya.');
+    expect(html).toContain('Step 2 · satisfied - save_comment landed.');
   });
 });

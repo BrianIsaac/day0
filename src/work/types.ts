@@ -193,6 +193,12 @@ export interface PlanStepOutcome {
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   /** A ledger effect, provider failure or explicit reason the step could not run. */
   evidence: string;
+  /**
+   * What the evidence rests on. Absent means the ledger; `manager-feedback`
+   * means a fact the manager stated in a rejection reason or retry note,
+   * which the run carries as authenticated feedback and the gate checks for.
+   */
+  basis?: 'manager-feedback';
 }
 
 /** Output authored once, after the initial action ledger has settled. */

@@ -663,6 +663,8 @@ export function validatePlanStepOutcomes(args: {
   initialActions: readonly ExecutionOutput['actions'][number][];
   initialLedger: readonly AppliedAction[];
   surfaces: ReadonlyArray<{ slug: string; displayName: string }>;
+  /** The manager's live feedback on the run; a step may rest on it only when it is here. */
+  managerFeedback?: string;
 }): void {
   const ordered = [...args.outcomes].sort((a, b) => a.step - b.step);
   if (
@@ -670,6 +672,14 @@ export function validatePlanStepOutcomes(args: {
     ordered.some((outcome, index) => outcome.step !== index + 1)
   ) {
     throw new Error('dependent phase did not account for every approved plan step exactly once');
+  }
+  if (!args.managerFeedback?.trim()) {
+    const cited = ordered.find((outcome) => outcome.basis === 'manager-feedback');
+    if (cited) {
+      throw new Error(
+        `approved plan step ${cited.step} cites manager feedback the run does not carry`,
+      );
+    }
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
   for (const [index, rawStep] of args.plan.steps.entries()) {
@@ -874,6 +884,7 @@ export const authorDependentActions = internalAction({
           slug: surface.slug,
           displayName: surface.displayName,
         })),
+        managerFeedback: liveManagerFeedback(item.managerFeedback),
       });
       const transitionRefusal = dependentTransitionRefusal({
         plan,

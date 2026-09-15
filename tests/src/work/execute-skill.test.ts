@@ -1423,7 +1423,9 @@ describe('advisory plan steps in the closing phase', (): void => {
       notes: 'n',
       actions: [],
       procedureTrails: [],
-      planStepOutcomes: [{ step: 1, status: 'not-verifiable', evidence: 'no assignee field' }],
+      planStepOutcomes: [
+        { step: 1, status: 'not-verifiable', evidence: 'no assignee field', basis: 'ledger' },
+      ],
     };
     expect(
       dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real').safeParse(row).success,

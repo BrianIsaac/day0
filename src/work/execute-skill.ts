@@ -572,12 +572,17 @@ const planStepOutcomeSchema = z
   })
   .strict();
 
-/** The real closing phase may also report a step as not verifiable from the ledger. */
+/**
+ * The real closing phase may also report a step as not verifiable from the
+ * ledger, and says what each outcome rests on: the ledger, or a fact the
+ * manager's feedback stated.
+ */
 const realPlanStepOutcomeSchema = z
   .object({
     step: z.number().int().positive(),
     status: z.enum(['satisfied', 'blocked', 'not-verifiable']),
     evidence: z.string().min(1),
+    basis: z.enum(['ledger', 'manager-feedback']),
   })
   .strict();
 
@@ -752,6 +757,14 @@ export function normalisePlanStepOutcomes(
   });
 }
 
+/** The persisted outcome names its basis only when it is not the ledger. */
+function recordedPlanStepBasis(
+  outcome: PlanStepOutcome | (Omit<PlanStepOutcome, 'basis'> & { basis?: 'ledger' | 'manager-feedback' }),
+): PlanStepOutcome {
+  const { basis, ...rest } = outcome;
+  return basis === 'manager-feedback' ? { ...rest, basis } : rest;
+}
+
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
 
 function materialiseGeneratedAction(action: GeneratedAction): MockAction {
@@ -843,6 +856,26 @@ export function managerFeedbackLines(feedback: string | undefined): string[] {
     JSON.stringify(reason),
     'Address the feedback before anything else: where it states a fact, treat that fact as approved evidence for this work item; where it asks for a change, make that change. Do not repeat the rejected draft.',
   ];
+}
+
+/**
+ * The closing-phase rule for what a plan step outcome may rest on.
+ *
+ * With feedback on the run, the fact the manager stated is evidence on the
+ * manager's word, and the row says so; without it, every row rests on the
+ * ledger and a row claiming otherwise is refused at the gate.
+ *
+ * Args:
+ *   feedback: The manager's feedback the run carries, or undefined.
+ *
+ * Returns:
+ *   One instruction line.
+ */
+export function planStepBasisRule(feedback: string | undefined): string {
+  if (!feedback?.trim()) {
+    return 'Every plan step outcome has basis `ledger`; no manager feedback is on this run, so no step may rest on `manager-feedback`.';
+  }
+  return "A fact the manager's feedback states is approved evidence for this work item: a plan step that fact settles is satisfied with basis `manager-feedback` and evidence quoting the fact, even when the ledger does not show it. Every other outcome has basis `ledger`. A promised read the ledger lacks stays blocked; the manager's word settles a fact, never a read the plan promised.";
 }
 
 export interface RunDependentSkillArgs extends RunSkillArgs {
@@ -2182,6 +2215,7 @@ export async function runDependentSkill(
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
+    ...(mode === 'real' ? [planStepBasisRule(args.managerFeedback)] : []),
     ...(advisory.length > 0
       ? [
           `Advisory plan steps: ${advisory.join(', ')}. Each checks a property of the candidate (ownership, priority, age) that the ledger cannot carry and nothing asked for. Report such a step as not-verifiable with what the data showed, never as blocked, and never let it hold back the documented steps, the audit comment or the state change the work earned.`,
@@ -2243,7 +2277,7 @@ export async function runDependentSkill(
       notes: raw.notes,
       actions: raw.actions.map(materialiseGeneratedAction),
       procedureTrails: raw.procedureTrails,
-      planStepOutcomes: normalisePlanStepOutcomes(ordered, advisory),
+      planStepOutcomes: normalisePlanStepOutcomes(ordered.map(recordedPlanStepBasis), advisory),
     };
   }
 

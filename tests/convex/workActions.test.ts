@@ -60,6 +60,7 @@ const recorded = vi.hoisted(() => ({
   skillModes: [] as Array<string | undefined>,
   skillSwitches: [] as Array<boolean | undefined>,
   skillFeedback: [] as Array<string | undefined>,
+  dependentFeedback: [] as Array<string | undefined>,
   dependentSwitches: [] as Array<boolean | undefined>,
   planSwitches: [] as boolean[],
   planContexts: [] as Array<{ surfaces?: string[]; documents?: string[] }>,
@@ -263,10 +264,12 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     },
     runDependentSkill: async (args: {
       autonomousActions?: boolean;
+      managerFeedback?: string;
       plan: { steps: string[] };
     }): Promise<DependentExecutionOutput> => {
       recorded.dependentRuns += 1;
       recorded.dependentSwitches.push(args.autonomousActions);
+      recorded.dependentFeedback.push(args.managerFeedback);
       return (
         recorded.dependentOutput ?? {
           draft: 'No further action needed.',
@@ -426,6 +429,7 @@ afterEach((): void => {
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
   recorded.skillFeedback.length = 0;
+  recorded.dependentFeedback.length = 0;
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
   recorded.dependentRuns = 0;
@@ -679,6 +683,51 @@ describe('work action completion evidence', (): void => {
         surfaces: [{ slug: 'looker', displayName: 'Looker pipeline tile' }],
       }),
     ).toThrow('promised a Looker pipeline tile read');
+  });
+
+  it('accepts a step satisfied on the manager\'s word only when the run carries their feedback', (): void => {
+    const plan = {
+      summary: 'Confirm the owner, then comment and close.',
+      steps: ['Confirm REVOPS-7 has an owner.', 'Comment on the ticket and close it.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const surfaces = [{ slug: 'linear', displayName: 'Linear' }];
+    const outcomes: PlanStepOutcome[] = [
+      {
+        step: 1,
+        status: 'satisfied',
+        evidence: 'Manager: REVOPS-7 is owned by Priya.',
+        basis: 'manager-feedback',
+      },
+      { step: 2, status: 'satisfied', evidence: 'comment and Done' },
+    ];
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan,
+        outcomes,
+        initialActions: [],
+        initialLedger: [],
+        surfaces,
+        managerFeedback: 'REVOPS-7 is owned by Priya.',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validatePlanStepOutcomes({ plan, outcomes, initialActions: [], initialLedger: [], surfaces }),
+    ).toThrow('step 1 cites manager feedback the run does not carry');
+    // The manager's word settles a fact; it never stands in for a read the plan promised.
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: { ...plan, steps: ['Read REVOPS-7 in Linear to confirm it has an owner.', plan.steps[1]] },
+        outcomes,
+        initialActions: [],
+        initialLedger: [],
+        surfaces,
+        managerFeedback: 'REVOPS-7 is owned by Priya.',
+      }),
+    ).toThrow('promised a Linear read');
   });
 
   it('accepts a not-verifiable outcome with evidence for a promised read, and never lets it withhold the close or fail the run', (): void => {
@@ -1494,6 +1543,109 @@ describe('executing an approved plan through the gate', (): void => {
       `${workItemId}:${runId}:1`,
       `${workItemId}:${runId}:2`,
     ]);
+  });
+
+  it('completes a retry whose note settles a plan step, on the manager\'s word and in the record', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Adding the audit note.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: skillOutput.actions.slice(0, 3),
+    };
+    recorded.dependentOutput = {
+      draft: 'Audit note added and the issue closed.',
+      notes: '',
+      actions: skillOutput.actions.slice(0, 3),
+      planStepOutcomes: [
+        {
+          step: 1,
+          status: 'satisfied',
+          evidence: 'Manager: REVOPS-7 is owned by Priya.',
+          basis: 'manager-feedback',
+        },
+        { step: 2, status: 'satisfied', evidence: 'save_comment and save_issue emitted.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, { autonomousActions: true });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Confirm the owner, then add the audit note and close.',
+          steps: ['Confirm REVOPS-7 has an owner', 'Add the audit note and close the ticket'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+        managerFeedback: { reason: 'REVOPS-7 is owned by Priya.', at: 2, kind: 'retry-note' },
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const done = await readItem(harness, workItemId);
+    expect(done.state).toBe('completed');
+    expect(recorded.skillFeedback).toEqual(['REVOPS-7 is owned by Priya.']);
+    expect(recorded.dependentFeedback).toEqual(['REVOPS-7 is owned by Priya.']);
+    expect((done.output as { planStepOutcomes: PlanStepOutcome[] }).planStepOutcomes).toEqual(
+      recorded.dependentOutput.planStepOutcomes,
+    );
+    expect(done.managerFeedback).toMatchObject({
+      reason: 'REVOPS-7 is owned by Priya.',
+      kind: 'retry-note',
+      addressedAt: expect.any(Number),
+    });
+  });
+
+  it('refuses a closing phase that cites manager feedback the run does not carry', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Adding the audit note.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: skillOutput.actions.slice(0, 3),
+    };
+    recorded.dependentOutput = {
+      draft: 'Audit note added.',
+      notes: '',
+      actions: skillOutput.actions.slice(0, 3),
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'Manager said so.', basis: 'manager-feedback' },
+        { step: 2, status: 'satisfied', evidence: 'save_comment and save_issue emitted.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, { autonomousActions: true });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Confirm the owner, then add the audit note and close.',
+          steps: ['Confirm REVOPS-7 has an owner', 'Add the audit note and close the ticket'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await expect(
+      harness.action(internal.workActions.authorDependentActions, { workItemId, runId }),
+    ).resolves.toMatchObject({ ok: false, reason: expect.stringContaining('cites manager feedback') });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+    expect(recorded.mcp.filter((call) => call.server === 'linear').map((call) => call.tool)).toEqual([]);
   });
 
   it('continues a channel-approved real plan without a browser identity', async (): Promise<void> => {
