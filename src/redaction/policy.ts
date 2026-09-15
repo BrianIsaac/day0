@@ -141,6 +141,22 @@ export const ENTITY_POLICY: Readonly<Record<RedactionContext, Readonly<Record<En
   },
 };
 
+/**
+ * Exact values that are never redacted, whatever any layer thinks: the
+ * placeholders this repository's own documentation and fixtures put where a
+ * value would go. The guard consults the list before its shapes.
+ */
+export const NEVER_REDACT: ReadonlySet<string> = new Set([
+  '{{secret}}',
+  '{{ secret }}',
+  '<redacted>',
+  'sk-test',
+  'sk-live',
+  'pk-test',
+  'pk-live',
+  'PASTE_LINEAR_API_KEY_HERE',
+]);
+
 /** Labels whose kind the policy could redact somewhere, which is every label asked for. */
 export const REQUESTED_LABELS: readonly string[] = Object.keys(MODEL_LABELS);
 

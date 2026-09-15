@@ -48,3 +48,36 @@ describe('the secret misses the review named', (): void => {
     expect(out.text).toContain('PIN for the shared phone: <redacted>');
   });
 });
+
+describe('the damaged working spans the review named', (): void => {
+  it('review-miss-midline-password-prose: the username stays, the password goes', async (): Promise<void> => {
+    const { out } = await redactCase('review-miss-midline-password-prose');
+    expect(out.text).toContain('The tile login is revops and the password is <redacted>;');
+    expect(out.text).not.toContain('hunter2');
+  });
+
+  it('review-miss-short-token-values: the sk-test placeholder stays, the short values go', async (): Promise<void> => {
+    const { out } = await redactCase('review-miss-short-token-values');
+    expect(out.text).toContain('- api key: sk-test');
+    expect(out.text).not.toContain('abc123');
+    expect(out.text).not.toContain('q7Mz2Kv9');
+  });
+
+  it('record-linear-issue: the branch name and the whole record pass unchanged', async (): Promise<void> => {
+    const { entry, out } = await redactCase('record-linear-issue');
+    expect(out.text).toContain('"branchName":"revops-7-refresh-the-looker-pipeline-tile"');
+    expect(out.text).toBe(entry.text);
+  });
+
+  it('pii-ip-and-hostnames: the bastion hostname and both addresses stay', async (): Promise<void> => {
+    const { entry, out } = await redactCase('pii-ip-and-hostnames');
+    for (const value of ['bastion.acme.internal', '10.20.30.40:5432', '203.0.113.7']) {
+      expect(survives(entry, out, value), value).toBe(true);
+    }
+  });
+
+  it('docs-local-refresh-runbook: the Username field name of the form is not a credential', async (): Promise<void> => {
+    const { out } = await redactCase('docs-local-refresh-runbook');
+    expect(out.text).toContain('{\\"name\\":\\"Username\\",\\"value\\":\\"revops\\"}');
+  });
+});

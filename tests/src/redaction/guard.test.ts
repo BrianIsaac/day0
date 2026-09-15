@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { guardReason, guardSecretSpan, splitUserPasswordPair } from '../../../src/redaction/guard';
+import { NEVER_REDACT } from '../../../src/redaction/policy';
 
 function spanOf(text: string, value: string): { start: number; end: number } {
   const start = text.indexOf(value);
@@ -112,6 +113,48 @@ describe('label-only spans and pairs', (): void => {
     expect(splitUserPasswordPair('docs / runbooks / archive')).toBeUndefined();
     expect(splitUserPasswordPair('Looker tile')).toBeUndefined();
     expect(splitUserPasswordPair('revops / {{secret}}')).toBeUndefined();
+  });
+});
+
+describe('working material the model mistakes for a secret', (): void => {
+  it.each([
+    ['sk-test', 'placeholder'],
+    ['pk_live', 'placeholder'],
+    ['bastion.acme.internal', 'hostname'],
+    ['db.internal.acme.example', 'hostname'],
+    ['revops-7-refresh-the-looker-pipeline-tile', 'branch name'],
+    ['username', 'label word'],
+    ['Username', 'label word'],
+    ['user', 'label word'],
+    ['{{secret}}', 'reference'],
+  ])('rejects %s as %s', (value: string, reason: string): void => {
+    expect(guardReason(value)).toBe(reason);
+  });
+
+  it.each(['hunter2.local1', 'Sunny-Day-42', 'pipeline-tile-local', 'warehouse-read-only', 'sk-test-9Xq2', 'q7Mz2Kv9'])(
+    'still passes %s',
+    (value: string): void => {
+      expect(guardReason(value)).toBeUndefined();
+    },
+  );
+
+  it('keeps a value a username designator introduces and a value under an identifier key', (): void => {
+    const prose = 'The tile login is revops and the password is hunter2.';
+    expect(guardSecretSpan(prose, spanOf(prose, 'revops'), 'api key')).toBeUndefined();
+    expect(guardSecretSpan(prose, spanOf(prose, 'hunter2'), 'password')).toEqual(spanOf(prose, 'hunter2'));
+    const labelled = 'username: revops, password: Tr0ub4dor&3';
+    expect(guardSecretSpan(labelled, spanOf(labelled, 'revops'), 'credential')).toBeUndefined();
+    expect(guardSecretSpan(labelled, spanOf(labelled, 'Tr0ub4dor&3'), 'credential')).toEqual(spanOf(labelled, 'Tr0ub4dor&3'));
+    const record = '{"id":"iss-9Xq2","identifier":"REVOPS-7","token":"Tr0ub4dor&3","url":"https://x.example/a"}';
+    expect(guardSecretSpan(record, spanOf(record, 'iss-9Xq2'), 'access token')).toBeUndefined();
+    expect(guardSecretSpan(record, spanOf(record, 'Tr0ub4dor&3'), 'access token')).toEqual(spanOf(record, 'Tr0ub4dor&3'));
+  });
+
+  it('never redacts a value on the policy list', (): void => {
+    for (const value of NEVER_REDACT) {
+      expect(guardReason(value), value).toBeDefined();
+      expect(guardSecretSpan(`token: ${value}`, { start: 7, end: 7 + value.length }, 'access token')).toBeUndefined();
+    }
   });
 });
 

@@ -27,7 +27,8 @@
         { "value": "<credential: looker pipeline tile dashboard login, stored>", "kind": "working", "label": "marker" },
         { "value": "{{secret}}", "kind": "working", "label": "placeholder" },
         { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" },
-        { "value": "74%", "kind": "working", "label": "figure" }
+        { "value": "74%", "kind": "working", "label": "figure" },
+        { "value": "Username", "kind": "working", "label": "field-name" }
       ]
     },
     {

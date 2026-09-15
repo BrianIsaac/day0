@@ -32,16 +32,7 @@ const EXPECTED_MISSES: string[] = [
   // A Singapore NRIC in an HR note.
   'pii-personal-record:id-number',
 ];
-const EXPECTED_DAMAGE: string[] = [
-  // The username beside a mid-sentence password, read as a credential.
-  'review-miss-midline-password-prose:username:revops',
-  // A test placeholder shaped like a key.
-  'review-miss-short-token-values:placeholder:sk-test',
-  // A Linear branch name, read as an id number.
-  'record-linear-issue:identifier:revops-7-refresh-the-looker-pipeline-tile',
-  // A bastion hostname beside its address, read as an address.
-  'pii-ip-and-hostnames:url:bastion.acme.internal',
-];
+const EXPECTED_DAMAGE: string[] = [];
 
 describe('the labelled redaction corpus', (): void => {
   const cases = loadRedactionCorpus();

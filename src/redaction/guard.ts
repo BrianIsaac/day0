@@ -10,6 +10,8 @@
  * takes the same model from precision 61 to 93 at no cost in recall.
  */
 
+import { NEVER_REDACT } from './policy';
+
 export interface Span {
   start: number;
   end: number;
@@ -30,8 +32,14 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
   { name: 'masked', pattern: /^(.)\1{3,}$/ },
   {
     name: 'label word',
-    pattern: /^(?:password|passwd|pwd|passcode|pin|token|secret|key|api key|credential|credentials|login|bearer|basic|authorization)$/i,
+    pattern: /^(?:password|passwd|pwd|passcode|passphrase|pin|token|secret|key|api key|credential|credentials|login|username|user|account|bearer|basic|authorization)$/i,
   },
+  /** A provider prefix with nothing after it but a mode word: a placeholder, not a key. */
+  { name: 'placeholder', pattern: /^[a-z]{1,4}[-_](?:test|live|example|sample|dummy|placeholder|changeme)$/i },
+  /** Dot-separated lowercase labels ending in an alphabetic top label: an address, not a value. */
+  { name: 'hostname', pattern: /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/ },
+  /** A ticket key then a slug: the branch a ticket tracker names for its issue. */
+  { name: 'branch name', pattern: /^[a-z]+-\d+(?:-[a-z0-9]+)+$/ },
   { name: 'uuid', pattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i },
   { name: 'hex id', pattern: /^(?:[0-9a-f]{32}|[0-9a-f]{40})$/i },
   { name: 'slack id', pattern: /^[CDUTBW][0-9A-Z]{8,12}$/ },
@@ -58,6 +66,14 @@ const ASSIGNED_VALUE = /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。
 const PHRASED_ASSIGNED_VALUE = /^(?:[ \t]+[^\s:=：]+){1,4}[ \t]*[:=：][ \t]*([^\s`'"，。<>\\]*\d[^\s`'"，。<>\\]*)/i;
 /** `user / password` in one span: the model read the pair as one name. */
 const USER_PASSWORD_PAIR = /^([^\s/`'"]+)[ \t]*\/[ \t]*([^\s/`'"]+)$/;
+/**
+ * What introduces a username rather than a secret: "login is revops",
+ * "username: revops", "user = revops". A `login:` assignment is not here; the
+ * grammar reads it as the credential unless it is a user / password pair.
+ */
+const USERNAME_DESIGNATOR = /(?:\blogin[ \t]+is|(?:\buser ?name|\buser|\baccount)[ \t]*(?:\bis\b|[:=：]))[ \t]*[`'"]?$/i;
+/** JSON keys whose string values are identifiers by construction. */
+const IDENTIFIER_KEY = /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
 const LEADING_PUNCTUATION = /^[(\[{'"`]+/;
 /** Sentence punctuation a model swallows; `!` and `?` stay, a password may end in one. */
 const TRAILING_PUNCTUATION = /[.,;:)\]}'"`]+$/;
@@ -117,6 +133,9 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     value = text.slice(start, end);
   }
   if (end <= start) return undefined;
+  const before = text.slice(0, start);
+  if (!explicitPassword && (USERNAME_DESIGNATOR.test(before) || IDENTIFIER_KEY.test(before))) return undefined;
+  if (NEVER_REDACT.has(value)) return undefined;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
     if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
       return false;
@@ -190,5 +209,7 @@ export function personalDataGuardReason(kind: string, value: string): string | u
  *   The rule name, or undefined when the value passes.
  */
 export function guardReason(value: string): string | undefined {
-  return NEVER_A_SECRET.find((shape: NeverASecret): boolean => shape.pattern.test(value))?.name;
+  const shape = NEVER_A_SECRET.find((candidate: NeverASecret): boolean => candidate.pattern.test(value))?.name;
+  if (shape) return shape;
+  return NEVER_REDACT.has(value) ? 'never-redact list' : undefined;
 }
