@@ -43,9 +43,10 @@ export const open = internalAction({
  *
  * Decrypts in-process through the same primitive `credentials.decrypt` uses,
  * without recording use: listing a value so it can be removed from text is
- * not using it. A row sealed under a rotated key is skipped, since no
- * plaintext of it exists to leak. Above the cap the action logs the count
- * and fails closed; the values themselves are never logged.
+ * not using it. A row sealed under a rotated key is skipped, and a deployment
+ * with no key at all gets an empty list, since in both cases no plaintext
+ * exists that a transport could have sent. Above the cap the action logs
+ * the count and fails closed; the values themselves are never logged.
  */
 export const ownerValues = internalAction({
   args: { userId: v.string() },
@@ -58,7 +59,7 @@ export const ownerValues = internalAction({
       );
       throw new Error(OWNER_KNOWN_VALUES_CAP_REASON);
     }
-    if (rows.length === 0) return [];
+    if (rows.length === 0 || !process.env.DAY0_CREDENTIAL_KEY) return [];
     const key = requireCredentialKey();
     const values = new Set<string>();
     for (const row of rows) {

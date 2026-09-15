@@ -1,6 +1,6 @@
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -80,11 +80,11 @@ describe('event trace export', (): void => {
     });
 
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).query(api.events.exportForAgent, { agentId }),
+      harness.withIdentity({ subject: 'intruder' }).query(internal.events.exportForAgent, { agentId }),
     ).rejects.toThrow('forbidden');
     const trace = await harness
       .withIdentity({ subject: 'owner' })
-      .query(api.events.exportForAgent, { agentId });
+      .query(internal.events.exportForAgent, { agentId });
     expect(trace.agent).toEqual({ id: agentId, name: 'Priya' });
     expect(trace.events.map((event) => event.type)).toEqual([
       'work.completed',
@@ -151,7 +151,7 @@ describe('event trace export on a deployed agent', (): void => {
         createdAt: 5,
       });
     });
-    const trace = await owner.query(mockApi.events.exportForAgent, { agentId });
+    const trace = await owner.action(mockApi.exportActions.exportForAgent, { agentId });
     const serialised = JSON.stringify(trace);
     expect(trace.events.map((event) => event.type)).toContain('agent.deployed');
     expect(serialised).not.toContain(bossEmail);

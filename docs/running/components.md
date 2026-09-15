@@ -209,7 +209,15 @@ pinned wheels and the verified snapshot.
 **What day0 uses it for.** Documentation pages at sync, HTTP and MCP provider
 outcomes (effect, reason and id), and the ticket record the planner reads go
 through the component. Other metadata, prompts and export use the synchronous
-structural floor; export is not a complete personal-data scrub. The model finds spans; what happens to each kind of span in each
+structural floor; export is not a complete personal-data scrub. Before any of
+that, every boundary removes the exact values day0 itself stores for the owner:
+the action that persists a page, an outcome, a grounding record or a run's
+output first decrypts the owner's credential list in memory (bounded, never
+persisted or logged) and removes each value literally, JSON-escaped and
+URL-encoded, whether or not the component answered. The export is an action
+(`exportActions:exportForAgent`) for the same reason: the synchronous trace
+query cannot decrypt, so it is internal and the action removes the stored
+values before answering. The model finds spans; what happens to each kind of span in each
 place is data in `src/redaction/policy.ts`. Detected secret spans are removed (and, on a page, stored as encrypted
 credentials with markers left behind). The policy keeps coworker names,
 usernames, channels, ticket ids, dates, figures and audit lines as working
@@ -242,7 +250,8 @@ this review. The live CPU corpus took a median 838 ms and p95 1,238 ms per case,
 including container-exec overhead. Calls have a 10-second deadline; a timeout
 fails documentation sync closed and marks provider evidence as limited redaction.
 The dashboard displays that limitation. Exact matching covers the credential
-supplied by the transport, not every credential stored for other systems.
+supplied by the transport and every active credential stored for the owner;
+it does not cover a secret day0 never stored.
 
 ---
 

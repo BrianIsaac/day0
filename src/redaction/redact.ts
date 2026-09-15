@@ -2,9 +2,10 @@
  * One interface for every redaction in Day0.
  *
  * Three layers, in the order they are applied:
- *   1. the exact values a transport already holds (the credential it just
- *      sent), removed literally, JSON-escaped and URL-encoded: defence in
- *      depth that a model miss must never get past;
+ *   1. the exact values the caller holds: the credential a transport just
+ *      sent and every value Day0 stores for the owner, removed literally,
+ *      JSON-escaped and URL-encoded: defence in depth that a model miss must
+ *      never get past, and never degraded;
  *   2. the structural grammar, for the formats whose secret position is
  *      syntax;
  *   3. the span model, whose secret spans pass the guard and whose personal
@@ -14,7 +15,6 @@
  * says what to do when the model cannot be reached: documentation sync fails
  * closed, a ledger outcome degrades to the first two layers and says so.
  */
-import { redactValue } from '../surfaces/secrets';
 import { RedactorUnavailableError, type ModelSpan, type SpanModel } from './client';
 import { guardSecretSpan, personalDataGuardReason } from './guard';
 import {
@@ -53,12 +53,63 @@ export interface RedactedText {
 export interface RedactOptions {
   /** The span model; undefined means none is configured. */
   model?: SpanModel;
-  /** Exact values the caller already holds, removed before anything else. */
+  /**
+   * Exact values the caller already holds: the transport's credential and
+   * the owner's stored values. Removed before anything else, whatever the
+   * model does.
+   */
   known?: readonly string[];
   /** What to do when the model is not configured or cannot be reached. */
   onUnavailable: 'throw' | 'structural';
   /** The marker a redacted secret becomes; personal data always names its kind. */
   secretMarker?: (finding: Finding) => string;
+}
+
+/** The label of a span the exact-value layer found; a structural rule that also covers it names it instead. */
+export const KNOWN_VALUE_LABEL = 'known credential';
+
+/**
+ * Every occurrence of every known value, in each representation a provider
+ * or a page may carry it: literal, JSON-escaped and URL-encoded.
+ *
+ * Args:
+ *   text: The original text.
+ *   known: The exact values.
+ *
+ * Returns:
+ *   Spans in the original text, unmerged.
+ */
+export function knownValueSpans(text: string, known: readonly string[]): Array<Omit<Finding, 'redacted'>> {
+  const spans: Array<Omit<Finding, 'redacted'>> = [];
+  for (const value of known) {
+    if (!value) continue;
+    const representations = new Set([value, JSON.stringify(value).slice(1, -1), encodeURIComponent(value)]);
+    for (const representation of representations) {
+      let from = 0;
+      for (;;) {
+        const index = text.indexOf(representation, from);
+        if (index === -1) break;
+        spans.push({
+          kind: 'secret',
+          label: KNOWN_VALUE_LABEL,
+          start: index,
+          end: index + representation.length,
+          value: representation,
+        });
+        from = index + representation.length;
+      }
+    }
+  }
+  return spans;
+}
+
+/** The text with every known span overwritten in place, so offsets hold and the model never sees the value. */
+function maskSpans(text: string, spans: ReadonlyArray<{ start: number; end: number }>): string {
+  let masked = text;
+  for (const span of spans) {
+    masked = `${masked.slice(0, span.start)}${'x'.repeat(span.end - span.start)}${masked.slice(span.end)}`;
+  }
+  return masked;
 }
 
 /** The marker for a redacted personal-data span. */
@@ -116,8 +167,8 @@ export async function redactText(
   context: RedactionContext,
   options: RedactOptions,
 ): Promise<RedactedText> {
-  let base = text;
-  for (const value of options.known ?? []) base = redactValue(base, value);
+  const base = text;
+  const known = knownValueSpans(base, options.known ?? []);
   const structural = structuralSpans(base).map(
     (span): Omit<Finding, 'redacted'> => ({
       kind: 'secret',
@@ -136,13 +187,16 @@ export async function redactText(
     degraded = 'structural-only';
   } else {
     try {
-      modelFindings = classify(base, await options.model.spans(base, REQUESTED_LABELS, MODEL_THRESHOLD));
+      const masked = maskSpans(base, known);
+      modelFindings = classify(masked, await options.model.spans(masked, REQUESTED_LABELS, MODEL_THRESHOLD));
     } catch (error) {
       if (!(error instanceof RedactorUnavailableError) || options.onUnavailable === 'throw') throw error;
       degraded = 'structural-only';
     }
   }
-  const candidates = [...structural, ...modelFindings];
+  // Known spans come last so a structural or model finding that covers the
+  // same characters keeps its more specific label after the merge.
+  const candidates = [...structural, ...modelFindings, ...known];
   const removed = mergeSpans(candidates.filter((finding) => dispositionFor(context, finding.kind) === 'redact'));
   const findings: Finding[] = [
     ...removed.map((finding): Finding => ({ ...finding, value: base.slice(finding.start, finding.end), redacted: true })),
@@ -173,7 +227,6 @@ export async function redactText(
  *   The text with every exact value and structural secret replaced.
  */
 export function redactStructural(text: string, known: readonly string[] = []): string {
-  let base = text;
-  for (const value of known) base = redactValue(base, value);
-  return replaceSpans(base, structuralSpans(base), (): string => REDACTED);
+  const spans = mergeSpans([...structuralSpans(text), ...knownValueSpans(text, known)]);
+  return replaceSpans(text, spans, (): string => REDACTED);
 }

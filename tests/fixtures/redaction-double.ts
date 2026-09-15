@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import type { ModelSpan, SpanModel } from '../../src/redaction/client';
-import { RedactorUnavailableError } from '../../src/redaction/client';
+import { HttpSpanModel, RedactorUnavailableError } from '../../src/redaction/client';
 import { CORPUS_SLOTS, loadRedactionCorpus } from './redaction-corpus';
 
 /**
@@ -130,6 +130,24 @@ export class UnreachableSpanModel implements SpanModel {
   readonly name = 'unreachable';
   async spans(): Promise<ModelSpan[]> {
     throw new RedactorUnavailableError('redaction component unreachable at redactor:8000: connection refused');
+  }
+}
+
+/**
+ * A configured component that accepts the request and never answers: the
+ * real HTTP client with a short deadline over a transport that only settles
+ * when the deadline aborts it, so the timeout path is the one under test.
+ */
+export class StalledSpanModel extends HttpSpanModel {
+  constructor(timeoutMs = 25) {
+    super(
+      'http://redactor.test:8000',
+      (_input: URL, init: RequestInit): Promise<Response> =>
+        new Promise<Response>((_resolve, reject): void => {
+          init.signal?.addEventListener('abort', (): void => reject(new Error('aborted')), { once: true });
+        }),
+      timeoutMs,
+    );
   }
 }
 

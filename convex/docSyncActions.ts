@@ -8,7 +8,8 @@ import { readerFor } from '../src/docs/readers';
 import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef, redactCredentials } from '../src/docs/redaction';
-import { spanModelFromEnv } from '../src/redaction/client';
+import { spanModelFromEnv, type SpanModel } from '../src/redaction/client';
+import { ownerKnownValues } from '../src/redaction/known-values';
 import { redactSecret } from '../src/surfaces/redact';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
 
@@ -42,18 +43,20 @@ export function categoryForPage(
 }
 
 /**
- * Redact the provider secret and every structural secret from a persisted error.
+ * Redact the provider secret, the owner's stored values and every structural
+ * secret from a persisted error.
  *
  * Args:
  *   error: Reader failure.
  *   secret: Optional provider credential.
+ *   known: The owner's stored values, when the batch had resolved them.
  *
  * Returns:
  *   Bounded error text without credential material.
  */
-export function safeSyncError(error: unknown, secret?: string): string {
+export function safeSyncError(error: unknown, secret?: string, known: readonly string[] = []): string {
   const message = error instanceof Error ? error.message : String(error);
-  return redactSecret(message, secret ?? '').slice(0, 500);
+  return redactSecret(message, secret ?? '', known).slice(0, 500);
 }
 
 /**
@@ -93,6 +96,7 @@ async function mirrorPages(
  *   source: Source that owns the provider pages.
  *   pages: Raw pages returned by the source reader.
  *   agents: Agents that inherit the source.
+ *   model: The span model; defaults to the configured component.
  *
  * Returns:
  *   Safe completion metadata for the generation record.
@@ -102,16 +106,21 @@ export async function persistPageBatch(
   source: Doc<'docSources'>,
   pages: DocPage[],
   agents: Doc<'agents'>[],
+  model: SpanModel | undefined = spanModelFromEnv(),
+  knownValues?: readonly string[],
 ): Promise<PersistedBatch> {
   const safePages: DocPage[] = [];
   const credentialRefs: string[] = [];
   let redactions = 0;
+  // Every value the owner already stores is removed from every page before
+  // the model is asked; resolved once for the batch.
+  const known = knownValues ?? (await ownerKnownValues(ctx, source.userId));
   // Sync fails closed: a page the model could not read is not persisted.
-  const model = spanModelFromEnv();
   for (const page of pages) {
     const unwrapped = unwrapWholePageFence(page.markdown);
     const result = await redactCredentials(unwrapped, markdownPageTitle(unwrapped, page.title), {
       model,
+      known,
     });
     const title = markdownPageTitle(result.markdown, result.title);
     for (const [index, credential] of result.credentials.entries()) {
@@ -193,7 +202,9 @@ export const syncBatch = internalAction({
     if (!context) return { ok: false, pages: 0, redactions: 0, complete: true };
     const source = context.source;
     let secret: string | undefined;
+    let known: readonly string[] = [];
     try {
+      known = await ownerKnownValues(ctx, source.userId);
       if (source.kind === 'mcp') {
         if (!source.credentialId) throw new Error('Documentation credential is not landed.');
         secret = await ctx.runAction(internal.credentials.decrypt, {
@@ -212,7 +223,7 @@ export const syncBatch = internalAction({
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
         sourceId: source._id,
       });
-      const persisted = await persistPageBatch(ctx, source, batch.pages, agents);
+      const persisted = await persistPageBatch(ctx, source, batch.pages, agents, spanModelFromEnv(), known);
       if (batch.nextCursor) {
         if (batch.nextCursor === args.cursor) {
           throw new Error('Documentation reader repeated its continuation cursor.');
@@ -257,7 +268,7 @@ export const syncBatch = internalAction({
         complete: true,
       };
     } catch (error) {
-      const reason = safeSyncError(error, secret);
+      const reason = safeSyncError(error, secret, known);
       await ctx.runMutation(internal.docSources.failSync, {
         sourceId: source._id,
         runId: args.runId,

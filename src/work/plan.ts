@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
-import type { SurfaceMode, SurfaceRecord } from '../surfaces/types';
+import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
 import { redactTokenShapes } from '../surfaces/redact';
 import type { SpanModel } from '../redaction/client';
@@ -369,11 +369,44 @@ export function boundCandidateRecordText(text: string): string {
 export async function redactCandidateRecordText(
   text: string,
   model?: SpanModel,
+  known: readonly string[] = [],
 ): Promise<{ text: string; redaction?: 'structural-only' }> {
   const decoded = text.replace(/\\[nr]/g, '\n');
-  const result = await redactText(decoded, 'record', { model, onUnavailable: 'structural' });
+  const result = await redactText(decoded, 'record', { model, known, onUnavailable: 'structural' });
   const bounded = boundCandidateRecordText(result.text);
   return result.degraded ? { text: bounded, redaction: result.degraded } : { text: bounded };
+}
+
+/**
+ * Redact a grounding read's effect, reason and provider id before the event
+ * persists them and the planner sees them.
+ *
+ * The owner's stored values are removed exactly whatever the model does; a
+ * model that was not consulted is recorded on the row.
+ *
+ * Args:
+ *   applied: The ledger row the read produced.
+ *   model: The span model, or undefined when none is configured.
+ *   known: The owner's stored values, resolved once by the hosting action.
+ *
+ * Returns:
+ *   The row with its text fields redacted and its degradation recorded.
+ */
+export async function redactGroundingRead(
+  applied: AppliedAction,
+  model: SpanModel | undefined,
+  known: readonly string[] = [],
+): Promise<AppliedAction> {
+  const redacted: AppliedAction = { ...applied };
+  let degraded = false;
+  for (const field of ['effect', 'reason', 'providerId'] as const) {
+    const value = applied[field];
+    if (value === undefined) continue;
+    const result = await redactCandidateRecordText(value, model, known);
+    redacted[field] = result.text;
+    degraded = degraded || result.redaction !== undefined;
+  }
+  return degraded ? { ...redacted, redaction: 'structural-only' } : redacted;
 }
 
 export interface DraftPlanArgs {

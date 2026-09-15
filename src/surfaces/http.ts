@@ -37,6 +37,8 @@ export interface HttpAdapterDeps {
   beforeTransport?: BeforeSurfaceTransport;
   /** The span model outcomes are redacted with; undefined degrades to the structural floor. */
   spanModel?: SpanModel;
+  /** Every value the owner stores, resolved once by the hosting action; removed exactly from every outcome. */
+  knownValues?: readonly string[];
 }
 
 /**
@@ -255,7 +257,7 @@ export class HttpAdapter implements SurfaceAdapter {
           idempotencyKey,
         };
       }
-      const redacted = await redactOutcome(raw, secret, this.deps.spanModel);
+      const redacted = await redactOutcome(raw, secret, this.deps.spanModel, this.deps.knownValues);
       const text = redacted.text;
       const redaction = redacted.redaction ? { redaction: redacted.redaction } : {};
       let payload: unknown;
@@ -271,7 +273,7 @@ export class HttpAdapter implements SurfaceAdapter {
       const summary = clipEffect(text, effectLength);
       if (!ok) {
         const errorResult = typeof envelope?.error === 'string'
-          ? await redactOutcome(envelope.error, secret, this.deps.spanModel)
+          ? await redactOutcome(envelope.error, secret, this.deps.spanModel, this.deps.knownValues)
           : undefined;
         const providerError = errorResult ? ` · ${errorResult.text}` : '';
         return {
@@ -284,7 +286,7 @@ export class HttpAdapter implements SurfaceAdapter {
         };
       }
       const rawId = providerIdFrom(payload);
-      const identifier = rawId ? await redactOutcome(rawId, secret, this.deps.spanModel) : undefined;
+      const identifier = rawId ? await redactOutcome(rawId, secret, this.deps.spanModel, this.deps.knownValues) : undefined;
       return {
         tool: action.tool,
         ok: true,
@@ -303,7 +305,7 @@ export class HttpAdapter implements SurfaceAdapter {
             : error instanceof Error
               ? error.message
               : String(error);
-      const redacted = await redactOutcome(message, secret, this.deps.spanModel);
+      const redacted = await redactOutcome(message, secret, this.deps.spanModel, this.deps.knownValues);
       return {
         tool: action.tool,
         ok: false,

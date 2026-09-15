@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveSpanModel } from '../fixtures/redaction-double';
@@ -20,6 +21,8 @@ import {
   safeSyncError,
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
+import { decrypt as decryptSpy, encrypt } from '../../src/lib/credential-crypto';
+import { ownerValuesRef } from '../../src/redaction/known-values';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -33,6 +36,11 @@ afterAll(async (): Promise<void> => {
   await redactorDouble?.close();
 });
 
+
+vi.mock('../../src/lib/credential-crypto', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/lib/credential-crypto')>();
+  return { ...original, decrypt: vi.fn(original.decrypt) };
+});
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -136,7 +144,9 @@ describe('documentation sync action helpers', (): void => {
     const actionCalls: unknown[] = [];
     const mutationCalls: unknown[] = [];
     const ctx = {
-      runAction: async (_reference: unknown, args: unknown): Promise<Id<'credentials'>> => {
+      runAction: async (reference: unknown, args: unknown): Promise<Id<'credentials'> | string[]> => {
+        // The boundary asks for the owner's stored values first; this owner has none.
+        if (getFunctionName(reference as never) === getFunctionName(ownerValuesRef)) return [];
         actionCalls.push(args);
         return `credential-${actionCalls.length}` as Id<'credentials'>;
       },
@@ -313,5 +323,52 @@ describe('documentation sync batching', (): void => {
     const source = await harness.query(internal.docSources.getInternal, { sourceId });
     expect(source?.lastError).toMatch(/ENOENT|no such file/i);
     expect(source).not.toHaveProperty('activeSyncId');
+  });
+
+  it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {
+    const root = await mkdtemp(join(tmpdir(), 'day0-sync-known-'));
+    await mkdir(join(root, 'few'));
+    const stored = ['Sunny-Day-42', 'Winter2026!'];
+    for (let index = 1; index <= 3; index += 1) {
+      await writeFile(
+        join(root, 'few', `page-${index}.md`),
+        `# Page ${index}\n\nThe tile password is ${stored[index % 2]}; ask Priya.\n`,
+        'utf8',
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const key = process.env.DAY0_CREDENTIAL_KEY ?? '';
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      for (const value of stored) {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'Looker tile password',
+          source: 'entered',
+          createdAt: 1,
+          ...encrypt(value, key),
+        });
+      }
+    });
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Few',
+      kind: 'folder',
+      locator: 'few',
+    });
+    vi.mocked(decryptSpy).mockClear();
+    await expect(harness.action(internal.docSyncActions.syncSource, { sourceId })).resolves.toMatchObject({
+      ok: true,
+      pages: 3,
+      complete: true,
+    });
+    // One AES call per stored row for the whole batch: the list is resolved
+    // once and handed to every page.
+    expect(vi.mocked(decryptSpy)).toHaveBeenCalledTimes(stored.length);
+    const pages = await harness.query(internal.docSources.pagesForSourceInternal, { sourceId });
+    expect(pages).toHaveLength(3);
+    for (const value of stored) expect(JSON.stringify(pages)).not.toContain(value);
+    expect(pages.every((page) => page.markdown.includes('<credential: '))).toBe(true);
   });
 });

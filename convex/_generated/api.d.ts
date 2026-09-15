@@ -23,6 +23,7 @@ import type * as documentationDiscovery from "../documentationDiscovery.js";
 import type * as documentationDiscoveryActions from "../documentationDiscoveryActions.js";
 import type * as evaluation from "../evaluation.js";
 import type * as events from "../events.js";
+import type * as exportActions from "../exportActions.js";
 import type * as intakeActions from "../intakeActions.js";
 import type * as managerChannelActions from "../managerChannelActions.js";
 import type * as metrics from "../metrics.js";
@@ -69,6 +70,7 @@ declare const fullApi: ApiFromModules<{
   documentationDiscoveryActions: typeof documentationDiscoveryActions;
   evaluation: typeof evaluation;
   events: typeof events;
+  exportActions: typeof exportActions;
   intakeActions: typeof intakeActions;
   managerChannelActions: typeof managerChannelActions;
   metrics: typeof metrics;

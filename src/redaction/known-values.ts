@@ -58,7 +58,11 @@ export type FetchOwnerValues = (ctx: ActionCtx, userId: string) => Promise<reado
  *     rows than the cap; the caller must not persist without the list.
  */
 export async function ownerKnownValues(ctx: ActionCtx, userId: string): Promise<readonly string[]> {
-  return await ctx.runAction(ownerValuesRef, { userId });
+  const values: unknown = await ctx.runAction(ownerValuesRef, { userId });
+  if (!Array.isArray(values) || values.some((value: unknown): boolean => typeof value !== 'string')) {
+    throw new Error('known credential values unavailable: the source answered with something other than a list');
+  }
+  return values as string[];
 }
 
 /**
@@ -75,10 +79,12 @@ export async function ownerKnownValues(ctx: ActionCtx, userId: string): Promise<
  */
 export function scrubKnownValues<T>(value: T, known: readonly string[]): T {
   if (known.length === 0) return value;
+  // Longest first, so a value that contains another is removed whole.
+  const ordered = [...known].sort((left, right): number => right.length - left.length);
   const walk = (entry: unknown): unknown => {
     if (typeof entry === 'string') {
       let text = entry;
-      for (const secret of known) text = redactValue(text, secret);
+      for (const secret of ordered) text = redactValue(text, secret);
       return text;
     }
     if (Array.isArray(entry)) return entry.map(walk);

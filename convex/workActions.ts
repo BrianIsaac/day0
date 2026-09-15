@@ -11,7 +11,7 @@ import {
 import { spanModelFromEnv } from '../src/redaction/client';
 import {
   candidateRecordRead,
-  redactCandidateRecordText,
+  redactGroundingRead,
   draftExecutionPlan,
   type CandidateRecord,
   type DraftPlanArgs,
@@ -42,6 +42,7 @@ import {
 } from '../src/surfaces/registry';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
+import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -315,6 +316,7 @@ export const draftPlan = action({
             autonomousActions: autonomousActionsOn(agent),
             candidate,
             surfaces: grounding.surfaces ?? [],
+            knownValues: await knownValuesForAgent(ctx, agent),
           })
         : undefined;
     const plan = await draftExecutionPlan({
@@ -959,6 +961,10 @@ export const applyApprovedActions = internalAction({
     try {
       const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: claim.agentId });
       if (!agent) throw new Error('agent not found');
+      // Resolved once, before any transport: a run with many outcomes
+      // decrypts once, and a list that cannot be produced fails the run
+      // here rather than after a write has landed.
+      const knownValues = await knownValuesForAgent(ctx, agent);
       const surfaces = await loadSurfaces(ctx, claim.agentId);
       const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(
         internal.agents.grantedScopes,
@@ -986,6 +992,7 @@ export const applyApprovedActions = internalAction({
       const deps = realAdapterDeps(
         authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl),
         browserMcpUrl,
+        knownValues,
       );
       const grants = new Set(grantRows.map((grant) => grant.scope));
       const applied = await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
@@ -1038,10 +1045,11 @@ export const applyApprovedActions = internalAction({
             claim,
             { ...output, actions: repaired.actions },
             repaired.applied,
+            knownValues,
           );
         }
       }
-      return await finishRun(ctx, args.workItemId, claim, output, applied);
+      return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues);
     } catch (err) {
       const reason = (err as Error).message;
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
@@ -1064,6 +1072,7 @@ export const applyApprovedActions = internalAction({
 function realAdapterDeps(
   beforeTransport?: BeforeSurfaceTransport,
   browserMcpUrl: string | undefined = process.env.DAY0_BROWSER_MCP_URL,
+  knownValues: readonly string[] = [],
 ): RealAdapterDeps {
   return {
     decrypt: decryptCredential,
@@ -1072,26 +1081,20 @@ function realAdapterDeps(
     fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
     beforeTransport,
     spanModel: SURFACE_MODE === 'real' ? spanModelFromEnv() : undefined,
+    knownValues,
   };
 }
 
 /**
- * Redact a grounding read's effect, reason and provider id before the event
- * persists them and the planner sees them. A model that was not consulted
- * is recorded on the row.
+ * The owner's stored credential values for this action invocation.
+ *
+ * Only real mode holds credentials a provider could echo; the mock
+ * environment reads nothing from outside the repository and its adapters
+ * never see a decrypted value.
  */
-async function redactGroundingRead(applied: AppliedAction): Promise<AppliedAction> {
-  const model = spanModelFromEnv();
-  const redacted: AppliedAction = { ...applied };
-  let degraded = false;
-  for (const field of ['effect', 'reason', 'providerId'] as const) {
-    const value = applied[field];
-    if (value === undefined) continue;
-    const result = await redactCandidateRecordText(value, model);
-    redacted[field] = result.text;
-    degraded = degraded || result.redaction !== undefined;
-  }
-  return degraded ? { ...redacted, redaction: 'structural-only' } : redacted;
+async function knownValuesForAgent(ctx: ActionCtx, agent: Doc<'agents'>): Promise<readonly string[]> {
+  if (SURFACE_MODE !== 'real' || !agent.userId) return [];
+  return await ownerKnownValues(ctx, agent.userId);
 }
 
 /** Refuse a browser switch that changed after the apply action claimed it. */
@@ -1240,6 +1243,8 @@ async function readCandidateRecord(
     autonomousActions: boolean;
     candidate: WorkCandidate;
     surfaces: readonly SurfaceRecord[];
+    /** The owner's stored values, resolved once by the calling action. */
+    knownValues: readonly string[];
   },
 ): Promise<CandidateRecord | undefined> {
   const read = candidateRecordRead(args.candidate, args.surfaces, Date.now());
@@ -1269,6 +1274,7 @@ async function readCandidateRecord(
         deps: realAdapterDeps(
           authorityBeforeTransport(ctx, args.agentId, 'auto', browserMcpUrl),
           browserMcpUrl,
+          args.knownValues,
         ),
         grants: new Set(grantRows.map((grant) => grant.scope)),
         approvedIndexes: new Set([0]),
@@ -1276,7 +1282,9 @@ async function readCandidateRecord(
         autonomousActions: args.autonomousActions,
       },
     );
-    const applied = rawApplied ? await redactGroundingRead(rawApplied) : undefined;
+    const applied = rawApplied
+      ? await redactGroundingRead(rawApplied, spanModelFromEnv(), args.knownValues)
+      : undefined;
     await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
     if (!applied || !applied.ok || applied.held) {
       return {
@@ -1337,9 +1345,15 @@ async function finishRun(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
   claim: FinishClaim,
-  output: LedgerOutput | DependentPendingOutput,
-  applied: AppliedAction[],
+  rawOutput: LedgerOutput | DependentPendingOutput,
+  rawApplied: AppliedAction[],
+  knownValues: readonly string[] = [],
 ): Promise<{ ok: boolean; reason?: string }> {
+  // The whole persisted record passes the exact-value layer once more here:
+  // the adapters already applied it to provider text, and this covers every
+  // other string the dashboard renders from the run, whatever wrote it.
+  const output = scrubKnownValues(rawOutput, knownValues);
+  const applied = scrubKnownValues(rawApplied, knownValues);
   const failures = applied.filter((action: AppliedAction): boolean => !action.ok && !action.held);
   const reason =
     applied.length === 0

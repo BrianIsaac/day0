@@ -9,7 +9,7 @@
  * The marker label names the system and the kind of credential, so the
  * owner's credential list reads as a list of what was found and where.
  */
-import { redactText, type Finding, type RedactOptions } from '../redaction/redact';
+import { KNOWN_VALUE_LABEL, redactText, type Finding, type RedactOptions } from '../redaction/redact';
 import type { SpanModel } from '../redaction/client';
 import { PROVIDER_LABELS } from '../redaction/structural';
 
@@ -27,6 +27,8 @@ export interface RedactedMarkdown {
 export interface DocumentationRedactionOptions {
   /** The span model; documentation sync fails closed without one. */
   model?: SpanModel;
+  /** Every value the owner already stores, removed before the model is asked. */
+  known?: readonly string[];
 }
 
 const MARKER = /<credential:[^>]*>|<redacted:[^>]*>/g;
@@ -90,6 +92,7 @@ const LABEL_KINDS: Readonly<Record<string, string>> = {
   'json web token': 'json web token',
   'header value': 'bearer token',
   secret: 'secret',
+  [KNOWN_VALUE_LABEL]: 'credential',
 };
 
 /**
@@ -143,7 +146,7 @@ function lineAround(text: string, finding: Finding): string {
  * Args:
  *   markdown: Raw page body returned by a reader.
  *   title: Raw page title.
- *   options: The span model and any exact values the reader holds.
+ *   options: The span model and the owner's stored values.
  *
  * Returns:
  *   Redacted Markdown and title, and distinct plaintext values in document
@@ -170,7 +173,11 @@ export async function redactCredentials(
       }
       return credentialMarker(labels.get(finding.value) ?? finding.label);
     };
-  const base: Omit<RedactOptions, 'secretMarker'> = { model: options.model, onUnavailable: 'throw' };
+  const base: Omit<RedactOptions, 'secretMarker'> = {
+    model: options.model,
+    known: options.known,
+    onUnavailable: 'throw',
+  };
   const titleResult = await redactText(title, 'documentation', {
     ...base,
     secretMarker: collect(title),
@@ -183,6 +190,10 @@ export async function redactCredentials(
   const credentials: RedactedCredential[] = [];
   for (const finding of [...titleResult.findings, ...bodyResult.findings]) {
     if (finding.kind !== 'secret' || credentials.some((row) => row.plaintext === finding.value)) continue;
+    // A stored value met in its escaped or encoded form is the same
+    // credential, not a new one; met literally it is stored again so the
+    // page's own row keeps its reference through a re-sync.
+    if (finding.label === KNOWN_VALUE_LABEL && !options.known?.includes(finding.value)) continue;
     credentials.push({ label: labels.get(finding.value) ?? finding.label, plaintext: finding.value });
   }
   return { markdown: bodyResult.text, title: safeTitle, credentials };

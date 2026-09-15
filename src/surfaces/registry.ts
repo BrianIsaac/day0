@@ -57,6 +57,8 @@ export interface RealAdapterDeps {
   browserMcpUrl?: string;
   /** The span model provider outcomes are redacted with; undefined degrades to the structural floor. */
   spanModel?: SpanModel;
+  /** Every value the owner stores, resolved once per action invocation before any transport. */
+  knownValues?: readonly string[];
 }
 
 export interface ApplyOptions {
@@ -142,6 +144,7 @@ export function resolveAdapters(
       beforeTransport: deps.beforeTransport,
       browserMcpUrl: deps.browserMcpUrl,
       spanModel: deps.spanModel,
+      knownValues: deps.knownValues,
     });
     const http = new HttpAdapter(surfaces, {
       decrypt: deps.decrypt,
@@ -149,6 +152,7 @@ export function resolveAdapters(
       now,
       beforeTransport: deps.beforeTransport,
       spanModel: deps.spanModel,
+      knownValues: deps.knownValues,
     });
     for (const tool of mcp.tools) adapters.set(tool, mcp);
     for (const tool of http.tools) adapters.set(tool, http);

@@ -1,6 +1,8 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
@@ -8,6 +10,8 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import * as cryptoActions from '../../convex/credentialCryptoActions';
 import * as credentialsModule from '../../convex/credentials';
+import * as eventsModule from '../../convex/events';
+import * as exportActions from '../../convex/exportActions';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { OWNER_KNOWN_VALUE_CAP, OWNER_KNOWN_VALUES_CAP_REASON } from '../../src/redaction/known-values';
 import { allConvexModules } from './all-modules';
@@ -111,5 +115,22 @@ describe('the owner known-value source', (): void => {
     ).rejects.toThrow(OWNER_KNOWN_VALUES_CAP_REASON);
     expect(error).toHaveBeenCalled();
     expect(JSON.stringify(error.mock.calls)).toContain(String(OWNER_KNOWN_VALUE_CAP));
+  });
+});
+
+describe('the public API surface and decryption', (): void => {
+  it('has no public query in a module that can reach a decrypted value', (): void => {
+    const modules = readdirSync('convex').filter((name: string): boolean => name.endsWith('.ts'));
+    const reaches = /credential-crypto|credentialCryptoActions|ownerKnownValues|ownerValuesRef|credentials\.decrypt|DAY0_CREDENTIAL_KEY|ciphertext/;
+    // Each exported definition is one chunk; a public query's chunk is its handler.
+    const offenders = modules.flatMap((name: string): string[] =>
+      readFileSync(join('convex', name), 'utf8')
+        .split(/\nexport const /)
+        .filter((chunk: string): boolean => /^\w+ = query\(\{/.test(chunk) && reaches.test(chunk))
+        .map((chunk: string): string => `${name}: ${chunk.split(' ', 1)[0]}`),
+    );
+    expect(offenders).toEqual([]);
+    expect(eventsModule.exportForAgent.isInternal).toBe(true);
+    expect(exportActions.exportForAgent.isPublic).toBe(true);
   });
 });

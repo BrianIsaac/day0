@@ -79,6 +79,8 @@ export interface McpAdapterDeps {
   browserMcpUrl?: string;
   /** The span model outcomes are redacted with; undefined degrades to the structural floor. */
   spanModel?: SpanModel;
+  /** Every value the owner stores, resolved once by the hosting action; removed exactly from every outcome. */
+  knownValues?: readonly string[];
 }
 
 /**
@@ -570,7 +572,7 @@ export class McpAdapter implements SurfaceAdapter {
             )?.arguments,
           );
           if ('reason' in resolved) {
-            const redacted = await redactOutcome(resolved.reason, bearer, this.deps.spanModel);
+            const redacted = await redactOutcome(resolved.reason, bearer, this.deps.spanModel, this.deps.knownValues);
             return {
               tool: action.tool,
               ok: false,
@@ -586,12 +588,12 @@ export class McpAdapter implements SurfaceAdapter {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
-        const redacted = await redactOutcome(result.text, bearer, this.deps.spanModel);
+        const redacted = await redactOutcome(result.text, bearer, this.deps.spanModel, this.deps.knownValues);
         const text = redacted.text;
         const redaction = redacted.redaction ? { redaction: redacted.redaction } : {};
         if (result.isError) {
           const errorResult = result.errorMessage
-            ? await redactOutcome(result.errorMessage, bearer, this.deps.spanModel)
+            ? await redactOutcome(result.errorMessage, bearer, this.deps.spanModel, this.deps.knownValues)
             : redacted;
           const reason = errorResult.text;
           return {
@@ -614,7 +616,7 @@ export class McpAdapter implements SurfaceAdapter {
             ? browserSnapshotEvidence(text)
             : undefined;
         const identifier = result.providerId
-          ? await redactOutcome(result.providerId, bearer, this.deps.spanModel)
+          ? await redactOutcome(result.providerId, bearer, this.deps.spanModel, this.deps.knownValues)
           : undefined;
         return {
           tool: action.tool,
@@ -643,6 +645,7 @@ export class McpAdapter implements SurfaceAdapter {
               error instanceof Error ? error.message : String(error),
               bearer,
               this.deps.spanModel,
+              this.deps.knownValues,
             );
       const reason = failure ? clipEffect(failure.text, EFFECT_LENGTH) : BROWSER_DRIVER_ABSENT_REASON;
       return {

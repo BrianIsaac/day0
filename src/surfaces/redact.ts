@@ -48,12 +48,13 @@ export function containsTokenShape(text: string): boolean {
  * Args:
  *   text: Untrusted text that may quote the secret.
  *   secret: The decrypted value to remove exactly, or an empty string.
+ *   known: The owner's other stored values, removed the same way.
  *
  * Returns:
- *   Text with the exact value and every structural secret redacted.
+ *   Text with every exact value and every structural secret redacted.
  */
-export function redactSecret(text: string, secret: string): string {
-  return redactStructural(text, secret ? [secret] : []);
+export function redactSecret(text: string, secret: string, known: readonly string[] = []): string {
+  return redactStructural(text, [...(secret ? [secret] : []), ...known]);
 }
 
 export interface RedactedOutcome {
@@ -65,15 +66,17 @@ export interface RedactedOutcome {
 /**
  * Redact a provider outcome before it is persisted to the ledger.
  *
- * The transport's own credential is removed exactly, the structural grammar
- * runs, and the span model decides the rest under the `outcome` policy. A
- * model that cannot be reached does not lose the outcome: the row is
- * persisted with the two floors applied and says so in `redaction`.
+ * The transport's own credential and every value the owner stores are
+ * removed exactly, the structural grammar runs, and the span model decides
+ * the rest under the `outcome` policy. A model that cannot be reached does
+ * not lose the outcome: the row is persisted with the two floors applied and
+ * says so in `redaction`; the exact layer is never what degraded.
  *
  * Args:
  *   text: A provider effect, reason or error message.
  *   secret: The decrypted credential the transport sent, or an empty string.
  *   model: The span model, or undefined when none is configured.
+ *   known: The owner's stored values, resolved once by the hosting action.
  *
  * Returns:
  *   The redacted text and whether the model was part of it.
@@ -82,10 +85,11 @@ export async function redactOutcome(
   text: string,
   secret: string,
   model: SpanModel | undefined,
+  known: readonly string[] = [],
 ): Promise<RedactedOutcome> {
   const result = await redactText(text, 'outcome', {
     model,
-    known: secret ? [secret] : [],
+    known: [...(secret ? [secret] : []), ...known],
     onUnavailable: 'structural',
   });
   return result.degraded ? { text: result.text, redaction: result.degraded } : { text: result.text };
@@ -103,6 +107,7 @@ export async function redactOutcome(
  *   secret: The decrypted value that must not appear in the line.
  *   fallback: Message when the failure carries no text at all.
  *   maxLength: Upper bound on the persisted line.
+ *   known: The owner's stored values, removed the same way as the secret.
  *
  * Returns:
  *   A single line with no credential material.
@@ -112,6 +117,7 @@ export function safeFailureMessage(
   secret: string,
   fallback: string,
   maxLength = 300,
+  known: readonly string[] = [],
 ): string {
   const raw = error instanceof Error ? error.message : String(error);
   const firstLine =
@@ -119,6 +125,6 @@ export function safeFailureMessage(
       .split(/\r?\n/)
       .map((line: string): string => line.trim())
       .find((line: string): boolean => line.length > 0) ?? '';
-  const safe = redactSecret(firstLine, secret).replace(/\s+/g, ' ').trim();
+  const safe = redactSecret(firstLine, secret, known).replace(/\s+/g, ' ').trim();
   return (safe || fallback).slice(0, maxLength);
 }
