@@ -1,9 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate, type NotionPageName } from '../../fixtures/notion-pages';
 import { credentialMarker, credentialSourceRef, redactCredentials } from '../../../src/docs/redaction';
 import { RedactorUnavailableError } from '../../../src/redaction/client';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
-import { RecordedSpanModel, UnreachableSpanModel } from '../../fixtures/redaction-double';
+import { RecordedSpanModel, ScriptedSpanModel, UnreachableSpanModel } from '../../fixtures/redaction-double';
 
 const model = new RecordedSpanModel();
 const options = { model };
@@ -140,4 +141,22 @@ describe('documentation credential redaction', (): void => {
     expect(credentialSourceRef('page', first, 2, 0)).toBe('page#credential=1-linear%20service%20token');
     expect(credentialSourceRef('page', second, 2, 1)).toBe('page#credential=2-linear%20service%20token');
   });
+});
+
+it('preserves runbook words while extracting an explicitly assigned word password', async () => {
+  const words = ['linear', 'Linear', 'save_comment', 'surface', 'icon_emoji'];
+  const detector = new ScriptedSpanModel((text) => words.flatMap((value) =>
+    [...text.matchAll(new RegExp(`\\b${value}\\b`, 'g'))].map((match) => ({
+      start: match.index, end: match.index + value.length, label: 'access token', score: 0.97,
+    })),
+  ));
+  const body = readFileSync(new URL('../../fixtures/redaction/runbook.md', import.meta.url), 'utf8');
+  const clean = await redactCredentials(body, 'Ticket runbook', { model: detector });
+  expect(clean.credentials).toEqual([]);
+  expect(clean.markdown).toBe(body);
+  for (const value of words) {
+    const secret = await redactCredentials(`Password: ${value}`, 'Test login', { model: detector });
+    expect(secret.credentials.map((row) => row.plaintext)).toEqual([value]);
+    expect(secret.markdown).not.toContain(`Password: ${value}`);
+  }
 });

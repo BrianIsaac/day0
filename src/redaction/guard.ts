@@ -56,6 +56,8 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
 const LABEL_THEN_VALUE =
   /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"，。]+)[`'"，。]?$/i;
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
+const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+)$/;
+const SECRET_ASSIGNMENT = /(?:password|passwd|pwd|passcode|pin|token|secret|api[_ ]?key|credential|密码|口令|令牌|密钥)[`'"]?\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
 const PASSWORD_ASSIGNMENT = /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
 const ASSIGNED_VALUE = /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
 /**
@@ -135,6 +137,10 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   if (end <= start) return undefined;
   const before = text.slice(0, start);
   if (!explicitPassword && (USERNAME_DESIGNATOR.test(before) || IDENTIFIER_KEY.test(before))) return undefined;
+  // Tool names and prose are not credentials merely because a detector
+  // labels them as such. Explicit assignments still protect weak passwords.
+  const wholeWord = !/[A-Za-z0-9_]$/.test(before) && !/^[A-Za-z0-9_]/.test(text.slice(end));
+  if (wholeWord && RUNBOOK_WORD.test(value) && !SECRET_ASSIGNMENT.test(before)) return undefined;
   if (NEVER_REDACT.has(value)) return undefined;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
     if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
