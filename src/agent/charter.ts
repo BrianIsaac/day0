@@ -2,6 +2,13 @@ import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import { SYSTEM_CLASSES } from './system-classes';
 export { SYSTEM_CLASSES } from './system-classes';
+import {
+  CONSTRAINT_KINDS,
+  deriveConstraints,
+  normaliseConstraints,
+  type CharterConstraint,
+} from './charter-constraints';
+export type { CharterConstraint } from './charter-constraints';
 
 /**
  * Charter domain type + synthesis. Lifted from Protean's
@@ -71,6 +78,12 @@ export interface Charter {
   adjacentRoles: AdjacentRole[];
   approvalChain: ApprovalChain;
   openQuestions: string[];
+  /**
+   * The clauses that constrain work, beside the manager's words, for the
+   * manager to confirm or strike. Absent on charters drafted before the
+   * list existed, which read as having nothing to confirm.
+   */
+  constraints?: CharterConstraint[];
   createdAt: string;
 }
 
@@ -96,6 +109,8 @@ const SYSTEM_PROMPT = [
   'List every product or service the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
   'Return exactly one namedSystems row per product or service. Channels, DMs, pages, files, runbooks, queues, dashboards, tiles, views, sheets and tabs are locations inside a system, never separate systems.',
   'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
+  'Constraints: under constraints, list every rule the manager stated that limits which work you take or how you do it: a property a candidate must have (candidate-property), a system you must or must not touch (system-boundary), a person you report to or must not contact (reporting-line).',
+  'For each, quote is the manager\'s own sentence, copied, and wording is the exact phrase or phrases in your proposedFunction, willDo, willNotDo or escalationTriggers that encode it. Leave constraints empty when the manager stated no such rule; never add one they did not state.',
 ].join('\n');
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
@@ -145,6 +160,13 @@ export const charterSchema = z.object({
     confidence: z.enum(['low', 'medium', 'high']),
   }),
   openQuestions: z.array(z.string()),
+  constraints: z.array(
+    z.object({
+      kind: z.enum(CONSTRAINT_KINDS),
+      quote: z.string(),
+      wording: z.array(z.string()),
+    }),
+  ),
 });
 
 type RawCharterPayload = z.infer<typeof charterSchema>;
@@ -322,7 +344,7 @@ export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSys
 }
 
 function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt: string): Charter {
-  return {
+  const charter: Charter = {
     version: args.version,
     source: 'day-1 manager 1:1',
     whyThisHire: raw.whyThisHire,
@@ -340,6 +362,11 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
     },
     openQuestions: raw.openQuestions,
     createdAt,
+  };
+  const listed = normaliseConstraints(raw.constraints ?? [], charter);
+  return {
+    ...charter,
+    constraints: [...listed, ...deriveConstraints(charter, args.answers, listed)],
   };
 }
 
