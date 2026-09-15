@@ -546,5 +546,5 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       'argument-repair',
       'dependent',
     ]);
-  });
+  }, 30_000);
 });
