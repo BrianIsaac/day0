@@ -690,7 +690,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     metricsReconciliation,
     traceFile,
   };
-  const trace = await client.query(api.events.exportForAgent, { agentId });
+  const trace = await client.action(api.exportActions.exportForAgent, { agentId });
   const composePrefix = [
     `COMPOSE_PROJECT_NAME=${options.composeProject}`,
     `CONVEX_PORT=${process.env.CONVEX_PORT ?? '3210'}`,

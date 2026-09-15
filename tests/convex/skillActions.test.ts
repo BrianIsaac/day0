@@ -96,6 +96,32 @@ describe('skill author prompts', (): void => {
     expect(prompt.endsWith('Author SKILL.md and smoke.py now.')).toBe(true);
   });
 
+  it('preserves the mock author prompt with persisted probed surfaces', () => {
+    const probed = { ...linear, toolArguments: [{ tool: 'save_comment', arguments: ['issueId', 'body'] }] };
+    expect(buildAuthorPrompt(skill, [probed], now, [], 'mock')).toBe(
+      buildAuthorPrompt(skill, [linear], now, [], 'mock'),
+    );
+  });
+
+  it('carries the probed argument names into the author prompt so authored skills use the right keys', (): void => {
+    const prompt = buildAuthorPrompt(
+      { ...skill, targetSurface: 'linear' },
+      [
+        {
+          ...linear,
+          toolAllowlist: ['get_issue', 'save_comment'],
+          toolArguments: [
+            { tool: 'get_issue', arguments: ['id', 'includeRelations'] },
+            { tool: 'save_comment', arguments: ['issueId', 'body'] },
+          ],
+        },
+      ],
+      now,
+    );
+    expect(prompt).toContain('allowed tools: get_issue(id, includeRelations), save_comment(issueId, body)');
+    expect(prompt).toContain('probed argument names');
+  });
+
   it('lists only live surfaces and says when a connected surface allows no tools', (): void => {
     const prompt = buildAuthorPrompt(
       { ...skill, targetSurface: 'linear' },

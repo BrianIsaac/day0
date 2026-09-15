@@ -1,4 +1,6 @@
+import { RedactorUnavailableError } from '../../../src/redaction/client';
 import { describe, expect, it, vi } from 'vitest';
+import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
@@ -6,6 +8,7 @@ import {
   EFFECT_LENGTH,
   interpretToolResult,
   McpAdapter,
+  providerErrorMessage,
   type McpClientLike,
   type McpClientOptions,
 } from '../../../src/surfaces/mcp';
@@ -117,10 +120,35 @@ function adapter(
     now: (): number => now,
     beforeTransport,
     browserMcpUrl: DRIVER,
+    spanModel: new RecordedSpanModel(),
   });
 }
 
 describe('MCP adapter', (): void => {
+  it('applies outcome redaction to extracted provider identifiers', async () => {
+    const client = fakeClient({ linear_save_comment: async () => ({ id: 'password: hunter2' }) });
+    const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
+    expect(result.providerId).toBe('password: <redacted>');
+  });
+
+  it('marks the row degraded when redacting its extracted error fails', async () => {
+    let calls = 0;
+    const spanModel = { name: 'intermittent', spans: async () => {
+      if (++calls > 1) throw new RedactorUnavailableError('offline');
+      return [];
+    } };
+    const client = fakeClient({ linear_save_comment: async () => ({
+      isError: true, content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'password: hunter2 opaque-known' }) }],
+    }) });
+    const surfaceAdapter = new McpAdapter([linear], {
+      decrypt: async () => 'opaque-known', now: () => now, createClient: client.create, spanModel,
+    });
+    const result = await surfaceAdapter.apply(ctx, run, commentCall, 0, 'k');
+    expect(calls).toBeGreaterThan(1);
+    expect(result.redaction).toBe('structural-only');
+    expect(result.reason).not.toContain('opaque-known');
+  });
+
   it('keeps a read result whole for the closing phase and clips a write to the short effect', async (): Promise<void> => {
     const long = JSON.stringify({
       issues: Array.from({ length: 40 }, (_, index) => ({
@@ -207,6 +235,55 @@ describe('MCP adapter', (): void => {
     const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
     expect(result).toMatchObject({ ok: false, reason: 'Issue not found: <redacted> was used' });
     expect(client.disconnected).toBe(1);
+  });
+
+  it('treats a validation failure reported in the result body as a failed row', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        isError: false,
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: true,
+              message: 'Tool input validation failed: unknown argument issueId; expected id',
+            }),
+          },
+        ],
+      }),
+    });
+    const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
+    expect(result).toMatchObject({ ok: false, idempotencyKey: 'k' });
+    expect(result.reason).toContain('validation failed');
+    expect(result.reason).toContain('expected id');
+    expect(result.effect).toBeUndefined();
+    expect(client.disconnected).toBe(1);
+  });
+
+  it('keeps a plain text result and a JSON record without an error flag as applied rows', async (): Promise<void> => {
+    const plain = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
+    });
+    await expect(adapter(plain).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
+      ok: true,
+      effect: 'save_comment on linear · ok',
+    });
+    const record = fakeClient({
+      linear_save_comment: async (): Promise<unknown> => ({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ id: 'c-9', issue: { identifier: 'REVOPS-7' }, error: 'none' }),
+          },
+        ],
+      }),
+    });
+    await expect(adapter(record).apply(ctx, run, commentCall, 0, 'k')).resolves.toMatchObject({
+      ok: true,
+      providerId: 'c-9',
+    });
   });
 
   it('turns a thrown transport error into a redacted failed row', async (): Promise<void> => {
@@ -406,6 +483,45 @@ describe('tool result interpretation', (): void => {
     expect(
       interpretToolResult({ isError: true, content: [{ type: 'text', text: 'nope' }] }),
     ).toMatchObject({ isError: true, text: 'nope' });
+  });
+
+  it('reads a failure the server put in the body instead of the flag', (): void => {
+    const validation = JSON.stringify({
+      error: true,
+      message: 'Tool input validation failed: unknown argument issueId',
+    });
+    expect(
+      interpretToolResult({ isError: false, content: [{ type: 'text', text: validation }] }),
+    ).toEqual({
+      isError: true,
+      text: validation,
+      providerId: undefined,
+      errorMessage: 'Tool input validation failed: unknown argument issueId',
+    });
+    expect(interpretToolResult(validation)).toMatchObject({ isError: true });
+    expect(
+      interpretToolResult({ validationErrors: [{ path: 'id', message: 'required' }] }),
+    ).toMatchObject({
+      isError: true,
+      errorMessage: 'validation failed: [{"path":"id","message":"required"}]',
+    });
+    expect(interpretToolResult({ error: true })).toMatchObject({
+      isError: true,
+      errorMessage: 'the server reported an error',
+    });
+    // A string-valued error field is data on a record, not a failure; so is
+    // plain text and a record with no error field at all.
+    expect(interpretToolResult({ id: 'x1', error: 'none' })).toMatchObject({ isError: false });
+    expect(interpretToolResult('ok')).toMatchObject({ isError: false, text: 'ok' });
+    expect(
+      interpretToolResult({ content: [{ type: 'text', text: '{"issue":{"id":"i1"}}' }] }),
+    ).toMatchObject({ isError: false, providerId: 'i1' });
+    expect(interpretToolResult({ error: false, message: 'fine' })).toMatchObject({
+      isError: false,
+    });
+    expect(interpretToolResult({ validationErrors: null, id: 'i2' })).toMatchObject({
+      isError: false,
+    });
   });
 });
 
@@ -886,5 +1002,54 @@ describe('the browser floor across one run', (): void => {
       'k',
     );
     expect(calls.map((c) => c.tool)).toEqual(['browser_navigate']);
+  });
+});
+
+
+describe('provider error envelope variants', () => {
+  it.each([
+    { content: [], structuredContent: { error: true, message: 'validation failed: id required' } },
+    { content: [{ type: 'text', text: 'Request received' }, { type: 'text', text: '{"validationErrors":["id required"]}' }] },
+  ])('never ledgers a failure body as a successful read', async (result) => {
+    const client = fakeClient({ 'linear_list_issues': async () => result });
+    const outcome = await adapter(client).apply(ctx, run, {
+      tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues', toolArgsJson: '{}' },
+    }, 0, 'review:read:0');
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toContain('id required');
+    expect(outcome.effect).toBeUndefined();
+  });
+});
+
+
+describe('an empty validation report', (): void => {
+  it('is not a failure at interpretation', (): void => {
+    expect(providerErrorMessage('{"success":true,"validationErrors":[]}')).toBeUndefined();
+    expect(providerErrorMessage('{"validationErrors":{}}')).toBeUndefined();
+    expect(providerErrorMessage('{"validationErrors":""}')).toBeUndefined();
+    expect(providerErrorMessage('{"validationErrors":["id required"]}')).toBe(
+      'validation failed: ["id required"]',
+    );
+    expect(
+      interpretToolResult({ content: [{ type: 'text', text: '{"id":"iss-1","validationErrors":[]}' }] }),
+    ).toMatchObject({ isError: false, providerId: 'iss-1' });
+  });
+
+  it('is ledgered as the successful read it is', async (): Promise<void> => {
+    const client = fakeClient({
+      linear_list_issues: async () => ({
+        content: [{ type: 'text', text: '{"id":"iss-1","identifier":"REVOPS-7","validationErrors":[]}' }],
+      }),
+    });
+    const outcome = await adapter(client).apply(
+      ctx,
+      run,
+      { tool: 'mcp.call', args: { surface: 'linear', tool: 'list_issues', toolArgsJson: '{}' } },
+      0,
+      'review:read:0',
+    );
+    expect(outcome.ok).toBe(true);
+    expect(outcome.providerId).toBe('iss-1');
+    expect(outcome.effect).toContain('REVOPS-7');
   });
 });

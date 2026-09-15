@@ -163,6 +163,18 @@ describe('sending a finished item back', (): void => {
       />,
     );
 
+  it('distinguishes degraded provider evidence in both successful and failed runs', () => {
+    for (const state of ['completed', 'failed'] as const) {
+      const row = item(state);
+      const markup = render({ ...row, output: { ...landedDm, applied: [{
+        ...landedDm.applied[0], ok: state === 'completed', redaction: 'structural-only',
+      }] } });
+      expect(markup).toContain('Limited redaction');
+      expect(markup).toContain('may still contain secrets or personal data');
+      expect(render(row)).not.toContain('Limited redaction');
+    }
+  });
+
   it('offers a finished item the note and Retry only, keeping the reconciliation checklist for a note in progress', (): void => {
     const markup = render(item('completed'));
     expect(markup).toContain('note for the retry');

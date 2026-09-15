@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
-import { internalMutation, query } from './_generated/server';
+import { internalMutation, internalQuery, query } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import { collectLedgerObservations } from './metrics';
 import { redactTokenShapes } from '../src/surfaces/redact';
@@ -48,10 +49,27 @@ export function redactForExport(value: unknown): unknown {
   return value;
 }
 
-/** The complete redacted trace used by the semi-final evaluation report. */
-export const exportForAgent = query({
+/** The judge-facing trace, as the export action returns it. */
+export interface AgentTrace {
+  version: 1;
+  agent: { id: Id<'agents'>; name: string };
+  events: Doc<'events'>[];
+  ledger: ReturnType<typeof collectLedgerObservations>;
+  credentialNames: Array<{ label: string }>;
+}
+
+/**
+ * The complete trace with the synchronous floor applied, for the export
+ * action only.
+ *
+ * A query cannot decrypt the owner's stored values, so this is internal:
+ * `exportActions.exportForAgent` runs it under the caller's identity (the
+ * ownership check below still runs) and removes every stored value before
+ * anything leaves the deployment.
+ */
+export const exportForAgent = internalQuery({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<AgentTrace> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const [events, workItems, surfaces] = await Promise.all([
       ctx.db

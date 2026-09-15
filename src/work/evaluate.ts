@@ -9,6 +9,7 @@ import {
 } from './types';
 import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
 import type { SurfaceMode } from '../surfaces/types';
+import { surfaceSlug } from '../surfaces/slug';
 import {
   documentedSystemIdentity,
   sameSystemForHostlessMention,
@@ -102,7 +103,31 @@ function tokenise(text: string): Set<string> {
   return out;
 }
 
+/**
+ * Whether a candidate is in scope by where it came from.
+ *
+ * A ticket read from a connected surface that the current documentation or
+ * the charter names is work the agent was pointed at; its wording need not
+ * echo the charter's. Real mode only: the mock candidates come from seeded
+ * tables, not from a surface.
+ *
+ * Args:
+ *   candidate: Work candidate being evaluated.
+ *   ctx: Evaluation mode, clock and declared surfaces.
+ *
+ * Returns:
+ *   True when the source surface is connected and currently named.
+ */
+function eligibleByProvenance(candidate: WorkCandidate, ctx: EvalContext): boolean {
+  if (ctx.surfaceMode !== 'real' || candidate.sourceSystem === 'boss') return false;
+  const now = ctx.now ?? Date.now();
+  const source = surfaceForSource(candidate.sourceSystem, ctx.surfaces, now);
+  if (!source || verdictFor(source, now) !== 'connected') return false;
+  return source.discoveryEvidence?.some((evidence): boolean => evidence.current) === true;
+}
+
 function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
+  if (eligibleByProvenance(candidate, ctx)) return true;
   const bodyTokens = tokenise(`${candidate.title}\n${candidate.contentSummary}`);
   const charterTokens = new Set<string>();
   for (const w of tokenise(ctx.charter.proposedFunction)) charterTokens.add(w);
@@ -123,23 +148,8 @@ function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
   });
 }
 
-/**
- * Convert a provider or candidate label to the surface slug convention.
- *
- * Args:
- *   value: Provider or candidate label.
- *
- * Returns:
- *   A lowercase URL-safe surface slug.
- */
-export function evaluationSurfaceSlug(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || 'system'
-  );
-}
+/** The surface slug convention, shared with the planner. */
+export const evaluationSurfaceSlug = surfaceSlug;
 
 /**
  * Normalise prose for whole-phrase surface matching.

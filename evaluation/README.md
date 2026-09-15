@@ -549,7 +549,7 @@ pnpm eval:semifinal -- --runs 1 --tasks docs-team-cadence,EVAL-WRITE-01
 `--arms` accepts `day0`, `baseline` or both; `--tasks` accepts fixture ids or
 `EVAL-*` external ids. Defaults are both arms, three runs, all tasks, a 750 ms
 approval delay and each task's declared timeout. An event trace for any agent in a
-run can be captured with `npx convex run events:exportForAgent '{"agentId":"<id>"}'`;
+run can be captured with `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}'`;
 the export carries no credential material and no personal address.
 
 ## Build provenance

@@ -1,11 +1,15 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
+  advisoryPlanSteps,
   managerFeedbackLines,
   appliedLedgerPrompt,
   dependentExecuteSchema,
+  dependentExecuteSchemaForProcedureContract,
+  normalisePlanStepOutcomes,
   executeSchema,
   executeSchemaForProcedureContract,
   executorInstructions,
@@ -195,9 +199,9 @@ describe('executor output contract', (): void => {
     for (const row of [
       { trailId: 'trail-1', state: 'mapped', actionIndex: 0 },
       { trailId: 'trail-1', state: 'inapplicable', reason: 'Not applicable here.' },
-      { trailId: 'trail-1', state: 'deferred', reason: 'A later phase is required.' },
+      { trailId: 'trail-1', state: 'deferred', reason: 'A later phase is required.', dependsOnActionIndex: null, dependsOnField: null },
     ]) {
-      expect(schema.safeParse({ ...base, procedureTrails: [row] }).success).toBe(true);
+      expect(schema.safeParse({ ...base, deferredActions: null, procedureTrails: [row] }).success).toBe(true);
     }
     expect(
       schema.safeParse({
@@ -1317,6 +1321,196 @@ describe('surface guidance in the executor prompt', (): void => {
   });
 });
 
+describe('probed argument names in the surface list', (): void => {
+  const probed: SurfaceRecord = {
+    ...linear,
+    toolAllowlist: ['get_issue', 'save_comment'],
+    toolArguments: [
+      {
+        tool: 'get_issue',
+        arguments: ['id', 'includeCustomerNeeds', 'includeRelations', 'includeReleases'],
+      },
+      { tool: 'save_comment', arguments: ['issueId', 'body', 'id', 'parentId'] },
+      { tool: 'delete_issue', arguments: ['id'] },
+    ],
+  };
+
+  it('renders each allowlisted tool with its probed argument names', (): void => {
+    const text = surfaceInstructions([probed, slack], now);
+    expect(text).toContain(
+      'allowed tools: get_issue(id, includeCustomerNeeds, includeRelations, includeReleases), save_comment(issueId, body, id, parentId)',
+    );
+    expect(text).toContain('keys of `toolArgsJson` for that tool are drawn from that list');
+    expect(text).toContain('allowed tools: (none) · manager DM channel id: D0MANAGER');
+  });
+
+  it('renders nothing for a tool outside the allowlist', (): void => {
+    expect(surfaceInstructions([probed], now)).not.toContain('delete_issue');
+  });
+
+  it('renders a tool without a probed record as its bare name', (): void => {
+    const partial: SurfaceRecord = {
+      ...probed,
+      toolArguments: [{ tool: 'get_issue', arguments: ['id'] }],
+    };
+    expect(surfaceInstructions([partial], now)).toContain(
+      'allowed tools: get_issue(id), save_comment',
+    );
+  });
+
+  it('preserves mock instructions even when persisted surfaces carry probed arguments', () => {
+    const args = {
+      mode: 'mock' as const, autonomousActions: false, skillBody: 'Read the issue.',
+      mockEnv: emptyMock, now,
+    };
+    expect(executorInstructions({ ...args, surfaces: [probed] })).toBe(
+      executorInstructions({ ...args, surfaces: [{ ...probed, toolArguments: undefined }] }),
+    );
+  });
+
+  it('reaches the closing phase through the same instructions', (): void => {
+    const instructions = executorInstructions({
+      mode: 'real',
+      autonomousActions: false,
+      skillBody: 'Read the issue.',
+      surfaces: [probed],
+      mockEnv: emptyMock,
+      now,
+    });
+    expect(instructions).toContain('get_issue(id, includeCustomerNeeds, includeRelations, includeReleases)');
+  });
+
+  it('adds no guidance line when no surface carries probed names', (): void => {
+    expect(surfaceInstructions([linear, slack], now)).not.toContain('probed argument names');
+  });
+});
+
+describe('advisory plan steps in the closing phase', (): void => {
+  const plan = {
+    summary: 'Confirm, then refresh.',
+    steps: [
+      'Open REVOPS-7 in connected Linear to confirm it is owned and prioritized.',
+      'Sign in to the tile and set the figure to 74%.',
+      'Read back the visible 74% and the audit line.',
+    ],
+    expectedOutputType: 'ticket-update' as const,
+    riskNotes: '',
+    reversibility: 'reversible',
+    estimatedMinutes: 5,
+  };
+  const ticket = {
+    sourceCategory: 'ticket-queue' as const,
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-7',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Set the pipeline coverage tile to 74%.',
+    contentRefs: ['ticket://REVOPS-7'],
+    observedAt: new Date(0),
+  };
+
+  it('extends the real preamble with the no-invented-prerequisites invariant and leaves the mock one alone', (): void => {
+    expect(executorPreamble('real')).toContain(
+      'The charter decides which work you take; it adds no verification step.',
+    );
+    expect(executorPreamble('real')).toContain('is advisory: report what the data shows');
+    expect(executorPreamble('mock')).not.toContain('adds no verification step');
+    expect(executorPreamble('mock')).not.toContain('advisory');
+  });
+
+  it('accepts not-verifiable only in the real closing schema', (): void => {
+    const row = {
+      draft: 'd',
+      notes: 'n',
+      actions: [],
+      procedureTrails: [],
+      planStepOutcomes: [{ step: 1, status: 'not-verifiable', evidence: 'no assignee field' }],
+    };
+    expect(
+      dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real').safeParse(row).success,
+    ).toBe(true);
+    expect(
+      dependentExecuteSchemaForProcedureContract({ trails: [] }, 'mock').safeParse(row).success,
+    ).toBe(false);
+    expect(dependentExecuteSchema.safeParse(row).success).toBe(false);
+  });
+
+  it('reads the planner audit and the plan mark as the same advisory set', (): void => {
+    expect(advisoryPlanSteps(plan, ticket, emptyMock)).toEqual([1]);
+    expect(advisoryPlanSteps({ ...plan, advisorySteps: [3] }, ticket, emptyMock)).toEqual([1, 3]);
+    expect(advisoryPlanSteps({ ...plan, steps: plan.steps.slice(1) }, ticket, emptyMock)).toEqual(
+      [],
+    );
+  });
+
+  it('reports an advisory step the model blocked on an unassigned record as not verifiable, leaving the runbook steps alone', (): void => {
+    const outcomes = normalisePlanStepOutcomes(
+      [
+        { step: 1, status: 'blocked', evidence: 'get_issue returned no assignee field' },
+        { step: 2, status: 'satisfied', evidence: 'ledger rows 1-5 landed' },
+        { step: 3, status: 'blocked', evidence: 'browser_snapshot failed: timed out' },
+      ],
+      [1],
+    );
+    expect(outcomes).toEqual([
+      { step: 1, status: 'not-verifiable', evidence: 'get_issue returned no assignee field' },
+      { step: 2, status: 'satisfied', evidence: 'ledger rows 1-5 landed' },
+      { step: 3, status: 'blocked', evidence: 'browser_snapshot failed: timed out' },
+    ]);
+  });
+});
+
+describe('frozen prompt text', (): void => {
+  // The hosted demo and the frozen evaluation beds run the mock executor.
+  // Its preamble, and the surface list rendered without probed argument
+  // names, are byte-for-byte what they were when those beds were recorded.
+  it('keeps the mock executor preamble byte-identical', (): void => {
+    expect(executorPreamble('mock')).toMatchInlineSnapshot(`
+      "You are an autonomous workplace agent named Day0.
+      A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.
+      Apply the skill to the candidate. Produce three things:
+        1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.
+        2. Notes — short assumptions or open questions (single sentence).
+        3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
+        4. Procedure trails — one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
+
+      The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:
+        - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three \`spreadsheet.appendRow\` actions, not one action and a sentence saying three.
+        - Never name a surface, a channel, a ticket or a quantity the actions do not carry. "Notified the team" is false unless a \`slack.postMessage\` in this response says it.
+        - Work that emits no actions changes nothing and does not count as done. If the skill calls for no mutation, say so in \`notes\` rather than describing the work as finished.
+        - Emit every action in this response and set \`needsDependentPhase\` to false: the mock environment treats it as one approval set and runs no second authoring phase.
+
+      Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:
+        - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }
+        - slack.postMessage    — { channelSlug, threadKey: string or null, body }
+        - twitter.reply        — { tweetSlug, body }
+        - ticket.update        — { slug, status: value or null, comment: string or null }
+
+      Discipline:
+        - Mock comparison mode: every emitted action is held for the manager's literal approval and only applied after that decision.
+        - Stay inside charter boundaries.
+        - Never invent values you do not have. If a cell value is unknown, leave it blank in \`cells\` and flag the gap in \`notes\`.
+        - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy."
+    `);
+  });
+
+  it('keeps the connected-surfaces list byte-identical when no argument names are probed', (): void => {
+    expect(surfaceInstructions([linear, slack], now)).toMatchInlineSnapshot(`
+      "Connected real surfaces (name each exactly as listed; take the action shape from its runbook):
+        - linear (Linear) - class kanban · path mcp · endpoint https://mcp.linear.app/mcp · allowed tools: save_comment, save_issue
+        - slack (Slack) - class chat · path documented-api · endpoint https://slack.com/api/ · allowed tools: (none) · manager DM channel id: D0MANAGER
+
+      Two verbs reach a real surface. Their structured arguments travel as JSON strings:
+        - mcp.call     - { surface, tool, toolArgsJson }: \`tool\` must be in the surface allowlist; \`toolArgsJson\` is the JSON object of tool arguments.
+        - http.request - { surface, method, path, headersJson, body }: \`path\` is relative to the surface endpoint; \`headersJson\` is a JSON object of headers; \`body\` is the request body.
+        - Write \`{{secret}}\` where the runbook shows the credential; the server substitutes the stored credential. Never include a token, key or secret value.
+        - You may only target a surface listed above. A system without a connected surface gets no action; say so in \`notes\`.
+        - A manager DM on a connected chat surface is an \`http.request\` to \`chat.postMessage\` with \`channel\` set to the manager DM channel id above. Posts to any other channel are held for the manager's approval unless autonomous actions are on.
+        - Do not add a provenance trailer or a \`username\`: the server appends the employee name and run id to every comment or message sent through a shared credential.
+        - A status change on a ticket must be preceded, in the same response, by a comment on that ticket."
+    `);
+  });
+});
+
 describe('executor preamble by mode', (): void => {
   it('teaches the four mock verbs without embedding the seeded office procedure', (): void => {
     const text = executorPreamble('mock');
@@ -1355,7 +1549,7 @@ describe('executor preamble by mode', (): void => {
     expect(text).toContain('A draft (human-readable)');
     expect(text).toContain('set `needsDependentPhase` to true');
     expect(text).toContain(
-      'Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a reason when a result-dependent phase is required.',
+      'Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex',
     );
     expect(text).toContain(
       'A MAPPED actionIndex must reference an action emitted in the same response.',
@@ -1534,4 +1728,9 @@ describe('manager feedback lines', (): void => {
     expect(lines[2]).toContain('cannot override');
     expect(lines[4]).toContain('Address the feedback');
   });
+});
+
+it('keeps the mock phase-one provider schema byte-identical', () => {
+  const schema = JSON.stringify(z.toJSONSchema(executeSchemaForProcedureContract({ trails: [] }, undefined, undefined, 'mock')));
+  expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(`"eeb7ba777f1f42a8ab311a70030b51ada6262e0c7fbb4894a2bd8d8542cc32d8"`);
 });

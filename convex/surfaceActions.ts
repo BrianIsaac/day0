@@ -31,6 +31,7 @@ import {
   type ChannelMembership,
 } from '../src/surfaces/slack-policy';
 import { safeFailureMessage } from '../src/surfaces/redact';
+import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
 import { actionIntent } from '../src/surfaces/policy';
 
@@ -349,8 +350,12 @@ export function slackMethodsFromPolicy(markdown: string): string[] {
  * Returns:
  *   One flattened, clipped and token-redacted error message.
  */
-export function safeProviderError(error: unknown, credential: string): string {
-  return safeFailureMessage(error, credential, 'Provider probe failed.');
+export function safeProviderError(
+  error: unknown,
+  credential: string,
+  known: readonly string[] = [],
+): string {
+  return safeFailureMessage(error, credential, 'Provider probe failed.', 300, known);
 }
 
 /**
@@ -924,7 +929,9 @@ export async function runSurfaceProbe(
     }
 
     let credential = '';
+    let known: readonly string[] = [];
     try {
+      if (context.agent.userId) known = await ownerKnownValues(ctx, context.agent.userId);
       if (surface.credentialId) {
         try {
           credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
@@ -1047,7 +1054,7 @@ export async function runSurfaceProbe(
         managerDmReady: managerDmChannelId !== undefined,
       };
     } catch (error) {
-      const reason = safeProviderError(error, credential);
+      const reason = safeProviderError(error, credential, known);
       const verdict = probeFailureVerdict(error, reason);
       const outcome = await failOrDemote(reason, verdict);
       if (outcome) return outcome;

@@ -1,0 +1,1982 @@
+{
+ "model": "urchade/gliner_multi_pii-v1",
+ "labels": [
+  "password",
+  "api key",
+  "secret key",
+  "access token",
+  "private key",
+  "credential",
+  "authentication token",
+  "person",
+  "username",
+  "email",
+  "phone number",
+  "address",
+  "id number",
+  "date of birth",
+  "ip address"
+ ],
+ "threshold": 0.3,
+ "recordedAt": "2026-09-15T08:04:14.404Z",
+ "cases": {
+  "docs-local-looker-tile": [
+   {
+    "start": 264,
+    "end": 288,
+    "label": "ip address",
+    "score": 0.3365
+   },
+   {
+    "start": 655,
+    "end": 674,
+    "label": "api key",
+    "score": 0.5714
+   },
+   {
+    "start": 687,
+    "end": 693,
+    "label": "username",
+    "score": 0.927
+   },
+   {
+    "start": 709,
+    "end": 733,
+    "label": "person",
+    "score": 0.3992
+   },
+   {
+    "start": 772,
+    "end": 794,
+    "label": "person",
+    "score": 0.3385
+   },
+   {
+    "start": 1126,
+    "end": 1132,
+    "label": "person",
+    "score": 0.497
+   },
+   {
+    "start": 1126,
+    "end": 1132,
+    "label": "person",
+    "score": 0.6107
+   }
+  ],
+  "docs-local-refresh-runbook": [
+   {
+    "start": 107,
+    "end": 113,
+    "label": "username",
+    "score": 0.964
+   },
+   {
+    "start": 280,
+    "end": 324,
+    "label": "credential",
+    "score": 0.4722
+   },
+   {
+    "start": 350,
+    "end": 358,
+    "label": "password",
+    "score": 0.5022
+   },
+   {
+    "start": 426,
+    "end": 434,
+    "label": "credential",
+    "score": 0.6973
+   },
+   {
+    "start": 679,
+    "end": 687,
+    "label": "credential",
+    "score": 0.4182
+   },
+   {
+    "start": 702,
+    "end": 708,
+    "label": "username",
+    "score": 0.9484
+   },
+   {
+    "start": 724,
+    "end": 732,
+    "label": "password",
+    "score": 0.8987
+   },
+   {
+    "start": 747,
+    "end": 757,
+    "label": "secret key",
+    "score": 0.5099
+   }
+  ],
+  "docs-local-slack-runbook": [
+   {
+    "start": 83,
+    "end": 105,
+    "label": "api key",
+    "score": 0.3453
+   },
+   {
+    "start": 116,
+    "end": 125,
+    "label": "access token",
+    "score": 0.381
+   },
+   {
+    "start": 131,
+    "end": 137,
+    "label": "credential",
+    "score": 0.3582
+   },
+   {
+    "start": 211,
+    "end": 230,
+    "label": "email",
+    "score": 0.9585
+   },
+   {
+    "start": 467,
+    "end": 473,
+    "label": "authentication token",
+    "score": 0.3001
+   },
+   {
+    "start": 474,
+    "end": 484,
+    "label": "secret key",
+    "score": 0.5468
+   },
+   {
+    "start": 600,
+    "end": 612,
+    "label": "username",
+    "score": 0.97
+   },
+   {
+    "start": 714,
+    "end": 724,
+    "label": "secret key",
+    "score": 0.7568
+   },
+   {
+    "start": 759,
+    "end": 779,
+    "label": "credential",
+    "score": 0.4262
+   }
+  ],
+  "docs-local-ticket-runbook": [
+   {
+    "start": 561,
+    "end": 573,
+    "label": "person",
+    "score": 0.8698
+   }
+  ],
+  "docs-local-onboarding": [
+   {
+    "start": 61,
+    "end": 73,
+    "label": "person",
+    "score": 0.5909
+   },
+   {
+    "start": 180,
+    "end": 209,
+    "label": "person",
+    "score": 0.5445
+   },
+   {
+    "start": 303,
+    "end": 313,
+    "label": "username",
+    "score": 0.4201
+   },
+   {
+    "start": 528,
+    "end": 550,
+    "label": "person",
+    "score": 0.5731
+   },
+   {
+    "start": 554,
+    "end": 557,
+    "label": "username",
+    "score": 0.4025
+   }
+  ],
+  "docs-local-queue": [
+   {
+    "start": 158,
+    "end": 163,
+    "label": "person",
+    "score": 0.6539
+   },
+   {
+    "start": 221,
+    "end": 226,
+    "label": "person",
+    "score": 0.7827
+   },
+   {
+    "start": 296,
+    "end": 315,
+    "label": "credential",
+    "score": 0.3658
+   },
+   {
+    "start": 356,
+    "end": 363,
+    "label": "person",
+    "score": 0.7931
+   },
+   {
+    "start": 386,
+    "end": 391,
+    "label": "person",
+    "score": 0.9038
+   }
+  ],
+  "notion-linear-automation": [
+   {
+    "start": 88,
+    "end": 94,
+    "label": "access token",
+    "score": 0.3097
+   },
+   {
+    "start": 112,
+    "end": 120,
+    "label": "access token",
+    "score": 0.5484
+   },
+   {
+    "start": 257,
+    "end": 270,
+    "label": "access token",
+    "score": 0.6235
+   },
+   {
+    "start": 284,
+    "end": 290,
+    "label": "access token",
+    "score": 0.3809
+   },
+   {
+    "start": 305,
+    "end": 334,
+    "label": "person",
+    "score": 0.6718
+   },
+   {
+    "start": 457,
+    "end": 505,
+    "label": "api key",
+    "score": 0.5533
+   }
+  ],
+  "notion-linear-automation-placeholder": [
+   {
+    "start": 38,
+    "end": 63,
+    "label": "api key",
+    "score": 0.8724
+   }
+  ],
+  "notion-slack-policy": [
+   {
+    "start": 41,
+    "end": 45,
+    "label": "username",
+    "score": 0.5289
+   },
+   {
+    "start": 208,
+    "end": 229,
+    "label": "access token",
+    "score": 0.7958
+   },
+   {
+    "start": 600,
+    "end": 604,
+    "label": "username",
+    "score": 0.6242
+   },
+   {
+    "start": 654,
+    "end": 658,
+    "label": "username",
+    "score": 0.5052
+   },
+   {
+    "start": 757,
+    "end": 762,
+    "label": "email",
+    "score": 0.4943
+   },
+   {
+    "start": 784,
+    "end": 791,
+    "label": "person",
+    "score": 0.4218
+   },
+   {
+    "start": 823,
+    "end": 830,
+    "label": "person",
+    "score": 0.3238
+   },
+   {
+    "start": 833,
+    "end": 838,
+    "label": "email",
+    "score": 0.5787
+   }
+  ],
+  "notion-slack-policy-with-config-token": [
+   {
+    "start": 137,
+    "end": 189,
+    "label": "access token",
+    "score": 0.8134
+   },
+   {
+    "start": 197,
+    "end": 220,
+    "label": "person",
+    "score": 0.3554
+   }
+  ],
+  "shape-aws-access-key": [
+   {
+    "start": 2,
+    "end": 12,
+    "label": "access token",
+    "score": 0.5958
+   },
+   {
+    "start": 14,
+    "end": 34,
+    "label": "access token",
+    "score": 0.8684
+   }
+  ],
+  "shape-github-classic": [
+   {
+    "start": 0,
+    "end": 4,
+    "label": "api key",
+    "score": 0.3598
+   },
+   {
+    "start": 10,
+    "end": 50,
+    "label": "authentication token",
+    "score": 0.5654
+   },
+   {
+    "start": 58,
+    "end": 66,
+    "label": "password",
+    "score": 0.9861
+   }
+  ],
+  "shape-github-fine": [
+   {
+    "start": 7,
+    "end": 15,
+    "label": "authentication token",
+    "score": 0.5825
+   },
+   {
+    "start": 16,
+    "end": 109,
+    "label": "api key",
+    "score": 0.3553
+   }
+  ],
+  "shape-stripe-table": [
+   {
+    "start": 2,
+    "end": 8,
+    "label": "username",
+    "score": 0.6674
+   },
+   {
+    "start": 11,
+    "end": 43,
+    "label": "access token",
+    "score": 0.5839
+   },
+   {
+    "start": 59,
+    "end": 97,
+    "label": "api key",
+    "score": 0.5913
+   }
+  ],
+  "shape-google-query": [
+   {
+    "start": 5,
+    "end": 44,
+    "label": "api key",
+    "score": 0.4676
+   },
+   {
+    "start": 52,
+    "end": 54,
+    "label": "private key",
+    "score": 0.4281
+   }
+  ],
+  "shape-openai-env": [
+   {
+    "start": 0,
+    "end": 14,
+    "label": "api key",
+    "score": 0.9324
+   },
+   {
+    "start": 15,
+    "end": 71,
+    "label": "api key",
+    "score": 0.792
+   },
+   {
+    "start": 148,
+    "end": 199,
+    "label": "api key",
+    "score": 0.4846
+   }
+  ],
+  "shape-jwt": [
+   {
+    "start": 98,
+    "end": 141,
+    "label": "secret key",
+    "score": 0.4586
+   }
+  ],
+  "shape-dsn-password": [],
+  "shape-bearer-curl": [
+   {
+    "start": 9,
+    "end": 62,
+    "label": "access token",
+    "score": 0.507
+   }
+  ],
+  "shape-client-secret": [
+   {
+    "start": 0,
+    "end": 13,
+    "label": "password",
+    "score": 0.4621
+   },
+   {
+    "start": 15,
+    "end": 47,
+    "label": "secret key",
+    "score": 0.7852
+   },
+   {
+    "start": 48,
+    "end": 55,
+    "label": "api key",
+    "score": 0.3515
+   },
+   {
+    "start": 57,
+    "end": 89,
+    "label": "api key",
+    "score": 0.9027
+   }
+  ],
+  "shape-provider-tokens-in-context": [
+   {
+    "start": 20,
+    "end": 68,
+    "label": "api key",
+    "score": 0.6291
+   },
+   {
+    "start": 91,
+    "end": 138,
+    "label": "api key",
+    "score": 0.5731
+   },
+   {
+    "start": 173,
+    "end": 221,
+    "label": "api key",
+    "score": 0.4616
+   },
+   {
+    "start": 248,
+    "end": 298,
+    "label": "secret key",
+    "score": 0.6091
+   },
+   {
+    "start": 320,
+    "end": 368,
+    "label": "api key",
+    "score": 0.6394
+   },
+   {
+    "start": 391,
+    "end": 439,
+    "label": "api key",
+    "score": 0.6785
+   }
+  ],
+  "shape-token-in-title-and-punctuation": [
+   {
+    "start": 8,
+    "end": 55,
+    "label": "api key",
+    "score": 0.5498
+   },
+   {
+    "start": 61,
+    "end": 109,
+    "label": "api key",
+    "score": 0.8454
+   },
+   {
+    "start": 123,
+    "end": 171,
+    "label": "api key",
+    "score": 0.8604
+   }
+  ],
+  "shape-generic-labelled-key": [
+   {
+    "start": 2,
+    "end": 29,
+    "label": "api key",
+    "score": 0.4394
+   },
+   {
+    "start": 31,
+    "end": 64,
+    "label": "api key",
+    "score": 0.9659
+   }
+  ],
+  "declared-dashboard-login": [
+   {
+    "start": 33,
+    "end": 54,
+    "label": "password",
+    "score": 0.5061
+   },
+   {
+    "start": 66,
+    "end": 72,
+    "label": "username",
+    "score": 0.7464
+   },
+   {
+    "start": 77,
+    "end": 95,
+    "label": "password",
+    "score": 0.8872
+   },
+   {
+    "start": 98,
+    "end": 117,
+    "label": "password",
+    "score": 0.7439
+   }
+  ],
+  "nonshape-rotation-prose": [
+   {
+    "start": 55,
+    "end": 63,
+    "label": "password",
+    "score": 0.7139
+   },
+   {
+    "start": 92,
+    "end": 107,
+    "label": "person",
+    "score": 0.7875
+   },
+   {
+    "start": 111,
+    "end": 117,
+    "label": "password",
+    "score": 0.476
+   },
+   {
+    "start": 139,
+    "end": 144,
+    "label": "credential",
+    "score": 0.5008
+   },
+   {
+    "start": 154,
+    "end": 158,
+    "label": "person",
+    "score": 0.6286
+   },
+   {
+    "start": 214,
+    "end": 219,
+    "label": "credential",
+    "score": 0.5615
+   },
+   {
+    "start": 227,
+    "end": 255,
+    "label": "api key",
+    "score": 0.5241
+   }
+  ],
+  "nonshape-hashes-and-ids": [
+   {
+    "start": 9,
+    "end": 49,
+    "label": "id number",
+    "score": 0.3722
+   },
+   {
+    "start": 76,
+    "end": 88,
+    "label": "id number",
+    "score": 0.4439
+   },
+   {
+    "start": 108,
+    "end": 144,
+    "label": "id number",
+    "score": 0.6809
+   },
+   {
+    "start": 164,
+    "end": 200,
+    "label": "id number",
+    "score": 0.6859
+   },
+   {
+    "start": 282,
+    "end": 314,
+    "label": "id number",
+    "score": 0.3935
+   }
+  ],
+  "nonshape-issue-keys": [
+   {
+    "start": 11,
+    "end": 19,
+    "label": "access token",
+    "score": 0.5574
+   },
+   {
+    "start": 26,
+    "end": 35,
+    "label": "access token",
+    "score": 0.3482
+   },
+   {
+    "start": 42,
+    "end": 50,
+    "label": "access token",
+    "score": 0.4902
+   },
+   {
+    "start": 62,
+    "end": 68,
+    "label": "access token",
+    "score": 0.6406
+   },
+   {
+    "start": 69,
+    "end": 80,
+    "label": "api key",
+    "score": 0.3539
+   },
+   {
+    "start": 82,
+    "end": 93,
+    "label": "api key",
+    "score": 0.6414
+   },
+   {
+    "start": 99,
+    "end": 112,
+    "label": "secret key",
+    "score": 0.3522
+   },
+   {
+    "start": 200,
+    "end": 211,
+    "label": "person",
+    "score": 0.9998
+   },
+   {
+    "start": 213,
+    "end": 219,
+    "label": "access token",
+    "score": 0.4134
+   }
+  ],
+  "nonshape-bearer-words": [
+   {
+    "start": 0,
+    "end": 14,
+    "label": "authentication token",
+    "score": 0.7653
+   },
+   {
+    "start": 20,
+    "end": 26,
+    "label": "access token",
+    "score": 0.4897
+   },
+   {
+    "start": 41,
+    "end": 54,
+    "label": "authentication token",
+    "score": 0.3888
+   },
+   {
+    "start": 82,
+    "end": 95,
+    "label": "authentication token",
+    "score": 0.7301
+   },
+   {
+    "start": 97,
+    "end": 103,
+    "label": "authentication token",
+    "score": 0.3148
+   },
+   {
+    "start": 131,
+    "end": 137,
+    "label": "authentication token",
+    "score": 0.6894
+   },
+   {
+    "start": 181,
+    "end": 194,
+    "label": "authentication token",
+    "score": 0.8029
+   },
+   {
+    "start": 229,
+    "end": 242,
+    "label": "authentication token",
+    "score": 0.8911
+   },
+   {
+    "start": 244,
+    "end": 250,
+    "label": "authentication token",
+    "score": 0.3616
+   }
+  ],
+  "nonshape-connection-strings": [
+   {
+    "start": 5,
+    "end": 38,
+    "label": "api key",
+    "score": 0.634
+   },
+   {
+    "start": 103,
+    "end": 143,
+    "label": "api key",
+    "score": 0.5689
+   },
+   {
+    "start": 283,
+    "end": 293,
+    "label": "secret key",
+    "score": 0.3575
+   }
+  ],
+  "nonshape-below-floor-labelled": [
+   {
+    "start": 0,
+    "end": 5,
+    "label": "access token",
+    "score": 0.3946
+   },
+   {
+    "start": 7,
+    "end": 39,
+    "label": "access token",
+    "score": 0.6246
+   },
+   {
+    "start": 70,
+    "end": 77,
+    "label": "api key",
+    "score": 0.431
+   },
+   {
+    "start": 79,
+    "end": 99,
+    "label": "api key",
+    "score": 0.9002
+   }
+  ],
+  "nonshape-prefix-words": [
+   {
+    "start": 24,
+    "end": 41,
+    "label": "api key",
+    "score": 0.5331
+   },
+   {
+    "start": 43,
+    "end": 47,
+    "label": "access token",
+    "score": 0.4927
+   },
+   {
+    "start": 101,
+    "end": 109,
+    "label": "secret key",
+    "score": 0.9726
+   },
+   {
+    "start": 135,
+    "end": 141,
+    "label": "secret key",
+    "score": 0.9627
+   },
+   {
+    "start": 166,
+    "end": 170,
+    "label": "secret key",
+    "score": 0.7909
+   },
+   {
+    "start": 189,
+    "end": 192,
+    "label": "secret key",
+    "score": 0.8534
+   },
+   {
+    "start": 200,
+    "end": 203,
+    "label": "authentication token",
+    "score": 0.4098
+   },
+   {
+    "start": 209,
+    "end": 212,
+    "label": "secret key",
+    "score": 0.7376
+   },
+   {
+    "start": 258,
+    "end": 278,
+    "label": "api key",
+    "score": 0.5059
+   }
+  ],
+  "nonshape-already-redacted": [
+   {
+    "start": 68,
+    "end": 73,
+    "label": "api key",
+    "score": 0.3895
+   },
+   {
+    "start": 102,
+    "end": 118,
+    "label": "credential",
+    "score": 0.3016
+   },
+   {
+    "start": 146,
+    "end": 182,
+    "label": "access token",
+    "score": 0.552
+   },
+   {
+    "start": 200,
+    "end": 242,
+    "label": "access token",
+    "score": 0.4375
+   }
+  ],
+  "review-miss-midline-password": [
+   {
+    "start": 33,
+    "end": 44,
+    "label": "username",
+    "score": 0.7014
+   },
+   {
+    "start": 46,
+    "end": 63,
+    "label": "password",
+    "score": 0.8014
+   }
+  ],
+  "review-miss-midline-password-prose": [
+   {
+    "start": 18,
+    "end": 24,
+    "label": "api key",
+    "score": 0.7758
+   },
+   {
+    "start": 33,
+    "end": 41,
+    "label": "password",
+    "score": 0.9176
+   },
+   {
+    "start": 45,
+    "end": 52,
+    "label": "password",
+    "score": 0.9714
+   },
+   {
+    "start": 58,
+    "end": 73,
+    "label": "person",
+    "score": 0.7288
+   }
+  ],
+  "review-miss-short-passwords": [
+   {
+    "start": 0,
+    "end": 8,
+    "label": "password",
+    "score": 0.8612
+   },
+   {
+    "start": 10,
+    "end": 17,
+    "label": "password",
+    "score": 0.9083
+   },
+   {
+    "start": 18,
+    "end": 33,
+    "label": "password",
+    "score": 0.6222
+   },
+   {
+    "start": 35,
+    "end": 45,
+    "label": "secret key",
+    "score": 0.5206
+   },
+   {
+    "start": 56,
+    "end": 65,
+    "label": "password",
+    "score": 0.7857
+   },
+   {
+    "start": 74,
+    "end": 85,
+    "label": "secret key",
+    "score": 0.7957
+   },
+   {
+    "start": 86,
+    "end": 99,
+    "label": "authentication token",
+    "score": 0.3336
+   },
+   {
+    "start": 101,
+    "end": 107,
+    "label": "secret key",
+    "score": 0.7635
+   }
+  ],
+  "review-miss-short-token-values": [
+   {
+    "start": 2,
+    "end": 15,
+    "label": "access token",
+    "score": 0.3952
+   },
+   {
+    "start": 17,
+    "end": 23,
+    "label": "access token",
+    "score": 0.9126
+   },
+   {
+    "start": 62,
+    "end": 75,
+    "label": "credential",
+    "score": 0.373
+   },
+   {
+    "start": 77,
+    "end": 85,
+    "label": "private key",
+    "score": 0.4504
+   },
+   {
+    "start": 97,
+    "end": 104,
+    "label": "api key",
+    "score": 0.9761
+   }
+  ],
+  "review-miss-password-in-parenthetical": [
+   {
+    "start": 2,
+    "end": 13,
+    "label": "username",
+    "score": 0.36
+   },
+   {
+    "start": 16,
+    "end": 40,
+    "label": "api key",
+    "score": 0.6245
+   },
+   {
+    "start": 43,
+    "end": 59,
+    "label": "username",
+    "score": 0.4993
+   }
+  ],
+  "password-keyword-variants": [
+   {
+    "start": 0,
+    "end": 3,
+    "label": "authentication token",
+    "score": 0.3633
+   },
+   {
+    "start": 5,
+    "end": 15,
+    "label": "authentication token",
+    "score": 0.3845
+   },
+   {
+    "start": 17,
+    "end": 34,
+    "label": "password",
+    "score": 0.4327
+   },
+   {
+    "start": 35,
+    "end": 38,
+    "label": "password",
+    "score": 0.4865
+   },
+   {
+    "start": 61,
+    "end": 65,
+    "label": "phone number",
+    "score": 0.9623
+   },
+   {
+    "start": 73,
+    "end": 94,
+    "label": "username",
+    "score": 0.6447
+   }
+  ],
+  "reference-values-kept": [
+   {
+    "start": 10,
+    "end": 20,
+    "label": "password",
+    "score": 0.7939
+   },
+   {
+    "start": 32,
+    "end": 40,
+    "label": "secret key",
+    "score": 0.4147
+   },
+   {
+    "start": 52,
+    "end": 70,
+    "label": "password",
+    "score": 0.7479
+   }
+  ],
+  "mock-team-overview": [
+   {
+    "start": 93,
+    "end": 100,
+    "label": "person",
+    "score": 0.9962
+   },
+   {
+    "start": 159,
+    "end": 164,
+    "label": "person",
+    "score": 0.9827
+   },
+   {
+    "start": 208,
+    "end": 212,
+    "label": "person",
+    "score": 0.9864
+   },
+   {
+    "start": 269,
+    "end": 273,
+    "label": "person",
+    "score": 0.9779
+   },
+   {
+    "start": 307,
+    "end": 314,
+    "label": "person",
+    "score": 0.6636
+   },
+   {
+    "start": 404,
+    "end": 411,
+    "label": "person",
+    "score": 0.9912
+   }
+  ],
+  "mock-on-call": [
+   {
+    "start": 111,
+    "end": 116,
+    "label": "person",
+    "score": 0.999
+   },
+   {
+    "start": 118,
+    "end": 122,
+    "label": "person",
+    "score": 0.9968
+   },
+   {
+    "start": 124,
+    "end": 128,
+    "label": "person",
+    "score": 0.9956
+   },
+   {
+    "start": 130,
+    "end": 134,
+    "label": "person",
+    "score": 0.9221
+   },
+   {
+    "start": 136,
+    "end": 140,
+    "label": "person",
+    "score": 0.957
+   },
+   {
+    "start": 294,
+    "end": 298,
+    "label": "person",
+    "score": 0.9995
+   },
+   {
+    "start": 301,
+    "end": 314,
+    "label": "credential",
+    "score": 0.3149
+   },
+   {
+    "start": 316,
+    "end": 320,
+    "label": "person",
+    "score": 0.999
+   },
+   {
+    "start": 323,
+    "end": 338,
+    "label": "credential",
+    "score": 0.3138
+   },
+   {
+    "start": 357,
+    "end": 362,
+    "label": "person",
+    "score": 0.9989
+   }
+  ],
+  "mock-slack-ask": [
+   {
+    "start": 0,
+    "end": 5,
+    "label": "person",
+    "score": 0.9987
+   },
+   {
+    "start": 63,
+    "end": 73,
+    "label": "person",
+    "score": 0.5131
+   }
+  ],
+  "mock-manager-dm": [
+   {
+    "start": 0,
+    "end": 12,
+    "label": "person",
+    "score": 0.8139
+   }
+  ],
+  "mock-tickets": [],
+  "mock-spreadsheet-rows": [
+   {
+    "start": 49,
+    "end": 54,
+    "label": "person",
+    "score": 0.9978
+   },
+   {
+    "start": 114,
+    "end": 118,
+    "label": "person",
+    "score": 0.9981
+   },
+   {
+    "start": 163,
+    "end": 174,
+    "label": "credential",
+    "score": 0.3364
+   },
+   {
+    "start": 190,
+    "end": 195,
+    "label": "person",
+    "score": 0.9962
+   }
+  ],
+  "mock-tweet": [
+   {
+    "start": 0,
+    "end": 14,
+    "label": "username",
+    "score": 0.8357
+   },
+   {
+    "start": 16,
+    "end": 23,
+    "label": "username",
+    "score": 0.8392
+   }
+  ],
+  "outcome-linear-comment": [
+   {
+    "start": 32,
+    "end": 68,
+    "label": "id number",
+    "score": 0.6884
+   },
+   {
+    "start": 138,
+    "end": 150,
+    "label": "person",
+    "score": 0.3839
+   },
+   {
+    "start": 302,
+    "end": 313,
+    "label": "username",
+    "score": 0.97
+   },
+   {
+    "start": 324,
+    "end": 344,
+    "label": "email",
+    "score": 0.9996
+   }
+  ],
+  "outcome-slack-post": [
+   {
+    "start": 33,
+    "end": 44,
+    "label": "api key",
+    "score": 0.5436
+   },
+   {
+    "start": 186,
+    "end": 197,
+    "label": "username",
+    "score": 0.9903
+   },
+   {
+    "start": 209,
+    "end": 220,
+    "label": "id number",
+    "score": 0.5797
+   }
+  ],
+  "outcome-slack-lookup-by-email": [
+   {
+    "start": 36,
+    "end": 47,
+    "label": "id number",
+    "score": 0.911
+   },
+   {
+    "start": 57,
+    "end": 67,
+    "label": "username",
+    "score": 0.8471
+   },
+   {
+    "start": 82,
+    "end": 92,
+    "label": "person",
+    "score": 0.8734
+   },
+   {
+    "start": 114,
+    "end": 137,
+    "label": "email",
+    "score": 0.9597
+   },
+   {
+    "start": 148,
+    "end": 161,
+    "label": "phone number",
+    "score": 0.9998
+   }
+  ],
+  "outcome-provider-error-echo": [
+   {
+    "start": 69,
+    "end": 139,
+    "label": "authentication token",
+    "score": 0.6097
+   }
+  ],
+  "outcome-provider-error-encoded-echo": [
+   {
+    "start": 16,
+    "end": 42,
+    "label": "api key",
+    "score": 0.3649
+   },
+   {
+    "start": 49,
+    "end": 55,
+    "label": "access token",
+    "score": 0.8165
+   },
+   {
+    "start": 109,
+    "end": 115,
+    "label": "access token",
+    "score": 0.8097
+   }
+  ],
+  "outcome-browser-snapshot": [
+   {
+    "start": 83,
+    "end": 89,
+    "label": "person",
+    "score": 0.8191
+   },
+   {
+    "start": 129,
+    "end": 135,
+    "label": "person",
+    "score": 0.4706
+   }
+  ],
+  "outcome-browser-login-echo": [
+   {
+    "start": 60,
+    "end": 66,
+    "label": "username",
+    "score": 0.9601
+   },
+   {
+    "start": 67,
+    "end": 75,
+    "label": "password",
+    "score": 0.9242
+   },
+   {
+    "start": 76,
+    "end": 95,
+    "label": "password",
+    "score": 0.4418
+   },
+   {
+    "start": 106,
+    "end": 113,
+    "label": "credential",
+    "score": 0.3235
+   }
+  ],
+  "outcome-auth-test": [
+   {
+    "start": 37,
+    "end": 41,
+    "label": "username",
+    "score": 0.961
+   },
+   {
+    "start": 62,
+    "end": 66,
+    "label": "username",
+    "score": 0.976
+   },
+   {
+    "start": 76,
+    "end": 86,
+    "label": "username",
+    "score": 0.7725
+   },
+   {
+    "start": 99,
+    "end": 110,
+    "label": "id number",
+    "score": 0.4893
+   },
+   {
+    "start": 113,
+    "end": 120,
+    "label": "id number",
+    "score": 0.3008
+   },
+   {
+    "start": 123,
+    "end": 134,
+    "label": "id number",
+    "score": 0.7818
+   },
+   {
+    "start": 146,
+    "end": 157,
+    "label": "api key",
+    "score": 0.5795
+   }
+  ],
+  "outcome-mcp-tool-error": [
+   {
+    "start": 29,
+    "end": 36,
+    "label": "credential",
+    "score": 0.3234
+   },
+   {
+    "start": 67,
+    "end": 75,
+    "label": "id number",
+    "score": 0.8779
+   }
+  ],
+  "record-linear-issue": [
+   {
+    "start": 7,
+    "end": 43,
+    "label": "id number",
+    "score": 0.3631
+   },
+   {
+    "start": 59,
+    "end": 67,
+    "label": "api key",
+    "score": 0.6749
+   },
+   {
+    "start": 139,
+    "end": 147,
+    "label": "api key",
+    "score": 0.6896
+   },
+   {
+    "start": 232,
+    "end": 237,
+    "label": "person",
+    "score": 0.9883
+   },
+   {
+    "start": 376,
+    "end": 384,
+    "label": "api key",
+    "score": 0.6119
+   },
+   {
+    "start": 439,
+    "end": 480,
+    "label": "access token",
+    "score": 0.7057
+   }
+  ],
+  "record-linear-issue-with-password": [
+   {
+    "start": 7,
+    "end": 43,
+    "label": "id number",
+    "score": 0.6
+   },
+   {
+    "start": 59,
+    "end": 67,
+    "label": "api key",
+    "score": 0.3067
+   },
+   {
+    "start": 192,
+    "end": 211,
+    "label": "password",
+    "score": 0.6664
+   }
+  ],
+  "record-linear-issue-escaped-midline": [
+   {
+    "start": 15,
+    "end": 23,
+    "label": "private key",
+    "score": 0.4011
+   },
+   {
+    "start": 64,
+    "end": 81,
+    "label": "password",
+    "score": 0.7392
+   },
+   {
+    "start": 135,
+    "end": 183,
+    "label": "api key",
+    "score": 0.985
+   },
+   {
+    "start": 211,
+    "end": 215,
+    "label": "person",
+    "score": 0.9873
+   }
+  ],
+  "record-unavailable-reason": [
+   {
+    "start": 66,
+    "end": 114,
+    "label": "api key",
+    "score": 0.8039
+   }
+  ],
+  "pii-contact-block": [
+   {
+    "start": 28,
+    "end": 39,
+    "label": "person",
+    "score": 0.9996
+   },
+   {
+    "start": 41,
+    "end": 65,
+    "label": "email",
+    "score": 0.9573
+   },
+   {
+    "start": 67,
+    "end": 80,
+    "label": "phone number",
+    "score": 0.9986
+   },
+   {
+    "start": 125,
+    "end": 132,
+    "label": "person",
+    "score": 0.9855
+   },
+   {
+    "start": 134,
+    "end": 154,
+    "label": "email",
+    "score": 0.8535
+   },
+   {
+    "start": 178,
+    "end": 191,
+    "label": "phone number",
+    "score": 0.973
+   }
+  ],
+  "pii-personal-record": [
+   {
+    "start": 25,
+    "end": 38,
+    "label": "person",
+    "score": 0.9999
+   },
+   {
+    "start": 69,
+    "end": 112,
+    "label": "address",
+    "score": 0.9965
+   },
+   {
+    "start": 128,
+    "end": 141,
+    "label": "date of birth",
+    "score": 0.9988
+   },
+   {
+    "start": 159,
+    "end": 172,
+    "label": "phone number",
+    "score": 0.9961
+   }
+  ],
+  "pii-customer-record": [
+   {
+    "start": 15,
+    "end": 24,
+    "label": "id number",
+    "score": 0.3122
+   },
+   {
+    "start": 78,
+    "end": 91,
+    "label": "person",
+    "score": 0.9997
+   },
+   {
+    "start": 93,
+    "end": 120,
+    "label": "email",
+    "score": 0.9055
+   },
+   {
+    "start": 130,
+    "end": 143,
+    "label": "phone number",
+    "score": 0.9937
+   }
+  ],
+  "pii-ip-and-hostnames": [
+   {
+    "start": 73,
+    "end": 94,
+    "label": "api key",
+    "score": 0.4218
+   },
+   {
+    "start": 96,
+    "end": 107,
+    "label": "ip address",
+    "score": 0.539
+   },
+   {
+    "start": 154,
+    "end": 168,
+    "label": "api key",
+    "score": 0.4576
+   }
+  ],
+  "zh-runbook-password": [
+   {
+    "start": 27,
+    "end": 51,
+    "label": "ip address",
+    "score": 0.5384
+   },
+   {
+    "start": 58,
+    "end": 64,
+    "label": "username",
+    "score": 0.6732
+   },
+   {
+    "start": 66,
+    "end": 68,
+    "label": "password",
+    "score": 0.6615
+   },
+   {
+    "start": 70,
+    "end": 89,
+    "label": "access token",
+    "score": 0.6943
+   },
+   {
+    "start": 112,
+    "end": 120,
+    "label": "username",
+    "score": 0.652
+   },
+   {
+    "start": 155,
+    "end": 161,
+    "label": "username",
+    "score": 0.6064
+   },
+   {
+    "start": 167,
+    "end": 215,
+    "label": "api key",
+    "score": 0.7633
+   }
+  ],
+  "zh-midline-password": [
+   {
+    "start": 10,
+    "end": 17,
+    "label": "username",
+    "score": 0.8294
+   },
+   {
+    "start": 17,
+    "end": 29,
+    "label": "password",
+    "score": 0.4962
+   }
+  ],
+  "zh-contacts": [
+   {
+    "start": 10,
+    "end": 17,
+    "label": "username",
+    "score": 0.3813
+   },
+   {
+    "start": 18,
+    "end": 20,
+    "label": "person",
+    "score": 0.988
+   },
+   {
+    "start": 24,
+    "end": 46,
+    "label": "email",
+    "score": 0.96
+   },
+   {
+    "start": 50,
+    "end": 63,
+    "label": "phone number",
+    "score": 0.6458
+   },
+   {
+    "start": 66,
+    "end": 73,
+    "label": "username",
+    "score": 0.4215
+   },
+   {
+    "start": 74,
+    "end": 76,
+    "label": "person",
+    "score": 0.9749
+   },
+   {
+    "start": 77,
+    "end": 95,
+    "label": "email",
+    "score": 0.9058
+   },
+   {
+    "start": 99,
+    "end": 103,
+    "label": "credential",
+    "score": 0.3855
+   },
+   {
+    "start": 104,
+    "end": 122,
+    "label": "id number",
+    "score": 0.435
+   },
+   {
+    "start": 133,
+    "end": 137,
+    "label": "username",
+    "score": 0.4761
+   }
+  ],
+  "zh-mixed-ticket-record": [
+   {
+    "start": 66,
+    "end": 71,
+    "label": "person",
+    "score": 0.9872
+   }
+  ],
+  "zh-compliance-prose": [
+   {
+    "start": 38,
+    "end": 49,
+    "label": "credential",
+    "score": 0.6652
+   },
+   {
+    "start": 78,
+    "end": 120,
+    "label": "api key",
+    "score": 0.529
+   }
+  ],
+  "prompt-candidate-render": [
+   {
+    "start": 264,
+    "end": 269,
+    "label": "person",
+    "score": 0.9894
+   }
+  ],
+  "prompt-executor-ledger-row": [
+   {
+    "start": 67,
+    "end": 103,
+    "label": "id number",
+    "score": 0.8708
+   },
+   {
+    "start": 261,
+    "end": 268,
+    "label": "credential",
+    "score": 0.5135
+   },
+   {
+    "start": 286,
+    "end": 293,
+    "label": "credential",
+    "score": 0.5077
+   },
+   {
+    "start": 318,
+    "end": 325,
+    "label": "credential",
+    "score": 0.5873
+   }
+  ],
+  "prompt-skill-body-placeholder": [
+   {
+    "start": 29,
+    "end": 45,
+    "label": "secret key",
+    "score": 0.4156
+   }
+  ],
+  "secret-in-prose-no-label": [
+   {
+    "start": 0,
+    "end": 4,
+    "label": "person",
+    "score": 0.9987
+   },
+   {
+    "start": 49,
+    "end": 97,
+    "label": "api key",
+    "score": 0.9824
+   }
+  ],
+  "secret-private-key-block": [
+   {
+    "start": 27,
+    "end": 31,
+    "label": "private key",
+    "score": 0.7715
+   },
+   {
+    "start": 38,
+    "end": 57,
+    "label": "private key",
+    "score": 0.7909
+   },
+   {
+    "start": 57,
+    "end": 61,
+    "label": "private key",
+    "score": 0.3068
+   },
+   {
+    "start": 235,
+    "end": 254,
+    "label": "private key",
+    "score": 0.8124
+   },
+   {
+    "start": 254,
+    "end": 258,
+    "label": "private key",
+    "score": 0.4553
+   }
+  ],
+  "secret-basic-auth-header": [
+   {
+    "start": 66,
+    "end": 106,
+    "label": "credential",
+    "score": 0.4433
+   },
+   {
+    "start": 109,
+    "end": 150,
+    "label": "api key",
+    "score": 0.3469
+   },
+   {
+    "start": 152,
+    "end": 195,
+    "label": "api key",
+    "score": 0.7377
+   }
+  ],
+  "secret-yaml-and-dotenv": [
+   {
+    "start": 28,
+    "end": 76,
+    "label": "api key",
+    "score": 0.7177
+   },
+   {
+    "start": 98,
+    "end": 107,
+    "label": "username",
+    "score": 0.4419
+   },
+   {
+    "start": 111,
+    "end": 128,
+    "label": "password",
+    "score": 0.5294
+   },
+   {
+    "start": 185,
+    "end": 249,
+    "label": "private key",
+    "score": 0.4817
+   }
+  ],
+  "working-audit-and-figures-prompt": [
+   {
+    "start": 169,
+    "end": 174,
+    "label": "person",
+    "score": 0.3183
+   },
+   {
+    "start": 176,
+    "end": 180,
+    "label": "person",
+    "score": 0.9732
+   }
+  ],
+  "working-safe-failure-line": [
+   {
+    "start": 64,
+    "end": 112,
+    "label": "access token",
+    "score": 0.6696
+   }
+  ]
+ }
+}

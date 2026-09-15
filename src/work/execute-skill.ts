@@ -9,22 +9,25 @@ import {
   type ExecutionPlan,
   type MockAction,
   type MockSurfaceSnapshot,
+  type PlanStepOutcome,
   type ProcedureTrailAttestation,
   type ProcedureTrailLimitation,
   type WorkCandidate,
 } from './types';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import {
+  actionIntent,
   isAuditComment,
   isManagerDm,
   isSurfaceTool,
   parseSurfaceAction,
   targetChannel,
   targetIssueReferences,
+  type ParsedMcpCall,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
-import { actionModeInstruction } from './plan';
+import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { replyTargetLine } from './reply-target';
 
@@ -70,7 +73,7 @@ const PROCEDURE_TRAIL_OUTPUT =
   '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.';
 
 const REAL_PROCEDURE_TRAIL_OUTPUT =
-  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a reason when a result-dependent phase is required.';
+  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read or snapshot) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 
@@ -391,6 +394,7 @@ const REAL_PREAMBLE = [
   '  - Stay inside charter boundaries.',
   '  - Two kinds of evidence: the applied ledger is the only evidence of what happened, and the loaded documentation below is citable for documented facts, procedures and checklists. When the candidate, the plan or the manager\'s feedback asks for documented content, quote it from the loaded documentation and name the page; say in `notes` when the documentation does not contain it.',
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
+  '  - The charter decides which work you take; it adds no verification step. Do not invent source-evidence, ownership, priority or duplicate-check prerequisites that the candidate, the plan or a loaded procedure does not require. Only a plan step marked advisory or checking a candidate property that neither the candidate nor a loaded procedure requires is advisory: report what the data shows and never let it hold back the documented sequence.',
   "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
   '  - The manager DM through the connected chat surface is for questions and escalation - what you could not resolve from the docs or the candidate - and for a one-line note of what you did. It never carries a draft that belongs in a channel or thread: put that reply in its own `chat.postMessage` action and let the gate decide it.',
   '',
@@ -545,6 +549,8 @@ const deferredProcedureTrailSchema = z
     trailId: z.string().min(1),
     state: z.literal('deferred'),
     reason: z.string().min(1),
+    dependsOnActionIndex: z.number().int().nonnegative().nullable(),
+    dependsOnField: z.string().min(1).nullable(),
   })
   .strict();
 
@@ -558,21 +564,30 @@ export const executeSchema = z
   })
   .strict();
 
+const planStepOutcomeSchema = z
+  .object({
+    step: z.number().int().positive(),
+    status: z.enum(['satisfied', 'blocked']),
+    evidence: z.string().min(1),
+  })
+  .strict();
+
+/** The real closing phase may also report a step as not verifiable from the ledger. */
+const realPlanStepOutcomeSchema = z
+  .object({
+    step: z.number().int().positive(),
+    status: z.enum(['satisfied', 'blocked', 'not-verifiable']),
+    evidence: z.string().min(1),
+  })
+  .strict();
+
 export const dependentExecuteSchema = z
   .object({
     draft: z.string(),
     notes: z.string(),
     actions: z.array(generatedActionSchema).max(DEPENDENT_ACTION_CAP),
     procedureTrails: z.array(procedureTrailAttestationSchema),
-    planStepOutcomes: z.array(
-      z
-        .object({
-          step: z.number().int().positive(),
-          status: z.enum(['satisfied', 'blocked']),
-          evidence: z.string().min(1),
-        })
-        .strict(),
-    ),
+    planStepOutcomes: z.array(planStepOutcomeSchema),
   })
   .strict();
 
@@ -641,6 +656,13 @@ function requiredActionFloor(
   return effects.size;
 }
 
+const deferredActionsSchema = z.array(z.object({
+  description: z.string().min(1),
+  reason: z.string().min(1),
+  dependsOnActionIndex: z.number().int().nonnegative().nullable(),
+  dependsOnField: z.string().min(1).nullable(),
+}).strict()).nullable();
+
 /** Bind the runtime-loaded trail ids and exact inventory size into the provider schema. */
 export function executeSchemaForProcedureContract(
   contract: ProcedureContract,
@@ -649,6 +671,7 @@ export function executeSchemaForProcedureContract(
   mode: SurfaceMode = 'mock',
 ) {
   return executeSchema.extend({
+    ...(mode === 'real' ? { deferredActions: deferredActionsSchema } : {}),
     actions:
       mode === 'mock'
         ? z.array(generatedActionSchema).min(requiredActionFloor(contract, candidate, plan))
@@ -670,6 +693,62 @@ export function dependentExecuteSchemaForProcedureContract(
       mode === 'mock'
         ? procedureTrailInventorySchema(contract)
         : realProcedureTrailInventorySchema(contract),
+    planStepOutcomes:
+      mode === 'mock' ? z.array(planStepOutcomeSchema) : z.array(realPlanStepOutcomeSchema),
+  });
+}
+
+/**
+ * The plan steps the closing phase reports on without gating: those the
+ * planner's audit kept as advisory, and those the same audit flags now, so a
+ * plan drafted before the audit existed is read the same way.
+ *
+ * Args:
+ *   plan: The approved plan.
+ *   candidate: The work candidate.
+ *   documents: The loaded procedures.
+ *
+ * Returns:
+ *   Sorted one-based step numbers.
+ */
+export function advisoryPlanSteps(
+  plan: ExecutionPlan,
+  candidate: WorkCandidate,
+  documents: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>,
+  charter?: Charter,
+): number[] {
+  const flagged = new Set<number>(plan.advisorySteps ?? []);
+  for (const step of planPreconditionAudit(plan, candidate, documents, charter).flagged) flagged.add(step);
+  return [...flagged].sort((a, b) => a - b);
+}
+
+/**
+ * Report an advisory step the model called blocked as not verifiable instead.
+ *
+ * The evidence is kept: the manager still reads what the data showed. Only
+ * the status changes, so the step can no longer fail the run or withhold a
+ * transition the documented sequence earned.
+ *
+ * Args:
+ *   outcomes: The closing phase's plan-step outcomes.
+ *   advisorySteps: One-based advisory step numbers.
+ *
+ * Returns:
+ *   The outcomes with advisory blocks reported as not verifiable.
+ */
+export function normalisePlanStepOutcomes(
+  outcomes: readonly PlanStepOutcome[],
+  advisorySteps: readonly number[],
+): PlanStepOutcome[] {
+  const advisory = new Set(advisorySteps);
+  return outcomes.map((outcome: PlanStepOutcome): PlanStepOutcome => {
+    if (outcome.status === 'blocked' && advisory.has(outcome.step)) {
+      return { ...outcome, status: 'not-verifiable' };
+    }
+    if (outcome.status === 'not-verifiable' && !advisory.has(outcome.step)) {
+      return { ...outcome, status: 'blocked' };
+    }
+    return outcome;
   });
 }
 
@@ -1235,6 +1314,182 @@ function procedureTrailAttentionIssues(
   return { issues, limitations };
 }
 
+/**
+ * Words that name a value only a prior result can supply: a read-back figure,
+ * a provider id, an audit line, a returned identifier or timestamp, a
+ * ledger outcome. A deferral reason that names none of these defers on
+ * judgement, not on data.
+ */
+const RESULT_DEPENDENCY =
+  /\b(?:read[- ]?back|figure|result|results|returned|return value|provider id|identifier|audit line|snapshot|ledger|landed|applied|outcome|response|confirmation|comment id|issue id|message id|timestamp|thread_ts|(?:once|after|when) [^.;]{0,60}\b(?:lands?|succeeds?|completes?|returns?|applied|landed))\b/i;
+
+/** Whether a deferral reason names a prior result the deferred payload consumes. */
+export function namesResultDependency(reason: string): boolean {
+  return RESULT_DEPENDENCY.test(reason);
+}
+
+/**
+ * A verb, in any of its forms, that commits a plan step to acting on a
+ * surface: "refresh the tile", "the tile is refreshed", "enter 74%".
+ */
+const SURFACE_ACTION_VERB = new RegExp(
+  `\\b(?:${[
+    'refresh(?:es|ed|ing)?',
+    'updat(?:e|es|ed|ing)',
+    'set(?:s|ting)?',
+    'fill(?:s|ed|ing)?',
+    'sav(?:e|es|ed|ing)',
+    'navigat(?:e|es|ed|ing)',
+    'open(?:s|ed|ing)?',
+    'sign(?:s|ed|ing)? in',
+    'log(?:s|ged|ging)? in',
+    'read(?:s|ing)?',
+    'check(?:s|ed|ing)?',
+    'snapshot(?:s|ted|ting)?',
+    'enter(?:s|ed|ing)?',
+    'bring(?:s|ing)?',
+    'brought',
+    'appl(?:y|ies|ied|ying)',
+    'perform(?:s|ed|ing)?',
+    'carr(?:y|ies|ied|ying) out',
+    'complet(?:e|es|ed|ing)',
+    'run(?:s|ning)?',
+    'ran',
+    'execut(?:e|es|ed|ing)',
+    'chang(?:e|es|ed|ing)',
+    'adjust(?:s|ed|ing)?',
+    'edit(?:s|ed|ing)?',
+    'submit(?:s|ted|ting)?',
+  ].join('|')})\\b`,
+  'gi',
+);
+/** A negation that governs the verb it stands at most two words before. */
+const GOVERNING_NEGATION = /\b(?:do not|don't|never|avoid|without|hold|withhold|skip|not)\s+(?:\w+\s+){0,2}$/i;
+
+/**
+ * Whether a clause commits to acting on the surface it names.
+ *
+ * A negation counts only when it governs the verb ("do not refresh",
+ * "skip the tile refresh"); one elsewhere in the clause ("refresh the tile
+ * without changing other fields") leaves the commitment standing. The
+ * surface's own name is removed first so it never pads the distance
+ * between a negation and the verb it governs.
+ *
+ * Args:
+ *   clause: One clause of a plan step.
+ *   surface: The surface the clause names.
+ *
+ * Returns:
+ *   True when an action verb in the clause is not governed by a negation.
+ */
+function affirmsSurfaceAction(
+  clause: string,
+  surface: Pick<SurfaceRecord, 'slug' | 'displayName'>,
+): boolean {
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const stripped = clause
+    .replace(new RegExp(escape(surface.displayName), 'gi'), ' ')
+    .replace(new RegExp(escape(surface.slug), 'gi'), ' ');
+  for (const verb of stripped.matchAll(SURFACE_ACTION_VERB)) {
+    if (!GOVERNING_NEGATION.test(stripped.slice(0, verb.index))) return true;
+  }
+  return false;
+}
+
+function namesSurface(text: string, surface: Pick<SurfaceRecord, 'slug' | 'displayName'>): boolean {
+  const lower = text.toLowerCase();
+  if (lower.includes(surface.slug.toLowerCase())) return true;
+  const phrase = surface.displayName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return phrase.length > 0 && ` ${lower.replace(/[^a-z0-9]+/g, ' ')} `.includes(` ${phrase} `);
+}
+
+export interface DeferralAuditContext {
+  mode: SurfaceMode;
+  plan: Pick<ExecutionPlan, 'summary' | 'steps'>;
+  surfaces: readonly SurfaceRecord[];
+  skillBody: string;
+  now: number;
+}
+
+/**
+ * Refuse a phase-one output that defers work on judgement rather than on data.
+ *
+ * A dependent phase is legitimate only for payloads that consume a prior
+ * result. Two things are checked in code: every DEFERRED procedure-trail row
+ * must declare a read or snapshot index and the result field it consumes, and every connected browser-driven
+ * surface an affirmative approved plan step acts on must either have an
+ * action in this phase or a `notes` sentence naming the surface and the
+ * result its sequence waits for. A browser sequence is the decidable case:
+ * the runbook carries every literal and says the session cannot be split.
+ * Mock mode emits everything in one phase and is never audited.
+ *
+ * Args:
+ *   output: The phase-one output as the model returned it.
+ *   candidate: The work candidate.
+ *   context: Mode, plan, surfaces, skill body and clock.
+ *
+ * Returns:
+ *   One issue per unjustified deferral; empty when the output may stand.
+ */
+export function deferralAudit(
+  output: Pick<ExecutionOutput, 'actions' | 'notes' | 'procedureTrails' | 'needsDependentPhase' | 'deferredActions'>,
+  candidate: WorkCandidate,
+  context: DeferralAuditContext,
+): string[] {
+  if (context.mode === 'mock' || output.needsDependentPhase !== true) return [];
+  const issues: string[] = [];
+  const fixedBrowserWork = context.surfaces.some((surface) =>
+    surface.path === 'browser-driven' &&
+    verdictFor(surface, context.now) === 'connected' &&
+    context.plan.steps.some((step) => step.split(/[.;\n]/).some((clause) =>
+      namesSurface(clause, surface) && affirmsSurfaceAction(clause, surface))) &&
+    !output.actions.some((action) => {
+      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+      return parsed?.ok && parsed.action.surface === surface.slug;
+    }),
+  );
+  const deferredRows: ProcedureTrailAttestation[] = [
+    ...(output.procedureTrails ?? []),
+    ...(output.deferredActions ?? []).map((row) => ({
+      ...row, trailId: row.description, state: 'deferred' as const,
+    })),
+  ];
+  for (const row of deferredRows) {
+    const state = procedureTrailState(row);
+    if (state.state !== 'deferred') continue;
+    const index = 'dependsOnActionIndex' in row ? row.dependsOnActionIndex : null;
+    const field = 'dependsOnField' in row ? row.dependsOnField?.trim() : undefined;
+    const action = typeof index === 'number' && Number.isInteger(index) && index >= 0
+      ? output.actions[index] : undefined;
+    const parsed = action && isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+    if (field && parsed?.ok && actionIntent(parsed.action) === 'read' && !fixedBrowserWork) continue;
+    issues.push(
+      `deferred an action with no result dependency: procedure trail ${row.trailId} is deferred for "${state.reason}"; declare dependsOnActionIndex pointing at a read or snapshot in this response and dependsOnField naming its result field; work whose payload is already fixed by the candidate, runbook and surface record must be emitted now`,
+    );
+  }
+  const targeted = new Set(
+    output.actions.flatMap((action): string[] => {
+      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+      return parsed?.ok ? [parsed.action.surface] : [];
+    }),
+  );
+  for (const surface of context.surfaces) {
+    if (surface.path !== 'browser-driven') continue;
+    if (verdictFor(surface, context.now) !== 'connected') continue;
+    const promised = context.plan.steps.some((step) =>
+      step
+        .split(/[.;\n]/)
+        .some((clause) => namesSurface(clause, surface) && affirmsSurfaceAction(clause, surface)),
+    );
+    if (!promised || targeted.has(surface.slug)) continue;
+    if (namesSurface(output.notes, surface) && namesResultDependency(output.notes)) continue;
+    issues.push(
+      `deferred an action with no result dependency: the documented ${surface.displayName} (${surface.slug}) sequence has no action in this phase; its payload is fixed by the candidate and the runbook, so emit the whole sequence now, or say in notes which prior result it consumes`,
+    );
+  }
+  return issues;
+}
+
 export function mockActionContractIssues(
   output: ExecutionOutput,
   candidate: WorkCandidate,
@@ -1322,23 +1577,39 @@ export function mockActionContractIssues(
  * Returns:
  *   Prompt lines, or an empty string when no surface is connected.
  */
-export function surfaceInstructions(surfaces: readonly SurfaceRecord[], now: number): string {
+export function surfaceInstructions(
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+  mode: SurfaceMode = 'real',
+): string {
   const connected = surfaces.filter((surface) => verdictFor(surface, now) === 'connected');
   if (connected.length === 0) return '';
   const lines: string[] = [
     'Connected real surfaces (name each exactly as listed; take the action shape from its runbook):',
   ];
+  let argumentNamesShown = false;
   for (const surface of connected) {
     const detail: string[] = [`class ${surface.class}`];
     if (surface.path) detail.push(`path ${surface.path}`);
     if (surface.endpoint) detail.push(`endpoint ${surface.endpoint}`);
-    detail.push(
-      `allowed tools: ${surface.toolAllowlist?.length ? surface.toolAllowlist.join(', ') : '(none)'}`,
-    );
+    const tools = (surface.toolAllowlist ?? []).map((tool: string): string => {
+      const probed = mode === 'real'
+        ? surface.toolArguments?.find((entry) => entry.tool === tool)
+        : undefined;
+      if (!probed) return tool;
+      argumentNamesShown = true;
+      return `${tool}(${probed.arguments.join(', ')})`;
+    });
+    detail.push(`allowed tools: ${tools.length ? tools.join(', ') : '(none)'}`);
     if (surface.managerDmChannelId) {
       detail.push(`manager DM channel id: ${surface.managerDmChannelId}`);
     }
     lines.push(`  - ${surface.slug} (${surface.displayName}) - ${detail.join(' · ')}`);
+  }
+  if (argumentNamesShown) {
+    lines.push(
+      "  The names in parentheses after a tool are its probed argument names: the keys of `toolArgsJson` for that tool are drawn from that list and no other, whatever a runbook example for a different tool shows.",
+    );
   }
   lines.push(
     '',
@@ -1449,7 +1720,7 @@ export function executorInstructions(args: {
   now: number;
   procedureContract?: ProcedureContract;
 }): string {
-  const surfaceGuidance = surfaceInstructions(args.surfaces, args.now);
+  const surfaceGuidance = surfaceInstructions(args.surfaces, args.now, args.mode);
   const procedureContract = args.procedureContract ?? parseProcedureContract(args.mockEnv);
   return [
     executorPreamble(args.mode, args.autonomousActions),
@@ -1546,14 +1817,23 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     needsDependentPhase: raw.needsDependentPhase,
     actions: raw.actions.map(materialiseGeneratedAction),
     procedureTrails: raw.procedureTrails,
+    ...(mode === 'real' ? { deferredActions: deferredActionsSchema.parse(raw.deferredActions ?? null) } : {}),
   };
   if (mode !== 'mock') {
+    const deferralContext: DeferralAuditContext = {
+      mode,
+      plan,
+      surfaces: args.surfaces ?? [],
+      skillBody: skill.body,
+      now: args.now ?? Date.now(),
+    };
     const trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
       mode,
       surfaces: args.surfaces ?? [],
       phase: 'initial',
     });
-    if (trailAttention.issues.length === 0) {
+    const issues = [...trailAttention.issues, ...deferralAudit(output, candidate, deferralContext)];
+    if (issues.length === 0) {
       return trailAttention.limitations.length > 0
         ? { ...output, procedureTrailLimitations: trailAttention.limitations }
         : output;
@@ -1564,7 +1844,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       '--- Required procedure-trail correction ---',
       'Your previous structured response was not applied and none of its actions reached the gate.',
       'Return one full replacement response that fixes every invariant below.',
-      ...trailAttention.issues.map((issue) => `- ${issue}`),
+      ...issues.map((issue) => `- ${issue}`),
       '',
       'Previous structured response:',
       JSON.stringify(output),
@@ -1583,15 +1863,20 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       needsDependentPhase: repairedRaw.needsDependentPhase,
       actions: repairedRaw.actions.map(materialiseGeneratedAction),
       procedureTrails: repairedRaw.procedureTrails,
+      deferredActions: deferredActionsSchema.parse(repairedRaw.deferredActions ?? null),
     };
     const remaining = procedureTrailAttentionIssues(repaired, candidate, procedureContract, {
       mode,
       surfaces: args.surfaces ?? [],
       phase: 'initial',
     });
-    if (remaining.issues.length > 0) {
+    const remainingIssues = [
+      ...remaining.issues,
+      ...deferralAudit(repaired, candidate, deferralContext),
+    ];
+    if (remainingIssues.length > 0) {
       throw new Error(
-        `executor procedure contract remained invalid after one repair: ${remaining.issues.join('; ')}`,
+        `executor procedure contract remained invalid after one repair: ${remainingIssues.join('; ')}`,
       );
     }
     return remaining.limitations.length > 0
@@ -1658,9 +1943,212 @@ export function appliedLedgerPrompt(
       const target = action
         ? JSON.stringify({ tool: action.tool, args: action.args })
         : JSON.stringify({ tool: entry.tool });
-      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}`);
+      const repair = entry.repair
+        ? ` · arguments repaired once after the provider refused ${entry.repair.toolArgsJson}: ${entry.repair.reason}`
+        : '';
+      return redactTokenShapes(`${index}. ${result} · ${target} · ${detail}${repair}`);
     })
     .join('\n');
+}
+
+/**
+ * Provider wording that blames the call's arguments rather than its target,
+ * its authority or the provider's own state. Only such a refusal is worth one
+ * re-authoring of the argument object; "issue not found" is not.
+ */
+const ARGUMENT_FAILURE =
+  /validation (?:failed|error)|invalid (?:argument|input|parameter|field|key|property)s?\b|unknown (?:argument|parameter|field|key|property)|unrecogni[sz]ed (?:argument|parameter|field|key|property)|(?:required|missing) (?:argument|parameter|field|property|key)|\bis required\b|unexpected (?:argument|parameter|field|key|property)|invalid_type|expected (?:string|number|boolean|object|array)\b/i;
+
+/**
+ * Whether a failed ledger row's reason is the provider refusing the arguments.
+ *
+ * Args:
+ *   reason: The failed row's reason.
+ *
+ * Returns:
+ *   True when the wording names an argument problem.
+ */
+export function isArgumentFailure(reason: string | undefined): boolean {
+  return reason !== undefined && ARGUMENT_FAILURE.test(reason);
+}
+
+/** A phase-one read the provider refused for its arguments, with what it needs to be re-authored. */
+export interface RepairableRead {
+  index: number;
+  action: MockAction;
+  call: ParsedMcpCall;
+  surface: SurfaceRecord;
+  reason: string;
+}
+
+/**
+ * The failed rows one bounded repair may re-author: an `mcp.call` read on a
+ * connected surface whose provider refused the arguments. A write is never
+ * re-authored here; the manager approved its literal payload, and a different
+ * payload is a different action.
+ *
+ * Args:
+ *   actions: The phase's actions.
+ *   applied: The ledger, index-aligned with the actions.
+ *   surfaces: The agent's surfaces.
+ *
+ * Returns:
+ *   The repairable rows, in ledger order.
+ */
+export function repairableReadFailures(
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+  surfaces: readonly SurfaceRecord[],
+): RepairableRead[] {
+  const rows: RepairableRead[] = [];
+  applied.forEach((entry, index): void => {
+    const action = actions[index];
+    if (!action || entry.ok || entry.held || entry.repair || !isArgumentFailure(entry.reason)) {
+      return;
+    }
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || parsed.action.kind !== 'mcp.call') return;
+    if (actionIntent(parsed.action) !== 'read') return;
+    const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+    if (!surface) return;
+    rows.push({ index, action, call: parsed.action, surface, reason: entry.reason ?? '' });
+  });
+  return rows;
+}
+
+const repairedArgumentsSchema = z.object({ toolArgsJson: z.string() }).strict();
+
+export interface RepairToolArgumentsArgs {
+  skill: Pick<SelectedSkill, 'name'>;
+  candidate: WorkCandidate;
+  row: RepairableRead;
+  onAdditionalModelCall?: () => void;
+}
+
+/**
+ * Ask the model once for a corrected argument object for one refused read.
+ *
+ * The prompt carries the provider's message and the probed argument names of
+ * the tool, which are the two things the first attempt did not have in front
+ * of it. The reply replaces only `toolArgsJson`; surface and tool are fixed.
+ *
+ * Args:
+ *   args: The skill, the candidate and the refused row.
+ *
+ * Returns:
+ *   The re-authored action, or undefined when the reply was not a JSON object.
+ */
+export async function repairToolArguments(
+  args: RepairToolArgumentsArgs,
+): Promise<MockAction | undefined> {
+  const { row } = args;
+  const probed = row.surface.toolArguments?.find((entry) => entry.tool === row.call.tool);
+  const agentName = `${skillAgentName(args.skill.name, args.candidate)}-argument-repair`;
+  const agent = new Agent({
+    id: agentName,
+    name: agentName,
+    instructions: [
+      'You are an autonomous workplace agent named Day0, correcting the arguments of one tool call the provider refused.',
+      'Return only the corrected JSON object of tool arguments. Keep every value that was right; change only what the provider refused. Never invent an identifier: take it from the refused call, the candidate `Refs:` line or the candidate id.',
+      'When probed argument names are listed, use those names and no other, whatever a runbook example for a different tool shows.',
+    ].join('\n'),
+    model: MODEL_CONFIG,
+    maxRetries: MODEL_PROVIDER_MAX_RETRIES,
+  });
+  const user = [
+    `Surface: ${row.surface.slug} (${row.surface.displayName})`,
+    `Tool: ${row.call.tool}`,
+    probed
+      ? `Probed argument names: ${probed.arguments.join(', ')}`
+      : 'Probed argument names: (none recorded)',
+    `Refused arguments: ${JSON.stringify(row.call.toolArgs)}`,
+    `Provider message: ${redactTokenShapes(row.reason)}`,
+    '',
+    '--- Candidate ---',
+    `Id: ${args.candidate.externalId}`,
+    `Refs: ${args.candidate.contentRefs.length > 0 ? args.candidate.contentRefs.join(', ') : '(none)'}`,
+    '',
+    'Return the corrected argument object as `toolArgsJson` now.',
+  ].join('\n');
+  args.onAdditionalModelCall?.();
+  const raw = await agentJson<z.infer<typeof repairedArgumentsSchema>>({
+    agent,
+    user,
+    schema: repairedArgumentsSchema,
+  });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.toolArgsJson);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+  return {
+    tool: 'mcp.call',
+    args: { surface: row.call.surface, tool: row.call.tool, toolArgsJson: JSON.stringify(parsed) },
+  };
+}
+
+export interface RepairFailedReadsArgs {
+  actions: readonly MockAction[];
+  applied: readonly AppliedAction[];
+  surfaces: readonly SurfaceRecord[];
+  skill: Pick<SelectedSkill, 'name'>;
+  candidate: WorkCandidate;
+  /** Apply one re-authored action at its ledger index through the same gate as the first attempt. */
+  apply: (action: MockAction, index: number) => Promise<AppliedAction>;
+  /** The one model call per refused row; defaults to `repairToolArguments`. */
+  repair?: (args: RepairToolArgumentsArgs) => Promise<MockAction | undefined>;
+  onAdditionalModelCall?: () => void;
+}
+
+/**
+ * Give every read the provider refused for its arguments one repair.
+ *
+ * Each such row costs one model call and one re-apply, then stands as the
+ * second attempt's outcome whatever that was: a second refusal is ledgered
+ * failed with the second message, and nothing loops. A row whose repair the
+ * model could not produce, or whose repair call itself failed, keeps its first
+ * outcome. Writes are never touched.
+ *
+ * Args:
+ *   args: The phase's actions and ledger, the surfaces, and the apply hook.
+ *
+ * Returns:
+ *   The actions and ledger with the repaired rows replaced in place.
+ */
+export async function repairFailedReads(
+  args: RepairFailedReadsArgs,
+): Promise<{ actions: MockAction[]; applied: AppliedAction[]; repaired: number }> {
+  const actions = [...args.actions];
+  const applied = [...args.applied];
+  const repair = args.repair ?? repairToolArguments;
+  let repaired = 0;
+  for (const row of repairableReadFailures(args.actions, args.applied, args.surfaces)) {
+    let replacement: MockAction | undefined;
+    try {
+      replacement = await repair({
+        skill: args.skill,
+        candidate: args.candidate,
+        row,
+        onAdditionalModelCall: args.onAdditionalModelCall,
+      });
+    } catch {
+      replacement = undefined;
+    }
+    if (!replacement) continue;
+    const outcome = await args.apply(replacement, row.index);
+    actions[row.index] = replacement;
+    applied[row.index] = {
+      ...outcome,
+      repair: {
+        reason: row.reason,
+        toolArgsJson: row.action.args.toolArgsJson ?? JSON.stringify(row.call.toolArgs),
+      },
+    };
+    repaired += 1;
+  }
+  return { actions, applied, repaired };
 }
 
 /**
@@ -1674,6 +2162,7 @@ export async function runDependentSkill(
   const { skill, plan, candidate, charter, mockEnv } = args;
   const mode: SurfaceMode = args.mode ?? 'mock';
   const procedureContract = parseProcedureContract(mockEnv);
+  const advisory = mode === 'real' ? advisoryPlanSteps(plan, candidate, mockEnv, charter) : [];
   const base = executorInstructions({
     mode,
     autonomousActions: args.autonomousActions ?? false,
@@ -1693,6 +2182,11 @@ export async function runDependentSkill(
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
+    ...(advisory.length > 0
+      ? [
+          `Advisory plan steps: ${advisory.join(', ')}. Each checks a property of the candidate (ownership, priority, age) that the ledger cannot carry and nothing asked for. Report such a step as not-verifiable with what the data showed, never as blocked, and never let it hold back the documented steps, the audit comment or the state change the work earned.`,
+        ]
+      : []),
   ].join('\n');
 
   const agentName = skillAgentName(skill.name, candidate, 'dependent');
@@ -1749,7 +2243,7 @@ export async function runDependentSkill(
       notes: raw.notes,
       actions: raw.actions.map(materialiseGeneratedAction),
       procedureTrails: raw.procedureTrails,
-      planStepOutcomes: ordered,
+      planStepOutcomes: normalisePlanStepOutcomes(ordered, advisory),
     };
   }
 

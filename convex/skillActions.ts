@@ -14,7 +14,8 @@ import {
 } from '../src/lib/skill-sandbox';
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { toSurfaceRecord } from '../src/surfaces/records';
-import type { SurfaceRecord } from '../src/surfaces/types';
+import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -148,8 +149,9 @@ export function buildAuthorPrompt(
   surfaces: readonly SurfaceRecord[],
   now: number,
   pages: readonly AuthorRunbookPage[] = [],
+  mode: SurfaceMode = 'real',
 ): string {
-  const surfaceGuidance = surfaceInstructions(surfaces, now);
+  const surfaceGuidance = surfaceInstructions(surfaces, now, mode);
   const runbookGuidance = linkedRunbookSection(skill, surfaces, pages);
   return [
     `Skill name: ${skill.name}`,
@@ -262,8 +264,6 @@ export const authorAndRegisterSkill = action({
     if (!claim.claimed) return { ok: false, reason: claim.reason };
     const { runId, skill } = claim;
 
-    // Real mode only in practice: the surfaces table is empty on the mock, so
-    // the mock author prompt is unchanged.
     const surfaceRows: Doc<'surfaces'>[] = await ctx.runQuery(
       internal.orientationData.surfacesForAgent,
       { agentId: skill.agentId },
@@ -280,6 +280,7 @@ export const authorAndRegisterSkill = action({
       surfaceRows.map(toSurfaceRecord),
       Date.now(),
       pageRows,
+      SURFACE_MODE,
     );
     type AuthoredSkill = z.infer<typeof authorSchema>;
     // The model layer rethrows failures prompt injection cannot fix, which is

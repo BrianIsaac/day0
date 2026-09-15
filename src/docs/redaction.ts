@@ -1,3 +1,18 @@
+/**
+ * Documentation redaction: the first persistence boundary for a page.
+ *
+ * A page is read from its source, handed to the redaction layer in the
+ * `documentation` context, and only the redacted body and title are stored.
+ * Every secret the layer found becomes an encrypted credential row and a
+ * `<credential: label, stored>` marker in the page; personal data the policy
+ * removes becomes a `<redacted: kind>` marker and is not stored anywhere.
+ * The marker label names the system and the kind of credential, so the
+ * owner's credential list reads as a list of what was found and where.
+ */
+import { KNOWN_VALUE_LABEL, redactText, type Finding, type RedactOptions } from '../redaction/redact';
+import type { SpanModel } from '../redaction/client';
+import { PROVIDER_LABELS } from '../redaction/structural';
+
 export interface RedactedCredential {
   label: string;
   plaintext: string;
@@ -9,130 +24,14 @@ export interface RedactedMarkdown {
   credentials: RedactedCredential[];
 }
 
-export interface RedactionOptions {
-  /**
-   * Also treat an unlabelled run of 32 or more mixed letters and digits as a
-   * secret when its per-character entropy clears the generic floor. Off by
-   * default: the same rule catches commit hashes, UUIDs and page ids, and a
-   * marker in place of one of those is a corrupted page.
-   */
-  genericEntropyFloor?: boolean;
+export interface DocumentationRedactionOptions {
+  /** The span model; documentation sync fails closed without one. */
+  model?: SpanModel;
+  /** Every value the owner already stores, removed before the model is asked. */
+  known?: readonly string[];
 }
 
-interface CredentialMatch extends RedactedCredential {
-  start: number;
-  end: number;
-}
-
-interface ProviderShape {
-  pattern: RegExp;
-  label: string | ((title: string) => string);
-}
-
-/**
- * Prefixed provider tokens, most specific first where two share a prefix.
- *
- * Every real value carries a fixed tail after its prefix (`AKIA` and `AIza`
- * exactly, the others at least 16 characters), so a short suffix
- * (`ntn_prefix` in prose) is not a token. `.` is excluded from every tail
- * because no provider uses it and it ends sentences. The prefixes are
- * case-sensitive and must not follow an identifier character, so an
- * environment variable name (`NOTION_SECRET_TOKEN_POLICY`) is not a token.
- */
-const PROVIDER_SHAPES: readonly ProviderShape[] = [
-  { pattern: /lin_api_[A-Za-z0-9_-]{16,}/, label: 'linear service token' },
-  { pattern: /xoxb-[A-Za-z0-9_-]{16,}/, label: 'slack bot token' },
-  { pattern: /xoxp-[A-Za-z0-9_-]{16,}/, label: 'slack user token' },
-  { pattern: /xoxa-[A-Za-z0-9_-]{16,}/, label: 'slack app token' },
-  { pattern: /ntn_[A-Za-z0-9_-]{16,}/, label: 'notion connection token' },
-  {
-    pattern: /secret_[A-Za-z0-9_-]{16,}/,
-    label: (title: string): string => `${systemFromTitle(title)} secret`,
-  },
-  { pattern: /AKIA[0-9A-Z]{16}(?![A-Za-z0-9])/, label: 'aws access key' },
-  { pattern: /ghp_[A-Za-z0-9]{36}(?![A-Za-z0-9])/, label: 'github personal access token' },
-  { pattern: /github_pat_[A-Za-z0-9_]{40,}/, label: 'github personal access token' },
-  { pattern: /sk_live_[A-Za-z0-9]{16,}/, label: 'stripe api key' },
-  { pattern: /whsec_[A-Za-z0-9]{16,}/, label: 'webhook signing secret' },
-  { pattern: /AIza[0-9A-Za-z_-]{35}(?![A-Za-z0-9_-])/, label: 'google api key' },
-  { pattern: /sk-ant-[A-Za-z0-9_-]{20,}/, label: 'anthropic api key' },
-  { pattern: /sk-[A-Za-z0-9_-]{20,}/, label: 'openai api key' },
-  {
-    pattern: /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}/,
-    label: (title: string): string => `${systemFromTitle(title)} json web token`,
-  },
-];
-const SHAPED_VALUE = new RegExp(
-  `(?<![A-Za-z0-9_-])(?:${PROVIDER_SHAPES.map((shape): string => `(${shape.pattern.source})`).join('|')})`,
-  'g',
-);
-/**
- * The password segment of a connection string. The scheme, user and host
- * stay in the clear: they are the address the runbook needs, and only the
- * password is the credential.
- */
-const CONNECTION_PASSWORD = /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]*):\/\/[^\s/:@`'"<>]*:([^\s/@`'"<>]+)@/gi;
-/**
- * The value after the `Bearer` scheme word. Twelve characters keeps
- * "Bearer header." in prose out, and the value must still look like a secret
- * so "Bearer YOUR_TOKEN_HERE" is read as the placeholder it is.
- */
-const BEARER_VALUE = /\bBearer\s+([^\s,;"'`<>]{12,})/gi;
-const LABELLED_VALUE = /(?:^|\n)[^\n:]{0,48}\b(?:token|key|secret)\b[^\n:]{0,32}:\s*[`"']?([^\s`"']+)[`"']?/gi;
-/**
- * A line that declares a sign-in credential and puts its value in code
- * formatting.
- *
- * `token` and `key` appear in prose constantly ("key rotation: quarterly",
- * "token lifetime: 12 hours"), so a value on one of those lines has to look
- * like a secret before it is treated as one. The words here do not have that
- * problem, and a team that writes the value in backticks has said plainly that
- * it is a literal rather than a description - which is what lets a memorable
- * dashboard password be stored instead of read past. Without the backticks
- * nothing is taken, so "Password rotation: quarterly" stays prose.
- */
-const DECLARED_VALUE =
-  /(?:^|\n)[^\n:]{0,48}\b(?:login|password|passphrase|credential)\b[^\n:]{0,32}:\s*`([^\s`]+)`/gi;
-/** An unlabelled run long enough to be a bare token, judged by entropy alone. */
-const GENERIC_CANDIDATE = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])/g;
-const MARKER = /<credential:[^>]*>/g;
-const TRAILING_PUNCTUATION = /[.,;:!?)\]}'"_-]+$/;
-const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
-/** A value that refers to a secret rather than carrying one: `<password>`, `${VAR}`, `{{ secret }}`. */
-const REFERENCE_START = /^[<${]/;
-
-/**
- * Total Shannon entropy, in bits, a labelled value must carry to be a secret.
- *
- * The floor is on the whole value, not per character, so it encodes length
- * as well as spread. A random 16-character hexadecimal key carries 64 bits
- * and passes; an issue key (`REVOPS-7`, 24 bits), a date-like key
- * (`2026-Q3-close`, 44 bits) and a masked value (`xxxxxxxx`, 0 bits) do not.
- */
-export const LABELLED_ENTROPY_FLOOR_BITS = 48;
-/** Per-character entropy an unlabelled run must clear under the generic floor. */
-export const GENERIC_ENTROPY_FLOOR_BITS_PER_CHAR = 3.5;
-
-/**
- * Measure the Shannon entropy of a value over its own character distribution.
- *
- * Args:
- *   value: Any string.
- *
- * Returns:
- *   Total bits: per-character entropy multiplied by the character count.
- */
-export function shannonBits(value: string): number {
-  const chars = [...value];
-  const counts = new Map<string, number>();
-  for (const char of chars) counts.set(char, (counts.get(char) ?? 0) + 1);
-  let perChar = 0;
-  for (const count of counts.values()) {
-    const probability = count / chars.length;
-    perChar -= probability * Math.log2(probability);
-  }
-  return perChar * chars.length;
-}
+const MARKER = /<credential:[^>]*>|<redacted:[^>]*>/g;
 
 /** Normalise a label fragment for a marker and metadata row. */
 function words(value: string): string {
@@ -144,7 +43,7 @@ function words(value: string): string {
     .trim();
 }
 
-/** Infer a page system from its title when a labelled line names only a kind. */
+/** Infer a page system from its title when a line names only a kind. */
 function systemFromTitle(title: string): string {
   const normalised = words(title)
     .replace(/\b(?:automation|policy|handbook|documentation|docs|access)\b/g, ' ')
@@ -154,7 +53,7 @@ function systemFromTitle(title: string): string {
 }
 
 /**
- * The kinds of credential a labelled line can declare, most specific first.
+ * The kinds of credential a line can declare, most specific first.
  *
  * Order is the whole rule: "dashboard login" has to be tried before "login",
  * and "service token" before "token", or the label would lose the part that
@@ -170,48 +69,59 @@ const CREDENTIAL_KINDS: readonly [RegExp, string][] = [
   [/\bapi key\b/, 'api key'],
   [/\bclient secret\b/, 'client secret'],
   [/\bsigning secret\b/, 'signing secret'],
+  [/\baccess key\b/, 'access key'],
   [/\blogin\b/, 'login'],
   [/\bpassphrase\b/, 'passphrase'],
   [/\bpassword\b/, 'password'],
   [/\btoken\b/, 'token'],
   [/\bsecret\b/, 'secret'],
   [/\bcredential\b/, 'credential'],
+  [/\bkey\b/, 'key'],
 ];
 
-/** Infer a safe metadata label for a labelled credential line. */
-function labelledLineLabel(line: string, title: string): string {
-  const descriptor = words(line.split(':', 1)[0]);
-  const kind =
-    CREDENTIAL_KINDS.find(([pattern]: [RegExp, string]): boolean => pattern.test(descriptor))?.[1] ??
-    'key';
-  const namedSystem = ['linear', 'slack', 'notion'].find((system: string): boolean =>
-    new RegExp(`\\b${system}\\b`).test(descriptor),
-  );
-  return `${namedSystem || systemFromTitle(title)} ${kind}`;
-}
+/** What the model or the grammar called it, as the kind word of a label. */
+const LABEL_KINDS: Readonly<Record<string, string>> = {
+  password: 'password',
+  'api key': 'api key',
+  'secret key': 'secret',
+  'access token': 'token',
+  'private key': 'private key',
+  credential: 'credential',
+  'authentication token': 'token',
+  'connection password': 'connection secret',
+  'json web token': 'json web token',
+  'header value': 'bearer token',
+  secret: 'secret',
+  [KNOWN_VALUE_LABEL]: 'credential',
+};
 
 /**
- * Decide whether a labelled-line value can be a secret at all.
+ * Name a stored credential from the line it was found on.
  *
- * A `token`/`key` line also introduces names (`Key contacts: Alice`), counts
- * (`Token budget: 20000`), scheme words (`Bot token: Bearer xoxb-...`),
- * pointers (`Service token: see the vault`), locations (a vault URL),
- * references (`${LINEAR_TOKEN}`) and identifiers (`Issue key: REVOPS-7`).
- * None of those is a credential, and storing them would corrupt the page and
- * the owner's credential list. A real key mixes letters and digits or is
- * long, and it carries at least `LABELLED_ENTROPY_FLOOR_BITS` of entropy.
+ * The line's own words win ("Service token (RevOps automation):" names a
+ * service token), then a system the line names, then the page title; the
+ * model's label supplies the kind when the line does not.
  *
  * Args:
- *   value: Captured value with trailing punctuation removed.
+ *   line: The line the value sits on, value removed.
+ *   label: The model's label or the structural rule.
+ *   title: The redacted page title.
  *
  * Returns:
- *   True when the value is worth storing and redacting.
+ *   A short label safe to store beside the ciphertext.
  */
-export function looksLikeSecret(value: string): boolean {
-  if (URL_SCHEME.test(value) || REFERENCE_START.test(value)) return false;
-  const mixed = /[a-z]/i.test(value) && /[0-9]/.test(value);
-  const shaped = (value.length >= 8 && mixed) || value.length >= 20;
-  return shaped && shannonBits(value) >= LABELLED_ENTROPY_FLOOR_BITS;
+function credentialLabel(line: string, label: string, title: string): string {
+  // A provider grammar names the system and the kind itself.
+  if (PROVIDER_LABELS.has(label) && label !== 'secret') return label;
+  const descriptor = words(line.split(/[:=：]/, 1)[0]);
+  const lineKind = CREDENTIAL_KINDS.find(([pattern]: [RegExp, string]): boolean =>
+    pattern.test(descriptor),
+  )?.[1];
+  const kind = lineKind ?? LABEL_KINDS[label] ?? 'credential';
+  const namedSystem = ['linear', 'slack', 'notion', 'github', 'stripe', 'aws', 'google', 'openai', 'anthropic', 'postgres', 'mysql', 'redis'].find(
+    (system: string): boolean => new RegExp(`\\b${system}\\b`).test(descriptor),
+  );
+  return `${namedSystem || systemFromTitle(title)} ${kind}`;
 }
 
 /** Create the only safe representation written into documentation tables. */
@@ -219,155 +129,74 @@ export function credentialMarker(label: string): string {
   return `<credential: ${label}, stored>`;
 }
 
-/** Label a provider-shaped match by the alternative that captured it. */
-function shapedLabel(match: RegExpMatchArray, title: string): string {
-  const index = match.slice(1).findIndex((group): boolean => group !== undefined);
-  const label = PROVIDER_SHAPES[Math.max(index, 0)].label;
-  return typeof label === 'string' ? label : label(title);
+/** The line a finding sits on, with the value itself blanked. */
+function lineAround(text: string, finding: Finding): string {
+  const start = text.lastIndexOf('\n', finding.start - 1) + 1;
+  const endIndex = text.indexOf('\n', finding.end);
+  const end = endIndex === -1 ? text.length : endIndex;
+  return `${text.slice(start, finding.start)} ${text.slice(finding.end, end)}`;
 }
 
 /**
- * Locate every credential value in one text.
+ * Redact a page before any persistence.
  *
- * Provider shapes are taken wherever they occur. Every other detector
- * captures a value out of its context (a connection string, a `Bearer`
- * scheme word, a labelled or declaring line). Explicit enclosing values
- * replace partial matches; equal spans retain the provider label. Where
- * the context is a mere word, the value must also look like a secret.
- *
- * Args:
- *   text: Page body or title.
- *   labelContext: Value-free title used to name generic lines.
- *   options: Optional detectors.
- *
- * Returns:
- *   Non-overlapping matches in document order.
- */
-function findCredentials(
-  text: string,
-  labelContext: string,
-  options: RedactionOptions = {},
-): CredentialMatch[] {
-  const matches: CredentialMatch[] = [];
-  const overlaps = (start: number, end: number): boolean =>
-    matches.some((known): boolean => start < known.end && end > known.start);
-  const addContextMatch = (match: CredentialMatch): void => {
-    // Explicit value boundaries outrank a provider-shaped substring, while an
-    // exact match retains the more informative provider label.
-    for (let index = matches.length - 1; index >= 0; index -= 1) {
-      const known = matches[index];
-      if (match.start <= known.start && match.end >= known.end &&
-        (match.start < known.start || match.end > known.end)) {
-        matches.splice(index, 1);
-      }
-    }
-    if (!overlaps(match.start, match.end)) matches.push(match);
-  };
-  for (const match of text.matchAll(SHAPED_VALUE)) {
-    if (match.index === undefined) continue;
-    const plaintext = match[0];
-    matches.push({
-      plaintext,
-      label: shapedLabel(match, labelContext),
-      start: match.index,
-      end: match.index + plaintext.length,
-    });
-  }
-  for (const match of text.matchAll(CONNECTION_PASSWORD)) {
-    if (match.index === undefined || REFERENCE_START.test(match[2])) continue;
-    const start = match.index + match[0].lastIndexOf(`${match[2]}@`);
-    const end = start + match[2].length;
-    const label = `${match[1].toLowerCase()} connection secret`;
-    addContextMatch({ plaintext: match[2], label, start, end });
-  }
-  for (const match of text.matchAll(BEARER_VALUE)) {
-    if (match.index === undefined) continue;
-    const plaintext = match[1].replace(TRAILING_PUNCTUATION, '');
-    if (!looksLikeSecret(plaintext)) continue;
-    const start = match.index + match[0].lastIndexOf(match[1]);
-    const end = start + plaintext.length;
-    addContextMatch({ plaintext, label: `${systemFromTitle(labelContext)} bearer token`, start, end });
-  }
-  for (const [pattern, requireSecretShape] of [
-    [LABELLED_VALUE, true],
-    [DECLARED_VALUE, false],
-  ] as const) {
-    for (const match of text.matchAll(pattern)) {
-      if (match.index === undefined || !match[1] || match[1].startsWith('<credential')) continue;
-      const plaintext = match[1].replace(TRAILING_PUNCTUATION, '');
-      if (requireSecretShape && !looksLikeSecret(plaintext)) continue;
-      if (URL_SCHEME.test(plaintext)) continue;
-      const start = match.index + match[0].lastIndexOf(match[1]);
-      const end = start + plaintext.length;
-      const line = match[0].replace(/^\n/, '');
-      addContextMatch({ plaintext, label: labelledLineLabel(line, labelContext), start, end });
-    }
-  }
-  if (options.genericEntropyFloor) {
-    for (const match of text.matchAll(GENERIC_CANDIDATE)) {
-      if (match.index === undefined) continue;
-      const plaintext = match[0];
-      const mixed = /[a-z]/i.test(plaintext) && /[0-9]/.test(plaintext);
-      if (!mixed || shannonBits(plaintext) / plaintext.length < GENERIC_ENTROPY_FLOOR_BITS_PER_CHAR) {
-        continue;
-      }
-      const end = match.index + plaintext.length;
-      if (overlaps(match.index, end)) continue;
-      const label = `${systemFromTitle(labelContext)} secret`;
-      matches.push({ plaintext, label, start: match.index, end });
-    }
-  }
-  return matches.sort((left, right): number => left.start - right.start);
-}
-
-/** Replace matched values with their markers, working from the end. */
-function replaceCredentials(text: string, matches: CredentialMatch[]): string {
-  let redacted = text;
-  for (const match of [...matches].reverse()) {
-    redacted = `${redacted.slice(0, match.start)}${credentialMarker(match.label)}${redacted.slice(match.end)}`;
-  }
-  return redacted;
-}
-
-/**
- * Detect credential values and replace them before any persistence.
- *
- * The title is redacted first, so a token in a heading or a provider page
- * title never reaches `docPages.title`, `mockDocs.title` or a marker label.
+ * The title is redacted first, so a token in a heading never reaches
+ * `docPages.title`, `mockDocs.title` or a marker label.
  *
  * Args:
  *   markdown: Raw page body returned by a reader.
- *   title: Raw page title used to label generic token lines.
- *   options: Optional detectors; every default is the conservative one.
+ *   title: Raw page title.
+ *   options: The span model and the owner's stored values.
  *
  * Returns:
  *   Redacted Markdown and title, and distinct plaintext values in document
  *   order for immediate storage.
+ *
+ * Raises:
+ *   RedactorUnavailableError: When no model is configured or it cannot be
+ *     reached; a page is never persisted unredacted.
  */
-export function redactCredentials(
+export async function redactCredentials(
   markdown: string,
   title: string,
-  options: RedactionOptions = {},
-): RedactedMarkdown {
-  const titleSpans = findCredentials(title, 'Documentation', options);
-  let labelContext = title;
-  for (const match of [...titleSpans].reverse()) {
-    labelContext = `${labelContext.slice(0, match.start)} ${labelContext.slice(match.end)}`;
-  }
-  const titleMatches = findCredentials(title, labelContext, options);
-  const safeTitle = replaceCredentials(title, titleMatches);
-  const bodyMatches = findCredentials(markdown, safeTitle, options);
-  const distinct = new Map<string, RedactedCredential>();
-  for (const match of [...titleMatches, ...bodyMatches]) {
-    if (!distinct.has(match.plaintext)) {
-      distinct.set(match.plaintext, { label: match.label, plaintext: match.plaintext });
-    }
-  }
-  return {
-    markdown: replaceCredentials(markdown, bodyMatches),
-    title: safeTitle,
-    credentials: [...distinct.values()],
+  options: DocumentationRedactionOptions,
+): Promise<RedactedMarkdown> {
+  // Labels are decided as markers are written; the credential list is then
+  // built in document order, title first, each value once.
+  const labels = new Map<string, string>();
+  let safeTitle = 'Documentation';
+  const collect =
+    (context: string) =>
+    (finding: Finding): string => {
+      if (!labels.has(finding.value)) {
+        labels.set(finding.value, credentialLabel(lineAround(context, finding), finding.label, safeTitle));
+      }
+      return credentialMarker(labels.get(finding.value) ?? finding.label);
+    };
+  const base: Omit<RedactOptions, 'secretMarker'> = {
+    model: options.model,
+    known: options.known,
+    onUnavailable: 'throw',
   };
+  const titleResult = await redactText(title, 'documentation', {
+    ...base,
+    secretMarker: collect(title),
+  });
+  safeTitle = titleResult.text;
+  const bodyResult = await redactText(markdown, 'documentation', {
+    ...base,
+    secretMarker: collect(markdown),
+  });
+  const credentials: RedactedCredential[] = [];
+  for (const finding of [...titleResult.findings, ...bodyResult.findings]) {
+    if (finding.kind !== 'secret' || credentials.some((row) => row.plaintext === finding.value)) continue;
+    // A stored value met in its escaped or encoded form is the same
+    // credential, not a new one; met literally it is stored again so the
+    // page's own row keeps its reference through a re-sync.
+    if (finding.label === KNOWN_VALUE_LABEL && !options.known?.includes(finding.value)) continue;
+    credentials.push({ label: labels.get(finding.value) ?? finding.label, plaintext: finding.value });
+  }
+  return { markdown: bodyResult.text, title: safeTitle, credentials };
 }
 
 /**

@@ -390,6 +390,37 @@ export const setVerdict = internalMutation({
  * state check and the write share one transaction, so the second caller is
  * told its draft was not needed.
  */
+/**
+ * Record the one read that grounds a plan, before it is made, so the run id
+ * the adapters key their idempotency on exists and the read is on the
+ * timeline whatever happens next.
+ */
+export const beginPlanGroundingRead = internalMutation({
+  args: { workItemId: v.id('workItems'), action: v.any() },
+  handler: async (ctx, args): Promise<Id<'events'>> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) throw new Error('workItem not found');
+    return await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.plan-grounding-read',
+      payload: { workItemId: args.workItemId, action: args.action },
+      createdAt: Date.now(),
+    });
+  },
+});
+
+/** Attach the ledger row to the grounding read's event. */
+export const finishPlanGroundingRead = internalMutation({
+  args: { eventId: v.id('events'), applied: v.any() },
+  handler: async (ctx, args): Promise<void> => {
+    const event = await ctx.db.get(args.eventId);
+    if (!event) return;
+    await ctx.db.patch(args.eventId, {
+      payload: { ...(event.payload as Record<string, unknown>), applied: args.applied },
+    });
+  },
+});
+
 export const setPlan = internalMutation({
   args: { workItemId: v.id('workItems'), plan: v.any() },
   handler: async (ctx, args): Promise<{ stored: boolean }> => {

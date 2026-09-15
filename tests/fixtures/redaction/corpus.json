@@ -1,0 +1,967 @@
+{
+  "$comment": "Labelled redaction corpus. `{{slot}}` names a value the loader assembles at runtime so no committed file carries a token shape. Every span is matched by value, all occurrences. kind: secret = must be redacted in every context; pii = redacted or kept per the entity policy for the case's context; working = must pass through wherever the policy keeps it. context: documentation = a page stored at sync; outcome = a provider effect or reason persisted to the ledger; record = a grounding read rendered to the planner and persisted; prompt = already-stored material rendered into a model prompt.",
+  "cases": [
+    {
+      "id": "docs-local-looker-tile",
+      "source": "docs-local/systems/looker-pipeline-tile.md",
+      "context": "documentation",
+      "language": "en",
+      "text": "# Looker pipeline tile\n\nThe pipeline coverage tile on the RevOps Looker dashboard is the number quoted in the Friday\nstandup and in the Q3 close summary. It is maintained by hand.\n\n## Where it is\n\n- The Looker pipeline tile is reached through its web UI only, at `http://looker-tile:8080/`. That\n  is the demo's internal address on the Day0 compose network; in a real deployment it is the\n  dashboard's own URL.\n- Probe marker: page title `Sign in - Looker`.\n- Integration: none. There is no API, no MCP server and no export endpoint for this dashboard.\n  Automations reach it the way a person does, through the browser.\n- Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`), held by the RevOps\n  operations lead and rotated each quarter.\n\nOwner: the RevOps operations lead.\n\n## Current approved figure\n\nFor `REVOPS-7`, the Friday standup coverage summary states **74%**. That summary is the approved\nsource for this refresh; enter `74%` exactly and preserve the tile's audit line as proof.\n\n## Working rules\n\n- The audit line under the tile is the evidence the change landed: it reads\n  `Last updated by <user> at <time> UTC`. Read it back after saving and quote it when reporting the\n  change.",
+      "spans": [
+        { "value": "pipeline-tile-local", "kind": "secret", "label": "password" },
+        { "value": "revops", "kind": "working", "label": "username" },
+        { "value": "http://looker-tile:8080/", "kind": "working", "label": "url" },
+        { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" },
+        { "value": "74%", "kind": "working", "label": "figure" },
+        { "value": "Last updated by <user> at <time> UTC", "kind": "working", "label": "audit-line" }
+      ]
+    },
+    {
+      "id": "docs-local-refresh-runbook",
+      "source": "docs-local/runbooks/how-to-refresh-the-tile.md",
+      "context": "documentation",
+      "language": "en",
+      "text": "# How to refresh the Looker pipeline tile\n\nDashboard login (Looker tile): `pipeline-tile-local` (username `revops`), held by the RevOps\noperations lead and rotated each quarter. Documentation sync encrypts the value and replaces it in\nthe agent-readable mirror with `<credential: looker pipeline tile dashboard login, stored>`. Never\nput the literal password in a skill, action, prompt, event, screenshot or ledger row.\n\nFor `REVOPS-7`, the Friday standup coverage summary is the approved source and states **74%**.\n\n```json\n{\n  \"tool\": \"mcp.call\",\n  \"args\": {\n    \"surface\": \"looker-pipeline-tile\",\n    \"tool\": \"browser_fill_form\",\n    \"toolArgsJson\": \"{\\\"fields\\\":[{\\\"name\\\":\\\"Username\\\",\\\"value\\\":\\\"revops\\\"},{\\\"name\\\":\\\"Password\\\",\\\"value\\\":\\\"{{secret}}\\\"}]}\"\n  }\n}\n```\n\nThe evidence is the audit line beneath the tile: `Last updated by <user> at <time> UTC`.",
+      "spans": [
+        { "value": "pipeline-tile-local", "kind": "secret", "label": "password" },
+        { "value": "<credential: looker pipeline tile dashboard login, stored>", "kind": "working", "label": "marker" },
+        { "value": "{{secret}}", "kind": "working", "label": "placeholder" },
+        { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" },
+        { "value": "74%", "kind": "working", "label": "figure" },
+        { "value": "Username", "kind": "working", "label": "field-name" }
+      ]
+    },
+    {
+      "id": "docs-local-slack-runbook",
+      "source": "docs-local/runbooks/how-to-post-slack.md",
+      "context": "documentation",
+      "language": "en",
+      "text": "# How to post to Slack\n\nThe approved transport is the Slack Web API over HTTPS at `https://slack.com/api/` with the bot\ntoken as a bearer. The probe also opens the manager DM by looking up the manager's email\n(`users.lookupByEmail`, `conversations.open`) and records the channel id on the surface.\n\n```json\n{\n  \"tool\": \"http.request\",\n  \"args\": {\n    \"surface\": \"slack\",\n    \"method\": \"POST\",\n    \"path\": \"/chat.postMessage\",\n    \"headersJson\": \"{\\\"Authorization\\\":\\\"Bearer {{secret}}\\\",\\\"Content-Type\\\":\\\"application/json; charset=utf-8\\\"}\",\n    \"body\": \"{\\\"channel\\\":\\\"D0123456789\\\",\\\"username\\\":\\\"Priya (Day0)\\\",\\\"text\\\":\\\"Draft complete: the synthetic close summary is ready for your review.\\\"}\"\n  }\n}\n```\n\n- `{{secret}}` is replaced server-side with the surface's credential; the literal token never appears anywhere.",
+      "spans": [
+        { "value": "{{secret}}", "kind": "working", "label": "placeholder" },
+        { "value": "D0123456789", "kind": "working", "label": "channel-id" },
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "https://slack.com/api/", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "docs-local-ticket-runbook",
+      "source": "docs-local/runbooks/how-to-update-ticket.md",
+      "context": "documentation",
+      "language": "en",
+      "text": "# How to update a Linear ticket\n\nUse the `linear` surface for formal work in team `REVOPS`, project `Q3 close`. The approved transport is\nLinear's Streamable HTTP MCP endpoint at `https://mcp.linear.app/mcp`.\n\n```json\n{\n  \"tool\": \"mcp.call\",\n  \"args\": {\n    \"surface\": \"linear\",\n    \"tool\": \"save_comment\",\n    \"toolArgsJson\": \"{\\\"issueId\\\":\\\"REVOPS-5\\\",\\\"body\\\":\\\"Prepared the synthetic close summary for manager review. No customer data was used.\\\"}\"\n  }\n}\n```\n\n- Provenance: every comment ends with a trailer naming the employee and the run, for example `-- Priya (Day0) · run wi_91/run_4`.",
+      "spans": [
+        { "value": "REVOPS-5", "kind": "working", "label": "ticket-id" },
+        { "value": "https://mcp.linear.app/mcp", "kind": "working", "label": "url" },
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "wi_91/run_4", "kind": "working", "label": "run-id" }
+      ]
+    },
+    {
+      "id": "docs-local-onboarding",
+      "source": "docs-local/onboarding.md",
+      "context": "documentation",
+      "language": "en",
+      "text": "# Revenue operations onboarding\n\n| System | What it is for | Access owner |\n|---|---|---|\n| Linear | Team `REVOPS`, project `Q3 close`, is the formal work queue and audit trail. | Work management administrator |\n| Slack | `#revops-asks` receives inbound requests, `#revops` is the team channel, and the manager DM is the only permitted outbound destination during cold start. | Messaging administrator |\n| Northstar CRM | Internal account and opportunity records used during close. No approved connection surface is recorded. | Business Systems owner |\n\n### Days 4-5\n\n- Complete one manager-approved Linear update.\n- Record the provider result in the work ledger.",
+      "spans": [
+        { "value": "#revops-asks", "kind": "working", "label": "channel" },
+        { "value": "#revops", "kind": "working", "label": "channel" },
+        { "value": "Northstar CRM", "kind": "working", "label": "system" }
+      ]
+    },
+    {
+      "id": "docs-local-queue",
+      "source": "docs-local/queue.md",
+      "context": "documentation",
+      "language": "en",
+      "text": "## REVOPS-2 - Reconcile Northstar CRM ownership\n\n- Source: Linear team `REVOPS`, project `Q3 close`\n- Priority: High\n- Request: inspect Northstar CRM for the owner of the synthetic `Aster Works` opportunity and add\n  the owner to the issue.\n- Acceptance: if no approved surface exists, defer as `awaiting-connection`, cite what was searched,\n  and ask the manager. Do not fabricate the owner or a connection.",
+      "spans": [
+        { "value": "REVOPS-2", "kind": "working", "label": "ticket-id" },
+        { "value": "Aster Works", "kind": "working", "label": "org" }
+      ]
+    },
+    {
+      "id": "notion-linear-automation",
+      "source": "tests/fixtures/notion-pages/linear-automation.md",
+      "context": "documentation",
+      "language": "en",
+      "text": "# Linear automation\n\n## Where it is\n\n- Workspace: `day0`.\n- Team: `RevOps`, identifier `REVOPS` (issue ids are `REVOPS-n`).\n- Integration endpoint: Linear's MCP server, Streamable HTTP, `https://mcp.linear.app/mcp`. Authentication is a bearer token in the `Authorization` header.\n\n## Access\n\n- Owner: the work management administrator.\n- The automation uses a personal API key created for it, scoped to this workspace.\n- Service token (RevOps automation): `{{linear_token}}`\n- Rotation: create a new key in Linear (Settings -> Security & access -> Personal API keys), replace the line above, revoke the old key.",
+      "spans": [
+        { "value": "{{linear_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "https://mcp.linear.app/mcp", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "notion-linear-automation-placeholder",
+      "source": "tests/fixtures/notion-pages/linear-automation.md (as committed)",
+      "context": "documentation",
+      "language": "en",
+      "text": "- Service token (RevOps automation): `PASTE_LINEAR_API_KEY_HERE`\n- Rotation: create a new key in Linear, replace the line above, revoke the old key.",
+      "spans": [
+        { "value": "PASTE_LINEAR_API_KEY_HERE", "kind": "working", "label": "placeholder", "note": "The lexical pipeline stores this as a credential today (looksLikeSecret is true); a placeholder is not a secret." }
+      ]
+    },
+    {
+      "id": "notion-slack-policy",
+      "source": "tests/fixtures/notion-pages/slack-day0-app.md",
+      "context": "documentation",
+      "language": "en",
+      "text": "# Slack automation policy\n\n- Workspace: `day0`.\n- Channels: `#revops-asks` (inbound requests), `#revops` (team channel).\n- Integration: Slack Web API over HTTPS at `https://slack.com/api/`, bot token in the `Authorization: Bearer` header.\n\n1. The automation registers its app from the team manifest template below, using `apps.manifest.create`. This needs a Slack **app configuration token**, which the messaging administrator issues at approval time. Configuration tokens expire after twelve hours and are never kept in documentation.\n\n```json\n{\n  \"display_information\": { \"name\": \"<employee name> (Day0)\" },\n  \"oauth_config\": {\n    \"redirect_urls\": [\"<Day0 public URL>/api/oauth/slack\"],\n    \"scopes\": { \"bot\": [\"chat:write\", \"channels:read\", \"users:read.email\"] }\n  }\n}\n```\n\n- The manager DM is opened by looking up the manager's email; automations never guess a channel id.",
+      "spans": [
+        { "value": "#revops-asks", "kind": "working", "label": "channel" },
+        { "value": "#revops", "kind": "working", "label": "channel" },
+        { "value": "<employee name>", "kind": "working", "label": "placeholder" }
+      ]
+    },
+    {
+      "id": "notion-slack-policy-with-config-token",
+      "source": "synthetic: the policy page with a configuration token pasted against the rule",
+      "context": "documentation",
+      "language": "en",
+      "text": "## How an automation gets its own Slack identity\n\n1. Register the app with `apps.manifest.create`. Configuration token (expires in 12h): {{slack_config_token}}\n2. The messaging administrator installs the new app from the install link.",
+      "spans": [
+        { "value": "{{slack_config_token}}", "kind": "secret", "label": "configuration-token" }
+      ]
+    },
+    {
+      "id": "shape-aws-access-key",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "- Access key: {{aws_key}}\n- Region: ap-southeast-1",
+      "spans": [
+        { "value": "{{aws_key}}", "kind": "secret", "label": "provider-token" },
+        { "value": "ap-southeast-1", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "shape-github-classic",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Push with {{github_classic}} as the password.",
+      "spans": [{ "value": "{{github_classic}}", "kind": "secret", "label": "provider-token" }]
+    },
+    {
+      "id": "shape-github-fine",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "export GH_TOKEN={{github_fine}}",
+      "spans": [{ "value": "{{github_fine}}", "kind": "secret", "label": "provider-token" }]
+    },
+    {
+      "id": "shape-stripe-table",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "| Stripe | {{stripe_key}} |\n\nVerify with {{stripe_webhook}}.",
+      "spans": [
+        { "value": "{{stripe_key}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{stripe_webhook}}", "kind": "secret", "label": "provider-token" }
+      ]
+    },
+    {
+      "id": "shape-google-query",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "?key={{google_key}}&region=sg",
+      "spans": [
+        { "value": "{{google_key}}", "kind": "secret", "label": "provider-token" },
+        { "value": "&region=sg", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "shape-openai-env",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "OPENAI_API_KEY={{openai_key}}\nFallback: {{anthropic_key}}\nUse {{openai_plain}} in the header.",
+      "spans": [
+        { "value": "{{openai_key}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{anthropic_key}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{openai_plain}}", "kind": "secret", "label": "provider-token" },
+        { "value": "OPENAI_API_KEY", "kind": "working", "label": "env-var-name" }
+      ]
+    },
+    {
+      "id": "shape-jwt",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Session: {{jwt}}, valid for one hour.",
+      "spans": [
+        { "value": "{{jwt}}", "kind": "secret", "label": "jwt" },
+        { "value": ", valid for one hour.", "kind": "working", "label": "prose" }
+      ]
+    },
+    {
+      "id": "shape-dsn-password",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "DSN: postgres://app_reader:{{db_password}}@warehouse.internal:5432/revops?sslmode=require",
+      "spans": [
+        { "value": "{{db_password}}", "kind": "secret", "label": "connection-password" },
+        { "value": "postgres://app_reader:", "kind": "working", "label": "url" },
+        { "value": "@warehouse.internal:5432/revops?sslmode=require", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "shape-bearer-curl",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "curl -H \"Authorization: Bearer {{bearer_value}}\" https://api.example.com/v1",
+      "spans": [
+        { "value": "{{bearer_value}}", "kind": "secret", "label": "bearer" },
+        { "value": "https://api.example.com/v1", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "shape-client-secret",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Client secret: {{client_secret}}\nAPI key: {{api_key_mixed}}",
+      "spans": [
+        { "value": "{{client_secret}}", "kind": "secret", "label": "client-secret" },
+        { "value": "{{api_key_mixed}}", "kind": "secret", "label": "api-key" }
+      ]
+    },
+    {
+      "id": "shape-provider-tokens-in-context",
+      "source": "tests/src/docs/redaction.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Run:\n```\nexport KEY={{linear_token}}\n```\n| Service token | {{notion_token}} |\nSee https://example.com/x?token={{slack_bot_token}}&y=1 for details\n{\"token\":\"{{notion_secret}}\",\"key\":\"value\"}\nUse `{{slack_user_token}}` in the header, then `{{slack_app_token}}` for the app.",
+      "spans": [
+        { "value": "{{linear_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{notion_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{slack_bot_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{notion_secret}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{slack_user_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{slack_app_token}}", "kind": "secret", "label": "provider-token" }
+      ]
+    },
+    {
+      "id": "shape-token-in-title-and-punctuation",
+      "source": "tests/src/docs/redaction.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "# Title {{notion_token}}\n\nUse {{linear_token}}, then rotate {{linear_token}}.",
+      "spans": [
+        { "value": "{{notion_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "{{linear_token}}", "kind": "secret", "label": "provider-token" }
+      ]
+    },
+    {
+      "id": "shape-generic-labelled-key",
+      "source": "tests/src/docs/redaction.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "# Billing automation\n\nAPI key: runtime-contract-value-0123456789",
+      "spans": [{ "value": "runtime-contract-value-0123456789", "kind": "secret", "label": "api-key" }]
+    },
+    {
+      "id": "declared-dashboard-login",
+      "source": "tests/src/docs/redaction.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "- Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`)\n- Warehouse password: `warehouse-read-only`",
+      "spans": [
+        { "value": "pipeline-tile-local", "kind": "secret", "label": "password" },
+        { "value": "warehouse-read-only", "kind": "secret", "label": "password" },
+        { "value": "revops", "kind": "working", "label": "username" }
+      ]
+    },
+    {
+      "id": "nonshape-rotation-prose",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "- Key rotation: quarterly\n- Token lifetime: 12 hours\n- Password rotation: quarterly, by the operations lead.\n- Secret rotation: annually\n- Login: ask the lead.\n- Key rotation: `quarterly`\n- Token lifetime: `12h`\n- Login page: `https://looker.example/login`",
+      "spans": [
+        { "value": "quarterly", "kind": "working", "label": "prose" },
+        { "value": "12 hours", "kind": "working", "label": "prose" },
+        { "value": "annually", "kind": "working", "label": "prose" },
+        { "value": "ask the lead", "kind": "working", "label": "prose" },
+        { "value": "12h", "kind": "working", "label": "prose" },
+        { "value": "https://looker.example/login", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "nonshape-hashes-and-ids",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Fixed in 3f2a9c1e7b5d4a6f8e0c2b1d9a7f6e5c4b3a2d1e on main; cherry-picked as 3f2a9c1e7b5d.\nThe dataset id is 0f8fad5b-d9cb-469f-a165-70867728950e and the run id was 0f8fad5b-d9cb-469f-a165-70867728950e.\nhttps://www.notion.so/day0/Onboarding-1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d\nPage id: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+      "spans": [
+        { "value": "3f2a9c1e7b5d4a6f8e0c2b1d9a7f6e5c4b3a2d1e", "kind": "working", "label": "commit" },
+        { "value": "0f8fad5b-d9cb-469f-a165-70867728950e", "kind": "working", "label": "uuid" },
+        { "value": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d", "kind": "working", "label": "page-id" }
+      ]
+    },
+    {
+      "id": "nonshape-issue-keys",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Issue key: REVOPS-7\nClose REVOPS-12 after REVOPS-7.\nTeam key: REVOPS\nChannel key: C0123456789\nKey: 2026-Q3-close\nToken version: v2-2026\nKey dates: 2026-09-03\nToken budget: 20000 per run\nKey contacts: Alice Smith (RevOps lead)",
+      "spans": [
+        { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" },
+        { "value": "REVOPS-12", "kind": "working", "label": "ticket-id" },
+        { "value": "C0123456789", "kind": "working", "label": "channel-id" },
+        { "value": "2026-Q3-close", "kind": "working", "label": "identifier" },
+        { "value": "v2-2026", "kind": "working", "label": "identifier" },
+        { "value": "2026-09-03", "kind": "working", "label": "date" },
+        { "value": "20000", "kind": "working", "label": "figure" },
+        { "value": "Alice Smith", "kind": "pii", "label": "person", "role": "coworker" }
+      ]
+    },
+    {
+      "id": "nonshape-bearer-words",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Authentication is a bearer token in the `Authorization` header.\nbot token in the `Authorization: Bearer` header.\nusing a bot token Bearer header. It names the usable methods.\nSend `Authorization: Bearer <token>` with every call.\nAuthorization: Bearer YOUR_TOKEN\nNotion tokens start with ntn_ and the ntn_prefix convention is documented.",
+      "spans": [
+        { "value": "Bearer <token>", "kind": "working", "label": "placeholder" },
+        { "value": "YOUR_TOKEN", "kind": "working", "label": "placeholder" },
+        { "value": "ntn_prefix", "kind": "working", "label": "prose" }
+      ]
+    },
+    {
+      "id": "nonshape-connection-strings",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "API: https://slack.com/api/ over HTTPS.\nTile: http://looker-tile:8080/ on the compose network.\nMirror: https://reader@warehouse.internal/revops\nDSN: postgres://app:${DB_PASSWORD}@warehouse.internal/revops\nDSN: postgres://app:<password>@warehouse.internal/revops\nDSN: postgres://app:{{ secret }}@warehouse.internal/revops",
+      "spans": [
+        { "value": "https://reader@warehouse.internal/revops", "kind": "working", "label": "url" },
+        { "value": "${DB_PASSWORD}", "kind": "working", "label": "placeholder" },
+        { "value": "<password>", "kind": "working", "label": "placeholder" },
+        { "value": "{{ secret }}", "kind": "working", "label": "placeholder" }
+      ]
+    },
+    {
+      "id": "nonshape-below-floor-labelled",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Token: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nKey: ************************\nAPI key: aaaaaaaaaaaaaaaaaaaa",
+      "spans": [
+        { "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "kind": "working", "label": "masked" },
+        { "value": "************************", "kind": "working", "label": "masked" },
+        { "value": "aaaaaaaaaaaaaaaaaaaa", "kind": "working", "label": "masked" }
+      ]
+    },
+    {
+      "id": "nonshape-prefix-words",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "An AKIA prefix marks an AWS access key id; ghp_ marks a classic GitHub token.\nStripe keys start with sk_live_ and webhook secrets with whsec_.\nGoogle keys start with AIza, OpenAI keys with sk-, and a JWT with eyJ.\nSet NOTION_SECRET_TOKEN_ROTATION_POLICY and LINEAR_API_KEY_OWNER in the vault.",
+      "spans": [
+        { "value": "NOTION_SECRET_TOKEN_ROTATION_POLICY", "kind": "working", "label": "env-var-name" },
+        { "value": "LINEAR_API_KEY_OWNER", "kind": "working", "label": "env-var-name" }
+      ]
+    },
+    {
+      "id": "nonshape-already-redacted",
+      "source": "tests/src/docs/redaction-breadth.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "DSN: postgres://app:<credential: postgres connection secret, stored>@db/x\nHeader: Bearer <credential: warehouse bearer token, stored>\nAccess key: <credential: aws access key, stored>\n- Service token: <credential: linear service token, stored>",
+      "spans": [
+        { "value": "<credential: postgres connection secret, stored>", "kind": "working", "label": "marker" },
+        { "value": "<credential: warehouse bearer token, stored>", "kind": "working", "label": "marker" },
+        { "value": "<credential: aws access key, stored>", "kind": "working", "label": "marker" },
+        { "value": "<credential: linear service token, stored>", "kind": "working", "label": "marker" }
+      ]
+    },
+    {
+      "id": "review-miss-midline-password",
+      "source": "real-mode-reliability-review-3 handover: a labelled value not at the start of its line is matched by neither redactor",
+      "context": "documentation",
+      "language": "en",
+      "text": "Sign in with the shared account (user revops, password: hunter2) and press Save.",
+      "spans": [
+        { "value": "hunter2", "kind": "secret", "label": "password" },
+        { "value": "revops", "kind": "working", "label": "username" }
+      ]
+    },
+    {
+      "id": "review-miss-midline-password-prose",
+      "source": "synthetic, review miss",
+      "context": "documentation",
+      "language": "en",
+      "text": "The tile login is revops and the password is hunter2; the operations lead rotates it each quarter.",
+      "spans": [
+        { "value": "hunter2", "kind": "secret", "label": "password" },
+        { "value": "revops", "kind": "working", "label": "username" }
+      ]
+    },
+    {
+      "id": "review-miss-short-passwords",
+      "source": "tests/src/surfaces/redact.test.ts and review 3",
+      "context": "documentation",
+      "language": "en",
+      "text": "Password: hunter2\nLooker password: revops2026\nPassword: P@ssw0rd!\nSecret: Tr0ub4dor&3\nClient secret: abc123",
+      "spans": [
+        { "value": "hunter2", "kind": "secret", "label": "password" },
+        { "value": "revops2026", "kind": "secret", "label": "password" },
+        { "value": "P@ssw0rd!", "kind": "secret", "label": "password" },
+        { "value": "Tr0ub4dor&3", "kind": "secret", "label": "password" },
+        { "value": "abc123", "kind": "secret", "label": "client-secret" }
+      ]
+    },
+    {
+      "id": "review-miss-short-token-values",
+      "source": "review 3: token and key labels pass short values by design",
+      "context": "documentation",
+      "language": "en",
+      "text": "- Sandbox token: abc123 (use only in the staging workspace)\n- Warehouse key: q7Mz2Kv9\n- api key: sk-test",
+      "spans": [
+        { "value": "abc123", "kind": "secret", "label": "api-key", "note": "Below the 48-bit floor; the lexical pipeline passes it by design." },
+        { "value": "q7Mz2Kv9", "kind": "secret", "label": "api-key", "note": "Eight mixed characters, 24 bits." },
+        { "value": "sk-test", "kind": "working", "label": "placeholder" }
+      ]
+    },
+    {
+      "id": "review-miss-password-in-parenthetical",
+      "source": "synthetic, review miss",
+      "context": "documentation",
+      "language": "en",
+      "text": "| Looker tile | http://looker-tile:8080/ | revops / hunter2 | operations lead |",
+      "spans": [
+        { "value": "hunter2", "kind": "secret", "label": "password", "note": "A user/password pair in a table cell with no label word at all." },
+        { "value": "revops", "kind": "working", "label": "username" },
+        { "value": "http://looker-tile:8080/", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "password-keyword-variants",
+      "source": "synthetic",
+      "context": "documentation",
+      "language": "en",
+      "text": "pwd: Winter2026!\nPasscode = 482913\nPIN for the shared phone: 0419\nlogin: revops / Sunny-Day-42",
+      "spans": [
+        { "value": "Winter2026!", "kind": "secret", "label": "password" },
+        { "value": "482913", "kind": "secret", "label": "password" },
+        { "value": "0419", "kind": "secret", "label": "password" },
+        { "value": "Sunny-Day-42", "kind": "secret", "label": "password" },
+        { "value": "revops", "kind": "working", "label": "username" }
+      ]
+    },
+    {
+      "id": "reference-values-kept",
+      "source": "tests/src/surfaces/redact.test.ts",
+      "context": "documentation",
+      "language": "en",
+      "text": "Password: <password>\nPassword: {{secret}}\nPassword: ${LOOKER_PASSWORD}\nService token: see the vault item RevOps/Linear\nAPI key: https://vault.example.com/item/123",
+      "spans": [
+        { "value": "<password>", "kind": "working", "label": "placeholder" },
+        { "value": "{{secret}}", "kind": "working", "label": "placeholder" },
+        { "value": "${LOOKER_PASSWORD}", "kind": "working", "label": "placeholder" },
+        { "value": "see the vault item RevOps/Linear", "kind": "working", "label": "prose" },
+        { "value": "https://vault.example.com/item/123", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "mock-team-overview",
+      "source": "convex/mockSeed.ts team-overview",
+      "context": "prompt",
+      "language": "en",
+      "text": "# Team overview — RevOps\n\nWe are the Revenue Operations team at Acme Co.\n\n## Who we are\n\n- **Manager:** runs the team, owns the relationship with the CRO.\n- **Priya:** senior analyst, segment + pipeline.\n- **Aman:** senior analyst, forecasting + variance analysis.\n- **Sara:** analyst, ad-hoc requests.\n\n## Cadence\n\n- Monday standup, 09:30 SGT (15 min).\n- Weekly committee meeting Tuesday 14:00 SGT (1h, manager presents).\n\n## Working surfaces\n\n- Google Sheets — Q1, Q2, Q3, Q4 revenue trackers. Slug for the Q4 tracker is `q4-revenue-tracker`.\n- Slack — `#revops-asks` (inbound), `#revops` (team), `#standups` (committee prep).\n- Linear — internal team tickets (project: REVOPS).",
+      "spans": [
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Aman", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Sara", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Acme Co", "kind": "working", "label": "org" },
+        { "value": "09:30 SGT", "kind": "working", "label": "date" },
+        { "value": "14:00 SGT", "kind": "working", "label": "date" },
+        { "value": "#revops-asks", "kind": "working", "label": "channel" },
+        { "value": "#standups", "kind": "working", "label": "channel" },
+        { "value": "q4-revenue-tracker", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "mock-on-call",
+      "source": "convex/mockSeed.ts on-call",
+      "context": "prompt",
+      "language": "en",
+      "text": "# On-call rotation\n\n- One-week rotations, Monday 09:00 SGT to Monday 09:00 SGT.\n- Five-engineer rotation pool (Priya, Aman, Sara, Theo, Ines).\n- Anyone can swap their shift directly with another engineer in the pool. Post the swap in #ops-oncall.\n\n## Escalation contacts\n\n- Tier-2 (this week): Sara\n- Tier-2 backup: Aman\n- Manager-on-call (only for sev-0): Priya",
+      "spans": [
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Aman", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Sara", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Theo", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Ines", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "#ops-oncall", "kind": "working", "label": "channel" }
+      ]
+    },
+    {
+      "id": "mock-slack-ask",
+      "source": "convex/mockSeed.ts messages",
+      "context": "prompt",
+      "language": "en",
+      "text": "Priya asked in #revops-asks (thread thread-pipeline-coverage): New joiner ask: what does our enterprise segment pipeline coverage look like over the last four weeks? Briefing the CRO Tuesday.",
+      "spans": [
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "#revops-asks", "kind": "working", "label": "channel" },
+        { "value": "thread-pipeline-coverage", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "mock-manager-dm",
+      "source": "convex/mockSeed.ts messages",
+      "context": "prompt",
+      "language": "en",
+      "text": "Manager (DM): Three closed-won deals from last Friday's standup need to land in the Q4 Revenue Tracker — Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k). Closed-won tab. Tracking ticket: REVOPS-203.",
+      "spans": [
+        { "value": "$45k", "kind": "working", "label": "money" },
+        { "value": "$72k", "kind": "working", "label": "money" },
+        { "value": "$28k", "kind": "working", "label": "money" },
+        { "value": "Beta Corp", "kind": "working", "label": "org" },
+        { "value": "REVOPS-203", "kind": "working", "label": "ticket-id" }
+      ]
+    },
+    {
+      "id": "mock-tickets",
+      "source": "convex/mockSeed.ts tickets",
+      "context": "prompt",
+      "language": "en",
+      "text": "REVOPS-201 (P2, open): Reconcile Q3 closed-won totals against Salesforce. Numbers in the committee deck do not match Salesforce; gap of ~$30k.\nREVOPS-202 (P3, open): Refresh Q4 pipeline coverage view in Looker. Pipeline coverage tile is showing stale data.\nREVOPS-203 (P1, open): Add Friday standup closed-won deals to Q4 Revenue Tracker.",
+      "spans": [
+        { "value": "REVOPS-201", "kind": "working", "label": "ticket-id" },
+        { "value": "REVOPS-202", "kind": "working", "label": "ticket-id" },
+        { "value": "REVOPS-203", "kind": "working", "label": "ticket-id" },
+        { "value": "~$30k", "kind": "working", "label": "money" }
+      ]
+    },
+    {
+      "id": "mock-spreadsheet-rows",
+      "source": "convex/mockSeed.ts spreadsheet rows",
+      "context": "prompt",
+      "language": "en",
+      "text": "closed-won | Northwind | $120,000 | 2026-04-12 | Priya | closed-won\nclosed-won | Contoso | $58,000 | 2026-04-19 | Aman | closed-won\npipeline | Initech | $95,000 | negotiation | 2026-06-01 | Priya",
+      "spans": [
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Aman", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "$120,000", "kind": "working", "label": "money" },
+        { "value": "2026-04-12", "kind": "working", "label": "date" },
+        { "value": "Northwind", "kind": "working", "label": "org" }
+      ]
+    },
+    {
+      "id": "mock-tweet",
+      "source": "convex/mockSeed.ts tweet",
+      "context": "prompt",
+      "language": "en",
+      "text": "@random_person: @AcmeCo your product is fine I guess",
+      "spans": [
+        { "value": "@random_person", "kind": "pii", "label": "username", "role": "public" },
+        { "value": "@AcmeCo", "kind": "working", "label": "org" }
+      ]
+    },
+    {
+      "id": "outcome-linear-comment",
+      "source": "real mode: Linear save_comment effect",
+      "context": "outcome",
+      "language": "en",
+      "text": "save_comment on linear · {\"id\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"body\":\"Prepared the synthetic close summary for manager review. -- Priya (Day0) · run wi_91/run_4\",\"createdAt\":\"2026-09-03T07:12:41.000Z\",\"issue\":{\"identifier\":\"REVOPS-5\",\"title\":\"Add the close-summary audit note\"},\"user\":{\"name\":\"Brian Isaac\",\"email\":\"operator@example.com\"}}",
+      "spans": [
+        { "value": "0f8fad5b-d9cb-469f-a165-70867728950e", "kind": "working", "label": "uuid" },
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "2026-09-03T07:12:41.000Z", "kind": "working", "label": "date" },
+        { "value": "REVOPS-5", "kind": "working", "label": "ticket-id" },
+        { "value": "Brian Isaac", "kind": "pii", "label": "person", "role": "account-holder" },
+        { "value": "operator@example.com", "kind": "pii", "label": "email" }
+      ]
+    },
+    {
+      "id": "outcome-slack-post",
+      "source": "real mode: chat.postMessage effect",
+      "context": "outcome",
+      "language": "en",
+      "text": "HTTP 200 · {\"ok\":true,\"channel\":\"D0123456789\",\"ts\":\"1725347561.000100\",\"message\":{\"type\":\"message\",\"text\":\"Draft complete: the synthetic close summary is ready for your review.\",\"user\":\"U0123ABCDEF\",\"bot_id\":\"B0123ABCDEF\",\"ts\":\"1725347561.000100\"}}",
+      "spans": [
+        { "value": "D0123456789", "kind": "working", "label": "channel-id" },
+        { "value": "1725347561.000100", "kind": "working", "label": "identifier" },
+        { "value": "U0123ABCDEF", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "outcome-slack-lookup-by-email",
+      "source": "real mode: users.lookupByEmail effect during the probe",
+      "context": "outcome",
+      "language": "en",
+      "text": "HTTP 200 · {\"ok\":true,\"user\":{\"id\":\"U0123ABCDEF\",\"name\":\"priya.nair\",\"real_name\":\"Priya Nair\",\"profile\":{\"email\":\"priya.nair@acme.example\",\"phone\":\"+65 9123 4567\",\"title\":\"Senior analyst\"},\"tz\":\"Asia/Singapore\"}}",
+      "spans": [
+        { "value": "U0123ABCDEF", "kind": "working", "label": "identifier" },
+        { "value": "\"name\":\"priya.nair\"", "kind": "pii", "label": "username", "role": "coworker" },
+        { "value": "Priya Nair", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "priya.nair@acme.example", "kind": "pii", "label": "email" },
+        { "value": "+65 9123 4567", "kind": "pii", "label": "phone" },
+        { "value": "Asia/Singapore", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "outcome-provider-error-echo",
+      "source": "real mode: a 401 that echoes the header",
+      "context": "outcome",
+      "language": "en",
+      "text": "HTTP 401 · invalid_auth · {\"ok\":false,\"error\":\"invalid_auth\",\"sent\":\"Authorization: Bearer {{slack_bot_token}}\"}",
+      "spans": [
+        { "value": "{{slack_bot_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "invalid_auth", "kind": "working", "label": "prose" }
+      ]
+    },
+    {
+      "id": "outcome-provider-error-encoded-echo",
+      "source": "real mode: URL-encoded and JSON-escaped echoes (exact-value layer)",
+      "context": "outcome",
+      "language": "en",
+      "text": "could not reach https://api.example.com/v1?token={{bearer_value_encoded}}: 401 {\"detail\":\"bad token {{bearer_value}}\"}",
+      "spans": [
+        { "value": "{{bearer_value_encoded}}", "kind": "secret", "label": "bearer", "known": "bearer_value" },
+        { "value": "{{bearer_value}}", "kind": "secret", "label": "bearer", "known": "bearer_value" }
+      ]
+    },
+    {
+      "id": "outcome-browser-snapshot",
+      "source": "real mode: browser_snapshot evidence after the tile refresh",
+      "context": "outcome",
+      "language": "en",
+      "text": "browser_snapshot on looker-pipeline-tile · Pipeline coverage 74% · Last updated by revops at 2026-09-03 07:14 UTC · Signed in as revops",
+      "spans": [
+        { "value": "74%", "kind": "working", "label": "figure" },
+        { "value": "Last updated by revops at 2026-09-03 07:14 UTC", "kind": "working", "label": "audit-line" },
+        { "value": "revops", "kind": "working", "label": "username" }
+      ]
+    },
+    {
+      "id": "outcome-browser-login-echo",
+      "source": "synthetic: a driver that echoes the filled form",
+      "context": "outcome",
+      "language": "en",
+      "text": "browser_fill_form on looker-pipeline-tile · filled Username=revops Password=pipeline-tile-local · clicked Sign in",
+      "spans": [
+        { "value": "pipeline-tile-local", "kind": "secret", "label": "password", "known": "looker_password" },
+        { "value": "revops", "kind": "working", "label": "username" }
+      ]
+    },
+    {
+      "id": "outcome-auth-test",
+      "source": "real mode: auth.test probe effect",
+      "context": "outcome",
+      "language": "en",
+      "text": "HTTP 200 · {\"ok\":true,\"url\":\"https://day0.slack.com/\",\"team\":\"day0\",\"user\":\"priya_day0\",\"team_id\":\"T0123ABCDEF\",\"user_id\":\"U0123ABCDEF\",\"bot_id\":\"B0123ABCDEF\"}",
+      "spans": [
+        { "value": "priya_day0", "kind": "working", "label": "username" },
+        { "value": "T0123ABCDEF", "kind": "working", "label": "identifier" },
+        { "value": "https://day0.slack.com/", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "outcome-mcp-tool-error",
+      "source": "real mode: a provider validation error",
+      "context": "outcome",
+      "language": "en",
+      "text": "Validation failed: argument `issueId` is required; received {\"id\":\"REVOPS-5\",\"body\":\"Prepared the close summary\"}",
+      "spans": [
+        { "value": "REVOPS-5", "kind": "working", "label": "ticket-id" },
+        { "value": "issueId", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "record-linear-issue",
+      "source": "review 2: a realistic Linear get_issue record",
+      "context": "record",
+      "language": "en",
+      "text": "{\"id\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"identifier\":\"REVOPS-7\",\"title\":\"Refresh the Looker pipeline tile\",\"description\":\"Ticket key: REVOPS-7\\nToken budget: none\\nRefresh the tile with the Friday standup figure (74%).\\nOwner: Priya\\nDue: 2026-09-05\",\"priority\":2,\"state\":{\"name\":\"Todo\"},\"team\":{\"key\":\"REVOPS\"},\"labels\":[\"q3-close\"],\"url\":\"https://linear.app/day0/issue/REVOPS-7\",\"createdAt\":\"2026-09-01T02:11:00.000Z\",\"branchName\":\"revops-7-refresh-the-looker-pipeline-tile\"}",
+      "spans": [
+        { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" },
+        { "value": "Token budget: none", "kind": "working", "label": "prose" },
+        { "value": "74%", "kind": "working", "label": "figure" },
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "2026-09-05", "kind": "working", "label": "date" },
+        { "value": "https://linear.app/day0/issue/REVOPS-7", "kind": "working", "label": "url" },
+        { "value": "revops-7-refresh-the-looker-pipeline-tile", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "record-linear-issue-with-password",
+      "source": "review 1 finding 6: a ticket description carrying the tile password",
+      "context": "record",
+      "language": "en",
+      "text": "{\"id\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"identifier\":\"REVOPS-7\",\"title\":\"Refresh the Looker pipeline tile\",\"description\":\"Sign in at http://looker-tile:8080/ as revops.\\nLooker password: pipeline-tile-local\\nThen set Pipeline coverage to 74% and quote the audit line.\",\"state\":{\"name\":\"Todo\"}}",
+      "spans": [
+        { "value": "pipeline-tile-local", "kind": "secret", "label": "password" },
+        { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" },
+        { "value": "revops", "kind": "working", "label": "username" },
+        { "value": "74%", "kind": "working", "label": "figure" }
+      ]
+    },
+    {
+      "id": "record-linear-issue-escaped-midline",
+      "source": "synthetic: a JSON-escaped description with a mid-line password and a service token",
+      "context": "record",
+      "language": "en",
+      "text": "{\"identifier\":\"REVOPS-9\",\"description\":\"Use the shared account (password: hunter2) until the SSO fix lands.\\r\\nThe old integration key {{linear_token}} must be revoked.\\nContact: Aman\"}",
+      "spans": [
+        { "value": "hunter2", "kind": "secret", "label": "password" },
+        { "value": "{{linear_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "REVOPS-9", "kind": "working", "label": "ticket-id" },
+        { "value": "Aman", "kind": "pii", "label": "person", "role": "coworker" }
+      ]
+    },
+    {
+      "id": "record-unavailable-reason",
+      "source": "review 1 finding 1: an unavailable reason that echoed a credential",
+      "context": "record",
+      "language": "en",
+      "text": "record unavailable: get_issue failed: 401 Unauthorized for Bearer {{linear_token}} (issue REVOPS-7)",
+      "spans": [
+        { "value": "{{linear_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" }
+      ]
+    },
+    {
+      "id": "pii-contact-block",
+      "source": "synthetic: a runbook contact block",
+      "context": "documentation",
+      "language": "en",
+      "text": "## Contacts\n\n- RevOps lead: Alice Smith, alice.smith@acme.example, +65 9123 4567, desk 4.12\n- Work management administrator: Ben Tan (ben.tan@acme.example)\n- Out-of-hours pager: +65 6555 0100 (PagerDuty)",
+      "spans": [
+        { "value": "Alice Smith", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "alice.smith@acme.example", "kind": "pii", "label": "email" },
+        { "value": "+65 9123 4567", "kind": "pii", "label": "phone" },
+        { "value": "Ben Tan", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "ben.tan@acme.example", "kind": "pii", "label": "email" },
+        { "value": "+65 6555 0100", "kind": "pii", "label": "phone", "role": "service-line" }
+      ]
+    },
+    {
+      "id": "pii-personal-record",
+      "source": "synthetic: personal data that should never reach a page or a ledger",
+      "context": "documentation",
+      "language": "en",
+      "text": "Escalation note from HR: Ines Ferreira, NRIC S1234567D, home address 12 Bukit Timah Road #05-01 Singapore 229804, date of birth 14 March 1991, personal mobile +65 8123 4567, salary band 4.",
+      "spans": [
+        { "value": "Ines Ferreira", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "S1234567D", "kind": "pii", "label": "id-number" },
+        { "value": "12 Bukit Timah Road #05-01 Singapore 229804", "kind": "pii", "label": "address" },
+        { "value": "14 March 1991", "kind": "pii", "label": "date-of-birth" },
+        { "value": "+65 8123 4567", "kind": "pii", "label": "phone" }
+      ]
+    },
+    {
+      "id": "pii-customer-record",
+      "source": "synthetic: a CRM export pasted into a ticket",
+      "context": "record",
+      "language": "en",
+      "text": "{\"identifier\":\"REVOPS-14\",\"description\":\"Contact for the Aster Works renewal: Mei Ling Chen <mei.chen@asterworks.example>, mobile +65 9876 5432, card ending 4242. Renewal value $95,000, close date 2026-06-01.\"}",
+      "spans": [
+        { "value": "REVOPS-14", "kind": "working", "label": "ticket-id" },
+        { "value": "Aster Works", "kind": "working", "label": "org" },
+        { "value": "Mei Ling Chen", "kind": "pii", "label": "person", "role": "external" },
+        { "value": "mei.chen@asterworks.example", "kind": "pii", "label": "email" },
+        { "value": "+65 9876 5432", "kind": "pii", "label": "phone" },
+        { "value": "$95,000", "kind": "working", "label": "money" },
+        { "value": "2026-06-01", "kind": "working", "label": "date" }
+      ]
+    },
+    {
+      "id": "pii-ip-and-hostnames",
+      "source": "synthetic: infrastructure notes",
+      "context": "documentation",
+      "language": "en",
+      "text": "The warehouse listens on 10.20.30.40:5432 inside the VPC; the bastion is bastion.acme.internal (203.0.113.7). Compose services: backend, docs-notion-mcp, playwright-mcp.",
+      "spans": [
+        { "value": "10.20.30.40", "kind": "pii", "label": "ip", "role": "infrastructure" },
+        { "value": "203.0.113.7", "kind": "pii", "label": "ip", "role": "infrastructure" },
+        { "value": "bastion.acme.internal", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "zh-runbook-password",
+      "source": "synthetic: a Chinese runbook page with a labelled password and a token",
+      "context": "documentation",
+      "language": "zh",
+      "text": "# 如何刷新 Looker 流水线图块\n\n登录页面：`http://looker-tile:8080/`，用户名 `revops`，密码：`pipeline-tile-local`，由运营负责人保管，每季度轮换。\n\n对于 `REVOPS-7`，周五站会的覆盖率摘要为 **74%**，请原样填写。\n\n服务令牌（RevOps 自动化）：{{linear_token}}\n\n审计行：`Last updated by <user> at <time> UTC`。",
+      "spans": [
+        { "value": "pipeline-tile-local", "kind": "secret", "label": "password" },
+        { "value": "{{linear_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "revops", "kind": "working", "label": "username" },
+        { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" },
+        { "value": "74%", "kind": "working", "label": "figure" },
+        { "value": "http://looker-tile:8080/", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "zh-midline-password",
+      "source": "synthetic: Chinese prose with a mid-sentence password",
+      "context": "documentation",
+      "language": "zh",
+      "text": "共享账号的用户名是 revops，密码是 hunter2，请勿写入工单。",
+      "spans": [
+        { "value": "hunter2", "kind": "secret", "label": "password" },
+        { "value": "revops", "kind": "working", "label": "username" }
+      ]
+    },
+    {
+      "id": "zh-contacts",
+      "source": "synthetic: a Chinese contact block with personal data",
+      "context": "documentation",
+      "language": "zh",
+      "text": "## 联系人\n\n- 收入运营负责人：张伟，邮箱 zhang.wei@acme.example，手机 138-0013-8000\n- 工作管理管理员：李娜（li.na@acme.example）\n- 身份证号：110101199003074512（仅供人事使用）\n- 团队频道：#revops，工单前缀 REVOPS-",
+      "spans": [
+        { "value": "张伟", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "zhang.wei@acme.example", "kind": "pii", "label": "email" },
+        { "value": "138-0013-8000", "kind": "pii", "label": "phone" },
+        { "value": "李娜", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "li.na@acme.example", "kind": "pii", "label": "email" },
+        { "value": "110101199003074512", "kind": "pii", "label": "id-number" },
+        { "value": "#revops", "kind": "working", "label": "channel" }
+      ]
+    },
+    {
+      "id": "zh-mixed-ticket-record",
+      "source": "synthetic: a mixed-language ticket record",
+      "context": "record",
+      "language": "mixed",
+      "text": "{\"identifier\":\"REVOPS-21\",\"title\":\"更新 Q3 关账摘要\",\"description\":\"负责人：Priya。截止日期 2026-09-05。数据库连接 postgres://app:{{db_password}}@warehouse.internal/revops 仅限只读。\"}",
+      "spans": [
+        { "value": "{{db_password}}", "kind": "secret", "label": "connection-password" },
+        { "value": "REVOPS-21", "kind": "working", "label": "ticket-id" },
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "2026-09-05", "kind": "working", "label": "date" }
+      ]
+    },
+    {
+      "id": "zh-compliance-prose",
+      "source": "docs/submission/compliance.md, Chinese section",
+      "context": "documentation",
+      "language": "zh",
+      "text": "脱敏是文档持久化的第一道边界。检测到的 token/key 值会加密写入 `credentials` table；`docPages` 和镜像文档只收到 `<credential: linear service token, stored>` 一类 marker。后续同步若移除该值，相应凭据会被撤销。",
+      "spans": [
+        { "value": "<credential: linear service token, stored>", "kind": "working", "label": "marker" }
+      ]
+    },
+    {
+      "id": "prompt-candidate-render",
+      "source": "planner prompt: a candidate rendered from the mock office",
+      "context": "prompt",
+      "language": "en",
+      "text": "Candidate: spreadsheet / ticket-queue\nSource: REVOPS-203 filed by Manager\nBody: append Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k) to the closed-won tab from last Friday's standup. Refs: ticket://REVOPS-203, sheet://q4-revenue-tracker\nAsked in #revops-asks by Priya; thread thread-pipeline-coverage.",
+      "spans": [
+        { "value": "REVOPS-203", "kind": "working", "label": "ticket-id" },
+        { "value": "$45k", "kind": "working", "label": "money" },
+        { "value": "#revops-asks", "kind": "working", "label": "channel" },
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "ticket://REVOPS-203", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "prompt-executor-ledger-row",
+      "source": "execute-skill appliedLedgerPrompt",
+      "context": "prompt",
+      "language": "en",
+      "text": "1. applied · linear save_comment · save_comment on linear · {\"id\":\"0f8fad5b-d9cb-469f-a165-70867728950e\"} · authority standing\n2. held · slack chat.postMessage · public post held while autonomous actions are off\n3. failed · looker-pipeline-tile browser_click · Sign in failed: element `Sign in` not found; page title `Sign in - Looker`",
+      "spans": [
+        { "value": "0f8fad5b-d9cb-469f-a165-70867728950e", "kind": "working", "label": "uuid" },
+        { "value": "Sign in - Looker", "kind": "working", "label": "prose" }
+      ]
+    },
+    {
+      "id": "prompt-skill-body-placeholder",
+      "source": "an authored skill body",
+      "context": "prompt",
+      "language": "en",
+      "text": "headers = {\"Authorization\": \"Bearer {{secret}}\", \"Content-Type\": \"application/json\"}\nresp = http_request(surface=\"slack\", method=\"POST\", path=\"/chat.postMessage\", headersJson=json.dumps(headers), body=json.dumps({\"channel\": channel_id, \"text\": text}))",
+      "spans": [
+        { "value": "{{secret}}", "kind": "working", "label": "placeholder" }
+      ]
+    },
+    {
+      "id": "secret-in-prose-no-label",
+      "source": "synthetic: a bare provider token in a Slack message",
+      "context": "prompt",
+      "language": "en",
+      "text": "Aman: here is the key for the staging workspace, {{linear_token}}, please rotate it after the demo. Ticket REVOPS-31.",
+      "spans": [
+        { "value": "{{linear_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "Aman", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "REVOPS-31", "kind": "working", "label": "ticket-id" }
+      ]
+    },
+    {
+      "id": "secret-private-key-block",
+      "source": "synthetic: a PEM block pasted into a page",
+      "context": "documentation",
+      "language": "en",
+      "text": "Deploy key for the mirror:\n-----BEGIN OPENSSH PRIVATE KEY-----\n{{pem_body}}\n-----END OPENSSH PRIVATE KEY-----\nAdd it under Settings -> Deploy keys.",
+      "spans": [
+        { "value": "{{pem_body}}", "kind": "secret", "label": "private-key" }
+      ]
+    },
+    {
+      "id": "secret-basic-auth-header",
+      "source": "synthetic: a basic auth header in a curl example",
+      "context": "documentation",
+      "language": "en",
+      "text": "curl -u revops:hunter2 https://warehouse.internal/health\ncurl -H \"Authorization: Basic {{basic_auth}}\" https://warehouse.internal/health\ncurl -H \"X-Api-Key: {{api_key_mixed}}\" https://api.example.com/v1/rows",
+      "spans": [
+        { "value": "hunter2", "kind": "secret", "label": "password" },
+        { "value": "{{basic_auth}}", "kind": "secret", "label": "bearer" },
+        { "value": "{{api_key_mixed}}", "kind": "secret", "label": "api-key" },
+        { "value": "revops", "kind": "working", "label": "username" }
+      ]
+    },
+    {
+      "id": "secret-yaml-and-dotenv",
+      "source": "synthetic: configuration snippets in a page",
+      "context": "documentation",
+      "language": "en",
+      "text": "```yaml\nslack:\n  bot_token: {{slack_bot_token}}\n  channel: '#revops'\nwarehouse:\n  password: hunter2\n  host: warehouse.internal\n```\n\n```\nDAY0_CREDENTIAL_KEY={{credential_key_hex}}\nDAY0_DOCS_ROOT=/docs\nNEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210\n```",
+      "spans": [
+        { "value": "{{slack_bot_token}}", "kind": "secret", "label": "provider-token" },
+        { "value": "hunter2", "kind": "secret", "label": "password" },
+        { "value": "{{credential_key_hex}}", "kind": "secret", "label": "api-key" },
+        { "value": "#revops", "kind": "working", "label": "channel" },
+        { "value": "warehouse.internal", "kind": "working", "label": "url" },
+        { "value": "/docs", "kind": "working", "label": "identifier" },
+        { "value": "http://127.0.0.1:3210", "kind": "working", "label": "url" }
+      ]
+    },
+    {
+      "id": "working-audit-and-figures-prompt",
+      "source": "the operator's list of working material",
+      "context": "prompt",
+      "language": "en",
+      "text": "Completion note: set Pipeline coverage to 74% for REVOPS-7. Audit line read back: Last updated by revops at 2026-09-03 07:14 UTC. Posted the summary in #revops and DM'd Priya; Aman is on call this week.",
+      "spans": [
+        { "value": "74%", "kind": "working", "label": "figure" },
+        { "value": "REVOPS-7", "kind": "working", "label": "ticket-id" },
+        { "value": "Last updated by revops at 2026-09-03 07:14 UTC", "kind": "working", "label": "audit-line" },
+        { "value": "#revops", "kind": "working", "label": "channel" },
+        { "value": "Priya", "kind": "pii", "label": "person", "role": "coworker" },
+        { "value": "Aman", "kind": "pii", "label": "person", "role": "coworker" }
+      ]
+    },
+    {
+      "id": "working-safe-failure-line",
+      "source": "tests/src/surfaces/redact.test.ts safeFailureMessage",
+      "context": "outcome",
+      "language": "en",
+      "text": "Failed to connect: 401 Unauthorized for local-value-only Bearer {{slack_bot_token}} at Transport._send (/srv/app/index.mjs:1:1)",
+      "spans": [
+        { "value": "local-value-only", "kind": "secret", "label": "bearer", "known": "local-value-only" },
+        { "value": "{{slack_bot_token}}", "kind": "secret", "label": "provider-token" }
+      ]
+    }
+  ]
+}

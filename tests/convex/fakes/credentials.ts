@@ -56,6 +56,12 @@ export const bySourceForStore = internalQuery({
   },
 });
 
+/** Mirror lane A's list for the exact-value layer: these fixtures store nothing to remove. */
+export const activeValuesForOwner = internalQuery({
+  args: { userId: v.string() },
+  handler: async (): Promise<{ overflow: boolean; rows: never[] }> => ({ overflow: false, rows: [] }),
+});
+
 /** Mirror lane A's `decrypt`: an unknown or revoked row is unavailable. */
 export const decrypt = internalAction({
   args: { credentialId: v.id('credentials') },

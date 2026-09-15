@@ -1,7 +1,8 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -34,11 +35,25 @@ import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
+// The redaction component the actions reach through DAY0_REDACTOR_URL, served
+// in-process from the recorded span model.
+let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
+beforeAll(async (): Promise<void> => {
+  redactorDouble = await serveSpanModel();
+  process.env.DAY0_REDACTOR_URL = redactorDouble.url;
+});
+afterAll(async (): Promise<void> => {
+  delete process.env.DAY0_REDACTOR_URL;
+  await redactorDouble?.close();
+});
+
+
 const recorded = vi.hoisted(() => ({
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
   http: [] as Array<{ url: string; authorization: string; body: unknown }>,
   failMcpAfterRequest: false,
   failedMcpTool: undefined as string | undefined,
+  issueRecordText: undefined as string | undefined,
   afterCredentialRead: undefined as (() => Promise<void>) | undefined,
   afterToolList: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
@@ -47,10 +62,14 @@ const recorded = vi.hoisted(() => ({
   dependentSwitches: [] as Array<boolean | undefined>,
   planSwitches: [] as boolean[],
   planContexts: [] as Array<{ surfaces?: string[]; documents?: string[] }>,
+  planRecords: [] as unknown[],
   skillOutput: undefined as ExecutionOutput | undefined,
   dependentOutput: undefined as DependentExecutionOutput | undefined,
   dependentRuns: 0,
   additionalModelCalls: 0,
+  /** What the mocked argument repair answers; undefined means the model produced nothing usable. */
+  repairedToolArgsJson: undefined as string | undefined,
+  repairRequests: [] as Array<{ tool: string; reason: string }>,
 }));
 
 const skillOutput: ExecutionOutput = {
@@ -225,6 +244,20 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
       }
       return recorded.skillOutput ?? skillOutput;
     },
+    repairToolArguments: async (args: {
+      row: { call: { surface: string; tool: string }; reason: string };
+    }): Promise<ExecutionOutput['actions'][number] | undefined> => {
+      recorded.repairRequests.push({ tool: args.row.call.tool, reason: args.row.reason });
+      if (!recorded.repairedToolArgsJson) return undefined;
+      return {
+        tool: 'mcp.call',
+        args: {
+          surface: args.row.call.surface,
+          tool: args.row.call.tool,
+          toolArgsJson: recorded.repairedToolArgsJson,
+        },
+      };
+    },
     runDependentSkill: async (args: {
       autonomousActions?: boolean;
       plan: { steps: string[] };
@@ -255,12 +288,14 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
       autonomousActions: boolean;
       surfaces?: Array<{ slug: string }>;
       documents?: { howToGuides: unknown[]; teamDocs: unknown[] };
+      record?: unknown;
     }) => {
       recorded.planSwitches.push(args.autonomousActions);
       recorded.planContexts.push({
         surfaces: args.surfaces?.map((surface) => surface.slug).sort(),
         documents: args.documents ? Object.keys(args.documents).sort() : undefined,
       });
+      recorded.planRecords.push(args.record);
       return {
         summary: 'Comment then close.',
         steps: ['comment', 'close'],
@@ -317,6 +352,23 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                     content: [{ type: 'text', text: `${tool} failed: snapshot timed out` }],
                   };
                 }
+                if (tool === 'get_issue' && 'issueId' in (args as Record<string, unknown>)) {
+                  return {
+                    isError: false,
+                    content: [
+                      {
+                        type: 'text',
+                        text: JSON.stringify({
+                          error: true,
+                          message: 'Tool input validation failed: unknown argument issueId',
+                        }),
+                      },
+                    ],
+                  };
+                }
+                if (tool === 'get_issue' && recorded.issueRecordText !== undefined) {
+                  return { content: [{ type: 'text', text: recorded.issueRecordText }] };
+                }
                 const text =
                   tool === 'browser_navigate'
                     ? '- Page URL: http://looker-tile:8080/'
@@ -342,7 +394,10 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   };
 });
 
+const realFetch = globalThis.fetch;
 vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<Response> => {
+  // The redaction component is reached over the same global; its calls are its own.
+  if (redactorDouble && String(input).startsWith(redactorDouble.url)) return realFetch(input, init);
   const headers = (init?.headers ?? {}) as Record<string, string>;
   recorded.http.push({
     url: String(input),
@@ -357,18 +412,22 @@ afterEach((): void => {
   recorded.http.length = 0;
   recorded.failMcpAfterRequest = false;
   recorded.failedMcpTool = undefined;
+  recorded.issueRecordText = undefined;
   recorded.afterCredentialRead = undefined;
   recorded.afterToolList = undefined;
   recorded.skillSwitches.length = 0;
   recorded.dependentSwitches.length = 0;
   recorded.planSwitches.length = 0;
   recorded.planContexts.length = 0;
+  recorded.planRecords.length = 0;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
   recorded.dependentRuns = 0;
   recorded.additionalModelCalls = 0;
+  recorded.repairedToolArgsJson = undefined;
+  recorded.repairRequests.length = 0;
   restoreSurfaceMode();
 });
 
@@ -616,6 +675,46 @@ describe('work action completion evidence', (): void => {
         surfaces: [{ slug: 'looker', displayName: 'Looker pipeline tile' }],
       }),
     ).toThrow('promised a Looker pipeline tile read');
+  });
+
+  it('accepts a not-verifiable outcome with evidence for a promised read, and never lets it withhold the close or fail the run', (): void => {
+    const plan = {
+      summary: 'Confirm, then comment and close.',
+      steps: [
+        'Check REVOPS-7 in Linear is owned and prioritized.',
+        'Comment on the ticket and close it.',
+      ],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const surfaces = [{ slug: 'linear', displayName: 'Linear' }];
+    const outcomes = [
+      { step: 1, status: 'not-verifiable' as const, evidence: 'get_issue carries no assignee field' },
+      { step: 2, status: 'satisfied' as const, evidence: 'comment and Done' },
+    ];
+    expect(() =>
+      validatePlanStepOutcomes({ plan, outcomes, initialActions: [], initialLedger: [], surfaces }),
+    ).not.toThrow();
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan,
+        outcomes: [{ ...outcomes[0], evidence: ' ' }, outcomes[1]],
+        initialActions: [],
+        initialLedger: [],
+        surfaces,
+      }),
+    ).toThrow('promised a Linear read');
+    const comment = skillOutput.actions[0];
+    const done = skillOutput.actions[1];
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment, done], planStepOutcomes: outcomes }),
+    ).toBeUndefined();
+    expect(
+      dependentTransitionRefusal({ plan, actions: [comment], planStepOutcomes: outcomes }),
+    ).toContain('omitted the approved ticket state transition');
+    expect(blockedPlanReason(outcomes)).toBeUndefined();
   });
 
   it('does not read a compound noun such as close-week as a promise to close the ticket', (): void => {
@@ -1484,6 +1583,115 @@ describe('executing an approved plan through the gate', (): void => {
     expect(await scheduled(off)).toContain('managerChannelActions:requestDecision');
   });
 
+  describe('the grounding read before the plan', (): void => {
+    const toClaimed = async (
+      harness: Harness,
+      workItemId: Id<'workItems'>,
+      patch: Partial<Doc<'workItems'>> = {},
+    ): Promise<void> => {
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(workItemId, { state: 'claimed', plan: undefined, ...patch });
+      });
+    };
+    const groundingEvents = async (harness: Harness) =>
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+        (event) => event.type === 'work.plan-grounding-read',
+      );
+
+    it('reads the ticket once under standing authority, writes nothing, and hands the record to the planner', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([
+        ['get_issue', { id: 'iss-1' }],
+      ]);
+      // The decision notice and its public acknowledgement go over Slack once the
+      // plan is pending; the read itself writes nothing to any surface.
+      expect(recorded.http.filter((call) => !call.url.endsWith('/chat.postMessage'))).toEqual([]);
+      expect(recorded.planRecords).toEqual([
+        { surface: 'linear', tool: 'get_issue', text: 'get_issue on linear · {"id":"get_issue-id"}' },
+      ]);
+      const events = await groundingEvents(harness);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload).toMatchObject({
+        workItemId,
+        action: { tool: 'mcp.call', args: { tool: 'get_issue', toolArgsJson: '{"id":"iss-1"}' } },
+        applied: { ok: true, authority: 'standing', tool: 'mcp.call' },
+      });
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    });
+
+    it('redacts ticket credentials before persisting the grounding ledger or handing off the record', async () => {
+      useSurfaceMode('real');
+      const password = 'Zq9!vT2#kL8mNp4rXs7wYb3e';
+      recorded.issueRecordText = JSON.stringify({
+        id: 'iss-1', description: `Refresh the tile.\nService password: ${password}`,
+      });
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+      await harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId });
+      const events = await groundingEvents(harness);
+      expect(events).toHaveLength(1);
+      expect(JSON.stringify(events)).not.toContain(password);
+      expect(JSON.stringify(recorded.planRecords)).not.toContain(password);
+      expect(events[0]!.payload).toMatchObject({ applied: { ok: true, authority: 'standing' } });
+    });
+
+    it('reads nothing for a chat candidate', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId, {
+        sourceCategory: 'inbox',
+        sourceSystem: 'slack',
+        externalId: 'C0PUBLIC:1787.0001',
+      });
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp).toHaveLength(0);
+      expect(recorded.planRecords).toEqual([undefined]);
+      expect(await groundingEvents(harness)).toHaveLength(0);
+    });
+
+    it('still drafts the plan when the read fails, with the reason in the record section', async (): Promise<void> => {
+      useSurfaceMode('real');
+      recorded.failedMcpTool = 'get_issue';
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+      expect(recorded.planRecords).toEqual([
+        { surface: 'linear', tool: 'get_issue', unavailable: 'get_issue failed: snapshot timed out' },
+      ]);
+      const events = await groundingEvents(harness);
+      expect(events[0]!.payload).toMatchObject({ applied: { ok: false } });
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    });
+
+    it('reports an ungranted read as unavailable without calling the provider', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real', ['boss:message', 'linear:write', 'slack:read']);
+      await toClaimed(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp).toHaveLength(0);
+      expect(recorded.planRecords).toEqual([
+        { surface: 'linear', tool: 'get_issue', unavailable: 'no grant (linear:read)' },
+      ]);
+    });
+  });
+
   it('pauses a real-mode run at actions-pending with nothing but the DM applied', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -1770,6 +1978,84 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.http).toHaveLength(0);
   });
 
+  it('repairs a read the provider refused for its arguments once, under standing authority', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'get_issue',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1' }),
+          },
+        },
+        skillOutput.actions[2],
+      ],
+    };
+    recorded.repairedToolArgsJson = JSON.stringify({ id: 'iss-1' });
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    expect(recorded.repairRequests).toEqual([
+      { tool: 'get_issue', reason: 'Tool input validation failed: unknown argument issueId' },
+    ]);
+    expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([
+      ['get_issue', { issueId: 'iss-1' }],
+      ['get_issue', { id: 'iss-1' }],
+    ]);
+    expect(ledger(row)[0]).toMatchObject({
+      ok: true,
+      authority: 'standing',
+      repair: {
+        reason: 'Tool input validation failed: unknown argument issueId',
+        toolArgsJson: '{"issueId":"iss-1"}',
+      },
+    });
+    expect((row.output as { actions: Array<{ args: { toolArgsJson?: string } }> }).actions[0].args.toolArgsJson).toBe(
+      '{"id":"iss-1"}',
+    );
+    expect(ledger(row)[1]).toMatchObject({ ok: true, authority: 'standing' });
+    expect(ledger(row)[1].held).toBeUndefined();
+  });
+
+  it('keeps the refused read as a failed row when the repair produces nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      ...skillOutput,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'get_issue',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1' }),
+          },
+        },
+        skillOutput.actions[2],
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await expect(
+      harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ ok: false });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toContain('Tool input validation failed: unknown argument issueId');
+    expect(recorded.repairRequests).toHaveLength(1);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+    expect(ledger(row)[0]).toMatchObject({ ok: false });
+    expect(ledger(row)[0].repair).toBeUndefined();
+  });
+
   it('refuses retry when a provider transport fails after an approved request was sent', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -1846,8 +2132,9 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.mcp).toHaveLength(0);
   });
 
-  it('preserves intentionally repeated append-row effects for exact-action approval', async (): Promise<void> => {
+  it.each([undefined, 'not a valid URL'])('preserves intentionally repeated append-row effects with redactor setting %s', async (redactorUrl): Promise<void> => {
     useSurfaceMode('mock');
+    if (redactorUrl) vi.stubEnv('DAY0_REDACTOR_URL', redactorUrl);
     const repeatedRow = {
       tool: 'spreadsheet.appendRow' as const,
       args: {

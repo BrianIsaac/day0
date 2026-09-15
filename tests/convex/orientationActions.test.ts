@@ -6,7 +6,8 @@ import { join, resolve } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
 import { getFunctionName } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -39,6 +40,19 @@ import {
   seedFakeCredential,
 } from './fakes/credential-registry';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+
+// The redaction component the actions reach through DAY0_REDACTOR_URL, served
+// in-process from the recorded span model.
+let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
+beforeAll(async (): Promise<void> => {
+  redactorDouble = await serveSpanModel();
+  process.env.DAY0_REDACTOR_URL = redactorDouble.url;
+});
+afterAll(async (): Promise<void> => {
+  delete process.env.DAY0_REDACTOR_URL;
+  await redactorDouble?.close();
+});
+
 
 type DraftPath = 'mcp' | 'documented-api' | 'browser-driven' | 'escalate';
 
@@ -134,7 +148,10 @@ const REGISTRY_SERVERS = {
  *   The fetch mock, for asserting which searches ran.
  */
 function stubRegistry(): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(async (input: URL | string): Promise<Response> => {
+  const realFetch = globalThis.fetch;
+  const fetchMock = vi.fn(async (input: URL | string, init?: RequestInit): Promise<Response> => {
+    // The redaction component is reached over the same global; its calls are its own.
+    if (redactorDouble && String(input).startsWith(redactorDouble.url)) return realFetch(input, init);
     const search = new URL(String(input)).searchParams.get('search')?.toLowerCase() ?? '';
     const servers = Object.values(REGISTRY_SERVERS).filter((entry): boolean =>
       `${entry.server.name} ${entry.server.title}`.toLowerCase().includes(search),

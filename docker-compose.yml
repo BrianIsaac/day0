@@ -24,6 +24,7 @@
 #   test          the fake Slack used by tests and review panes.
 #   dev           the Convex dashboard.
 #   model, sandbox  a bundled model server and the local skill sandbox.
+#   redactor      the span model documentation sync and the ledger redact with.
 #
 #   pnpm convex:up                                            # folder docs only
 #   pnpm convex:up --profile docs-notion --profile browser    # Notion docs + web UIs
@@ -255,6 +256,57 @@ services:
       timeout: 10s
       start_period: 5s
 
+  # day0's redaction component: the span model that decides which parts of a
+  # page, a provider outcome or a grounding read are a secret or personal data
+  # before any of it is stored. The policy that says what to do with a span is
+  # data on the caller's side (src/redaction/policy.ts); this container only
+  # finds spans. Needed for real mode: documentation sync refuses to persist a
+  # page it could not send here, and provider outcomes fall back to the
+  # structural grammar and say so in the ledger.
+  #
+  #   pnpm redactor:up                  # on the GPU wherever there is one
+  #   pnpm convex:up --profile redactor # the CPU configuration, any machine
+  #
+  # The image is the pinned python:3.12-slim the sandbox already uses. The
+  # wheels (redactor/requirements.txt, versions pinned) go into a virtual
+  # environment on `redactor_venv` at first start, the way the Notion component
+  # fetches its pinned package into a cache volume, so a machine that started
+  # once on a network starts again without one. The model snapshot goes into
+  # `redactor_models` and is verified file by file against
+  # redactor/models.sha256 before it is served; a file that does not match
+  # refuses to start, and the healthcheck says so. Neither the wheels nor the
+  # model are in the repository. No host port: the backend reaches it at
+  # http://redactor:8000 (DAY0_REDACTOR_URL), and nothing else needs to.
+  redactor:
+    profiles: ['redactor']
+    image: python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+    stop_grace_period: 10s
+    command: ['/opt/day0/start.sh']
+    environment:
+      - REDACTOR_MODEL=${REDACTOR_MODEL:-urchade/gliner_multi_pii-v1}
+      - REDACTOR_DEVICE=${REDACTOR_DEVICE:-cpu}
+      - REDACTOR_PORT=8000
+      - REDACTOR_MODELS_DIR=/models
+      - REDACTOR_MANIFEST=/opt/day0/models.sha256
+      - HF_HUB_DISABLE_PROGRESS_BARS=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./redactor/start.sh:/opt/day0/start.sh:ro
+      - ./redactor/server.py:/opt/day0/server.py:ro
+      - ./redactor/requirements.txt:/opt/day0/requirements.txt:ro
+      - ./redactor/requirements-cuda.txt:/opt/day0/requirements-cuda.txt:ro
+      - ./redactor/models.sha256:/opt/day0/models.sha256:ro
+      - redactor_venv:/opt/redactor/venv
+      - redactor_models:/models
+    expose: ['8000']
+    healthcheck:
+      test: ['CMD', '/opt/redactor/venv/bin/python', '/opt/day0/server.py', '--health']
+      interval: 15s
+      timeout: 15s
+      # Installing the wheels and fetching the model can take minutes on the
+      # first start; after that the model loads in under a minute.
+      start_period: 900s
+
   # day0's Notion documentation component: it reads an operator-owned Notion
   # workspace through Streamable HTTP so `/documentation` can link a Notion
   # source. It is Notion's own MCP server, which is why the service is named
@@ -409,3 +461,6 @@ volumes:
   # Carries one unix socket between the backend and the sandbox. It is the only
   # thing the two share, and the only way into a container that has no network.
   sandbox_socket:
+  # The redaction component's virtual environment and verified model snapshot.
+  redactor_venv:
+  redactor_models:

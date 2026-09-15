@@ -437,8 +437,16 @@ Real mode adds optional components, and each one is a Compose profile. `real` is
 | `browser` | Playwright MCP, day0's browser floor | a system your documentation records has a web UI and no API |
 | `demo` | a synthetic Looker-style pipeline tile with a login | you want a web-UI-only system to drive without pointing day0 at a real one |
 | `sandbox` | the networkless skill sandbox | always, unless you have a `DAYTONA_API_KEY` |
+| `redactor` | the span model that redacts documentation and the ledger | always in real mode: documentation sync refuses to store a page without it, and provider outcomes record that only the exact-value and structural layers ran |
 
 What each is for, and what it never sees, is in [`docs/running/components.md`](docs/running/components.md).
+
+On Linux x86-64 with Python 3.12, the redactor's first CPU start downloads about
+251 MB of pinned wheels and 1.16 GB of weights and tokenizer files, plus the
+container image if it is not cached. These downloads need network access; inference
+runs locally without an account. CUDA wheels require additional space; their download
+size has not been verified here. Detection can miss secrets, and structural-only
+outcomes are labelled as limited redaction in the dashboard.
 
 ### Setup
 
@@ -464,6 +472,7 @@ DAY0_SURFACE_MODE=real
 NEXT_PUBLIC_DEMO_BOSS_EMAIL=you@example.com         # your Slack address; stored on the agent at deploy
 DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
 DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile browser
+DAY0_REDACTOR_URL=http://redactor:8000              # paired with pnpm redactor:up
 ```
 
 and bring the stack up:
@@ -471,6 +480,7 @@ and bring the stack up:
 ```bash
 pnpm convex:up --profile docs-notion --profile browser --profile demo
 pnpm sandbox:up                  # verifies authored skills; no port, no account
+pnpm redactor:up                 # the span model documentation sync and the ledger redact with; on the GPU if you have one
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY in .env.local
 
 pnpm sync:env                    # pushes the no-auth JWKS, the key and every DAY0_* value
@@ -512,10 +522,10 @@ Then, in the browser:
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
-5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one query, and because every per-agent query checks the caller, the CLI has to present the local owner's identity to run it:
+5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one action, which removes every credential value stored for the owner before it answers, and because every per-agent function checks the caller, the CLI has to present the local owner's identity to run it:
 
    ```bash
-   npx convex run events:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
+   npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
    ```
 
    Without `--identity` the call is refused as not authenticated - that is the no-auth boundary, not a broken export. The agent id is the last segment of the dashboard URL.
@@ -595,6 +605,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `DAY0_CREDENTIAL_KEY` | Encrypts every stored credential. Written by `pnpm dev:no-auth-key` and pushed to the deployment; `pnpm sync:env` refuses real mode without it |
 | `DAY0_NOTION_MCP_AUTH_TOKEN` | Authenticates the private hop to the bundled Notion component. Written by `pnpm dev:no-auth-key`; `--profile docs-notion` refuses to start without it |
 | `DAY0_BROWSER_MCP_URL` | The switch that tells day0 it has a browser component. `http://playwright-mcp:8931/mcp` for the bundled one, paired with `--profile browser`. Unset means this deployment has no browser, and every browser action is refused with `BROWSER_DRIVER_ABSENT` |
+| `DAY0_REDACTOR_URL` | The redaction component as the backend reaches it: `http://redactor:8000` for the bundled one, paired with `pnpm redactor:up`. Unset means no component: a documentation sync refuses to persist, and a provider outcome is recorded as `structural-only` |
 | `DAY0_PUBLIC_URL` | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead |
 
 Convex Node actions read their settings from the Convex deployment env, which is a separate store from `.env.local`: the model keys (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_JSON_MODE`), `EXA_API_KEY`, `DAYTONA_API_KEY`, `SKILL_SANDBOX_SOCKET` and every real-mode `DAY0_*` value bar `DAY0_DOCS_HOST_DIR`, which is Compose's alone. `./scripts/sync-convex-env.sh` pushes exactly that list and is the only thing that should write it; it also pushes `OPENAI_BASE_URL` under the deployment's name for it, taking the value from `CONVEX_OPENAI_BASE_URL`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
@@ -912,7 +923,7 @@ pnpm eval:semifinal -- --regrade evaluation/results/<timestamp>/semifinal.json  
 pnpm eval:semifinal -- --arms day0 --runs 1 --tasks EVAL-WRITE-01               # a subset
 ```
 
-`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run events:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
+`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
 
 The three frozen evidence directories the submission quotes, and their numbers, are listed in [`evaluation/README.md`](evaluation/README.md); earlier directories are kept as superseded audit history and are not used for any conclusion.
 
@@ -1312,8 +1323,14 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 | `browser` | Playwright MCP，day0 的浏览器执行层 | 文档记录的系统只有 Web UI 而没有 API |
 | `demo` | 带登录的合成 Looker 风格 pipeline tile | 想演示浏览器执行层，但不希望指向真实系统 |
 | `sandbox` | 无网络的技能沙箱 | 除非配置了 `DAYTONA_API_KEY`，否则始终需要 |
+| `redactor` | 对文档和 ledger 做脱敏的 span 模型 | 真实模式下始终需要：没有它，文档同步会拒绝存储页面，provider 结果只会记录结构层脱敏 |
 
 每个组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。
+
+在 Linux x86-64、Python 3.12 环境下，redactor 首次以 CPU 启动时会下载约
+251 MB 的固定版本 wheel，以及 1.16 GB 的权重和分词器文件；若镜像未缓存，还需下载镜像。
+下载需要联网，推理在本地运行，无需账户。CUDA wheel 需要更多空间，此处尚未验证其下载大小。
+检测可能漏掉秘密；仅完成结构层脱敏的结果会在仪表盘中显示有限脱敏提示。
 
 #### 安装步骤
 
@@ -1339,6 +1356,7 @@ DAY0_SURFACE_MODE=real
 NEXT_PUBLIC_DEMO_BOSS_EMAIL=you@example.com         # your Slack address; stored on the agent at deploy
 DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
 DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile browser
+DAY0_REDACTOR_URL=http://redactor:8000              # paired with pnpm redactor:up
 ```
 
 随后启动整套服务：
@@ -1346,6 +1364,7 @@ DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile brow
 ```bash
 pnpm convex:up --profile docs-notion --profile browser --profile demo
 pnpm sandbox:up                  # verifies authored skills; no port, no account
+pnpm redactor:up                 # 文档同步和 ledger 使用的脱敏模型；有 GPU 时自动使用
 pnpm convex:admin-key            # -> paste into CONVEX_SELF_HOSTED_ADMIN_KEY in .env.local
 
 pnpm sync:env                    # pushes the no-auth JWKS, the key and every DAY0_* value
@@ -1387,10 +1406,10 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
-5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量。同一条轨迹可以用一条查询导出为 JSON；由于每个按 Agent 划分的查询都会校验调用者，CLI 必须以本机 owner 的身份运行：
+5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量。同一条轨迹可以用一条 action 导出为 JSON，导出前会移除为该 owner 存储的所有凭据值；由于每个按 Agent 划分的函数都会校验调用者，CLI 必须以本机 owner 的身份运行：
 
    ```bash
-   npx convex run events:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
+   npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
    ```
 
    不带 `--identity` 时调用会以未认证被拒绝，这是无认证边界在起作用，而不是导出损坏。Agent id 是 dashboard URL 的最后一段。
@@ -1461,7 +1480,7 @@ pnpm eval:semifinal -- --regrade evaluation/results/<timestamp>/semifinal.json  
 pnpm eval:semifinal -- --arms day0 --runs 1 --tasks EVAL-WRITE-01               # a subset
 ```
 
-`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断，结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run events:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
+`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断，结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
 
 最终提交所引用的三个冻结证据目录及其数字列在 [`evaluation/README.md`](evaluation/README.md)；更早的目录仅保留为 superseded audit history，不用于最终结论。
 

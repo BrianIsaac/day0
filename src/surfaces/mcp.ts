@@ -11,7 +11,9 @@ import {
   TOOL_NOT_ALLOWED,
   type ParsedMcpCall,
 } from './policy';
-import { injectSecret, redactValue } from './secrets';
+import { injectSecret } from './secrets';
+import { redactOutcome } from './redact';
+import type { SpanModel } from '../redaction/client';
 import { createSecretMcpClient } from './mcp-client';
 import {
   browserComponent,
@@ -75,6 +77,10 @@ export interface McpAdapterDeps {
   beforeTransport?: BeforeSurfaceTransport;
   /** The browser driver's address; only the browser floor uses it. */
   browserMcpUrl?: string;
+  /** The span model outcomes are redacted with; undefined degrades to the structural floor. */
+  spanModel?: SpanModel;
+  /** Every value the owner stores, resolved once by the hosting action; removed exactly from every outcome. */
+  knownValues?: readonly string[];
 }
 
 /**
@@ -118,6 +124,65 @@ export interface InterpretedToolResult {
   isError: boolean;
   text: string;
   providerId?: string;
+  /** The provider's own message when the failure was reported in the result body. */
+  errorMessage?: string;
+}
+
+/**
+ * Whether a `validationErrors` field carries a failure.
+ *
+ * A server that reports validation on every response answers a good call
+ * with an empty list or object; only a populated value names a failure.
+ *
+ * Args:
+ *   value: The field's value.
+ *
+ * Returns:
+ *   True when at least one validation error is reported.
+ */
+function hasValidationErrors(value: unknown): boolean {
+  if (value === undefined || value === null || value === false) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+/**
+ * Read a failure a server reported inside the result body rather than through
+ * the protocol's `isError` flag.
+ *
+ * Linear's MCP answers an argument validation failure as a JSON object with
+ * `error: true` and a `message`, flag unset; other servers put a top-level
+ * `validationErrors` list in the body. Either is a failure. A string-valued
+ * `error` field is data (an error category on a record, say) and is left alone.
+ *
+ * Args:
+ *   text: The first text block of the result, or the serialised body.
+ *
+ * Returns:
+ *   The provider's message, or undefined when the body reports no failure.
+ */
+export function providerErrorMessage(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+  const record = parsed as Record<string, unknown>;
+  const flagged = record.error === true;
+  const validation = hasValidationErrors(record.validationErrors);
+  if (!flagged && !validation) return undefined;
+  for (const key of ['message', 'detail', 'reason']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  if (validation) return `validation failed: ${JSON.stringify(record.validationErrors)}`;
+  return 'the server reported an error';
 }
 
 /**
@@ -191,7 +256,11 @@ function firstStringDeep(value: unknown, keys: readonly string[], depth = 0): st
 export function interpretToolResult(result: unknown): InterpretedToolResult {
   const idKeys = ['id', 'identifier', 'commentId', 'issueId'];
   if (typeof result === 'string') {
-    return { isError: false, text: result, providerId: providerIdFromText(result, idKeys) };
+    return withBodyError({
+      isError: false,
+      text: result,
+      providerId: providerIdFromText(result, idKeys),
+    });
   }
   if (typeof result !== 'object' || result === null) {
     return { isError: false, text: result === undefined ? '' : String(result) };
@@ -203,20 +272,37 @@ export function interpretToolResult(result: unknown): InterpretedToolResult {
   };
   const blocks = Array.isArray(record.content) ? record.content : undefined;
   if (blocks) {
-    const textBlock = blocks.find(
+    const textBlocks = blocks.filter(
       (block): block is { type: string; text: string } =>
         typeof block === 'object' &&
         block !== null &&
         (block as { type?: unknown }).type === 'text' &&
         typeof (block as { text?: unknown }).text === 'string',
     );
-    const text = textBlock?.text ?? '';
+    const text = textBlocks[0]?.text ?? '';
+    const errorMessage =
+      providerErrorMessage(JSON.stringify(record.structuredContent) ?? '') ??
+      textBlocks.map((block) => providerErrorMessage(block.text)).find((message) => message !== undefined);
     const providerId =
       firstStringDeep(record.structuredContent, idKeys) ?? providerIdFromText(text, idKeys);
-    return { isError: record.isError === true, text, providerId };
+    return withBodyError({ isError: record.isError === true || errorMessage !== undefined, text, providerId, errorMessage });
   }
   const text = JSON.stringify(result);
-  return { isError: false, text, providerId: firstStringDeep(result, idKeys) };
+  const errorMessage = providerErrorMessage(JSON.stringify(record.structuredContent) ?? '');
+  return withBodyError({
+    isError: record.isError === true || errorMessage !== undefined,
+    text,
+    providerId: firstStringDeep(result, idKeys),
+    errorMessage,
+  });
+}
+
+/** Mark a result whose body reports a failure the flag did not. */
+function withBodyError(interpreted: InterpretedToolResult): InterpretedToolResult {
+  if (interpreted.isError) return interpreted;
+  const errorMessage = providerErrorMessage(interpreted.text);
+  if (errorMessage === undefined) return interpreted;
+  return { ...interpreted, isError: true, errorMessage };
 }
 
 function providerIdFromText(text: string, idKeys: readonly string[]): string | undefined {
@@ -486,10 +572,12 @@ export class McpAdapter implements SurfaceAdapter {
             )?.arguments,
           );
           if ('reason' in resolved) {
+            const redacted = await redactOutcome(resolved.reason, bearer, this.deps.spanModel, this.deps.knownValues);
             return {
               tool: action.tool,
               ok: false,
-              reason: clipEffect(redactValue(resolved.reason, bearer), EFFECT_LENGTH),
+              reason: clipEffect(redacted.text, EFFECT_LENGTH),
+              ...(redacted.redaction ? { redaction: redacted.redaction } : {}),
               idempotencyKey,
             };
           }
@@ -500,12 +588,20 @@ export class McpAdapter implements SurfaceAdapter {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
-        const text = redactValue(result.text, bearer);
+        const redacted = await redactOutcome(result.text, bearer, this.deps.spanModel, this.deps.knownValues);
+        const text = redacted.text;
+        const redaction = redacted.redaction ? { redaction: redacted.redaction } : {};
         if (result.isError) {
+          const errorResult = result.errorMessage
+            ? await redactOutcome(result.errorMessage, bearer, this.deps.spanModel, this.deps.knownValues)
+            : redacted;
+          const reason = errorResult.text;
           return {
             tool: action.tool,
             ok: false,
-            reason: clipEffect(text || 'the server reported an error', EFFECT_LENGTH),
+            reason: clipEffect(reason || 'the server reported an error', EFFECT_LENGTH),
+            ...redaction,
+            ...(errorResult.redaction ? { redaction: errorResult.redaction } : {}),
             idempotencyKey,
           };
         }
@@ -519,6 +615,9 @@ export class McpAdapter implements SurfaceAdapter {
           browserDriven && call.tool === 'browser_snapshot'
             ? browserSnapshotEvidence(text)
             : undefined;
+        const identifier = result.providerId
+          ? await redactOutcome(result.providerId, bearer, this.deps.spanModel, this.deps.knownValues)
+          : undefined;
         return {
           tool: action.tool,
           ok: true,
@@ -526,9 +625,9 @@ export class McpAdapter implements SurfaceAdapter {
             `${call.tool} on ${surface.slug} · ${(evidence ?? text) || 'ok'}`,
             writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH,
           ),
-          providerId: result.providerId
-            ? clipEffect(redactValue(result.providerId, bearer), EFFECT_LENGTH)
-            : undefined,
+          providerId: identifier ? clipEffect(identifier.text, EFFECT_LENGTH) : undefined,
+          ...redaction,
+          ...(identifier?.redaction ? { redaction: identifier.redaction } : {}),
           idempotencyKey,
         };
       } finally {
@@ -539,18 +638,22 @@ export class McpAdapter implements SurfaceAdapter {
       // A driver that was configured and has since stopped reads as the same
       // absence as one that was never configured, and says so with the same
       // code rather than with a transport error nobody can act on.
-      const reason =
+      const failure =
         browserDriven && isDriverUnreachable(error)
-          ? BROWSER_DRIVER_ABSENT_REASON
-          : clipEffect(
-              redactValue(error instanceof Error ? error.message : String(error), bearer),
-              EFFECT_LENGTH,
+          ? undefined
+          : await redactOutcome(
+              error instanceof Error ? error.message : String(error),
+              bearer,
+              this.deps.spanModel,
+              this.deps.knownValues,
             );
+      const reason = failure ? clipEffect(failure.text, EFFECT_LENGTH) : BROWSER_DRIVER_ABSENT_REASON;
       return {
         tool: action.tool,
         ok: false,
         reason,
         ...(writeAttempted ? { outcomeUnknown: true } : {}),
+        ...(failure?.redaction ? { redaction: failure.redaction } : {}),
         idempotencyKey,
       };
     }

@@ -20,11 +20,22 @@ import { DEV_NO_AUTH } from '@/lib/dev-auth';
 export function Providers({ children }: { children: ReactNode }) {
   const client = useMemo(() => {
     const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-    if (!url) {
-      throw new Error('NEXT_PUBLIC_CONVEX_URL is not set — run `pnpm convex:dev` first');
-    }
-    return new ConvexReactClient(url);
+    return url ? new ConvexReactClient(url) : null;
   }, []);
+
+  // Prerender can run before local setup; backend-dependent children need
+  // both providers and must wait until a configured build serves them. The
+  // address is inlined at build time, so a production build needs rebuilding,
+  // not restarting, once the setup has written it.
+  if (!client) {
+    return (
+      <main className="min-h-screen grid place-items-center px-6">
+        <p className="max-w-md text-center text-sm text-[var(--color-muted)]">
+          Day0 is not configured yet. Complete the local setup, then build and start the app again.
+        </p>
+      </main>
+    );
+  }
 
   if (DEV_NO_AUTH) {
     return (

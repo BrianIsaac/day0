@@ -293,6 +293,96 @@ describe('work surface enablement', (): void => {
     ).toBe('jira');
   });
 
+  describe('eligibility by provenance', (): void => {
+    /** The audit-note ticket as intake reads it: no word in common with the charter, no surface named. */
+    const auditNote = (): WorkCandidate => {
+      const work = candidate(
+        'linear',
+        'Add a comment summarising the completed close checks, then move it to Done after manager approval.',
+      );
+      work.title = 'Add the close-summary audit note';
+      return work;
+    };
+
+    it('takes a ticket from a connected, currently named surface without charter overlap', async (): Promise<void> => {
+      await expect(
+        evaluateCandidate(auditNote(), context('real', [surface('linear')]), lookups()),
+      ).resolves.toMatchObject({ decision: 'claim' });
+    });
+
+    it('still runs the connection and permission checks after provenance', async (): Promise<void> => {
+      await expect(
+        evaluateCandidate(
+          auditNote(),
+          context('real', [surface('linear')]),
+          lookups(async (scope: string): Promise<boolean> => scope !== 'linear:read'),
+        ),
+      ).resolves.toEqual({
+        decision: 'defer',
+        reason: 'awaiting-permission',
+        missingPermissions: ['linear:read'],
+      });
+    });
+
+    it('skips the same ticket as out of scope when its surface is absent', async (): Promise<void> => {
+      await expect(
+        evaluateCandidate(auditNote(), context('real', [surface('linear', 'absent')]), lookups()),
+      ).resolves.toEqual({
+        decision: 'skip',
+        reason: 'out-of-scope: no charter or current documented-system overlap',
+      });
+    });
+
+    it('skips the same ticket when the connected surface has no current discovery evidence', async (): Promise<void> => {
+      const unnamed = surface('linear', 'connected', {
+        discoveryEvidence: [
+          {
+            kind: 'documentation',
+            sourceId: 'source-1',
+            ref: 'systems/linear.md',
+            quote: '# linear',
+            current: false,
+            firstSeenAt: 1,
+            lastSeenAt: 2,
+          },
+        ],
+      });
+      await expect(
+        evaluateCandidate(auditNote(), context('real', [unnamed]), lookups()),
+      ).resolves.toEqual({
+        decision: 'skip',
+        reason: 'out-of-scope: no charter or current documented-system overlap',
+      });
+      await expect(
+        evaluateCandidate(
+          auditNote(),
+          context('real', [surface('linear', 'connected', { discoveryEvidence: undefined })]),
+          lookups(),
+        ),
+      ).resolves.toMatchObject({ decision: 'skip' });
+    });
+
+    it('never fires in mock mode, whatever the surfaces table holds', async (): Promise<void> => {
+      const work = auditNote();
+      work.sourceSystem = 'ticket';
+      await expect(
+        evaluateCandidate(
+          work,
+          context('mock', [
+            surface('ticket', 'connected', { displayName: 'Ticket queue', class: 'kanban' }),
+          ]),
+          lookups(),
+        ),
+      ).resolves.toEqual({
+        decision: 'skip',
+        reason: 'out-of-scope: no charter or current documented-system overlap',
+      });
+      await expect(
+        evaluateCandidate(work, context('mock', []), lookups()),
+      ).resolves.toMatchObject({ decision: 'skip' });
+    });
+  });
+
   it('does not use retired documentation evidence to widen charter scope', async (): Promise<void> => {
     const work = candidate('linear', 'Inspect Northstar CRM ownership.');
     work.title = 'Reconcile Northstar CRM ownership';
@@ -310,11 +400,24 @@ describe('work surface enablement', (): void => {
       ],
     });
 
+    // The source surface is connected but nothing current names it, so the
+    // item's provenance does not carry it either: the retired evidence alone
+    // must not.
+    const unnamedLinear = surface('linear', 'connected', { discoveryEvidence: [] });
     await expect(
-      evaluateCandidate(work, context('real', [surface('linear'), retired]), lookups()),
+      evaluateCandidate(work, context('real', [unnamedLinear, retired]), lookups()),
     ).resolves.toEqual({
       decision: 'skip',
       reason: 'out-of-scope: no charter or current documented-system overlap',
+    });
+    // From a connected, currently named Linear the same item is in scope by
+    // provenance and stops at the Northstar connection gate instead.
+    await expect(
+      evaluateCandidate(work, context('real', [surface('linear'), retired]), lookups()),
+    ).resolves.toEqual({
+      decision: 'defer',
+      reason: 'awaiting-connection',
+      missingSurface: 'northstar-crm',
     });
   });
 

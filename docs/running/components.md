@@ -195,6 +195,70 @@ starts by default.
 
 ---
 
+## `redactor` - the redaction component
+
+**What it is.** A small span model (`urchade/gliner_multi_pii-v1`, Apache-2.0,
+289M parameters) behind a two-endpoint HTTP API, run from the same pinned
+`python:3.12-slim` image the sandbox uses. Its wheels are installed into a cache
+volume at first start and its model snapshot is fetched into another and
+verified file by file against `redactor/models.sha256` before it is served; a
+file that does not match refuses to start, and the health check says so. It
+performs no hosted inference. Inference runs locally; first startup downloads
+pinned wheels and the verified snapshot.
+
+**What day0 uses it for.** Documentation pages at sync, HTTP and MCP provider
+outcomes (effect, reason and id), and the ticket record the planner reads go
+through the component. Other metadata, prompts and export use the synchronous
+structural floor; export is not a complete personal-data scrub. Before any of
+that, every boundary removes the exact values day0 itself stores for the owner:
+the action that persists a page, an outcome, a grounding record or a run's
+output first decrypts the owner's credential list in memory (bounded, never
+persisted or logged) and removes each value literally, JSON-escaped and
+URL-encoded, whether or not the component answered. The export is an action
+(`exportActions:exportForAgent`) for the same reason: the synchronous trace
+query cannot decrypt, so it is internal and the action removes the stored
+values before answering. The model finds spans; what happens to each kind of span in each
+place is data in `src/redaction/policy.ts`. Detected secret spans are removed (and, on a page, stored as encrypted
+credentials with markers left behind). The policy keeps coworker names,
+usernames, channels, ticket ids, dates, figures and audit lines as working
+material. It removes detected phone numbers, personal addresses, government
+and account identifiers and dates of birth; it keeps email addresses in stored
+pages and removes them from provider outcomes. Detection still has misses and
+false positives; these policy choices are not a guarantee of complete redaction. A deterministic guard keeps the model from
+taking a placeholder, a stored marker or an identifier for a secret.
+
+**When you need it.** Always in real mode. Without it a documentation sync
+refuses to persist a page rather than store it in the clear, and a provider
+outcome is recorded with `redaction: structural-only`, meaning only the exact
+credential the transport sent and the structural grammar (connection-string
+passwords, key blocks, JSON web tokens, header values, fixed-prefix provider
+tokens) protected it.
+
+**When you do not.** Mock mode, which reads nothing from outside the repository.
+
+**What it never sees.** Anything but the text it is handed. It has no
+credential, no database access and no host port; the backend reaches it at
+`http://redactor:8000` on the compose network and nothing else needs to. It
+keeps no log of what it was sent.
+
+**The GPU.** `pnpm redactor:up` reserves the GPU the way `pnpm model:up` does
+and installs the CUDA build of its wheels; `pnpm convex:up --profile redactor`
+uses the CPU configuration by default. The reviewed CPU installation was Linux
+x86-64 with Python 3.12. Its 37 pinned wheels total about 251 MB, and the five
+verified snapshot files total 1.16 GB. CUDA download size was not measured in
+this review. Through the HTTP client the backend uses, over the compose bridge
+on a laptop CPU, the 77-case corpus took a median 423 ms and p95 860 ms per
+call, from 328 ms for a short outcome to 1.30 s for a 1,216-character page;
+measured through `docker exec` in review it was 838 ms median and p95
+1,238 ms. Neither is the in-process figure the research report quotes. Calls
+have a 10-second deadline; a timeout
+fails documentation sync closed and marks provider evidence as limited redaction.
+The dashboard displays that limitation. Exact matching covers the credential
+supplied by the transport and every active credential stored for the owner;
+it does not cover a secret day0 never stored.
+
+---
+
 ## The other two
 
 `--profile model` runs a bundled model server for the account-free path, and

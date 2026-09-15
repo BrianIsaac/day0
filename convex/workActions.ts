@@ -8,8 +8,21 @@ import {
   inferRequiredPermissions,
   type EvaluateLookups,
 } from '../src/work/evaluate';
-import { draftExecutionPlan, type DraftPlanArgs } from '../src/work/plan';
-import { runDependentSkill, runSkill } from '../src/work/execute-skill';
+import { spanModelFromEnv } from '../src/redaction/client';
+import {
+  candidateRecordRead,
+  redactGroundingRead,
+  draftExecutionPlan,
+  type CandidateRecord,
+  type DraftPlanArgs,
+} from '../src/work/plan';
+import {
+  repairableReadFailures,
+  repairFailedReads,
+  repairToolArguments,
+  runDependentSkill,
+  runSkill,
+} from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import {
   DEPENDENT_ACTION_CAP,
@@ -29,6 +42,7 @@ import {
 } from '../src/surfaces/registry';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
+import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -291,12 +305,27 @@ export const draftPlan = action({
     });
     if (!charterRow) return { ok: false, reason: 'no charter' };
     const agent = await ctx.runQuery(api.agents.get, { agentId });
+    const candidate = rowToCandidate(item);
+    const grounding = await planGrounding(ctx, agentId);
+    const record =
+      SURFACE_MODE === 'real' && agent
+        ? await readCandidateRecord(ctx, {
+            workItemId: args.workItemId,
+            agentId,
+            agentName: agent.name,
+            autonomousActions: autonomousActionsOn(agent),
+            candidate,
+            surfaces: grounding.surfaces ?? [],
+            knownValues: await knownValuesForAgent(ctx, agent),
+          })
+        : undefined;
     const plan = await draftExecutionPlan({
-      candidate: rowToCandidate(item),
+      candidate,
       charter: charterRow.body as Charter,
       autonomousActions: autonomousActionsOn(agent),
       surfaceMode: SURFACE_MODE,
-      ...(await planGrounding(ctx, agentId)),
+      ...grounding,
+      ...(record ? { record } : {}),
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -651,7 +680,7 @@ export function validatePlanStepOutcomes(args: {
     for (const surface of named) {
       if (reads.has(surface.slug.toLowerCase())) continue;
       const outcome = ordered[index];
-      if (outcome.status !== 'blocked' || outcome.evidence.trim() === '') {
+      if (outcome.status === 'satisfied' || outcome.evidence.trim() === '') {
         throw new Error(
           `approved plan step ${index + 1} promised a ${surface.displayName} read, but no landed read or blocking ledger reason was recorded`,
         );
@@ -932,6 +961,10 @@ export const applyApprovedActions = internalAction({
     try {
       const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: claim.agentId });
       if (!agent) throw new Error('agent not found');
+      // Resolved once, before any transport: a run with many outcomes
+      // decrypts once, and a list that cannot be produced fails the run
+      // here rather than after a write has landed.
+      const knownValues = await knownValuesForAgent(ctx, agent);
       const surfaces = await loadSurfaces(ctx, claim.agentId);
       const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(
         internal.agents.grantedScopes,
@@ -950,34 +983,73 @@ export const applyApprovedActions = internalAction({
               entry && !entry.awaitingApproval ? entry : undefined,
             )
           : undefined;
-      const applied = await applySurfaceActions(
-        ctx,
-        SURFACE_MODE,
-        surfaces,
-        {
-          agentId: claim.agentId,
-          agentName: agent.name,
-          workItemId: args.workItemId,
-          runId: claim.runId,
-        },
-        output.actions ?? [],
-        {
-          deps: realAdapterDeps(
-            authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl),
-            browserMcpUrl,
-          ),
-          grants: new Set(grantRows.map((grant) => grant.scope)),
-          approvedIndexes: new Set(claim.approvedIndexes),
-          heldReasons: new Map(claim.heldReasons),
-          deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
-          priorLedger,
-          idempotencyIndexOffset: actionIndexOffset,
-          autoPhase: claim.phase === 'auto',
-          autonomousActions: claim.autonomousActions,
-          replyTarget: claim.replyTarget,
-        },
+      const run = {
+        agentId: claim.agentId,
+        agentName: agent.name,
+        workItemId: args.workItemId,
+        runId: claim.runId,
+      };
+      const deps = realAdapterDeps(
+        authorityBeforeTransport(ctx, claim.agentId, claim.phase, browserMcpUrl),
+        browserMcpUrl,
+        knownValues,
       );
-      return await finishRun(ctx, args.workItemId, claim, output, applied);
+      const grants = new Set(grantRows.map((grant) => grant.scope));
+      const applied = await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
+        deps,
+        grants,
+        approvedIndexes: new Set(claim.approvedIndexes),
+        heldReasons: new Map(claim.heldReasons),
+        deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
+        priorLedger,
+        idempotencyIndexOffset: actionIndexOffset,
+        autoPhase: claim.phase === 'auto',
+        autonomousActions: claim.autonomousActions,
+        replyTarget: claim.replyTarget,
+      });
+      if (
+        SURFACE_MODE === 'real' &&
+        claim.phase === 'auto' &&
+        !isDependentPendingOutput(output) &&
+        repairableReadFailures(output.actions ?? [], applied, surfaces).length > 0
+      ) {
+        const item = await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId });
+        const skills: Doc<'skills'>[] = await ctx.runQuery(internal.skills.registeredInternal, {
+          agentId: claim.agentId,
+        });
+        const skill = skills.find((row: Doc<'skills'>): boolean => row._id === item?.skillId);
+        if (item && skill) {
+          const repaired = await repairFailedReads({
+            actions: output.actions ?? [],
+            applied,
+            surfaces,
+            skill: { name: skill.name },
+            candidate: rowToCandidate(item),
+            repair: repairToolArguments,
+            apply: async (action, index): Promise<AppliedAction> => {
+              const [row] = await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, [action], {
+                deps,
+                grants,
+                approvedIndexes: new Set([0]),
+                idempotencyIndexOffset: actionIndexOffset + index,
+                autoPhase: true,
+                autonomousActions: claim.autonomousActions,
+                replyTarget: claim.replyTarget,
+              });
+              return row!;
+            },
+          });
+          return await finishRun(
+            ctx,
+            args.workItemId,
+            claim,
+            { ...output, actions: repaired.actions },
+            repaired.applied,
+            knownValues,
+          );
+        }
+      }
+      return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues);
     } catch (err) {
       const reason = (err as Error).message;
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
@@ -1000,6 +1072,7 @@ export const applyApprovedActions = internalAction({
 function realAdapterDeps(
   beforeTransport?: BeforeSurfaceTransport,
   browserMcpUrl: string | undefined = process.env.DAY0_BROWSER_MCP_URL,
+  knownValues: readonly string[] = [],
 ): RealAdapterDeps {
   return {
     decrypt: decryptCredential,
@@ -1007,7 +1080,21 @@ function realAdapterDeps(
     browserMcpUrl,
     fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
     beforeTransport,
+    spanModel: SURFACE_MODE === 'real' ? spanModelFromEnv() : undefined,
+    knownValues,
   };
+}
+
+/**
+ * The owner's stored credential values for this action invocation.
+ *
+ * Only real mode holds credentials a provider could echo; the mock
+ * environment reads nothing from outside the repository and its adapters
+ * never see a decrypted value.
+ */
+async function knownValuesForAgent(ctx: ActionCtx, agent: Doc<'agents'>): Promise<readonly string[]> {
+  if (SURFACE_MODE !== 'real' || !agent.userId) return [];
+  return await ownerKnownValues(ctx, agent.userId);
 }
 
 /** Refuse a browser switch that changed after the apply action claimed it. */
@@ -1132,6 +1219,90 @@ async function planGrounding(
   };
 }
 
+/**
+ * Read the candidate's own record before the plan is drafted.
+ *
+ * One standing-authority read through the same registry, rules and adapter as
+ * an executed action, keyed on an event minted for it so the ledger row is on
+ * the timeline. A failed read, including a provider error body, becomes
+ * "record unavailable" with the reason; nothing here stops the plan.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: The work item, agent, candidate and surfaces.
+ *
+ * Returns:
+ *   The record or its unavailability, or undefined when there is no record to read.
+ */
+async function readCandidateRecord(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    agentId: Id<'agents'>;
+    agentName: string;
+    autonomousActions: boolean;
+    candidate: WorkCandidate;
+    surfaces: readonly SurfaceRecord[];
+    /** The owner's stored values, resolved once by the calling action. */
+    knownValues: readonly string[];
+  },
+): Promise<CandidateRecord | undefined> {
+  const read = candidateRecordRead(args.candidate, args.surfaces, Date.now());
+  if (!read) return undefined;
+  try {
+    const eventId = await ctx.runMutation(internal.work.beginPlanGroundingRead, {
+      workItemId: args.workItemId,
+      action: read.action,
+    });
+    const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(
+      internal.agents.grantedScopes,
+      { agentId: args.agentId },
+    );
+    const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
+    const [rawApplied] = await applySurfaceActions(
+      ctx,
+      SURFACE_MODE,
+      args.surfaces,
+      {
+        agentId: args.agentId,
+        agentName: args.agentName,
+        workItemId: args.workItemId,
+        runId: eventId,
+      },
+      [read.action],
+      {
+        deps: realAdapterDeps(
+          authorityBeforeTransport(ctx, args.agentId, 'auto', browserMcpUrl),
+          browserMcpUrl,
+          args.knownValues,
+        ),
+        grants: new Set(grantRows.map((grant) => grant.scope)),
+        approvedIndexes: new Set([0]),
+        autoPhase: true,
+        autonomousActions: args.autonomousActions,
+      },
+    );
+    const applied = rawApplied
+      ? await redactGroundingRead(rawApplied, spanModelFromEnv(), args.knownValues)
+      : undefined;
+    await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
+    if (!applied || !applied.ok || applied.held) {
+      return {
+        surface: read.surface,
+        tool: read.tool,
+        unavailable: applied?.reason ?? 'the read did not land',
+      };
+    }
+    return { surface: read.surface, tool: read.tool, text: applied.effect ?? '(empty record)' };
+  } catch (error) {
+    return {
+      surface: read.surface,
+      tool: read.tool,
+      unavailable: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {
   const rows: Doc<'surfaces'>[] = await ctx.runQuery(internal.orientationData.surfacesForAgent, {
     agentId,
@@ -1174,9 +1345,15 @@ async function finishRun(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
   claim: FinishClaim,
-  output: LedgerOutput | DependentPendingOutput,
-  applied: AppliedAction[],
+  rawOutput: LedgerOutput | DependentPendingOutput,
+  rawApplied: AppliedAction[],
+  knownValues: readonly string[] = [],
 ): Promise<{ ok: boolean; reason?: string }> {
+  // The whole persisted record passes the exact-value layer once more here:
+  // the adapters already applied it to provider text, and this covers every
+  // other string the dashboard renders from the run, whatever wrote it.
+  const output = scrubKnownValues(rawOutput, knownValues);
+  const applied = scrubKnownValues(rawApplied, knownValues);
   const failures = applied.filter((action: AppliedAction): boolean => !action.ok && !action.held);
   const reason =
     applied.length === 0

@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
+import { ownerValuesRef } from '../../src/redaction/known-values';
 import {
   approvedMcpEndpoint,
   argumentNamesFromSchema,
@@ -42,6 +44,24 @@ const SLACK_POLICY = [
 ].join('\n');
 
 /** Create one Slack-shaped JSON response. */
+/**
+ * A probe's action context answers two actions: the owner's stored values
+ * (none, for these fixtures) and the surface credential's decryption.
+ *
+ * Args:
+ *   credential: The decrypted value, or the error decryption raises.
+ *
+ * Returns:
+ *   A `runAction` for a fake action context.
+ */
+function fakeRunAction(credential: string | Error): (reference: unknown) => Promise<string | string[]> {
+  return async (reference: unknown): Promise<string | string[]> => {
+    if (getFunctionName(reference as never) === getFunctionName(ownerValuesRef)) return [];
+    if (credential instanceof Error) throw credential;
+    return credential;
+  };
+}
+
 function slackResponse(payload: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -599,7 +619,7 @@ describe('surface probe action state', (): void => {
         surface,
         agent: { _id: agentId, bossEmail: 'boss@day0.local' },
       }),
-      runAction: async (): Promise<string> => 'provider-contract-value',
+      runAction: fakeRunAction('provider-contract-value'),
     } as unknown as ActionCtx;
 
     const outcome = await runSurfaceProbe(ctx, surfaceId, false, {
@@ -665,7 +685,7 @@ describe('surface probe action state', (): void => {
             'surfaceId' in args
               ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
               : [],
-          runAction: async (): Promise<string> => 'slack-contract-value',
+          runAction: fakeRunAction('slack-contract-value'),
         } as unknown as ActionCtx,
         surfaceId,
         false,
@@ -796,7 +816,7 @@ describe('surface probe action state', (): void => {
         surface: { _id: surfaceId, agentId },
         agent: { _id: agentId, bossEmail: 'boss@day0.local' },
       }),
-      runAction: async (): Promise<string> => 'local-contract-value',
+      runAction: fakeRunAction('local-contract-value'),
     } as unknown as ActionCtx;
 
     await expect(
@@ -1300,9 +1320,7 @@ describe('probing the browser floor', (): void => {
       {
         runMutation: harness.mutation.bind(harness),
         runQuery: harness.query.bind(harness),
-        runAction: async (): Promise<string> => {
-          throw new Error('no credential to decrypt');
-        },
+        runAction: fakeRunAction(new Error('no credential to decrypt')),
       } as unknown as ActionCtx,
       surfaceId,
       false,
@@ -1327,9 +1345,7 @@ describe('probing the browser floor', (): void => {
       {
         runMutation: harness.mutation.bind(harness),
         runQuery: harness.query.bind(harness),
-        runAction: async (): Promise<string> => {
-          throw new Error('no credential to decrypt');
-        },
+        runAction: fakeRunAction(new Error('no credential to decrypt')),
       } as unknown as ActionCtx,
       surfaceId,
       false,
@@ -1354,9 +1370,7 @@ describe('probing the browser floor', (): void => {
         {
           runMutation: harness.mutation.bind(harness),
           runQuery: harness.query.bind(harness),
-          runAction: async (): Promise<string> => {
-            throw new Error('no credential to decrypt');
-          },
+          runAction: fakeRunAction(new Error('no credential to decrypt')),
         } as unknown as ActionCtx,
         surfaceId,
         false,
@@ -1421,7 +1435,7 @@ describe('probing the browser floor', (): void => {
       {
         runMutation: harness.mutation.bind(harness),
         runQuery: harness.query.bind(harness),
-        runAction: async (): Promise<string> => 'jira-contract-credential',
+        runAction: fakeRunAction('jira-contract-credential'),
       } as unknown as ActionCtx,
       surfaceId,
       false,
@@ -1498,9 +1512,7 @@ describe('probing the browser floor', (): void => {
         {
           runMutation: harness.mutation.bind(harness),
           runQuery: harness.query.bind(harness),
-          runAction: async (): Promise<string> => {
-            throw new Error('no credential to decrypt');
-          },
+          runAction: fakeRunAction(new Error('no credential to decrypt')),
         } as unknown as ActionCtx,
         reportsId,
         false,
@@ -1565,9 +1577,7 @@ describe('probing the browser floor', (): void => {
       {
         runMutation: harness.mutation.bind(harness),
         runQuery: harness.query.bind(harness),
-        runAction: async (): Promise<never> => {
-          throw new Error('credential row is gone');
-        },
+        runAction: fakeRunAction(new Error('credential row is gone')),
       } as unknown as ActionCtx,
       surfaceId,
       false,
@@ -1661,7 +1671,7 @@ describe('probing the browser floor', (): void => {
       {
         runMutation: harness.mutation.bind(harness),
         runQuery: harness.query.bind(harness),
-        runAction: async (): Promise<string> => 'jira-contract-credential',
+        runAction: fakeRunAction('jira-contract-credential'),
       } as unknown as ActionCtx,
       surfaceId,
       false,

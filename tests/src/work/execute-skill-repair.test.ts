@@ -27,10 +27,16 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import {
+  appliedLedgerPrompt,
+  isArgumentFailure,
+  repairableReadFailures,
+  repairFailedReads,
   runDependentSkill,
   runSkill,
   type RunDependentSkillArgs,
 } from '../../../src/work/execute-skill';
+import type { AppliedAction } from '../../../src/surfaces/types';
+import type { MockAction } from '../../../src/work/types';
 
 const recordedFlatArgs = {
   body: '',
@@ -1020,11 +1026,15 @@ describe('real initial procedure trails', (): void => {
         {
           trailId: 'trail-1',
           state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
           reason: 'This trail depends on the result of prerequisite actions.',
         },
         {
           trailId: 'trail-2',
           state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
           reason: 'This trail depends on the result of prerequisite actions.',
         },
       ],
@@ -1057,11 +1067,15 @@ describe('real initial procedure trails', (): void => {
       {
         trailId: 'trail-1',
         state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
         reason: 'This trail depends on the result of prerequisite actions.',
       },
       {
         trailId: 'trail-2',
         state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
         reason: 'This trail depends on the result of prerequisite actions.',
       },
     ]);
@@ -1094,6 +1108,8 @@ describe('real initial procedure trails', (): void => {
         {
           trailId: 'trail-1',
           state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
           reason: 'A result-dependent phase is required.',
         },
         {
@@ -1192,12 +1208,16 @@ describe('real initial procedure trails', (): void => {
           {
             trailId: 'trail-1',
             state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
             reason: 'A result-dependent phase is required.',
           },
           ticketSource
             ? {
                 trailId: 'trail-2',
                 state: 'deferred',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
                 reason: 'A result-dependent phase is required.',
               }
             : {
@@ -1227,5 +1247,208 @@ describe('real initial procedure trails', (): void => {
       expect(recorded.calls, fixture.title).toHaveLength(2);
       expect(output.procedureTrails, fixture.title).toEqual(replacement.procedureTrails);
     }
+  });
+});
+
+describe('real-mode argument repair', (): void => {
+  const linear: SurfaceRecord = {
+    slug: 'linear',
+    displayName: 'Linear',
+    class: 'kanban',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: 1,
+    path: 'mcp',
+    endpoint: 'https://mcp.linear.app/mcp',
+    toolAllowlist: ['get_issue', 'save_comment'],
+    toolArguments: [
+      {
+        tool: 'get_issue',
+        arguments: ['id', 'includeCustomerNeeds', 'includeRelations', 'includeReleases'],
+      },
+      { tool: 'save_comment', arguments: ['issueId', 'body'] },
+    ],
+  };
+  const candidate: WorkCandidate = {
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-7',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Set the tile to 74%.',
+    contentRefs: ['ticket://REVOPS-7'],
+    observedAt: new Date(0),
+  };
+  const VALIDATION = 'Tool input validation failed: unknown argument issueId; expected id';
+  const read = (toolArgsJson: string): MockAction => ({
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'get_issue', toolArgsJson },
+  });
+  const failed = (reason: string, tool = 'mcp.call'): AppliedAction => ({
+    tool,
+    ok: false,
+    reason,
+    idempotencyKey: 'wi:run:0',
+  });
+  const applied: AppliedAction[] = [];
+
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+    applied.length = 0;
+  });
+
+  /** An apply hook that answers a call by its argument keys and records what it was handed. */
+  function applyHook(
+    answers: Record<string, AppliedAction>,
+  ): (action: MockAction, index: number) => Promise<AppliedAction> {
+    return async (action: MockAction, index: number): Promise<AppliedAction> => {
+      applied.push({ ...answers[action.args.toolArgsJson ?? '']!, idempotencyKey: `wi:run:${index}` });
+      return applied[applied.length - 1]!;
+    };
+  }
+
+  it('recognises the provider refusing arguments, not a missing record', (): void => {
+    expect(isArgumentFailure(VALIDATION)).toBe(true);
+    expect(isArgumentFailure('validation failed: [{"path":"id","message":"required"}]')).toBe(true);
+    expect(isArgumentFailure('Invalid input: unrecognized key "issueId"')).toBe(true);
+    expect(isArgumentFailure('Issue not found')).toBe(false);
+    expect(isArgumentFailure('no grant (linear:read)')).toBe(false);
+    expect(isArgumentFailure(undefined)).toBe(false);
+  });
+
+  it('repairs a refused read once with the provider message and the probed names in front of the model', async (): Promise<void> => {
+    let additionalModelCalls = 0;
+    recorded.outputs.push({ toolArgsJson: JSON.stringify({ id: 'REVOPS-7' }) });
+    const result = await repairFailedReads({
+      actions: [read(JSON.stringify({ issueId: 'REVOPS-7' }))],
+      applied: [failed(VALIDATION)],
+      surfaces: [linear],
+      skill: { name: 'refresh-tile' },
+      candidate,
+      apply: applyHook({
+        '{"id":"REVOPS-7"}': {
+          tool: 'mcp.call',
+          ok: true,
+          effect: 'get_issue on linear · {"identifier":"REVOPS-7"}',
+          authority: 'standing',
+          idempotencyKey: '',
+        },
+      }),
+      onAdditionalModelCall: (): void => {
+        additionalModelCalls += 1;
+      },
+    });
+    expect(recorded.calls).toHaveLength(1);
+    expect(additionalModelCalls).toBe(1);
+    const prompt = recorded.calls[0]!.user;
+    expect(prompt).toContain(`Provider message: ${VALIDATION}`);
+    expect(prompt).toContain(
+      'Probed argument names: id, includeCustomerNeeds, includeRelations, includeReleases',
+    );
+    expect(prompt).toContain('Refused arguments: {"issueId":"REVOPS-7"}');
+    expect(prompt).toContain('Refs: ticket://REVOPS-7');
+    expect(result.repaired).toBe(1);
+    expect(result.actions).toEqual([read('{"id":"REVOPS-7"}')]);
+    expect(result.applied).toEqual([
+      {
+        tool: 'mcp.call',
+        ok: true,
+        effect: 'get_issue on linear · {"identifier":"REVOPS-7"}',
+        authority: 'standing',
+        idempotencyKey: 'wi:run:0',
+        repair: { reason: VALIDATION, toolArgsJson: '{"issueId":"REVOPS-7"}' },
+      },
+    ]);
+    expect(appliedLedgerPrompt(result.actions, result.applied)).toContain(
+      'landed · {"tool":"mcp.call","args":{"surface":"linear","tool":"get_issue","toolArgsJson":"{\\"id\\":\\"REVOPS-7\\"}"}} · get_issue on linear · {"identifier":"REVOPS-7"} · arguments repaired once after the provider refused {"issueId":"REVOPS-7"}: Tool input validation failed',
+    );
+  });
+
+  it('makes no third attempt when the repair is refused too', async (): Promise<void> => {
+    const SECOND = 'Tool input validation failed: unknown argument issue';
+    recorded.outputs.push({ toolArgsJson: JSON.stringify({ issue: 'REVOPS-7' }) });
+    const result = await repairFailedReads({
+      actions: [read(JSON.stringify({ issueId: 'REVOPS-7' }))],
+      applied: [failed(VALIDATION)],
+      surfaces: [linear],
+      skill: { name: 'refresh-tile' },
+      candidate,
+      apply: applyHook({ '{"issue":"REVOPS-7"}': failed(SECOND) }),
+    });
+    expect(recorded.calls).toHaveLength(1);
+    expect(applied).toHaveLength(1);
+    expect(result.applied[0]).toEqual({
+      tool: 'mcp.call',
+      ok: false,
+      reason: SECOND,
+      idempotencyKey: 'wi:run:0',
+      repair: { reason: VALIDATION, toolArgsJson: '{"issueId":"REVOPS-7"}' },
+    });
+    // A row that already carries a repair is never repaired again.
+    expect(repairableReadFailures(result.actions, result.applied, [linear])).toEqual([]);
+  });
+
+  it('never re-authors a write the provider refused', async (): Promise<void> => {
+    const comment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ id: 'REVOPS-7', body: 'Set to 74%.' }),
+      },
+    };
+    const result = await repairFailedReads({
+      actions: [comment],
+      applied: [failed(VALIDATION)],
+      surfaces: [linear],
+      skill: { name: 'refresh-tile' },
+      candidate,
+      apply: async (): Promise<AppliedAction> => {
+        throw new Error('a write must not be re-applied');
+      },
+    });
+    expect(recorded.calls).toHaveLength(0);
+    expect(result).toEqual({ actions: [comment], applied: [failed(VALIDATION)], repaired: 0 });
+  });
+
+  it('leaves a read that failed for another reason, a held row and a JSON-less repair alone', async (): Promise<void> => {
+    const notFound = await repairFailedReads({
+      actions: [read('{"id":"REVOPS-9"}'), read('{"id":"REVOPS-7"}')],
+      applied: [failed('Issue not found'), { ...failed(VALIDATION), ok: true, held: true }],
+      surfaces: [linear],
+      skill: { name: 'refresh-tile' },
+      candidate,
+      apply: async (): Promise<AppliedAction> => {
+        throw new Error('nothing to re-apply');
+      },
+    });
+    expect(recorded.calls).toHaveLength(0);
+    expect(notFound.repaired).toBe(0);
+
+    recorded.outputs.push({ toolArgsJson: 'not json' });
+    const unparsable = await repairFailedReads({
+      actions: [read('{"issueId":"REVOPS-7"}')],
+      applied: [failed(VALIDATION)],
+      surfaces: [linear],
+      skill: { name: 'refresh-tile' },
+      candidate,
+      apply: async (): Promise<AppliedAction> => {
+        throw new Error('nothing to re-apply');
+      },
+    });
+    expect(recorded.calls).toHaveLength(1);
+    expect(unparsable.applied).toEqual([failed(VALIDATION)]);
+
+    const modelDown = await repairFailedReads({
+      actions: [read('{"issueId":"REVOPS-7"}')],
+      applied: [failed(VALIDATION)],
+      surfaces: [linear],
+      skill: { name: 'refresh-tile' },
+      candidate,
+      apply: async (): Promise<AppliedAction> => {
+        throw new Error('nothing to re-apply');
+      },
+    });
+    expect(modelDown.applied).toEqual([failed(VALIDATION)]);
   });
 });

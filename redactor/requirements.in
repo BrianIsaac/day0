@@ -1,0 +1,5 @@
+# The direct dependencies of the redaction component; the pinned wheel lists
+# are compiled from it (see the header of requirements.txt). protobuf is what
+# the tokenizer library needs to read the backbone's sentencepiece model.
+gliner==0.2.29
+protobuf
