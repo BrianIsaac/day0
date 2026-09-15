@@ -969,6 +969,8 @@ describe('deferral by data, not by judgement', (): void => {
   });
 
   it('accepts the 16 September second retry deferring Done until the ordered audit comment lands', () => {
+    const retryTicket = { ...ticket, externalId: 'REVOPS-5', contentRefs: ['ticket://REVOPS-5'] };
+    const retryDone = { ...done, args: { ...done.args, toolArgsJson: '{"id":"REVOPS-5","state":"Done"}' } };
     const retryPlan = {
       ...plan,
       steps: ['Add the comment "Audit checked" to REVOPS-5 in Linear.', 'After the comment lands, move the Linear issue to Done.'],
@@ -982,10 +984,10 @@ describe('deferral by data, not by judgement', (): void => {
         reason: 'Wait until the audit comment lands before the Done move.', dependsOnActionIndex: 0, dependsOnField: 'id' }],
     };
     const retryContext = { ...recordContext, plan: retryPlan, skillBody: '' };
-    expect(deferralAudit(deferred, ticket, retryContext)).toEqual([]);
-    expect(deferralAudit({ ...deferred, actions: [comment, done], procedureTrails: [] }, ticket, retryContext))
+    expect(deferralAudit(deferred, retryTicket, retryContext)).toEqual([]);
+    expect(deferralAudit({ ...deferred, actions: [comment, retryDone], procedureTrails: [] }, retryTicket, retryContext))
       .toEqual([expect.stringContaining('prewrote a closing action')]);
-    expect(deferralAudit(deferred, ticket, { ...retryContext, plan: { ...retryPlan, steps: retryPlan.steps.slice(0, 1) } }))
+    expect(deferralAudit(deferred, retryTicket, { ...retryContext, plan: { ...retryPlan, steps: retryPlan.steps.slice(0, 1) } }))
       .toEqual([expect.stringContaining('deferred an action with no result dependency')]);
   });
 

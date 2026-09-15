@@ -1,3 +1,4 @@
+import { actionIdempotencyKey } from './idempotency';
 import { actionIntent, isAuditComment, isStatusChange, parseSurfaceAction } from '../surfaces/policy';
 import type { AppliedAction } from '../surfaces/types';
 import { promisesResult } from './plan-steps';
@@ -51,11 +52,63 @@ export function closingResume(output: unknown, plan: ExecutionPlan, failure: str
   }
   const closingActions = row.actions.slice(boundary);
   const closingApplied = row.applied.slice(boundary);
+  if (row.prerequisiteCount === undefined && closingActions.some(action => {
+    const parsed = parseSurfaceAction(action);
+    return !parsed.ok || actionIntent(parsed.action) === 'read' ||
+      (parsed.action.kind === 'mcp.call' && /^browser[._-]/i.test(parsed.action.tool));
+  })) return undefined;
   if (closingActions.every((_, index) => closingApplied[index]?.ok && !closingApplied[index]?.held)) return undefined;
+  const landedClosing = closingActions.flatMap((action, index) => {
+    const entry = closingApplied[index];
+    return entry?.ok && !entry.held && !entry.awaitingApproval ? [{ action, entry }] : [];
+  });
   return {
-    draft: row.draft, notes: row.notes, actions, applied,
+    draft: row.draft, notes: row.notes,
+    actions: [...actions, ...landedClosing.map(row => row.action)],
+    applied: [...applied, ...landedClosing.map(row => row.entry)],
     needsDependentPhase: true, phase: 'dependent-authoring', resumedClosing: true,
     initialFailure: failure,
     previousClosing: { actions: closingActions, applied: closingApplied },
   };
+}
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
+function payload(action: ExecutionOutput['actions'][number]): string | undefined {
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok) return undefined;
+  if (parsed.action.kind === 'http.request' && parsed.action.bodyJson) {
+    return canonical({ ...parsed.action, body: undefined });
+  }
+  return canonical(parsed.action);
+}
+
+export function resumedClosingLedger(
+  actions: ExecutionOutput['actions'],
+  previous: ClosingResume['previousClosing'] | undefined,
+  run: { workItemId: string; runId: string; actionIndexOffset: number },
+): Array<AppliedAction | undefined> {
+  return actions.map((action, index) => {
+    const key = payload(action);
+    if (!key || !previous) return undefined;
+    const priorIndex = previous.actions.findIndex((prior, position) => {
+      const entry = previous.applied[position];
+      return entry?.ok && !entry.held && !entry.awaitingApproval && payload(prior) === key;
+    });
+    if (priorIndex < 0) return undefined;
+    return {
+      ...previous.applied[priorIndex]!,
+      reason: 'This closing action already landed in the previous attempt; reused its recorded result.',
+      idempotencyKey: actionIdempotencyKey({
+        workItemId: run.workItemId, runId: run.runId, actionIndex: run.actionIndexOffset + index,
+      }),
+    };
+  });
 }

@@ -456,6 +456,23 @@ describe('applying surface actions', (): void => {
     expect(recorded.http).toHaveLength(1);
   });
 
+  it('accepts a landed prerequisite comment but refuses a held, failed or differently targeted one', async () => {
+    for (const [priorComment, entry, accepted] of [
+      [comment, { tool: 'mcp.call', ok: true }, true],
+      [comment, { tool: 'mcp.call', ok: true, held: true }, false],
+      [comment, { tool: 'mcp.call', ok: false }, false],
+      [{ ...comment, args: { ...comment.args, toolArgsJson: '{"issueId":"other","body":"Audit"}' } }, { tool: 'mcp.call', ok: true }, false],
+    ] as const) {
+      const recorded: Recorded = { mcp: [], http: [] };
+      const result = await applySurfaceActions(ctx, 'real', [linear], run, [status], {
+        deps: deps(recorded), grants, now,
+        prerequisiteLedger: { actions: [priorComment], applied: [{ ...entry, idempotencyKey: 'old' }] },
+      });
+      expect(result[0]!.ok).toBe(accepted);
+      expect(recorded.mcp.map(call => call.tool)).toEqual(accepted ? ['save_issue'] : []);
+    }
+  });
+
   it('fails a status change whose audit comment was not approved or did not land', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const unapproved = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {

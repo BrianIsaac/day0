@@ -65,6 +65,7 @@ import {
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
 import { landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
+import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   grantRefusal,
@@ -710,6 +711,7 @@ async function repairedForHold<T extends { actions: MockAction[] }>(
 interface DependentAuthoringOutput extends ExecutionOutput {
   phase: 'dependent-authoring';
   resumedClosing?: boolean;
+  previousClosing?: ClosingResume['previousClosing'];
   applied: AppliedAction[];
   initialFailure?: string;
 }
@@ -1212,12 +1214,18 @@ export const applyApprovedActions = internalAction({
           ? ((claim.output as { actionIndexOffset: number }).actionIndexOffset ?? 0)
           : 0;
       const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
-      const priorLedger =
-        claim.phase === 'approved'
-          ? (output.applied ?? []).map((entry) =>
-              entry && !entry.awaitingApproval ? entry : undefined,
-            )
-          : undefined;
+      const resumedLedger = isDependentPendingOutput(output) && output.initial.resumedClosing
+        ? resumedClosingLedger(output.actions, {
+            actions: [...output.initial.actions, ...(output.initial.previousClosing?.actions ?? [])],
+            applied: [...output.initial.applied, ...(output.initial.previousClosing?.applied ?? [])],
+          }, {
+            workItemId: args.workItemId, runId: claim.runId, actionIndexOffset,
+          })
+        : [];
+      const priorLedger = output.actions.map((_, index) => {
+        const entry = claim.phase === 'approved' ? output.applied?.[index] : undefined;
+        return entry && !entry.awaitingApproval ? entry : resumedLedger[index];
+      });
       const run = {
         agentId: claim.agentId,
         agentName: agent.name,
@@ -1238,6 +1246,7 @@ export const applyApprovedActions = internalAction({
           heldReasons: new Map(claim.heldReasons),
           deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
           priorLedger,
+          ...(isDependentPendingOutput(output) ? { prerequisiteLedger: output.initial } : {}),
           idempotencyIndexOffset: actionIndexOffset,
           autoPhase: claim.phase === 'auto',
           autonomousActions: claim.autonomousActions,
