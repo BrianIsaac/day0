@@ -16,6 +16,7 @@ import {
   DashboardHeader,
   DraftDetails,
   PendingActions,
+  PlanApprovalForm,
   PlanExecutionLedger,
   RepairNote,
   WorkItemCard,
@@ -112,6 +113,59 @@ describe('a write re-authored once before the hold', (): void => {
       />,
     );
     expect(untouched).not.toContain('re-authored');
+  });
+});
+
+describe('a question at plan approval', (): void => {
+  const question = {
+    _id: 'q1',
+    _creationTime: 1,
+    agentId: 'a1',
+    key: 'who owns the looker pipeline tile',
+    question: 'Who owns the Looker pipeline tile.',
+    context: { touchedBy: 'plan', text: 'Refresh the Looker pipeline tile.', words: ['looker', 'pipeline', 'tile'] },
+    askedAt: 1,
+    workItemId: 'w1',
+    charterId: 'c1',
+  } as unknown as Doc<'managerQuestions'>;
+  const noop = (): void => undefined;
+
+  it('shows the question with where it came from, an answer field, the planner\'s note, and one approve button', (): void => {
+    const markup = renderToStaticMarkup(
+      <PlanApprovalForm
+        riskNotes="The runbook does not say which figure to enter if the deck and the sheet disagree."
+        questions={[question]}
+        onApprove={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(markup).toContain('A question for you before this plan runs');
+    expect(markup).toContain('Who owns the Looker pipeline tile.');
+    expect(markup).toContain('from the charter · touched by the plan: looker, pipeline, tile');
+    expect(markup).toContain('aria-label="answer: Who owns the Looker pipeline tile."');
+    expect(markup).toContain('Planner');
+    expect(markup).toContain('which figure to enter if the deck and the sheet disagree');
+    expect(markup).toContain('aria-label="answer to the planner');
+    expect(markup).toContain('Approve plan with answers');
+    expect(markup).toContain('Cancel');
+  });
+
+  it('keeps the plain approve button when the plan raises nothing, and skips an answered question', (): void => {
+    const plain = renderToStaticMarkup(
+      <PlanApprovalForm riskNotes="" questions={[]} onApprove={noop} onCancel={noop} />,
+    );
+    expect(plain).toContain('>Approve plan<');
+    expect(plain).not.toContain('aria-label="answer');
+    const answered = renderToStaticMarkup(
+      <PlanApprovalForm
+        riskNotes=""
+        questions={[{ ...question, answer: { text: 'Priya.', answeredAt: 2, via: 'dashboard' } } as Doc<'managerQuestions'>]}
+        onApprove={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(answered).not.toContain('Who owns the Looker pipeline tile.');
+    expect(answered).toContain('>Approve plan<');
   });
 });
 
@@ -213,6 +267,19 @@ describe('sending a finished item back', (): void => {
         onResendDecision={resolved}
       />,
     );
+
+  it('shows what the manager answered at approval once the plan is running', (): void => {
+    const row = {
+      ...item('completed'),
+      plan: { summary: 'Refresh the tile.', steps: ['Refresh'], riskNotes: '', reversibility: 'r', estimatedMinutes: 1, expectedOutputType: 'ticket-update' },
+      managerAnswers: [{ question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.', answeredAt: 2 }],
+    } as unknown as Doc<'workItems'>;
+    const markup = render(row);
+    expect(markup).toContain('Answered at approval');
+    expect(markup).toContain('Who owns the Looker pipeline tile.');
+    expect(markup).toContain('Priya owns it.');
+    expect(render(item('completed'))).not.toContain('Answered at approval');
+  });
 
   it('shows a landed row that was re-authored before the hold with its first attempt', (): void => {
     const row = item('completed');

@@ -426,6 +426,22 @@ export default defineSchema({
       v.object({ reason: v.string(), at: v.number(), runId: v.optional(v.id('events')) }),
     ),
     /**
+     * What the manager answered when approving the plan: the charter's open
+     * questions this plan touched (each also amended the charter through its
+     * `managerQuestions` record) and the planner's own note. The executor
+     * reads them as approved evidence for this run; cleared on completion.
+     */
+    managerAnswers: v.optional(
+      v.array(
+        v.object({
+          question: v.string(),
+          answer: v.string(),
+          answeredAt: v.number(),
+          questionId: v.optional(v.id('managerQuestions')),
+        }),
+      ),
+    ),
+    /**
      * When the manager retried this item after the quality-fit filter skipped
      * it. The retry is the manager's decision that the work is worth doing, so
      * the next evaluation leaves that filter out; plan approval still applies.

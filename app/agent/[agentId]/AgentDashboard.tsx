@@ -66,6 +66,7 @@ export function AgentDashboard({ agentId }: Props) {
   const charter = useQuery(api.charters.latest, { agentId });
   const workspace = useQuery(api.workspace.read, { agentId });
   const workItems = useQuery(api.work.listForAgent, { agentId });
+  const openQuestions = useQuery(api.managerQuestions.openForAgent, { agentId });
   const proposedSkills = useQuery(api.skills.proposed, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
@@ -195,6 +196,7 @@ export function AgentDashboard({ agentId }: Props) {
 
           <WorkQueue
             workItems={workItems ?? []}
+            openQuestions={openQuestions ?? []}
             surfaces={surfaces}
             registeredSkillCount={(registeredSkills ?? []).length}
             charterApproved={!!charter?.approved}
@@ -1336,12 +1338,15 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 
 function WorkQueue({
   workItems,
+  openQuestions,
   surfaces,
   registeredSkillCount,
   charterApproved,
   autonomousActions,
 }: {
   workItems: Doc<'workItems'>[];
+  /** The charter's open questions still waiting on the manager, asked at a plan. */
+  openQuestions: Doc<'managerQuestions'>[];
   surfaces: SurfaceRecord[];
   registeredSkillCount: number;
   charterApproved: boolean;
@@ -1432,7 +1437,14 @@ function WorkQueue({
               item={item}
               surfaces={surfaces}
               autonomousActions={autonomousActions}
-              onApprovePlan={() => approvePlan({ workItemId: item._id })}
+              questions={openQuestions.filter((question) => question.workItemId === item._id)}
+              onApprovePlan={(decision) =>
+                approvePlan({
+                  workItemId: item._id,
+                  ...(decision.answers.length > 0 ? { answers: decision.answers } : {}),
+                  ...(decision.note ? { note: decision.note } : {}),
+                })
+              }
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={(feedback) =>
                 retryFailed({ workItemId: item._id, ...(feedback?.trim() ? { feedback } : {}) })
@@ -1917,10 +1929,112 @@ export function PendingActions({
   );
 }
 
+/** What the manager decided with the plan: the answers given, and a note to the planner's own. */
+export interface PlanApproval {
+  answers: Array<{ questionId: Id<'managerQuestions'>; text: string }>;
+  note?: string;
+}
+
+/**
+ * The questions a pending plan raises and the manager's answers to them,
+ * approved as one decision.
+ *
+ * The charter's open questions this plan touched come from their records;
+ * the planner's own note (`riskNotes`) is shown and may be answered as free
+ * text. Every answer reaches the run as approved evidence; a question left
+ * blank is simply not answered and stays open.
+ */
+export function PlanApprovalForm({
+  riskNotes,
+  questions,
+  onApprove,
+  onCancel,
+}: {
+  riskNotes: string;
+  questions: Doc<'managerQuestions'>[];
+  onApprove: (decision: PlanApproval) => void;
+  onCancel: () => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [note, setNote] = useState('');
+  const open = questions.filter((question) => !question.answer);
+  const planNote = riskNotes.trim();
+  function decision(): PlanApproval {
+    return {
+      answers: open.flatMap((question) => {
+        const text = (answers[question._id] ?? '').trim();
+        return text ? [{ questionId: question._id, text }] : [];
+      }),
+      ...(note.trim() ? { note: note.trim() } : {}),
+    };
+  }
+  return (
+    <div className="mt-2 space-y-2">
+      {open.length > 0 ? (
+        <div className="p-2 rounded-md border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10">
+          <p className="text-[var(--color-warn)] font-medium mb-1">
+            {open.length === 1 ? 'A question for you before this plan runs' : `${open.length} questions for you before this plan runs`}
+          </p>
+          <ul className="space-y-1.5">
+            {open.map((question) => (
+              <li key={question._id}>
+                <p className="text-[var(--color-fg)]">{question.question}</p>
+                <p className="text-[10px] text-[var(--color-muted)]">
+                  from the charter · touched by the {question.context.touchedBy}
+                  {question.context.words.length > 0 ? `: ${question.context.words.join(', ')}` : ''}
+                </p>
+                <input
+                  type="text"
+                  value={answers[question._id] ?? ''}
+                  onChange={(event) =>
+                    setAnswers((current) => ({ ...current, [question._id]: event.target.value }))
+                  }
+                  placeholder="your answer, written into the charter with the approval (optional)"
+                  aria-label={`answer: ${question.question}`}
+                  className="mt-0.5 w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {planNote ? (
+        <div className="p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-0.5">Planner&apos;s note</p>
+          <p className="text-[var(--color-fg)]">{planNote}</p>
+          <input
+            type="text"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="your answer to the note, for this run (optional)"
+            aria-label="answer to the planner's note"
+            className="mt-1 w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+          />
+        </div>
+      ) : null}
+      <div className="flex gap-2">
+        <button
+          onClick={() => onApprove(decision())}
+          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs"
+        >
+          {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function WorkItemCard({
   item,
   surfaces,
   autonomousActions,
+  questions = [],
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -1932,7 +2046,9 @@ export function WorkItemCard({
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
   autonomousActions: boolean;
-  onApprovePlan: () => void;
+  /** The charter's open questions asked at this item's plan and still waiting. */
+  questions?: Doc<'managerQuestions'>[];
+  onApprovePlan: (decision: PlanApproval) => void;
   onCancelPlan: () => void;
   onRetryFailed: (feedback?: string) => void;
   onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
@@ -2065,19 +2181,24 @@ export function WorkItemCard({
             ))}
           </ol>
           {item.state === 'plan-pending' ? (
-            <div className="flex gap-2 mt-2">
-              <button
-                onClick={onApprovePlan}
-                className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs"
-              >
-                Approve plan
-              </button>
-              <button
-                onClick={onCancelPlan}
-                className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs"
-              >
-                Cancel
-              </button>
+            <PlanApprovalForm
+              key={item._id}
+              riskNotes={plan.riskNotes ?? ''}
+              questions={questions}
+              onApprove={onApprovePlan}
+              onCancel={onCancelPlan}
+            />
+          ) : null}
+          {item.state !== 'plan-pending' && item.managerAnswers && item.managerAnswers.length > 0 ? (
+            <div className="mt-2 text-[var(--color-muted)]">
+              <p className="text-[10px] uppercase tracking-wider mb-0.5">Answered at approval</p>
+              <ul className="space-y-0.5">
+                {item.managerAnswers.map((entry) => (
+                  <li key={`${entry.question}:${entry.answeredAt}`}>
+                    {entry.question} <span className="text-[var(--color-fg)]">- {entry.answer}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : null}
         </div>

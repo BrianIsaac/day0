@@ -31,6 +31,7 @@ import {
   type ArgumentRepairAttempt,
   type DependentExecutionOutput,
   type ExecutionPlan,
+  type ManagerAnswer,
   type MockAction,
   type PlanStepOutcome,
   type WorkCandidate,
@@ -402,7 +403,15 @@ async function executeApprovedPlanHandler(
     charter,
     internalCaller,
     managerFeedback: item.managerFeedback?.reason,
+    managerAnswers: managerAnswersOf(item),
   });
+}
+
+/** The manager's answers at approval, as the executor reads them. */
+function managerAnswersOf(item: Doc<'workItems'>): ManagerAnswer[] | undefined {
+  const rows = item.managerAnswers;
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map((row) => ({ question: row.question, answer: row.answer }));
 }
 
 export const executeApprovedPlan = action({
@@ -444,6 +453,8 @@ async function holdDay0Actions(
     internalCaller: boolean;
     /** The manager's reason for rejecting the previous attempt, if this is a retry. */
     managerFeedback?: string;
+    /** What the manager answered when approving the plan. */
+    managerAnswers?: readonly ManagerAnswer[];
   },
 ): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
   let additionalModelCalls = 0;
@@ -472,6 +483,7 @@ async function holdDay0Actions(
       mode: SURFACE_MODE,
       autonomousActions: autonomousActionsOn(agent),
       managerFeedback: args.managerFeedback,
+      managerAnswers: args.managerAnswers,
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
@@ -843,6 +855,7 @@ export const authorDependentActions = internalAction({
         mode: 'real',
         autonomousActions: autonomousActionsOn(agent),
         managerFeedback: item.managerFeedback?.reason,
+        managerAnswers: managerAnswersOf(item),
         initialOutput: initial,
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,

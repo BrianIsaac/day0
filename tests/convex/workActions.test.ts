@@ -59,6 +59,7 @@ const recorded = vi.hoisted(() => ({
   afterToolList: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
   skillModes: [] as Array<string | undefined>,
+  skillAnswers: [] as unknown[],
   skillSwitches: [] as Array<boolean | undefined>,
   dependentSwitches: [] as Array<boolean | undefined>,
   planSwitches: [] as boolean[],
@@ -235,10 +236,12 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     runSkill: async (args: {
       mode?: string;
       autonomousActions?: boolean;
+      managerAnswers?: unknown;
       onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
       recorded.skillModes.push(args.mode);
+      recorded.skillAnswers.push(args.managerAnswers);
       recorded.skillSwitches.push(args.autonomousActions);
       for (let call = 0; call < recorded.additionalModelCalls; call += 1) {
         args.onAdditionalModelCall?.();
@@ -438,6 +441,7 @@ afterEach((): void => {
   recorded.planRecords.length = 0;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
+  recorded.skillAnswers.length = 0;
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
   recorded.dependentRuns = 0;
@@ -1862,6 +1866,35 @@ describe('executing an approved plan through the gate', (): void => {
         { surface: 'linear', tool: 'get_issue', subject: 'record', unavailable: 'no grant (linear:read)' },
       ]);
     });
+  });
+
+  it('hands the manager\'s answers at approval to the executor as approved evidence, and nothing when there were none', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        managerAnswers: [
+          { question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.', answeredAt: 2 },
+          { question: 'Which figure if the deck and the sheet disagree?', answer: 'Use the sheet figure.', answeredAt: 2 },
+        ],
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    // The auto phase is applied here so the scheduled apply finds nothing to claim.
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(recorded.skillAnswers).toEqual([
+      [
+        { question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.' },
+        { question: 'Which figure if the deck and the sheet disagree?', answer: 'Use the sheet figure.' },
+      ],
+    ]);
+    recorded.skillAnswers.length = 0;
+    const plain = convexTest(contractSchema(), allConvexModules());
+    const seeded = await seed(plain, 'real');
+    await plain.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId: seeded.workItemId });
+    await plain.action(internal.workActions.applyApprovedActions, { workItemId: seeded.workItemId });
+    expect(recorded.skillAnswers).toEqual([undefined]);
   });
 
   it('pauses a real-mode run at actions-pending with nothing but the DM applied', async (): Promise<void> => {

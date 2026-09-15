@@ -863,6 +863,43 @@ describe('deferral by data, not by judgement', (): void => {
     expect(output.actions).toEqual([getIssue]);
   });
 
+  it('carries the manager\'s answers at approval into both phases\' prompts, and no block without them', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'd',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue],
+      procedureTrails: [],
+      deferredActions: null,
+    });
+    await runSkill({
+      ...runArgs,
+      plan: { ...plan, steps: ['Comment on REVOPS-7 in Linear.'] },
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      managerAnswers: [{ question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.' }],
+    });
+    expect(recorded.users[0]).toContain("--- Manager's answers at plan approval ---");
+    expect(recorded.users[0]).toContain('[{"question":"Who owns the Looker pipeline tile.","answer":"Priya owns it."}]');
+    expect(recorded.users[0]!.indexOf("Manager's answers")).toBeLessThan(recorded.users[0]!.indexOf('--- Candidate ---'));
+    recorded.users.length = 0;
+    recorded.outputs.push({
+      draft: 'd',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue],
+      procedureTrails: [],
+      deferredActions: null,
+    });
+    await runSkill({
+      ...runArgs,
+      plan: { ...plan, steps: ['Comment on REVOPS-7 in Linear.'] },
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+    });
+    expect(recorded.users[0]).not.toContain("Manager's answers");
+  });
+
   it('leaves the flag alone in mock mode and when the plan promises no result', async (): Promise<void> => {
     recorded.outputs.push({
       draft: 'd',

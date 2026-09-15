@@ -178,6 +178,12 @@ export interface ArgumentRepairAttempt {
   repaired: boolean;
 }
 
+/** One answer the manager gave when approving the plan, as the executor reads it. */
+export interface ManagerAnswer {
+  question: string;
+  answer: string;
+}
+
 export interface ExecutionOutput {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;

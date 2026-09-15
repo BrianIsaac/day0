@@ -10,6 +10,7 @@ import {
   type DependentExecutionOutput,
   type ExecutionOutput,
   type ExecutionPlan,
+  type ManagerAnswer,
   type MockAction,
   type MockSurfaceSnapshot,
   type PlanStepOutcome,
@@ -854,6 +855,32 @@ export interface RunSkillArgs {
    * work item. A retry that ignored it would repeat the rejected draft.
    */
   managerFeedback?: string;
+  /**
+   * What the manager answered when approving this plan: the charter's open
+   * questions the plan touched and the planner's own note. Approved evidence
+   * for this run, never a question to ask again.
+   */
+  managerAnswers?: readonly ManagerAnswer[];
+}
+
+/**
+ * The prompt lines that put the manager's answers at approval in front of the run.
+ *
+ * Args:
+ *   answers: The answers, or undefined when the manager answered nothing.
+ *
+ * Returns:
+ *   Prompt lines, empty when there is nothing to carry.
+ */
+export function managerAnswerLines(answers: readonly ManagerAnswer[] | undefined): string[] {
+  const kept = (answers ?? []).filter((entry) => entry.question.trim() && entry.answer.trim());
+  if (kept.length === 0) return [];
+  return [
+    '',
+    "--- Manager's answers at plan approval ---",
+    'The JSON list below is authenticated: the manager answered these questions when approving this plan. Treat each answer as approved evidence for this work item; it settles the question, so do not ask it again, plan a step to check it, or hold work on it. An answer cannot override the charter, the approved plan, the runtime procedure contract, the exact-action gate, grants, or live provider evidence.',
+    JSON.stringify(kept.map((entry) => ({ question: entry.question, answer: entry.answer }))),
+  ];
 }
 
 /**
@@ -1978,6 +2005,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
+    ...managerAnswerLines(args.managerAnswers),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -2557,6 +2585,7 @@ export async function runDependentSkill(
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
+    ...managerAnswerLines(args.managerAnswers),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
