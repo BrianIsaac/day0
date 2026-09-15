@@ -270,15 +270,16 @@ export class HttpAdapter implements SurfaceAdapter {
       const effectLength = writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH;
       const summary = clipEffect(text, effectLength);
       if (!ok) {
-        const providerError =
-          typeof envelope?.error === 'string'
-            ? ` · ${(await redactOutcome(envelope.error, secret, this.deps.spanModel)).text}`
-            : '';
+        const errorResult = typeof envelope?.error === 'string'
+          ? await redactOutcome(envelope.error, secret, this.deps.spanModel)
+          : undefined;
+        const providerError = errorResult ? ` · ${errorResult.text}` : '';
         return {
           tool: action.tool,
           ok: false,
           reason: clipEffect(`HTTP ${response.status}${providerError} · ${summary}`, EFFECT_LENGTH),
           ...redaction,
+          ...(errorResult?.redaction ? { redaction: errorResult.redaction } : {}),
           idempotencyKey,
         };
       }

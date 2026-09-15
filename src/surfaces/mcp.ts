@@ -590,14 +590,16 @@ export class McpAdapter implements SurfaceAdapter {
         const text = redacted.text;
         const redaction = redacted.redaction ? { redaction: redacted.redaction } : {};
         if (result.isError) {
-          const reason = result.errorMessage
-            ? (await redactOutcome(result.errorMessage, bearer, this.deps.spanModel)).text
-            : text;
+          const errorResult = result.errorMessage
+            ? await redactOutcome(result.errorMessage, bearer, this.deps.spanModel)
+            : redacted;
+          const reason = errorResult.text;
           return {
             tool: action.tool,
             ok: false,
             reason: clipEffect(reason || 'the server reported an error', EFFECT_LENGTH),
             ...redaction,
+            ...(errorResult.redaction ? { redaction: errorResult.redaction } : {}),
             idempotencyKey,
           };
         }

@@ -1,3 +1,4 @@
+import { RedactorUnavailableError } from '../../../src/redaction/client';
 import { describe, expect, it, vi } from 'vitest';
 import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
@@ -87,6 +88,23 @@ function adapter(
 }
 
 describe('HTTP adapter', (): void => {
+  it('marks the row degraded when redacting its extracted error fails', async () => {
+    let calls = 0;
+    const spanModel = { name: 'intermittent', spans: async () => {
+      if (++calls > 1) throw new RedactorUnavailableError('offline');
+      return [];
+    } };
+    const surfaceAdapter = new HttpAdapter([slack], {
+      decrypt: async () => 'opaque-known', now: () => now,
+      fetch: async () => Response.json({ ok: false, error: 'password: hunter2 opaque-known' }),
+      spanModel,
+    });
+    const result = await surfaceAdapter.apply(ctx, run, post, 0, 'k');
+    expect(calls).toBeGreaterThan(1);
+    expect(result.redaction).toBe('structural-only');
+    expect(result.reason).not.toContain('opaque-known');
+  });
+
   it('keeps a read response whole for the closing phase and clips a write to the short effect', async (): Promise<void> => {
     const long = JSON.stringify({
       ok: true,

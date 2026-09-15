@@ -1,3 +1,4 @@
+import { RedactorUnavailableError } from '../../../src/redaction/client';
 import { describe, expect, it, vi } from 'vitest';
 import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
@@ -124,6 +125,24 @@ function adapter(
 }
 
 describe('MCP adapter', (): void => {
+  it('marks the row degraded when redacting its extracted error fails', async () => {
+    let calls = 0;
+    const spanModel = { name: 'intermittent', spans: async () => {
+      if (++calls > 1) throw new RedactorUnavailableError('offline');
+      return [];
+    } };
+    const client = fakeClient({ linear_save_comment: async () => ({
+      isError: true, content: [{ type: 'text', text: JSON.stringify({ error: true, message: 'password: hunter2 opaque-known' }) }],
+    }) });
+    const surfaceAdapter = new McpAdapter([linear], {
+      decrypt: async () => 'opaque-known', now: () => now, createClient: client.create, spanModel,
+    });
+    const result = await surfaceAdapter.apply(ctx, run, commentCall, 0, 'k');
+    expect(calls).toBeGreaterThan(1);
+    expect(result.redaction).toBe('structural-only');
+    expect(result.reason).not.toContain('opaque-known');
+  });
+
   it('keeps a read result whole for the closing phase and clips a write to the short effect', async (): Promise<void> => {
     const long = JSON.stringify({
       issues: Array.from({ length: 40 }, (_, index) => ({
