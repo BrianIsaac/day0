@@ -86,13 +86,14 @@ export class PlaywrightDashboard implements Dashboard {
    *
    * Args:
    *   origin: The app's origin, `http://localhost:<port>`.
+   *   headed: Show the browser window instead of running headless.
    *
    * Returns:
    *   The dashboard.
    */
-  static async open(origin: string): Promise<PlaywrightDashboard> {
+  static async open(origin: string, headed = false): Promise<PlaywrightDashboard> {
     const { chromium } = await import('playwright');
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch({ headless: !headed });
     const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
     context.setDefaultTimeout(ACTION_TIMEOUT_MS);
     const page = await context.newPage();

@@ -146,7 +146,7 @@ async function main(): Promise<number> {
     ledger: new UndoLedger(),
     dockerInventory,
     portIsFree,
-    openDashboard: (origin) => PlaywrightDashboard.open(origin),
+    openDashboard: (origin) => PlaywrightDashboard.open(origin, options.headed),
     connectBackend,
     primaryProject,
     sourceEnv,

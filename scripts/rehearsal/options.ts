@@ -30,6 +30,8 @@ export interface RehearsalOptions {
   dryRun: boolean;
   /** Leave the clone and the stack up after the run. */
   keep: boolean;
+  /** Launch a visible browser so the operator can watch the script drive the dashboard. */
+  headed: boolean;
   help: boolean;
 }
 
@@ -58,6 +60,7 @@ Options:
   --timeout-minutes <n>    ceiling for the whole run (default 40)
   --dry-run                stop before the first provider write; print the writes it would make
   --keep                   leave the clone and the stack up afterwards (workspaces are still reset)
+  --headed                 show the browser the script drives, so the run can be watched
   --help                   print this
 `;
 
@@ -80,6 +83,7 @@ export function parseRehearsalArguments(argv: readonly string[]): RehearsalOptio
     timeoutMinutes: 40,
     dryRun: false,
     keep: false,
+    headed: false,
     help: false,
   };
   const valueOf = (index: number, flag: string): string => {
@@ -146,6 +150,9 @@ export function parseRehearsalArguments(argv: readonly string[]): RehearsalOptio
         break;
       case '--keep':
         options.keep = true;
+        break;
+      case '--headed':
+        options.headed = true;
         break;
       case '--help':
       case '-h':

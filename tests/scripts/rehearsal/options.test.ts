@@ -64,6 +64,7 @@ describe('command line', (): void => {
       timeoutMinutes: 15,
       dryRun: true,
       keep: true,
+      headed: false,
       help: false,
     });
   });
