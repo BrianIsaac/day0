@@ -1370,6 +1370,7 @@ function RegisteredSkillsPanel({
                           ? 'a run stopped without reporting · Retry takes the skill over'
                           : (s.verificationLog ?? s.description)}
                     </div>
+                    <RefusedDraftDetails skill={s} />
                   </div>
                   <button
                     onClick={() => onRetry(s._id, s.name)}
@@ -1395,6 +1396,43 @@ function RegisteredSkillsPanel({
         </div>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * The draft a refusal turned away before any sandbox ran, behind a disclosure
+ * under the failed skill. Read-only: the row keeps it so the manager can see
+ * what was refused against the reason above it, and Retry hands it back to the
+ * author to correct. Nothing here was registered or checked.
+ */
+export function RefusedDraftDetails({
+  skill,
+}: {
+  skill: Pick<Doc<'skills'>, 'refusedBody' | 'refusedSmokeTest'>;
+}) {
+  const body = skill.refusedBody?.trim() ?? '';
+  const smokeTest = skill.refusedSmokeTest?.trim() ?? '';
+  if (!body && !smokeTest) return null;
+  const files = [
+    { name: 'SKILL.md', content: body },
+    { name: 'smoke.py', content: smokeTest },
+  ].filter((file) => file.content);
+  return (
+    <details className="mt-1 text-xs">
+      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+        Refused draft · {files.map((file) => file.name).join(' and ')} · not registered
+      </summary>
+      <div className="mt-1 space-y-1">
+        {files.map((file) => (
+          <div key={file.name}>
+            <div className="font-mono text-[10px] text-[var(--color-muted)]">{file.name}</div>
+            <pre className="text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]">
+              {file.content}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 

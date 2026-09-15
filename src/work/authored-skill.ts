@@ -157,3 +157,22 @@ export function authoredSkillIssues(args: {
   }
   return issues;
 }
+
+/** Upper bound on each refused draft kept on the row; a prompt carries it back on retry. */
+export const REFUSED_DRAFT_CHARS = 16_000;
+
+/**
+ * Bound a refused draft before it is stored.
+ *
+ * Args:
+ *   text: The draft, already redacted.
+ *   limit: The most characters to keep.
+ *
+ * Returns:
+ *   The draft as it is when it fits, else its first `limit` characters and a
+ *   line saying how much was not kept.
+ */
+export function clipRefusedDraft(text: string, limit: number = REFUSED_DRAFT_CHARS): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n… (${text.length - limit} more characters not kept)`;
+}

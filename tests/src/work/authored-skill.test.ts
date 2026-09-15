@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   authoredSkillIssues,
+  clipRefusedDraft,
   instanceLiterals,
+  REFUSED_DRAFT_CHARS,
   type AuthoredSkillInstance,
 } from '../../../src/work/authored-skill';
 
@@ -171,5 +173,21 @@ describe('the static gate on an authored skill', (): void => {
   it('checks the placeholder contract alone when the first work item is unknown', (): void => {
     const body = reusableBody.replace('## Procedure', '## Procedure\nEnter 74% on REVOPS-7.');
     expect(authoredSkillIssues({ body, smokeTest: reusableSmoke, instance: null })).toEqual([]);
+  });
+});
+
+describe('the refused draft kept on the row', (): void => {
+  it('keeps a draft within the bound as it is', (): void => {
+    expect(clipRefusedDraft(reusableBody)).toBe(reusableBody);
+    expect(clipRefusedDraft('')).toBe('');
+  });
+
+  it('cuts a draft above the bound and says how much was not kept', (): void => {
+    const long = 'x'.repeat(REFUSED_DRAFT_CHARS + 250);
+    const clipped = clipRefusedDraft(long);
+    expect(clipped.startsWith('x'.repeat(REFUSED_DRAFT_CHARS))).toBe(true);
+    expect(clipped).toContain('(250 more characters not kept)');
+    expect(clipped.length).toBeLessThan(REFUSED_DRAFT_CHARS + 60);
+    expect(clipRefusedDraft('abcdef', 4)).toBe('abcd\n… (2 more characters not kept)');
   });
 });

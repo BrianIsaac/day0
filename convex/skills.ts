@@ -517,6 +517,8 @@ export const requestRevision = mutation({
       sandboxId: undefined,
       daytonaSandboxId: undefined,
       verificationLog: undefined,
+      refusedBody: undefined,
+      refusedSmokeTest: undefined,
       registeredAt: undefined,
       ...RELEASED,
     });
@@ -696,7 +698,12 @@ export const recordAuthoringProgress = internalMutation({
   handler: async (ctx, args): Promise<{ held: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'authoring-progress');
     if (!row) return { held: false };
-    await ctx.db.patch(args.skillId, { sandboxId: args.sandboxId, body: args.body });
+    await ctx.db.patch(args.skillId, {
+      sandboxId: args.sandboxId,
+      body: args.body,
+      refusedBody: undefined,
+      refusedSmokeTest: undefined,
+    });
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'skill.authoring',
@@ -736,6 +743,8 @@ export const completeRegistration = internalMutation({
       state: 'registered',
       body: args.body,
       verificationLog: args.verificationLog,
+      refusedBody: undefined,
+      refusedSmokeTest: undefined,
       registeredAt: row.registeredAt ?? Date.now(),
       ...RELEASED,
     });
@@ -758,6 +767,11 @@ export const completeRegistration = internalMutation({
  * is listed with a Retry, the feed carries the reason, and the work item that
  * asked for the skill says what it is still waiting for.
  *
+ * A refusal before the sandbox keeps the draft it turned away, already
+ * redacted and bounded by the action, so the row carries something to read
+ * and the retry something to correct. A failure with no draft to keep clears
+ * whatever an earlier refusal left: the row describes its latest attempt only.
+ *
  * One transaction for the same reason as registration. A failing run that could
  * write the skill and the work item separately is a failing run that can put
  * the work item back at `needs-skill` after somebody else has already moved it
@@ -772,6 +786,8 @@ export const failAuthoringRun = internalMutation({
     /** The shorter form for the event feed and the work item. */
     reason: v.string(),
     eventType: v.string(),
+    refusedBody: v.optional(v.string()),
+    refusedSmokeTest: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ recorded: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'fail');
@@ -779,6 +795,8 @@ export const failAuthoringRun = internalMutation({
     await ctx.db.patch(args.skillId, {
       state: 'failed',
       verificationLog: args.rowReason,
+      refusedBody: args.refusedBody,
+      refusedSmokeTest: args.refusedSmokeTest,
       ...RELEASED,
     });
     for (const type of ['skill.failed', args.eventType]) {
@@ -819,6 +837,8 @@ export const parkUnverified = internalMutation({
       body: args.body,
       sandboxId: args.sandboxId,
       verificationLog: args.verificationLog,
+      refusedBody: undefined,
+      refusedSmokeTest: undefined,
       ...RELEASED,
     });
     await ctx.db.insert('events', {

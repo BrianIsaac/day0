@@ -14,10 +14,13 @@ import {
 } from '../src/lib/skill-sandbox';
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { skillNameFor, skillOperationLabel, skillSurfacePhrase } from '../src/work/skill-shape';
-import { authoredSkillIssues } from '../src/work/authored-skill';
+import { authoredSkillIssues, clipRefusedDraft } from '../src/work/authored-skill';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { redactOutcome } from '../src/surfaces/redact';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { spanModelFromEnv } from '../src/redaction/client';
+import { ownerKnownValues } from '../src/redaction/known-values';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -284,14 +287,51 @@ async function recordAuthoringFailure(
   ctx: ActionCtx,
   skillId: Id<'skills'>,
   runId: Id<'events'>,
-  args: { rowReason: string; reason: string; eventType: string },
+  args: {
+    rowReason: string;
+    reason: string;
+    eventType: string;
+    refusedDraft?: { body: string; smokeTest: string };
+  },
 ): Promise<{ ok: false; reason: string }> {
+  const { refusedDraft, ...failure } = args;
   const { recorded } = await ctx.runMutation(internal.skills.failAuthoringRun, {
     skillId,
     runId,
-    ...args,
+    ...failure,
+    ...(refusedDraft
+      ? { refusedBody: refusedDraft.body, refusedSmokeTest: refusedDraft.smokeTest }
+      : {}),
   });
   return { ok: false, reason: recorded ? args.reason : SUPERSEDED };
+}
+
+/**
+ * A draft turned away before any sandbox ran, made safe to keep on the row.
+ *
+ * The draft is model output about the owner's own systems, so it goes through
+ * the outcome redactor like a provider outcome would: the owner's stored
+ * values exactly, the structural grammar, and the span model where one is
+ * configured. Bounded afterwards, so a cut can never expose what the redactor
+ * removed. Never registered: it is there to be read and corrected.
+ */
+async function keepRefusedDraft(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  draft: { body: string; smokeTest: string },
+): Promise<{ body: string; smokeTest: string }> {
+  let known: readonly string[] = [];
+  let model = undefined;
+  if (SURFACE_MODE === 'real') {
+    const agent: Doc<'agents'> | null = await ctx.runQuery(internal.agents.getInternal, { agentId });
+    if (agent?.userId) known = await ownerKnownValues(ctx, agent.userId);
+    model = spanModelFromEnv();
+  }
+  const [body, smokeTest] = await Promise.all([
+    redactOutcome(draft.body, '', model, known),
+    redactOutcome(draft.smokeTest, '', model, known),
+  ]);
+  return { body: clipRefusedDraft(body.text), smokeTest: clipRefusedDraft(smokeTest.text) };
 }
 
 export const authorAndRegisterSkill = action({
@@ -377,6 +417,7 @@ export const authorAndRegisterSkill = action({
         rowReason: reason,
         reason,
         eventType: 'skill.author-failed',
+        refusedDraft: await keepRefusedDraft(ctx, skill.agentId, { body, smokeTest }),
       });
     }
 
@@ -403,6 +444,7 @@ export const authorAndRegisterSkill = action({
           rowReason: verification.reason,
           reason: verification.reason,
           eventType: 'skill.author-failed',
+          refusedDraft: await keepRefusedDraft(ctx, skill.agentId, { body, smokeTest }),
         });
       }
       const result = verification.result;
