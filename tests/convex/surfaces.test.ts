@@ -1139,6 +1139,41 @@ describe('surface probe generations', (): void => {
     expect(grants).toHaveLength(1);
   });
 
+  it('schedules one intake poll of the surface the moment it first connects', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const pendingPolls = async (): Promise<Array<Record<string, unknown>>> =>
+      await harness.run(
+        async (ctx) =>
+          (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+            (job) => job.name === 'intakeActions:pollSurface',
+          ) as unknown as Array<Record<string, unknown>>,
+      );
+    const connect = async (): Promise<void> => {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: probe.generation,
+        toolAllowlist: ['list_issues'],
+        toolArguments: [],
+        verifiedAt: 100,
+      });
+    };
+
+    await connect();
+    const scheduled = await pendingPolls();
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0].args).toEqual([{ surfaceId }]);
+
+    // The hourly re-probe of a connected surface is not a new connection.
+    await connect();
+    expect(await pendingPolls()).toHaveLength(1);
+  });
+
   it('grants the read scope and requeues deferred work in the connecting write', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);

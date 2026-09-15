@@ -16,6 +16,7 @@ import {
   runIntakeSweep,
   safeIntakeError,
   slackChannelsFromPages,
+  type IntakeDependencies,
   type IntakeRuntime,
   type LinearListRequest,
 } from '../../convex/intakeActions';
@@ -1662,5 +1663,104 @@ describe('intake provider contracts', (): void => {
       'custom-value',
     );
     expect(safe).toBe('Bearer <redacted> failed next to <redacted>');
+  });
+});
+
+describe('poll on connect', (): void => {
+  /** Two connected surfaces; only Linear has a reader wired for this test. */
+  function connectedPair(): {
+    harness: RuntimeHarness;
+    makeMcpClient: NonNullable<IntakeDependencies['makeMcpClient']>;
+  } {
+    const linearCredential = id<'credentials'>('cred-linear');
+    const slackCredential = id<'credentials'>('cred-slack');
+    const surfaces = [
+      surfaceRow('slack', 'Slack', 'chat', {
+        credentialId: slackCredential,
+        endpoint: 'https://slack.com/api/',
+        providerIdentityId: 'UBOT',
+        providerWorkspaceId: 'TTEAM',
+      }),
+      surfaceRow('linear', 'Linear', 'kanban', {
+        credentialId: linearCredential,
+        endpoint: 'https://mcp.linear.app/mcp',
+        toolAllowlist: ['list_issues'],
+      }),
+    ];
+    const pages = [pageRow('onboarding.md', 'Onboarding', ONBOARDING), pageRow('linear.md', 'Linear', LINEAR)];
+    const harness = runtimeHarness(
+      surfaces,
+      pages,
+      new Map([
+        [String(linearCredential), 'linear-test-value'],
+        [String(slackCredential), 'slack-test-value'],
+      ]),
+    );
+    const makeMcpClient = () => ({
+      listToolDefinitionsWithErrors: async () => ({
+        definitions: {
+          surface: {
+            list_issues: {
+              inputSchema: { type: 'object', properties: { project: {}, team: {}, limit: {} } },
+            },
+          },
+        },
+        errors: {},
+      }),
+      toolFromDefinition: async () => ({
+        execute: async (): Promise<unknown> => ({
+          issues: [
+            {
+              id: 'issue-9',
+              title: 'Reconcile the close checklist',
+              description: 'Reconcile the checklist against the ledger.',
+              url: 'https://linear.app/day0/issue/REVOPS-9',
+              updatedAt: '2026-09-15T01:30:00.000Z',
+            },
+          ],
+        }),
+      }),
+      disconnect: async (): Promise<void> => undefined,
+    });
+    return { harness, makeMcpClient };
+  }
+
+  it('polls only the surface that connected and records nothing for the others', async (): Promise<void> => {
+    const { harness, makeMcpClient } = connectedPair();
+    const fetcher = vi.fn(async (): Promise<Response> => {
+      throw new Error('the chat surface must not be polled by a Linear connection');
+    });
+
+    const result = await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => Date.parse('2026-09-15T02:00:00.000Z'),
+      surfaceId: id<'surfaces'>('surface-linear'),
+      makeMcpClient,
+      fetcher,
+    });
+
+    expect(result).toEqual({ candidates: 1, mode: 'real', polled: 1, skipped: 0, surfaces: 1 });
+    expect(harness.records).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-linear'),
+        waterfallPosition: 1,
+        polledAt: Date.parse('2026-09-15T02:00:00.000Z'),
+      },
+    ]);
+    expect([...harness.seeds.keys()]).toEqual(['agent-intake:linear:issue-9']);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('polls nothing when the surface is unknown', async (): Promise<void> => {
+    const { harness, makeMcpClient } = connectedPair();
+
+    const result = await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      surfaceId: id<'surfaces'>('surface-missing'),
+      makeMcpClient,
+    });
+
+    expect(result).toEqual({ candidates: 0, mode: 'real', polled: 0, skipped: 0, surfaces: 0 });
+    expect(harness.records).toEqual([]);
   });
 });

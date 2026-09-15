@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ToolExecutionContext } from '@mastra/core/tools';
 import type { FunctionReference } from 'convex/server';
-import type { GenericId } from 'convex/values';
+import { v, type GenericId } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
@@ -95,6 +95,11 @@ export interface IntakeDependencies {
   now?: () => number;
   /** This deployment's browser driver address; absent means no browser component. */
   browserMcpUrl?: string;
+  /**
+   * Poll this one surface and record nothing for the rest of its agent's
+   * waterfall; the poll a fresh connection schedules for itself.
+   */
+  surfaceId?: Id<'surfaces'>;
 }
 
 export interface IntakeSweepResult {
@@ -1159,6 +1164,9 @@ export async function runIntakeSweep(
     dependencies.browserMcpUrl ?? process.env.DAY0_BROWSER_MCP_URL,
   );
   const surfaces = await runtime.listSurfaces();
+  const target = dependencies.surfaceId;
+  const inScope = (surface: Doc<'surfaces'>): boolean =>
+    target === undefined || surface._id === target;
   const byAgent = new Map<Id<'agents'>, Doc<'surfaces'>[]>();
   for (const surface of surfaces) {
     const rows = byAgent.get(surface.agentId) ?? [];
@@ -1170,6 +1178,7 @@ export async function runIntakeSweep(
   let polled = 0;
   let skipped = 0;
   for (const [agentId, agentSurfaces] of byAgent) {
+    if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
     const pages = await runtime.listPages(agentId);
@@ -1181,6 +1190,7 @@ export async function runIntakeSweep(
     );
     const ordered = orderSurfaceWaterfall(agentSurfaces, documentedNames);
     for (const [index, surface] of ordered.entries()) {
+      if (!inScope(surface)) continue;
       const waterfallPosition = index + 1;
       if (surface.verdict !== 'connected') {
         await runtime.recordIntake({
@@ -1272,7 +1282,7 @@ export async function runIntakeSweep(
       }
     }
   }
-  return { candidates, mode, polled, skipped, surfaces: surfaces.length };
+  return { candidates, mode, polled, skipped, surfaces: surfaces.filter(inScope).length };
 }
 
 /** Poll only manager decision replies, without touching discovery checkpoints. */
@@ -1376,6 +1386,16 @@ export const pollAll = internalAction({
   args: {},
   handler: async (ctx): Promise<IntakeSweepResult> =>
     await runIntakeSweep(convexRuntime(ctx), { mode: SURFACE_MODE }),
+});
+
+/**
+ * Poll one surface as soon as it connects, so the work it already holds does
+ * not wait for the next scheduled sweep. The cron remains the steady state.
+ */
+export const pollSurface = internalAction({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<IntakeSweepResult> =>
+    await runIntakeSweep(convexRuntime(ctx), { mode: SURFACE_MODE, surfaceId: args.surfaceId }),
 });
 
 /** Poll manager decisions on the latency-sensitive schedule. */

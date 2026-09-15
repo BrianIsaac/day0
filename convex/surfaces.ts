@@ -1179,6 +1179,11 @@ export const recordConnected = internalMutation({
     if (transitioned) {
       await grantScopeInTransaction(ctx, surface.agentId, `${surface.slug}:read`, 'surface');
       await requeueWorkAwaitingSurface(ctx, surface, args.verifiedAt);
+      // The work the surface already holds is read now rather than at the
+      // next scheduled sweep; the cron remains the steady state.
+      await ctx.scheduler.runAfter(0, internal.intakeActions.pollSurface, {
+        surfaceId: surface._id,
+      });
     }
     return true;
   },
