@@ -45,6 +45,8 @@ export type ScopeJudgement =
 export interface ScopeInputs {
   /** The item came from a connected surface the documentation currently names. */
   provenance: boolean;
+  /** Mock evaluation defers the legacy quality call until permissions and ownership pass. */
+  deferMockQualityFit?: boolean;
   /** The item names a currently documented system as a whole phrase. */
   namesDocumentedSystem: boolean;
 }
@@ -233,7 +235,7 @@ export async function judgeScope(
 
   const hasGoodHabits = GOOD_HABITS_HEADING.test(ctx.agentsMd);
   if (ctx.surfaceMode !== 'real') {
-    if (!ctx.qualityFitWaived) {
+    if (!ctx.qualityFitWaived && !inputs.deferMockQualityFit) {
       const fit = await qualityFit({
         candidate,
         agentsMd: ctx.agentsMd,

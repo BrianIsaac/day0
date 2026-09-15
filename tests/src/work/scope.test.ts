@@ -123,6 +123,19 @@ const noSkill: EvaluateLookups = {
 const GOOD_HABITS = '## Good-habits memory\n- Confirm the owner before touching a revenue record.';
 
 describe('one scope judgement for the R6 card', (): void => {
+  it.each(['permission', 'ownership'])('keeps mock quality-fit behind %s checks', async (guard) => {
+    model.calls.length = 0;
+    const verdict = await evaluateCandidate(r6Card, context('mock', { agentsMd: GOOD_HABITS }), {
+      ...noSkill,
+      hasGrantForScope: async () => guard !== 'permission',
+      findExistingClaim: async () => guard === 'ownership' ? { state: 'executing' } : null,
+    });
+    expect(verdict).toMatchObject(guard === 'permission'
+      ? { decision: 'defer', reason: 'awaiting-permission' }
+      : { decision: 'skip', reason: 'already-claimed: state=executing' });
+    expect(model.calls).toEqual([]);
+  });
+
   beforeEach((): void => {
     model.calls.length = 0;
     model.answer = { inScope: true, fit: true, reason: 'inside the role' };

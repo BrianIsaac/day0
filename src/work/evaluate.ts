@@ -316,16 +316,18 @@ export async function evaluateCandidate(
   opts: EvaluateOptions = {},
 ): Promise<EvaluationVerdict> {
   const scope = await judgeScope(candidate, ctx, {
+    deferMockQualityFit: true,
     provenance: eligibleByProvenance(candidate, ctx),
     namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
   });
-  opts.onScopeJudgement?.(scope);
+  if (ctx.surfaceMode !== 'mock' || !scope.admitted) opts.onScopeJudgement?.(scope);
   if (!scope.admitted) {
     return { decision: 'skip', reason: scope.reason };
   }
 
   const missingSurface = missingConnectionSurface(candidate, ctx);
   if (missingSurface) {
+    if (ctx.surfaceMode === 'mock') opts.onScopeJudgement?.(scope);
     return { decision: 'defer', reason: 'awaiting-connection', missingSurface };
   }
 
@@ -336,12 +338,25 @@ export async function evaluateCandidate(
     if (!ok) missing.push(scope);
   }
   if (missing.length > 0) {
+    if (ctx.surfaceMode === 'mock') opts.onScopeJudgement?.(scope);
     return { decision: 'defer', reason: 'awaiting-permission', missingPermissions: missing };
   }
 
   const existing = await lookups.findExistingClaim(candidate.sourceSystem, candidate.externalId);
   if (existing) {
+    if (ctx.surfaceMode === 'mock') opts.onScopeJudgement?.(scope);
     return { decision: 'skip', reason: `already-claimed: state=${existing.state}` };
+  }
+
+  if (ctx.surfaceMode === 'mock') {
+    const mockScope = await judgeScope(candidate, ctx, {
+      provenance: false,
+      namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
+    });
+    opts.onScopeJudgement?.(mockScope);
+    if (!mockScope.admitted) {
+      return { decision: 'skip', reason: mockScope.reason };
+    }
   }
 
   const value = scoreValue(candidate);
