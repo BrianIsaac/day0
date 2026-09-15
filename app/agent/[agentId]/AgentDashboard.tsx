@@ -27,6 +27,7 @@ import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
 import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
+import type { CharterConstraint } from '../../../src/agent/charter-constraints';
 import { replyTargetFor } from '../../../src/work/reply-target';
 import {
   providerReconciliationEntries,
@@ -507,21 +508,111 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
   );
 }
 
-function CharterCard({ charter }: { charter: Doc<'charters'> }) {
+/** The charter body as the card reads it; `constraints` is absent on charters drafted before the list existed. */
+export interface CharterCardBody {
+  whyThisHire: string;
+  proposedFunction: string;
+  shortTermGoals: { day30: string; day60: string; day90: string };
+  proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
+  namedCollaborators: Array<{ name: string; topic: string }>;
+  namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
+  priorityReading: string[];
+  openQuestions: string[];
+  constraints?: CharterConstraint[];
+}
+
+const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
+  'candidate-property': 'what work qualifies',
+  'system-boundary': 'where I may act',
+  'reporting-line': 'who I report to',
+};
+
+/**
+ * The confirm-or-strike list: every rule the draft will enforce, in the
+ * manager's own words, beside the clause phrases that encode it.
+ *
+ * Before approval each row can be struck or restored; the clauses on the card
+ * stay as drafted until Approve, which is when struck wording leaves them.
+ * After approval the list is the record of what was confirmed and what was
+ * struck.
+ */
+export function ConstraintList({
+  constraints,
+  approved,
+  onStrike,
+}: {
+  constraints: CharterConstraint[];
+  approved: boolean;
+  onStrike?: (index: number, struck: boolean) => void;
+}) {
+  if (constraints.length === 0) return null;
+  return (
+    <div className="text-xs">
+      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+        {approved ? 'Rules this charter enforces' : 'These words will limit the work. Confirm or strike each one.'}
+      </div>
+      <ul className="space-y-1.5">
+        {constraints.map((constraint, index) => (
+          <li
+            key={index}
+            className={`flex items-start gap-2 p-2 rounded-md border ${
+              constraint.struck
+                ? 'border-[var(--color-border)] text-[var(--color-muted)]'
+                : 'border-[var(--color-warn)]/40'
+            }`}
+          >
+            <div className="flex-1 min-w-0">
+              <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
+                &ldquo;{constraint.quote}&rdquo;
+              </p>
+              <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
+                {CONSTRAINT_KIND_LABEL[constraint.kind]}
+                {constraint.wording.length > 0 ? (
+                  <>
+                    {' · in the charter as '}
+                    {constraint.wording.map((phrase, i) => (
+                      <span key={i}>
+                        {i > 0 ? ', ' : ''}
+                        <span className="font-mono text-[var(--color-fg)]">{phrase}</span>
+                      </span>
+                    ))}
+                  </>
+                ) : (
+                  ' · no clause carries it'
+                )}
+                {constraint.origin === 'derived' ? ' · found by checking the clauses' : ''}
+                {constraint.origin === 'manager' ? ' · added by you' : ''}
+                {constraint.struck ? ' · struck' : ''}
+              </p>
+            </div>
+            {!approved && onStrike ? (
+              <button
+                onClick={() => onStrike(index, !constraint.struck)}
+                className={`shrink-0 px-2 py-1 rounded-md text-[10px] border ${
+                  constraint.struck
+                    ? 'border-[var(--color-border)] hover:border-[var(--color-ok)]'
+                    : 'border-[var(--color-border)] hover:border-[var(--color-warn)]'
+                }`}
+              >
+                {constraint.struck ? 'Restore' : 'Strike'}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
   const approve = useMutation(api.charters.approve);
   const requestChanges = useMutation(api.charters.requestChanges);
+  const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
   const postApproval = useAction(api.onboarding.postCharterApproval);
   const [posting, setPosting] = useState(false);
-  const body = charter.body as {
-    whyThisHire: string;
-    proposedFunction: string;
-    shortTermGoals: { day30: string; day60: string; day90: string };
-    proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
-    namedCollaborators: Array<{ name: string; topic: string }>;
-    namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
-    priorityReading: string[];
-    openQuestions: string[];
-  };
+  const body = charter.body as CharterCardBody;
+  const constraints = body.constraints ?? [];
+  const struckCount = constraints.filter((constraint) => constraint.struck).length;
 
   async function onApprove() {
     setPosting(true);
@@ -569,6 +660,13 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             <BoundaryList label="Open questions" items={body.openQuestions} />
           </div>
         </details>
+        <ConstraintList
+          constraints={constraints}
+          approved={charter.approved}
+          onStrike={(index, struck) =>
+            setConstraintStruck({ charterId: charter._id, index, struck })
+          }
+        />
         {!charter.approved ? (
           <div className="flex gap-2 pt-1">
             <button
@@ -576,7 +674,9 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
               disabled={posting}
               className="px-4 py-2 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
             >
-              Approve
+              {struckCount > 0
+                ? `Approve without ${struckCount} struck ${struckCount === 1 ? 'rule' : 'rules'}`
+                : 'Approve'}
             </button>
             <button
               onClick={() => requestChanges({ charterId: charter._id })}
