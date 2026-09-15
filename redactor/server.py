@@ -18,7 +18,7 @@ started once on a network starts again without one.
 
 Chunking is done here, on line boundaries, because the model reads at most
 384 tokens at a time and the caller should not need to know that. Offsets in
-the reply are character offsets into the text as sent.
+the reply are UTF-16 code-unit offsets, matching JavaScript string slicing.
 
     GET  /healthz     -> {"ok": true, "model": ..., "device": ..., "manifest": "verified"}
     POST /v1/spans    -> {"text", "labels", "threshold"}
@@ -154,12 +154,15 @@ class Redactor:
 
     def predict(self, text: str, labels: list[str], threshold: float) -> list[dict[str, Any]]:
         spans: list[dict[str, Any]] = []
+        utf16 = [0]
+        for character in text:
+            utf16.append(utf16[-1] + (2 if ord(character) > 0xFFFF else 1))
         for offset, chunk in chunks(text):
             for entity in self.model.predict_entities(chunk, labels, threshold=threshold, flat_ner=True):
                 spans.append(
                     {
-                        "start": offset + int(entity["start"]),
-                        "end": offset + int(entity["end"]),
+                        "start": utf16[offset + int(entity["start"])],
+                        "end": utf16[offset + int(entity["end"])],
                         "label": str(entity["label"]),
                         "score": float(entity["score"]),
                     }
