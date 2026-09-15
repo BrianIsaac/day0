@@ -73,6 +73,12 @@ export interface EvalContext extends AgentContext {
    * left out and the plan gate still stands.
    */
   qualityFitWaived?: boolean;
+  /**
+   * The manager retried this candidate after it was skipped as out of scope,
+   * which is their decision that the work is theirs to give; the eligibility
+   * rule is left out and the plan gate still stands.
+   */
+  eligibilityWaived?: boolean;
 }
 
 import { QUALITY_FIT_SKIP_PREFIX } from './types';
@@ -329,7 +335,7 @@ export async function evaluateCandidate(
   lookups: EvaluateLookups,
   opts: EvaluateOptions = {},
 ): Promise<EvaluationVerdict> {
-  if (!isEligible(candidate, ctx)) {
+  if (!ctx.eligibilityWaived && !isEligible(candidate, ctx)) {
     return {
       decision: 'skip',
       reason: 'out-of-scope: no charter or current documented-system overlap',

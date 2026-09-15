@@ -383,6 +383,28 @@ describe('work surface enablement', (): void => {
     });
   });
 
+  it('leaves the eligibility rule out once the manager has waived it, in either mode', async (): Promise<void> => {
+    const work = candidate('ticket', 'Reserve the venue and confirm the catering headcount.');
+    work.title = 'Book the offsite venue';
+    await expect(
+      evaluateCandidate(work, context('mock', []), lookups()),
+    ).resolves.toEqual({
+      decision: 'skip',
+      reason: 'out-of-scope: no charter or current documented-system overlap',
+    });
+    await expect(
+      evaluateCandidate(work, { ...context('mock', []), eligibilityWaived: true }, lookups()),
+    ).resolves.toMatchObject({ decision: 'claim' });
+    work.sourceSystem = 'linear';
+    await expect(
+      evaluateCandidate(
+        work,
+        { ...context('real', [surface('linear', 'absent')]), eligibilityWaived: true },
+        lookups(),
+      ),
+    ).resolves.toEqual({ decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' });
+  });
+
   it('does not use retired documentation evidence to widen charter scope', async (): Promise<void> => {
     const work = candidate('linear', 'Inspect Northstar CRM ownership.');
     work.title = 'Reconcile Northstar CRM ownership';

@@ -2381,6 +2381,52 @@ describe('the autonomous-actions switch through the gate', (): void => {
     });
   });
 
+  it('re-evaluates an out-of-scope skip the manager retried without the eligibility rule and records the decision', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'mock');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        state: 'discovered',
+        plan: undefined,
+        title: 'Book the offsite venue',
+        contentSummary: 'Reserve the venue and confirm the catering headcount.',
+      });
+    });
+    const events = async (type: string): Promise<unknown[]> =>
+      (
+        await harness.run(
+          async (ctx) =>
+            await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+        )
+      )
+        .filter((event) => event.type === type)
+        .map((event) => event.payload);
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'skip' });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'skipped',
+      verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
+    expect(await events('work.retry')).toEqual([
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'eligibility' },
+    ]);
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'claim' });
+    const retried = await readItem(harness, workItemId);
+    expect(retried.state).toBe('claimed');
+    expect(typeof retried.eligibilityWaivedAt).toBe('number');
+    expect(retried.qualityFitWaivedAt).toBeUndefined();
+  });
+
   it('refuses manager-approved reads and DMs whose standing grants were revoked', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());

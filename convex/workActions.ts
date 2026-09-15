@@ -255,6 +255,7 @@ export const evaluateWorkItem = action({
         surfaceMode: surfaceConfig.mode,
         surfaces,
         qualityFitWaived: item.qualityFitWaivedAt !== undefined,
+        eligibilityWaived: item.eligibilityWaivedAt !== undefined,
       },
       lookups,
     );

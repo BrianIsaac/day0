@@ -431,6 +431,13 @@ export default defineSchema({
      */
     qualityFitWaivedAt: v.optional(v.number()),
     /**
+     * When the manager retried this item after the scope judgement skipped it
+     * as out of scope. The retry is the manager's decision that the work is
+     * theirs to give, so the next evaluation leaves the eligibility rule out;
+     * plan approval still applies.
+     */
+    eligibilityWaivedAt: v.optional(v.number()),
+    /**
      * The last policy change that sent this row back to `discovered`: the
      * trigger, its idempotency key and when. The same key never re-admits the
      * row twice.

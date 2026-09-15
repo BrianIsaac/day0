@@ -1235,12 +1235,18 @@ export const retryFailed = mutation({
       : verdict?.decision === 'claim'
         ? 'claimed'
         : 'discovered';
-    // Retrying an item the quality-fit filter skipped is the manager saying the
-    // work is worth doing; the re-evaluation leaves that filter out.
-    const waivesQualityFit =
-      row.state === 'skipped' &&
-      typeof verdict?.reason === 'string' &&
-      verdict.reason.startsWith(QUALITY_FIT_SKIP_PREFIX);
+    // Retrying a skip is the manager overruling the agent's judgement: a
+    // quality-fit skip says the work is worth doing, an out-of-scope skip says
+    // the work is theirs to give. The re-evaluation leaves that one rule out.
+    const skipReason =
+      row.state === 'skipped' && typeof verdict?.reason === 'string' ? verdict.reason : '';
+    const waived: 'quality-fit' | 'eligibility' | undefined = skipReason.startsWith(
+      QUALITY_FIT_SKIP_PREFIX,
+    )
+      ? 'quality-fit'
+      : skipReason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)
+        ? 'eligibility'
+        : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
       skipReason: undefined,
@@ -1249,7 +1255,8 @@ export const retryFailed = mutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
-      ...(waivesQualityFit ? { qualityFitWaivedAt: Date.now() } : {}),
+      ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
+      ...(waived === 'eligibility' ? { eligibilityWaivedAt: Date.now() } : {}),
       ...(feedback ? { managerFeedback: { reason: feedback, at: Date.now() } } : {}),
     });
     await ctx.db.insert('events', {
@@ -1259,7 +1266,7 @@ export const retryFailed = mutation({
         workItemId: args.workItemId,
         resumeState: next,
         fromState: row.state,
-        ...(waivesQualityFit ? { waived: 'quality-fit' } : {}),
+        ...(waived ? { waived } : {}),
         ...(feedback ? { feedback: true } : {}),
       },
       createdAt: Date.now(),

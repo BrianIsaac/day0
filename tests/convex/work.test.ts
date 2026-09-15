@@ -1199,6 +1199,37 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
     ]);
   });
 
+  it('records the eligibility waiver when the manager retries an out-of-scope skip', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'skipped');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        plan: undefined,
+        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+        skipReason: 'out-of-scope: no charter or current documented-system overlap',
+      });
+    });
+
+    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    expect(result).toEqual({ ok: true, resumeState: 'discovered' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('discovered');
+    expect(row.skipReason).toBeUndefined();
+    expect(typeof row.eligibilityWaivedAt).toBe('number');
+    expect(row.qualityFitWaivedAt).toBeUndefined();
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    expect(retries.map((event) => event.payload)).toEqual([
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'eligibility' },
+    ]);
+  });
+
   it('does not waive the filter for a run that failed for another reason', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -1211,6 +1242,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
 
     const row = await readItem(harness, workItemId);
     expect(row.qualityFitWaivedAt).toBeUndefined();
+    expect(row.eligibilityWaivedAt).toBeUndefined();
   });
 });
 
