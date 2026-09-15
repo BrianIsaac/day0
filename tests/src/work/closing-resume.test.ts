@@ -55,3 +55,36 @@ describe('landed closing payloads on resume', () => {
     }
   });
 });
+
+describe('resuming after a closing gate refusal', () => {
+  const surfaces = [{ slug: 'linear', displayName: 'Linear' }, { slug: 'looker', displayName: 'Looker' }];
+  const refused = {
+    actions: [action('linear', 'save_comment')], planStepOutcomes: [{ step: 3, status: 'satisfied', evidence: 'the comment' }],
+    draft: '', notes: '', reason: 'approved plan step 3 promised a Linear read, but no landed read or blocking ledger reason was recorded', at: 1,
+  };
+  const landed = { tool: 'mcp.call', ok: true, idempotencyKey: 'k' };
+  const gateRefusal = {
+    phase: 'dependent-authoring', draft: '', notes: '', needsDependentPhase: true,
+    actions: [action('looker', 'browser_snapshot'), action('linear', 'list_issues')],
+    applied: [landed, landed],
+    refusedClosing: refused,
+  };
+
+  it('resumes at the closing phase with the refused set when every prerequisite landed', () => {
+    expect(closingResume(gateRefusal, plan, refused.reason, surfaces)).toEqual({
+      draft: '', notes: '', actions: gateRefusal.actions, applied: gateRefusal.applied,
+      needsDependentPhase: true, phase: 'dependent-authoring', resumedClosing: true,
+      initialFailure: refused.reason, previousClosing: { actions: refused.actions, applied: [] }, refusedClosing: refused,
+    });
+    expect(closingResume({ ...gateRefusal, refusedClosing: undefined }, plan, 'cap exceeded', surfaces)).toMatchObject({
+      resumedClosing: true, previousClosing: { actions: [], applied: [] },
+    });
+  });
+
+  it('goes back through phase one when a prerequisite did not land or a promised surface was not read', () => {
+    expect(closingResume({ ...gateRefusal, applied: [landed, { tool: 'mcp.call', ok: false }] }, plan, refused.reason, surfaces)).toBeUndefined();
+    expect(closingResume({ ...gateRefusal, applied: [landed, { ...landed, held: true }] }, plan, refused.reason, surfaces)).toBeUndefined();
+    expect(closingResume({ ...gateRefusal, actions: [gateRefusal.actions[1]], applied: [landed] }, plan, refused.reason, surfaces)).toBeUndefined();
+    expect(closingResume({ ...gateRefusal, actions: [], applied: [] }, plan, refused.reason, surfaces)).toBeUndefined();
+  });
+});

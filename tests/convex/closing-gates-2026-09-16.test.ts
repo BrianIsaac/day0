@@ -16,6 +16,7 @@ import {
   auditNotePrerequisiteLedger,
   auditNotePrerequisites,
   refreshClosing,
+  refreshOutcomes,
   refreshPlan,
   refreshPrerequisiteLedger,
   refreshPrerequisites,
@@ -235,6 +236,64 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
     expect((recorded.mcp[0]!.args as { body: string }).body).toContain(REVOPS_7_COMMENT);
     expect((done.output as { planStepOutcomes: Array<{ status: string }> }).planStepOutcomes.map((row) => row.status)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied']);
+  });
+
+  it('keeps a refused closing set on the row and resumes the retry at the closing phase, not at phase one', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await seedAtClosing(t, REVOPS_7);
+    // The closing phase leaves out the Done the plan promised and calls every step satisfied.
+    const withoutDone = {
+      ...refreshClosing,
+      actions: [refreshClosing.actions[0]!, refreshClosing.actions[2]!],
+    };
+    recorded.closingReply = withoutDone;
+    const refusal = await t.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    expect(refusal).toEqual({ ok: false, reason: 'dependent phase omitted the approved ticket state transition without a blocked plan step' });
+    const failed = await readItem(t, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toBe(refusal.reason);
+    expect(failed.output).toMatchObject({
+      phase: 'dependent-authoring',
+      applied: refreshPrerequisiteLedger,
+      refusedClosing: {
+        actions: withoutDone.actions,
+        planStepOutcomes: refreshOutcomes,
+        draft: refreshClosing.draft,
+        reason: refusal.reason,
+      },
+    });
+    expect(recorded.mcp).toEqual([]);
+    expect(recorded.http).toEqual([]);
+    recorded.model.length = 0;
+
+    // The browser writes landed, so the retry needs the provider reconciled; then it resumes at the closing phase.
+    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Move it to Done as the plan says.' });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const resumed = await readItem(t, workItemId);
+    expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', resumedClosing: true, initialFailure: refusal.reason });
+    expect(recorded.model).toEqual([]);
+    expect(recorded.mcp).toEqual([]);
+
+    recorded.closingReply = refreshClosing;
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! })).resolves.toEqual({
+      ok: true, reason: 'dependent actions applying',
+    });
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['dependent']);
+    const prompt = recorded.model[0]!.user;
+    expect(prompt).toContain(`Previous closing attempt failure (prerequisites succeeded; retry the closing set): ${refusal.reason}`);
+    expect(prompt).toContain('Previous closing set, refused by the gate');
+    expect(prompt).toContain(REVOPS_7_COMMENT);
+    expect(prompt).toContain('Move it to Done as the plan says.');
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const held = await readItem(t, workItemId);
+    await t.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [0, 1],
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(t, workItemId)).state).toBe('completed');
+    // The tile was not touched again: only the closing writes reached a provider.
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
   });
 
   it('holds the REVOPS-5 audit comment without a transition, as the plan says, then lands it on approval', async (): Promise<void> => {

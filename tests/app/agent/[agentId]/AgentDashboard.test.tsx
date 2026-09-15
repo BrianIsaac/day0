@@ -18,6 +18,7 @@ import {
   PendingActions,
   PlanApprovalForm,
   PlanExecutionLedger,
+  RefusedClosingDetails,
   RefusedDraftDetails,
   RepairNote,
   WorkItemCard,
@@ -182,6 +183,34 @@ describe('a question at plan approval', (): void => {
     );
     expect(answered).not.toContain('Who owns the Looker pipeline tile.');
     expect(answered).toContain('>Approve plan<');
+  });
+});
+
+describe('refused closing set', (): void => {
+  it('shows the refused actions, the reason and the outcomes the set claimed, and nothing when there is none', (): void => {
+    const markup = renderToStaticMarkup(
+      <RefusedClosingDetails
+        refused={{
+          actions: [
+            {
+              tool: 'mcp.call',
+              args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-7","body":"Refreshed the tile to 74%."}' },
+            },
+          ],
+          planStepOutcomes: [{ step: 3, status: 'satisfied', evidence: 'the audit comment in this response' }],
+          draft: 'd',
+          notes: '',
+          reason: 'approved plan step 3 promised a Linear read, but no landed read or blocking ledger reason was recorded',
+          at: 1,
+        }}
+      />,
+    );
+    expect(markup).toContain('Refused closing set · 1 action · never sent');
+    expect(markup).toContain('approved plan step 3 promised a Linear read');
+    expect(markup).toContain('mcp.call linear · save_comment');
+    expect(markup).toContain('Refreshed the tile to 74%.');
+    expect(markup).toContain('Step 3 · satisfied - the audit comment in this response');
+    expect(renderToStaticMarkup(<RefusedClosingDetails refused={undefined} />)).toBe('');
   });
 });
 

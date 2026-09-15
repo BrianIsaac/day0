@@ -35,6 +35,7 @@ import {
   type ManagerAnswer,
   type MockAction,
   type PlanStepOutcome,
+  type RefusedClosing,
   type WorkCandidate,
   type WorkSourceCategory,
 } from '../src/work/types';
@@ -714,6 +715,8 @@ interface DependentAuthoringOutput extends ExecutionOutput {
   previousClosing?: ClosingResume['previousClosing'];
   applied: AppliedAction[];
   initialFailure?: string;
+  /** The closing set a gate refused, kept with its reason; see `RefusedClosing`. */
+  refusedClosing?: RefusedClosing;
 }
 
 interface DependentPendingOutput extends DependentExecutionOutput {
@@ -1033,6 +1036,10 @@ export const authorDependentActions = internalAction({
     const claim = await ctx.runMutation(internal.work.claimDependentAuthoring, args);
     if (!claim.claimed) return { ok: false, reason: claim.reason };
     let initial: DependentAuthoringOutput | undefined;
+    // The set the closing phase authored, kept on the row if a gate refuses
+    // it: nothing in it reaches a surface, and the manager and the retry
+    // both need to read it against the refusal.
+    let authored: DependentExecutionOutput | undefined;
     try {
       const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, {
         workItemId: args.workItemId,
@@ -1069,7 +1076,9 @@ export const authorDependentActions = internalAction({
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,
         resumedClosing: initial.resumedClosing,
+        refusedClosing: initial.refusedClosing,
       });
+      authored = output;
       const cap = dependentActionCap(initial);
       if (output.actions.length > cap) {
         throw new Error(
@@ -1100,6 +1109,7 @@ export const authorDependentActions = internalAction({
         candidate: rowToCandidate(item),
         onAdditionalModelCall: (): void => {},
       });
+      authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
         plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes,
         initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
@@ -1183,12 +1193,36 @@ export const authorDependentActions = internalAction({
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
-        ...(initial ? { output: initial } : {}),
+        ...(initial ? { output: withRefusedClosing(initial, authored, reason) } : {}),
       });
       return { ok: false, reason };
     }
   },
 });
+
+/**
+ * The prerequisite phase as the row keeps it after a closing gate refused
+ * the authored set: the ledger whole, and the refused set beside its reason.
+ * A previous attempt's refused set is replaced by this one.
+ */
+function withRefusedClosing(
+  initial: DependentAuthoringOutput,
+  authored: DependentExecutionOutput | undefined,
+  reason: string,
+): DependentAuthoringOutput {
+  if (!authored) return initial;
+  return {
+    ...initial,
+    refusedClosing: {
+      actions: authored.actions,
+      planStepOutcomes: authored.planStepOutcomes,
+      draft: authored.draft,
+      notes: authored.notes,
+      reason,
+      at: Date.now(),
+    },
+  };
+}
 
 /**
  * Apply the approved actions of the current phase, with the run id the skill ran under.

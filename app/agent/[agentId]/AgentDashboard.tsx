@@ -11,6 +11,7 @@ import { MockEnvironment } from './MockEnvironment';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
 import {
   type ActionVerdict,
+  describeAction,
   normaliseActionVerdict,
   reviewPayload,
   skillApprovalRefusal,
@@ -1687,6 +1688,17 @@ interface RunOutput {
   planStepOutcomes?: PlanStepOutcomeRow[];
   /** The one repair each held write earned before the hold, by action index. */
   argumentRepairs?: ArgumentRepairAttempt[];
+  /** The closing set a gate refused before anything in it reached a surface, with the reason. */
+  refusedClosing?: RefusedClosingRow;
+}
+
+interface RefusedClosingRow {
+  actions: MockAction[];
+  planStepOutcomes: PlanStepOutcomeRow[];
+  draft: string;
+  notes: string;
+  reason: string;
+  at: number;
 }
 
 /**
@@ -1794,6 +1806,49 @@ export function ManagerFeedbackNote({ feedback }: { feedback: ManagerFeedback })
         </p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The closing set a gate refused, behind a disclosure under the failed run.
+ * Read-only: nothing in it reached a surface, the row keeps it so the
+ * manager can read what the agent wrote against the reason it was turned
+ * away, and Retry hands it back to the closing phase to correct from the
+ * same ledger.
+ */
+export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow | undefined }) {
+  if (!refused || refused.actions.length === 0) return null;
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+        Refused closing set · {refused.actions.length}{' '}
+        {refused.actions.length === 1 ? 'action' : 'actions'} · never sent
+      </summary>
+      <p className="mt-1 text-[10px] text-[var(--color-warn)] break-words">{refused.reason}</p>
+      <ul className="mt-1 space-y-1">
+        {refused.actions.map((action, index) => (
+          <li key={index}>
+            <span className="font-mono text-[10px] text-[var(--color-muted)]">
+              {describeAction(action)}
+            </span>
+            <ActionPayload action={action} />
+          </li>
+        ))}
+      </ul>
+      {refused.planStepOutcomes.length > 0 ? (
+        <ol className="mt-1 space-y-0.5 text-[10px] text-[var(--color-muted)]">
+          {refused.planStepOutcomes.map((outcome) => (
+            <li key={outcome.step}>
+              {`Step ${outcome.step} · ${outcome.status} - ${outcome.evidence}`}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <p className="mt-1 text-[10px] text-[var(--color-muted)]">
+        As the closing phase accounted for the plan before the gate refused the set. Retry authors
+        the closing set again from the same prerequisite ledger.
+      </p>
+    </details>
   );
 }
 
@@ -2676,6 +2731,8 @@ export function WorkItemCard({
       ) : null}
 
       <PlanExecutionLedger outcomes={output?.planStepOutcomes ?? []} />
+
+      <RefusedClosingDetails refused={output?.refusedClosing} />
 
       {output ? <DraftDetails output={output} /> : null}
 
