@@ -51,7 +51,7 @@ afterAll(async (): Promise<void> => {
 
 const recorded = vi.hoisted(() => ({
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
-  http: [] as Array<{ url: string; authorization: string; body: unknown }>,
+  http: [] as Array<{ url: string; method?: string; authorization: string | undefined; body: unknown }>,
   failMcpAfterRequest: false,
   failedMcpTool: undefined as string | undefined,
   issueRecordText: undefined as string | undefined,
@@ -402,9 +402,22 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
   const headers = (init?.headers ?? {}) as Record<string, string>;
   recorded.http.push({
     url: String(input),
+    method: init?.method,
     authorization: headers.Authorization,
-    body: JSON.parse(String(init?.body)),
+    body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
   });
+  if (String(input).includes('/conversations.replies')) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [
+          { ts: '1787746453.202809', text: '<@U0DAY0> are the three Q3 deals covered in the tracker?', user: 'U0MANAGER' },
+          { ts: '1787746500.000100', text: 'Context: the Friday standup figure was 74%.', user: 'U0MANAGER' },
+        ],
+      }),
+      { status: 200 },
+    );
+  }
   return new Response(JSON.stringify({ ok: true, ts: '1787654400.000200' }), { status: 200 });
 });
 
@@ -1701,7 +1714,7 @@ describe('executing an approved plan through the gate', (): void => {
       // plan is pending; the read itself writes nothing to any surface.
       expect(recorded.http.filter((call) => !call.url.endsWith('/chat.postMessage'))).toEqual([]);
       expect(recorded.planRecords).toEqual([
-        { surface: 'linear', tool: 'get_issue', text: 'get_issue on linear · {"id":"get_issue-id"}' },
+        { surface: 'linear', tool: 'get_issue', subject: 'record', text: 'get_issue on linear · {"id":"get_issue-id"}' },
       ]);
       const events = await groundingEvents(harness);
       expect(events).toHaveLength(1);
@@ -1730,7 +1743,76 @@ describe('executing an approved plan through the gate', (): void => {
       expect(events[0]!.payload).toMatchObject({ applied: { ok: true, authority: 'standing' } });
     });
 
-    it('reads nothing for a chat candidate', async (): Promise<void> => {
+    const asMention = async (harness: Harness, workItemId: Id<'workItems'>): Promise<void> => {
+      await toClaimed(harness, workItemId, {
+        sourceCategory: 'event-stream',
+        sourceSystem: 'slack',
+        externalId: 'C0PUBLIC:1787746453.202809',
+        title: 'Slack mention in #revops-asks',
+        contentSummary: '<@U0DAY0> are the three Q3 deals covered in the tracker?',
+        replyTarget: { channel: 'C0PUBLIC', channelName: 'revops-asks', threadTs: '1787746453.202809' },
+      });
+    };
+    const allowThreadRead = async (harness: Harness, agentId: Id<'agents'>): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const slack = (await ctx.db.query('surfaces').collect()).find((row) => row.slug === 'slack');
+        if (!slack) throw new Error('slack surface missing');
+        await ctx.db.patch(slack._id, {
+          toolAllowlist: ['chat.postMessage', 'conversations.history', 'conversations.replies'],
+        });
+        void agentId;
+      });
+    };
+
+    it('reads a chat ask\'s thread once under standing authority and hands it to the planner as a thread', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { agentId, workItemId } = await seed(harness, 'real');
+      await allowThreadRead(harness, agentId);
+      await asMention(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp).toHaveLength(0);
+      const reads = recorded.http.filter((call) => call.url.includes('/conversations.replies'));
+      expect(reads).toHaveLength(1);
+      expect(reads[0]).toMatchObject({ method: 'GET', authorization: 'Bearer plain-cred-slack', body: undefined });
+      expect(new URL(reads[0]!.url).searchParams.get('channel')).toBe('C0PUBLIC');
+      expect(new URL(reads[0]!.url).searchParams.get('ts')).toBe('1787746453.202809');
+      expect(new URL(reads[0]!.url).searchParams.get('limit')).toBe('50');
+      expect(recorded.planRecords).toEqual([
+        {
+          surface: 'slack',
+          tool: 'conversations.replies',
+          subject: 'thread',
+          text: expect.stringContaining('are the three Q3 deals covered in the tracker?'),
+        },
+      ]);
+      const events = await groundingEvents(harness);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload).toMatchObject({
+        workItemId,
+        action: { tool: 'http.request', args: { method: 'GET', surface: 'slack' } },
+        applied: { ok: true, authority: 'standing', tool: 'http.request' },
+      });
+      expect(JSON.stringify(events[0]!.payload)).not.toContain('plain-cred-slack');
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    });
+
+    it('reads nothing for a chat ask whose surface documents no thread tool, and says so in no record', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await asMention(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.http.filter((call) => call.method === 'GET')).toEqual([]);
+      expect(recorded.planRecords).toEqual([undefined]);
+      expect(await groundingEvents(harness)).toHaveLength(0);
+    });
+
+    it('reads nothing for an inbox candidate', async (): Promise<void> => {
       useSurfaceMode('real');
       const harness = convexTest(contractSchema(), allConvexModules());
       const { workItemId } = await seed(harness, 'real');
@@ -1758,7 +1840,7 @@ describe('executing an approved plan through the gate', (): void => {
       ).resolves.toEqual({ ok: true });
       expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
       expect(recorded.planRecords).toEqual([
-        { surface: 'linear', tool: 'get_issue', unavailable: 'get_issue failed: snapshot timed out' },
+        { surface: 'linear', tool: 'get_issue', subject: 'record', unavailable: 'get_issue failed: snapshot timed out' },
       ]);
       const events = await groundingEvents(harness);
       expect(events[0]!.payload).toMatchObject({ applied: { ok: false } });
@@ -1775,7 +1857,7 @@ describe('executing an approved plan through the gate', (): void => {
       ).resolves.toEqual({ ok: true });
       expect(recorded.mcp).toHaveLength(0);
       expect(recorded.planRecords).toEqual([
-        { surface: 'linear', tool: 'get_issue', unavailable: 'no grant (linear:read)' },
+        { surface: 'linear', tool: 'get_issue', subject: 'record', unavailable: 'no grant (linear:read)' },
       ]);
     });
   });
@@ -1890,6 +1972,7 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.http).toEqual([
       {
         url: 'https://slack.com/api/chat.postMessage',
+        method: 'POST',
         authorization: 'Bearer plain-cred-slack',
         body: {
           channel: 'D0MANAGER',

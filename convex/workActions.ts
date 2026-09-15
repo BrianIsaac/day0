@@ -1159,12 +1159,13 @@ async function planGrounding(
 }
 
 /**
- * Read the candidate's own record before the plan is drafted.
+ * Read what the candidate points at before the plan is drafted: a ticket's
+ * own record, or the thread a chat ask sits in.
  *
  * One standing-authority read through the same registry, rules and adapter as
  * an executed action, keyed on an event minted for it so the ledger row is on
  * the timeline. A failed read, including a provider error body, becomes
- * "record unavailable" with the reason; nothing here stops the plan.
+ * "unavailable" with the reason; nothing here stops the plan.
  *
  * Args:
  *   ctx: Convex action context.
@@ -1225,20 +1226,14 @@ async function readCandidateRecord(
       ? await redactGroundingRead(rawApplied, spanModelFromEnv(), args.knownValues)
       : undefined;
     await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
+    const { surface, tool, subject } = read;
     if (!applied || !applied.ok || applied.held) {
-      return {
-        surface: read.surface,
-        tool: read.tool,
-        unavailable: applied?.reason ?? 'the read did not land',
-      };
+      return { surface, tool, subject, unavailable: applied?.reason ?? 'the read did not land' };
     }
-    return { surface: read.surface, tool: read.tool, text: applied.effect ?? '(empty record)' };
+    return { surface, tool, subject, text: applied.effect ?? `(empty ${subject})` };
   } catch (error) {
-    return {
-      surface: read.surface,
-      tool: read.tool,
-      unavailable: error instanceof Error ? error.message : String(error),
-    };
+    const { surface, tool, subject } = read;
+    return { surface, tool, subject, unavailable: error instanceof Error ? error.message : String(error) };
   }
 }
 
