@@ -44,3 +44,36 @@ print(json.dumps({'status': server.probe(), 'requests': requests}))
     expect(JSON.parse(output)).toEqual({ status: 1, requests: ['http://127.0.0.1:8000/v1/spans'] });
   });
 });
+
+describe('verified loading', () => {
+  it('loads only listed files through an isolated local cache', () => {
+    const output = execFileSync('python3', ['-c', `
+import importlib.util, json, sys, tempfile, types
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('redactor_server', 'redactor/server.py')
+server = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(server)
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    snapshot = root / ('a' * 40)
+    snapshot.mkdir()
+    (snapshot / 'gliner_config.json').write_text('{}')
+    (snapshot / 'unverified.bin').write_text('not approved')
+    server.MODELS_DIR = root
+    server.read_manifest = lambda: {server.MODEL_ID: {'gliner_config.json': 'digest'}}
+    server.fetch_and_verify = lambda repo, files: snapshot
+    calls = []
+    class Detector:
+        @classmethod
+        def from_pretrained(cls, location, **kwargs):
+            calls.append({'local': kwargs.get('local_files_only'), 'path': Path(location).is_dir(),
+                'files': sorted(p.name for p in Path(location).iterdir()) if Path(location).is_dir() else []})
+            return cls()
+        def eval(self): pass
+    sys.modules['gliner'] = types.SimpleNamespace(GLiNER=Detector)
+    server.load_model()
+    print(json.dumps(calls))
+`], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    expect(JSON.parse(output)).toEqual([{ local: true, path: true, files: ['gliner_config.json'] }]);
+  });
+});

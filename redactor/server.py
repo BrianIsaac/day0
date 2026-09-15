@@ -34,6 +34,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -104,12 +105,25 @@ def load_model() -> tuple[Any, str]:
     manifest = read_manifest()
     if MODEL_ID not in manifest:
         raise RuntimeError(f"{MODEL_ID} is not in {MANIFEST}; add its files and digests first")
-    for repo, files in manifest.items():
-        fetch_and_verify(repo, files)
-    os.environ["HF_HUB_OFFLINE"] = "1"
+    snapshots = {repo: fetch_and_verify(repo, files) for repo, files in manifest.items()}
     from gliner import GLiNER
 
-    model = GLiNER.from_pretrained(MODEL_ID)
+    # A shared Hub snapshot may contain unlisted alternative weights or tokenizers.
+    # Only expose verified files to the loader, including its backbone lookups.
+    with tempfile.TemporaryDirectory(prefix="verified-", dir=MODELS_DIR) as directory:
+        cache = Path(directory)
+        local: dict[str, Path] = {}
+        for repo, files in manifest.items():
+            revision = snapshots[repo].name
+            repository = cache / ("models--" + repo.replace("/", "--"))
+            target = repository / "snapshots" / revision
+            target.mkdir(parents=True)
+            (repository / "refs").mkdir()
+            (repository / "refs" / "main").write_text(revision, encoding="utf-8")
+            for name in files:
+                (target / name).symlink_to((snapshots[repo] / name).resolve())
+            local[repo] = target
+        model = GLiNER.from_pretrained(str(local[MODEL_ID]), cache_dir=str(cache), local_files_only=True)
     device = "cpu"
     if DEVICE == "cuda":
         import torch
