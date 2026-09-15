@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -132,6 +132,7 @@ describe('skill selection surface boundary', (): void => {
           contentSummary: 'Write the team handoff for the next shift.',
         },
         [spreadsheetSkill],
+        { surfaceClass: 'chat', operation: 'thread-reply' },
       ),
     ).toBeUndefined();
   });
@@ -151,6 +152,7 @@ describe('skill selection surface boundary', (): void => {
           contentSummary: 'Write the team handoff for the next shift.',
         },
         [spreadsheetSkill, slackSkill],
+        { surfaceClass: 'chat', operation: 'thread-reply' },
       ),
     ).toBe(slackSkill);
   });
@@ -170,9 +172,12 @@ describe('skill selection for real-mode target surfaces', (): void => {
       targetSurface: 'looker',
       requiredScopes: ['boss:message', 'slack:read', 'looker:read', 'looker:write'],
     };
-    expect(findMatchingSkillForCandidate(slackMention, [proposedByEvaluator])).toBe(
-      proposedByEvaluator,
-    );
+    expect(
+      findMatchingSkillForCandidate(slackMention, [proposedByEvaluator], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBe(proposedByEvaluator);
   });
 
   it('refuses a row that declares only a foreign surface, even when its name matches the source', (): void => {
@@ -182,7 +187,12 @@ describe('skill selection for real-mode target surfaces', (): void => {
       targetSurface: 'looker',
       requiredScopes: ['looker:read', 'looker:write'],
     };
-    expect(findMatchingSkillForCandidate(slackMention, [foreignOnly])).toBeUndefined();
+    expect(
+      findMatchingSkillForCandidate(slackMention, [foreignOnly], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBeUndefined();
   });
 
   it('matches a builtin or legacy row without surface metadata by the source name alone', (): void => {
@@ -194,14 +204,112 @@ describe('skill selection for real-mode target surfaces', (): void => {
       findMatchingSkillForCandidate(
         { sourceSystem: 'docs', title: 'Team cadence', contentSummary: 'When is standup?' },
         [builtinDocs],
+        { surfaceClass: 'docs', operation: 'answer-from-docs' },
       ),
     ).toBe(builtinDocs);
     expect(
       findMatchingSkillForCandidate(
         { sourceSystem: 'linear', title: 'Close REVOPS-5', contentSummary: 'Close the issue.' },
         [builtinDocs],
+        { surfaceClass: 'kanban', operation: 'comment-and-close' },
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('skill selection by shape', (): void => {
+  const tileSkill = {
+    name: 'analytics-refresh-value',
+    description: 'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
+    targetSurface: 'looker-pipeline-tile',
+    requiredScopes: ['boss:message', 'linear:read', 'looker-pipeline-tile:read', 'looker-pipeline-tile:write'],
+    surfaceClass: 'analytics',
+    operation: 'refresh-value',
+  };
+  const chatSkill = {
+    name: 'chat-thread-reply',
+    description: 'Threaded reply on a chat surface, parameterised from each work item and its runbook.',
+    targetSurface: 'slack',
+    requiredScopes: ['boss:message', 'slack:read', 'slack:write'],
+    surfaceClass: 'chat',
+    operation: 'thread-reply',
+  };
+  const legacyTicketSkill = {
+    name: 'linear-action-revops-7',
+    description: 'Skill proposed to handle linear work like "Refresh the Looker pipeline tile".',
+    targetSurface: 'looker-pipeline-tile',
+    requiredScopes: ['boss:message', 'linear:read', 'looker-pipeline-tile:write'],
+  };
+  const secondRefresh = {
+    sourceSystem: 'linear',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Set the coverage figure to 68% for REVOPS-11 and record the audit line.',
+  };
+
+  it('reuses the registered skill for a second refresh with a different figure and ticket', (): void => {
+    expect(
+      findMatchingSkillForCandidate(secondRefresh, [chatSkill, tileSkill], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBe(tileSkill);
+  });
+
+  it('reuses the chat skill for an ask in a different thread', (): void => {
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'slack',
+          title: 'Mention in #revops-asks',
+          contentSummary: 'Which coverage figure are we quoting this week?',
+        },
+        [tileSkill, chatSkill],
+        { surfaceClass: 'chat', operation: 'thread-reply' },
+      ),
+    ).toBe(chatSkill);
+  });
+
+  it('finds nothing for a shape no registered skill covers', (): void => {
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'linear',
+          title: 'Append the close row to the Close tracker',
+          contentSummary: 'Add this week\'s close figures as a new row.',
+        },
+        [tileSkill, chatSkill],
+        { surfaceClass: 'spreadsheet', operation: 'append-row' },
+      ),
+    ).toBeUndefined();
+  });
+
+  it('never matches a shaped skill by token overlap', (): void => {
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'linear',
+          title: 'Refresh the value on the analytics surface',
+          contentSummary: 'analytics refresh value runbook work item',
+        },
+        [tileSkill],
+        { surfaceClass: 'kanban', operation: 'comment-and-close' },
+      ),
+    ).toBeUndefined();
+  });
+
+  it('keeps serving a legacy per-ticket row through the token path when no shaped skill covers the shape', (): void => {
+    expect(
+      findMatchingSkillForCandidate(secondRefresh, [legacyTicketSkill], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBe(legacyTicketSkill);
+    expect(
+      findMatchingSkillForCandidate(secondRefresh, [legacyTicketSkill, tileSkill], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBe(tileSkill);
   });
 });
 
@@ -2349,6 +2457,192 @@ async function events(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'eve
         .collect(),
   );
 }
+describe('a registered skill serves every later work item of its shape', (): void => {
+  beforeEach((): void => {
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+  });
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  async function seedShapedSkills(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    seededItem: Id<'workItems'>,
+  ): Promise<void> {
+    await harness.run(async (ctx): Promise<void> => {
+      // The seeded item holds the one supervised slot, and the seeded legacy
+      // row would match any Linear item by its name alone; the registry here
+      // is shaped skills only, evaluated against an empty queue.
+      await ctx.db.patch(seededItem, { state: 'completed' });
+      for (const legacy of await ctx.db.query('skills').collect()) {
+        await ctx.db.patch(legacy._id, { state: 'rejected' });
+      }
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+      for (const [scope] of [['looker-pipeline-tile:read'], ['looker-pipeline-tile:write']]) {
+        await ctx.db.insert('permissionGrants', { agentId, scope: scope!, createdAt: 1 });
+      }
+      for (const skill of [
+        {
+          name: 'analytics-refresh-value',
+          description: 'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
+          targetSurface: 'looker-pipeline-tile',
+          surfaceClass: 'analytics',
+          operation: 'refresh-value',
+          requiredScopes: ['boss:message', 'linear:read', 'looker-pipeline-tile:read', 'looker-pipeline-tile:write'],
+        },
+        {
+          name: 'chat-thread-reply',
+          description: 'Threaded reply on a chat surface, parameterised from each work item and its runbook.',
+          targetSurface: 'slack',
+          surfaceClass: 'chat',
+          operation: 'thread-reply',
+          requiredScopes: ['boss:message', 'slack:read', 'slack:write'],
+        },
+      ]) {
+        await ctx.db.insert('skills', {
+          agentId,
+          ...skill,
+          body: '# Procedure\n## Inputs\n- <record-id>\n',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          createdAt: 1,
+          registeredAt: 1,
+        });
+      }
+    });
+  }
+
+  async function discoveredItem(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    item: Partial<Doc<'workItems'>> & Pick<Doc<'workItems'>, 'sourceSystem' | 'externalId' | 'title' | 'contentSummary'>,
+  ): Promise<Id<'workItems'>> {
+    return await harness.run(
+      async (ctx): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          contentRefs: [],
+          priority: 'P1',
+          requesterLabel: 'Manager',
+          state: 'discovered',
+          observedAt: Date.now(),
+          createdAt: Date.now(),
+          ...item,
+        }),
+    );
+  }
+
+  async function proposedSkills(harness: Harness): Promise<string[]> {
+    return (await harness.run(async (ctx) => await ctx.db.query('skills').collect()))
+      .filter((skill) => skill.state === 'proposed')
+      .map((skill) => skill.name);
+  }
+
+  it('claims a second tile refresh with a different figure and ticket without a proposal', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-11',
+      title: 'Refresh the Looker pipeline tile',
+      contentSummary: 'Set the pipeline coverage figure to 68% and record the audit line on REVOPS-11.',
+      contentRefs: ['ticket://REVOPS-11'],
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.verdict).toMatchObject({ decision: 'claim' });
+    expect(row.state).toBe('claimed');
+    expect(await proposedSkills(harness)).toEqual([]);
+  });
+
+  it('claims a chat ask in a different thread through the chat skill', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceCategory: 'event-stream',
+      sourceSystem: 'slack',
+      externalId: 'C0BSF04TZ19:1789000500.000200',
+      title: 'Mention in #revops-asks',
+      contentSummary: 'Which coverage figure are we quoting in the Friday standup this week?',
+      replyTarget: { channel: 'C0BSF04TZ19', threadTs: '1789000500.000200' },
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'claim' });
+    expect(await proposedSkills(harness)).toEqual([]);
+  });
+
+  it('still proposes a skill for a shape nothing registered covers', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'close-tracker',
+        displayName: 'Close tracker',
+        class: 'spreadsheet',
+        verdict: 'connected',
+        endpoint: 'https://sheets.example.test/close-tracker',
+        path: 'documented-api',
+        toolAllowlist: [],
+        credentialId: 'cred-sheet',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-12',
+      title: 'Append this week to the Close tracker',
+      contentSummary: 'Add the week 37 close figures as a new row in the Close tracker.',
+      contentRefs: ['ticket://REVOPS-12'],
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'needs-skill' });
+    expect(await proposedSkills(harness)).toEqual(['spreadsheet-append-row']);
+    const proposed = (await harness.run(async (ctx) => await ctx.db.query('skills').collect())).find(
+      (skill) => skill.name === 'spreadsheet-append-row',
+    );
+    expect(proposed).toMatchObject({
+      surfaceClass: 'spreadsheet',
+      operation: 'append-row',
+      targetSurface: 'close-tracker',
+      description: 'Row append on a spreadsheet surface, parameterised from each work item and its runbook.',
+    });
+    expect(proposed?.rationale).not.toContain('REVOPS-12');
+    expect(proposed?.rationale).not.toContain('Charter');
+  });
+});
+
 describe('the autonomous-actions switch through the gate', (): void => {
   it('defers queued work with the revoked read scope named in its verdict', async (): Promise<void> => {
     useSurfaceMode('real');

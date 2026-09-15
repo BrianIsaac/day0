@@ -48,7 +48,12 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponent } from '../src/surfaces/browser';
 import type { ExecutionOutput, SkillShape } from '../src/work/types';
-import { skillOperationLabel } from '../src/work/skill-shape';
+import {
+  sameSkillShape,
+  skillOperationLabel,
+  skillShapeFor,
+  type ShapeSurface,
+} from '../src/work/skill-shape';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import {
   grantRefusal,
@@ -84,6 +89,8 @@ interface SimpleSkillRow {
   body: string;
   requiredScopes?: string[];
   targetSurface?: string;
+  surfaceClass?: string;
+  operation?: string;
 }
 
 interface MatchableSkill {
@@ -91,6 +98,8 @@ interface MatchableSkill {
   description: string;
   requiredScopes?: readonly string[];
   targetSurface?: string;
+  surfaceClass?: string;
+  operation?: string;
 }
 
 interface SkillMatchCandidate {
@@ -116,10 +125,36 @@ function declaredSurfaces(skill: MatchableSkill): Set<string> {
   return surfaces;
 }
 
+/**
+ * The registered skill that covers a candidate.
+ *
+ * A skill proposed by shape is matched by shape and nothing else: the one
+ * registered row whose surface class and operation are the candidate's. Rows
+ * without a shape (the builtin docs skill, and skills proposed before shapes
+ * existed) are served by the older token match, so they keep working until
+ * the operator retires them; they are never preferred over a shaped match.
+ *
+ * Args:
+ *   candidate: The work being evaluated or executed.
+ *   skills: The agent's registered skills.
+ *   shape: The candidate's shape, from `skillShapeFor`.
+ *
+ * Returns:
+ *   The covering skill, or undefined when none does.
+ */
 export function findMatchingSkillForCandidate<T extends MatchableSkill>(
   candidate: SkillMatchCandidate,
   skills: readonly T[],
+  shape: SkillShape,
 ): T | undefined {
+  const shaped = skills.find(
+    (skill: T): boolean =>
+      skill.surfaceClass !== undefined &&
+      skill.operation !== undefined &&
+      sameSkillShape({ surfaceClass: skill.surfaceClass, operation: skill.operation }, shape),
+  );
+  if (shaped) return shaped;
+
   const source = candidate.sourceSystem.toLowerCase();
   const sourceTokens = tokens(candidate.sourceSystem);
   const candidateTokens = new Set(
@@ -129,6 +164,7 @@ export function findMatchingSkillForCandidate<T extends MatchableSkill>(
   let bestScore = 0;
 
   for (const skill of skills) {
+    if (skill.surfaceClass !== undefined && skill.operation !== undefined) continue;
     const surfaces = declaredSurfaces(skill);
     const skillTokens = new Set(tokens(`${skill.name} ${skill.description}`));
     const sourceCompatible =
@@ -198,9 +234,9 @@ function buildLookups(args: {
     countOpenClaims: async () => {
       return await args.ctx.runQuery(api.work.countOpenForAgent, { agentId: args.agentId });
     },
-    findMatchingSkill: async (candidate, charter) => {
+    findMatchingSkill: async (candidate, charter, shape) => {
       void charter;
-      const skill = findMatchingSkillForCandidate(candidate, args.registeredSkills);
+      const skill = findMatchingSkillForCandidate(candidate, args.registeredSkills, shape);
       return skill ? { name: skill.name, description: skill.description } : null;
     },
   };
@@ -249,6 +285,8 @@ export const evaluateWorkItem = action({
       body: s.body,
       requiredScopes: s.requiredScopes,
       targetSurface: s.targetSurface,
+      surfaceClass: s.surfaceClass,
+      operation: s.operation,
     }));
     const grantedScopes = new Set<string>(grantRows.map((g) => g.scope));
 
@@ -391,7 +429,15 @@ async function executeApprovedPlanHandler(
   const skills: Doc<'skills'>[] = internalCaller
     ? await ctx.runQuery(internal.skills.registeredInternal, { agentId })
     : await ctx.runQuery(api.skills.registered, { agentId });
-  const pickedSkill = findMatchingSkillForCandidate(candidate, skills);
+  // The same shape the evaluator matched on, read from the same surfaces, so
+  // the skill that runs is the skill the verdict promised.
+  const shapeSurfaces: readonly ShapeSurface[] =
+    SURFACE_MODE === 'real' ? await loadSurfaces(ctx, agentId) : [];
+  const pickedSkill = findMatchingSkillForCandidate(
+    candidate,
+    skills,
+    skillShapeFor(candidate, shapeSurfaces, SURFACE_MODE),
+  );
   if (!pickedSkill) {
     const reason = `no registered skill matches source surface ${candidate.sourceSystem}`;
     await ctx.runMutation(internal.work.setFailed, {
