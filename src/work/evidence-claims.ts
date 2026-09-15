@@ -16,11 +16,12 @@ import type { MockAction } from './types';
  * The check is deliberately narrow. It reads only the sentences that assert
  * a settled state (complete, verified, confirmed, refreshed, posted ...) and
  * asks each for its support: a quoted span the sources carry, a run of words
- * or a distinctive value the ledger or the manager's feedback carries, or a
- * hedge saying the fact is unconfirmed. Documentation counts only when it is
- * quoted, because a page cannot say what happened on this run. Sentences that
- * assert nothing settled are not read at all, so the check refuses a false
- * report and never a plain description.
+ * or a distinctive value the ledger or the manager's feedback carries, a
+ * hedge saying the fact is unconfirmed, or the sentence being a question in
+ * form. Documentation counts only when it is quoted, because a page cannot
+ * say what happened on this run. Sentences that assert nothing settled are
+ * not read at all, so the check refuses a false report and never a plain
+ * description.
  */
 
 /** What the executor may cite: the ledger rendered for the closing prompt, page texts, the manager's words. */
@@ -44,6 +45,15 @@ const SETTLED_STATE =
 
 const HEDGED =
   /\b(?:not|no|never|cannot|can't|could not|couldn't|unable|unconfirmed|unverified|pending|awaiting|outstanding|still open|to be confirmed|please confirm|needs? (?:your )?confirmation|did not|didn't|has not|hasn't|have not|haven't|was not|wasn't|were not|weren't|is not|isn't|are not|aren't)\b/i;
+
+/**
+ * A sentence that asks opens with an interrogative or an auxiliary and ends
+ * with the mark. A declarative with a question tagged on ("all checks are
+ * complete, can you confirm?") asserts first and asks second, and the
+ * assertion is what the reader takes away.
+ */
+const QUESTION_OPENING =
+  /^(?:is|are|was|were|has|have|had|do|does|did|can|could|should|would|will|shall|may|might|must|what|which|who|whom|whose|when|where|why|how|any|anyone|anything)\b/i;
 
 const QUOTED = /"([^"\n]{3,})"|“([^”\n]{3,})”|'([^'\n]{3,})'|`([^`\n]{3,})`/g;
 
@@ -120,8 +130,12 @@ function prepare(evidence: ClaimEvidence): PreparedEvidence {
   };
 }
 
+function asks(sentence: string): boolean {
+  return /\?\s*$/.test(sentence) && QUESTION_OPENING.test(sentence.trim());
+}
+
 function supported(sentence: string, prepared: PreparedEvidence): boolean {
-  if (HEDGED.test(sentence) || /\?\s*$/.test(sentence)) return true;
+  if (HEDGED.test(sentence) || asks(sentence)) return true;
   if (quotedSpans(sentence).some((span) => prepared.quotable.some((source) => source.includes(normalised(span))))) {
     return true;
   }

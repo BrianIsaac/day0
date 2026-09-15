@@ -193,7 +193,7 @@ export function structuralSpans(text: string): StructuralSpan[] {
   for (const match of text.matchAll(LOGIN_PAIR)) {
     if (match.index === undefined) continue;
     const value = match[2].replace(PASSWORD_TRAILING, '');
-    if (!value || guardReason(value)) continue;
+    if (!value || guardReason(value, { assigned: true })) continue;
     const start = match.index + match[0].lastIndexOf(match[2]);
     spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
   }
@@ -202,7 +202,7 @@ export function structuralSpans(text: string): StructuralSpan[] {
     const quoted = match[1] ?? match[2] ?? match[3];
     const raw = quoted ?? match[4] ?? '';
     const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
-    if (!value || guardReason(value) || (quoted === undefined && LOWERCASE_WORD.test(value))) continue;
+    if (!value || guardReason(value, { assigned: true }) || (quoted === undefined && LOWERCASE_WORD.test(value))) continue;
     const start = match.index + match[0].lastIndexOf(raw);
     spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
   }

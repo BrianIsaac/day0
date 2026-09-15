@@ -13,7 +13,7 @@ import {
 } from '../src/lib/skill-sandbox';
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { skillNameFor, skillOperationLabel, skillSurfacePhrase } from '../src/work/skill-shape';
-import { authoredSkillIssues, clipRefusedDraft } from '../src/work/authored-skill';
+import { authoredSkillIssues, clipRefusedDraft, REFUSED_DRAFT_PROMPT_CHARS } from '../src/work/authored-skill';
 import { EXECUTION_INPUT_LINES } from '../src/work/skill-inputs';
 import {
   FENCE_REMOVED_NOTE,
@@ -210,7 +210,8 @@ export function buildAuthorPrompt(
  * repair is: one full replacement that fixes every reason and keeps the rest,
  * rather than a fresh attempt that may fail some other way. Without a draft
  * (the model failed, or the row predates kept drafts) the notice is the
- * reason alone, as it always was.
+ * reason alone, as it always was. Each draft is bounded for the prompt below
+ * what the row keeps, so the prompt fits a local model's window.
  */
 function previousAttemptSection(skill: AuthorPromptSkill): string[] {
   if (!skill.previousAuthoringFailure) return [];
@@ -233,10 +234,10 @@ function previousAttemptSection(skill: AuthorPromptSkill): string[] {
     'Return one corrected full replacement of both SKILL.md and smoke.py that fixes every reason above. Keep every part of the refused draft the reasons do not implicate: the same procedure, tools, verification and inputs, corrected rather than rewritten from nothing.',
     '',
     'Refused SKILL.md:',
-    draft.body,
+    clipRefusedDraft(draft.body, REFUSED_DRAFT_PROMPT_CHARS.body),
     '',
     'Refused smoke.py:',
-    draft.smokeTest,
+    clipRefusedDraft(draft.smokeTest, REFUSED_DRAFT_PROMPT_CHARS.smokeTest),
   ];
 }
 

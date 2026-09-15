@@ -111,6 +111,8 @@ describe('the labelled password grammar', (): void => {
       ['pwd: Winter2026!', ['Winter2026!']],
       ['Passcode = 482913', ['482913']],
       ['login: revops / Sunny-Day-42', ['Sunny-Day-42']],
+      ["password: 'ops:hunter2'", ['ops:hunter2']],
+      ['login: svc / ops:hunter2', ['ops:hunter2']],
       ['Credentials: revops/hunter2 (rotated quarterly)', ['hunter2']],
       ['密码：revops2026', ['revops2026']],
     ];
