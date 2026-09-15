@@ -8,6 +8,7 @@ import {
 } from '../../convex/skillActions';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import type { SurfaceRecord } from '../../src/surfaces/types';
+import { clipRefusedDraft, REFUSED_DRAFT_CHARS, REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -402,6 +403,29 @@ describe('skill author prompts', (): void => {
     expect(prompt.endsWith('Author SKILL.md and smoke.py now.')).toBe(true);
     expect(prompt.indexOf('Refused SKILL.md:')).toBeLessThan(prompt.indexOf('Refused smoke.py:'));
     expect(prompt.indexOf('Previous authoring attempt')).toBeLessThan(prompt.indexOf('--- Required correction ---'));
+  });
+
+  it('bounds each refused draft in the prompt below what the row keeps, so a local window is not overrun', (): void => {
+    const refusedBody = `# Refresh\n## Inputs\n- <analytics-surface>: the tile\n## Procedure\n${'Open <analytics-surface> and read the tile. '.repeat(400)}`;
+    const refusedSmokeTest = `def run(inputs: dict) -> dict:\n${'    value = inputs["analytics-surface"]\n'.repeat(200)}    return {"actions": []}\nprint(run({}))`;
+    expect(refusedBody.length).toBeGreaterThan(REFUSED_DRAFT_PROMPT_CHARS.body);
+    expect(refusedSmokeTest.length).toBeGreaterThan(REFUSED_DRAFT_PROMPT_CHARS.smokeTest);
+    const prompt = buildAuthorPrompt(
+      {
+        ...skill,
+        previousAuthoringFailure: 'the authored skill is not a reusable procedure: SKILL.md declares no `## Inputs` section',
+        previousAuthoringDraft: { body: refusedBody, smokeTest: refusedSmokeTest },
+      },
+      [],
+      now,
+    );
+    const body = prompt.slice(prompt.indexOf('Refused SKILL.md:\n') + 'Refused SKILL.md:\n'.length, prompt.indexOf('\n\nRefused smoke.py:'));
+    const smokeTest = prompt.slice(prompt.indexOf('Refused smoke.py:\n') + 'Refused smoke.py:\n'.length, prompt.lastIndexOf('\n\nAuthor SKILL.md and smoke.py now.'));
+    expect(body).toBe(clipRefusedDraft(refusedBody, REFUSED_DRAFT_PROMPT_CHARS.body));
+    expect(smokeTest).toBe(clipRefusedDraft(refusedSmokeTest, REFUSED_DRAFT_PROMPT_CHARS.smokeTest));
+    expect(body).toMatch(/more characters not kept\)$/);
+    expect(smokeTest).toMatch(/more characters not kept\)$/);
+    expect(REFUSED_DRAFT_PROMPT_CHARS.body + REFUSED_DRAFT_PROMPT_CHARS.smokeTest).toBeLessThan(REFUSED_DRAFT_CHARS);
   });
 
   it('keeps the draft-free failure notice when nothing was kept', (): void => {

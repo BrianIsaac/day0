@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { clipRefusedDraft, REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -196,7 +197,9 @@ describe('the static gate on an authored skill, through the authoring action', (
     const retryPrompt = recorded.users[1]!;
     expect(retryPrompt).toContain('SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`');
     expect(retryPrompt).toContain('--- Required correction ---');
-    expect(retryPrompt).toContain(`Refused SKILL.md:\n${failed.refusedBody}`);
+    // The row keeps the draft whole; the prompt carries it bounded for the model's window.
+    expect(retryPrompt).toContain(`Refused SKILL.md:\n${clipRefusedDraft(failed.refusedBody!, REFUSED_DRAFT_PROMPT_CHARS.body)}`);
+    expect(retryPrompt).not.toContain(failed.refusedBody!);
     expect(retryPrompt).toContain(`Refused smoke.py:\n${smokeTest}`);
     expect(retryPrompt).not.toContain('xoxb-');
   });

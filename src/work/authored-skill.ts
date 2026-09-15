@@ -162,8 +162,22 @@ export function authoredSkillIssues(args: {
   return issues;
 }
 
-/** Upper bound on each refused draft kept on the row; a prompt carries it back on retry. */
+/** Upper bound on each refused draft kept on the row, where the manager reads it whole. */
 export const REFUSED_DRAFT_CHARS = 16_000;
+
+/**
+ * Upper bound on each refused draft as the retry prompt carries it back.
+ *
+ * Smaller than the row's bound because the prompt has a window to fit: the
+ * author prompt already carries up to 20,000 characters of linked runbook
+ * beside the charter and surface guidance, and the bundled local model runs
+ * in a 16,384-token window that Ollama truncates from the head without
+ * failing the request. Two drafts at the row's bound would take that window
+ * on their own. A draft a correction needs fits well inside these; a cut is
+ * marked in the prompt, so the model never mistakes a clipped draft for the
+ * whole.
+ */
+export const REFUSED_DRAFT_PROMPT_CHARS = { body: 8_000, smokeTest: 4_000 } as const;
 
 /**
  * Bound a refused draft before it is stored.
