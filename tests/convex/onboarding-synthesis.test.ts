@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -70,7 +70,7 @@ afterEach((): void => {
   restoreSurfaceMode();
 });
 
-async function deployAgent(harness: ReturnType<typeof convexTest<typeof schema>>): Promise<Id<'agents'>> {
+async function deployAgent(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
   return await harness.run(async (ctx) =>
     await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -91,7 +91,7 @@ async function synthesise(): Promise<Doc<'charters'>> {
     bossLabel: 'Brian',
     transcript: DAY_ONE_TRANSCRIPT_2026_09_14,
   });
-  expect(result.outcome).toBe('synthesised');
+  if (result.outcome !== 'synthesised') throw new Error(`outcome ${result.outcome}`);
   const charter = await harness.run(async (ctx) => await ctx.db.get(result.charterId as Id<'charters'>));
   if (!charter) throw new Error('no charter');
   return charter;
