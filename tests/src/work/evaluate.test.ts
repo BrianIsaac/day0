@@ -120,8 +120,40 @@ describe('work surface enablement', (): void => {
     if (verdict.decision !== 'needs-skill') throw new Error('Expected needs-skill verdict');
     expect(verdict.reason).not.toContain('in-scope');
     expect(verdict.reason).toBe(
-      `no registered skill matches; agent will propose "${verdict.suggestedSkillName}"`,
+      `no registered skill covers ticket comment-and-close on a kanban surface; agent will propose "${verdict.suggestedSkillName}"`,
     );
+  });
+
+  it('proposes a skill named after the surface class and operation, not the work item', async (): Promise<void> => {
+    const ticket = candidate('ticket');
+    const verdict = await evaluateCandidate(ticket, context('mock', []), {
+      ...lookups(),
+      findMatchingSkill: async (): Promise<null> => null,
+    });
+
+    if (verdict.decision !== 'needs-skill') throw new Error('Expected needs-skill verdict');
+    expect(verdict.suggestedSkillName).toBe('kanban-comment-and-close');
+    expect(verdict.suggestedSkillShape).toEqual({
+      surfaceClass: 'kanban',
+      operation: 'comment-and-close',
+    });
+    expect(verdict.suggestedSkillName).not.toContain(ticket.externalId.toLowerCase());
+    expect(verdict.suggestedSkillRationale).toContain('ticket comment-and-close on a kanban surface');
+    expect(verdict.suggestedSkillRationale).toContain(`"${ticket.title}"`);
+    expect(verdict.suggestedSkillRationale).not.toContain(charter.proposedFunction);
+    expect(verdict.suggestedSkillRationale).not.toContain('Charter');
+  });
+
+  it('hands the shape to the skill lookup so matching and naming agree', async (): Promise<void> => {
+    const seen: unknown[] = [];
+    await evaluateCandidate(candidate('slack'), context('mock', []), {
+      ...lookups(),
+      findMatchingSkill: async (_candidate, _charter, shape): Promise<null> => {
+        seen.push(shape);
+        return null;
+      },
+    });
+    expect(seen).toEqual([{ surfaceClass: 'chat', operation: 'thread-reply' }]);
   });
 
   it('preserves mock behaviour when no persistent surfaces exist', async (): Promise<void> => {

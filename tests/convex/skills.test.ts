@@ -319,6 +319,24 @@ describe('skills that target a surface', (): void => {
     expect(skill?.requiredScopes).toEqual(['boss:message', 'linear:read', 'linear:write']);
   });
 
+  it('stores the surface class and operation the proposal was shaped by', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'ticket');
+    const skillId = await harness.mutation(internal.skills.propose, {
+      agentId,
+      workItemId,
+      name: 'kanban-comment-and-close',
+      description: 'Ticket comment-and-close on a kanban surface.',
+      rationale: 'No registered skill covers ticket comment-and-close on a kanban surface.',
+      requiredScopes: ['boss:message', 'ticket:read', 'ticket:write'],
+      surfaceClass: 'kanban',
+      operation: 'comment-and-close',
+    });
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill).toMatchObject({ surfaceClass: 'kanban', operation: 'comment-and-close' });
+  });
+
   it('leaves a mock-era skill without a target surface', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());

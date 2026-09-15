@@ -44,12 +44,28 @@ export interface WorkCandidate {
   replyTarget?: ReplyTarget;
 }
 
+/**
+ * What a skill is for: one documented operation on one surface class. A skill
+ * is named, matched and authored by its shape, never by the work item that
+ * first needed it.
+ */
+export interface SkillShape {
+  surfaceClass: string;
+  operation: string;
+}
+
 export type WorkVerdict =
   | { decision: 'claim'; value: number; risk: number; requiredPermissions: string[] }
   | { decision: 'queue'; reason: string; openClaims: number }
   | { decision: 'skip'; reason: string }
   | { decision: 'defer'; reason: string; missingPermissions: string[] }
-  | { decision: 'needs-skill'; reason: string; suggestedSkillName: string; suggestedSkillRationale: string };
+  | {
+      decision: 'needs-skill';
+      reason: string;
+      suggestedSkillName: string;
+      suggestedSkillRationale: string;
+      suggestedSkillShape: SkillShape;
+    };
 
 export interface AgentContext {
   agentId: AgentId;

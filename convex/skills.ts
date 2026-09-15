@@ -15,6 +15,8 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { grantScopeInTransaction } from './agents';
+import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
+import { surfaceSlug } from '../src/surfaces/slug';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -148,20 +150,21 @@ async function surfaceForWork(
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', agentId))
     .collect();
-  const workTokens = new Set(
-    `${item.title}\n${item.contentSummary}`.toLowerCase().match(/[a-z0-9]+/g) ?? [],
-  );
-  const named = surfaces.filter((surface: Doc<'surfaces'>): boolean => {
-    const nameTokens = surface.displayName.toLowerCase().match(/[a-z0-9]+/g) ?? [];
-    return (
-      nameTokens.length > 0 && nameTokens.every((token: string): boolean => workTokens.has(token))
-    );
-  });
-  const namedSlugs = [...new Set(named.map((surface: Doc<'surfaces'>): string => surface.slug))];
+  // The same rule the evaluator shaped the proposal by, so the surface whose
+  // class named the skill is the surface the scopes and the approval gate
+  // are about.
+  const sourceSlug = surfaceSlug(item.sourceSystem);
+  const namedSlugs = [
+    ...new Set(
+      namedSurfacesFor(item, surfaces)
+        .map((surface: Doc<'surfaces'>): string => surface.slug)
+        .filter((slug: string): boolean => slug !== sourceSlug),
+    ),
+  ];
   if (namedSlugs.length > 1) {
     throw new Error(`work evidence names more than one target surface: ${namedSlugs.join(', ')}`);
   }
-  const targetSurface = namedSlugs[0] ?? item.sourceSystem;
+  const targetSurface = targetSurfaceFor(item, surfaces)?.slug ?? item.sourceSystem;
   if (
     surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.slug === targetSurface).length >
     1
@@ -304,6 +307,8 @@ export const propose = internalMutation({
     description: v.string(),
     rationale: v.string(),
     requiredScopes: v.array(v.string()),
+    surfaceClass: v.optional(v.string()),
+    operation: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'skills'>> => {
     const target = await surfaceForWork(ctx, args.agentId, args.workItemId);
@@ -341,6 +346,8 @@ export const propose = internalMutation({
           requiredScopes: targetChanged
             ? proposedScopes
             : [...new Set([...(existing.requiredScopes ?? []), ...proposedScopes])],
+          surfaceClass: existing.surfaceClass ?? args.surfaceClass,
+          operation: existing.operation ?? args.operation,
         });
       }
       return existing._id;
@@ -359,6 +366,8 @@ export const propose = internalMutation({
       rationale: args.rationale,
       requiredScopes: proposedScopes,
       targetSurface,
+      surfaceClass: args.surfaceClass,
+      operation: args.operation,
       createdAt: Date.now(),
     });
     await ctx.db.insert('events', {

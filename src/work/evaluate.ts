@@ -4,12 +4,19 @@ import {
   COLD_START_WIP_LIMIT,
   VALUE_THRESHOLD,
   type AgentContext,
+  type SkillShape,
   type WorkCandidate,
   type WorkVerdict,
 } from './types';
 import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
 import type { SurfaceMode } from '../surfaces/types';
 import { surfaceSlug } from '../surfaces/slug';
+import {
+  candidateNamesSurface,
+  skillNameFor,
+  skillOperationLabel,
+  skillShapeFor,
+} from './skill-shape';
 import {
   documentedSystemIdentity,
   sameSystemForHostlessMention,
@@ -43,10 +50,15 @@ export interface EvaluateLookups {
   ) => Promise<{ state: string } | null>;
   /** Returns the count of open claims for the agent. */
   countOpenClaims: () => Promise<number>;
-  /** Returns the matching registered skill or null. */
+  /**
+   * Returns the registered skill covering the candidate's shape, or null.
+   * The shape is the evaluator's, so the name it proposes and the skill it
+   * would have matched are the same thing.
+   */
   findMatchingSkill: (
     candidate: WorkCandidate,
     charter: AgentContext['charter'],
+    shape: SkillShape,
   ) => Promise<{ name: string; description: string } | null>;
 }
 
@@ -150,39 +162,6 @@ function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
 
 /** The surface slug convention, shared with the planner. */
 export const evaluationSurfaceSlug = surfaceSlug;
-
-/**
- * Normalise prose for whole-phrase surface matching.
- *
- * Args:
- *   value: Candidate prose or a surface label.
- *
- * Returns:
- *   Lowercase alphanumeric words separated by one space.
- */
-function comparableSurfaceText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-}
-
-/**
- * Check whether candidate prose names a declared surface as a whole phrase.
- *
- * Args:
- *   text: Candidate title and summary.
- *   surface: Declared surface metadata.
- *
- * Returns:
- *   True when the display name or slug is present as a complete phrase.
- */
-function candidateNamesSurface(text: string, surface: EvaluationSurface): boolean {
-  const haystack = ` ${comparableSurfaceText(text)} `;
-  const names = [surface.displayName, surface.slug].map(comparableSurfaceText).filter(Boolean);
-  return names.some((name: string): boolean => haystack.includes(` ${name} `));
-}
 
 function evaluationSurfaceIdentity(surface: EvaluationSurface) {
   return documentedSystemIdentity({
@@ -301,24 +280,30 @@ export function scoreRisk(candidate: WorkCandidate): number {
   return Math.max(0, Math.min(100, score));
 }
 
+/**
+ * Name and justify the skill a candidate needs.
+ *
+ * The name is the shape's, so a later candidate of the same shape finds the
+ * skill by it. The rationale names the first work item as an instance and
+ * quotes nothing from the charter: charter scope is this evaluator's job and
+ * must not become an invoke condition inside the skill.
+ *
+ * Args:
+ *   candidate: The work item that needs the skill.
+ *   shape: Surface class and operation the candidate resolved to.
+ *
+ * Returns:
+ *   The proposed name and the manager-facing rationale.
+ */
 function inferSkillRationale(
   candidate: WorkCandidate,
-  charter: AgentContext['charter'],
+  shape: SkillShape,
 ): { name: string; rationale: string } {
-  const verb =
-    candidate.sourceSystem === 'spreadsheet'
-      ? 'update-spreadsheet'
-      : candidate.sourceSystem === 'ticket'
-        ? 'update-ticket'
-        : `${candidate.sourceSystem}-action`;
-  const name = `${verb}-${candidate.externalId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(
-    0,
-    60,
-  );
+  const name = skillNameFor(shape);
+  const label = skillOperationLabel(shape);
   const rationale = [
-    `Charter places me on ${charter.proposedFunction.replace(/\.\s*$/, '')}.`,
-    `This candidate ("${candidate.title}") needs me to operate on ${candidate.sourceSystem} but I don't have a registered skill for it.`,
-    `Proposing a new skill so I can complete this and similar work going forward.`,
+    `No registered skill covers ${label} on a ${shape.surfaceClass} surface.`,
+    `First needed by "${candidate.title}" from ${candidate.sourceSystem}; the skill is a reusable procedure for every later work item of this shape, taking each run's values from that item and its runbook.`,
   ].join(' ');
   return { name, rationale };
 }
@@ -386,14 +371,16 @@ export async function evaluateCandidate(
     };
   }
 
-  const matchingSkill = await lookups.findMatchingSkill(candidate, ctx.charter);
+  const shape = skillShapeFor(candidate, ctx.surfaces, ctx.surfaceMode);
+  const matchingSkill = await lookups.findMatchingSkill(candidate, ctx.charter, shape);
   if (!matchingSkill) {
-    const { name, rationale } = inferSkillRationale(candidate, ctx.charter);
+    const { name, rationale } = inferSkillRationale(candidate, shape);
     return {
       decision: 'needs-skill',
-      reason: `no registered skill matches; agent will propose "${name}"`,
+      reason: `no registered skill covers ${skillOperationLabel(shape)} on a ${shape.surfaceClass} surface; agent will propose "${name}"`,
       suggestedSkillName: name,
       suggestedSkillRationale: rationale,
+      suggestedSkillShape: shape,
     };
   }
 

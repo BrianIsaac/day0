@@ -47,7 +47,8 @@ import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponent } from '../src/surfaces/browser';
-import type { ExecutionOutput } from '../src/work/types';
+import type { ExecutionOutput, SkillShape } from '../src/work/types';
+import { skillOperationLabel } from '../src/work/skill-shape';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import {
   grantRefusal,
@@ -146,6 +147,22 @@ export function findMatchingSkillForCandidate<T extends MatchableSkill>(
   }
 
   return bestScore >= 3 ? best : undefined;
+}
+
+/**
+ * The registry description of a shape: what the skill does, for the panel
+ * and the author. It names no work item, so a later item of the same shape
+ * reads as covered by it.
+ *
+ * Args:
+ *   shape: Surface class and operation.
+ *
+ * Returns:
+ *   One sentence.
+ */
+export function skillDescriptionFor(shape: SkillShape): string {
+  const label = skillOperationLabel(shape);
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)} on a ${shape.surfaceClass} surface, parameterised from each work item and its runbook.`;
 }
 
 function rowToCandidate(row: Doc<'workItems'>): WorkCandidate {
@@ -266,13 +283,16 @@ export const evaluateWorkItem = action({
       const required = inferRequiredPermissions(candidate);
       const writeScope = `${candidate.sourceSystem}:write`;
       const requiredScopes = [...new Set([...required, writeScope])];
+      const shape = verdict.suggestedSkillShape;
       const skillId = await ctx.runMutation(internal.skills.propose, {
         agentId,
         workItemId: args.workItemId,
         name: verdict.suggestedSkillName,
-        description: `Skill proposed to handle ${candidate.sourceSystem} work like "${candidate.title}".`,
+        description: skillDescriptionFor(shape),
         rationale: verdict.suggestedSkillRationale,
         requiredScopes,
+        surfaceClass: shape.surfaceClass,
+        operation: shape.operation,
       });
       await ctx.runMutation(internal.work.setProposedSkill, {
         workItemId: args.workItemId,
