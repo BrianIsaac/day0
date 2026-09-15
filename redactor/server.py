@@ -16,8 +16,8 @@ not match is refused rather than served, and the health check says so. A
 snapshot already on the volume is never fetched again, so a machine that
 started once on a network starts again without one.
 
-Chunking is done here, on line boundaries, because the model reads at most
-384 tokens at a time and the caller should not need to know that. Offsets in
+Chunking is done here in overlapping word windows below the detector's
+configured word limit so long lines are never silently truncated. Offsets in
 the reply are UTF-16 code-unit offsets, matching JavaScript string slicing.
 
     GET  /healthz     -> {"ok": true, "model": ..., "device": ..., "manifest": "verified"}
@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -137,26 +138,30 @@ def load_model() -> tuple[Any, str]:
     return model, device
 
 
-def chunks(text: str) -> list[tuple[int, str]]:
-    """Split on line boundaries so no chunk exceeds CHUNK_CHARS; a longer line is cut."""
-    out: list[tuple[int, str]] = []
-    start, buffer, position = 0, "", 0
-    for line in text.splitlines(keepends=True):
-        if buffer and len(buffer) + len(line) > CHUNK_CHARS:
-            out.append((start, buffer))
-            start, buffer = position, ""
-        buffer += line
-        position += len(line)
-    if buffer:
-        out.append((start, buffer))
-    split: list[tuple[int, str]] = []
-    for offset, chunk in out:
-        if len(chunk) <= CHUNK_CHARS * 2:
-            split.append((offset, chunk))
-            continue
-        for index in range(0, len(chunk), CHUNK_CHARS):
-            split.append((offset + index, chunk[index : index + CHUNK_CHARS]))
-    return split
+def chunks(text: str, splitter: Any = None, max_words: int = 256) -> list[tuple[int, str]]:
+    """Overlap word windows within the detector's limit; retain original offsets."""
+    tokens = list(splitter(text)) if splitter else [
+        (match.group(), match.start(), match.end()) for match in re.finditer(r"\S+", text)
+    ]
+    if not tokens:
+        return []
+    windows: list[tuple[int, str]] = []
+    first = 0
+    while first < len(tokens):
+        start = 0 if first == 0 else tokens[first][1]
+        stop = first
+        while stop < len(tokens) and stop - first < max_words:
+            if tokens[stop][2] - start > CHUNK_CHARS:
+                break
+            stop += 1
+        if stop == first:
+            raise ValueError("a redaction token exceeds the prediction window")
+        end = len(text) if stop == len(tokens) else tokens[stop][1]
+        windows.append((start, text[start:end]))
+        if stop == len(tokens):
+            break
+        first = max(first + 1, stop - min(32, (stop - first) // 2))
+    return windows
 
 
 class Redactor:
@@ -171,7 +176,11 @@ class Redactor:
         utf16 = [0]
         for character in text:
             utf16.append(utf16[-1] + (2 if ord(character) > 0xFFFF else 1))
-        for offset, chunk in chunks(text):
+        processor = getattr(self.model, "data_processor", None)
+        splitter = getattr(processor, "words_splitter", None)
+        config = getattr(self.model, "config", None)
+        max_words = min(256, getattr(config, "max_len", 256))
+        for offset, chunk in chunks(text, splitter, max_words):
             for entity in self.model.predict_entities(chunk, labels, threshold=threshold, flat_ner=True):
                 spans.append(
                     {

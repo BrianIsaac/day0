@@ -77,3 +77,23 @@ with tempfile.TemporaryDirectory() as directory:
     expect(JSON.parse(output)).toEqual([{ local: true, path: true, files: ['gliner_config.json'] }]);
   });
 });
+
+describe('prediction windows', () => {
+  it('bounds word count and overlaps windows instead of silently truncating a dense line', () => {
+    const output = execFileSync('python3', ['-c', `
+import importlib.util, json
+spec = importlib.util.spec_from_file_location('redactor_server', 'redactor/server.py')
+server = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(server)
+text = 'x ' * 700 + 'password: hunter2'
+windows = server.chunks(text)
+print(json.dumps({'largest': max(len(chunk.split()) for _, chunk in windows),
+    'covered': windows[-1][0] + len(windows[-1][1]) == len(text),
+    'overlap': all(start < previous + len(chunk) for (previous, chunk), (start, _) in zip(windows, windows[1:]))}))
+`], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    const result = JSON.parse(output);
+    expect(result.largest).toBeLessThanOrEqual(256);
+    expect(result.covered).toBe(true);
+    expect(result.overlap).toBe(true);
+  });
+});
