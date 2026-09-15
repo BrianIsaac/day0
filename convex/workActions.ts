@@ -1071,7 +1071,7 @@ function realAdapterDeps(
     browserMcpUrl,
     fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
     beforeTransport,
-    spanModel: spanModelFromEnv(),
+    spanModel: SURFACE_MODE === 'real' ? spanModelFromEnv() : undefined,
   };
 }
 

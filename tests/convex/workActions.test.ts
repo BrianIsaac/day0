@@ -2132,8 +2132,9 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.mcp).toHaveLength(0);
   });
 
-  it('preserves intentionally repeated append-row effects for exact-action approval', async (): Promise<void> => {
+  it.each([undefined, 'not a valid URL'])('preserves intentionally repeated append-row effects with redactor setting %s', async (redactorUrl): Promise<void> => {
     useSurfaceMode('mock');
+    if (redactorUrl) vi.stubEnv('DAY0_REDACTOR_URL', redactorUrl);
     const repeatedRow = {
       tool: 'spreadsheet.appendRow' as const,
       args: {
