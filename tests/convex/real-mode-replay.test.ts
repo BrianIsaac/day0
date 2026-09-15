@@ -52,6 +52,7 @@ const recorded = vi.hoisted(() => ({
   instructions: [] as Array<{ agent: string; instructions: string }>,
   planCalls: 0,
   prewritten: false,
+  repairClosing: false,
 }));
 
 const gatedPlan = {
@@ -162,8 +163,10 @@ vi.mock('../../src/lib/mastra', () => ({
       recorded.planCalls += 1;
       return (recorded.planCalls === 1 ? gatedPlan : cleanPlan) as T;
     }
+    if (recorded.repairClosing && name.endsWith('-argument-repair')) return { toolArgsJson: '{"issueId":"REVOPS-7","body":"Checked and finished."}' } as T;
     if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
     if (name.endsWith('-dependent')) return closing as T;
+    if (recorded.repairClosing && name.endsWith('-initial')) return { ...phaseOne, actions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } }, { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-7","comment":"Checked and finished."}' } }] } as T;
     if (name.endsWith('-initial'))
       return (
         recorded.prewritten
@@ -423,6 +426,7 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     recorded.instructions.length = 0;
     recorded.planCalls = 0;
     recorded.prewritten = false;
+    recorded.repairClosing = false;
     restoreSurfaceMode();
   });
 
@@ -449,6 +453,23 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toEqual([]);
     expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
     expect(recorded.model.filter((call) => call.agent.endsWith('-initial'))).toHaveLength(2);
+  }, 30_000);
+
+  it('audits a closing comment revealed by key repair before autonomy can apply it', async () => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(t);
+    recorded.repairClosing = true;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+      await ctx.db.patch(workItemId, { state: 'plan-approved', plan: {
+        ...cleanPlan, steps: ['Read the Linear issue.', 'Comment on Linear with the result.'],
+      } });
+    });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishInProgressScheduledFunctions();
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
+    expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
   }, 30_000);
 
   it('plans without the ownership gate, holds the tile batch in phase one, repairs the read once, and closes from the read-back', async (): Promise<void> => {

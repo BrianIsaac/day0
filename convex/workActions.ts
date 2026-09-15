@@ -17,6 +17,7 @@ import {
   type DraftPlanArgs,
 } from '../src/work/plan';
 import {
+  deferralAudit,
   dependentActionCap,
   repairableReadFailures,
   repairFailedReads,
@@ -596,6 +597,12 @@ async function holdDay0Actions(
             },
           })
         : staged;
+    if (stagedOutput.argumentRepairs?.some((attempt) => attempt.repaired)) {
+      const issues = deferralAudit(stagedOutput, args.candidate, {
+        mode: SURFACE_MODE, plan: args.plan, surfaces, skillBody: args.skill.body, now: Date.now(),
+      });
+      if (issues.length > 0) throw new Error(`repaired action set failed the audit: ${issues.join('; ')}`);
+    }
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
       // Nothing to wait for is not a failed prerequisite: the closing phase
       // authors the whole set and accounts for every plan step, and a step
@@ -1030,6 +1037,11 @@ export const authorDependentActions = internalAction({
         candidate: rowToCandidate(item),
         onAdditionalModelCall: (): void => {},
       });
+      const repairedTransitionRefusal = dependentTransitionRefusal({
+        plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes,
+        initialFailure: initial.initialFailure,
+      });
+      if (repairedTransitionRefusal) throw new Error(repairedTransitionRefusal);
       const dependent: DependentPendingOutput = {
         ...held,
         phase: 'dependent',
@@ -1041,7 +1053,7 @@ export const authorDependentActions = internalAction({
         outcomes: output.planStepOutcomes,
         initialActions: initial.actions,
         initialApplied: initial.applied,
-        closingActions: output.actions,
+        closingActions: held.actions,
         initialFailure: initial.initialFailure,
         surfaces,
       });
