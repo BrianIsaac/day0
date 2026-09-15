@@ -12,6 +12,8 @@ import * as cryptoActions from '../../convex/credentialCryptoActions';
 import * as credentialsModule from '../../convex/credentials';
 import * as eventsModule from '../../convex/events';
 import * as exportActions from '../../convex/exportActions';
+import { redactCredentials } from '../../src/docs/redaction';
+import { ScriptedSpanModel } from '../fixtures/redaction-double';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { OWNER_KNOWN_VALUE_CAP, OWNER_KNOWN_VALUES_CAP_REASON } from '../../src/redaction/known-values';
 import { allConvexModules } from './all-modules';
@@ -133,4 +135,24 @@ describe('the public API surface and decryption', (): void => {
     expect(eventsModule.exportForAgent.isInternal).toBe(true);
     expect(exportActions.exportForAgent.isPublic).toBe(true);
   });
+});
+
+it('lets resync repair an old scope row instead of redacting it as a known value forever', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const credentialId = await insertRow(harness, { userId: 'owner', label: 'Slack credential', plaintext: 'users:read' });
+  await harness.run(async (ctx) => {
+    const sourceId = await ctx.db.insert('docSources', {
+      userId: 'owner', label: 'Handbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+    });
+    await ctx.db.patch(credentialId, { source: { sourceId, ref: 'slack.md' } });
+  });
+  const known = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  const markdown = readFileSync('tests/fixtures/slack-manifest-scopes.md', 'utf8');
+  const model = new ScriptedSpanModel((text) => [...text.matchAll(/[a-z]+:[a-z]+(?:\.[a-z]+)?/g)].map((match) => ({
+    start: match.index!, end: match.index! + match[0].length, label: 'credential', score: 0.99,
+  })));
+  expect((await redactCredentials(markdown, 'Slack automation policy', { model, known })).credentials).toEqual([]);
+  // Explicitly entered material still participates in exact-value protection.
+  await insertRow(harness, { userId: 'owner', label: 'Entered value', plaintext: 'users:read' });
+  expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual(['users:read']);
 });

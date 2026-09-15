@@ -586,3 +586,57 @@ describe('documentation sources in real mode', (): void => {
     expect(dead?.state).toBe('superseded');
   });
 });
+
+it('supersedes missing page credentials and unbinds every dependent surface atomically', async () => {
+  useSurfaceMode('real');
+  const harness = convexTest(schema, allConvexModules());
+  const { sourceId, agentId } = await seedSyncedSource(harness);
+  const { credentialId, surfaceId, retainedId, proposedId } = await harness.run(async (ctx) => {
+    const credentialId = await ctx.db.insert('credentials', {
+      userId: 'owner', kind: 'value', label: 'Slack credential',
+      source: { sourceId, ref: 'page.md' }, ciphertext: 'sealed', iv: 'iv', createdAt: 1,
+      status: 'suspect', statusReason: 'permission scope',
+    });
+    const retainedId = await ctx.db.insert('credentials', {
+      userId: 'owner', kind: 'value', label: 'retained',
+      source: { sourceId, ref: 'retained.md' }, ciphertext: 'sealed', iv: 'iv', createdAt: 1,
+    });
+    const surfaceId = await ctx.db.insert('surfaces', {
+      agentId, slug: 'slack', displayName: 'Slack', class: 'chat', verdict: 'connected',
+      credentialId, credentialKind: 'value', credentialLanded: true, whereFound: [], createdAt: 1,
+      request: { credential: { found: 'value', method: 'bot-token', evidenceRef: 'page.md' } },
+      managerApprovedAt: 2, itApprovedAt: 3, probeGeneration: 4, lastVerifiedAt: 5,
+      toolAllowlist: ['chat.postMessage'], providerIdentityId: 'bot',
+    });
+    const proposedId = await ctx.db.insert('surfaces', {
+      agentId, slug: 'slack-proposed', displayName: 'Slack proposed', class: 'chat', verdict: 'proposed',
+      credentialId, credentialKind: 'value', credentialLanded: false, whereFound: [], createdAt: 1,
+    });
+    return { credentialId, surfaceId, retainedId, proposedId };
+  });
+  const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+  const finish = { sourceId, runId, refs: ['page.md', 'retained.md'], credentialRefs: ['retained.md'], pageCount: 2, redactionCount: 1 };
+  await harness.mutation(internal.docSources.finishSync, finish);
+  expect(await harness.query(internal.credentials.getInternal, { credentialId })).toMatchObject({
+    status: 'superseded', revokedAt: expect.any(Number),
+  });
+  const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+  expect(surface).toMatchObject({
+    verdict: 'ungranted', credentialLanded: false, probeGeneration: 5,
+    managerApprovedAt: 2, itApprovedAt: 3,
+    request: { credential: { found: 'location', method: 'bot-token' } },
+  });
+  expect(surface?.credentialId).toBeUndefined();
+  expect(surface?.toolAllowlist).toBeUndefined();
+  expect(surface?.lastVerifiedAt).toBeUndefined();
+  expect(surface?.providerIdentityId).toBeUndefined();
+  const proposed = await harness.run(async (ctx) => await ctx.db.get(proposedId));
+  expect(proposed?.verdict).toBe('proposed');
+  expect(proposed?.credentialId).toBeUndefined();
+  expect(await harness.mutation(internal.surfaces.recordConnected, {
+    surfaceId, generation: 4, toolAllowlist: ['chat.postMessage'], toolArguments: [], verifiedAt: 10,
+  })).toBe(false);
+  expect(await harness.query(internal.credentials.getInternal, { credentialId: retainedId })).not.toHaveProperty('status');
+  await harness.mutation(internal.docSources.finishSync, finish);
+  expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(surface);
+});

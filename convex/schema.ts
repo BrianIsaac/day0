@@ -327,7 +327,8 @@ export default defineSchema({
     /** The minute-by-minute manager decision poll wants the deployment's chat
      * rows, not its whole surface set - which now grows with the documented
      * estate rather than with the systems a manager happened to name. */
-    .index('by_class', ['class']),
+    .index('by_class', ['class'])
+    .index('by_credentialId', ['credentialId']),
 
   voiceSessions: defineTable({
     agentId: v.id('agents'),

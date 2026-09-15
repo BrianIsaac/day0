@@ -176,7 +176,7 @@ export const activeValuesForOwner = internalQuery({
   handler: async (
     ctx,
     args,
-  ): Promise<{ overflow: boolean; rows: Array<{ _id: Id<'credentials'>; ciphertext: string; iv: string }> }> => {
+  ): Promise<{ overflow: boolean; rows: Array<{ _id: Id<'credentials'>; ciphertext: string; iv: string; pageDerived: boolean }> }> => {
     const rows = await ctx.db
       .query('credentials')
       .withIndex('by_userId', (index) => index.eq('userId', args.userId))
@@ -185,7 +185,7 @@ export const activeValuesForOwner = internalQuery({
       overflow: rows.length > OWNER_KNOWN_VALUE_CAP,
       rows: rows.flatMap((row) =>
         !row.revokedAt && !row.status && row.ciphertext !== undefined && row.iv !== undefined
-          ? [{ _id: row._id, ciphertext: row.ciphertext, iv: row.iv }]
+          ? [{ _id: row._id, ciphertext: row.ciphertext, iv: row.iv, pageDerived: typeof row.source !== 'string' }]
           : [],
       ),
     };

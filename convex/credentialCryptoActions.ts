@@ -52,7 +52,7 @@ export const open = internalAction({
 export const ownerValues = internalAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<string[]> => {
-    const { overflow, rows }: { overflow: boolean; rows: Array<{ ciphertext: string; iv: string }> } =
+    const { overflow, rows }: { overflow: boolean; rows: Array<{ ciphertext: string; iv: string; pageDerived: boolean }> } =
       await ctx.runQuery(internal.credentials.activeValuesForOwner, { userId: args.userId });
     if (overflow) {
       console.error(
@@ -70,7 +70,8 @@ export const ownerValues = internalAction({
       } catch {
         continue;
       }
-      if (plaintext) values.add(plaintext);
+      // A false page detection must not perpetuate itself through exact-value redaction.
+      if (plaintext && !(row.pageDerived && guardReason(plaintext))) values.add(plaintext);
     }
     return [...values];
   },
