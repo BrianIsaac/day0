@@ -1655,7 +1655,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('discovered');
     expect(row.skipReason).toBeUndefined();
-    expect(typeof row.eligibilityWaivedAt).toBe('number');
+    expect(typeof row.scopeWaivedAt).toBe('number');
     expect(row.qualityFitWaivedAt).toBeUndefined();
     const retries = await harness.run(
       async (ctx) =>
@@ -1664,7 +1664,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
         ),
     );
     expect(retries.map((event) => event.payload)).toEqual([
-      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'eligibility' },
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'scope' },
     ]);
   });
 
@@ -1680,7 +1680,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
 
     const row = await readItem(harness, workItemId);
     expect(row.qualityFitWaivedAt).toBeUndefined();
-    expect(row.eligibilityWaivedAt).toBeUndefined();
+    expect(row.scopeWaivedAt).toBeUndefined();
   });
 });
 

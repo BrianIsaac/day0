@@ -322,7 +322,7 @@ export const evaluateWorkItem = action({
         surfaceMode: surfaceConfig.mode,
         surfaces,
         qualityFitWaived: item.qualityFitWaivedAt !== undefined,
-        eligibilityWaived: item.eligibilityWaivedAt !== undefined,
+        scopeWaived: item.scopeWaivedAt !== undefined,
       },
       lookups,
       {

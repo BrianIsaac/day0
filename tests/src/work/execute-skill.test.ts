@@ -1244,7 +1244,7 @@ describe('executor output contract', (): void => {
       draft: 'd',
       notes: 'n',
       procedureTrails: [],
-      planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' }],
+      planStepOutcomes: [{ step: 1, status: 'satisfied' as const, evidence: 'ledger row 0', basis: 'ledger' as const }],
       actions: Array.from({ length: count }, () => read),
     });
     const closingSetOnly = dependentExecuteSchemaForProcedureContract({ trails: [] }, 'real', CLOSING_SET_CAP);

@@ -246,12 +246,12 @@ describe('one scope judgement for the R6 card', (): void => {
     model.answer = { inScope: false, fit: false, reason: 'outside the role and against a norm' };
 
     await expect(
-      judgeScope(r6Card, context('real', { eligibilityWaived: true }), { provenance: false, namesDocumentedSystem: false }),
+      judgeScope(r6Card, context('real', { scopeWaived: true }), { provenance: false, namesDocumentedSystem: false }),
     ).resolves.toEqual({ admitted: true, basis: 'waived' });
     expect(model.calls).toEqual([]);
 
     await expect(
-      judgeScope(r6Card, context('real', { eligibilityWaived: true, agentsMd: GOOD_HABITS }), {
+      judgeScope(r6Card, context('real', { scopeWaived: true, agentsMd: GOOD_HABITS }), {
         provenance: false,
         namesDocumentedSystem: false,
       }),
@@ -262,7 +262,7 @@ describe('one scope judgement for the R6 card', (): void => {
     });
     model.answer = { inScope: false, fit: true, reason: 'outside the role' };
     await expect(
-      judgeScope(r6Card, context('real', { eligibilityWaived: true, agentsMd: GOOD_HABITS }), {
+      judgeScope(r6Card, context('real', { scopeWaived: true, agentsMd: GOOD_HABITS }), {
         provenance: false,
         namesDocumentedSystem: false,
       }),

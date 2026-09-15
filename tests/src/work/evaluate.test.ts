@@ -450,13 +450,13 @@ describe('work surface enablement', (): void => {
       reason: 'out-of-scope: no charter or current documented-system overlap',
     });
     await expect(
-      evaluateCandidate(work, { ...context('mock', []), eligibilityWaived: true }, lookups()),
+      evaluateCandidate(work, { ...context('mock', []), scopeWaived: true }, lookups()),
     ).resolves.toMatchObject({ decision: 'claim' });
     work.sourceSystem = 'linear';
     await expect(
       evaluateCandidate(
         work,
-        { ...context('real', [surface('linear', 'absent')]), eligibilityWaived: true },
+        { ...context('real', [surface('linear', 'absent')]), scopeWaived: true },
         lookups(),
       ),
     ).resolves.toEqual({ decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' });

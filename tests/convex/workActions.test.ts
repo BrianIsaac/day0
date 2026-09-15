@@ -1974,11 +1974,13 @@ describe('executing an approved plan through the gate', (): void => {
 
   it('refuses a closing phase that cites manager feedback the run does not carry', async (): Promise<void> => {
     useSurfaceMode('real');
+    // Phase one keeps every action it emits now, so the ticket writes belong
+    // to the closing set here: the refusal must land nothing.
     recorded.skillOutput = {
       draft: 'Adding the audit note.',
       notes: '',
       needsDependentPhase: true,
-      actions: skillOutput.actions.slice(0, 3),
+      actions: skillOutput.actions.slice(2, 3),
     };
     recorded.dependentOutput = {
       draft: 'Audit note added.',
@@ -3391,7 +3393,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
       harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
     ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
     expect(await events('work.retry')).toEqual([
-      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'eligibility' },
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'scope' },
     ]);
 
     await expect(
@@ -3399,7 +3401,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     ).resolves.toEqual({ decision: 'claim' });
     const retried = await readItem(harness, workItemId);
     expect(retried.state).toBe('claimed');
-    expect(typeof retried.eligibilityWaivedAt).toBe('number');
+    expect(typeof retried.scopeWaivedAt).toBe('number');
     expect(retried.qualityFitWaivedAt).toBeUndefined();
   });
 

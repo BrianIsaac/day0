@@ -52,7 +52,7 @@ export interface ScopeInputs {
 export interface ScopeContext extends AgentContext {
   surfaceMode: SurfaceMode;
   qualityFitWaived?: boolean;
-  eligibilityWaived?: boolean;
+  scopeWaived?: boolean;
 }
 
 const STOP_WORDS = ['will', 'their', 'them', 'with', 'from', 'this', 'that', 'when', 'where'];
@@ -219,7 +219,7 @@ export async function judgeScope(
   inputs: ScopeInputs,
 ): Promise<ScopeJudgement> {
   let basis: Extract<ScopeJudgement, { admitted: true }>['basis'];
-  if (ctx.eligibilityWaived) {
+  if (ctx.scopeWaived) {
     basis = 'waived';
   } else if (inputs.provenance) {
     basis = 'provenance';
@@ -247,7 +247,7 @@ export async function judgeScope(
   }
 
   const fitCounts = hasGoodHabits && !ctx.qualityFitWaived;
-  if (ctx.eligibilityWaived && !fitCounts) return { admitted: true, basis };
+  if (ctx.scopeWaived && !fitCounts) return { admitted: true, basis };
 
   let judgement: CharterJudgement;
   try {
@@ -261,11 +261,11 @@ export async function judgeScope(
     return { admitted: true, basis, failedOpen: cause };
   }
   const reason = judgement.reason.trim() || 'the charter judgement gave no reason';
-  if (!judgement.inScope && !ctx.eligibilityWaived) {
+  if (!judgement.inScope && !ctx.scopeWaived) {
     return { admitted: false, basis: 'charter-judgement', reason: `${OUT_OF_SCOPE_SKIP_PREFIX}${reason}` };
   }
   if (!judgement.fit && fitCounts) {
     return { admitted: false, basis: 'quality-fit', reason: `${QUALITY_FIT_SKIP_PREFIX}${reason}` };
   }
-  return { admitted: true, basis: ctx.eligibilityWaived ? 'waived' : 'charter-judgement' };
+  return { admitted: true, basis: ctx.scopeWaived ? 'waived' : 'charter-judgement' };
 }

@@ -97,7 +97,7 @@ export interface EvalContext extends AgentContext {
    * which is their decision that the work is theirs to give; the eligibility
    * rule is left out and the plan gate still stands.
    */
-  eligibilityWaived?: boolean;
+  scopeWaived?: boolean;
 }
 
 export { QUALITY_FIT_SKIP_PREFIX } from './types';
