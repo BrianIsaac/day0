@@ -246,8 +246,12 @@ and installs the CUDA build of its wheels; `pnpm convex:up --profile redactor`
 uses the CPU configuration by default. The reviewed CPU installation was Linux
 x86-64 with Python 3.12. Its 37 pinned wheels total about 251 MB, and the five
 verified snapshot files total 1.16 GB. CUDA download size was not measured in
-this review. The live CPU corpus took a median 838 ms and p95 1,238 ms per case,
-including container-exec overhead. Calls have a 10-second deadline; a timeout
+this review. Through the HTTP client the backend uses, over the compose bridge
+on a laptop CPU, the 77-case corpus took a median 423 ms and p95 860 ms per
+call, from 328 ms for a short outcome to 1.30 s for a 1,216-character page;
+measured through `docker exec` in review it was 838 ms median and p95
+1,238 ms. Neither is the in-process figure the research report quotes. Calls
+have a 10-second deadline; a timeout
 fails documentation sync closed and marks provider evidence as limited redaction.
 The dashboard displays that limitation. Exact matching covers the credential
 supplied by the transport and every active credential stored for the owner;
