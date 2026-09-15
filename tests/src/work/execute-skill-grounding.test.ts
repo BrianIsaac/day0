@@ -49,7 +49,12 @@ import {
 } from '../../../src/work/execute-skill';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import { planPreconditionAudit } from '../../../src/work/plan';
-import type { ExecutionOutput, MockAction } from '../../../src/work/types';
+import {
+  CLOSING_SET_CAP,
+  DEFERRED_SEQUENCE_ALLOWANCE,
+  type ExecutionOutput,
+  type MockAction,
+} from '../../../src/work/types';
 
 const charter: Charter = {
   version: '0.0',
@@ -130,6 +135,154 @@ describe('documentation grounding in the executor prompts', (): void => {
     expect(recorded.users[0]).toContain('--- Team docs (read-only context) ---');
     expect(recorded.users[0]).toContain('Close checklist: reconcile the ledger, confirm the owner, file the summary.');
     expect(recorded.instructions[0]).toContain('citable');
+  });
+
+  it('tells the closing phase the cap for this run: the closing set, plus a deferred sequence only when phase one declared one', async (): Promise<void> => {
+    const closingArgs = {
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: {
+        summary: 'Comment on the ticket.',
+        steps: ['Comment on the ticket with the checklist review.'],
+        expectedOutputType: 'ticket-update' as const,
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real' as const,
+      surfaces: [],
+      initialLedger: [],
+    };
+    await runDependentSkill({
+      ...closingArgs,
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+    });
+    expect(recorded.instructions[0]).toContain(`Emit at most ${CLOSING_SET_CAP} closing actions.`);
+    await runDependentSkill({
+      ...closingArgs,
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [{ tool: 'mcp.call', args: { surface: 'tracker', tool: 'get_issue', toolArgsJson: '{"id":"T-1"}' } }],
+        procedureTrails: [],
+        deferredActions: [
+          {
+            description: 'the tile refresh, whose figure the record read returns',
+            reason: 'the fill value is the figure in the record',
+            dependsOnActionIndex: 0,
+            dependsOnField: 'record',
+          },
+        ],
+      },
+    });
+    expect(recorded.instructions[1]).toContain(
+      `Emit at most ${CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE} closing actions.`,
+    );
+  });
+
+  it('names the owner the provider returned to both executor phases', async (): Promise<void> => {
+    const plan = {
+      summary: 'Comment on the ticket.',
+      steps: ['Comment on the ticket with the checklist review.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const owned: WorkCandidate = { ...candidate, owner: 'Ana', requester: 'Manager' };
+    recorded.outputs.push({ draft: 'Commented.', notes: '', actions: [], procedureTrails: [] });
+    await runSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan,
+      candidate: owned,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+    });
+    await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan,
+      candidate: owned,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+
+    expect(recorded.users).toHaveLength(2);
+    expect(recorded.users[0]).toContain('From: Manager\nOwner: Ana\nTitle:');
+    expect(recorded.users[1]).toContain('Owner: Ana\nTitle:');
+  });
+
+  it('treats a fact the manager states as approved evidence in the closing phase', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'Closing draft.',
+      notes: '',
+      actions: [],
+      procedureTrails: [],
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'Manager: REVOPS-7 is owned by Priya.', basis: 'manager-feedback' },
+        { step: 2, status: 'satisfied', evidence: 'ledger row 0', basis: 'ledger' },
+      ],
+    });
+    const output = await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: {
+        summary: 'Confirm the owner, then comment.',
+        steps: ['Confirm REVOPS-7 has an owner.', 'Comment on the ticket.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      managerFeedback: 'REVOPS-7 is owned by Priya.',
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+
+    // The rule is in the closing instructions and the fact is in the prompt, so
+    // the step the manager settled is reported on their word, and the record says so.
+    expect(recorded.instructions[0]).toContain("A fact the manager's feedback states is approved evidence");
+    expect(recorded.instructions[0]).toContain('`manager-feedback`');
+    expect(recorded.users[0]).toContain(JSON.stringify('REVOPS-7 is owned by Priya.'));
+    expect(output.planStepOutcomes).toEqual([
+      { step: 1, status: 'satisfied', evidence: 'Manager: REVOPS-7 is owned by Priya.', basis: 'manager-feedback' },
+      { step: 2, status: 'satisfied', evidence: 'ledger row 0' },
+    ]);
+  });
+
+  it('gives the closing phase no feedback rule when the run carries none', async (): Promise<void> => {
+    await runDependentSkill({
+      skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
+      plan: {
+        summary: 'Comment on the ticket.',
+        steps: ['Comment on the ticket.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialLedger: [],
+    });
+    expect(recorded.instructions[0]).not.toContain("A fact the manager's feedback states");
+    expect(recorded.instructions[0]).toContain('Every plan step outcome has basis `ledger`');
   });
 
   it('tells the closing phase that a step it fulfils by an action emitted now is satisfied', async (): Promise<void> => {
@@ -525,6 +678,377 @@ describe('deferral by data, not by judgement', (): void => {
         surfaces: [{ ...tile, verdict: 'absent' }, linear],
       }),
     ).toEqual([]);
+  });
+
+  const slack: SurfaceRecord = {
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage', 'conversations.replies'],
+    managerDmChannelId: 'D0MANAGER',
+  };
+  const recordContext = { ...context, surfaces: [tile, linear, slack] };
+  const readOnly = (steps: string[]): string[] =>
+    deferralAudit(
+      { notes: '', needsDependentPhase: true, actions: [getIssue], procedureTrails: [] },
+      ticket,
+      { ...recordContext, plan: { ...plan, steps } },
+    );
+
+  it('requires a record write whose payload the plan fixes to be emitted in phase one, whatever the transport', (): void => {
+    const linearIssues = readOnly([
+      'Read REVOPS-9 in Linear.',
+      'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear and move it to In Progress.',
+    ]);
+    expect(linearIssues).toHaveLength(1);
+    expect(linearIssues[0]).toContain('deferred an action with no result dependency');
+    expect(linearIssues[0]).toContain('Linear (linear)');
+    expect(linearIssues[0]).toContain('"Kick-off scheduled for Monday"');
+    const slackIssues = readOnly([
+      'Read the thread.',
+      'Post "Standup moved to 10:00" in #revops-asks on Slack.',
+    ]);
+    expect(slackIssues).toHaveLength(1);
+    expect(slackIssues[0]).toContain('Slack (slack)');
+    // The same plans pass once the fixed-payload writes are in the phase; the gate holds them.
+    const comment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-9","body":"Kick-off scheduled for Monday"}',
+      },
+    };
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [getIssue, comment], procedureTrails: [] },
+        ticket,
+        {
+          ...recordContext,
+          plan: {
+            ...plan,
+            steps: [
+              'Read REVOPS-9 in Linear.',
+              'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear and move it to In Progress.',
+            ],
+          },
+        },
+      ),
+    ).toEqual([]);
+    const reply: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: '{"Authorization":"Bearer {{secret}}"}',
+        body: '{"channel":"C0PUBLIC","text":"Standup moved to 10:00"}',
+      },
+    };
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [getIssue, reply], procedureTrails: [] },
+        ticket,
+        {
+          ...recordContext,
+          plan: { ...plan, steps: ['Read the thread.', 'Post "Standup moved to 10:00" in #revops-asks on Slack.'] },
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    'Comment on REVOPS-7 in Linear quoting the read-back figure, then move it to Done.',
+    'After the snapshot lands, post "done" in the Slack thread.',
+    'Move the Linear issue titled "Refresh the tile" to Done.',
+    'Comment on "REVOPS-7" in Linear with the outcome.',
+    'Draft the Linear comment: "Friday standup summary for Q3 close" for the manager to approve.',
+    'Do not post "done" in Slack until the manager approves.',
+  ])('leaves a record write alone when its payload consumes a result, is a reference, a draft, or is withheld: %s', (step): void => {
+    expect(readOnly(['Read REVOPS-7 in Linear.', step])).toEqual([]);
+  });
+
+  it('never audits a fixed-payload write on a surface that is not connected', (): void => {
+    const disconnected = { ...linear, verdict: 'absent' as const, credentialLanded: false };
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+        ticket,
+        {
+          ...context,
+          surfaces: [disconnected],
+          plan: { ...plan, steps: ['Add the comment "Kick-off" to REVOPS-9 in Linear.'] },
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it('sends a fixed-payload MCP write left out of phase one through the same one repair', async (): Promise<void> => {
+    const literalPlan = {
+      ...plan,
+      steps: [
+        'Read REVOPS-9 in Linear.',
+        'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear.',
+      ],
+    };
+    const comment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-9","body":"Kick-off scheduled for Monday"}',
+      },
+    };
+    const gated = {
+      draft: 'Reading first.',
+      notes: 'The comment waits for the manager.',
+      needsDependentPhase: true,
+      actions: [getIssue],
+      procedureTrails: [],
+      deferredActions: null,
+    };
+    const corrected = { ...gated, actions: [getIssue, comment] };
+    recorded.outputs.push(gated, corrected);
+    let additional = 0;
+    const output = await runSkill({
+      ...runArgs,
+      plan: literalPlan,
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      onAdditionalModelCall: (): void => {
+        additional += 1;
+      },
+    });
+    expect(additional).toBe(1);
+    expect(recorded.users[1]).toContain('"Kick-off scheduled for Monday"');
+    expect(recorded.users[1]).toContain('Linear (linear)');
+    expect(output.actions).toEqual([getIssue, comment]);
+  });
+
+  const auditComment: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-7","body":"Refreshed the tile to 74%; audit line quoted."}',
+    },
+  };
+  const done: MockAction = {
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"REVOPS-7","state":"Done"}' },
+  };
+  const post = (channel: string, text: string, threadTs?: string): MockAction => ({
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel, text, ...(threadTs ? { thread_ts: threadTs } : {}) }),
+    },
+  });
+  const readBackPlan = {
+    ...plan,
+    steps: [
+      'Read REVOPS-7 in Linear.',
+      'Comment on REVOPS-7 in Linear quoting the read-back figure, then move it to Done.',
+    ],
+  };
+
+  it('refuses a closing action prewritten in phase one before its result exists', (): void => {
+    const issues = deferralAudit(
+      {
+        notes: '',
+        needsDependentPhase: true,
+        actions: [getIssue, auditComment, done],
+        procedureTrails: [],
+      },
+      ticket,
+      { ...recordContext, plan: readBackPlan },
+    );
+    expect(issues).toHaveLength(2);
+    expect(issues[0]).toContain('prewrote a closing action');
+    expect(issues[0]).toContain('linear save_comment');
+    expect(issues[1]).toContain('linear save_issue');
+    expect(issues[0]).toContain('closing phase');
+  });
+
+  it('lets the manager DM and a fixed-payload comment stand in phase one, and refuses a prewritten thread reply', (): void => {
+    expect(
+      deferralAudit(
+        {
+          notes: '',
+          needsDependentPhase: true,
+          actions: [getIssue, post('D0MANAGER', 'Reading REVOPS-7 now; the tile refresh is next.')],
+          procedureTrails: [],
+        },
+        ticket,
+        { ...recordContext, plan: readBackPlan },
+      ),
+    ).toEqual([]);
+    const kickOff: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-9","body":"Kick-off scheduled for Monday"}',
+      },
+    };
+    expect(
+      deferralAudit(
+        { notes: '', needsDependentPhase: true, actions: [getIssue, kickOff], procedureTrails: [] },
+        ticket,
+        {
+          ...recordContext,
+          plan: {
+            ...plan,
+            steps: ['Read REVOPS-9 in Linear.', 'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.'],
+          },
+        },
+      ),
+    ).toEqual([]);
+    const ask: WorkCandidate = {
+      ...ticket,
+      sourceCategory: 'event-stream',
+      sourceSystem: 'slack',
+      externalId: 'C0PUBLIC:1787.0001',
+      replyTarget: { channel: 'C0PUBLIC', channelName: 'revops-asks', threadTs: '1787.0001' },
+    };
+    const replyIssues = deferralAudit(
+      {
+        notes: '',
+        needsDependentPhase: true,
+        actions: [getIssue, post('C0PUBLIC', 'Coverage is 74%.', '1787.0001')],
+        procedureTrails: [],
+      },
+      ask,
+      {
+        ...recordContext,
+        plan: { ...plan, steps: ['Read REVOPS-7 in Linear.', 'Reply in the thread with the figure once the read lands.'] },
+      },
+    );
+    expect(replyIssues).toHaveLength(1);
+    expect(replyIssues[0]).toContain('prewrote a closing action');
+    expect(replyIssues[0]).toContain('slack POST /chat.postMessage');
+  });
+
+  it('lets a fixed-payload comment stand when the body differs from the quoted literal only by sentence punctuation or edge whitespace', (): void => {
+    const fixedPlan = {
+      ...plan,
+      steps: ['Read REVOPS-9 in Linear.', 'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.'],
+    };
+    const comment = (body: string): MockAction => ({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-9', body }) },
+    });
+    for (const body of ['Kick-off scheduled for Monday.', ' Kick-off scheduled for Monday', 'Kick-off scheduled for Monday!\n']) {
+      expect(
+        deferralAudit(
+          { notes: '', needsDependentPhase: true, actions: [getIssue, comment(body)], procedureTrails: [] },
+          ticket,
+          { ...recordContext, plan: fixedPlan },
+        ),
+        body,
+      ).toEqual([]);
+    }
+    for (const body of ['Kick-off scheduled for Monday, done', 'Kick-off scheduled', 'Done']) {
+      expect(
+        deferralAudit(
+          { notes: '', needsDependentPhase: true, actions: [getIssue, comment(body)], procedureTrails: [] },
+          ticket,
+          { ...recordContext, plan: fixedPlan },
+        ),
+        body,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('gives a run whose plan promises a result its closing phase, and moves a prewritten close there through the one repair', async (): Promise<void> => {
+    const prewritten = {
+      draft: 'Read, commented and closed.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue, auditComment, done],
+      procedureTrails: [],
+      deferredActions: null,
+    };
+    const corrected = { ...prewritten, needsDependentPhase: true, actions: [getIssue] };
+    recorded.outputs.push(prewritten, corrected);
+    let additional = 0;
+    const output = await runSkill({
+      ...runArgs,
+      plan: readBackPlan,
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      onAdditionalModelCall: (): void => {
+        additional += 1;
+      },
+    });
+    expect(additional).toBe(1);
+    expect(recorded.users[1]).toContain('prewrote a closing action');
+    expect(recorded.users[1]).toContain('linear save_comment');
+    expect(output.needsDependentPhase).toBe(true);
+    expect(output.actions).toEqual([getIssue]);
+  });
+
+  it('carries the manager\'s answers at approval into both phases\' prompts, and no block without them', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'd',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue],
+      procedureTrails: [],
+      deferredActions: null,
+    });
+    await runSkill({
+      ...runArgs,
+      plan: { ...plan, steps: ['Comment on REVOPS-7 in Linear.'] },
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      managerAnswers: [{ question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.' }],
+    });
+    expect(recorded.users[0]).toContain("--- Manager's answers at plan approval ---");
+    expect(recorded.users[0]).toContain('[{"question":"Who owns the Looker pipeline tile.","answer":"Priya owns it."}]');
+    expect(recorded.users[0]!.indexOf("Manager's answers")).toBeLessThan(recorded.users[0]!.indexOf('--- Candidate ---'));
+    recorded.users.length = 0;
+    recorded.outputs.push({
+      draft: 'd',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue],
+      procedureTrails: [],
+      deferredActions: null,
+    });
+    await runSkill({
+      ...runArgs,
+      plan: { ...plan, steps: ['Comment on REVOPS-7 in Linear.'] },
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+    });
+    expect(recorded.users[0]).not.toContain("Manager's answers");
+  });
+
+  it('leaves the flag alone in mock mode and when the plan promises no result', async (): Promise<void> => {
+    recorded.outputs.push({
+      draft: 'd',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue],
+      procedureTrails: [],
+      deferredActions: null,
+    });
+    const single = await runSkill({
+      ...runArgs,
+      plan: { ...plan, steps: ['Comment on REVOPS-7 in Linear.'] },
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+    });
+    expect(single.needsDependentPhase).toBe(false);
   });
 
   it('preserves the 2 September approved plan shapes and complete browser batch', () => {

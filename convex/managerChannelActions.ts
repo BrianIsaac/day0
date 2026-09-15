@@ -21,6 +21,7 @@ import { applySurfaceActions } from '../src/surfaces/registry';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import type { BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import {
+  batchRequestLines,
   decisionIdFromBytes,
   decisionRequestText,
   managerMessageAction,
@@ -157,7 +158,7 @@ export const requestDecision = internalAction({
     });
     if (!prepared.prepared) return { sent: false, reason: prepared.reason };
 
-    const text = decisionRequestText({
+    let text = decisionRequestText({
         agentName: prepared.agentName,
         title: prepared.title,
         id: prepared.decisionId,
@@ -168,6 +169,34 @@ export const requestDecision = internalAction({
         surfaces: prepared.surfaces,
         closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
       });
+    // Other held action sets are already waiting on this channel: offer one
+    // code that decides them all, each named with its own.
+    if (args.kind === 'actions' && prepared.openActionDecisions.length > 0 && prepared.pendingRunId) {
+      const batchId = decisionIdFromBytes(randomBytes(32));
+      const members = [
+        {
+          workItemId: args.workItemId,
+          decisionId: prepared.decisionId,
+          pendingRunId: prepared.pendingRunId,
+          title: prepared.title,
+        },
+        ...prepared.openActionDecisions,
+      ];
+      const batch = await ctx.runMutation(internal.work.prepareDecisionBatch, {
+        agentId: prepared.agentId,
+        batchId,
+        surfaceSlug: prepared.surface.slug,
+        channel: prepared.surface.managerDmChannelId ?? '',
+        members: members.map(({ workItemId, decisionId, pendingRunId }) => ({
+          workItemId,
+          decisionId,
+          pendingRunId,
+        })),
+      });
+      if (batch.prepared) {
+        text = [text, ...batchRequestLines({ id: batchId, members })].join('\n');
+      }
+    }
     try {
       const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text, prepared.decisionId);
       await ctx.runMutation(internal.work.recordDecisionRequest, {
@@ -237,5 +266,54 @@ export const sendManagerReplyNotice = internalAction({
       await ctx.runMutation(internal.work.recordManagerReplyNotice, { ...args, failure: reason });
       return { sent: false, reason };
     }
+  },
+});
+
+/** Send one per-run note the gate kept for the manager. */
+export const sendManagerNote = internalAction({
+  args: { noteId: v.id('managerNotes') },
+  handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
+    const prepared = await ctx.runMutation(internal.work.prepareManagerNote, args);
+    if (!prepared.prepared) return { sent: false, reason: 'note already claimed' };
+    try {
+      const result = await deliverManagerMessage(ctx, prepared.workItemId, prepared, prepared.text);
+      await ctx.runMutation(internal.work.recordManagerNote, { ...args, ts: result.providerId });
+      return { sent: true };
+    } catch (error) {
+      const reason = safeFailureMessage(error, '', 'Manager note failed.');
+      await ctx.runMutation(internal.work.recordManagerNote, { ...args, failure: reason });
+      return { sent: false, reason };
+    }
+  },
+});
+
+/** Send every agent's kept notes as one digest; the cron's hourly job. */
+export const sendManagerDigests = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ sent: number; failed: number }> => {
+    const agents = await ctx.runQuery(internal.work.digestCandidates, {});
+    let sent = 0;
+    let failed = 0;
+    for (const agentId of agents) {
+      const prepared = await ctx.runMutation(internal.work.prepareManagerDigest, { agentId });
+      if (!prepared.prepared) continue;
+      try {
+        const result = await deliverManagerMessage(ctx, prepared.workItemId, prepared, prepared.text);
+        await ctx.runMutation(internal.work.recordManagerDigest, {
+          agentId,
+          noteIds: prepared.noteIds,
+          ts: result.providerId,
+        });
+        sent += 1;
+      } catch (error) {
+        await ctx.runMutation(internal.work.recordManagerDigest, {
+          agentId,
+          noteIds: prepared.noteIds,
+          failure: safeFailureMessage(error, '', 'Manager digest failed.'),
+        });
+        failed += 1;
+      }
+    }
+    return { sent, failed };
   },
 });

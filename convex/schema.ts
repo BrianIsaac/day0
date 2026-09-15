@@ -40,6 +40,11 @@ export default defineSchema({
      * actions; skill and surface approval are unchanged. See
      * `src/work/autonomy.ts`. */
     autonomousActions: v.optional(v.boolean()),
+    /** How the manager hears about run outcomes over the chat surface.
+     * Absent reads as `per-run`: the landed note goes out as it happens and
+     * a stop is never sent. `digest` keeps both for one hourly message.
+     * Decision requests are sent at once in either mode. */
+    managerNotifications: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
     /** REMOVED 26 Aug (late): the posture ladder this toggle replaced. Kept
      * optional for one more deployment so rows the ladder wrote still
      * validate at push; nothing reads or writes it. Delete once the primary
@@ -58,6 +63,9 @@ export default defineSchema({
     body: v.any(),
     approved: v.boolean(),
     approvedAt: v.optional(v.number()),
+    /** The version this amendment replaced. Every row is kept; the newest is
+     * the active one, so the chain is the charter's history. */
+    supersedes: v.optional(v.id('charters')),
     createdAt: v.number(),
   })
     .index('by_agent', ['agentId'])
@@ -391,6 +399,8 @@ export default defineSchema({
     contentRefs: v.array(v.string()),
     priority: v.optional(v.string()),
     requesterLabel: v.optional(v.string()),
+    owner: v.optional(v.string()),
+    requester: v.optional(v.string()),
     state: v.union(
       v.literal('discovered'),
       v.literal('claimed'),
@@ -420,7 +430,31 @@ export default defineSchema({
      * the truncated skip reason.
      */
     managerFeedback: v.optional(
-      v.object({ reason: v.string(), at: v.number(), runId: v.optional(v.id('events')) }),
+      v.object({
+        reason: v.string(),
+        at: v.number(),
+        runId: v.optional(v.id('events')),
+        /** A rejection reason or a note given with Retry; absent rows predate the kind and are rejections. */
+        kind: v.optional(v.union(v.literal('rejection'), v.literal('retry-note'))),
+        /** Set when a run completed with this feedback as its direction; it is then a record, not an instruction. */
+        addressedAt: v.optional(v.number()),
+      }),
+    ),
+    /**
+     * What the manager answered when approving the plan: the charter's open
+     * questions this plan touched (each also amended the charter through its
+     * `managerQuestions` record) and the planner's own note. The executor
+     * reads them as approved evidence for this run; cleared on completion.
+     */
+    managerAnswers: v.optional(
+      v.array(
+        v.object({
+          question: v.string(),
+          answer: v.string(),
+          answeredAt: v.number(),
+          questionId: v.optional(v.id('managerQuestions')),
+        }),
+      ),
     ),
     /**
      * When the manager retried this item after the quality-fit filter skipped
@@ -428,6 +462,21 @@ export default defineSchema({
      * the next evaluation leaves that filter out; plan approval still applies.
      */
     qualityFitWaivedAt: v.optional(v.number()),
+    /**
+     * When the manager retried this item after the scope judgement skipped it
+     * as out of scope. The retry is the manager's decision that the work is
+     * theirs to give, so the next evaluation leaves the scope rule out; the
+     * plan gate still applies.
+     */
+    scopeWaivedAt: v.optional(v.number()),
+    /**
+     * The last policy change that sent this row back to `discovered`: the
+     * trigger, its idempotency key and when. The same key never re-admits the
+     * row twice.
+     */
+    reevaluation: v.optional(
+      v.object({ trigger: v.string(), key: v.string(), at: v.number() }),
+    ),
     providerReconciliation: v.optional(
       v.object({
         actor: v.string(),
@@ -528,6 +577,80 @@ export default defineSchema({
     .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId']),
 
+  /** One question for the manager per (agent, question key): an open
+   * question of the charter, asked once at the first plan approval whose plan
+   * or candidate touched it. The answer becomes a charter amendment. The
+   * record shape is `ManagerQuestionRecord` in `src/agent/manager-questions.ts`. */
+  managerQuestions: defineTable({
+    agentId: v.id('agents'),
+    /** Stable across charter versions: the normalised question text. */
+    key: v.string(),
+    question: v.string(),
+    context: v.object({
+      touchedBy: v.union(v.literal('plan'), v.literal('candidate')),
+      text: v.string(),
+      words: v.array(v.string()),
+    }),
+    askedAt: v.number(),
+    workItemId: v.id('workItems'),
+    /** The charter version whose open question this was. */
+    charterId: v.id('charters'),
+    answer: v.optional(
+      v.object({
+        text: v.string(),
+        answeredAt: v.number(),
+        via: v.union(v.literal('dashboard'), v.literal('plan-approval'), v.literal('channel')),
+        amendedCharterId: v.optional(v.id('charters')),
+      }),
+    ),
+  })
+    .index('by_agent', ['agentId'])
+    .index('by_agent_key', ['agentId', 'key'])
+    .index('by_work_item', ['workItemId']),
+
+  /**
+   * One code that decides every held action set open on the manager's
+   * channel at the moment it was issued. Each member is named by its item,
+   * its own decision code and the run whose literal payloads were shown, so
+   * the batch decides exactly what the manager was sent and nothing that
+   * moved on since.
+   */
+  decisionBatches: defineTable({
+    agentId: v.id('agents'),
+    id: v.string(),
+    surfaceSlug: v.string(),
+    channel: v.string(),
+    members: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        decisionId: v.string(),
+        pendingRunId: v.id('events'),
+      }),
+    ),
+    requestedAt: v.number(),
+    decidedAt: v.optional(v.number()),
+    outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
+    decidedTs: v.optional(v.string()),
+  }).index('by_agent_id', ['agentId', 'id']),
+
+  /**
+   * What the gate tells the manager about a finished run: that work landed,
+   * or that the run stopped. Sent one per run or gathered into a digest,
+   * claimed once either way, with the provider ts as delivery evidence.
+   */
+  managerNotes: defineTable({
+    agentId: v.id('agents'),
+    workItemId: v.id('workItems'),
+    kind: v.union(v.literal('landed'), v.literal('stopped')),
+    text: v.string(),
+    createdAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    /** The digest send that claimed this note, when it went out in one. */
+    digestId: v.optional(v.id('events')),
+    providerTs: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  }).index('by_agent', ['agentId']),
+
   /** One idempotent manager-DM acknowledgement per parsed provider reply. */
   managerDecisionNotices: defineTable({
     agentId: v.id('agents'),
@@ -565,6 +688,13 @@ export default defineSchema({
     /** The surface slug a real-mode skill acts on; approval refuses the skill
      * while that surface is not connected. Absent for mock-only skills. */
     targetSurface: v.optional(v.string()),
+    /** The shape the skill was proposed for: one documented operation on one
+     * surface class. A registered skill is matched to later work by this pair,
+     * never by the item that first needed it. Absent on builtin rows and on
+     * rows proposed before shapes existed, which the legacy token matcher
+     * still serves. */
+    surfaceClass: v.optional(v.string()),
+    operation: v.optional(v.string()),
     /** The authoring run that currently holds this skill, and when it took it.
      * Authoring is an exclusive, fenced run: a second run cannot start while
      * this is set and unexpired, and a run may only write its result while this

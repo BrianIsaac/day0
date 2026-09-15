@@ -7,7 +7,8 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import type { AppliedAction } from '../../src/surfaces/types';
-import type { ExecutionOutput, ExecutionPlan } from '../../src/work/types';
+import { dependentActionCap } from '../../src/work/execute-skill';
+import { CLOSING_SET_CAP, type ExecutionOutput, type ExecutionPlan } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -50,6 +51,8 @@ const recorded = vi.hoisted(() => ({
   model: [] as Array<{ agent: string; user: string }>,
   instructions: [] as Array<{ agent: string; instructions: string }>,
   planCalls: 0,
+  prewritten: false,
+  repairClosing: false,
 }));
 
 const gatedPlan = {
@@ -80,6 +83,7 @@ const phaseOne = {
   draft: 'Reading REVOPS-7, then signing in to the tile, entering 74%, saving and reading it back.',
   notes: '',
   needsDependentPhase: true,
+  deferredActions: [],
   actions: [
     {
       tool: 'mcp.call' as const,
@@ -136,9 +140,24 @@ const closing = {
   ],
   procedureTrails: [],
   planStepOutcomes: [
-    { step: 1, status: 'satisfied', evidence: 'ledger rows 1 to 5 landed on the tile' },
-    { step: 2, status: 'satisfied', evidence: 'ledger row 6: visible figure 74% and the audit line' },
-    { step: 3, status: 'satisfied', evidence: 'the comment, Done and DM in this response' },
+    {
+      step: 1,
+      status: 'satisfied',
+      basis: 'ledger',
+      evidence: 'ledger rows 1 to 5 landed on the tile',
+    },
+    {
+      step: 2,
+      basis: 'ledger',
+      status: 'satisfied',
+      evidence: 'ledger row 6: visible figure 74% and the audit line',
+    },
+    {
+      step: 3,
+      status: 'satisfied',
+      basis: 'ledger',
+      evidence: 'the comment, Done and DM in this response',
+    },
   ],
 };
 
@@ -149,17 +168,73 @@ vi.mock('../../src/lib/mastra', () => ({
     recorded.instructions.push({ agent: name, instructions });
     return { name };
   },
-  agentJson: async <T>(args: { agent: { name: string }; user: string }): Promise<T> => {
+  agentJson: async <T>(args: {
+    agent: { name: string };
+    user: string;
+    schema: { parse(value: unknown): unknown };
+  }): Promise<T> => {
     recorded.model.push({ agent: args.agent.name, user: args.user });
     const name = args.agent.name;
-    if (name === 'day0-plan') {
-      recorded.planCalls += 1;
-      return (recorded.planCalls === 1 ? gatedPlan : cleanPlan) as T;
-    }
-    if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
-    if (name.endsWith('-dependent')) return closing as T;
-    if (name.endsWith('-initial')) return phaseOne as T;
-    throw new Error(`unscripted agent ${name}`);
+    const reply = (): unknown => {
+      if (name === 'day0-plan') {
+        recorded.planCalls += 1;
+        return (recorded.planCalls === 1 ? gatedPlan : cleanPlan) as T;
+      }
+      if (recorded.repairClosing && name.endsWith('-argument-repair'))
+        return { toolArgsJson: '{"issueId":"REVOPS-7","body":"Checked and finished."}' } as T;
+      if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
+      if (name.endsWith('-dependent')) return closing as T;
+      if (recorded.repairClosing && name.endsWith('-initial'))
+        return {
+          ...phaseOne,
+          actions: [
+            {
+              tool: 'mcp.call',
+              args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
+            },
+            {
+              tool: 'mcp.call',
+              args: {
+                surface: 'linear',
+                tool: 'save_comment',
+                toolArgsJson: '{"issueId":"REVOPS-7","comment":"Checked and finished."}',
+              },
+            },
+          ],
+        } as T;
+      if (name.endsWith('-initial'))
+        return (
+          recorded.prewritten
+            ? {
+                ...phaseOne,
+                actions: [
+                  {
+                    ...phaseOne.actions[0],
+                    args: {
+                      surface: 'linear',
+                      tool: 'get_issue',
+                      toolArgsJson: '{"id":"REVOPS-7"}',
+                    },
+                  },
+                  {
+                    tool: 'mcp.call',
+                    args: {
+                      surface: 'linear',
+                      tool: 'save_comment',
+                      toolArgsJson: JSON.stringify({
+                        issueId: 'REVOPS-7',
+                        body: 'Done after checking the result.',
+                      }),
+                    },
+                  },
+                  closing.actions[1],
+                ],
+              }
+            : phaseOne
+        ) as T;
+      throw new Error(`unscripted agent ${name}`);
+    };
+    return args.schema.parse(reply()) as T;
   },
   agentText: async (): Promise<string> => '',
 }));
@@ -196,14 +271,18 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                 const record = args as Record<string, unknown>;
                 if (tool === 'get_issue') {
                   return 'issueId' in record
-                    ? { isError: false, ...text(JSON.stringify({ error: true, message: VALIDATION })) }
+                    ? {
+                        isError: false,
+                        ...text(JSON.stringify({ error: true, message: VALIDATION })),
+                      }
                     : text(JSON.stringify(UNASSIGNED_ISSUE));
                 }
                 if (tool === 'save_comment') return text(JSON.stringify({ id: 'comment-91' }));
                 if (tool === 'save_issue') {
                   return text(JSON.stringify({ id: 'lin-7f3a', state: { name: 'Done' } }));
                 }
-                if (tool === 'browser_navigate') return text('- Page URL: http://looker-tile:8080/');
+                if (tool === 'browser_navigate')
+                  return text('- Page URL: http://looker-tile:8080/');
                 if (tool === 'browser_snapshot') return text(SNAPSHOT);
                 return text('ok');
               },
@@ -223,7 +302,9 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 type Harness = TestConvex<typeof schema>;
 const OWNER = { subject: 'owner' };
 
-async function seed(harness: Harness): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
+async function seed(
+  harness: Harness,
+): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -385,8 +466,56 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     recorded.model.length = 0;
     recorded.instructions.length = 0;
     recorded.planCalls = 0;
+    recorded.prewritten = false;
+    recorded.repairClosing = false;
     restoreSurfaceMode();
   });
+
+  it('refuses a prewritten Done transition under autonomy through the real executor', async () => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(t);
+    recorded.prewritten = true;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+      await ctx.db.patch(workItemId, {
+        state: 'plan-approved',
+        plan: {
+          ...cleanPlan,
+          steps: [
+            'Read the Linear issue.',
+            'After the read-back, move the Linear issue to "Done".',
+          ],
+        },
+      });
+    });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishInProgressScheduledFunctions();
+    expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toEqual([]);
+    expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
+    expect(recorded.model.filter((call) => call.agent.endsWith('-initial'))).toHaveLength(2);
+  }, 30_000);
+
+  it('audits a closing comment revealed by key repair before autonomy can apply it', async () => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(t);
+    recorded.repairClosing = true;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+      await ctx.db.patch(workItemId, {
+        state: 'plan-approved',
+        plan: {
+          ...cleanPlan,
+          steps: ['Read the Linear issue.', 'Comment on Linear with the result.'],
+        },
+      });
+    });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishInProgressScheduledFunctions();
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
+    expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
+  }, 30_000);
 
   it('plans without the ownership gate, holds the tile batch in phase one, repairs the read once, and closes from the read-back', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -403,7 +532,9 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     ]);
     const planPrompts = recorded.model.filter((call) => call.agent === 'day0-plan');
     expect(planPrompts).toHaveLength(2);
-    expect(planPrompts[0]!.user).toContain('--- Candidate record, read from linear (get_issue) ---');
+    expect(planPrompts[0]!.user).toContain(
+      '--- Candidate record, read from linear (get_issue) ---',
+    );
     expect(planPrompts[0]!.user).toContain('"identifier":"REVOPS-7"');
     expect(planPrompts[0]!.user).not.toContain('assignee');
     expect(planPrompts[1]!.user).toContain("step 1 checks the candidate's ownership");
@@ -428,7 +559,15 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const executorPrompt = recorded.model.find((call) => call.agent.endsWith('-initial'));
-    expect(executorPrompt?.user).toContain(`Plan steps: ${cleanPlan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`);
+    expect(executorPrompt?.user).toContain(
+      `Plan steps: ${cleanPlan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
+    );
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, {
+        workItemId,
+        feedback: 'Repeat the current work',
+      }),
+    ).rejects.toThrow('expected one of failed, skipped, cancelled, completed');
     const held = await readItem(harness, workItemId);
     expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual([
       'auto',
@@ -459,7 +598,11 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       authority: 'standing',
       repair: { reason: VALIDATION, toolArgsJson: '{"issueId":"REVOPS-7"}' },
     });
-    expect(ledger(parked).slice(1).every((row) => row.held && row.awaitingApproval)).toBe(true);
+    expect(
+      ledger(parked)
+        .slice(1)
+        .every((row) => row.held && row.awaitingApproval),
+    ).toBe(true);
     const runId = parked.executionRunId;
     if (!runId) throw new Error('execution run missing');
 
@@ -474,7 +617,9 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     const authoring = await readItem(harness, workItemId);
     expect(authoring.output).toMatchObject({ phase: 'dependent-authoring' });
     expect(
-      recorded.mcp.filter((call) => call.server === 'looker-pipeline-tile').map((call) => call.tool),
+      recorded.mcp
+        .filter((call) => call.server === 'looker-pipeline-tile')
+        .map((call) => call.tool),
     ).toEqual([
       'browser_navigate',
       'browser_snapshot',
@@ -506,9 +651,16 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     expect(recorded.http.map((call) => (call.body as { channel: string }).channel)).toEqual([
       'D0MANAGER',
     ]);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [1],
+      }),
+    ).rejects.toThrow('pending run changed');
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
       workItemId,
-      pendingRunId: runId,
+      pendingRunId: closingHeld.pendingRunId!,
       approvedIndexes: [0, 1],
     });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
@@ -537,14 +689,16 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       'satisfied',
     ]);
     expect(ledger(done).filter((row) => row.ok && !row.held)).toHaveLength(10);
+    // The closing set (comment, Done, DM) fits the runbook closing-set cap
+    // without the deferred-sequence allowance, which this phase one never declared.
+    expect(closing.actions.length).toBeLessThanOrEqual(CLOSING_SET_CAP);
+    expect(dependentActionCap(phaseOne)).toBe(CLOSING_SET_CAP);
     // One more model call than the happy path: the planner repair and the
     // argument repair, and no third attempt at anything.
-    expect(recorded.model.map((call) => call.agent.replace(/^day0-skill-.*-(initial|dependent|argument-repair)$/, '$1'))).toEqual([
-      'day0-plan',
-      'day0-plan',
-      'initial',
-      'argument-repair',
-      'dependent',
-    ]);
-  });
+    expect(
+      recorded.model.map((call) =>
+        call.agent.replace(/^day0-skill-.*-(initial|dependent|argument-repair)$/, '$1'),
+      ),
+    ).toEqual(['day0-plan', 'day0-plan', 'initial', 'argument-repair', 'dependent']);
+  }, 30_000);
 });

@@ -6,10 +6,12 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { PLAN_CANCELLED_REASON } from '../../convex/work';
+import { PLAN_CANCELLED_REASON, REEVALUATION_BATCH } from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { autonomousActionsOn } from '../../src/work/autonomy';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
+import type { Charter } from '../../src/agent/charter';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -216,6 +218,236 @@ async function pend(harness: Harness): Promise<{ agentId: Id<'agents'>; workItem
   });
   return ids;
 }
+
+/** A second parked run under the same agent, so a batch has two members. */
+async function pendAnother(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  title = 'Close REVOPS-2',
+): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'> }> {
+  const ids = await harness.run(async (ctx) => {
+    const workItemId = await ctx.db.insert('workItems', {
+      agentId,
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: title,
+      title,
+      contentSummary: 'Synthetic.',
+      contentRefs: [],
+      state: 'executing',
+      plan: { summary: 'Comment then close.', steps: ['comment', 'close'] },
+      observedAt: 1,
+      createdAt: 1,
+    });
+    const runId = await ctx.db.insert('events', {
+      agentId,
+      type: 'work.execution-claimed',
+      payload: { workItemId },
+      createdAt: 1,
+    });
+    await ctx.db.patch(workItemId, { executionRunId: runId });
+    return { workItemId, runId };
+  });
+  await harness.mutation(internal.work.setActionsPending, { ...ids, output: pendingOutput });
+  return ids;
+}
+
+describe('batched decisions', (): void => {
+  it('approves held actions across items in one transaction, each fenced by its own run', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const first = await pend(harness);
+    const second = await pendAnother(harness, first.agentId);
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, {
+        members: [
+          { workItemId: first.workItemId, pendingRunId: first.runId, approvedIndexes: [0, 1] },
+          { workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] },
+        ],
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      approved: [
+        { workItemId: first.workItemId, approvedIndexes: [0, 1] },
+        { workItemId: second.workItemId, approvedIndexes: [0] },
+      ],
+    });
+    expect(await readItem(harness, first.workItemId)).toMatchObject({ applyPhase: 'approved', approvedIndexes: [0, 1] });
+    expect(await readItem(harness, second.workItemId)).toMatchObject({ applyPhase: 'approved', approvedIndexes: [0] });
+    const approvals = await eventsOfType(harness, first.agentId, 'work.actions-approved');
+    expect(approvals.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ workItemId: first.workItemId, runId: first.runId, approvedIndexes: [0, 1], rejectedIndexes: [], decidedVia: 'dashboard' }),
+      expect.objectContaining({ workItemId: second.workItemId, runId: second.runId, approvedIndexes: [0], rejectedIndexes: [1], decidedVia: 'dashboard' }),
+    ]);
+    expect((await scheduledFunctionNames(harness)).filter((name) => name === 'workActions:applyApprovedActions')).toHaveLength(2);
+  });
+
+  it('refuses the whole batch when one member has moved on, approving nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const first = await pend(harness);
+    const second = await pendAnother(harness, first.agentId);
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: first.workItemId,
+      pendingRunId: first.runId,
+      approvedIndexes: [0],
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, {
+        members: [
+          { workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0, 1] },
+          { workItemId: first.workItemId, pendingRunId: first.runId, approvedIndexes: [0, 1] },
+        ],
+      }),
+    ).rejects.toThrow('actions have already been approved');
+    expect((await readItem(harness, second.workItemId)).approvedIndexes).toBeUndefined();
+    await expect(
+      harness.withIdentity({ subject: 'intruder' }).mutation(api.work.approveActionsBatch, {
+        members: [{ workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] }],
+      }),
+    ).rejects.toThrow();
+  });
+
+  async function batchOnChannel(harness: Harness): Promise<{
+    agentId: Id<'agents'>;
+    surfaceId: Id<'surfaces'>;
+    first: { workItemId: Id<'workItems'>; runId: Id<'events'> };
+    second: { workItemId: Id<'workItems'>; runId: Id<'events'> };
+  }> {
+    const ids = await seed(harness, 'executing', undefined, { withSlack: true });
+    await harness.mutation(internal.work.setActionsPending, { workItemId: ids.workItemId, runId: ids.runId, output: pendingOutput });
+    const second = await pendAnother(harness, ids.agentId);
+    const surfaceId = await harness.run(async (ctx) => {
+      const row = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', ids.agentId).eq('slug', 'slack'))
+        .unique();
+      if (!row) throw new Error('chat surface missing');
+      return row._id;
+    });
+    for (const [item, decisionId] of [
+      [ids, 'gh6npq'],
+      [second, 'hk7rst'],
+    ] as const) {
+      await harness.mutation(internal.work.prepareDecisionRequest, { workItemId: item.workItemId, kind: 'actions', decisionId });
+      await harness.mutation(internal.work.recordDecisionRequest, { workItemId: item.workItemId, decisionId, ts: `1.${decisionId}` });
+    }
+    await expect(
+      harness.mutation(internal.work.prepareDecisionBatch, {
+        agentId: ids.agentId,
+        batchId: 'bq2wxy',
+        surfaceSlug: 'slack',
+        channel: 'D0MANAGER',
+        members: [
+          { workItemId: ids.workItemId, decisionId: 'gh6npq', pendingRunId: ids.runId },
+          { workItemId: second.workItemId, decisionId: 'hk7rst', pendingRunId: second.runId },
+        ],
+      }),
+    ).resolves.toEqual({ prepared: true });
+    return { agentId: ids.agentId, surfaceId, first: ids, second };
+  }
+
+  it('decides every open member of a batch code from one channel reply, and names what it left', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, first, second } = await batchOnChannel(harness);
+    // The manager decided the second one from the dashboard meanwhile.
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: second.workItemId,
+      pendingRunId: second.runId,
+      approvedIndexes: [0],
+    });
+
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1.200',
+        reply: { verb: 'approve', id: 'bq2wxy' },
+      }),
+    ).resolves.toEqual({
+      status: 'decided',
+      outcome: 'approve',
+      decided: ['gh6npq'],
+      skipped: [{ decisionId: 'hk7rst', reason: 'already approved' }],
+    });
+    expect(await readItem(harness, first.workItemId)).toMatchObject({
+      applyPhase: 'approved',
+      approvedIndexes: [0, 1],
+      decision: { id: 'gh6npq', outcome: 'approved', decidedVia: 'channel', decidedTs: '1.200' },
+    });
+    expect(await readItem(harness, second.workItemId)).toMatchObject({ approvedIndexes: [0], decision: { decidedVia: 'dashboard' } });
+    const batch = await harness.run(async (ctx) =>
+      await ctx.db.query('decisionBatches').withIndex('by_agent_id', (q) => q.eq('agentId', agentId).eq('id', 'bq2wxy')).unique(),
+    );
+    expect(batch).toMatchObject({ outcome: 'approved', decidedTs: '1.200', decidedAt: expect.any(Number) });
+    const notice = await harness.run(async (ctx) =>
+      await ctx.db.query('managerDecisionNotices').withIndex('by_surface_message', (q) => q.eq('surfaceId', surfaceId).eq('messageTs', '1.200')).unique(),
+    );
+    expect(notice?.text).toBe(
+      'Approval bq2wxy received for 1 of 2 decisions (gh6npq). I’m applying the approved actions now. Left as they were: hk7rst: already approved.',
+    );
+    expect((await eventsOfType(harness, agentId, 'work.decision-batch-decided')).map((event) => event.payload)).toEqual([
+      { batchId: 'bq2wxy', outcome: 'approved', decided: ['gh6npq'], skipped: [{ decisionId: 'hk7rst', reason: 'already approved' }], messageTs: '1.200' },
+    ]);
+
+    // The same code again is single-use, like an item's.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1.300',
+        reply: { verb: 'approve', id: 'bq2wxy' },
+      }),
+    ).resolves.toEqual({ status: 'already-decided', notified: true });
+  });
+
+  it('rejects every open member of a batch with the reason on each item', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, first, second } = await batchOnChannel(harness);
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1.200',
+        reply: { verb: 'reject', id: 'bq2wxy', reason: 'not this week' },
+      }),
+    ).resolves.toEqual({ status: 'decided', outcome: 'reject', decided: ['gh6npq', 'hk7rst'], skipped: [] });
+    for (const item of [first, second]) {
+      expect(await readItem(harness, item.workItemId)).toMatchObject({
+        state: 'failed',
+        skipReason: 'rejected by the manager: not this week',
+        managerFeedback: { reason: 'not this week', kind: 'rejection' },
+        decision: { outcome: 'rejected', decidedVia: 'channel' },
+      });
+    }
+  });
+
+  it('answers a batch code the poller hands to the resolver only from the manager on its own channel', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId } = await batchOnChannel(harness);
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'USOMEONE',
+        messageTs: '1.200',
+        reply: { verb: 'approve', id: 'bq2wxy' },
+      }),
+    ).resolves.toEqual({ status: 'ignored', reason: 'manager identity mismatch' });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1.201',
+        reply: { verb: 'approve', id: 'zz9zzz' },
+      }),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'unknown decision id' });
+  });
+});
 
 describe('plan decisions under the autonomous-actions switch', (): void => {
   it('keeps a drafted plan pending while autonomous actions are off', async (): Promise<void> => {
@@ -1118,6 +1350,171 @@ describe('single-use manager decisions', (): void => {
   });
 });
 
+describe('approving a plan with answers', (): void => {
+  afterEach(restoreSurfaceMode);
+
+  const lookerPlan = {
+    summary: 'Refresh the Looker pipeline tile and comment on the ticket.',
+    steps: ['Read REVOPS-7.', 'Refresh the Looker pipeline tile.', 'Comment on REVOPS-7.'],
+    riskNotes: 'The runbook does not say which figure to enter if the standup deck and the sheet disagree.',
+    reversibility: 'reversible',
+    estimatedMinutes: 10,
+    expectedOutputType: 'ticket-update',
+  };
+
+  async function askedAtPlan(
+    harness: Harness,
+  ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; charterId: Id<'charters'>; question: Doc<'managerQuestions'> }> {
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+    const charterId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('charters', {
+          agentId,
+          version: '0.0',
+          body: runThroughBody(),
+          approved: true,
+          approvedAt: 2,
+          createdAt: 2,
+        }),
+    );
+    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    const [question] = await harness.run(
+      async (ctx) =>
+        await ctx.db.query('managerQuestions').withIndex('by_work_item', (q) => q.eq('workItemId', workItemId)).collect(),
+    );
+    if (!question) throw new Error('the plan asked no question');
+    return { agentId, workItemId, charterId, question };
+  }
+
+  it('answers the question and the note, amends the charter, and approves in one decision', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, charterId, question } = await askedAtPlan(harness);
+    expect(question.question).toBe('Who owns the Looker pipeline tile.');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approvePlan, {
+        workItemId,
+        answers: [{ questionId: question._id, text: '  Priya owns it;  ask her before changing the source. ' }],
+        note: 'Use the sheet figure.',
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.managerAnswers).toEqual([
+      {
+        question: 'Who owns the Looker pipeline tile.',
+        answer: 'Priya owns it; ask her before changing the source.',
+        answeredAt: expect.any(Number),
+        questionId: question._id,
+      },
+      { question: lookerPlan.riskNotes, answer: 'Use the sheet figure.', answeredAt: expect.any(Number) },
+    ]);
+    const answered = await harness.run(async (ctx) => await ctx.db.get(question._id));
+    expect(answered?.answer).toMatchObject({ text: 'Priya owns it; ask her before changing the source.', via: 'plan-approval' });
+    const latest = await harness.withIdentity(OWNER).query(api.charters.latest, { agentId });
+    expect(latest).toMatchObject({ version: '0.1', approved: true, supersedes: charterId });
+    expect(latest?._id).toBe(answered?.answer?.amendedCharterId);
+    const body = latest?.body as Charter;
+    expect(body.openQuestions).not.toContain('Who owns the Looker pipeline tile.');
+    expect(body.answeredQuestions).toEqual([
+      expect.objectContaining({ question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it; ask her before changing the source.' }),
+    ]);
+    const approvals = await eventsOfType(harness, agentId, 'work.plan-approved');
+    expect(approvals.map((event) => event.payload)).toEqual([
+      {
+        workItemId,
+        decidedVia: 'dashboard',
+        answered: [
+          { question: 'Who owns the Looker pipeline tile.', questionId: question._id },
+          { question: lookerPlan.riskNotes },
+        ],
+      },
+    ]);
+    expect(await eventTypes(harness, agentId)).toContain('charter.amended');
+  });
+
+  it('approves without answers as before, and leaves the question open', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, question } = await askedAtPlan(harness);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.managerAnswers).toBeUndefined();
+    expect((await harness.run(async (ctx) => await ctx.db.get(question._id)))?.answer).toBeUndefined();
+    expect((await eventsOfType(harness, agentId, 'work.plan-approved'))[0]?.payload).toEqual({
+      workItemId,
+      decidedVia: 'dashboard',
+    });
+    expect(await harness.withIdentity(OWNER).query(api.managerQuestions.openForAgent, { agentId })).toHaveLength(1);
+  });
+
+  it('refuses an answer to a question asked on another item, an empty answer and a stranger, and approves nothing then', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, question } = await askedAtPlan(harness);
+    const other = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-2',
+          title: 'Northstar account clean-up',
+          contentSummary: 'Merge the duplicate Northstar accounts.',
+          contentRefs: [],
+          state: 'claimed',
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.work.setPlan, {
+      workItemId: other,
+      plan: { summary: 'Merge the accounts.', steps: ['Read the accounts.', 'Draft the merge.'], riskNotes: '' },
+    });
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.work.approvePlan, { workItemId: other, answers: [{ questionId: question._id, text: 'Priya.' }] }),
+    ).rejects.toThrow('not asked on this work item');
+    await expect(
+      owner.mutation(api.work.approvePlan, { workItemId, answers: [{ questionId: question._id, text: '   ' }] }),
+    ).rejects.toThrow('cannot be empty');
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).mutation(api.work.approvePlan, {
+        workItemId,
+        answers: [{ questionId: question._id, text: 'Priya.' }],
+      }),
+    ).rejects.toThrow(/forbidden/);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    expect((await readItem(harness, other)).state).toBe('plan-pending');
+    expect((await harness.run(async (ctx) => await ctx.db.get(question._id)))?.answer).toBeUndefined();
+  });
+
+  it('clears the answers when the run completes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        managerAnswers: [{ question: 'Who owns the tile.', answer: 'Priya.', answeredAt: 2 }],
+      });
+    });
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId,
+      runId,
+      output: {
+        ...pendingOutput,
+        applied: [{ tool: 'mcp.call', ok: true, effect: 'landed', idempotencyKey: 'k0' }],
+      },
+    });
+    expect((await readItem(harness, workItemId)).managerAnswers).toBeUndefined();
+  });
+});
+
 describe('cancelling a pending plan', (): void => {
   it('records why the item is cancelled and refuses any other state', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -1173,6 +1570,37 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
     ]);
   });
 
+  it('records the manager\'s scope waiver for an out-of-scope skip on the item and in the ledger', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'skipped');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        plan: undefined,
+        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+        skipReason: 'out-of-scope: no charter or current documented-system overlap',
+      });
+    });
+
+    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    expect(result).toEqual({ ok: true, resumeState: 'discovered' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('discovered');
+    expect(row.skipReason).toBeUndefined();
+    expect(typeof row.scopeWaivedAt).toBe('number');
+    expect(row.qualityFitWaivedAt).toBeUndefined();
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    expect(retries.map((event) => event.payload)).toEqual([
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'scope' },
+    ]);
+  });
+
   it('carries a note given with Retry to the retried run as manager feedback', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -1187,7 +1615,48 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
 
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-approved');
-    expect(row.managerFeedback?.reason).toBe('The three checks are done; propose Done.');
+    expect(row.managerFeedback).toMatchObject({
+      reason: 'The three checks are done; propose Done.',
+      kind: 'retry-note',
+    });
+    expect(row.managerFeedback?.addressedAt).toBeUndefined();
+    const retries = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
+          (event) => event.type === 'work.retry',
+        ),
+    );
+    // The note itself is in the ledger: the manager's direction is part of the record of the run.
+    expect(retries.map((event) => event.payload)).toEqual([
+      {
+        workItemId,
+        resumeState: 'plan-approved',
+        fromState: 'failed',
+        feedback: 'The three checks are done; propose Done.',
+      },
+    ]);
+  });
+
+  it('records the eligibility waiver when the manager retries an out-of-scope skip', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'skipped');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        plan: undefined,
+        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+        skipReason: 'out-of-scope: no charter or current documented-system overlap',
+      });
+    });
+
+    const result = await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    expect(result).toEqual({ ok: true, resumeState: 'discovered' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('discovered');
+    expect(row.skipReason).toBeUndefined();
+    expect(typeof row.scopeWaivedAt).toBe('number');
+    expect(row.qualityFitWaivedAt).toBeUndefined();
     const retries = await harness.run(
       async (ctx) =>
         (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
@@ -1195,7 +1664,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
         ),
     );
     expect(retries.map((event) => event.payload)).toEqual([
-      { workItemId, resumeState: 'plan-approved', fromState: 'failed', feedback: true },
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'scope' },
     ]);
   });
 
@@ -1211,6 +1680,7 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
 
     const row = await readItem(harness, workItemId);
     expect(row.qualityFitWaivedAt).toBeUndefined();
+    expect(row.scopeWaivedAt).toBeUndefined();
   });
 });
 
@@ -1823,6 +2293,170 @@ describe('the exact-action gate', (): void => {
     ]);
   });
 
+  it('keeps a note for the manager when work landed, and none for a stop, per run', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', undefined, { withSlack: true });
+    const comment = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x' }) },
+    };
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId,
+      runId,
+      output: {
+        draft: '',
+        notes: '',
+        actions: [comment],
+        applied: [{ tool: 'mcp.call', ok: true, effect: 'commented on REVOPS-1', idempotencyKey: 'a' }],
+      },
+    });
+    const notes = await harness.run(
+      async (ctx) => await ctx.db.query('managerNotes').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+    );
+    expect(notes.map((note) => [note.kind, note.workItemId, note.claimedAt])).toEqual([['landed', workItemId, undefined]]);
+    expect(notes[0].text).toBe('Priya finished “Add the close-summary audit note”: 1 change landed.\n- commented on REVOPS-1');
+    expect(await scheduledFunctionNames(harness)).toContain('managerChannelActions:sendManagerNote');
+
+    // A stop is read on the card, not sent: nothing needs deciding.
+    const { workItemId: stoppedItem, runId: stoppedRun } = await seed(harness, 'executing', undefined, { withSlack: true });
+    await harness.mutation(internal.work.setFailed, {
+      workItemId: stoppedItem,
+      runId: stoppedRun,
+      reason: 'the read did not land',
+      output: { draft: '', notes: '', actions: [comment], applied: [{ tool: 'mcp.call', ok: false, reason: 'timeout', idempotencyKey: 'a' }] },
+    });
+    const all = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+    expect(all.filter((note) => note.workItemId === stoppedItem)).toEqual([]);
+
+    // Without a manager channel there is nowhere to send, so nothing is kept.
+    const bare = convexTest(schema, allConvexModules());
+    const { workItemId: bareItem, runId: bareRun } = await seed(bare, 'executing');
+    await bare.mutation(internal.work.setCompleted, {
+      workItemId: bareItem,
+      runId: bareRun,
+      output: { draft: '', notes: '', actions: [comment], applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'a' }] },
+    });
+    expect(await bare.run(async (ctx) => await ctx.db.query('managerNotes').collect())).toEqual([]);
+  });
+
+  it('keeps both landed and stopped notes for the hourly digest without sending them', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', undefined, { withSlack: true });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'digest' });
+    });
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      runId,
+      reason: 'the read did not land',
+      output: { draft: '', notes: '', actions: [], applied: [] },
+    });
+    const { workItemId: landedItem, runId: landedRun } = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'Close REVOPS-2',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'executing',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const run = await ctx.db.insert('events', { agentId, type: 'work.execution-claimed', payload: { workItemId: id }, createdAt: 1 });
+      await ctx.db.patch(id, { executionRunId: run });
+      return { workItemId: id, runId: run };
+    });
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId: landedItem,
+      runId: landedRun,
+      output: {
+        draft: '',
+        notes: '',
+        actions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{}' } }],
+        applied: [{ tool: 'mcp.call', ok: true, effect: 'commented', idempotencyKey: 'a' }],
+      },
+    });
+    const notes = await harness.run(
+      async (ctx) => await ctx.db.query('managerNotes').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+    );
+    expect(notes.map((note) => note.kind)).toEqual(['stopped', 'landed']);
+    expect(notes[0].text).toBe('Priya stopped on “Add the close-summary audit note”: the read did not land. Nothing landed; Retry stands in day0.');
+    expect(await scheduledFunctionNames(harness)).not.toContain('managerChannelActions:sendManagerNote');
+    expect(await harness.query(internal.work.digestCandidates, {})).toEqual([agentId]);
+  });
+
+  it('records a failure with nothing landed as stopped, and one after a landed write as failed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', undefined, { withSlack: true });
+    const read = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+    };
+    const dm = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body: JSON.stringify({ channel: 'D0MANAGER', text: 'Which figure?' }),
+      },
+    };
+    const comment = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x' }) },
+    };
+    // A read and the manager DM landed; neither is work.
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      runId,
+      reason: 'the closing phase could not settle the owner',
+      output: {
+        draft: '',
+        notes: '',
+        actions: [read, dm, comment],
+        applied: [
+          { tool: 'mcp.call', ok: true, idempotencyKey: 'a' },
+          { tool: 'http.request', ok: true, idempotencyKey: 'b' },
+          { tool: 'mcp.call', ok: false, reason: 'provider refused', idempotencyKey: 'c' },
+        ],
+      },
+    });
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe('stopped: the closing phase could not settle the owner');
+    await expect(eventsOfType(harness, agentId, 'work.failed')).resolves.toMatchObject([
+      { payload: { workItemId, stopped: true, reason: 'stopped: the closing phase could not settle the owner' } },
+    ]);
+
+    // A landed comment is work: the failure is a failure, and Retry reconciles it.
+    const { agentId: other, workItemId: landedItem, runId: landedRun } = await seed(harness, 'executing');
+    await harness.mutation(internal.work.setFailed, {
+      workItemId: landedItem,
+      runId: landedRun,
+      reason: 'the status change was refused',
+      output: {
+        draft: '',
+        notes: '',
+        actions: [comment, comment],
+        applied: [
+          { tool: 'mcp.call', ok: true, idempotencyKey: 'a' },
+          { tool: 'mcp.call', ok: false, reason: 'provider refused', idempotencyKey: 'b' },
+        ],
+      },
+    });
+    const failed = await readItem(harness, landedItem);
+    expect(failed.skipReason).toBe('the status change was refused');
+    const events = await eventsOfType(harness, other, 'work.failed');
+    expect(events).toHaveLength(1);
+    expect((events[0].payload as { stopped?: boolean }).stopped).toBeUndefined();
+  });
+
   it('permits retry after only reads landed and every write failed or stayed held', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -2104,6 +2738,9 @@ describe('the exact-action gate', (): void => {
         output: { ...pendingOutput, phase: 'dependent', actionIndexOffset: 0, planStepOutcomes: [], initial: {} },
       }),
     ).resolves.toEqual({ pending: true, phase: 'manager' });
+    await expect(harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: runId, approvedIndexes: [0],
+    })).rejects.toThrow('pending run changed');
     // The closing set is now pending; a second phase cannot be prepared behind it.
     await expect(
       harness.mutation(internal.work.prepareDependentPhase, {
@@ -2318,18 +2955,18 @@ describe('manager feedback kept for the retry', (): void => {
     await harness.withIdentity(OWNER).mutation(api.work.rejectActions, { workItemId, pendingRunId: runId, reason });
     const failed = await readItem(harness, workItemId);
     expect(failed.skipReason).toBe(`rejected by the manager: ${reason.slice(0, 200)}`);
-    expect(failed.managerFeedback).toMatchObject({ reason, runId });
+    expect(failed.managerFeedback).toMatchObject({ reason, runId, kind: 'rejection' });
     await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
     expect((await readItem(harness, workItemId)).managerFeedback?.reason).toBe(reason);
   });
 
-  it('clears the previous rejection feedback when the retried run completes', async (): Promise<void> => {
+  it('keeps the feedback the completed run addressed, marked as addressed', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await seed(harness, 'executing');
     await harness.run(async (ctx) => {
       await ctx.db.patch(workItemId, {
-        managerFeedback: { reason: 'Rewrite this as a close summary.', at: 2, runId },
+        managerFeedback: { reason: 'Rewrite this as a close summary.', at: 2, runId, kind: 'rejection' },
       });
     });
     await harness.mutation(internal.work.setCompleted, {
@@ -2341,7 +2978,16 @@ describe('manager feedback kept for the retry', (): void => {
       },
     });
 
-    expect((await readItem(harness, workItemId)).managerFeedback).toBeUndefined();
+    // The reason stays readable on the finished item; the mark says the run
+    // that completed is the one that answered it, so no later run reads it as
+    // a live direction.
+    expect((await readItem(harness, workItemId)).managerFeedback).toEqual({
+      reason: 'Rewrite this as a close summary.',
+      at: 2,
+      runId,
+      kind: 'rejection',
+      addressedAt: expect.any(Number),
+    });
   });
 });
 
@@ -2366,7 +3012,10 @@ describe('sending a completed item back with a note', (): void => {
     expect(result).toEqual({ ok: true, resumeState: 'plan-approved' });
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('plan-approved');
-    expect(row.managerFeedback?.reason).toBe('Draft the reply for the thread and hold it.');
+    expect(row.managerFeedback).toMatchObject({
+      reason: 'Draft the reply for the thread and hold it.',
+      kind: 'retry-note',
+    });
     const retries = await harness.run(
       async (ctx) =>
         (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect()).filter(
@@ -2374,7 +3023,12 @@ describe('sending a completed item back with a note', (): void => {
         ),
     );
     expect(retries.map((event) => event.payload)).toEqual([
-      { workItemId, resumeState: 'plan-approved', fromState: 'completed', feedback: true },
+      {
+        workItemId,
+        resumeState: 'plan-approved',
+        fromState: 'completed',
+        feedback: 'Draft the reply for the thread and hold it.',
+      },
     ]);
   });
 
@@ -2414,5 +3068,254 @@ describe('sending a completed item back with a note', (): void => {
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Draft the reply.' }),
     ).resolves.toEqual({ ok: true, resumeState: 'plan-approved' });
+  });
+});
+
+describe('re-admitting pending work when the policy changes', (): void => {
+  type Seeded = { agentId: Id<'agents'>; ids: Record<string, Id<'workItems'>> };
+
+  /** One agent with a connected Linear and one parked row per verdict kind. */
+  async function seedParked(harness: Harness): Promise<Seeded> {
+    const { agentId } = await seed(harness, 'completed');
+    const ids = await harness.run(async (ctx): Promise<Record<string, Id<'workItems'>>> => {
+      const insert = async (
+        externalId: string,
+        state: Doc<'workItems'>['state'],
+        verdict: Record<string, unknown>,
+      ): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: `Item ${externalId}`,
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state,
+          verdict,
+          ...(state === 'skipped' ? { skipReason: String(verdict.reason) } : {}),
+        });
+      return {
+        outOfScope: await insert('REVOPS-10', 'skipped', {
+          decision: 'skip',
+          reason: 'out-of-scope: no charter or current documented-system overlap',
+        }),
+        qualityFit: await insert('REVOPS-11', 'skipped', {
+          decision: 'skip',
+          reason: 'quality-fit-fail: the request is too thin',
+        }),
+        lowValue: await insert('REVOPS-12', 'skipped', { decision: 'skip', reason: 'low-value: 10' }),
+        awaitingConnection: await insert('REVOPS-13', 'deferred', {
+          decision: 'defer',
+          reason: 'awaiting-connection',
+          missingSurface: 'northstar-crm',
+        }),
+        awaitingPermission: await insert('REVOPS-14', 'deferred', {
+          decision: 'defer',
+          reason: 'awaiting-permission',
+          missingPermissions: ['northstar-crm:read'],
+        }),
+      };
+    });
+    return { agentId, ids };
+  }
+
+  async function states(harness: Harness, ids: Record<string, Id<'workItems'>>): Promise<Record<string, string>> {
+    return await harness.run(async (ctx): Promise<Record<string, string>> => {
+      const out: Record<string, string> = {};
+      for (const [name, id] of Object.entries(ids)) out[name] = (await ctx.db.get(id))?.state ?? 'missing';
+      return out;
+    });
+  }
+
+  async function requeuedEvents(harness: Harness, agentId: Id<'agents'>): Promise<Array<Record<string, unknown>>> {
+    return await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect())
+          .filter((event) => event.type === 'work.requeued')
+          .map((event) => event.payload as Record<string, unknown>),
+    );
+  }
+
+  it('re-admits the skips a charter amendment can change, once per amendment, and records each', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, ids } = await seedParked(harness);
+
+    const first = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v2',
+    });
+
+    expect(first).toEqual({ readmitted: 2, examined: 5, continued: false });
+    expect(await states(harness, ids)).toEqual({
+      outOfScope: 'discovered',
+      qualityFit: 'discovered',
+      lowValue: 'skipped',
+      awaitingConnection: 'deferred',
+      awaitingPermission: 'deferred',
+    });
+    const row = await readItem(harness, ids.outOfScope);
+    expect(row.verdict).toBeUndefined();
+    expect(row.skipReason).toBeUndefined();
+    expect(row.reevaluation).toEqual({ trigger: 'charter', key: 'charter:v2', at: expect.any(Number) });
+    expect(await requeuedEvents(harness, agentId)).toEqual([
+      { workItemId: ids.outOfScope, trigger: 'charter', key: 'charter:v2', previousState: 'skipped' },
+      { workItemId: ids.qualityFit, trigger: 'charter', key: 'charter:v2', previousState: 'skipped' },
+    ]);
+
+    // The evaluator skips it again; the same amendment firing twice is a no-op.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(ids.outOfScope, {
+        state: 'skipped',
+        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+      });
+    });
+    const again = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v2',
+    });
+    expect(again).toEqual({ readmitted: 0, examined: 4, continued: false });
+    expect((await states(harness, ids)).outOfScope).toBe('skipped');
+
+    // The next amendment is a new decision and re-admits it again.
+    const next = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v3',
+    });
+    expect(next).toEqual({ readmitted: 1, examined: 4, continued: false });
+    expect((await states(harness, ids)).outOfScope).toBe('discovered');
+    expect(await requeuedEvents(harness, agentId)).toHaveLength(3);
+  });
+
+  it('re-admits only out-of-scope skips when the documentation changes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, ids } = await seedParked(harness);
+
+    const result = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'documentation',
+      key: 'documentation:source-1:abc',
+    });
+
+    expect(result).toEqual({ readmitted: 1, examined: 5, continued: false });
+    expect(await states(harness, ids)).toMatchObject({
+      outOfScope: 'discovered',
+      qualityFit: 'skipped',
+      lowValue: 'skipped',
+      awaitingConnection: 'deferred',
+      awaitingPermission: 'deferred',
+    });
+  });
+
+  it('re-admits out-of-scope skips and the work parked on a surface when that surface connects', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, ids } = await seedParked(harness);
+    const surfaceId = await harness.run(
+      async (ctx): Promise<Id<'surfaces'>> =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'northstar-crm',
+          displayName: 'Northstar CRM',
+          class: 'crm',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          lastVerifiedAt: 1,
+          createdAt: 1,
+        }),
+    );
+
+    const result = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'surface',
+      key: `surface:${surfaceId}:100`,
+      surfaceId,
+    });
+
+    expect(result).toEqual({ readmitted: 3, examined: 5, continued: false });
+    expect(await states(harness, ids)).toEqual({
+      outOfScope: 'discovered',
+      qualityFit: 'skipped',
+      lowValue: 'skipped',
+      awaitingConnection: 'discovered',
+      awaitingPermission: 'discovered',
+    });
+    const events = await requeuedEvents(harness, agentId);
+    expect(events.find((event) => event.workItemId === ids.awaitingConnection)).toEqual({
+      workItemId: ids.awaitingConnection,
+      trigger: 'surface',
+      key: `surface:${surfaceId}:100`,
+      previousState: 'deferred',
+      surfaceId,
+      slug: 'northstar-crm',
+      previousMissingSurface: 'northstar-crm',
+    });
+  });
+
+  it('examines a bounded batch per call and continues by scheduling itself', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seed(harness, 'completed');
+    const total = REEVALUATION_BATCH + 3;
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < total; index += 1) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${1000 + index}`,
+          title: `Item ${index}`,
+          contentSummary: 'Triage.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'skipped',
+          verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+        });
+      }
+    });
+
+    const first = await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v2',
+    });
+    expect(first).toEqual({ readmitted: REEVALUATION_BATCH, examined: REEVALUATION_BATCH, continued: true });
+    const pending = await harness.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (job) => job.state.kind === 'pending' && job.name === 'work:reevaluatePending',
+        ),
+    );
+    expect(pending).toHaveLength(1);
+    expect((pending[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
+      agentId,
+      trigger: 'charter',
+      key: 'charter:v2',
+      after: { skipped: expect.any(Number) },
+    });
+
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const remaining = await harness.run(
+      async (ctx) =>
+        (
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'skipped'))
+            .collect()
+        ).length,
+    );
+    expect(remaining).toBe(0);
+    expect(await requeuedEvents(harness, agentId)).toHaveLength(total);
+    vi.useRealTimers();
   });
 });

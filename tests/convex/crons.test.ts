@@ -31,4 +31,11 @@ describe('scheduled surface maintenance', (): void => {
       schedule: { type: 'interval', seconds: 60 },
     });
   });
+
+  it('sends manager digests every hour', (): void => {
+    expect(crons.crons['send manager digests']).toMatchObject({
+      name: 'managerChannelActions:sendManagerDigests',
+      schedule: { type: 'interval', minutes: 60 },
+    });
+  });
 });

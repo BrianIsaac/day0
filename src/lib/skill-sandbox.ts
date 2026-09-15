@@ -71,11 +71,35 @@ export function configuredSkillSandboxBackend(): Exclude<SkillSandboxBackend, 'n
 }
 
 /**
+ * How many representative input sets the smoke test runs the procedure with.
+ * The author is told to call `run()` once per set and print one line per
+ * call, so a passing run prints at least this many distinct lines: the only
+ * offline evidence that the emitted actions follow the inputs rather than a
+ * constant. The number is the author prompt's ("two different representative
+ * input dicts") and changes with it.
+ */
+export const SMOKE_TEST_INPUT_SETS = 2;
+
+function distinctOutputLines(stdout: string): string[] {
+  return [
+    ...new Set(
+      stdout
+        .split(/\r?\n/)
+        .map((line: string): string => line.trim())
+        .filter((line: string): boolean => line.length > 0),
+    ),
+  ];
+}
+
+/**
  * The one place that decides whether a smoke test verified anything.
  *
  * Exit 0 with nothing on stdout used to count, and it was a real defect: a
  * smoke test that ran no assertions and printed nothing registered a skill.
- * Both backends come through here so the two can never drift apart on it.
+ * One line for two input sets is the same defect by halves: the second run
+ * printed nothing, or the same thing, so nothing shows the output following
+ * the input. Both backends come through here so the two can never drift
+ * apart on it.
  *
  * A run that hit the wall-clock cap is not a verification whatever else it
  * reports. The local sandbox kills such a run, so its exit code carries the
@@ -83,8 +107,10 @@ export function configuredSkillSandboxBackend(): Exclude<SkillSandboxBackend, 'n
  * should not depend on which of the two is answering.
  */
 export function verdictFor(backend: SkillSandboxBackend, run: SmokeTestOutcome): SkillSandboxRun {
-  const printedSomething = run.stdout.trim().length > 0;
-  const ok = run.exitCode === 0 && printedSomething && !run.timedOut;
+  const printedLines = distinctOutputLines(run.stdout);
+  const printedSomething = printedLines.length > 0;
+  const printedEachRun = printedLines.length >= SMOKE_TEST_INPUT_SETS;
+  const ok = run.exitCode === 0 && printedEachRun && !run.timedOut;
   return {
     backend,
     sandboxId: run.sandboxId,
@@ -98,7 +124,9 @@ export function verdictFor(backend: SkillSandboxBackend, run: SmokeTestOutcome):
             ? `smoke test did not finish within the sandbox time limit`
             : run.exitCode !== 0
               ? `smoke test exited ${run.exitCode}`
-              : 'smoke test exited 0 but printed nothing, so the run produced no verification signal',
+              : !printedSomething
+                ? 'smoke test exited 0 but printed nothing, so the run produced no verification signal'
+                : `smoke test exited 0 but printed ${printedLines.length} distinct line for ${SMOKE_TEST_INPUT_SETS} representative input sets, so the run does not show the actions following the inputs`,
         }),
     skipped: false,
   };
@@ -124,8 +152,8 @@ function skipped(reason: string): SkillSandboxRun {
  * signals: execution success (no exception), environment success (the world
  * state we intended to change actually changed), and a critic (a model judges
  * whether the output looks right). Day0 implements signal 1 directly here
- * (sandbox exit 0 + non-empty stdout); signals 2 and 3 are surfaced by the
- * caller comparing the stdout against expected fixtures.
+ * (sandbox exit 0 + one distinct stdout line per input set); signals 2 and 3
+ * are surfaced by the caller comparing the stdout against expected fixtures.
  *
  * Sandbox verification is an optional capability. With neither backend the run
  * is reported as skipped instead of throwing - the skill keeps its body, stays

@@ -40,8 +40,23 @@ export interface WorkCandidate {
   contentRefs: string[];
   observedAt: Date;
   priority?: string;
+  /** Display label of who asked: the requester, else the owner. */
   requesterLabel?: string;
+  /** The person the provider shows the item assigned to, when it returns one. */
+  owner?: string;
+  /** The person the provider shows as having raised the item, when it returns one. */
+  requester?: string;
   replyTarget?: ReplyTarget;
+}
+
+/**
+ * What a skill is for: one documented operation on one surface class. A skill
+ * is named, matched and authored by its shape, never by the work item that
+ * first needed it.
+ */
+export interface SkillShape {
+  surfaceClass: string;
+  operation: string;
 }
 
 export type WorkVerdict =
@@ -49,7 +64,13 @@ export type WorkVerdict =
   | { decision: 'queue'; reason: string; openClaims: number }
   | { decision: 'skip'; reason: string }
   | { decision: 'defer'; reason: string; missingPermissions: string[] }
-  | { decision: 'needs-skill'; reason: string; suggestedSkillName: string; suggestedSkillRationale: string };
+  | {
+      decision: 'needs-skill';
+      reason: string;
+      suggestedSkillName: string;
+      suggestedSkillRationale: string;
+      suggestedSkillShape: SkillShape;
+    };
 
 export interface AgentContext {
   agentId: AgentId;
@@ -161,12 +182,37 @@ export interface DeferredActionDependency {
   dependsOnField: string | null;
 }
 
+/**
+ * One bounded argument repair made before a write was held: the probed
+ * schema of the tool refused the argument names the executor wrote, the
+ * model re-authored them once, and the held payload is the corrected one.
+ * `repaired` is false when the repair produced nothing the schema accepts
+ * and the first attempt stands, so the manager sees why before deciding.
+ */
+export interface ArgumentRepairAttempt {
+  /** The action's index in the phase it was held with. */
+  index: number;
+  /** Why the probed schema refused the first attempt. */
+  reason: string;
+  /** The first attempt's arguments, as written. */
+  toolArgsJson: string;
+  repaired: boolean;
+}
+
+/** One answer the manager gave when approving the plan, as the executor reads it. */
+export interface ManagerAnswer {
+  question: string;
+  answer: string;
+}
+
 export interface ExecutionOutput {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;
   draft: string;
   notes: string;
   actions: MockAction[];
+  /** The one repair each held write earned before the hold; absent when none was needed. */
+  argumentRepairs?: ArgumentRepairAttempt[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */
   procedureTrails?: ProcedureTrailAttestation[];
   /** Server-derived real-transport ambiguities; absent from model-authored schemas. */
@@ -179,8 +225,23 @@ export interface ExecutionOutput {
   needsDependentPhase?: boolean;
 }
 
-/** The fixed upper bound on the one result-dependent phase of a run. */
-export const DEPENDENT_ACTION_CAP = 4;
+/**
+ * The closing set a runbook prescribes once the results exist: the audit
+ * comment on the originating issue, its state change, the manager DM, the
+ * reply into the source thread, and one read-back of what landed.
+ */
+export const CLOSING_SET_CAP = 5;
+
+/**
+ * Room for a documented sequence phase one legitimately deferred because a
+ * value in it comes from a phase-one read. The longest such sequence in the
+ * runbooks is the six-step tile refresh: navigate, sign in, fill, click,
+ * save, snapshot. Granted only when phase one declared a deferral.
+ */
+export const DEFERRED_SEQUENCE_ALLOWANCE = 6;
+
+/** The fixed upper bound on the one result-dependent phase of a run: the closing set plus one deferred sequence. */
+export const DEPENDENT_ACTION_CAP = CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE;
 
 /** How one approved plan step is accounted for after real action results exist. */
 export interface PlanStepOutcome {
@@ -193,6 +254,12 @@ export interface PlanStepOutcome {
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   /** A ledger effect, provider failure or explicit reason the step could not run. */
   evidence: string;
+  /**
+   * What the evidence rests on. Absent means the ledger; `manager-feedback`
+   * means a fact the manager stated in a rejection reason or retry note,
+   * which the run carries as authenticated feedback and the gate checks for.
+   */
+  basis?: 'manager-feedback';
 }
 
 /** Output authored once, after the initial action ledger has settled. */
@@ -200,6 +267,8 @@ export interface DependentExecutionOutput {
   draft: string;
   notes: string;
   actions: MockAction[];
+  /** The one repair each held write earned before the hold; absent when none was needed. */
+  argumentRepairs?: ArgumentRepairAttempt[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */
   procedureTrails?: ProcedureTrailAttestation[];
   /** Server-derived real-transport ambiguities; absent from model-authored schemas. */
@@ -241,3 +310,5 @@ export const VALUE_THRESHOLD = 30;
 
 /** Prefix of the skip reason the quality-fit filter writes. */
 export const QUALITY_FIT_SKIP_PREFIX = 'quality-fit-fail: ';
+/** Prefix of the skip reason the scope judgement writes. */
+export const OUT_OF_SCOPE_SKIP_PREFIX = 'out-of-scope: ';

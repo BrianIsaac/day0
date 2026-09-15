@@ -15,6 +15,8 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { grantScopeInTransaction } from './agents';
+import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
+import { surfaceSlug } from '../src/surfaces/slug';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -148,20 +150,21 @@ async function surfaceForWork(
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', agentId))
     .collect();
-  const workTokens = new Set(
-    `${item.title}\n${item.contentSummary}`.toLowerCase().match(/[a-z0-9]+/g) ?? [],
-  );
-  const named = surfaces.filter((surface: Doc<'surfaces'>): boolean => {
-    const nameTokens = surface.displayName.toLowerCase().match(/[a-z0-9]+/g) ?? [];
-    return (
-      nameTokens.length > 0 && nameTokens.every((token: string): boolean => workTokens.has(token))
-    );
-  });
-  const namedSlugs = [...new Set(named.map((surface: Doc<'surfaces'>): string => surface.slug))];
+  // The same rule the evaluator shaped the proposal by, so the surface whose
+  // class named the skill is the surface the scopes and the approval gate
+  // are about.
+  const sourceSlug = surfaceSlug(item.sourceSystem);
+  const namedSlugs = [
+    ...new Set(
+      namedSurfacesFor(item, surfaces)
+        .map((surface: Doc<'surfaces'>): string => surface.slug)
+        .filter((slug: string): boolean => slug !== sourceSlug),
+    ),
+  ];
   if (namedSlugs.length > 1) {
     throw new Error(`work evidence names more than one target surface: ${namedSlugs.join(', ')}`);
   }
-  const targetSurface = namedSlugs[0] ?? item.sourceSystem;
+  const targetSurface = targetSurfaceFor(item, surfaces)?.slug ?? item.sourceSystem;
   if (
     surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.slug === targetSurface).length >
     1
@@ -304,6 +307,8 @@ export const propose = internalMutation({
     description: v.string(),
     rationale: v.string(),
     requiredScopes: v.array(v.string()),
+    surfaceClass: v.optional(v.string()),
+    operation: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'skills'>> => {
     const target = await surfaceForWork(ctx, args.agentId, args.workItemId);
@@ -341,6 +346,8 @@ export const propose = internalMutation({
           requiredScopes: targetChanged
             ? proposedScopes
             : [...new Set([...(existing.requiredScopes ?? []), ...proposedScopes])],
+          surfaceClass: existing.surfaceClass ?? args.surfaceClass,
+          operation: existing.operation ?? args.operation,
         });
       }
       return existing._id;
@@ -359,6 +366,8 @@ export const propose = internalMutation({
       rationale: args.rationale,
       requiredScopes: proposedScopes,
       targetSurface,
+      surfaceClass: args.surfaceClass,
+      operation: args.operation,
       createdAt: Date.now(),
     });
     await ctx.db.insert('events', {
@@ -554,6 +563,57 @@ export const migrateSandboxIdField = internalMutation({
       moved += 1;
     }
     return { moved };
+  },
+});
+
+/**
+ * Retire a registered skill that predates shapes.
+ *
+ * A skill proposed before shapes existed carries no `surfaceClass` and was
+ * named after the work item that first needed it (`linear-action-revops-7`),
+ * with that item's values in its body. The matcher still serves such a row
+ * through the name-token path while no shaped skill covers the shape, so it
+ * keeps working; it also keeps the reusable procedure from being proposed for
+ * that shape. Retiring it is the operator's decision, made once per row:
+ *
+ *   npx convex run skills:retireUnshaped '{"skillId":"<id>"}'
+ *
+ * Nothing is deleted. The row moves to `rejected`, which no panel lists and
+ * the executor never picks from, its history stays readable under every run
+ * that named it, and the next work item of its shape proposes the shaped
+ * skill. A shaped row and a builtin row are refused: the first is the
+ * reusable procedure for its shape, the second is installed, not authored.
+ */
+export const retireUnshaped = internalMutation({
+  args: { skillId: v.id('skills') },
+  handler: async (ctx, args): Promise<{ retired: boolean; reason?: string }> => {
+    const row = await ctx.db.get(args.skillId);
+    if (!row) throw new Error('skill not found');
+    if (row.state === 'rejected') return { retired: false, reason: 'already retired' };
+    if (row.state !== 'registered') {
+      throw new Error(`skill state is ${row.state}; only a registered skill is retired`);
+    }
+    if (row.sourceType !== 'agent-authored') {
+      throw new Error('a builtin skill is installed, not authored, and is not retired');
+    }
+    if (row.surfaceClass !== undefined && row.operation !== undefined) {
+      throw new Error(
+        `skill ${row.name} is the reusable procedure for ${row.surfaceClass}/${row.operation}, not a legacy row`,
+      );
+    }
+    await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'skill.retired',
+      payload: {
+        skillId: args.skillId,
+        name: row.name,
+        reason:
+          'proposed before skills were shaped; the next work item of its shape proposes the reusable procedure',
+      },
+      createdAt: Date.now(),
+    });
+    return { retired: true };
   },
 });
 

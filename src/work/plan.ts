@@ -10,6 +10,7 @@ import { renderHowTos, renderTeamDocs } from './documents';
 import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
+import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
 
 /**
  * Layer-3 plan drafter. Lifted from Protean's `src/work/plan.ts` and
@@ -72,20 +73,6 @@ export function planSystemPrompt(
 const VERIFICATION_VERB =
   /\b(?:confirm(?:s|ed|ing)?|verif(?:y|ies|ied|ying)|check(?:s|ed|ing)?|ensur(?:e|es|ed|ing)|validat(?:e|es|ed|ing)|mak(?:e|es|ing) sure|establish(?:es|ed|ing)?|double-check(?:s|ed|ing)?)\b/i;
 
-/** A candidate property a plan may be tempted to gate on, with the words that name it. */
-const CANDIDATE_PROPERTIES: ReadonlyArray<{ property: string; words: RegExp }> = [
-  {
-    property: 'ownership',
-    words: /\b(?:owner|owners|owned|ownership|assignee|assignees|assigned|assignment|unassigned)\b/i,
-  },
-  { property: 'priority', words: /\bpriorit(?:y|ies|ised|ized|ise|ize)\b/i },
-  {
-    property: 'age',
-    words: /\b(?:age|stale|staleness|days old|older than|created date|creation date)\b/i,
-  },
-];
-
-type CandidateProperty = (typeof CANDIDATE_PROPERTIES)[number];
 const CANDIDATE_CLASS = /\b(?:tickets?|requests?|items?|issues?|mentions?)\b/gi;
 const PREMODIFIER_WORD = /^[a-z]+(?:-[a-z]+)*$/;
 const PREMODIFIER_CONNECTOR = new Set(['and', 'or', 'plus']);
@@ -262,27 +249,46 @@ export const planSchema = z.object({
 /** The documentation the planner may plan from: the same pages the executor cites. */
 export type PlanDocuments = Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>;
 
+/** What a grounding read fetched: a ticket's own record, or the thread a chat ask sits in. */
+export type CandidateRecordSubject = 'record' | 'thread';
+
 /**
  * The candidate's own record, read from its source surface before the plan
  * is drafted, or the reason it could not be.
  */
 export type CandidateRecord =
-  | { surface: string; tool: string; text: string }
-  | { surface: string; tool: string; unavailable: string };
+  | { surface: string; tool: string; subject: CandidateRecordSubject; text: string }
+  | { surface: string; tool: string; subject: CandidateRecordSubject; unavailable: string };
+
+/** A grounding read before it is applied: the action and what it fetches. */
+export interface CandidateGroundingRead {
+  surface: string;
+  tool: string;
+  subject: CandidateRecordSubject;
+  action: MockAction;
+}
 
 /** The most a record contributes to the plan prompt. */
 export const CANDIDATE_RECORD_LENGTH = 4_000;
 
 const RECORD_READ_TOOL = /^(?:get|fetch|read|show)[_-]?(?:issue|ticket)$/i;
 const RECORD_ID_ARGUMENTS = ['id', 'issueId', 'identifier', 'issue', 'ticketId', 'key'];
+/** The documented Slack thread read, and the channel read that stands in when only it is allowed. */
+const THREAD_READ_TOOL = 'conversations.replies';
+const HISTORY_READ_TOOL = 'conversations.history';
+/** The most messages one grounding read asks the chat surface for; the effect is clipped again by the adapter. */
+export const THREAD_READ_LIMIT = 50;
 
 /**
- * The one read that grounds a plan in the candidate's record.
+ * The one read that grounds a plan in what the candidate points at.
  *
  * A ticket-queue candidate whose source surface is connected over MCP and
  * allows a single-record read tool (`get_issue`, or a tool of that shape)
  * gets that tool called with the candidate's external id under the probed
- * id argument. Anything else, a chat ask say, has no record to read.
+ * id argument. A chat ask on a connected documented-API chat surface reads
+ * its own thread with the documented thread tool, bounded to one page, or
+ * the channel up to the ask when only the history tool is allowed. A
+ * browser-driven target has nothing to read.
  *
  * Args:
  *   candidate: The work candidate.
@@ -290,19 +296,18 @@ const RECORD_ID_ARGUMENTS = ['id', 'issueId', 'identifier', 'issue', 'ticketId',
  *   now: The clock the connection verdict is resolved against.
  *
  * Returns:
- *   The read action with its surface and tool, or undefined.
+ *   The read action with its surface, tool and subject, or undefined.
  */
 export function candidateRecordRead(
-  candidate: Pick<WorkCandidate, 'sourceCategory' | 'sourceSystem' | 'externalId'>,
+  candidate: Pick<WorkCandidate, 'sourceCategory' | 'sourceSystem' | 'externalId' | 'replyTarget'>,
   surfaces: readonly SurfaceRecord[],
   now: number,
-): { surface: string; tool: string; action: MockAction } | undefined {
-  if (candidate.sourceCategory !== 'ticket-queue') return undefined;
+): CandidateGroundingRead | undefined {
   const slug = surfaceSlug(candidate.sourceSystem);
   const surface = surfaces.find((row) => row.slug === slug);
-  if (!surface || surface.path !== 'mcp' || verdictFor(surface, now) !== 'connected') {
-    return undefined;
-  }
+  if (!surface || verdictFor(surface, now) !== 'connected') return undefined;
+  if (candidate.sourceCategory === 'event-stream') return threadRead(candidate, surface);
+  if (candidate.sourceCategory !== 'ticket-queue' || surface.path !== 'mcp') return undefined;
   const allowlist = surface.toolAllowlist ?? [];
   const tool =
     allowlist.find((name) => name === 'get_issue') ??
@@ -316,6 +321,7 @@ export function candidateRecordRead(
   return {
     surface: surface.slug,
     tool,
+    subject: 'record',
     action: {
       tool: 'mcp.call',
       args: {
@@ -328,22 +334,75 @@ export function candidateRecordRead(
 }
 
 /**
- * Render the candidate record for the planner, redacted the way the loaded
- * documentation is and bounded.
+ * The bounded thread read for a chat ask, when its surface documents one.
+ *
+ * The request is the same GET the intake poller makes, with the surface's
+ * own credential in the placeholder the adapter fills, so it passes the
+ * allowlist, the grant and the standing-authority check like any read.
  *
  * Args:
- *   record: The record read, or its unavailability.
+ *   candidate: The chat candidate with its reply target.
+ *   surface: Its connected source surface.
+ *
+ * Returns:
+ *   The read, or undefined when the surface is not a documented-API chat
+ *   surface with a thread or history tool allowed, or the ask has no thread.
+ */
+function threadRead(
+  candidate: Pick<WorkCandidate, 'replyTarget'>,
+  surface: SurfaceRecord,
+): CandidateGroundingRead | undefined {
+  const target = candidate.replyTarget;
+  if (!target?.threadTs || surface.class !== 'chat' || surface.path !== 'documented-api') {
+    return undefined;
+  }
+  const allowlist = surface.toolAllowlist ?? [];
+  const tool = allowlist.includes(THREAD_READ_TOOL)
+    ? THREAD_READ_TOOL
+    : allowlist.includes(HISTORY_READ_TOOL)
+      ? HISTORY_READ_TOOL
+      : undefined;
+  if (!tool) return undefined;
+  const query = new URLSearchParams({
+    channel: target.channel,
+    ...(tool === THREAD_READ_TOOL ? { ts: target.threadTs } : { latest: target.threadTs }),
+    inclusive: 'true',
+    limit: String(THREAD_READ_LIMIT),
+  });
+  return {
+    surface: surface.slug,
+    tool,
+    subject: 'thread',
+    action: {
+      tool: 'http.request',
+      args: {
+        surface: surface.slug,
+        method: 'GET',
+        path: `/${tool}?${query.toString()}`,
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+      },
+    },
+  };
+}
+
+/**
+ * Render the candidate record or thread for the planner, redacted the way
+ * the loaded documentation is and bounded; the heading names what was read.
+ *
+ * Args:
+ *   record: The record or thread read, or its unavailability.
  *
  * Returns:
  *   Prompt lines.
  */
 export function renderCandidateRecord(record: CandidateRecord): string[] {
-  const heading = `--- Candidate record, read from ${record.surface} (${record.tool}) ---`;
+  const subject = record.subject ?? 'record';
+  const heading = `--- Candidate ${subject}, read from ${record.surface} (${record.tool}) ---`;
   const text = 'unavailable' in record ? record.unavailable : record.text;
   // The record was redacted by the span model when it was read and persisted;
   // the prompt applies the synchronous floor again and bounds it.
   const bounded = boundCandidateRecordText(redactTokenShapes(text));
-  return [heading, 'unavailable' in record ? `record unavailable: ${bounded}` : bounded];
+  return [heading, 'unavailable' in record ? `${subject} unavailable: ${bounded}` : bounded];
 }
 
 /** Clip a record to what the planner may see. */
@@ -474,6 +533,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
     `From: ${candidate.requesterLabel ?? '(unknown)'}`,
+    ...(candidate.owner ? [`Owner: ${candidate.owner}`] : []),
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),

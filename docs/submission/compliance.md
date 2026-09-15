@@ -1,6 +1,6 @@
 # Day0 GOAI semi-final — data sources and compliance statement
 
-- Status: final submission statement, 1 September 2026
+- Status: reviewed tree, 15 September 2026; frozen submission evidence retains its original dates
 - Scope: hosted `mock` demonstration, controlled mock-mode evaluation and local
   `real (local)` verification
 - Intended use: a synthetic demonstration of onboarding and bounded operational
@@ -27,6 +27,10 @@ that organisation to establish its own lawful basis, access authority, retention
 rules and provider agreements; this demonstration does not supply them.
 
 12 September final addendum: the evidence card also includes the retained local `qwen3:14b` comparison and Featherless-hosted `zai-org/GLM-5.3-Flash` **baseline only** (45 rows, no onboarded arm: charter setup failed). These use synthetic evaluation content. The three-bed inventory below describes the September submission; it is not the complete final inventory. Provider-budget details are recorded observations, with no retained raw charter HTTP responses.
+
+15 September integration addendum, describing the integrated tree rather than the frozen evidence: (1) in real mode the scope judgement sends the whole approved charter, its boundaries and the candidate, including the assignee and creator names the provider returned, to the configured model in at most one scope call per eligible evaluation; mock mode makes no such call and the frozen mock results are unchanged. (2) A work item now stores the provider's assignee as its owner and its creator as its requester, as display names, and shows them in prompts; both are synthetic in every demonstration workspace. (3) An approved charter is amended as append-only versions, each with the actor, reason and per-field diff on one event; the rules the manager struck before approval are kept on the draft, marked struck. (4) The manager's retry note and rejection reason are kept on the work item, marked once a run has read them, and a fact stated in a note is recorded as the basis of the plan step it settles. (5) Manager notifications are messages to the manager's own channel only: a note when a run landed work, sent at once or gathered into an hourly digest, and nothing at all for a run that landed nothing and left nothing to decide. (6) A batch approval, from the dashboard or by one channel code, applies each member under its own run and idempotency keys and refuses a member that moved on. (7) The real-mode rehearsal script writes only to the operator's own demonstration ticket and the bot's own direct messages, attempts cleanup of attributable writes afterwards, keeps its record under an ignored directory, and never writes the provider keys to the bed's environment file.
+
+Review boundary: local regression tests cover the redaction guard, real executor and recorded provider transports; live rehearsal remains unverified on this reviewed tree. Existing poisoned documentation requires reconciliation and resync. Cleanup deletes only comments/messages attributed to this isolated work item, restores a state only when a successful receipt or the provider's own history attributes the move to this run's key, and leaves changed assignments alone; exclusive ticket use and reconciliation of uncertain outcomes are still required. Closing approvals have their own identity, and pre-hold argument repair preserves values. A manager DM that asks the manager something can still be sent for blocked work under its standing grant; a report-only note is withheld. These are code behaviours, not new frozen evaluation results.
 
 ## Evaluation provenance and claim boundary
 
@@ -93,7 +97,16 @@ rotated into an approved vault.
   gate. With autonomous actions off, writes including public posts are held. With
   it on, applicable actions including public posts may apply automatically within
   current standing grants and policy; boundary actions are held and out-of-policy
-  actions are refused.
+  actions are refused. A held write whose argument names the provider did not
+  probe is repaired once before it is held; nothing is applied by the repair.
+- Held actions across several items may be approved from one place, on the
+  dashboard or by one channel code; each member is approved exactly as it was
+  shown, under its own run and idempotency keys, and a member that has moved on
+  refuses the batch (dashboard) or is left and named (channel).
+- A run that lands nothing and leaves nothing to decide stops: its closing actions
+  are withheld rather than held, the reason is recorded on the item, and no
+  message is sent. A run that landed work reports so to the manager, per run or in
+  an hourly digest; decision requests are never digested.
 - Authority is re-read after credential access and immediately before transport.
   Revoked grants, disabled autonomy, a stale/dead surface or a deleted agent stop
   the provider call. A separately manager-approved literal action remains its own
@@ -109,9 +122,10 @@ rotated into an approved vault.
 ## Retention, deletion and privacy protection
 
 - `api.reset.deleteMyData` removes the current agent's Day0 records: the agent row
-  and its rows in the 17 agent-keyed tables (charters, workspace, voice sessions,
-  work items, manager decision notices, skills, permission grants, events, surfaces
-  and the eight mock-environment tables). A plain reset keeps the owner-level
+  and its rows in the 20 agent-keyed tables (charters, workspace, voice sessions,
+  work items, manager questions, manager decision notices, manager notes, decision
+  batches, skills, permission grants, events, surfaces and the eight
+  mock-environment tables). A plain reset keeps the owner-level
   documentation sources, their stored pages, and the owner's stored credentials,
   still encrypted and still usable. A reset with `alsoUnlinkDocumentation` also
   unlinks every documentation source, deleting its pages, mirrors, sync runs and
@@ -148,7 +162,7 @@ effects, especially in higher-risk domains.
 
 ## 中文版：Day0 GOAI 半决赛数据来源与合规声明
 
-- 状态：最终提交版本，2026 年 9 月 1 日
+- 状态：已审查代码树，2026 年 9 月 15 日；冻结提交证据保留原日期
 - 范围：托管的 `mock` 演示、mock mode 受控评测，以及本地 `real (local)` 验证
 - 预期用途：使用合成数据演示 Agent 入职和受约束的运营工作，不是生产服务
 
@@ -169,6 +183,10 @@ effects, especially in higher-risk domains.
 操作者拥有或管理所有演示工作区，并编写了全部源记录。复现本次提交不需要任何生产、客户、员工或个人数据。若使用其他组织的信息，该组织必须自行确认合法处理依据、访问授权、保留规则和服务商协议；本演示不提供这些授权。
 
 9 月 12 日决赛补充：证据卡还包含本地 `qwen3:14b` 比较和经 Featherless 托管的 `zai-org/GLM-5.3-Flash` **仅 baseline** 结果（45 行，charter 准备失败，没有入职组）。内容均为合成评测数据。下述三个环境是半决赛清单，并非决赛的全部清单。预算细节来自运行者记录，未保留原始 charter HTTP 回复。
+
+9 月 15 日集成补充（描述集成后的代码树，而非冻结证据）：(1) 真实模式下，范围判断会把整份已批准章程、其边界以及候选事项（含 provider 返回的负责人与创建者姓名）在每次符合条件的评估中最多向配置的模型发送一次；mock 模式不做此调用，冻结的 mock 结果不变。(2) 工作项现在把 provider 的 assignee 存为负责人、creator 存为请求者（均为显示名），并在提示词中展示；所有演示 workspace 中这些都是合成数据。(3) 已批准章程的修订以只追加的版本形式记录，每次修订的操作者、理由和逐字段 diff 记录在同一条事件中；manager 在批准前划掉的规则保留在草稿上并标记为已划掉。(4) manager 的重试备注和拒绝理由保留在工作项上，运行读取后标记为已处理；备注中陈述的事实会记录为它所解决的计划步骤的依据。(5) 给 manager 的通知只发往 manager 自己的频道：运行有效果落地时发一条说明，即时发送或汇总为每小时摘要；什么都没落地、也没有需要决定事项的运行不发任何消息。(6) 批量批准（来自 dashboard 或一个频道码）对每个成员按其自身运行和幂等键执行，已发生变化的成员会被拒绝。(7) 真实模式演练脚本只写操作者自己的演示工单和 bot 自己的私信，在结束后尝试清理可归属的写入，记录保存在被 gitignore 的目录中，且从不把 provider key 写入 bed 的环境文件。
+
+审查边界：本地回归测试覆盖脱敏 guard、真实执行器和记录的 provider 传输；本次审查后的代码树尚未完成真实演练。此前误存的文档需要核对并重新同步。清理只删除可归属该独立工作项的评论和消息；恢复状态需要匹配的成功回执或 provider 自身历史记录证明该次变更出自本次运行的密钥，已被他人修改的负责人保持不变。演示工单仍需独占使用，不确定的效果需要核对。收尾批准使用独立标识，参数名修复保留值；受阻工作仍可凭现行授权发送向 manager 提问或请求决定的 DM；仅作汇报的说明会随停止一并保留不发。这些是代码行为，不是新增的冻结评测结果。
 
 ### 评测来源与结论边界
 
@@ -198,14 +216,16 @@ workspace，三个系统经审批卡片连接，工作在操作者自有的 Line
 
 - 文档连接为只读。发现的系统名称和路径只是证据，不自动构成权限。
 - 管理者和 IT 共同控制连接设置；凭据写入与成功的存活探测是两个独立步骤。
-- 每个外部操作在 exact-action gate 之前都会具体化为 literal action。关闭自主操作时，包括公开发布在内的写操作会被 hold；开启后，包括公开发布在内的适用 action 可在当前现行授权（standing grant）和 policy 范围内自动执行，边界 action 会被 hold，越权 action 会被 refuse。
+- 每个外部操作在 exact-action gate 之前都会具体化为 literal action。关闭自主操作时，包括公开发布在内的写操作会被 hold；开启后，包括公开发布在内的适用 action 可在当前现行授权（standing grant）和 policy 范围内自动执行，边界 action 会被 hold，越权 action 会被 refuse。被 hold 的写入若参数名不在 provider 探测到的名称之内，会在 hold 之前修复一次；修复本身不执行任何操作。
+- 多个事项的 held action 可以在一处批准（dashboard 面板或一个频道码）；每个成员严格按展示的内容、在其自身运行和幂等键下批准，已发生变化的成员会使整批被拒绝（dashboard）或被跳过并点名（频道）。
+- 什么都没落地、也没有留下需要决定事项的运行会停止：收尾 action 被扣留而不是 hold，原因记录在事项上，不发送任何消息。有效果落地的运行会向 manager 报告，按次或按每小时摘要；决策请求从不进入摘要。
 - 系统在读取凭据之后、发出传输请求之前重新读取授权状态。Grant 已撤销、autonomy 已关闭、surface stale/dead 或 Agent 已删除时，provider call 会被阻止。由管理者单独批准的 literal action 构成独立的授权边界；撤销 standing scope 不等同于取消该精确批准。
 - 已落地操作通过 provider state 验证，并记录脱敏后的 provider identifier 和 outcome。仅有模型叙述不能证明 action 已发生。
 - 管理者仍负责批准 held action、拒绝不合适的工作、控制凭据，并在文档没有可用 surface 时处理后续决策。
 
 ### 保留、删除和隐私保护
 
-- `api.reset.deleteMyData` 删除当前 Agent 的 Day0 记录：Agent 行及其在 17 张以 agent 为键的表中的行（charter、workspace、voice session、work item、manager decision notice、skill、permission grant、event、surface，以及八张 mock 环境表）。普通 reset 会保留 owner 级别的文档源、已存页面和 owner 的 stored credential，后者仍处于加密状态且仍可使用。带 `alsoUnlinkDocumentation` 的 reset 还会 unlink 每个文档源（删除其页面、镜像、sync run 和系统发现记录），并撤销 owner 持有的每一条 credential，无论它来自页面、在卡片上手动输入还是由 OAuth 安装交付：ciphertext 和 IV 会立即删除，没有宽限期；credential 行本身保留，只剩 label、kind、来源引用、app id 和日期作为审计记录。单独的 documentation unlink 对该来源持有的 credential 做同样处理：删除页面和镜像、删除 ciphertext、保留行。Dashboard 上的 revoke 和 rotation 只撤销不删除，之前的值不再可用，但后续 rotation 可以重新激活该行。
+- `api.reset.deleteMyData` 删除当前 Agent 的 Day0 记录：Agent 行及其在 20 张以 agent 为键的表中的行（charter、workspace、voice session、work item、manager question、manager decision notice、manager note、decision batch、skill、permission grant、event、surface，以及八张 mock 环境表）。普通 reset 会保留 owner 级别的文档源、已存页面和 owner 的 stored credential，后者仍处于加密状态且仍可使用。带 `alsoUnlinkDocumentation` 的 reset 还会 unlink 每个文档源（删除其页面、镜像、sync run 和系统发现记录），并撤销 owner 持有的每一条 credential，无论它来自页面、在卡片上手动输入还是由 OAuth 安装交付：ciphertext 和 IV 会立即删除，没有宽限期；credential 行本身保留，只剩 label、kind、来源引用、app id 和日期作为审计记录。单独的 documentation unlink 对该来源持有的 credential 做同样处理：删除页面和镜像、删除 ciphertext、保留行。Dashboard 上的 revoke 和 rotation 只撤销不删除，之前的值不再可用，但后续 rotation 可以重新激活该行。
 - 本地自托管数据和模型日志会保留在操作者控制的 volume/file 中，直至操作者删除。外部 provider object 和 provider-side record 必须使用相应服务商的控制项删除；Day0 reset 无法撤销已经落地的外部操作。
 - 仓库保留复现所需的合成 fixture 和冻结评测证据。不保留值的 action audit 保存 field name 和 SHA-256 digest，而不是模型生成值。提交使用的私有 working notes 已被 gitignore，不属于公开仓库。
 - 不应把生产 secret、个人数据或受监管记录输入演示 stack。若将系统改造用于真实组织，应先执行字段最小化、定义保留/删除周期、审查 provider 条款、取得必要同意或授权，并完成适当的安全和隐私评估。

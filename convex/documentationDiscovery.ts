@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { agentReadsSource } from './docSources';
+import { reevaluatePendingInTransaction } from './work';
 import {
   backfillCharterProvenance,
   reconcileDocumentedSystems,
@@ -332,6 +333,15 @@ export const apply = internalMutation({
         type: 'documentation.systems-discovered',
         payload: { sourceId: source._id, systems: systems.length, ...result },
         createdAt: now,
+      });
+      // The documented systems the evaluator reads have just changed for this
+      // agent; the work skipped as out of scope under the old pages returns.
+      // The page fingerprint is the key, so the same pages never re-admit twice.
+      await reevaluatePendingInTransaction(ctx, {
+        agentId: agent._id,
+        trigger: 'documentation',
+        key: `documentation:${source._id}:${args.fingerprint}`,
+        now,
       });
     }
     await ctx.db.patch(source._id, {

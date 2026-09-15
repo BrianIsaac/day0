@@ -19,6 +19,7 @@ const base = {
   adjacentRoles: [],
   approvalChain: { boss: 'manager', confidence: 'high' as const },
   openQuestions: [],
+  constraints: [],
 };
 
 describe('charter named systems', (): void => {

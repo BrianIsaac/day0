@@ -1,6 +1,6 @@
 'use client';
 
-import { QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
+import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
@@ -27,15 +27,30 @@ import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
 import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
+import type { CharterConstraint } from '../../../src/agent/charter-constraints';
+import {
+  LIST_CLAUSE_FIELDS,
+  nextCharterVersion,
+  type CharterChange,
+  type ListClauseField,
+} from '../../../src/agent/charter-amendment';
+import { SYSTEM_CLASSES, type SystemClass } from '../../../src/agent/system-classes';
 import { replyTargetFor } from '../../../src/work/reply-target';
 import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
   type ReconciliationEntry,
 } from '../../../src/work/reconciliation';
-import type { MockAction } from '../../../src/work/types';
+import type { ArgumentRepairAttempt, MockAction } from '../../../src/work/types';
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
+import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
+import { isStopped, stopDetail } from '../../../src/work/stop';
+import {
+  managerNotificationMode,
+  NOTIFICATION_MODE_LABELS,
+  type ManagerNotificationMode,
+} from '../../../src/work/manager-notes';
 import type { AgentMetrics } from '../../../convex/metrics';
 
 interface Props {
@@ -58,6 +73,7 @@ export function AgentDashboard({ agentId }: Props) {
   const charter = useQuery(api.charters.latest, { agentId });
   const workspace = useQuery(api.workspace.read, { agentId });
   const workItems = useQuery(api.work.listForAgent, { agentId });
+  const openQuestions = useQuery(api.managerQuestions.openForAgent, { agentId });
   const proposedSkills = useQuery(api.skills.proposed, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
@@ -187,6 +203,7 @@ export function AgentDashboard({ agentId }: Props) {
 
           <WorkQueue
             workItems={workItems ?? []}
+            openQuestions={openQuestions ?? []}
             surfaces={surfaces}
             registeredSkillCount={(registeredSkills ?? []).length}
             charterApproved={!!charter?.approved}
@@ -358,6 +375,51 @@ export function AutonomyControl({
   );
 }
 
+/**
+ * How the manager hears about run outcomes over the chat surface: as each
+ * run finishes, or in one hourly digest. Decision requests are sent at once
+ * in either mode, so the choice only quietens what is for information.
+ */
+export function NotificationModeControl({
+  mode,
+  onChange,
+}: {
+  mode: ManagerNotificationMode;
+  onChange: (mode: ManagerNotificationMode) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <label
+      className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
+      title="Decision requests are always sent at once. This sets how you hear that work landed or a run stopped."
+    >
+      <span>Manager DMs</span>
+      <select
+        aria-label="Manager DMs"
+        value={mode}
+        disabled={busy}
+        onChange={(event) => {
+          const next = event.target.value as ManagerNotificationMode;
+          setBusy(true);
+          setError(null);
+          onChange(next)
+            .catch((err: unknown) => setError((err as Error).message))
+            .finally(() => setBusy(false));
+        }}
+        className="bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
+      >
+        {(Object.keys(NOTIFICATION_MODE_LABELS) as ManagerNotificationMode[]).map((option) => (
+          <option key={option} value={option}>
+            {NOTIFICATION_MODE_LABELS[option]}
+          </option>
+        ))}
+      </select>
+      {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
+    </label>
+  );
+}
+
 export function DashboardHeader({
   agent,
   charter,
@@ -368,6 +430,7 @@ export function DashboardHeader({
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
+  const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
     'day-one-in-progress': {
@@ -406,6 +469,12 @@ export function DashboardHeader({
           {/* In real mode the chip is the manager's autonomous-actions
               switch; the hosted mock has no gate for the switch to change, so
               it keeps the static label. */}
+          {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
+            <NotificationModeControl
+              mode={managerNotificationMode(agent)}
+              onChange={(mode) => setManagerNotifications({ agentId: agent._id, mode })}
+            />
+          ) : null}
           {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
             <AutonomyControl
               on={autonomousActionsOn(agent)}
@@ -507,21 +576,132 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
   );
 }
 
-function CharterCard({ charter }: { charter: Doc<'charters'> }) {
+/** The charter body as the card reads it; `constraints` is absent on charters drafted before the list existed. */
+export interface CharterCardBody {
+  whyThisHire: string;
+  proposedFunction: string;
+  shortTermGoals: { day30: string; day60: string; day90: string };
+  proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
+  namedCollaborators: Array<{ name: string; topic: string }>;
+  namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
+  priorityReading: string[];
+  openQuestions: string[];
+  constraints?: CharterConstraint[];
+  answeredQuestions?: Array<{ question: string; answer: string; answeredAt: string }>;
+}
+
+const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
+  'candidate-property': 'what work qualifies',
+  'system-boundary': 'where I may act',
+  'reporting-line': 'who I report to',
+};
+
+/**
+ * The confirm-or-strike list: every rule the draft will enforce, in the
+ * manager's own words, beside the clause phrases that encode it.
+ *
+ * Before approval each row can be struck or restored; the clauses on the card
+ * stay as drafted until Approve, which is when struck wording leaves them.
+ * After approval the list is the record of what was confirmed and what was
+ * struck.
+ */
+export function ConstraintList({
+  constraints,
+  approved,
+  onStrike,
+  onRestore,
+}: {
+  constraints: CharterConstraint[];
+  approved: boolean;
+  /** Strike a confirmed rule; before approval a draft flag, after it an amendment. */
+  onStrike?: (index: number) => void;
+  /** Restore a struck rule; only a draft can, because a strike after approval has already left the clauses. */
+  onRestore?: (index: number) => void;
+}) {
+  if (constraints.length === 0) return null;
+  return (
+    <div className="text-xs">
+      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+        {approved ? 'Rules this charter enforces' : 'These words will limit the work. Confirm or strike each one.'}
+      </div>
+      <ul className="space-y-1.5">
+        {constraints.map((constraint, index) => (
+          <li
+            key={index}
+            className={`flex items-start gap-2 p-2 rounded-md border ${
+              constraint.struck
+                ? 'border-[var(--color-border)] text-[var(--color-muted)]'
+                : 'border-[var(--color-warn)]/40'
+            }`}
+          >
+            <div className="flex-1 min-w-0">
+              <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
+                &ldquo;{constraint.quote}&rdquo;
+              </p>
+              <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
+                {CONSTRAINT_KIND_LABEL[constraint.kind]}
+                {constraint.wording.length > 0 ? (
+                  <>
+                    {' · in the charter as '}
+                    {constraint.wording.map((phrase, i) => (
+                      <span key={i}>
+                        {i > 0 ? ', ' : ''}
+                        <span className="font-mono text-[var(--color-fg)]">{phrase}</span>
+                      </span>
+                    ))}
+                  </>
+                ) : (
+                  ' · no clause carries it'
+                )}
+                {constraint.origin === 'derived' ? ' · found by checking the clauses' : ''}
+                {constraint.origin === 'manager' ? ' · added by you' : ''}
+                {constraint.struck ? ' · struck' : ''}
+              </p>
+            </div>
+            {!constraint.struck && onStrike ? (
+              <button
+                onClick={() => onStrike(index)}
+                className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)]"
+              >
+                Strike
+              </button>
+            ) : constraint.struck && onRestore ? (
+              <button
+                onClick={() => onRestore(index)}
+                className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)]"
+              >
+                Restore
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
   const approve = useMutation(api.charters.approve);
   const requestChanges = useMutation(api.charters.requestChanges);
+  const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
+  const amend = useMutation(api.charters.amend);
   const postApproval = useAction(api.onboarding.postCharterApproval);
   const [posting, setPosting] = useState(false);
-  const body = charter.body as {
-    whyThisHire: string;
-    proposedFunction: string;
-    shortTermGoals: { day30: string; day60: string; day90: string };
-    proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
-    namedCollaborators: Array<{ name: string; topic: string }>;
-    namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
-    priorityReading: string[];
-    openQuestions: string[];
-  };
+  const [amendError, setAmendError] = useState<string | null>(null);
+  const body = charter.body as CharterCardBody;
+  const constraints = body.constraints ?? [];
+  const struckCount = constraints.filter((constraint) => constraint.struck).length;
+
+  async function sendAmendment(change: CharterChange): Promise<boolean> {
+    setAmendError(null);
+    try {
+      await amend({ agentId: charter.agentId, changes: [change] });
+      return true;
+    } catch (error) {
+      setAmendError((error as Error).message ?? 'The amendment was refused.');
+      return false;
+    }
+  }
 
   async function onApprove() {
     setPosting(true);
@@ -569,6 +749,28 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             <BoundaryList label="Open questions" items={body.openQuestions} />
           </div>
         </details>
+        <ConstraintList
+          constraints={constraints}
+          approved={charter.approved}
+          onStrike={(index) =>
+            charter.approved
+              ? void sendAmendment({ kind: 'strike-constraint', index })
+              : void setConstraintStruck({ charterId: charter._id, index, struck: true })
+          }
+          onRestore={
+            charter.approved
+              ? undefined
+              : (index) => void setConstraintStruck({ charterId: charter._id, index, struck: false })
+          }
+        />
+        {charter.approved ? (
+          <AmendCharterPanel
+            charter={charter}
+            body={body}
+            error={amendError}
+            onAmend={sendAmendment}
+          />
+        ) : null}
         {!charter.approved ? (
           <div className="flex gap-2 pt-1">
             <button
@@ -576,7 +778,9 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
               disabled={posting}
               className="px-4 py-2 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
             >
-              Approve
+              {struckCount > 0
+                ? `Approve without ${struckCount} struck ${struckCount === 1 ? 'rule' : 'rules'}`
+                : 'Approve'}
             </button>
             <button
               onClick={() => requestChanges({ charterId: charter._id })}
@@ -588,6 +792,292 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
         ) : null}
       </div>
     </Card>
+  );
+}
+
+const CLAUSE_LIST_LABEL: Record<ListClauseField, string> = {
+  willDo: 'Will do',
+  willNotDo: 'Will NOT do',
+  escalationTriggers: 'Escalation triggers',
+};
+
+const AMEND_INPUT =
+  'flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs text-[var(--color-fg)]';
+const AMEND_BUTTON =
+  'shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50';
+
+/**
+ * One line of text the manager can rewrite or remove; Save sends the
+ * amendment. Callers key it by the text, so a new version remounts it with
+ * the new text rather than syncing state from props.
+ */
+function EditableLine({
+  text,
+  onSave,
+  onRemove,
+}: {
+  text: string;
+  onSave: (text: string) => void;
+  onRemove?: () => void;
+}) {
+  const [draft, setDraft] = useState(text);
+  const changed = draft.trim() !== text.trim();
+  return (
+    <div className="flex items-center gap-1">
+      <input className={AMEND_INPUT} value={draft} onChange={(e) => setDraft(e.target.value)} />
+      <button className={AMEND_BUTTON} disabled={!changed || !draft.trim()} onClick={() => onSave(draft)}>
+        Save
+      </button>
+      {onRemove ? (
+        <button className={AMEND_BUTTON} onClick={onRemove}>
+          Remove
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** A single input with a button, cleared when the submission is accepted. */
+function AddLine({
+  placeholder,
+  label,
+  onAdd,
+}: {
+  placeholder: string;
+  label: string;
+  onAdd: (text: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState('');
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        className={AMEND_INPUT}
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <button
+        className={AMEND_BUTTON}
+        disabled={!draft.trim()}
+        onClick={async () => {
+          if (await onAdd(draft)) setDraft('');
+        }}
+      >
+        {label}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Amend an approved charter from the card: each Save, Answer, Add or Remove
+ * is one typed change and one new version. The list of versions below the
+ * editors is the charter's history; nothing here edits a row in place.
+ */
+export function AmendCharterPanel({
+  charter,
+  body,
+  error,
+  onAmend,
+}: {
+  charter: Doc<'charters'>;
+  body: CharterCardBody;
+  error: string | null;
+  onAmend: (change: CharterChange) => Promise<boolean>;
+}) {
+  const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
+  const now = useNow();
+  const [rule, setRule] = useState<{ quote: string; kind: CharterConstraint['kind']; clause: ListClauseField }>({
+    quote: '',
+    kind: 'candidate-property',
+    clause: 'willDo',
+  });
+  const [system, setSystem] = useState<{ name: string; class: SystemClass; whereMentioned: string }>({
+    name: '',
+    class: 'other',
+    whereMentioned: '',
+  });
+  const answered = body.answeredQuestions ?? [];
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+        Amend this charter · next version v{nextCharterVersion(charter.version)}
+      </summary>
+      <div className="mt-2 space-y-3 pl-3 border-l border-[var(--color-border)]">
+        {error ? <p className="text-[var(--color-warn)]">{error}</p> : null}
+        <div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Proposed function</div>
+          <EditableLine
+            key={body.proposedFunction}
+            text={body.proposedFunction}
+            onSave={(text) => void onAmend({ kind: 'edit-function', text })}
+          />
+        </div>
+        {LIST_CLAUSE_FIELDS.map((field) => (
+          <div key={field}>
+            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+              {CLAUSE_LIST_LABEL[field]}
+            </div>
+            <div className="space-y-1">
+              {body.proposedBoundaries[field].map((item, index) => (
+                <EditableLine
+                  key={`${index}:${item}`}
+                  text={item}
+                  onSave={(text) => void onAmend({ kind: 'edit-clause', field, index, text })}
+                  onRemove={() => void onAmend({ kind: 'edit-clause', field, index, text: '' })}
+                />
+              ))}
+              <AddLine
+                placeholder={`Add to ${CLAUSE_LIST_LABEL[field].toLowerCase()}`}
+                label="Add"
+                onAdd={(text) =>
+                  onAmend({ kind: 'edit-clause', field, index: body.proposedBoundaries[field].length, text })
+                }
+              />
+            </div>
+          </div>
+        ))}
+        {body.openQuestions.length > 0 || answered.length > 0 ? (
+          <div>
+            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Open questions</div>
+            <div className="space-y-1.5">
+              {body.openQuestions.map((question) => (
+                <div key={question}>
+                  <p className="text-[var(--color-fg)] mb-0.5">{question}</p>
+                  <AddLine
+                    placeholder="Your answer"
+                    label="Answer"
+                    onAdd={(answer) => onAmend({ kind: 'answer-question', question, answer })}
+                  />
+                </div>
+              ))}
+              {answered.map((entry) => (
+                <p key={entry.question} className="text-[var(--color-muted)]">
+                  {entry.question} <span className="text-[var(--color-fg)]">— {entry.answer}</span>
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Add a rule</div>
+          <div className="flex flex-wrap items-center gap-1">
+            <input
+              className={AMEND_INPUT}
+              placeholder="In your own words"
+              value={rule.quote}
+              onChange={(e) => setRule({ ...rule, quote: e.target.value })}
+            />
+            <select
+              className={AMEND_INPUT}
+              value={rule.kind}
+              onChange={(e) => setRule({ ...rule, kind: e.target.value as CharterConstraint['kind'] })}
+            >
+              <option value="candidate-property">what work qualifies</option>
+              <option value="system-boundary">where I may act</option>
+              <option value="reporting-line">who I report to</option>
+            </select>
+            <select
+              className={AMEND_INPUT}
+              value={rule.clause}
+              onChange={(e) => setRule({ ...rule, clause: e.target.value as ListClauseField })}
+            >
+              {LIST_CLAUSE_FIELDS.map((field) => (
+                <option key={field} value={field}>
+                  under {CLAUSE_LIST_LABEL[field].toLowerCase()}
+                </option>
+              ))}
+            </select>
+            <button
+              className={AMEND_BUTTON}
+              disabled={!rule.quote.trim()}
+              onClick={async () => {
+                if (
+                  await onAmend({
+                    kind: 'add-constraint',
+                    constraint: { kind: rule.kind, quote: rule.quote, clause: rule.clause },
+                  })
+                ) {
+                  setRule({ ...rule, quote: '' });
+                }
+              }}
+            >
+              Add rule
+            </button>
+          </div>
+        </div>
+        <div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Systems named</div>
+          <div className="space-y-1">
+            {(body.namedSystems ?? []).map((named) => (
+              <div key={named.name} className="flex items-center gap-1">
+                <span className="flex-1 min-w-0 text-[var(--color-fg)]">
+                  {named.name} ({named.class})
+                </span>
+                <button
+                  className={AMEND_BUTTON}
+                  onClick={() => void onAmend({ kind: 'remove-system', name: named.name })}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <div className="flex flex-wrap items-center gap-1">
+              <input
+                className={AMEND_INPUT}
+                placeholder="System name"
+                value={system.name}
+                onChange={(e) => setSystem({ ...system, name: e.target.value })}
+              />
+              <select
+                className={AMEND_INPUT}
+                value={system.class}
+                onChange={(e) => setSystem({ ...system, class: e.target.value as SystemClass })}
+              >
+                {SYSTEM_CLASSES.map((systemClass) => (
+                  <option key={systemClass} value={systemClass}>
+                    {systemClass}
+                  </option>
+                ))}
+              </select>
+              <input
+                className={AMEND_INPUT}
+                placeholder="Where it is used, in your words"
+                value={system.whereMentioned}
+                onChange={(e) => setSystem({ ...system, whereMentioned: e.target.value })}
+              />
+              <button
+                className={AMEND_BUTTON}
+                disabled={!system.name.trim() || !system.whereMentioned.trim()}
+                onClick={async () => {
+                  if (await onAmend({ kind: 'add-system', system })) {
+                    setSystem({ name: '', class: 'other', whereMentioned: '' });
+                  }
+                }}
+              >
+                Add system
+              </button>
+            </div>
+          </div>
+        </div>
+        {versions && versions.length > 1 ? (
+          <div>
+            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Versions</div>
+            <ul className="space-y-0.5 text-[var(--color-muted)]">
+              {versions.map((row) => (
+                <li key={row._id}>
+                  v{row.version}
+                  {row._id === charter._id ? ' · current' : ''}
+                  {row.supersedes ? ' · amendment' : ' · from the 1:1'}
+                  {' · '}
+                  <span title={clockTimeWithSeconds(row.createdAt)}>{relativeTime(row.createdAt, now)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 
@@ -907,12 +1397,15 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 
 function WorkQueue({
   workItems,
+  openQuestions,
   surfaces,
   registeredSkillCount,
   charterApproved,
   autonomousActions,
 }: {
   workItems: Doc<'workItems'>[];
+  /** The charter's open questions still waiting on the manager, asked at a plan. */
+  openQuestions: Doc<'managerQuestions'>[];
   surfaces: SurfaceRecord[];
   registeredSkillCount: number;
   charterApproved: boolean;
@@ -927,6 +1420,7 @@ function WorkQueue({
   const retryFailed = useMutation(api.work.retryFailed);
   const reconcileFailed = useMutation(api.work.reconcileFailed);
   const approveActions = useMutation(api.work.approveActions);
+  const approveActionsBatch = useMutation(api.work.approveActionsBatch);
   const rejectActions = useMutation(api.work.rejectActions);
   const resendDecision = useMutation(api.work.resendDecisionRequest);
 
@@ -963,12 +1457,8 @@ function WorkQueue({
   // item; once a verdict comes back, draft a plan if claim, etc.
   useEffect(() => {
     if (!charterApproved) return;
-    for (const it of workItems) {
-      if (it.state === 'discovered') {
-        once('evaluate', it._id, () => evaluate({ workItemId: it._id }));
-        break;
-      }
-    }
+    const next = nextItemToEvaluate(workItems);
+    if (next) once('evaluate', next._id, () => evaluate({ workItemId: next._id }));
   }, [charterApproved, workItems, evaluate, once]);
 
   useEffect(() => {
@@ -997,17 +1487,21 @@ function WorkQueue({
         </p>
       ) : (
         <div className="space-y-3">
+          <PendingDecisionsPanel
+            members={pendingDecisionMembers(items)}
+            surfaces={surfaces}
+            onApproveBatch={(members) => approveActionsBatch({ members })}
+          />
           {items.map((item) => (
             <WorkItemCard
               key={item._id}
               item={item}
               surfaces={surfaces}
               autonomousActions={autonomousActions}
-              onApprovePlan={() => approvePlan({ workItemId: item._id })}
+              questions={openQuestions.filter((question) => question.workItemId === item._id)}
+              onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
-              onRetryFailed={(feedback) =>
-                retryFailed({ workItemId: item._id, ...(feedback?.trim() ? { feedback } : {}) })
-              }
+              onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
               onReconcileFailed={(confirmed) =>
                 reconcileFailed({ workItemId: item._id, confirmed })
               }
@@ -1036,6 +1530,7 @@ function WorkQueue({
 
 function stateColor(state: string): string {
   if (state === 'completed') return 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]';
+  if (state === 'stopped') return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
   if (state === 'plan-pending' || state === 'needs-skill' || state === 'actions-pending') {
     return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
   }
@@ -1058,12 +1553,15 @@ interface LedgerRow {
   outcomeUnknown?: boolean;
   idempotencyKey?: string;
   redaction?: 'structural-only';
+  /** The first attempt at this row's arguments, when one bounded repair re-authored them. */
+  repair?: { reason: string; toolArgsJson: string };
 }
 
 interface PlanStepOutcomeRow {
   step: number;
   status: 'satisfied' | 'blocked' | 'not-verifiable';
   evidence: string;
+  basis?: 'manager-feedback';
 }
 
 /** A run's persisted output as the card reads it, in either of its two phases. */
@@ -1074,6 +1572,35 @@ interface RunOutput {
   applied?: LedgerRow[];
   initial?: { applied?: LedgerRow[] };
   planStepOutcomes?: PlanStepOutcomeRow[];
+  /** The one repair each held write earned before the hold, by action index. */
+  argumentRepairs?: ArgumentRepairAttempt[];
+}
+
+/**
+ * The note beside a held or applied row whose arguments were re-authored once:
+ * why the first attempt was refused and what it was, so the manager judges the
+ * payload in front of them knowing it is the second.
+ */
+export function RepairNote({
+  repair,
+}: {
+  repair: { reason: string; toolArgsJson: string; repaired?: boolean } | undefined;
+}) {
+  if (!repair) return null;
+  const stands = repair.repaired === false;
+  return (
+    <details className="mt-0.5">
+      <summary className="text-[10px] text-[var(--color-warn)] cursor-pointer select-none">
+        {stands
+          ? 'argument names refused by the probed schema · the one repair produced nothing usable · first attempt stands'
+          : 'arguments re-authored once before the hold · this payload is the second attempt'}
+      </summary>
+      <p className="text-[10px] text-[var(--color-muted)] break-words">{repair.reason}</p>
+      <code className="block font-mono text-[10px] whitespace-pre-wrap break-words text-[var(--color-muted)]">
+        first attempt: {repair.toolArgsJson}
+      </code>
+    </details>
+  );
 }
 
 type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
@@ -1130,6 +1657,33 @@ export function DraftDetails({ output }: { output: RunOutput }) {
 }
 
 /** The approved plan's result-aware accounting, including promised work that could not run. */
+/**
+ * The manager's written word on the item, in every state.
+ *
+ * A rejection reason or a retry note is the direction the next run reads,
+ * and the record of why the item went the way it did; it is shown whether
+ * the item is failed, running, held or finished, and says when a run
+ * completed with it.
+ */
+export function ManagerFeedbackNote({ feedback }: { feedback: ManagerFeedback }) {
+  return (
+    <div className="mt-2 p-2 rounded-md bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/30 text-xs">
+      <p className="text-[var(--color-accent)] font-medium mb-0.5">
+        {managerFeedbackLabel(feedback)}
+        <span className="ml-1 font-normal text-[10px] text-[var(--color-muted)]" title={clockTimeWithSeconds(feedback.at)}>
+          {clockTimeWithSeconds(feedback.at)}
+        </span>
+      </p>
+      <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">{feedback.reason}</p>
+      {feedback.addressedAt !== undefined ? (
+        <p className="mt-0.5 text-[10px] text-[var(--color-muted)]">
+          addressed by the run that completed {clockTimeWithSeconds(feedback.addressedAt)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
   if (outcomes.length === 0) return null;
   return (
@@ -1138,7 +1692,9 @@ export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow
       <ol className="space-y-0.5 text-[var(--color-muted)]">
         {outcomes.map((outcome) => (
           <li key={outcome.step}>
-            Step {outcome.step} · {outcome.status} - {outcome.evidence}
+            {`Step ${outcome.step} · ${outcome.status}${
+              outcome.basis === 'manager-feedback' ? ' by manager feedback' : ''
+            } - ${outcome.evidence}`}
           </li>
         ))}
       </ol>
@@ -1196,12 +1752,42 @@ export function clipLedgerRow(text: string | undefined): string | undefined {
 
 const LEDGER_ROW_LENGTH = 180;
 
+/**
+ * The next item the queue evaluates on its own: the first discovered one.
+ *
+ * A retried item returns to `discovered`, so the manager's Retry reaches the
+ * evaluator through this same pick.
+ */
+export function nextItemToEvaluate(items: readonly Doc<'workItems'>[]): Doc<'workItems'> | undefined {
+  return items.find((item) => item.state === 'discovered');
+}
+
+/**
+ * What the card's Retry sends: the item and, when the manager wrote one, the note.
+ *
+ * Args:
+ *   workItemId: The item being retried.
+ *   feedback: The retry note as typed; a blank note is not sent.
+ *
+ * Returns:
+ *   The arguments for `work.retryFailed`.
+ */
+export function retryRequest(
+  workItemId: Id<'workItems'>,
+  feedback?: string,
+): { workItemId: Id<'workItems'>; feedback?: string } {
+  return { workItemId, ...(feedback?.trim() ? { feedback } : {}) };
+}
+
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
+  }
+  if (item.skipReason && isStopped(item.skipReason)) {
+    return `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;
 }
@@ -1279,6 +1865,7 @@ export function PendingActions({
   surfaces,
   replyTarget,
   autonomousActions = false,
+  repairs,
   onApprove,
   onReject,
 }: {
@@ -1288,6 +1875,8 @@ export function PendingActions({
   replyTarget?: ReplyTarget;
   /** Whether the agent's switch is on now; the card says why the rows are waiting either way. */
   autonomousActions?: boolean;
+  /** The one repair each held write earned before the hold, by action index. */
+  repairs?: ArgumentRepairAttempt[];
   onApprove: (approvedIndexes: number[]) => Promise<unknown>;
   onReject: (reason: string) => Promise<unknown>;
 }) {
@@ -1379,6 +1968,7 @@ export function PendingActions({
                     </summary>
                     <ActionPayload action={action} />
                   </details>
+                  <RepairNote repair={repairs?.find((attempt) => attempt.index === index)} />
                   <div className="flex items-center gap-2 mt-0.5">
                     {!refused && !on ? (
                       <span className="text-[10px] text-[var(--color-muted)]">held · will not be sent</span>
@@ -1453,10 +2043,261 @@ export function PendingActions({
   );
 }
 
+/** What the manager decided with the plan: the answers given, and a note to the planner's own. */
+export interface PlanApproval {
+  answers: Array<{ questionId: Id<'managerQuestions'>; text: string }>;
+  note?: string;
+}
+
+/**
+ * What the approval form sends: the item, the answers given and the note.
+ *
+ * Args:
+ *   workItemId: The plan-pending item.
+ *   decision: The answers and note as the form collected them.
+ *
+ * Returns:
+ *   The arguments for `work.approvePlan`; nothing optional is sent empty.
+ */
+export function planApprovalRequest(
+  workItemId: Id<'workItems'>,
+  decision: PlanApproval,
+): { workItemId: Id<'workItems'>; answers?: PlanApproval['answers']; note?: string } {
+  return {
+    workItemId,
+    ...(decision.answers.length > 0 ? { answers: decision.answers } : {}),
+    ...(decision.note ? { note: decision.note } : {}),
+  };
+}
+
+/**
+ * The questions a pending plan raises and the manager's answers to them,
+ * approved as one decision.
+ *
+ * The charter's open questions this plan touched come from their records;
+ * the planner's own note (`riskNotes`) is shown and may be answered as free
+ * text. Every answer reaches the run as approved evidence; a question left
+ * blank is simply not answered and stays open.
+ */
+export function PlanApprovalForm({
+  riskNotes,
+  questions,
+  onApprove,
+  onCancel,
+}: {
+  riskNotes: string;
+  questions: Doc<'managerQuestions'>[];
+  onApprove: (decision: PlanApproval) => void;
+  onCancel: () => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [note, setNote] = useState('');
+  const open = questions.filter((question) => !question.answer);
+  const planNote = riskNotes.trim();
+  function decision(): PlanApproval {
+    return {
+      answers: open.flatMap((question) => {
+        const text = (answers[question._id] ?? '').trim();
+        return text ? [{ questionId: question._id, text }] : [];
+      }),
+      ...(note.trim() ? { note: note.trim() } : {}),
+    };
+  }
+  return (
+    <div className="mt-2 space-y-2">
+      {open.length > 0 ? (
+        <div className="p-2 rounded-md border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10">
+          <p className="text-[var(--color-warn)] font-medium mb-1">
+            {open.length === 1 ? 'A question for you before this plan runs' : `${open.length} questions for you before this plan runs`}
+          </p>
+          <ul className="space-y-1.5">
+            {open.map((question) => (
+              <li key={question._id}>
+                <p className="text-[var(--color-fg)]">{question.question}</p>
+                <p className="text-[10px] text-[var(--color-muted)]">
+                  from the charter · touched by the {question.context.touchedBy}
+                  {question.context.words.length > 0 ? `: ${question.context.words.join(', ')}` : ''}
+                </p>
+                <input
+                  type="text"
+                  value={answers[question._id] ?? ''}
+                  onChange={(event) =>
+                    setAnswers((current) => ({ ...current, [question._id]: event.target.value }))
+                  }
+                  placeholder="your answer, written into the charter with the approval (optional)"
+                  aria-label={`answer: ${question.question}`}
+                  className="mt-0.5 w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {planNote ? (
+        <div className="p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-0.5">Planner&apos;s note</p>
+          <p className="text-[var(--color-fg)]">{planNote}</p>
+          <input
+            type="text"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="your answer to the note, for this run (optional)"
+            aria-label="answer to the planner's note"
+            className="mt-1 w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+          />
+        </div>
+      ) : null}
+      <div className="flex gap-2">
+        <button
+          onClick={() => onApprove(decision())}
+          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs"
+        >
+          {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** One member of the cross-item approval: the held rows of a parked run. */
+export interface PendingDecisionMember {
+  workItemId: Id<'workItems'>;
+  pendingRunId: Id<'events'>;
+  title: string;
+  actions: MockAction[];
+  heldIndexes: number[];
+  refused: number;
+}
+
+/**
+ * The held action sets open across the queue, read from each parked item.
+ *
+ * Args:
+ *   items: The work items.
+ *
+ * Returns:
+ *   One member per item whose run is parked with rows awaiting the manager.
+ */
+export function pendingDecisionMembers(items: readonly Doc<'workItems'>[]): PendingDecisionMember[] {
+  return items.flatMap((item): PendingDecisionMember[] => {
+    if (item.state !== 'actions-pending' || !item.pendingRunId || item.approvedIndexes !== undefined) {
+      return [];
+    }
+    const actions = ((item.output ?? {}) as RunOutput).actions ?? [];
+    const verdicts = pendingVerdicts(item.actionVerdicts, actions.length);
+    const heldIndexes = verdicts.flatMap((verdict, index) => (verdict.disposition === 'held' ? [index] : []));
+    if (heldIndexes.length === 0) return [];
+    return [
+      {
+        workItemId: item._id,
+        pendingRunId: item.pendingRunId,
+        title: item.title,
+        actions,
+        heldIndexes,
+        refused: verdicts.filter((verdict) => verdict.disposition === 'refused').length,
+      },
+    ];
+  });
+}
+
+/**
+ * Every held action set across the queue, approvable from one place.
+ *
+ * Each member is shown with the same literal payloads its own card shows,
+ * and the one button sends the same exact approval per member that the
+ * card's "Approve all" sends: the parked run and its held indexes. A member
+ * with a refused row is listed but left to its card, as the card's own rule
+ * is. Shown only when more than one item is waiting; one item is its card.
+ */
+export function PendingDecisionsPanel({
+  members,
+  surfaces,
+  onApproveBatch,
+}: {
+  members: PendingDecisionMember[];
+  surfaces: SurfaceRecord[];
+  onApproveBatch: (
+    members: Array<{ workItemId: Id<'workItems'>; pendingRunId: Id<'events'>; approvedIndexes: number[] }>,
+  ) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (members.length < 2) return null;
+  const eligible = members.filter((member) => member.refused === 0);
+  const heldCount = eligible.reduce((sum, member) => sum + member.heldIndexes.length, 0);
+  return (
+    <div className="mb-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
+      <p className="text-[var(--color-warn)] font-medium mb-1">
+        {members.length} items have actions awaiting your approval
+      </p>
+      <ul className="space-y-1.5">
+        {members.map((member) => (
+          <li key={member.workItemId}>
+            <p className="text-[var(--color-fg)] font-medium">{member.title}</p>
+            {member.refused > 0 ? (
+              <p className="text-[10px] text-[var(--color-muted)]">
+                {member.refused} {member.refused === 1 ? 'row is' : 'rows are'} refused by the gate; decide this
+                one on its card.
+              </p>
+            ) : null}
+            <ul className="ml-3 space-y-0.5">
+              {member.heldIndexes.map((index) => (
+                <li key={index} className="text-[var(--color-fg)] break-words">
+                  {summariseAction(member.actions[index], surfaces)}
+                  <details className="mt-0.5">
+                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                      exact payload
+                    </summary>
+                    <ActionPayload action={member.actions[index]} />
+                  </details>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center gap-2 mt-2">
+        <button
+          type="button"
+          disabled={busy || eligible.length === 0}
+          onClick={() => {
+            setBusy(true);
+            setError(null);
+            onApproveBatch(
+              eligible.map((member) => ({
+                workItemId: member.workItemId,
+                pendingRunId: member.pendingRunId,
+                approvedIndexes: member.heldIndexes,
+              })),
+            )
+              .catch((err: unknown) => setError((err as Error).message))
+              .finally(() => setBusy(false));
+          }}
+          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
+        >
+          Approve {heldCount} held {heldCount === 1 ? 'action' : 'actions'} across {eligible.length}{' '}
+          {eligible.length === 1 ? 'item' : 'items'}
+        </button>
+        <span className="text-[10px] text-[var(--color-muted)]">
+          Each item is approved exactly as shown; if one has moved on, nothing is approved and the list refreshes.
+        </span>
+      </div>
+      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
 export function WorkItemCard({
   item,
   surfaces,
   autonomousActions,
+  questions = [],
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -1468,7 +2309,9 @@ export function WorkItemCard({
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
   autonomousActions: boolean;
-  onApprovePlan: () => void;
+  /** The charter's open questions asked at this item's plan and still waiting. */
+  questions?: Doc<'managerQuestions'>[];
+  onApprovePlan: (decision: PlanApproval) => void;
   onCancelPlan: () => void;
   onRetryFailed: (feedback?: string) => void;
   onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
@@ -1505,10 +2348,15 @@ export function WorkItemCard({
   const retryBlocked = needsProviderReconciliation && !item.providerReconciliation;
   // The quality-fit filter's skip is the agent's judgement, not the manager's;
   // Retry hands the item back with that filter waived.
-  const qualityFitSkipped =
-    item.state === 'skipped' &&
-    typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string' &&
-    ((verdict as { reason: string }).reason).startsWith(QUALITY_FIT_SKIP_PREFIX);
+  const skipVerdictReason =
+    item.state === 'skipped' && typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string'
+      ? (verdict as { reason: string }).reason
+      : undefined;
+  const qualityFitSkipped = skipVerdictReason?.startsWith(QUALITY_FIT_SKIP_PREFIX) === true;
+  // The scope judgement is the agent's reading of the charter and the
+  // documented systems; Retry is the manager saying the work is theirs to give.
+  const outOfScopeSkipped = skipVerdictReason?.startsWith(OUT_OF_SCOPE_SKIP_PREFIX) === true;
+  const skipWaivable = qualityFitSkipped || outOfScopeSkipped;
   const [retryNote, setRetryNote] = useState('');
   const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   const awaitingSurface =
@@ -1523,15 +2371,18 @@ export function WorkItemCard({
     item.state === 'plan-pending' || item.state === 'actions-pending'
       ? undeliveredDecisionReason(item.decision, now)
       : undefined;
+  // A failed item whose run landed nothing and left nothing to decide is
+  // shown as stopped: Retry stands, and the badge says no harm was done.
+  const shownState = item.state === 'failed' && isStopped(item.skipReason) ? 'stopped' : item.state;
   return (
     <div className="border border-[var(--color-border)] rounded-lg p-3">
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
             <span
-              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(item.state)}`}
+              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shownState)}`}
             >
-              {item.state}
+              {shownState}
             </span>
             <span className="text-[10px] text-[var(--color-muted)]">
               {item.sourceSystem}/{item.sourceCategory}
@@ -1601,23 +2452,30 @@ export function WorkItemCard({
             ))}
           </ol>
           {item.state === 'plan-pending' ? (
-            <div className="flex gap-2 mt-2">
-              <button
-                onClick={onApprovePlan}
-                className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs"
-              >
-                Approve plan
-              </button>
-              <button
-                onClick={onCancelPlan}
-                className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs"
-              >
-                Cancel
-              </button>
+            <PlanApprovalForm
+              key={item._id}
+              riskNotes={plan.riskNotes ?? ''}
+              questions={questions}
+              onApprove={onApprovePlan}
+              onCancel={onCancelPlan}
+            />
+          ) : null}
+          {item.state !== 'plan-pending' && item.managerAnswers && item.managerAnswers.length > 0 ? (
+            <div className="mt-2 text-[var(--color-muted)]">
+              <p className="text-[10px] uppercase tracking-wider mb-0.5">Answered at approval</p>
+              <ul className="space-y-0.5">
+                {item.managerAnswers.map((entry) => (
+                  <li key={`${entry.question}:${entry.answeredAt}`}>
+                    {entry.question} <span className="text-[var(--color-fg)]">- {entry.answer}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : null}
         </div>
       ) : null}
+
+      {item.managerFeedback ? <ManagerFeedbackNote feedback={item.managerFeedback} /> : null}
 
       {item.state === 'executing' && item.applyPhase === 'auto' ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">
@@ -1641,6 +2499,7 @@ export function WorkItemCard({
           surfaces={surfaces}
           replyTarget={replyTargetFor(item)}
           autonomousActions={autonomousActions}
+          repairs={output.argumentRepairs}
           onApprove={onApproveActions}
           onReject={onRejectActions}
         />
@@ -1674,6 +2533,7 @@ export function WorkItemCard({
                   </span>
                 ) : null}
                 <PhaseLabel phase={a.phase} />
+                <RepairNote repair={a.repair} />
               </li>
             ))}
           </ul>
@@ -1695,6 +2555,7 @@ export function WorkItemCard({
                 {a.effect ? (
                   <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">{a.effect}</code>
                 ) : null}
+                <RepairNote repair={a.repair} />
               </li>
             ))}
           </ul>
@@ -1719,18 +2580,22 @@ export function WorkItemCard({
               <li key={i}>
                 {a.tool} - {a.reason ?? 'unknown reason'}
                 <PhaseLabel phase={a.phase} />
+                <RepairNote repair={a.repair} />
               </li>
             ))}
           </ul>
         </div>
       ) : null}
 
-      {item.state === 'failed' || item.state === 'completed' || qualityFitSkipped ? (
+      {item.state === 'failed' || item.state === 'completed' || skipWaivable ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
               no registered skill, a model error, a mid-run throw, a rejection. */}
-          {item.state === 'failed' && failedActions.length === 0 && failedItemReason(item) ? (
+          {item.state === 'failed' &&
+          failedActions.length === 0 &&
+          failedItemReason(item) &&
+          !(item.managerFeedback && item.skipReason?.startsWith('rejected by the manager')) ? (
             <p className="text-[10px] text-[var(--color-muted)] italic mb-1.5">
               {failedItemReason(item)}
             </p>
@@ -1780,6 +2645,12 @@ export function WorkItemCard({
           {qualityFitSkipped ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry re-evaluates this item without the quality-fit filter; its plan still needs
+              your approval.
+            </p>
+          ) : null}
+          {outOfScopeSkipped ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              Retry re-evaluates this item as in scope, on your decision; its plan still needs
               your approval.
             </p>
           ) : null}
@@ -2115,6 +2986,9 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
 }
 
 export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): string {
+  if (event.type === 'work.failed' && (event.payload as { stopped?: unknown })?.stopped === true) {
+    return 'work.failed · stopped';
+  }
   if (event.type !== 'surface.charter-match-ambiguous') return event.type;
   const candidateSlugs = (event.payload as { candidateSlugs?: unknown }).candidateSlugs;
   if (!Array.isArray(candidateSlugs) || !candidateSlugs.every((slug) => typeof slug === 'string')) {

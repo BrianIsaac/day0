@@ -1,6 +1,7 @@
 import { cronJobs } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
 import { internal } from './_generated/api';
+import { DIGEST_INTERVAL_MINUTES } from '../src/work/manager-notes';
 
 const intakeInternal = internal as unknown as {
   intakeActions: {
@@ -44,6 +45,13 @@ crons.interval(
   'poll manager decision replies',
   { seconds: 60 },
   intakeInternal.intakeActions.pollDecisions,
+  {},
+);
+
+crons.interval(
+  'send manager digests',
+  { minutes: DIGEST_INTERVAL_MINUTES },
+  internal.managerChannelActions.sendManagerDigests,
   {},
 );
 

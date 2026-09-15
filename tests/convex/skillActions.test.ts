@@ -43,7 +43,7 @@ describe('skill author prompts', (): void => {
     expect(AUTHOR_SYSTEM).toContain('mcp.call             — { surface, tool, toolArgsJson }');
     expect(AUTHOR_SYSTEM).toContain('http.request         — { surface, method, path, headersJson, body }');
     expect(AUTHOR_SYSTEM).toContain('name the surface exactly as the Surfaces list does');
-    expect(AUTHOR_SYSTEM).toContain('take the action shape (tool names, argument names, paths) from the runbook');
+    expect(AUTHOR_SYSTEM).toContain('take the tool sequence and paths from the runbook for that system and the argument names from the probed schema');
     expect(AUTHOR_SYSTEM).toContain('emit the reply as its own `http.request` POST `chat.postMessage` action with `channel` set to the source channel and `thread_ts` set to the source thread timestamp');
     expect(AUTHOR_SYSTEM).toContain('it must never carry a draft reply that belongs in the channel');
     expect(AUTHOR_SYSTEM).not.toContain(
@@ -73,7 +73,56 @@ describe('skill author prompts', (): void => {
     }
   });
 
-  it('keeps the mock author prompt unchanged when nothing is connected', (): void => {
+  it('teaches a reusable procedure with declared inputs and no work-item constants', (): void => {
+    expect(AUTHOR_SYSTEM).not.toContain('no template placeholders');
+    expect(AUTHOR_SYSTEM).toContain('A skill is a reusable procedure for one operation on one surface class');
+    expect(AUTHOR_SYSTEM).toContain('`## Inputs`');
+    expect(AUTHOR_SYSTEM).toContain('`<record-id>`');
+    expect(AUTHOR_SYSTEM).toContain('`{{secret}}` stays the only double-brace placeholder');
+    expect(AUTHOR_SYSTEM).toContain('no percentage, amount, identifier, channel, thread or quoted request from any single work item');
+  });
+
+  it('takes invoke conditions from the runbook and leaves scope to the evaluator', (): void => {
+    expect(AUTHOR_SYSTEM).toContain('`## When to invoke` describes the operation and its preconditions as the runbook states them');
+    expect(AUTHOR_SYSTEM).toContain('never restates the charter');
+    expect(AUTHOR_SYSTEM).toContain('owned, prioritised, assigned');
+  });
+
+  it('makes the probed schema the authority for argument names over runbook examples', (): void => {
+    expect(AUTHOR_SYSTEM).toContain('the probed argument names in the Surfaces list are the authority for every tool\'s `toolArgsJson` keys, over any example in a runbook');
+    expect(AUTHOR_SYSTEM).toContain('the runbook is the authority for the sequence, the element names and the verification');
+    expect(AUTHOR_SYSTEM).not.toContain('take the action shape (tool names, argument names, paths) from the runbook for that system');
+  });
+
+  it('asks for a smoke test that runs the procedure with two different input sets', (): void => {
+    expect(AUTHOR_SYSTEM).toContain('reads every value it needs from `inputs`');
+    expect(AUTHOR_SYSTEM).toContain('Call run() once for each of two different representative input dicts');
+    expect(AUTHOR_SYSTEM).toContain('none of them the values of the work item that first needed this skill');
+    expect(AUTHOR_SYSTEM).not.toContain('Call run() once.');
+  });
+
+  it('puts the shape and the execution inputs in front of the author', (): void => {
+    const prompt = buildAuthorPrompt(
+      {
+        ...skill,
+        name: 'analytics-refresh-value',
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      },
+      [],
+      now,
+    );
+    expect(prompt).toContain('Skill name: analytics-refresh-value');
+    expect(prompt).toContain('Shape: value refresh on an analytics surface');
+    expect(prompt).toContain('Execution inputs the executor can supply');
+    expect(prompt).toContain('`<record-id>`');
+    expect(prompt).toContain('`<requested-value>`');
+    expect(prompt).toContain('`<reply-channel>`');
+    expect(prompt).toContain('`<originating-surface>`');
+    expect(prompt).toContain('The rationale names the first work item; it is an instance');
+  });
+
+  it('keeps the shape-free author prompt as it was when nothing is connected', (): void => {
     expect(buildAuthorPrompt(skill, [], now)).toBe(
       [
         'Skill name: update-linear-ticket',
@@ -174,7 +223,10 @@ describe('skill author prompts', (): void => {
     expect(prompt).toContain(
       '`browser_fill_form` with `{"fields":[{"name":"Password","value":"{{secret}}"}]}`',
     );
-    expect(prompt).toContain('preserve its tool name, argument names and literal values exactly');
+    expect(prompt).toContain('preserve its tool name, its sequence and its element names');
+    expect(prompt).toContain('a literal value in an example is that document\'s instance value, not the skill\'s: write the named input it stands for');
+    expect(prompt).toContain('argument names come from the probed schema in the Surfaces list when it shows them');
+    expect(prompt).not.toContain('literal values exactly');
     expect(prompt).toContain('never invent a selector, driver reference or path');
     expect(prompt).not.toContain('runbooks/how-to-post-slack.md');
   });

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import {
   evaluateCandidate,
@@ -8,6 +8,16 @@ import {
   type EvaluationSurface,
 } from '../../../src/work/evaluate';
 import type { AgentContext, WorkCandidate } from '../../../src/work/types';
+
+const model = vi.hoisted(() => ({ calls: [] as string[] }));
+
+vi.mock('../../../src/lib/mastra', () => ({
+  makeAgent: (name: string): { name: string } => ({ name }),
+  agentJson: async (args: { agent: { name: string } }): Promise<unknown> => {
+    model.calls.push(args.agent.name);
+    return { inScope: true, fit: true, reason: 'inside the role' };
+  },
+}));
 
 const NOW = Date.parse('2026-08-26T12:00:00.000Z');
 
@@ -110,6 +120,21 @@ function lookups(
 }
 
 describe('work surface enablement', (): void => {
+  beforeEach((): void => {
+    model.calls.length = 0;
+  });
+
+  it('asks the charter judgement once for a real-mode candidate and never in mock mode', async (): Promise<void> => {
+    await expect(
+      evaluateCandidate(candidate('ticket'), context('mock', []), lookups()),
+    ).resolves.toMatchObject({ decision: 'claim' });
+    expect(model.calls).toEqual([]);
+    await expect(
+      evaluateCandidate(candidate(), context('real', [surface('linear')]), lookups()),
+    ).resolves.toMatchObject({ decision: 'claim' });
+    expect(model.calls).toEqual(['day0-scope-judgement']);
+  });
+
   it('reports a missing skill without asserting in-scope', async (): Promise<void> => {
     const verdict = await evaluateCandidate(candidate('ticket'), context('mock', []), {
       ...lookups(),
@@ -120,8 +145,40 @@ describe('work surface enablement', (): void => {
     if (verdict.decision !== 'needs-skill') throw new Error('Expected needs-skill verdict');
     expect(verdict.reason).not.toContain('in-scope');
     expect(verdict.reason).toBe(
-      `no registered skill matches; agent will propose "${verdict.suggestedSkillName}"`,
+      `no registered skill covers ticket comment-and-close on a kanban surface; agent will propose "${verdict.suggestedSkillName}"`,
     );
+  });
+
+  it('proposes a skill named after the surface class and operation, not the work item', async (): Promise<void> => {
+    const ticket = candidate('ticket');
+    const verdict = await evaluateCandidate(ticket, context('mock', []), {
+      ...lookups(),
+      findMatchingSkill: async (): Promise<null> => null,
+    });
+
+    if (verdict.decision !== 'needs-skill') throw new Error('Expected needs-skill verdict');
+    expect(verdict.suggestedSkillName).toBe('kanban-comment-and-close');
+    expect(verdict.suggestedSkillShape).toEqual({
+      surfaceClass: 'kanban',
+      operation: 'comment-and-close',
+    });
+    expect(verdict.suggestedSkillName).not.toContain(ticket.externalId.toLowerCase());
+    expect(verdict.suggestedSkillRationale).toContain('ticket comment-and-close on a kanban surface');
+    expect(verdict.suggestedSkillRationale).toContain(`"${ticket.title}"`);
+    expect(verdict.suggestedSkillRationale).not.toContain(charter.proposedFunction);
+    expect(verdict.suggestedSkillRationale).not.toContain('Charter');
+  });
+
+  it('hands the shape to the skill lookup so matching and naming agree', async (): Promise<void> => {
+    const seen: unknown[] = [];
+    await evaluateCandidate(candidate('slack'), context('mock', []), {
+      ...lookups(),
+      findMatchingSkill: async (_candidate, _charter, shape): Promise<null> => {
+        seen.push(shape);
+        return null;
+      },
+    });
+    expect(seen).toEqual([{ surfaceClass: 'chat', operation: 'thread-reply' }]);
   });
 
   it('preserves mock behaviour when no persistent surfaces exist', async (): Promise<void> => {
@@ -381,6 +438,28 @@ describe('work surface enablement', (): void => {
         evaluateCandidate(work, context('mock', []), lookups()),
       ).resolves.toMatchObject({ decision: 'skip' });
     });
+  });
+
+  it('leaves the eligibility rule out once the manager has waived it, in either mode', async (): Promise<void> => {
+    const work = candidate('ticket', 'Reserve the venue and confirm the catering headcount.');
+    work.title = 'Book the offsite venue';
+    await expect(
+      evaluateCandidate(work, context('mock', []), lookups()),
+    ).resolves.toEqual({
+      decision: 'skip',
+      reason: 'out-of-scope: no charter or current documented-system overlap',
+    });
+    await expect(
+      evaluateCandidate(work, { ...context('mock', []), scopeWaived: true }, lookups()),
+    ).resolves.toMatchObject({ decision: 'claim' });
+    work.sourceSystem = 'linear';
+    await expect(
+      evaluateCandidate(
+        work,
+        { ...context('real', [surface('linear', 'absent')]), scopeWaived: true },
+        lookups(),
+      ),
+    ).resolves.toEqual({ decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' });
   });
 
   it('does not use retired documentation evidence to widen charter scope', async (): Promise<void> => {

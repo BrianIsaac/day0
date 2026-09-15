@@ -2,6 +2,15 @@ import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import { SYSTEM_CLASSES } from './system-classes';
 export { SYSTEM_CLASSES } from './system-classes';
+import {
+  CONSTRAINT_KINDS,
+  deriveConstraints,
+  normaliseConstraints,
+  type CharterConstraint,
+} from './charter-constraints';
+export type { CharterConstraint } from './charter-constraints';
+import { renderBullets } from './charter-workspace';
+export { identityFromCharter, toolsFromCharter } from './charter-workspace';
 
 /**
  * Charter domain type + synthesis. Lifted from Protean's
@@ -71,7 +80,25 @@ export interface Charter {
   adjacentRoles: AdjacentRole[];
   approvalChain: ApprovalChain;
   openQuestions: string[];
+  /**
+   * The clauses that constrain work, beside the manager's words, for the
+   * manager to confirm or strike. Absent on charters drafted before the
+   * list existed, which read as having nothing to confirm.
+   */
+  constraints?: CharterConstraint[];
+  /**
+   * Open questions the manager has answered, each answer written into the
+   * charter by an amendment. Absent until the first answer.
+   */
+  answeredQuestions?: AnsweredQuestion[];
   createdAt: string;
+}
+
+export interface AnsweredQuestion {
+  question: string;
+  answer: string;
+  /** ISO timestamp of the amendment that recorded the answer. */
+  answeredAt: string;
 }
 
 export const DAY_ONE_TOPICS = [
@@ -96,6 +123,8 @@ const SYSTEM_PROMPT = [
   'List every product or service the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
   'Return exactly one namedSystems row per product or service. Channels, DMs, pages, files, runbooks, queues, dashboards, tiles, views, sheets and tabs are locations inside a system, never separate systems.',
   'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
+  'Constraints: under constraints, list every rule the manager stated that limits which work you take or how you do it: a property a candidate must have (candidate-property), a system you must or must not touch (system-boundary), a person you report to or must not contact (reporting-line).',
+  'For each, quote is the manager\'s own sentence, copied, and wording is the exact phrase or phrases in your proposedFunction, willDo, willNotDo or escalationTriggers that encode it. Leave constraints empty when the manager stated no such rule; never add one they did not state.',
 ].join('\n');
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
@@ -145,6 +174,13 @@ export const charterSchema = z.object({
     confidence: z.enum(['low', 'medium', 'high']),
   }),
   openQuestions: z.array(z.string()),
+  constraints: z.array(
+    z.object({
+      kind: z.enum(CONSTRAINT_KINDS),
+      quote: z.string(),
+      wording: z.array(z.string()),
+    }),
+  ),
 });
 
 type RawCharterPayload = z.infer<typeof charterSchema>;
@@ -322,7 +358,7 @@ export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSys
 }
 
 function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt: string): Charter {
-  return {
+  const charter: Charter = {
     version: args.version,
     source: 'day-1 manager 1:1',
     whyThisHire: raw.whyThisHire,
@@ -340,6 +376,11 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
     },
     openQuestions: raw.openQuestions,
     createdAt,
+  };
+  const listed = normaliseConstraints(raw.constraints ?? [], charter);
+  return {
+    ...charter,
+    constraints: [...listed, ...deriveConstraints(charter, args.answers, listed)],
   };
 }
 
@@ -486,13 +527,15 @@ export function renderCharter(c: Charter, date = new Date()): string {
     'OPEN QUESTIONS — to follow up',
     ...renderBullets(c.openQuestions, '  '),
     '',
+    ...((c.answeredQuestions ?? []).length > 0
+      ? [
+          'ANSWERED QUESTIONS                                         [from manager, after approval]',
+          ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} — ${q.answer}`),
+          '',
+        ]
+      : []),
   ];
   return lines.join('\n');
-}
-
-function renderBullets(values: string[], indent: string): string[] {
-  if (values.length === 0) return [`${indent}- (none)`];
-  return values.map((v) => `${indent}- ${v}`);
 }
 
 function renderEvidence(items: EvidenceItem[]): string[] {
@@ -512,54 +555,4 @@ function renderAdjacents(items: AdjacentRole[]): string[] {
 
 export function extractRole(c: Charter): string {
   return (c.proposedFunction || c.whyThisHire || 'autonomous agent').trim();
-}
-
-export function identityFromCharter(c: Charter): string {
-  const lines = [
-    '# IDENTITY',
-    '',
-    `Role: ${c.proposedFunction}`,
-    '',
-    `Why this hire: ${c.whyThisHire}`,
-    '',
-    '## Short-term goals (manager-defined)',
-    `- 30-day: ${c.shortTermGoals.day30}`,
-    `- 60-day: ${c.shortTermGoals.day60}`,
-    `- 90-day: ${c.shortTermGoals.day90}`,
-    '',
-    '## Boundaries — what I will do',
-    ...renderBullets(c.proposedBoundaries.willDo, ''),
-    '',
-    '## Boundaries — what I will NOT do',
-    ...renderBullets(c.proposedBoundaries.willNotDo, ''),
-    '',
-    '## Escalation triggers',
-    ...renderBullets(c.proposedBoundaries.escalationTriggers, ''),
-    '',
-    '## Key relationships',
-    ...c.namedCollaborators.map((n) => `- ${n.name} — ${n.topic} (intro path: ${n.introPath})`),
-    '',
-  ];
-  return lines.join('\n');
-}
-
-export function toolsFromCharter(c: Charter): string {
-  const reading =
-    c.priorityReading.length > 0 ? c.priorityReading : ['(manager pointed nothing yet)'];
-  const lines = [
-    '# TOOLS',
-    '',
-    '## Priority reading (manager-pointed)',
-    ...reading.map((r) => `- ${r}`),
-    '',
-    '## Known surfaces (open questions until the team names them)',
-    ...(c.namedSystems ?? []).map(
-      (system) => `- ${system.name} (${system.class}) - ${system.whereMentioned}`,
-    ),
-    ...c.openQuestions
-      .filter((q) => /tool|stack|tracker|surface|dashboard|wiki|spreadsheet/i.test(q))
-      .map((q) => `- ${q}`),
-    '',
-  ];
-  return lines.join('\n');
 }

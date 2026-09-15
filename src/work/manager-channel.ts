@@ -189,3 +189,56 @@ export function decisionRequestText(args: {
     `Reply “approve ${args.id}” or “reject ${args.id} <reason>”.`,
   ].join('\n');
 }
+
+/**
+ * The lines a decision request adds when other held action sets are open:
+ * one code that decides them all, with every member named so the manager
+ * knows exactly which requests the batch covers.
+ *
+ * Args:
+ *   args: The batch code and its members with their own codes.
+ *
+ * Returns:
+ *   Prompt lines to append after the single-item command.
+ */
+export function batchRequestLines(args: {
+  id: string;
+  members: ReadonlyArray<{ title: string; decisionId: string }>;
+}): string[] {
+  const count = args.members.length;
+  return [
+    '',
+    `${count} held action sets are waiting, each shown in its own request:`,
+    ...args.members.map(
+      (member, index) => `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId})`,
+    ),
+    `Reply “approve ${args.id}” to approve every held action in all ${count}, or “reject ${args.id} <reason>” to reject them all. A request decided since is left as decided.`,
+  ];
+}
+
+/**
+ * The acknowledgement for a batch reply.
+ *
+ * Args:
+ *   args: The batch code, the verb, and which members were decided or left.
+ *
+ * Returns:
+ *   One message naming what the reply did.
+ */
+export function batchDecisionNoticeText(args: {
+  id: string;
+  verb: 'approve' | 'reject';
+  decided: readonly string[];
+  skipped: ReadonlyArray<{ decisionId: string; reason: string }>;
+}): string {
+  const noun = args.verb === 'approve' ? 'Approval' : 'Rejection';
+  const total = args.decided.length + args.skipped.length;
+  const head =
+    args.decided.length === 0
+      ? `${noun} ${args.id} received, but nothing in it was still open.`
+      : `${noun} ${args.id} received for ${args.decided.length} of ${total} decisions (${args.decided.join(', ')}). ${
+          args.verb === 'approve' ? 'I’m applying the approved actions now.' : 'I won’t apply them.'
+        }`;
+  const left = args.skipped.map((member) => `${member.decisionId}: ${member.reason}`);
+  return left.length > 0 ? `${head} Left as they were: ${left.join('; ')}.` : head;
+}

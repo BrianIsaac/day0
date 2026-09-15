@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import {
   blockedPlanReason,
   browserTransportRefusal,
+  closingStopReason,
   completionFailure,
   dependentTransitionRefusal,
   findMatchingSkillForCandidate,
@@ -26,10 +27,13 @@ import {
   HELD_WRITE,
 } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
-import type {
-  DependentExecutionOutput,
-  ExecutionOutput,
-  PlanStepOutcome,
+import { STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
+import { actionIdempotencyKey } from '../../src/work/idempotency';
+import {
+  CLOSING_SET_CAP,
+  type DependentExecutionOutput,
+  type ExecutionOutput,
+  type PlanStepOutcome,
 } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
@@ -50,7 +54,7 @@ afterAll(async (): Promise<void> => {
 
 const recorded = vi.hoisted(() => ({
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
-  http: [] as Array<{ url: string; authorization: string; body: unknown }>,
+  http: [] as Array<{ url: string; method?: string; authorization: string | undefined; body: unknown }>,
   failMcpAfterRequest: false,
   failedMcpTool: undefined as string | undefined,
   issueRecordText: undefined as string | undefined,
@@ -58,7 +62,10 @@ const recorded = vi.hoisted(() => ({
   afterToolList: undefined as (() => Promise<void>) | undefined,
   skillRuns: 0,
   skillModes: [] as Array<string | undefined>,
+  skillAnswers: [] as unknown[],
   skillSwitches: [] as Array<boolean | undefined>,
+  skillFeedback: [] as Array<string | undefined>,
+  dependentFeedback: [] as Array<string | undefined>,
   dependentSwitches: [] as Array<boolean | undefined>,
   planSwitches: [] as boolean[],
   planContexts: [] as Array<{ surfaces?: string[]; documents?: string[] }>,
@@ -132,6 +139,7 @@ describe('skill selection surface boundary', (): void => {
           contentSummary: 'Write the team handoff for the next shift.',
         },
         [spreadsheetSkill],
+        { surfaceClass: 'chat', operation: 'thread-reply' },
       ),
     ).toBeUndefined();
   });
@@ -151,6 +159,7 @@ describe('skill selection surface boundary', (): void => {
           contentSummary: 'Write the team handoff for the next shift.',
         },
         [spreadsheetSkill, slackSkill],
+        { surfaceClass: 'chat', operation: 'thread-reply' },
       ),
     ).toBe(slackSkill);
   });
@@ -170,9 +179,12 @@ describe('skill selection for real-mode target surfaces', (): void => {
       targetSurface: 'looker',
       requiredScopes: ['boss:message', 'slack:read', 'looker:read', 'looker:write'],
     };
-    expect(findMatchingSkillForCandidate(slackMention, [proposedByEvaluator])).toBe(
-      proposedByEvaluator,
-    );
+    expect(
+      findMatchingSkillForCandidate(slackMention, [proposedByEvaluator], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBe(proposedByEvaluator);
   });
 
   it('refuses a row that declares only a foreign surface, even when its name matches the source', (): void => {
@@ -182,7 +194,12 @@ describe('skill selection for real-mode target surfaces', (): void => {
       targetSurface: 'looker',
       requiredScopes: ['looker:read', 'looker:write'],
     };
-    expect(findMatchingSkillForCandidate(slackMention, [foreignOnly])).toBeUndefined();
+    expect(
+      findMatchingSkillForCandidate(slackMention, [foreignOnly], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBeUndefined();
   });
 
   it('matches a builtin or legacy row without surface metadata by the source name alone', (): void => {
@@ -194,14 +211,119 @@ describe('skill selection for real-mode target surfaces', (): void => {
       findMatchingSkillForCandidate(
         { sourceSystem: 'docs', title: 'Team cadence', contentSummary: 'When is standup?' },
         [builtinDocs],
+        { surfaceClass: 'docs', operation: 'answer-from-docs' },
       ),
     ).toBe(builtinDocs);
     expect(
       findMatchingSkillForCandidate(
         { sourceSystem: 'linear', title: 'Close REVOPS-5', contentSummary: 'Close the issue.' },
         [builtinDocs],
+        { surfaceClass: 'kanban', operation: 'comment-and-close' },
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('skill selection by shape', (): void => {
+  const tileSkill = {
+    name: 'analytics-refresh-value',
+    description: 'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
+    targetSurface: 'looker-pipeline-tile',
+    requiredScopes: ['boss:message', 'linear:read', 'looker-pipeline-tile:read', 'looker-pipeline-tile:write'],
+    surfaceClass: 'analytics',
+    operation: 'refresh-value',
+  };
+  const chatSkill = {
+    name: 'chat-thread-reply',
+    description: 'Threaded reply on a chat surface, parameterised from each work item and its runbook.',
+    targetSurface: 'slack',
+    requiredScopes: ['boss:message', 'slack:read', 'slack:write'],
+    surfaceClass: 'chat',
+    operation: 'thread-reply',
+  };
+  const legacyTicketSkill = {
+    name: 'linear-action-revops-7',
+    description: 'Skill proposed to handle linear work like "Refresh the Looker pipeline tile".',
+    targetSurface: 'looker-pipeline-tile',
+    requiredScopes: ['boss:message', 'linear:read', 'looker-pipeline-tile:write'],
+  };
+  const secondRefresh = {
+    sourceSystem: 'linear',
+    title: 'Refresh the Looker pipeline tile',
+    contentSummary: 'Set the coverage figure to 68% for REVOPS-11 and record the audit line.',
+  };
+
+  it('reuses the registered skill for a second refresh with a different figure and ticket', (): void => {
+    expect(
+      findMatchingSkillForCandidate(secondRefresh, [chatSkill, tileSkill], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBe(tileSkill);
+  });
+
+  it('reuses the chat skill for an ask in a different thread', (): void => {
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'slack',
+          title: 'Mention in #revops-asks',
+          contentSummary: 'Which coverage figure are we quoting this week?',
+        },
+        [tileSkill, chatSkill],
+        { surfaceClass: 'chat', operation: 'thread-reply' },
+      ),
+    ).toBe(chatSkill);
+  });
+
+  it('finds nothing for a shape no registered skill covers', (): void => {
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'linear',
+          title: 'Append the close row to the Close tracker',
+          contentSummary: 'Add this week\'s close figures as a new row.',
+        },
+        [tileSkill, chatSkill],
+        { surfaceClass: 'spreadsheet', operation: 'append-row' },
+      ),
+    ).toBeUndefined();
+  });
+
+  it('never matches a shaped skill by token overlap', (): void => {
+    expect(
+      findMatchingSkillForCandidate(
+        {
+          sourceSystem: 'linear',
+          title: 'Refresh the value on the analytics surface',
+          contentSummary: 'analytics refresh value runbook work item',
+        },
+        [tileSkill],
+        { surfaceClass: 'kanban', operation: 'comment-and-close' },
+      ),
+    ).toBeUndefined();
+  });
+
+  it('does not use a legacy write procedure for a read-only shape', () => {
+    expect(findMatchingSkillForCandidate({
+      ...secondRefresh, title: 'Read the Looker pipeline tile',
+      contentSummary: 'Report the figure; do not change anything.',
+    }, [legacyTicketSkill, tileSkill], { surfaceClass: 'analytics', operation: 'read' })).toBeUndefined();
+  });
+
+  it('keeps serving a legacy per-ticket row through the token path when no shaped skill covers the shape', (): void => {
+    expect(
+      findMatchingSkillForCandidate(secondRefresh, [legacyTicketSkill], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBe(legacyTicketSkill);
+    expect(
+      findMatchingSkillForCandidate(secondRefresh, [legacyTicketSkill, tileSkill], {
+        surfaceClass: 'analytics',
+        operation: 'refresh-value',
+      }),
+    ).toBe(tileSkill);
   });
 });
 
@@ -234,11 +356,15 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     runSkill: async (args: {
       mode?: string;
       autonomousActions?: boolean;
+      managerAnswers?: unknown;
+      managerFeedback?: string;
       onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
       recorded.skillModes.push(args.mode);
+      recorded.skillAnswers.push(args.managerAnswers);
       recorded.skillSwitches.push(args.autonomousActions);
+      recorded.skillFeedback.push(args.managerFeedback);
       for (let call = 0; call < recorded.additionalModelCalls; call += 1) {
         args.onAdditionalModelCall?.();
       }
@@ -246,8 +372,10 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     },
     repairToolArguments: async (args: {
       row: { call: { surface: string; tool: string }; reason: string };
+      onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput['actions'][number] | undefined> => {
       recorded.repairRequests.push({ tool: args.row.call.tool, reason: args.row.reason });
+      args.onAdditionalModelCall?.();
       if (!recorded.repairedToolArgsJson) return undefined;
       return {
         tool: 'mcp.call',
@@ -260,10 +388,12 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     },
     runDependentSkill: async (args: {
       autonomousActions?: boolean;
+      managerFeedback?: string;
       plan: { steps: string[] };
     }): Promise<DependentExecutionOutput> => {
       recorded.dependentRuns += 1;
       recorded.dependentSwitches.push(args.autonomousActions);
+      recorded.dependentFeedback.push(args.managerFeedback);
       return (
         recorded.dependentOutput ?? {
           draft: 'No further action needed.',
@@ -401,9 +531,22 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
   const headers = (init?.headers ?? {}) as Record<string, string>;
   recorded.http.push({
     url: String(input),
+    method: init?.method,
     authorization: headers.Authorization,
-    body: JSON.parse(String(init?.body)),
+    body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
   });
+  if (String(input).includes('/conversations.replies')) {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [
+          { ts: '1787746453.202809', text: '<@U0DAY0> are the three Q3 deals covered in the tracker?', user: 'U0MANAGER' },
+          { ts: '1787746500.000100', text: 'Context: the Friday standup figure was 74%.', user: 'U0MANAGER' },
+        ],
+      }),
+      { status: 200 },
+    );
+  }
   return new Response(JSON.stringify({ ok: true, ts: '1787654400.000200' }), { status: 200 });
 });
 
@@ -422,6 +565,9 @@ afterEach((): void => {
   recorded.planRecords.length = 0;
   recorded.skillRuns = 0;
   recorded.skillModes.length = 0;
+  recorded.skillAnswers.length = 0;
+  recorded.skillFeedback.length = 0;
+  recorded.dependentFeedback.length = 0;
   recorded.skillOutput = undefined;
   recorded.dependentOutput = undefined;
   recorded.dependentRuns = 0;
@@ -573,6 +719,14 @@ function ledger(row: Doc<'workItems'>): AppliedAction[] {
   return ((row.output ?? {}) as { applied?: AppliedAction[] }).applied ?? [];
 }
 
+async function scheduledNames(harness: Harness): Promise<string[]> {
+  return (
+    await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+  )
+    .map((row) => row.name)
+    .sort();
+}
+
 describe('work action completion evidence', (): void => {
   it('refuses an empty ledger', (): void => {
     expect(completionFailure([])).toContain('nothing in the work environment changed');
@@ -610,30 +764,55 @@ describe('work action completion evidence', (): void => {
     ).toBeUndefined();
   });
 
-  it('removes a prewritten closing comment after the last prerequisite read', (): void => {
-    const snapshot: ExecutionOutput['actions'][number] = {
+  it('keeps every audited phase-one action, the browser batch and its snapshot included, wherever the last read sits', (): void => {
+    const browser = (tool: string, toolArgsJson: string): ExecutionOutput['actions'][number] => ({
       tool: 'mcp.call',
-      args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
+      args: { surface: 'looker', tool, toolArgsJson },
+    });
+    const read: ExecutionOutput['actions'][number] = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
     };
-    const stale = skillOutput.actions[0];
+    // The 2 September batch: the read, then the six-step tile sequence ending in the snapshot.
+    const batch = [
+      read,
+      browser('browser_navigate', '{"url":"http://looker-tile:8080/"}'),
+      browser('browser_fill_form', '{"fields":[{"name":"Username","value":"revops"},{"name":"Password","value":"{{secret}}"}]}'),
+      browser('browser_click', '{"element":"Sign in"}'),
+      browser('browser_fill_form', '{"fields":[{"name":"Pipeline coverage","value":"74%"}]}'),
+      browser('browser_click', '{"element":"Save"}'),
+      browser('browser_snapshot', '{}'),
+    ];
+    const plan = {
+      summary: 'Refresh the tile, read it back, then close the ticket.',
+      steps: ['Refresh the tile', 'Read back the figure and the audit line', 'Comment and close REVOPS-7'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const staged = prerequisiteOutput(
+      { draft: 'd', notes: '', needsDependentPhase: true, actions: batch },
+      plan,
+    );
+    expect(staged.needsDependentPhase).toBe(true);
+    expect(staged.actions).toEqual(batch);
+    // The audit, not the position of the last read, decides what phase one carries:
+    // a sequence whose snapshot is not its last action is kept whole too.
+    const snapshotFirst = [read, batch[6], ...batch.slice(1, 6)];
     expect(
       prerequisiteOutput(
-        {
-          draft: 'd',
-          notes: '',
-          needsDependentPhase: true,
-          actions: [snapshot, stale],
-        },
-        {
-          summary: 'Read then close.',
-          steps: ['Read the evidence', 'Close the ticket'],
-          expectedOutputType: 'ticket-update',
-          riskNotes: '',
-          reversibility: '',
-          estimatedMinutes: 1,
-        },
-      ).actions,
-    ).toEqual([snapshot]);
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: snapshotFirst },
+        plan,
+      ),
+    ).toEqual({ draft: 'd', notes: '', needsDependentPhase: true, actions: snapshotFirst });
+    // A plan that promises no result and an output that asked for no closing phase stay single-phase.
+    expect(
+      prerequisiteOutput(
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: [read] },
+        { ...plan, steps: ['Comment on REVOPS-7'] },
+      ).needsDependentPhase,
+    ).toBe(false);
   });
 
   it('refuses to call a promised Linear read satisfied when no such ledger row landed', (): void => {
@@ -675,6 +854,51 @@ describe('work action completion evidence', (): void => {
         surfaces: [{ slug: 'looker', displayName: 'Looker pipeline tile' }],
       }),
     ).toThrow('promised a Looker pipeline tile read');
+  });
+
+  it('accepts a step satisfied on the manager\'s word only when the run carries their feedback', (): void => {
+    const plan = {
+      summary: 'Confirm the owner, then comment and close.',
+      steps: ['Confirm REVOPS-7 has an owner.', 'Comment on the ticket and close it.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    };
+    const surfaces = [{ slug: 'linear', displayName: 'Linear' }];
+    const outcomes: PlanStepOutcome[] = [
+      {
+        step: 1,
+        status: 'satisfied',
+        evidence: 'Manager: REVOPS-7 is owned by Priya.',
+        basis: 'manager-feedback',
+      },
+      { step: 2, status: 'satisfied', evidence: 'comment and Done' },
+    ];
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan,
+        outcomes,
+        initialActions: [],
+        initialLedger: [],
+        surfaces,
+        managerFeedback: 'REVOPS-7 is owned by Priya.',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validatePlanStepOutcomes({ plan, outcomes, initialActions: [], initialLedger: [], surfaces }),
+    ).toThrow('step 1 cites manager feedback the run does not carry');
+    // The manager's word settles a fact; it never stands in for a read the plan promised.
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: { ...plan, steps: ['Read REVOPS-7 in Linear to confirm it has an owner.', plan.steps[1]] },
+        outcomes,
+        initialActions: [],
+        initialLedger: [],
+        surfaces,
+        managerFeedback: 'REVOPS-7 is owned by Priya.',
+      }),
+    ).toThrow('promised a Linear read');
   });
 
   it('accepts a not-verifiable outcome with evidence for a promised read, and never lets it withhold the close or fail the run', (): void => {
@@ -803,6 +1027,46 @@ describe('work action completion evidence', (): void => {
   });
 });
 
+describe('stopping blocked work with only a manager message left', (): void => {
+  const slack = {
+    slug: 'slack', displayName: 'Slack', class: 'chat', verdict: 'connected', credentialLanded: true,
+    lastVerifiedAt: 1, path: 'documented-api', endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage'], managerDmChannelId: 'D0MANAGER',
+  } as const;
+  const dm = (text: string) => ({
+    tool: 'http.request' as const,
+    args: {
+      surface: 'slack', method: 'POST', path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel: 'D0MANAGER', text }),
+    },
+  });
+  const run = (text: string) => ({
+    plan: {
+      summary: 'Confirm the owner, then add the audit note and close.',
+      steps: ['Confirm REVOPS-7 has an owner', 'Comment and close REVOPS-7'],
+      expectedOutputType: 'ticket-update' as const, riskNotes: '', reversibility: 'reversible', estimatedMinutes: 5,
+    },
+    outcomes: [
+      { step: 1, status: 'blocked' as const, evidence: 'get_issue shows no assignee.' },
+      { step: 2, status: 'blocked' as const, evidence: 'Nothing to close without an owner.' },
+    ],
+    initialActions: [{ tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"iss-1"}' } }],
+    initialApplied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'wi:run:0' }],
+    closingActions: [dm(text)],
+    surfaces: [slack as never],
+  });
+
+  it('lets a question or an ask for a decision through', (): void => {
+    expect(closingStopReason(run('Who should own REVOPS-7 so I can continue?'))).toBeUndefined();
+    expect(closingStopReason(run('Please assign REVOPS-7 an owner and I will pick it up.'))).toBeUndefined();
+  });
+
+  it('still stops on a note that asks the manager nothing', (): void => {
+    expect(closingStopReason(run('REVOPS-7 has no owner, so nothing was changed and I stopped.'))).toContain('blocked');
+  });
+});
+
 describe('executing an approved plan through the gate', (): void => {
   it('authors ticket closure only after the browser read-back exists', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -863,19 +1127,10 @@ describe('executing an approved plan through the gate', (): void => {
           tool: 'mcp.call',
           args: { surface: 'looker', tool: 'browser_snapshot', toolArgsJson: '{}' },
         },
-        {
-          tool: 'mcp.call',
-          args: {
-            surface: 'linear',
-            tool: 'save_comment',
-            toolArgsJson: JSON.stringify({
-              issueId: 'iss-1',
-              body: 'The evidence is not yet available, so I am not moving the issue to Done.',
-            }),
-          },
-        },
       ],
     };
+    // A comment written before the read-back exists never reaches the gate:
+    // the executor's deferral audit refuses it and the closing phase authors it.
     const auditLine = 'visible figure 74% · Last updated by revops at 2026-08-29 17:24:02 UTC';
     recorded.dependentOutput = {
       draft: `The tile was read back as ${auditLine} and REVOPS-7 is ready to close.`,
@@ -984,6 +1239,86 @@ describe('executing an approved plan through the gate', (): void => {
       Array.from({ length: 8 }, (_, index) => `${workItemId}:${runId}:${index}`),
     );
     expect(recorded.dependentRuns).toBe(1);
+  });
+
+  it('lets the closing phase carry the whole closing set, and a deferred sequence only when phase one declared one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const linearRead = (tool: string): ExecutionOutput['actions'][number] => ({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool, toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+    });
+    const closingSet: ExecutionOutput['actions'] = [
+      skillOutput.actions[0],
+      skillOutput.actions[1],
+      skillOutput.actions[2],
+      linearRead('list_comments'),
+      linearRead('get_issue'),
+    ];
+    expect(closingSet).toHaveLength(CLOSING_SET_CAP);
+    const closing = (actions: ExecutionOutput['actions']): DependentExecutionOutput => ({
+      draft: 'Closing the ticket from the read-back.',
+      notes: '',
+      actions,
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'ledger row 0' },
+        { step: 2, status: 'satisfied', evidence: 'the comment and Done in this response' },
+      ],
+    });
+    const prepare = async (initial: ExecutionOutput): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'>; harness: Harness }> => {
+      recorded.skillOutput = initial;
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      const prepared = await readItem(harness, workItemId);
+      expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+      const runId = prepared.executionRunId;
+      if (!runId) throw new Error('execution run missing');
+      return { workItemId, runId, harness };
+    };
+    const undeclared: ExecutionOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [linearRead('get_issue')],
+    };
+
+    // The closing set fits without any declared deferral. The auto rows are
+    // applied here rather than left to the scheduler, so no call from this
+    // run lands in a later test.
+    recorded.dependentOutput = closing(closingSet);
+    let run = await prepare(undeclared);
+    await expect(
+      run.harness.action(internal.workActions.authorDependentActions, { workItemId: run.workItemId, runId: run.runId }),
+    ).resolves.toEqual({ ok: true, reason: 'dependent actions applying' });
+    await run.harness.action(internal.workActions.applyApprovedActions, { workItemId: run.workItemId });
+    expect((await readItem(run.harness, run.workItemId)).state).toBe('actions-pending');
+
+    // A sixth closing action needs the allowance phase one did not declare.
+    recorded.dependentOutput = closing([...closingSet, linearRead('get_issue')]);
+    run = await prepare(undeclared);
+    await expect(
+      run.harness.action(internal.workActions.authorDependentActions, { workItemId: run.workItemId, runId: run.runId }),
+    ).resolves.toEqual({ ok: false, reason: `dependent phase emitted 6 actions; cap is ${CLOSING_SET_CAP}` });
+    expect((await readItem(run.harness, run.workItemId)).state).toBe('failed');
+
+    // Phase one declared a deferral against its read: the closing phase may carry it.
+    run = await prepare({
+      ...undeclared,
+      deferredActions: [
+        {
+          description: 'the documented tile sequence, whose figure the record read returns',
+          reason: 'the fill value is the figure in the record',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'record',
+        },
+      ],
+    });
+    await expect(
+      run.harness.action(internal.workActions.authorDependentActions, { workItemId: run.workItemId, runId: run.runId }),
+    ).resolves.toEqual({ ok: true, reason: 'dependent actions applying' });
+    await run.harness.action(internal.workActions.applyApprovedActions, { workItemId: run.workItemId });
+    expect((await readItem(run.harness, run.workItemId)).state).toBe('actions-pending');
   });
 
   it('holds the dependent comment and Done transition together under one supervised decision', async (): Promise<void> => {
@@ -1101,7 +1436,7 @@ describe('executing an approved plan through the gate', (): void => {
 
     await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
       workItemId,
-      pendingRunId: runId,
+      pendingRunId: pending.pendingRunId!,
       approvedIndexes: [0, 1],
     });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
@@ -1111,7 +1446,7 @@ describe('executing an approved plan through the gate', (): void => {
     ).toEqual(['save_comment', 'save_issue']);
   });
 
-  it('applies a truthful closing comment and withholds Done when the manager left a prerequisite out', async (): Promise<void> => {
+  it('stops without a second decision when the manager left the prerequisite out, and withholds the closing comment', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
     recorded.skillOutput = {
@@ -1208,34 +1543,33 @@ describe('executing an approved plan through the gate', (): void => {
       phase: 'dependent-authoring',
     });
     await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
-    // With the switch off the closing comment is itself held; the manager sends it.
-    const closing = await readItem(harness, workItemId);
-    expect(closing.state).toBe('actions-pending');
-    expect((closing.output as ExecutionOutput).actions?.map((action) => action.args.tool)).toEqual([
-      'save_comment',
-    ]);
-    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
-      workItemId,
-      pendingRunId: runId,
-      approvedIndexes: [0],
-    });
-    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
-
+    // The manager already decided the Save; nothing landed and no approval of
+    // the closing comment could complete the plan, so the run stops with the
+    // comment on the record rather than asking a second time.
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
+    expect(failed.skipReason?.startsWith(STOPPED_PREFIX)).toBe(true);
     expect(failed.skipReason).toContain('2 approved plan step(s) remained blocked');
     expect(failed.skipReason).toContain('browser_click Save was held and not approved.');
-    // The snapshot shares the browser session with the held Save, so neither
-    // reached the provider; only the truthful closing comment did.
-    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+    expect(recorded.mcp.map((call) => call.tool)).toEqual([]);
     expect(ledger(failed).map((entry) => [entry.tool, entry.ok, entry.held ?? false])).toEqual([
       ['mcp.call', true, true],
       ['mcp.call', true, true],
-      ['mcp.call', true, false],
+      ['mcp.call', true, true],
     ]);
+    expect(ledger(failed)[2].reason).toBe(WITHHELD_ON_STOP);
+    expect((failed.output as ExecutionOutput).actions?.map((action) => action.args.tool)).toEqual([
+      'browser_click',
+      'browser_snapshot',
+      'save_comment',
+    ]);
+    const stops = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+      (event) => event.type === 'work.failed',
+    );
+    expect(stops.map((event) => (event.payload as { stopped?: boolean }).stopped)).toEqual([true]);
   });
 
-  it('reports a failed snapshot truthfully and never emits the Done transition', async (): Promise<void> => {
+  it('stops on a failed snapshot before any closing action, with the failure on the record', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
     recorded.failedMcpTool = 'browser_snapshot';
@@ -1313,50 +1647,31 @@ describe('executing an approved plan through the gate', (): void => {
 
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
-    const prepared = await readItem(harness, workItemId);
-    const runId = prepared.executionRunId;
-    if (!runId) throw new Error('execution run missing');
-    expect((prepared.output as { initialFailure?: string }).initialFailure).toContain(
-      'browser_snapshot failed: snapshot timed out',
-    );
-    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
-    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
 
+    // A provider failure with nothing landed leaves nothing to audit and
+    // nothing to decide: the run stops here, without a closing phase.
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
+    expect(failed.skipReason?.startsWith(STOPPED_PREFIX)).toBe(true);
     expect(failed.skipReason).toContain('browser_snapshot failed: snapshot timed out');
-    const linearCalls = recorded.mcp.filter((call) => call.server === 'linear');
-    expect(linearCalls.map((call) => call.tool)).toEqual(['save_comment']);
-    expect(linearCalls[0].args).toMatchObject({
-      body: expect.stringContaining('browser_snapshot timed out'),
-    });
-    expect(JSON.stringify(linearCalls)).not.toContain('save_issue');
-    expect(JSON.stringify(linearCalls)).not.toContain('"state":"Done"');
-    expect((failed.output as { planStepOutcomes?: unknown[] }).planStepOutcomes).toHaveLength(2);
+    expect(recorded.dependentRuns).toBe(0);
+    expect(recorded.mcp.filter((call) => call.server === 'linear')).toEqual([]);
+    expect(JSON.stringify(recorded.mcp)).not.toContain('"state":"Done"');
+    expect(ledger(failed).map((entry) => [entry.tool, entry.ok])).toEqual([['mcp.call', false]]);
+    expect(await scheduledNames(harness)).not.toContain('workActions:authorDependentActions');
   });
 
   it('records why promised Linear reads were not made instead of silently answering the Slack ask', async (): Promise<void> => {
     useSurfaceMode('real');
+    // The executor emitted no read and set no closing phase; a reply written
+    // before the promised reads is refused by the deferral audit, so nothing
+    // reaches the gate from phase one. The plan's promised reads give the run
+    // its closing phase regardless.
     recorded.skillOutput = {
       draft: 'The Slack reply is ready.',
       notes: '',
       needsDependentPhase: false,
-      actions: [
-        {
-          tool: 'http.request',
-          args: {
-            surface: 'slack',
-            method: 'POST',
-            path: '/chat.postMessage',
-            headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
-            body: JSON.stringify({
-              channel: 'C0PUBLIC',
-              thread_ts: '1787746453.202809',
-              text: 'The three deals are covered.',
-            }),
-          },
-        },
-      ],
+      actions: [],
     };
     recorded.dependentOutput = {
       draft: 'I could not answer because the promised Linear reads were never emitted.',
@@ -1428,7 +1743,7 @@ describe('executing an approved plan through the gate', (): void => {
     const failed = await readItem(harness, workItemId);
     expect(failed.state).toBe('failed');
     expect(failed.skipReason).toBe(
-      '3 approved plan step(s) remained blocked: step 1 (No Linear list or get action exists in the ledger.); step 2 (No Linear read exists in the ledger.); step 3 (The evidence prerequisite was not met.)',
+      `${STOPPED_PREFIX}3 approved plan step(s) remained blocked: step 1 (No Linear list or get action exists in the ledger.); step 2 (No Linear read exists in the ledger.); step 3 (The evidence prerequisite was not met.)`,
     );
     expect(recorded.mcp.filter((call) => call.server === 'linear')).toHaveLength(0);
     expect(recorded.http).toHaveLength(0);
@@ -1439,11 +1754,13 @@ describe('executing an approved plan through the gate', (): void => {
 
   it('completes a ticket update whose plan says read but whose evidence is the ticket itself', async (): Promise<void> => {
     useSurfaceMode('real');
+    // The plan promises a read, so the run has a closing phase whatever the
+    // executor said; the comment and Done are authored there, never in phase one.
     recorded.skillOutput = {
       draft: 'Adding the audit note.',
       notes: '',
       needsDependentPhase: false,
-      actions: skillOutput.actions.slice(0, 3),
+      actions: [],
     };
     recorded.dependentOutput = {
       draft: 'Audit note added and the issue closed.',
@@ -1490,6 +1807,319 @@ describe('executing an approved plan through the gate', (): void => {
       `${workItemId}:${runId}:1`,
       `${workItemId}:${runId}:2`,
     ]);
+  });
+
+  it('applies a batch approval per item through the gate, each with its own idempotency keys', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: first } = await seed(harness, 'real');
+    const second = await harness.run(async (ctx) =>
+      await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'iss-2',
+        title: 'Add the second audit note',
+        contentSummary: 'linear ticket work',
+        contentRefs: [],
+        state: 'plan-approved',
+        plan: { summary: 'Comment then close.', steps: ['comment', 'close'], expectedOutputType: 'ticket-update', riskNotes: '', reversibility: 'reversible', estimatedMinutes: 5 },
+        observedAt: 1,
+        createdAt: 1,
+      }),
+    );
+    for (const workItemId of [first, second]) {
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    }
+    const parked = await Promise.all([readItem(harness, first), readItem(harness, second)]);
+    expect(parked.map((row) => row.state)).toEqual(['actions-pending', 'actions-pending']);
+    const members = parked.map((row) => {
+      if (!row.pendingRunId) throw new Error('pending run missing');
+      const verdicts = row.actionVerdicts ?? [];
+      return {
+        workItemId: row._id,
+        pendingRunId: row.pendingRunId,
+        approvedIndexes: verdicts.flatMap((verdict, index) => (verdict.disposition === 'held' ? [index] : [])),
+      };
+    });
+    expect(members.map((member) => member.approvedIndexes)).toEqual([[0, 1, 3], [0, 1, 3]]);
+    recorded.mcp.length = 0;
+
+    // The batch schedules one apply per member; let those start and finish
+    // rather than racing them by hand.
+    await harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, { members });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await harness.finishInProgressScheduledFunctions();
+
+    const done = await Promise.all([readItem(harness, first), readItem(harness, second)]);
+    expect(done.map((row) => [row.state, row.skipReason])).toEqual([
+      ['completed', undefined],
+      ['completed', undefined],
+    ]);
+    for (const [row, member] of [
+      [done[0], members[0]],
+      [done[1], members[1]],
+    ] as const) {
+      expect(ledger(row).map((entry) => entry.idempotencyKey)).toEqual(
+        [0, 1, 2, 3].map((actionIndex) => actionIdempotencyKey({ workItemId: row._id, runId: member.pendingRunId, actionIndex })),
+      );
+      expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false])).toEqual([
+        [true, false],
+        [true, false],
+        [true, false],
+        [true, false],
+      ]);
+    }
+    // Both items' literal payloads reached the provider, once each.
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => call.args)).toEqual([
+      { issueId: 'iss-1', body: expect.stringContaining('Prepared the close summary.') },
+      { issueId: 'iss-1', body: expect.stringContaining('Prepared the close summary.') },
+    ]);
+    expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toHaveLength(2);
+  });
+
+  it('stops a blocked closing phase with its comment and DM withheld, and sends nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+        },
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'REVOPS-7 has no owner, so I cannot close it.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Blocked: no owner is set.' }),
+          },
+        },
+        skillOutput.actions[2],
+      ],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', evidence: 'get_issue shows no assignee.' },
+        { step: 2, status: 'blocked', evidence: 'Nothing to close without an owner.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Confirm the owner, then add the audit note and close.',
+          steps: ['Confirm REVOPS-7 has an owner', 'Comment and close REVOPS-7'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await expect(
+      harness.action(internal.workActions.authorDependentActions, { workItemId, runId }),
+    ).resolves.toMatchObject({ ok: false, reason: expect.stringContaining('remained blocked') });
+
+    // The read landed, but a read is not work: the run stops, the comment
+    // never reaches the manager for a decision and the DM is never sent.
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason?.startsWith(STOPPED_PREFIX)).toBe(true);
+    expect(stopped.skipReason).toContain('step 1 (get_issue shows no assignee.)');
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
+    expect(recorded.http.filter((call) => call.url.endsWith('/chat.postMessage'))).toEqual([]);
+    expect(ledger(stopped).map((entry) => [entry.tool, entry.ok, entry.held ?? false, entry.reason])).toEqual([
+      ['mcp.call', true, false, undefined],
+      ['mcp.call', true, true, WITHHELD_ON_STOP],
+      ['http.request', true, true, WITHHELD_ON_STOP],
+    ]);
+    expect((stopped.output as { planStepOutcomes?: PlanStepOutcome[] }).planStepOutcomes).toEqual(
+      recorded.dependentOutput.planStepOutcomes,
+    );
+    const types = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).map(
+      (event) => event.type,
+    );
+    expect(types.filter((type) => type === 'work.actions-pending')).toEqual([]);
+    expect(await scheduledNames(harness)).not.toContain('managerChannelActions:requestDecision');
+  });
+
+  it('delivers an escalation-only closing set when the plan remains blocked', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id: 'iss-1' }) },
+        },
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'REVOPS-7 has no owner, so I cannot close it.',
+      notes: '',
+      actions: [{
+        tool: 'http.request', args: {
+          surface: 'slack', method: 'POST', path: '/chat.postMessage',
+          headersJson: '{"Authorization":"Bearer {{secret}}"}',
+          body: JSON.stringify({ channel: 'D0MANAGER', text: 'Who should own REVOPS-7 so I can continue?' }),
+        },
+      }],
+      planStepOutcomes: [
+        { step: 1, status: 'blocked', evidence: 'get_issue shows no assignee.' },
+        { step: 2, status: 'blocked', evidence: 'Nothing to close without an owner.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Confirm the owner, then add the audit note and close.',
+          steps: ['Confirm REVOPS-7 has an owner', 'Comment and close REVOPS-7'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await expect(
+      harness.action(internal.workActions.authorDependentActions, { workItemId, runId }),
+    ).resolves.toMatchObject({ ok: true });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(recorded.http.filter(call => call.url.endsWith('/chat.postMessage'))).toHaveLength(1);
+    expect(recorded.mcp.map(call => call.tool)).toEqual(['get_issue']);
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+  });
+
+  it('completes a retry whose note settles a plan step, on the manager\'s word and in the record', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Adding the audit note.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: skillOutput.actions.slice(0, 3),
+    };
+    recorded.dependentOutput = {
+      draft: 'Audit note added and the issue closed.',
+      notes: '',
+      actions: skillOutput.actions.slice(0, 3),
+      planStepOutcomes: [
+        {
+          step: 1,
+          status: 'satisfied',
+          evidence: 'Manager: REVOPS-7 is owned by Priya.',
+          basis: 'manager-feedback',
+        },
+        { step: 2, status: 'satisfied', evidence: 'save_comment and save_issue emitted.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, { autonomousActions: true });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Confirm the owner, then add the audit note and close.',
+          steps: ['Confirm REVOPS-7 has an owner', 'Add the audit note and close the ticket'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+        managerFeedback: { reason: 'REVOPS-7 is owned by Priya.', at: 2, kind: 'retry-note' },
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const done = await readItem(harness, workItemId);
+    expect(done.state).toBe('completed');
+    expect(recorded.skillFeedback).toEqual(['REVOPS-7 is owned by Priya.']);
+    expect(recorded.dependentFeedback).toEqual(['REVOPS-7 is owned by Priya.']);
+    expect((done.output as { planStepOutcomes: PlanStepOutcome[] }).planStepOutcomes).toEqual(
+      recorded.dependentOutput.planStepOutcomes,
+    );
+    expect(done.managerFeedback).toMatchObject({
+      reason: 'REVOPS-7 is owned by Priya.',
+      kind: 'retry-note',
+      addressedAt: expect.any(Number),
+    });
+  });
+
+  it('refuses a closing phase that cites manager feedback the run does not carry', async (): Promise<void> => {
+    useSurfaceMode('real');
+    // Phase one keeps every action it emits now, so the ticket writes belong
+    // to the closing set here: the refusal must land nothing.
+    recorded.skillOutput = {
+      draft: 'Adding the audit note.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: skillOutput.actions.slice(2, 3),
+    };
+    recorded.dependentOutput = {
+      draft: 'Audit note added.',
+      notes: '',
+      actions: skillOutput.actions.slice(0, 3),
+      planStepOutcomes: [
+        { step: 1, status: 'satisfied', evidence: 'Manager said so.', basis: 'manager-feedback' },
+        { step: 2, status: 'satisfied', evidence: 'save_comment and save_issue emitted.' },
+      ],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, { autonomousActions: true });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Confirm the owner, then add the audit note and close.',
+          steps: ['Confirm REVOPS-7 has an owner', 'Add the audit note and close the ticket'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'reversible',
+          estimatedMinutes: 5,
+        },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await expect(
+      harness.action(internal.workActions.authorDependentActions, { workItemId, runId }),
+    ).resolves.toMatchObject({ ok: false, reason: expect.stringContaining('cites manager feedback') });
+    expect((await readItem(harness, workItemId)).state).toBe('failed');
+    expect(recorded.mcp.filter((call) => call.server === 'linear').map((call) => call.tool)).toEqual([]);
   });
 
   it('continues a channel-approved real plan without a browser identity', async (): Promise<void> => {
@@ -1613,7 +2243,7 @@ describe('executing an approved plan through the gate', (): void => {
       // plan is pending; the read itself writes nothing to any surface.
       expect(recorded.http.filter((call) => !call.url.endsWith('/chat.postMessage'))).toEqual([]);
       expect(recorded.planRecords).toEqual([
-        { surface: 'linear', tool: 'get_issue', text: 'get_issue on linear · {"id":"get_issue-id"}' },
+        { surface: 'linear', tool: 'get_issue', subject: 'record', text: 'get_issue on linear · {"id":"get_issue-id"}' },
       ]);
       const events = await groundingEvents(harness);
       expect(events).toHaveLength(1);
@@ -1642,7 +2272,76 @@ describe('executing an approved plan through the gate', (): void => {
       expect(events[0]!.payload).toMatchObject({ applied: { ok: true, authority: 'standing' } });
     });
 
-    it('reads nothing for a chat candidate', async (): Promise<void> => {
+    const asMention = async (harness: Harness, workItemId: Id<'workItems'>): Promise<void> => {
+      await toClaimed(harness, workItemId, {
+        sourceCategory: 'event-stream',
+        sourceSystem: 'slack',
+        externalId: 'C0PUBLIC:1787746453.202809',
+        title: 'Slack mention in #revops-asks',
+        contentSummary: '<@U0DAY0> are the three Q3 deals covered in the tracker?',
+        replyTarget: { channel: 'C0PUBLIC', channelName: 'revops-asks', threadTs: '1787746453.202809' },
+      });
+    };
+    const allowThreadRead = async (harness: Harness, agentId: Id<'agents'>): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const slack = (await ctx.db.query('surfaces').collect()).find((row) => row.slug === 'slack');
+        if (!slack) throw new Error('slack surface missing');
+        await ctx.db.patch(slack._id, {
+          toolAllowlist: ['chat.postMessage', 'conversations.history', 'conversations.replies'],
+        });
+        void agentId;
+      });
+    };
+
+    it('reads a chat ask\'s thread once under standing authority and hands it to the planner as a thread', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { agentId, workItemId } = await seed(harness, 'real');
+      await allowThreadRead(harness, agentId);
+      await asMention(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp).toHaveLength(0);
+      const reads = recorded.http.filter((call) => call.url.includes('/conversations.replies'));
+      expect(reads).toHaveLength(1);
+      expect(reads[0]).toMatchObject({ method: 'GET', authorization: 'Bearer plain-cred-slack', body: undefined });
+      expect(new URL(reads[0]!.url).searchParams.get('channel')).toBe('C0PUBLIC');
+      expect(new URL(reads[0]!.url).searchParams.get('ts')).toBe('1787746453.202809');
+      expect(new URL(reads[0]!.url).searchParams.get('limit')).toBe('50');
+      expect(recorded.planRecords).toEqual([
+        {
+          surface: 'slack',
+          tool: 'conversations.replies',
+          subject: 'thread',
+          text: expect.stringContaining('are the three Q3 deals covered in the tracker?'),
+        },
+      ]);
+      const events = await groundingEvents(harness);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload).toMatchObject({
+        workItemId,
+        action: { tool: 'http.request', args: { method: 'GET', surface: 'slack' } },
+        applied: { ok: true, authority: 'standing', tool: 'http.request' },
+      });
+      expect(JSON.stringify(events[0]!.payload)).not.toContain('plain-cred-slack');
+      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    });
+
+    it('reads nothing for a chat ask whose surface documents no thread tool, and says so in no record', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await asMention(harness, workItemId);
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.http.filter((call) => call.method === 'GET')).toEqual([]);
+      expect(recorded.planRecords).toEqual([undefined]);
+      expect(await groundingEvents(harness)).toHaveLength(0);
+    });
+
+    it('reads nothing for an inbox candidate', async (): Promise<void> => {
       useSurfaceMode('real');
       const harness = convexTest(contractSchema(), allConvexModules());
       const { workItemId } = await seed(harness, 'real');
@@ -1670,7 +2369,7 @@ describe('executing an approved plan through the gate', (): void => {
       ).resolves.toEqual({ ok: true });
       expect(recorded.mcp.map((call) => call.tool)).toEqual(['get_issue']);
       expect(recorded.planRecords).toEqual([
-        { surface: 'linear', tool: 'get_issue', unavailable: 'get_issue failed: snapshot timed out' },
+        { surface: 'linear', tool: 'get_issue', subject: 'record', unavailable: 'get_issue failed: snapshot timed out' },
       ]);
       const events = await groundingEvents(harness);
       expect(events[0]!.payload).toMatchObject({ applied: { ok: false } });
@@ -1687,9 +2386,68 @@ describe('executing an approved plan through the gate', (): void => {
       ).resolves.toEqual({ ok: true });
       expect(recorded.mcp).toHaveLength(0);
       expect(recorded.planRecords).toEqual([
-        { surface: 'linear', tool: 'get_issue', unavailable: 'no grant (linear:read)' },
+        { surface: 'linear', tool: 'get_issue', subject: 'record', unavailable: 'no grant (linear:read)' },
       ]);
     });
+  });
+
+  it('hands the manager\'s answers at approval to the executor as approved evidence, and nothing when there were none', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        managerAnswers: [
+          { question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.', answeredAt: 2 },
+          { question: 'Which figure if the deck and the sheet disagree?', answer: 'Use the sheet figure.', answeredAt: 2 },
+        ],
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    // The auto phase is applied here so the scheduled apply finds nothing to claim.
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(recorded.skillAnswers).toEqual([
+      [
+        { question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.' },
+        { question: 'Which figure if the deck and the sheet disagree?', answer: 'Use the sheet figure.' },
+      ],
+    ]);
+    recorded.skillAnswers.length = 0;
+    const plain = convexTest(contractSchema(), allConvexModules());
+    const seeded = await seed(plain, 'real');
+    await plain.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId: seeded.workItemId });
+    await plain.action(internal.workActions.applyApprovedActions, { workItemId: seeded.workItemId });
+    expect(recorded.skillAnswers).toEqual([undefined]);
+  });
+
+  it('hands live manager feedback to the run and keeps addressed feedback out of it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        managerFeedback: { reason: 'REVOPS-7 is owned by Priya.', at: 2, kind: 'retry-note' },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    // Take the apply this run scheduled, so it does not run into a later test.
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect(recorded.skillFeedback).toEqual(['REVOPS-7 is owned by Priya.']);
+
+    const { workItemId: finished } = await seed(harness, 'real');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(finished, {
+        managerFeedback: {
+          reason: 'Rewrite this as a close summary.',
+          at: 2,
+          kind: 'rejection',
+          addressedAt: 3,
+        },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId: finished });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId: finished });
+    expect(recorded.skillFeedback).toEqual(['REVOPS-7 is owned by Priya.', undefined]);
   });
 
   it('pauses a real-mode run at actions-pending with nothing but the DM applied', async (): Promise<void> => {
@@ -1802,6 +2560,7 @@ describe('executing an approved plan through the gate', (): void => {
     expect(recorded.http).toEqual([
       {
         url: 'https://slack.com/api/chat.postMessage',
+        method: 'POST',
         authorization: 'Bearer plain-cred-slack',
         body: {
           channel: 'D0MANAGER',
@@ -1976,6 +2735,118 @@ describe('executing an approved plan through the gate', (): void => {
     ]);
     expect(recorded.mcp).toHaveLength(1);
     expect(recorded.http).toHaveLength(0);
+  });
+
+  describe('a held write repaired once before the hold', (): void => {
+    const WRONG = JSON.stringify({ issueId: 'iss-1', comment: 'Prepared the close summary.' });
+    const RIGHT = JSON.stringify({ issueId: 'iss-1', body: 'Prepared the close summary.' });
+    const wrongKeyOutput: ExecutionOutput = {
+      ...skillOutput,
+      actions: [
+        { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: WRONG } },
+        skillOutput.actions[1],
+        skillOutput.actions[2],
+      ],
+    };
+    const probeSaveComment = async (harness: Harness): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const linear = (await ctx.db.query('surfaces').collect()).find((row) => row.slug === 'linear');
+        if (!linear) throw new Error('linear surface missing');
+        await ctx.db.patch(linear._id, {
+          toolArguments: [{ tool: 'save_comment', arguments: ['issueId', 'body'] }],
+        });
+      });
+    };
+
+    it('holds a save_comment with a wrong key as its corrected payload, applies nothing in the repair, and shows the attempt in the ledger', async (): Promise<void> => {
+      useSurfaceMode('real');
+      recorded.skillOutput = wrongKeyOutput;
+      recorded.repairedToolArgsJson = RIGHT;
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await probeSaveComment(harness);
+      const result = await harness
+        .withIdentity(OWNER)
+        .action(api.workActions.executeApprovedPlan, { workItemId });
+      expect(result).toEqual({ ok: true, reason: 'automatic actions applying', additionalModelCalls: 1 });
+      expect(recorded.repairRequests).toEqual([
+        { tool: 'save_comment', reason: expect.stringContaining('unknown argument comment for save_comment on linear') },
+      ]);
+      // The repair re-authored the payload; nothing reached Linear.
+      expect(recorded.mcp).toHaveLength(0);
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      const pending = await readItem(harness, workItemId);
+      expect(pending.state).toBe('actions-pending');
+      const held = pending.output as ExecutionOutput;
+      expect(held.actions[0]!.args.toolArgsJson).toBe(RIGHT);
+      expect(held.argumentRepairs).toEqual([
+        {
+          index: 0,
+          reason: expect.stringContaining('the schema accepts issueId, body'),
+          toolArgsJson: WRONG,
+          repaired: true,
+        },
+      ]);
+      expect(pending.actionVerdicts![0]).toEqual({ disposition: 'held', reason: HELD_MUTATION });
+      expect(recorded.mcp).toHaveLength(0);
+      const runId = pending.pendingRunId;
+      if (!runId) throw new Error('pending run missing');
+      await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: runId,
+        approvedIndexes: [0, 1],
+      });
+      await expect(
+        harness.action(internal.workActions.applyApprovedActions, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      const row = await readItem(harness, workItemId);
+      expect(row.state).toBe('completed');
+      expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment', 'save_issue']);
+      expect(recorded.mcp[0]!.args).toMatchObject({
+        issueId: 'iss-1',
+        body: expect.stringContaining('Prepared the close summary.'),
+      });
+      expect(recorded.mcp[0]!.args).not.toHaveProperty('comment');
+      expect(ledger(row)[0]).toMatchObject({
+        ok: true,
+        authority: 'manager',
+        repair: { reason: expect.stringContaining('unknown argument comment'), toolArgsJson: WRONG },
+      });
+      expect(ledger(row)[1]!.repair).toBeUndefined();
+      expect(ledger(row)[2]!.repair).toBeUndefined();
+    });
+
+    it('holds the first attempt and records that the repair failed when the model produces nothing usable', async (): Promise<void> => {
+      useSurfaceMode('real');
+      recorded.skillOutput = wrongKeyOutput;
+      recorded.repairedToolArgsJson = undefined;
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await probeSaveComment(harness);
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      const pending = await readItem(harness, workItemId);
+      expect(recorded.repairRequests).toHaveLength(1);
+      const held = pending.output as ExecutionOutput;
+      expect(held.actions[0]!.args.toolArgsJson).toBe(WRONG);
+      expect(held.argumentRepairs).toEqual([
+        { index: 0, reason: expect.stringContaining('unknown argument comment'), toolArgsJson: WRONG, repaired: false },
+      ]);
+    });
+
+    it('makes no attempt when the write matches its probed names or the tool was never probed', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await probeSaveComment(harness);
+      const result = await harness
+        .withIdentity(OWNER)
+        .action(api.workActions.executeApprovedPlan, { workItemId });
+      expect(result).toEqual({ ok: true, reason: 'automatic actions applying' });
+      expect(recorded.repairRequests).toEqual([]);
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+      expect((await readItem(harness, workItemId)).output).not.toHaveProperty('argumentRepairs');
+    });
   });
 
   it('repairs a read the provider refused for its arguments once, under standing authority', async (): Promise<void> => {
@@ -2349,6 +3220,192 @@ async function events(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'eve
         .collect(),
   );
 }
+describe('a registered skill serves every later work item of its shape', (): void => {
+  beforeEach((): void => {
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+  });
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  async function seedShapedSkills(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    seededItem: Id<'workItems'>,
+  ): Promise<void> {
+    await harness.run(async (ctx): Promise<void> => {
+      // The seeded item holds the one supervised slot, and the seeded legacy
+      // row would match any Linear item by its name alone; the registry here
+      // is shaped skills only, evaluated against an empty queue.
+      await ctx.db.patch(seededItem, { state: 'completed' });
+      for (const legacy of await ctx.db.query('skills').collect()) {
+        await ctx.db.patch(legacy._id, { state: 'rejected' });
+      }
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+      for (const [scope] of [['looker-pipeline-tile:read'], ['looker-pipeline-tile:write']]) {
+        await ctx.db.insert('permissionGrants', { agentId, scope: scope!, createdAt: 1 });
+      }
+      for (const skill of [
+        {
+          name: 'analytics-refresh-value',
+          description: 'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
+          targetSurface: 'looker-pipeline-tile',
+          surfaceClass: 'analytics',
+          operation: 'refresh-value',
+          requiredScopes: ['boss:message', 'linear:read', 'looker-pipeline-tile:read', 'looker-pipeline-tile:write'],
+        },
+        {
+          name: 'chat-thread-reply',
+          description: 'Threaded reply on a chat surface, parameterised from each work item and its runbook.',
+          targetSurface: 'slack',
+          surfaceClass: 'chat',
+          operation: 'thread-reply',
+          requiredScopes: ['boss:message', 'slack:read', 'slack:write'],
+        },
+      ]) {
+        await ctx.db.insert('skills', {
+          agentId,
+          ...skill,
+          body: '# Procedure\n## Inputs\n- <record-id>\n',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          createdAt: 1,
+          registeredAt: 1,
+        });
+      }
+    });
+  }
+
+  async function discoveredItem(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    item: Partial<Doc<'workItems'>> & Pick<Doc<'workItems'>, 'sourceSystem' | 'externalId' | 'title' | 'contentSummary'>,
+  ): Promise<Id<'workItems'>> {
+    return await harness.run(
+      async (ctx): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          contentRefs: [],
+          priority: 'P1',
+          requesterLabel: 'Manager',
+          state: 'discovered',
+          observedAt: Date.now(),
+          createdAt: Date.now(),
+          ...item,
+        }),
+    );
+  }
+
+  async function proposedSkills(harness: Harness): Promise<string[]> {
+    return (await harness.run(async (ctx) => await ctx.db.query('skills').collect()))
+      .filter((skill) => skill.state === 'proposed')
+      .map((skill) => skill.name);
+  }
+
+  it('claims a second tile refresh with a different figure and ticket without a proposal', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-11',
+      title: 'Refresh the Looker pipeline tile',
+      contentSummary: 'Set the pipeline coverage figure to 68% and record the audit line on REVOPS-11.',
+      contentRefs: ['ticket://REVOPS-11'],
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId });
+    const row = await readItem(harness, workItemId);
+    expect(row.verdict).toMatchObject({ decision: 'claim' });
+    expect(row.state).toBe('claimed');
+    expect(await proposedSkills(harness)).toEqual([]);
+  });
+
+  it('claims a chat ask in a different thread through the chat skill', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceCategory: 'event-stream',
+      sourceSystem: 'slack',
+      externalId: 'C0BSF04TZ19:1789000500.000200',
+      title: 'Mention in #revops-asks',
+      contentSummary: 'Which coverage figure are we quoting in the Friday standup this week?',
+      replyTarget: { channel: 'C0BSF04TZ19', threadTs: '1789000500.000200' },
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'claim' });
+    expect(await proposedSkills(harness)).toEqual([]);
+  });
+
+  it('still proposes a skill for a shape nothing registered covers', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'close-tracker',
+        displayName: 'Close tracker',
+        class: 'spreadsheet',
+        verdict: 'connected',
+        endpoint: 'https://sheets.example.test/close-tracker',
+        path: 'documented-api',
+        toolAllowlist: [],
+        credentialId: 'cred-sheet',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-12',
+      title: 'Append this week to the Close tracker',
+      contentSummary: 'Add the week 37 close figures as a new row in the Close tracker.',
+      contentRefs: ['ticket://REVOPS-12'],
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'needs-skill' });
+    expect(await proposedSkills(harness)).toEqual(['spreadsheet-append-row']);
+    const proposed = (await harness.run(async (ctx) => await ctx.db.query('skills').collect())).find(
+      (skill) => skill.name === 'spreadsheet-append-row',
+    );
+    expect(proposed).toMatchObject({
+      surfaceClass: 'spreadsheet',
+      operation: 'append-row',
+      targetSurface: 'close-tracker',
+      description: 'Row append on a spreadsheet surface, parameterised from each work item and its runbook.',
+    });
+    expect(proposed?.rationale).not.toContain('REVOPS-12');
+    expect(proposed?.rationale).not.toContain('Charter');
+  });
+});
+
 describe('the autonomous-actions switch through the gate', (): void => {
   it('defers queued work with the revoked read scope named in its verdict', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -2379,6 +3436,79 @@ describe('the autonomous-actions switch through the gate', (): void => {
         missingPermissions: ['linear:read'],
       },
     });
+  });
+
+  it('admits a real-mode item on the lexical inputs and records it when the charter judgement is unavailable', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        state: 'discovered',
+        plan: undefined,
+        title: 'Triage the Linear close summary',
+        contentSummary: 'Triage this Linear close summary revenue operations hand-off.',
+      });
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'claim' });
+    const unavailable = (
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+      )
+    ).filter((event) => event.type === 'work.scope-judgement-unavailable');
+    expect(unavailable.map((event) => event.payload)).toEqual([
+      { workItemId, cause: 'model unavailable in tests' },
+    ]);
+  });
+
+  it('re-evaluates an out-of-scope skip the manager retried without the eligibility rule and records the decision', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'mock');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        state: 'discovered',
+        plan: undefined,
+        title: 'Book the offsite venue',
+        contentSummary: 'Reserve the venue and confirm the catering headcount.',
+      });
+    });
+    const events = async (type: string): Promise<unknown[]> =>
+      (
+        await harness.run(
+          async (ctx) =>
+            await ctx.db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+        )
+      )
+        .filter((event) => event.type === type)
+        .map((event) => event.payload);
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'skip' });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'skipped',
+      verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
+    expect(await events('work.retry')).toEqual([
+      { workItemId, resumeState: 'discovered', fromState: 'skipped', waived: 'scope' },
+    ]);
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'claim' });
+    const retried = await readItem(harness, workItemId);
+    expect(retried.state).toBe('claimed');
+    expect(typeof retried.scopeWaivedAt).toBe('number');
+    expect(retried.qualityFitWaivedAt).toBeUndefined();
   });
 
   it('refuses manager-approved reads and DMs whose standing grants were revoked', async (): Promise<void> => {

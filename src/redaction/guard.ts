@@ -56,6 +56,23 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
 const LABEL_THEN_VALUE =
   /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"，。]+)[`'"，。]?$/i;
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
+const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+)$/;
+/**
+ * A word that names a credential, on its own or as the tail of a longer name
+ * (`LOOKER_PASSWORD`, `X-Auth-Token`, `secret key`, `GH_PAT`).
+ */
+const SECRET_LABEL =
+  '(?:password|passwd|pwd|passcode|passphrase|pin|token|key|secret|login|credentials?|auth|pat|密码|口令|令牌|密钥|秘钥|凭证)';
+/** A quote around a label or value, literal or JSON-escaped. */
+const QUOTE = '(?:\\\\?[`\'"])?';
+/**
+ * A credential label with its separator directly before the value: the
+ * assignment forms a runbook writes, including a table cell after a labelled
+ * cell. Prose that only mentions a label ("no token value is on this page")
+ * has no separator and is not one.
+ */
+const SECRET_ASSIGNMENT = new RegExp(`${SECRET_LABEL}${QUOTE}\\s*(?:[:=：|]|\\bis\\b|是|为)\\s*${QUOTE}$`, 'i');
+const SECRET_LABEL_WORD = new RegExp(`(?:^|[^A-Za-z])${SECRET_LABEL}(?:$|[^A-Za-z])`, 'i');
 const PASSWORD_ASSIGNMENT = /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
 const ASSIGNED_VALUE = /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
 /**
@@ -135,6 +152,12 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   if (end <= start) return undefined;
   const before = text.slice(0, start);
   if (!explicitPassword && (USERNAME_DESIGNATOR.test(before) || IDENTIFIER_KEY.test(before))) return undefined;
+  // Tool names and prose are not credentials merely because a detector
+  // labels them as such. Explicit assignments still protect weak passwords.
+  const wholeWord = !/[A-Za-z0-9_]$/.test(before) && !/^[A-Za-z0-9_]/.test(text.slice(end));
+  if (wholeWord && RUNBOOK_WORD.test(value) && !SECRET_ASSIGNMENT.test(before) && !inCredentialColumn(text, start, end)) {
+    return undefined;
+  }
   if (NEVER_REDACT.has(value)) return undefined;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
     if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
@@ -143,6 +166,42 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
     return shape.pattern.test(value);
   });
   return rejected ? undefined : { start, end };
+}
+
+/**
+ * Whether a span is a whole cell of a Markdown table whose column header
+ * names a credential: the `| Service | Username | Password |` table a
+ * runbook keeps its logins in, where the label sits rows above the value.
+ *
+ * Args:
+ *   text: The text the span indexes into.
+ *   start: Span start.
+ *   end: Span end.
+ *
+ * Returns:
+ *   True when the value is the only content of a credential column's cell.
+ */
+function inCredentialColumn(text: string, start: number, end: number): boolean {
+  const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+  const lineEndIndex = text.indexOf('\n', end);
+  const lineEnd = lineEndIndex === -1 ? text.length : lineEndIndex;
+  const cellBefore = text.slice(lineStart, start);
+  const cellAfter = text.slice(end, lineEnd);
+  if (!/\|[ \t]*$/.test(cellBefore) || !/^[ \t]*\|/.test(cellAfter)) return false;
+  const cells = (line: string): string[] => {
+    const parts = line.split('|').map((cell: string): string => cell.trim());
+    return line.trimStart().startsWith('|') ? parts.slice(1) : parts;
+  };
+  const column = cells(cellBefore).length - 1;
+  const lines = text.slice(0, lineStart).split('\n').slice(0, -1);
+  let header: string | undefined;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index] ?? '';
+    if (!line.includes('|')) break;
+    if (!/^[\s|:-]+$/.test(line)) header = line;
+  }
+  if (header === undefined) return false;
+  return SECRET_LABEL_WORD.test(cells(header)[column] ?? '');
 }
 
 /**

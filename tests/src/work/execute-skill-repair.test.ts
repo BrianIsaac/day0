@@ -29,9 +29,13 @@ vi.mock('../../../src/lib/mastra', () => ({
 import {
   appliedLedgerPrompt,
   isArgumentFailure,
+  probedArgumentIssue,
   repairableReadFailures,
+  repairableWriteArguments,
   repairFailedReads,
+  repairHeldWriteArguments,
   runDependentSkill,
+  withArgumentRepairs,
   runSkill,
   type RunDependentSkillArgs,
 } from '../../../src/work/execute-skill';
@@ -1386,6 +1390,143 @@ describe('real-mode argument repair', (): void => {
     });
     // A row that already carries a repair is never repaired again.
     expect(repairableReadFailures(result.actions, result.applied, [linear])).toEqual([]);
+  });
+
+  describe('a write repaired once before it is held', (): void => {
+    const write = (toolArgsJson: string, tool = 'save_comment'): MockAction => ({
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool, toolArgsJson },
+    });
+    const WRONG_KEY = '{"issueId":"REVOPS-7","comment":"Set to 74%."}';
+    const RIGHT_KEY = '{"issueId":"REVOPS-7","body":"Set to 74%."}';
+
+    it('names an argument the probed schema does not list, and nothing else', (): void => {
+      const call = { kind: 'mcp.call' as const, surface: 'linear', tool: 'save_comment', toolArgs: {} };
+      expect(probedArgumentIssue({ ...call, toolArgs: { issueId: 'REVOPS-7', comment: 'x' } }, linear)).toBe(
+        'Tool input validation failed against the probed schema: unknown argument comment for save_comment on linear; the schema accepts issueId, body',
+      );
+      expect(probedArgumentIssue({ ...call, toolArgs: { issue: 'REVOPS-7', comment: 'x' } }, linear)).toContain(
+        'unknown arguments issue, comment',
+      );
+      expect(probedArgumentIssue({ ...call, toolArgs: { issueId: 'REVOPS-7', body: 'x' } }, linear)).toBeUndefined();
+      // No probed names, no judgement.
+      expect(probedArgumentIssue({ ...call, tool: 'save_issue', toolArgs: { anything: 1 } }, linear)).toBeUndefined();
+      expect(isArgumentFailure(probedArgumentIssue({ ...call, toolArgs: { comment: 'x' } }, linear))).toBe(true);
+    });
+
+    it('selects writes the schema refuses and leaves reads, unprobed tools and accepted payloads alone', (): void => {
+      const rows = repairableWriteArguments(
+        [read('{"issueId":"REVOPS-7"}'), write(WRONG_KEY), write(RIGHT_KEY), write('{"x":1}', 'save_issue')],
+        [linear],
+      );
+      expect(rows.map((row) => [row.index, row.call.tool])).toEqual([[1, 'save_comment']]);
+      expect(rows[0]!.reason).toContain('unknown argument comment');
+    });
+
+    it('re-authors the refused write once with the schema message and the probed names, holds the corrected payload, and applies nothing', async (): Promise<void> => {
+      let additionalModelCalls = 0;
+      recorded.outputs.push({ toolArgsJson: RIGHT_KEY });
+      const result = await repairHeldWriteArguments({
+        actions: [read('{"id":"REVOPS-7"}'), write(WRONG_KEY)],
+        surfaces: [linear],
+        skill: { name: 'refresh-tile' },
+        candidate,
+        onAdditionalModelCall: (): void => {
+          additionalModelCalls += 1;
+        },
+      });
+      expect(recorded.calls).toHaveLength(1);
+      expect(additionalModelCalls).toBe(1);
+      const prompt = recorded.calls[0]!.user;
+      expect(prompt).toContain('Tool: save_comment');
+      expect(prompt).toContain('Probed argument names: issueId, body');
+      expect(prompt).toContain(`Refused arguments: ${WRONG_KEY}`);
+      expect(prompt).toContain('Provider message: Tool input validation failed against the probed schema: unknown argument comment');
+      expect(result.actions).toEqual([read('{"id":"REVOPS-7"}'), write(RIGHT_KEY)]);
+      expect(result.argumentRepairs).toEqual([
+        {
+          index: 1,
+          reason: expect.stringContaining('unknown argument comment for save_comment on linear'),
+          toolArgsJson: WRONG_KEY,
+          repaired: true,
+        },
+      ]);
+      // The ledger row the approved write produces carries the attempt; a row still awaiting approval does not.
+      const landed: AppliedAction = { tool: 'mcp.call', ok: true, effect: 'save_comment on linear', idempotencyKey: 'wi:run:1' };
+      const awaiting: AppliedAction = { tool: 'mcp.call', ok: true, held: true, awaitingApproval: true, idempotencyKey: 'wi:run:1' };
+      const readRow: AppliedAction = { tool: 'mcp.call', ok: true, effect: 'get_issue on linear', idempotencyKey: 'wi:run:0' };
+      expect(withArgumentRepairs([readRow, landed], result.argumentRepairs)).toEqual([
+        readRow,
+        { ...landed, repair: { reason: result.argumentRepairs[0]!.reason, toolArgsJson: WRONG_KEY } },
+      ]);
+      expect(withArgumentRepairs([readRow, awaiting], result.argumentRepairs)).toEqual([readRow, awaiting]);
+      expect(withArgumentRepairs([readRow, landed], undefined)).toEqual([readRow, landed]);
+    });
+
+    it.each([
+      '{"issueId":"REVOPS-7","body":"Set to 99%."}',
+      '{"issueId":"REVOPS-8","body":"Set to 74%."}',
+      '{"issueId":"Set to 74%.","body":"REVOPS-7"}',
+      '{"body":"Set to 74%."}',
+    ])('refuses a key repair that changes or loses a payload value: %s', async (toolArgsJson) => {
+      recorded.outputs.push({ toolArgsJson });
+      const result = await repairHeldWriteArguments({
+        actions: [write(WRONG_KEY)], surfaces: [linear], skill: { name: 'refresh-tile' }, candidate,
+      });
+      expect(result.actions).toEqual([write(WRONG_KEY)]);
+      expect(result.argumentRepairs[0]?.repaired).toBe(false);
+    });
+
+    it('keeps the first attempt and says the repair failed when the model returns nothing usable or a payload the schema still refuses', async (): Promise<void> => {
+      recorded.outputs.push({ toolArgsJson: 'not json' });
+      const unparsable = await repairHeldWriteArguments({
+        actions: [write(WRONG_KEY)],
+        surfaces: [linear],
+        skill: { name: 'refresh-tile' },
+        candidate,
+      });
+      expect(unparsable.actions).toEqual([write(WRONG_KEY)]);
+      expect(unparsable.argumentRepairs).toEqual([
+        { index: 0, reason: expect.stringContaining('unknown argument comment'), toolArgsJson: WRONG_KEY, repaired: false },
+      ]);
+
+      recorded.outputs.push({ toolArgsJson: '{"issueId":"REVOPS-7","text":"Set to 74%."}' });
+      const stillWrong = await repairHeldWriteArguments({
+        actions: [write(WRONG_KEY)],
+        surfaces: [linear],
+        skill: { name: 'refresh-tile' },
+        candidate,
+      });
+      expect(stillWrong.actions).toEqual([write(WRONG_KEY)]);
+      expect(stillWrong.argumentRepairs[0]!.repaired).toBe(false);
+      // A failed attempt never reaches the ledger as a repair: the row is the first attempt.
+      const refused: AppliedAction = { tool: 'mcp.call', ok: false, reason: 'provider refused', idempotencyKey: 'wi:run:0' };
+      expect(withArgumentRepairs([refused], stillWrong.argumentRepairs)).toEqual([refused]);
+
+      const modelDown = await repairHeldWriteArguments({
+        actions: [write(WRONG_KEY)],
+        surfaces: [linear],
+        skill: { name: 'refresh-tile' },
+        candidate,
+      });
+      expect(modelDown.actions).toEqual([write(WRONG_KEY)]);
+      expect(modelDown.argumentRepairs[0]!.repaired).toBe(false);
+      expect(recorded.calls).toHaveLength(3);
+    });
+
+    it('makes no attempt when every write matches its probed names or the surface probed none', async (): Promise<void> => {
+      const result = await repairHeldWriteArguments({
+        actions: [write(RIGHT_KEY), write('{"id":"REVOPS-7","state":"Done"}', 'save_issue')],
+        surfaces: [linear],
+        skill: { name: 'refresh-tile' },
+        candidate,
+      });
+      expect(recorded.calls).toHaveLength(0);
+      expect(result).toEqual({
+        actions: [write(RIGHT_KEY), write('{"id":"REVOPS-7","state":"Done"}', 'save_issue')],
+        argumentRepairs: [],
+      });
+    });
   });
 
   it('never re-authors a write the provider refused', async (): Promise<void> => {

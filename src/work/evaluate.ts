@@ -1,15 +1,23 @@
-import { qualityFit } from './quality-fit';
+import { judgeScope, type ScopeJudgement } from './scope';
 import {
   AUTONOMOUS_WIP_LIMIT,
   COLD_START_WIP_LIMIT,
   VALUE_THRESHOLD,
   type AgentContext,
+  type SkillShape,
   type WorkCandidate,
   type WorkVerdict,
 } from './types';
 import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
 import type { SurfaceMode } from '../surfaces/types';
 import { surfaceSlug } from '../surfaces/slug';
+import {
+  candidateNamesSurface,
+  skillNameFor,
+  skillOperationLabel,
+  skillShapeFor,
+  skillSurfacePhrase,
+} from './skill-shape';
 import {
   documentedSystemIdentity,
   sameSystemForHostlessMention,
@@ -18,9 +26,8 @@ import {
 
 /**
  * Layer-2 evaluator. Lifted from Protean's `src/work/evaluate.ts`.
- * Same seven-criterion sequence — eligibility, permission, ownership,
- * quality fit, value, risk (informational), capacity. The two
- * differences for Day0:
+ * Same criterion sequence — scope, connection, permission, ownership,
+ * value, risk (informational), capacity. The three differences for Day0:
  *
  *   1. The DB lookups (permission grants, existing claims, open-claim
  *      count) are passed in as `Lookups` callbacks instead of imported
@@ -31,6 +38,11 @@ import {
  *      surface this as a propose-new-skill flow rather than
  *      hard-skipping. Capability is meant to grow in place, so an
  *      unmatched candidate is a gap to fill rather than a dead end.
+ *
+ *   3. Scope is one judgement (`./scope`), with the lexical eligibility
+ *      rule and the quality-fit filter as its inputs rather than verdicts
+ *      of their own, so a card carries one description of why it was
+ *      or was not the agent's work.
  */
 
 export interface EvaluateLookups {
@@ -43,15 +55,22 @@ export interface EvaluateLookups {
   ) => Promise<{ state: string } | null>;
   /** Returns the count of open claims for the agent. */
   countOpenClaims: () => Promise<number>;
-  /** Returns the matching registered skill or null. */
+  /**
+   * Returns the registered skill covering the candidate's shape, or null.
+   * The shape is the evaluator's, so the name it proposes and the skill it
+   * would have matched are the same thing.
+   */
   findMatchingSkill: (
     candidate: WorkCandidate,
     charter: AgentContext['charter'],
+    shape: SkillShape,
   ) => Promise<{ name: string; description: string } | null>;
 }
 
 export interface EvaluateOptions {
   wipLimit?: number;
+  /** Observes the scope judgement, admitted or not, before the rest of the chain runs. */
+  onScopeJudgement?: (judgement: ScopeJudgement) => void;
 }
 
 export interface EvaluationSurface extends SurfaceLiveness {
@@ -73,9 +92,14 @@ export interface EvalContext extends AgentContext {
    * left out and the plan gate still stands.
    */
   qualityFitWaived?: boolean;
+  /**
+   * The manager retried this candidate after it was skipped as out of scope,
+   * which is their decision that the work is theirs to give; the eligibility
+   * rule is left out and the plan gate still stands.
+   */
+  scopeWaived?: boolean;
 }
 
-import { QUALITY_FIT_SKIP_PREFIX } from './types';
 export { QUALITY_FIT_SKIP_PREFIX } from './types';
 
 export type EvaluationVerdict =
@@ -90,17 +114,6 @@ export function inferRequiredPermissions(candidate: WorkCandidate): string[] {
     required.add(`${candidate.sourceSystem}:read`);
   }
   return [...required];
-}
-
-function tokenise(text: string): Set<string> {
-  const out = new Set<string>();
-  for (const w of text
-    .toLowerCase()
-    .split(/\W+/)
-    .filter((s) => s.length >= 4)) {
-    out.add(w);
-  }
-  return out;
 }
 
 /**
@@ -126,22 +139,22 @@ function eligibleByProvenance(candidate: WorkCandidate, ctx: EvalContext): boole
   return source.discoveryEvidence?.some((evidence): boolean => evidence.current) === true;
 }
 
-function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
-  if (eligibleByProvenance(candidate, ctx)) return true;
-  const bodyTokens = tokenise(`${candidate.title}\n${candidate.contentSummary}`);
-  const charterTokens = new Set<string>();
-  for (const w of tokenise(ctx.charter.proposedFunction)) charterTokens.add(w);
-  for (const clause of ctx.charter.proposedBoundaries.willDo) {
-    for (const w of tokenise(clause)) charterTokens.add(w);
-  }
-  for (const stop of ['will', 'their', 'them', 'with', 'from', 'this', 'that', 'when', 'where']) {
-    charterTokens.delete(stop);
-  }
-  for (const t of charterTokens) {
-    if (bodyTokens.has(t)) return true;
-  }
+/**
+ * Whether the candidate names a declared surface that is currently documented.
+ *
+ * Args:
+ *   candidate: Work candidate being evaluated.
+ *   surfaces: Declared surfaces with their discovery evidence.
+ *
+ * Returns:
+ *   True when a currently named surface appears in the item as a whole phrase.
+ */
+function namesDocumentedSystem(
+  candidate: WorkCandidate,
+  surfaces: readonly EvaluationSurface[],
+): boolean {
   const candidateText = `${candidate.title}\n${candidate.contentSummary}`;
-  return ctx.surfaces.some((surface): boolean => {
+  return surfaces.some((surface): boolean => {
     const currentlyNamed = surface.discoveryEvidence?.some((evidence): boolean => evidence.current);
     if (!currentlyNamed) return false;
     return candidateNamesSurface(candidateText, surface);
@@ -150,39 +163,6 @@ function isEligible(candidate: WorkCandidate, ctx: EvalContext): boolean {
 
 /** The surface slug convention, shared with the planner. */
 export const evaluationSurfaceSlug = surfaceSlug;
-
-/**
- * Normalise prose for whole-phrase surface matching.
- *
- * Args:
- *   value: Candidate prose or a surface label.
- *
- * Returns:
- *   Lowercase alphanumeric words separated by one space.
- */
-function comparableSurfaceText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-}
-
-/**
- * Check whether candidate prose names a declared surface as a whole phrase.
- *
- * Args:
- *   text: Candidate title and summary.
- *   surface: Declared surface metadata.
- *
- * Returns:
- *   True when the display name or slug is present as a complete phrase.
- */
-function candidateNamesSurface(text: string, surface: EvaluationSurface): boolean {
-  const haystack = ` ${comparableSurfaceText(text)} `;
-  const names = [surface.displayName, surface.slug].map(comparableSurfaceText).filter(Boolean);
-  return names.some((name: string): boolean => haystack.includes(` ${name} `));
-}
 
 function evaluationSurfaceIdentity(surface: EvaluationSurface) {
   return documentedSystemIdentity({
@@ -301,24 +281,30 @@ export function scoreRisk(candidate: WorkCandidate): number {
   return Math.max(0, Math.min(100, score));
 }
 
+/**
+ * Name and justify the skill a candidate needs.
+ *
+ * The name is the shape's, so a later candidate of the same shape finds the
+ * skill by it. The rationale names the first work item as an instance and
+ * quotes nothing from the charter: charter scope is this evaluator's job and
+ * must not become an invoke condition inside the skill.
+ *
+ * Args:
+ *   candidate: The work item that needs the skill.
+ *   shape: Surface class and operation the candidate resolved to.
+ *
+ * Returns:
+ *   The proposed name and the manager-facing rationale.
+ */
 function inferSkillRationale(
   candidate: WorkCandidate,
-  charter: AgentContext['charter'],
+  shape: SkillShape,
 ): { name: string; rationale: string } {
-  const verb =
-    candidate.sourceSystem === 'spreadsheet'
-      ? 'update-spreadsheet'
-      : candidate.sourceSystem === 'ticket'
-        ? 'update-ticket'
-        : `${candidate.sourceSystem}-action`;
-  const name = `${verb}-${candidate.externalId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(
-    0,
-    60,
-  );
+  const name = skillNameFor(shape);
+  const label = skillOperationLabel(shape);
   const rationale = [
-    `Charter places me on ${charter.proposedFunction.replace(/\.\s*$/, '')}.`,
-    `This candidate ("${candidate.title}") needs me to operate on ${candidate.sourceSystem} but I don't have a registered skill for it.`,
-    `Proposing a new skill so I can complete this and similar work going forward.`,
+    `No registered skill covers ${label} on ${skillSurfacePhrase(shape)}.`,
+    `First needed by "${candidate.title}" from ${candidate.sourceSystem}; the skill is a reusable procedure for every later work item of this shape, taking each run's values from that item and its runbook.`,
   ].join(' ');
   return { name, rationale };
 }
@@ -329,15 +315,19 @@ export async function evaluateCandidate(
   lookups: EvaluateLookups,
   opts: EvaluateOptions = {},
 ): Promise<EvaluationVerdict> {
-  if (!isEligible(candidate, ctx)) {
-    return {
-      decision: 'skip',
-      reason: 'out-of-scope: no charter or current documented-system overlap',
-    };
+  const scope = await judgeScope(candidate, ctx, {
+    deferMockQualityFit: true,
+    provenance: eligibleByProvenance(candidate, ctx),
+    namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
+  });
+  if (ctx.surfaceMode !== 'mock' || !scope.admitted) opts.onScopeJudgement?.(scope);
+  if (!scope.admitted) {
+    return { decision: 'skip', reason: scope.reason };
   }
 
   const missingSurface = missingConnectionSurface(candidate, ctx);
   if (missingSurface) {
+    if (ctx.surfaceMode === 'mock') opts.onScopeJudgement?.(scope);
     return { decision: 'defer', reason: 'awaiting-connection', missingSurface };
   }
 
@@ -348,22 +338,24 @@ export async function evaluateCandidate(
     if (!ok) missing.push(scope);
   }
   if (missing.length > 0) {
+    if (ctx.surfaceMode === 'mock') opts.onScopeJudgement?.(scope);
     return { decision: 'defer', reason: 'awaiting-permission', missingPermissions: missing };
   }
 
   const existing = await lookups.findExistingClaim(candidate.sourceSystem, candidate.externalId);
   if (existing) {
+    if (ctx.surfaceMode === 'mock') opts.onScopeJudgement?.(scope);
     return { decision: 'skip', reason: `already-claimed: state=${existing.state}` };
   }
 
-  if (!ctx.qualityFitWaived) {
-    const fit = await qualityFit({
-      candidate,
-      agentsMd: ctx.agentsMd,
-      role: ctx.charter.proposedFunction,
+  if (ctx.surfaceMode === 'mock') {
+    const mockScope = await judgeScope(candidate, ctx, {
+      provenance: false,
+      namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
     });
-    if (!fit.pass) {
-      return { decision: 'skip', reason: `${QUALITY_FIT_SKIP_PREFIX}${fit.reason}` };
+    opts.onScopeJudgement?.(mockScope);
+    if (!mockScope.admitted) {
+      return { decision: 'skip', reason: mockScope.reason };
     }
   }
 
@@ -386,14 +378,16 @@ export async function evaluateCandidate(
     };
   }
 
-  const matchingSkill = await lookups.findMatchingSkill(candidate, ctx.charter);
+  const shape = skillShapeFor(candidate, ctx.surfaces, ctx.surfaceMode);
+  const matchingSkill = await lookups.findMatchingSkill(candidate, ctx.charter, shape);
   if (!matchingSkill) {
-    const { name, rationale } = inferSkillRationale(candidate, ctx.charter);
+    const { name, rationale } = inferSkillRationale(candidate, shape);
     return {
       decision: 'needs-skill',
-      reason: `no registered skill matches; agent will propose "${name}"`,
+      reason: `no registered skill covers ${skillOperationLabel(shape)} on ${skillSurfacePhrase(shape)}; agent will propose "${name}"`,
       suggestedSkillName: name,
       suggestedSkillRationale: rationale,
+      suggestedSkillShape: shape,
     };
   }
 

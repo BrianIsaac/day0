@@ -62,19 +62,21 @@ A Day-1 one-to-one, held over voice or chat, walks its new boss through seven to
 
 ### It writes its own charter, and waits for a human
 
-From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes, and a set of scoped, revocable capability grants.
+From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. Before approving, the manager sees each rule the draft derived from what they said, beside the sentence it came from, and can strike any of them; nothing struck survives as a gate. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes, and a set of scoped, revocable capability grants. After approval the charter is amended, never rewritten: each change is a new version that supersedes the last, with the actor, the reason and the per-field diff on one event, and an amendment schedules re-evaluation of eligible parked skips. Only out-of-scope and quality-fit skips return on a charter change; low-value skips and running approved plans remain as they are. A question the charter left open is asked once, at the first plan that touches it, and the answer is written into the charter with the plan's approval.
 
 ![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 ### It finds its own work
 
-Nothing hands it a queue. The agent reads its work environment and proposes what to pick up. Each candidate is scored against seven criteria - eligibility, permission, ownership, quality fit, value, risk and capacity - and then moves through a twelve-state lifecycle in which a human approves the plan before anything executes.
+Nothing hands it a queue. The agent reads its work environment and proposes what to pick up. Each candidate is scored against seven criteria - eligibility, permission, ownership, quality fit, value, risk and capacity - and then moves through a twelve-state lifecycle in which a human approves the plan before anything executes. Scope is one judgement per item: the lexical charter rule and the quality-fit filter are its inputs, and real mode can read the whole charter, boundaries included, in one model call per eligible evaluation. An item skipped as out of scope keeps a Retry, and retrying is the manager's decision that the work is theirs to give. A run that lands nothing and leaves nothing to decide stops, with its reason on the card and no message to anyone.
 
 ![The real-mode work queue after intake, showing seven discovered items and the completed plan for a close-week reminder](.github/images/work-queue.webp)
 
 ### It writes the skill it is missing
 
 A work item that reaches skill matching but matches no registered skill returns `needs-skill` rather than being dropped. Its reason reports the missing skill and proposed name; it does not establish that the work is within the charter’s boundaries. The agent proposes a skill, authors it, then verifies it by running a smoke test in an isolated sandbox. It registers the skill only if the sandbox agrees; one that fails verification, or that was never verified at all, stays visibly uncallable. Capability grows in place, without a developer.
+
+The skill it writes is a procedure for one operation on one surface class, named for that shape (`analytics-refresh-value`, `kanban-comment-and-close`, `chat-thread-reply`), never for the ticket or thread that first needed it. Its body declares the values that vary per run as inputs (`<record-id>`, `<requested-value>`, `<reply-thread>`), which the executor binds from each work item, its runbook and the surface record at execution; a body that carries the first item's figure or identifier is refused before the sandbox runs. A later item of the same shape reuses the registered skill and proposes nothing; the `needs-skill` verdict fires only for a shape no registered skill covers. The operation table covers the documented demo procedures; an explicit read-only request uses a separate read shape. It is not a general operation classifier. A quoted click/press/select control is allowed in a reusable body when the linked runbook independently names it; quoted output values remain refused.
 
 ![The skills panel after sandbox verification, showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/skills-registered.webp)
 
@@ -514,7 +516,7 @@ Then, in the browser:
 
    ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
 
-4. **Decide the work.** Skills the agent proposes, plans and held actions arrive in the dashboard and, once Slack is connected, in your DM as a short code - `approve <code>` or `reject <code> <reason>` from the manager's own Slack account, which is the only author the poller accepts. A held action can be approved, or the whole run rejected with a reason; rejecting stops the run, and a retry after anything landed first asks you to confirm the provider state. Turning autonomous actions on (the header switch, with a confirmation) raises the work-in-progress cap and lets in-policy writes apply without a code. An item the agent skipped as not worth the role's time shows the reason and a Retry; retrying is your decision that it is, and re-evaluates it without that filter (the plan still waits for you). A failed run's Retry takes an optional note: a fact you state there is treated as approved evidence for the retry, and a change you ask for is made. A completed run can be sent back the same way: its Retry needs a note, and the note reaches the agent as your direction. Revoking a read or the DM grant stops queued and in-flight work that needs it and records the block. A write you approved literally stays authorised by that exact approval; a write authorised only by the autonomous switch is refused if its matching `<surface>:write` scope is revoked.
+4. **Decide the work.** Skills the agent proposes, plans and held actions arrive in the dashboard and, once Slack is connected, in your DM as a short code - `approve <code>` or `reject <code> <reason>` from the manager's own Slack account, which is the only author the poller accepts. A held action can be approved, or the whole run rejected with a reason; rejecting stops the run, and a retry after anything landed first asks you to confirm the provider state. When two or more items are waiting, the panel at the top of the queue lists every held row with its exact payload and approves them from one place, each item still fenced to its own run; a DM request that arrives while others are open carries the same list and one batch code that decides every member still exactly as it was sent. Turning autonomous actions on (the header switch, with a confirmation) raises the work-in-progress cap and lets in-policy writes apply without a code. A plan that raises one of the charter's open questions asks it on the approval card, once per question; answering approves the plan and writes the answer into the charter as a new version, and the answer reaches the run as approved evidence. The charter card amends an approved charter the same way: edit a clause, strike a rule, add a system, answer a question, and parked work is re-evaluated against the new version. An item the agent skipped as not worth the role's time, or as outside its scope, shows the reason and a Retry; retrying is your decision that it is worth doing, or yours to give, and re-evaluates it without that one rule (the plan still waits for you). A failed run's Retry takes an optional note: a fact you state there is treated as approved evidence for the retry, a plan step it settles is recorded as satisfied on your word, and a change you ask for is made; your note stays on the card, marked once the run has read it. A completed run can be sent back the same way: its Retry needs a note, and the note reaches the agent as your direction. A run that lands nothing and leaves nothing to decide is recorded as stopped, with the reason on the card and its closing actions withheld rather than held, and sends you nothing; a run that landed work tells you so in one DM, or, with the "Manager DMs" control set to hourly, in one digest an hour, while decision requests always arrive at once. Revoking a read or the DM grant stops queued and in-flight work that needs it and records the block. A write you approved literally stays authorised by that exact approval; a write authorised only by the autonomous switch is refused if its matching `<surface>:write` scope is revoked.
 
    What the first day's decisions look like, in the order the queue offers them (the cold-start cap runs one item at a time): a chat ask ends its first run one of two ways - a public reply into the ask's thread held beside the DM to you, which lands once you approve it, or the DM alone with a question, which you answer by sending the finished item back with a note so the reply comes back held. A web-only system's runbook sequence (sign in, set the value, save, read back) is held as one browser batch; approve it whole, and the closing ticket comment and state change arrive held separately after the read-back. A held ticket comment that is too thin is a rejection with a written reason: confirm the DM that already landed, Retry, and the revision arrives held with your reason applied - a comment quoting the documentation and the state change together. If the retry asks you for a fact instead of drafting, Retry once more with the fact in the note.
 
@@ -531,6 +533,19 @@ Then, in the browser:
    Without `--identity` the call is refused as not authenticated - that is the no-auth boundary, not a broken export. The agent id is the last segment of the dashboard URL.
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
+
+### Rehearse the real path
+
+The real-mode route above can be run unattended, from a fresh clone, against the operator's own Linear and Slack demonstration workspaces:
+
+```bash
+pnpm rehearse:real --secrets <file> --dry-run        # bring-up, onboarding and the cards; no provider write
+pnpm rehearse:real --secrets <file> --warm-from day0  # the whole run, cleaned up afterwards
+```
+
+The secrets file (mode 0600) holds `LINEAR_API_KEY` and `SLACK_BOT_TOKEN`; neither is ever written to the bed's `.env.local`. They are typed into the connection cards by a browser, exactly as you would type them, and the script's own reads and clean-up calls use them from memory. Everything else comes from your `.env.local`, opened read-only. The rehearsal clones this checkout at `HEAD`, writes the clone a private `.env.local`, brings up its own Compose project (`day0-rehearsal-<6 hex>`, refused when the name is protected, is your own project, or already exists) on free ports, links your `docs-local` folder, deploys, holds the 1:1 with seven scripted answers in the tickets' own words, approves the charter, waits for orientation and lands the credentials on the cards. That is the dry-run boundary: nothing before it writes to a provider, so `--dry-run` proves the whole bring-up and prints the writes the live run would make. The live run then assigns the demonstration ticket to you, polls intake, approves the skill, the plan, the browser batch and the closing set, checks the five ledger shapes the 14 September replay asserts, exports the ledger, and undoes what it did in reverse order: attributable ticket state restored (a landed move is attributed by its receipt or by the provider's own history of who moved it), comments and bot DMs carrying this work item's server provenance deleted, the project's containers and volumes removed, the clone removed. `--keep` leaves the bed up for inspection and still attempts workspace cleanup. Arrange exclusive use of the demonstration ticket during a run: restoration is not atomic with concurrent provider edits, and unknown effects require reconciliation. Every run leaves `summary.md`, `record.json`, the checks, the export and screenshots under `docs/plans/progress/real-mode-rehearsals/<stamp>/`, a directory the script keeps out of git. A card that already carries a credential stored from documentation offers no landing form, and the rehearsal records that as a stop rather than typing over it. `--warm-from <project>` copies another project's redactor wheel and model volumes into the bed so its first start does not download them.
+
+Closing actions carry a different approval identity from phase one, so a delayed approval cannot authorise new payloads at old indexes; provider idempotency retains the execution identity. Pre-hold repair preserves payload values and valid argument bindings, then reruns the closing-action checks. A blocked run can still send a manager DM under its standing grant when that message asks the manager something; a note that only reports is withheld with the stop. A Slack plan approval carries no question answers; use the charter or plan card to answer, and refresh a stale plan card if the charter answer changed.
 
 ### Teardown
 
@@ -725,10 +740,10 @@ It resolves values the way the running app does, which matters more than it soun
    - Voice: `GET /api/voice/elevenlabs/start` returns a signed URL; ElevenLabs's post-call webhook hits `POST /api/voice/elevenlabs/webhook`.
    - Chat: `POST /api/voice/chat` streams the configured model until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
 3. **Charter synthesis** — `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
-4. **Approval** — boss approves; `api.charters.approve` flips state to `active` and triggers `postCharterApproval` (Exa + the configured model → `## Good-habits memory` block in `AGENTS.md`).
-5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item. Claimed items get a plan (`draftPlan`), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Run it in real mode](#run-it-in-real-mode). **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
-6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** non-empty stdout, whichever ran. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
-7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 17 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
+4. **Approval** — the card lists the rules the draft derived from the transcript, each with its quote; the boss strikes any of them, then approves. `api.charters.approve` applies the strikes to the clauses, flips state to `active` and triggers `postCharterApproval` (Exa + the configured model → `## Good-habits memory` block in `AGENTS.md`). Afterwards `api.charters.amend` writes each change as a new version that supersedes the last and schedules `work.reevaluatePending` for the parked work; `work.setPlan` asks each of the charter's open questions once, at the first plan that touches it, and `api.work.approvePlan` takes the answers with the approval.
+5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Run it in real mode](#run-it-in-real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
+6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** one distinct stdout line per representative input set (two), whichever ran. Before any sandbox runs, a static gate refuses a body or smoke test that repeats the identifiers, figures or quoted phrases of the work item that proposed the skill, or uses an input it does not declare; the reason lands on the row for the retry. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
+7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 20 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
 
 ## Stack
 
@@ -771,7 +786,8 @@ It resolves values the way the running app does, which matters more than it soun
 | File | What's in it |
 |---|---|
 | `agents.ts` | Agent CRUD; `deploy` mutation seeds five read-scopes + emits `agent.deployed` event |
-| `charters.ts` | Charter persist + approve, version listing |
+| `charters.ts` | Charter persist, confirm-or-strike constraints, approve, amend as a new superseding version with the diff on the event, and the re-evaluation trigger for parked work |
+| `managerQuestions.ts` | The charter's open questions asked once each at the first plan that touches them, answered from the approval card or the charter card into a charter amendment |
 | `workspace.ts` | 8-file workspace storage (`AGENTS`, `SOUL`, `IDENTITY`, `USER`, `TOOLS`, `BOOTSTRAP`, `MEMORY`, `HEARTBEAT`) |
 | `voice.ts` | Voice/chat session lifecycle |
 | `events.ts` | Append-only event log |
@@ -779,22 +795,22 @@ It resolves values the way the running app does, which matters more than it soun
 | `devAuth.ts` | Local no-auth issuer constants and the guarded custom-JWT provider built from `DEV_NO_AUTH_JWKS` |
 | `docSources.ts` | Owner-level documentation locations: link, rotate, resync, unlink, inheritance and fenced sync-generation persistence |
 | `docSyncActions.ts` (Node) | Reads sources in 25-page batches, redacts and seals credentials, mirrors safe pages to agents and schedules system discovery |
-| `documentationDiscovery.ts` | Reconciles one completed source generation into durable system discoveries and each inheriting agent's surface set |
+| `documentationDiscovery.ts` | Reconciles one completed source generation into durable system discoveries and each inheriting agent's surface set, and re-admits the out-of-scope skips of every reading agent once per changed generation |
 | `documentationDiscoveryActions.ts` (Node) | Fingerprints pages, combines structural and model-derived system candidates, then applies the fenced discovery generation |
 | `credentials.ts` | Encrypted credential metadata plus internal store/decrypt/touch and owner-visible summary/revocation operations |
 | `credentialCryptoActions.ts` (Node) | AES-256 seal/open actions isolated behind `DAY0_CREDENTIAL_KEY` |
-| `surfaces.ts` | Per-agent system discovery provenance, connection-card lifecycle, two-role approvals, credential attachment, probe state and work requeueing |
+| `surfaces.ts` | Per-agent system discovery provenance, connection-card lifecycle, two-role approvals, credential attachment, probe state, an intake poll the moment a surface first connects, and the re-evaluation of work parked on it |
 | `orientationData.ts` | Bounded internal reads for orientation, intake and re-probe candidates |
 | `orientationActions.ts` (Node) | Reads documentation evidence, selects the MCP/API/browser/escalate ladder and files an exact connect request or absent verdict |
 | `probeActions.ts` (Node) | Local documentation-source probes for MCP and folder readers |
 | `surfaceActions.ts` (Node) | Probes approved system paths, discovers safe tool catalogues, lands credentials and periodically re-verifies connections |
 | `slackProvisionActions.ts` (Node) | Registers a dedicated Slack app from the documented manifest and completes its signed OAuth installation |
-| `intakeActions.ts` (Node) | Polls connected real surfaces in documentation-derived waterfall order and polls manager decision replies on a separate checkpoint |
-| `managerChannelActions.ts` (Node) | Sends exact plan/action decision requests and idempotent acknowledgements through the approved manager chat surface |
-| `work.ts` | Twelve-state work-item machine, including `actions-pending`, channel decisions, grants, retries and transition fencing |
-| `workActions.ts` (Node) | Evaluates, plans and executes work; real-mode output crosses the exact-action gate before provider apply |
-| `skills.ts` | Seven-state skill registry, including rejected/failed states and fenced authoring claims |
-| `skillActions.ts` (Node) | `authorAndRegisterSkill` — configured-model authoring, sandbox verification and registration |
+| `intakeActions.ts` (Node) | Polls connected real surfaces in documentation-derived waterfall order, one surface on demand when it connects, carries the provider's assignee and creator as the candidate's owner and requester, and polls manager decision replies (single or batch codes) on a separate checkpoint |
+| `managerChannelActions.ts` (Node) | Sends exact plan/action decision requests (with a batch code when others are open), landed notes per run or as an hourly digest, and idempotent acknowledgements through the approved manager chat surface |
+| `work.ts` | Twelve-state work-item machine, including `actions-pending`, channel and batch decisions, grants, retries with the quality-fit or scope waiver and the note kept on the item, approval with answers, `reevaluatePending`, the stopped outcome and manager notes, and transition fencing |
+| `workActions.ts` (Node) | Evaluates, plans and executes work; real-mode output crosses the deferral audit, a one-shot argument repair for held writes and the exact-action gate before provider apply |
+| `skills.ts` | Seven-state skill registry keyed by surface class and operation, including rejected/failed states, fenced authoring claims and `retireUnshaped` for rows that predate shapes |
+| `skillActions.ts` (Node) | `authorAndRegisterSkill` — configured-model authoring of a parameterised procedure, the static gate on the body, sandbox verification and registration |
 | `onboarding.ts` (Node) | `synthesiseFromAnswers`, `synthesiseFromTranscript`, `postCharterApproval` (Exa research + good-habits merge) |
 | `mock.ts` | Mock environment CRUD (docs, spreadsheets, slack, twitter, tickets) |
 | `mockSeed.ts` | Idempotent demo seed (4 team docs, 4 how-to guides, Q4 spreadsheet, 5 channels, 1 tweet, 3 tickets) |
@@ -806,18 +822,19 @@ It resolves values the way the running app does, which matters more than it soun
 | `revocationEvaluationActions.ts` (Node) | Drives the live revocation trials across the credential-access and authority-recheck boundary |
 | `metrics.ts` | Derives supervision, action, decision, latency and audit-coverage metrics from the event ledger |
 | `ownership.ts` | Shared caller and per-agent ownership guards for queries, mutations and actions |
-| `crons.ts` | Recovery, documentation sync, surface re-probe, work intake and manager-decision schedules |
-| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 17 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |
+| `crons.ts` | Recovery, documentation sync, surface re-probe, work intake, manager-decision and hourly manager-digest schedules |
+| `reset.ts` | `deleteMyData` — deletes an agent plus its rows in 20 enumerated related tables; unlinking documentation is optional and also revokes every owned credential and deletes its ciphertext |
 | `auth.config.ts` | Chooses the Clerk JWT bridge or the guarded local no-auth JWT provider from deployment env |
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 23 tables: 18 carry per-agent or agent-owned runtime state, and five hold owner-level documentation and credential state.
+The schema contains 26 tables: 21 carry per-agent or agent-owned runtime state, and five hold owner-level documentation and credential state.
 
 | Table | Purpose |
 |---|---|
 | `agents` | One row per deployed agent; lifecycle state |
-| `charters` | Versioned charters with approval state |
+| `charters` | Versioned charters with approval state, the constraints the manager confirmed or struck, and the version each amendment supersedes |
+| `managerQuestions` | One record per open charter question asked, with the plan or candidate that touched it and the answer that amended the charter |
 | `workspace` | 8-file workspace storage |
 | `credentials` | Owner-scoped encrypted values, locations and OAuth grants with source, use and revocation metadata |
 | `docSources` | Linked MCP, folder, git and URL documentation locations with sync/discovery status |
@@ -826,9 +843,11 @@ The schema contains 23 tables: 18 carry per-agent or agent-owned runtime state, 
 | `docSystemDiscoveries` | Current and retired evidence-backed system candidates derived from each source |
 | `surfaces` | Per-agent system connection cards, approvals, paths, probe results, tool catalogues and intake checkpoints |
 | `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |
-| `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions and provider reconciliation |
+| `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions, provider reconciliation, the manager's feedback, waivers and answers, and the re-evaluation stamp |
 | `managerDecisionNotices` | Idempotent received/unknown acknowledgements for parsed manager-channel replies |
-| `skills` | Skill registry — `builtin` or `agent-authored` |
+| `decisionBatches` | One channel code per set of held action decisions open at once, naming each member's item, code and run |
+| `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
+| `skills` | Skill registry — `builtin` or `agent-authored`, shaped by surface class and operation |
 | `permissionGrants` | Scoped capability grants (revocable) |
 | `events` | Event ticker |
 | `mockDocs`, `mockSpreadsheets`, `mockSpreadsheetRows`, `mockSlackChannels`, `mockSlackMessages`, `mockTweets`, `mockTweetReplies`, `mockTickets` | Per-agent mock work environment |
@@ -842,7 +861,7 @@ The schema contains 23 tables: 18 carry per-agent or agent-owned runtime state, 
 | `src/lib/openai.ts` | Shared model resolver: hosted OpenAI through Responses, custom base URLs through chat completions, plus raw JSON/text helpers |
 | `src/lib/structured-fallback.ts` | Classifies a structured-output failure and decides whether the native `response_format` rung may be demoted to the prompt rung |
 | `src/lib/exa.ts` | `searchRole(role)` — fixed query for role best-practices, 8 results × 1200-char snippets |
-| `src/lib/skill-sandbox.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — picks a sandbox backend, and owns the rule that verification means exit 0 **and** non-empty stdout |
+| `src/lib/skill-sandbox.ts` | `authorAndVerifySkill({ skillName, skillBody, smokeTest })` — picks a sandbox backend, and owns the rule that verification means exit 0 **and** one distinct stdout line per representative input set |
 | `src/lib/local-sandbox.ts` | Client for the bundled sandbox service, over a unix socket because that container has no network |
 | `src/lib/daytona.ts` | The Daytona backend — `python:3.12-slim` sandbox runs `python smoke.py` with 60-s timeout |
 | `src/lib/credential-crypto.ts` | AES-256-GCM credential encryption/decryption with strict key and payload validation |
@@ -852,7 +871,9 @@ The schema contains 23 tables: 18 carry per-agent or agent-owned runtime state, 
 | `src/lib/ids.ts` | Branded id helpers (zero runtime cost) |
 | `src/lib/logger.ts` | JSON logger |
 | `src/agent/avatar-pets.ts`, `src/agent/system-classes.ts` | Agent-avatar catalogue and the shared taxonomy used to classify documented systems |
-| `src/agent/charter.ts` | `synthesiseCharter`, `renderCharter`, `identityFromCharter`, `toolsFromCharter`, `extractRole` |
+| `src/agent/charter.ts` | `synthesiseCharter` (with the constraints a draft carries), `renderCharter`, `extractRole`; the workspace renderers live in `src/agent/charter-workspace.ts` |
+| `src/agent/charter-constraints.ts`, `src/agent/charter-amendment.ts` | The rules derived from the transcript and their removal on a strike; the seven amendment kinds, version bump and per-field diff |
+| `src/agent/manager-questions.ts` | The question record shape, its stable key and the content-word rule that decides which plan first asks it |
 | `src/agent/day-one-prompts.ts` | `DAY_ONE_TOPIC_SPECS`, `DAY_ONE_WELCOME`, `defaultSoul`, `day1Script` |
 | `src/agent/good-habits.ts` | `researchAndDistil(role)`, `mergeGoodHabits(existing, fragment)` |
 | `src/agent/work-generator.ts` | Schema and prompt that turn an approved charter into mock-mode work candidates |
@@ -860,11 +881,15 @@ The schema contains 23 tables: 18 carry per-agent or agent-owned runtime state, 
 | `src/evaluation/` | Ordinary-agent control loop, arm-parity checks, shared mock-office scopes and terminal-state definitions |
 | `src/memory/workspace.ts` | `WORKSPACE_FILES` (8-file slot table), `buildSystemPrompt` |
 | `src/surfaces/` | Real/mock adapter registry, exact-action policy, MCP/HTTP/browser transports, secret injection/redaction, Slack identity and connection presentation |
-| `src/work/types.ts` | Domain types; constants `COLD_START_WIP_LIMIT = 1`, `VALUE_THRESHOLD = 30` |
+| `src/work/types.ts` | Domain types; constants `COLD_START_WIP_LIMIT = 1`, `VALUE_THRESHOLD = 30`, the closing cap (`CLOSING_SET_CAP` plus `DEFERRED_SEQUENCE_ALLOWANCE`) and the skip-reason prefixes |
 | `src/work/evaluate.ts` | `evaluateCandidate` — 7-criterion sequential evaluator |
 | `src/work/quality-fit.ts` | `qualityFit` — short-circuits if `AGENTS.md` has no good-habits section |
-| `src/work/plan.ts` | `draftExecutionPlan` |
-| `src/work/execute-skill.ts` | Per-invocation skill agents, procedure contracts and mock/real action schemas, including dependent closing actions |
+| `src/work/plan.ts`, `src/work/plan-steps.ts` | `draftExecutionPlan`, grounded in the candidate's ticket record or chat thread when a surface can read it; the step predicates the gate and the executor share |
+| `src/work/candidate-properties.ts` | The ownership, priority and age vocabulary the planner audit and the charter constraints both read |
+| `src/work/skill-shape.ts`, `src/work/skill-inputs.ts`, `src/work/authored-skill.ts` | A candidate's surface class and operation, the `<record-id>` input grammar the executor binds, and the static gate that refuses a body carrying the first item's values |
+| `src/work/scope.ts` | `judgeScope` — the one scope judgement; lexical rule and quality fit as inputs, the charter judgement model call in real mode |
+| `src/work/stop.ts`, `src/work/manager-feedback.ts`, `src/work/manager-notes.ts` | The stopped outcome (nothing landed, nothing to decide), the feedback a run may still read, and the landed and stopped notes the manager receives |
+| `src/work/execute-skill.ts` | Per-invocation skill agents, procedure contracts and mock/real action schemas, the deferral audit, the one-shot argument repair, the manager's answers and feedback as evidence, and dependent closing actions |
 | `src/work/autonomy.ts`, `src/work/idempotency.ts` | Supervised/autonomous policy labels and stable provider-action idempotency keys |
 | `src/work/manager-channel.ts`, `src/work/reconciliation.ts`, `src/work/reply-target.ts` | Manager decision parsing/requests, interrupted-provider reconciliation and exact chat-thread targeting |
 
@@ -989,19 +1014,21 @@ Day-1 一对一通过语音或文字依次讨论七个主题：为什么招聘�
 
 #### 它起草自己的章程，并等待人工确认
 
-Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围和一组范围受限且可撤销的能力授权。
+Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准前，manager 会看到草稿从你的话里推导出的每条规则，旁边附有它来自的那句话，可以划掉其中任何一条；被划掉的规则不会再作为门槛存在。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围和一组范围受限且可撤销的能力授权。批准之后章程只能修订，不会被重写：每次修改都是一个取代上一版的新版本，操作者、理由和逐字段 diff 记录在同一条事件里，而每次修订都会把在旧版本下被搁置的工作送回重新评估。章程中悬而未决的问题会在第一个涉及它的计划上被问一次，答案随该计划的批准一起写入章程。
 
 ![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
 #### 它自行发现工作
 
-系统不会直接给它一条预置队列。Agent 读取工作环境并提出应当接手的事项。每个候选事项按七项标准评估：资格、权限、归属、质量匹配、价值、风险和容量；随后进入一个十二状态的生命周期，任何执行都要先由人工批准计划。
+系统不会直接给它一条预置队列。Agent 读取工作环境并提出应当接手的事项。每个候选事项按七项标准评估：资格、权限、归属、质量匹配、价值、风险和容量；随后进入一个十二状态的生命周期，任何执行都要先由人工批准计划。范围判断对每个事项只做一次：词法章程规则和质量匹配过滤器是它的输入，在真实模式下模型会把整份章程（含边界）读一遍。被判定为超出范围而跳过的事项保留一个 Retry；重试即 manager 决定这项工作可以交给它。一次运行若什么都没落地、也没有留下任何需要决定的事项，就会停止：原因显示在卡片上，不给任何人发消息。
 
 ![The real-mode work queue after intake, showing seven discovered items and the completed plan for a close-week reminder](.github/images/work-queue.webp)
 
 #### 缺少技能时，它会编写并验证技能
 
 如果工作项进入技能匹配步骤，但与任何已注册技能都不匹配，结果是 `needs-skill`，而不是直接丢弃。判定理由说明缺少匹配技能及拟议技能名称，并不表示该工作已被确认符合章程边界。Agent 会提出技能、编写技能，并在隔离沙箱中运行冒烟测试。只有沙箱验证通过后，技能才会注册；验证失败或从未验证的技能会保持为清晰可见的不可调用状态。这样可以在不要求开发者介入的情况下扩展能力。
+
+它编写的技能是针对某一类 surface 上某一种操作的流程，按这个形状命名（`analytics-refresh-value`、`kanban-comment-and-close`、`chat-thread-reply`），而不是按最初需要它的那张工单或那条线程命名。技能正文把每次运行会变化的值声明为输入（`<record-id>`、`<requested-value>`、`<reply-thread>`），执行器在执行时从每个工作项、其 runbook 和 surface 记录中绑定这些值；正文若带有第一个事项的数字或标识，会在沙箱运行之前被拒绝。后续同一形状的事项会复用已注册的技能，不再提出新技能；只有没有任何已注册技能覆盖的形状才会触发 `needs-skill`。
 
 ![The skills panel after sandbox verification, showing the built-in documentation skill and three agent-authored Linear and Slack skills registered](.github/images/skills-registered.webp)
 
@@ -1398,7 +1425,7 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
    ![Clean status headers showing Northstar CRM absent and the browser-driven Looker pipeline tile connected](.github/images/connection-statuses.webp)
 
-4. **对工作做决策。** Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。被 Agent 判定为不值得投入而跳过的事项会显示原因和一个 Retry；重试即你的决定，它会跳过该过滤器重新评估（计划仍需你批准）。失败运行的 Retry 可附一条可选备注：你在其中陈述的事实会被当作该次重试的已批准证据，你要求的改动会被执行。已完成的运行也可以同样方式退回：其 Retry 必须附备注，备注会作为你的指示送达 Agent。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断。你逐字批准过的写入仍由该次精确批准授权；仅由自主执行开关授权的写入，在对应的 `<surface>:write` 范围被撤销后会被拒绝。
+4. **对工作做决策。** Agent 提出的技能、计划与被暂缓的 action 会出现在 dashboard 中；连接 Slack 之后，也会以短码形式发到你的 DM，用 manager 本人的 Slack 账号回复 `approve <code>` 或 `reject <code> <reason>`，轮询只接受这一位作者。被暂缓的 action 可以批准，也可以带理由拒绝整个运行；拒绝会停止运行，若此前已有效果落地，重试前会要求你确认 provider 状态。当有两个或更多事项在等待时，队列顶部的面板会列出每一条被暂缓的行及其精确 payload，可以在一处批准它们，每个事项仍受各自运行的约束；在其他请求仍未决定时到达的 DM 请求会带上同一份清单和一个批次码，它只决定那些仍与发送时完全一致的成员。打开自主执行（页眉开关，需确认）会提高在制品上限，并让符合策略的写入无需短码即可执行。计划若触及章程中某个悬而未决的问题，批准卡片会把它问出来，每个问题只问一次；作答即批准计划，答案作为新版本写入章程，并作为已批准证据送达该次运行。章程卡片以同样方式修订已批准的章程：编辑条款、划掉规则、添加系统、回答问题，被搁置的工作会按新版本重新评估。被 Agent 判定为不值得投入、或超出其范围而跳过的事项会显示原因和一个 Retry；重试即你的决定（值得做，或可以交给它），它会跳过那一条规则重新评估（计划仍需你批准）。失败运行的 Retry 可附一条可选备注：你在其中陈述的事实会被当作该次重试的已批准证据，由它解决的计划步骤会按你的话记录为已满足，你要求的改动会被执行；备注留在卡片上，运行读取后会标记为已处理。已完成的运行也可以同样方式退回：其 Retry 必须附备注，备注会作为你的指示送达 Agent。一次运行若什么都没落地、也没有留下需要决定的事项，会记录为 stopped，原因显示在卡片上，收尾 action 被扣留而不是暂缓，且不会给你发任何消息；已落地工作的运行会用一条 DM 告诉你，或者在 "Manager DMs" 控件设为每小时时汇总为每小时一份摘要，而决策请求始终即时送达。撤销读取或 DM 授权会阻断需要它的排队与进行中的工作并记录该阻断。你逐字批准过的写入仍由该次精确批准授权；仅由自主执行开关授权的写入，在对应的 `<surface>:write` 范围被撤销后会被拒绝。
 
    第一天的决策按队列给出的顺序出现（冷启动上限一次只跑一项）：一条聊天请求的首次运行有两种结局——一条发往原帖线程的公开回复与发给你的 DM 一起被暂缓，你批准后即落地；或者只有一条带着问题的 DM，此时你用备注把已完成的事项退回，回复就会以暂缓状态返回。只有网页界面的系统，其 runbook 序列（登录、填值、保存、回读）会作为一个浏览器批次整体暂缓；整体批准后，收尾的工单评论和状态变更会在回读之后另行暂缓。被暂缓的工单评论若过于单薄，就带书面理由拒绝：确认已落地的 DM，点 Retry，修订版会带着你的理由以暂缓状态返回——引用文档的评论与状态变更一并出现。若重试反过来向你要一个事实而不是起草，就再 Retry 一次，把该事实写进备注。
 
@@ -1415,6 +1442,20 @@ pnpm dev                         # prints an unlock URL - open that, not localho
    不带 `--identity` 时调用会以未认证被拒绝，这是无认证边界在起作用，而不是导出损坏。Agent id 是 dashboard URL 的最后一段。
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
+
+
+章程修订仅重新准入因范围或质量匹配而跳过的事项；低价值事项和正在运行的已批准计划保持原状。收尾阶段使用不同于第一阶段的批准标识，延迟的旧批准不能批准新 payload；provider 幂等键仍沿用执行标识。参数名修复保留 payload 值及已有效的绑定，并重新执行收尾检查。受阻运行仍可在现行授权下发送仅含求助的 manager DM。Slack 的计划批准不携带问题答案；需要在章程或计划卡片作答，旧卡片与当前章程答案冲突时必须刷新。操作分类只覆盖演示流程，明确只读的请求使用独立 read 类型；它并非通用操作分类器。
+
+#### 演练真实路径
+
+上面的真实模式路线可以从一个全新 clone 无人值守地跑一遍，对象是操作者自己的 Linear 和 Slack 演示 workspace：
+
+```bash
+pnpm rehearse:real --secrets <file> --dry-run        # 搭建、入职和卡片；不向 provider 写入
+pnpm rehearse:real --secrets <file> --warm-from day0  # 完整运行，结束后清理
+```
+
+secrets 文件（权限 0600）保存 `LINEAR_API_KEY` 和 `SLACK_BOT_TOKEN`；两者都不会写进 bed 的 `.env.local`。它们由浏览器像你一样敲进连接卡片，脚本自己的读取和清理调用只在内存中使用它们。其余值来自你的 `.env.local`，以只读方式打开。演练会在 `HEAD` clone 本仓库、为 clone 写一份私有 `.env.local`、用空闲端口启动自己的 Compose 项目（`day0-rehearsal-<6 hex>`；名称受保护、是你自己的项目或已存在时会拒绝）、链接你的 `docs-local` 文件夹、部署、用七条按工单原话写好的回答完成 1:1、批准章程、等待 orientation，并把凭据填到卡片上。这里就是 dry-run 边界：在此之前没有任何一步会向 provider 写入，所以 `--dry-run` 能证明整个搭建过程，并打印出真实运行将要做的写入。真实运行随后把演示工单分配给你、轮询 intake、批准技能、计划、浏览器批次和收尾集合，检查 9 月 14 日 replay 断言的五种 ledger 形状，导出 ledger，然后按相反顺序撤销：恢复可归属的工单状态、删除带有该工作项服务端来源标记的评论和 bot 私信、移除该项目的容器和卷、移除 clone。`--keep` 会保留 bed 供检查，但仍会尝试清理 workspace。运行期间请独占演示工单：恢复操作与其他人的修改并非原子操作，无法归属的效果需要人工核对。每次运行都会在 `docs/plans/progress/real-mode-rehearsals/<stamp>/` 下留下 `summary.md`、`record.json`、各项检查、导出和截图，脚本会让该目录不进入 git。已经带有从文档中存储的凭据的卡片没有填写表单，演练会把它记录为一次停止，而不是覆盖它。`--warm-from <project>` 会把另一个项目的 redactor wheel 和模型卷复制到 bed 中，这样首次启动不必重新下载。
 
 #### 停止
 
