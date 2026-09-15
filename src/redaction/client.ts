@@ -52,13 +52,32 @@ export class HttpSpanModel implements SpanModel {
   }
 
   async spans(text: string, labels: readonly string[], threshold: number): Promise<ModelSpan[]> {
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    let onAbort: () => void = () => {};
+    const deadline = new Promise<never>((_, reject) => {
+      onAbort = () => reject(new RedactorUnavailableError('redaction component timed out'));
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([this.readSpans(text, labels, threshold, signal), deadline]);
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  private async readSpans(
+    text: string,
+    labels: readonly string[],
+    threshold: number,
+    signal: AbortSignal,
+  ): Promise<ModelSpan[]> {
     let response: Response;
     try {
       response = await this.fetchImpl(this.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text, labels, threshold }),
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -77,7 +96,7 @@ export class HttpSpanModel implements SpanModel {
     if (!Array.isArray(spans)) {
       throw new RedactorUnavailableError('redaction component answered without spans');
     }
-    return spans.flatMap((entry: unknown): ModelSpan[] => {
+    return spans.map((entry: unknown): ModelSpan => {
       const span = entry as Partial<ModelSpan> | null;
       if (
         !span ||
@@ -85,13 +104,18 @@ export class HttpSpanModel implements SpanModel {
         typeof span.end !== 'number' ||
         typeof span.label !== 'string' ||
         typeof span.score !== 'number' ||
+        !Number.isInteger(span.start) ||
+        !Number.isInteger(span.end) ||
+        !Number.isFinite(span.score) ||
+        span.score < 0 || span.score > 1 ||
+        !labels.includes(span.label) ||
         span.start < 0 ||
         span.end > text.length ||
         span.end <= span.start
       ) {
-        return [];
+        throw new RedactorUnavailableError('redaction component answered with an invalid span');
       }
-      return [{ start: span.start, end: span.end, label: span.label, score: span.score }];
+      return { start: span.start, end: span.end, label: span.label, score: span.score };
     });
   }
 }
