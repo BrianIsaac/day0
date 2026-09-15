@@ -91,6 +91,8 @@ export interface AuthorPromptSkill {
   surfaceClass?: string;
   operation?: string;
   previousAuthoringFailure?: string;
+  /** The draft the previous attempt's refusal kept, as stored: redacted and bounded. */
+  previousAuthoringDraft?: { body: string; smokeTest: string };
 }
 
 /**
@@ -205,17 +207,47 @@ export function buildAuthorPrompt(
     ...(shape.length > 0 ? ['', ...shape] : []),
     ...(surfaceGuidance ? ['', surfaceGuidance] : []),
     ...(runbookGuidance ? ['', runbookGuidance] : []),
-    ...(skill.previousAuthoringFailure
-      ? [
-          '',
-          'Previous authoring attempt failed before registration:',
-          skill.previousAuthoringFailure,
-          'Correct that failure in this attempt; do not repeat the rejected output.',
-        ]
-      : []),
+    ...previousAttemptSection(skill),
     '',
     'Author SKILL.md and smoke.py now.',
   ].join('\n');
+}
+
+/**
+ * What the retry is told about the attempt before it.
+ *
+ * With the refused draft in hand the retry is a correction, as the executor's
+ * repair is: one full replacement that fixes every reason and keeps the rest,
+ * rather than a fresh attempt that may fail some other way. Without a draft
+ * (the model failed, or the row predates kept drafts) the notice is the
+ * reason alone, as it always was.
+ */
+function previousAttemptSection(skill: AuthorPromptSkill): string[] {
+  if (!skill.previousAuthoringFailure) return [];
+  const draft = skill.previousAuthoringDraft;
+  if (!draft) {
+    return [
+      '',
+      'Previous authoring attempt failed before registration:',
+      skill.previousAuthoringFailure,
+      'Correct that failure in this attempt; do not repeat the rejected output.',
+    ];
+  }
+  return [
+    '',
+    'Previous authoring attempt failed before registration:',
+    skill.previousAuthoringFailure,
+    '',
+    '--- Required correction ---',
+    'The draft below was refused for the reasons above and nothing in it was registered or run.',
+    'Return one corrected full replacement of both SKILL.md and smoke.py that fixes every reason above. Keep every part of the refused draft the reasons do not implicate: the same procedure, tools, verification and inputs, corrected rather than rewritten from nothing.',
+    '',
+    'Refused SKILL.md:',
+    draft.body,
+    '',
+    'Refused smoke.py:',
+    draft.smokeTest,
+  ];
 }
 
 export const authorSchema = z.object({
@@ -361,6 +393,10 @@ export const authorAndRegisterSkill = action({
       {
         ...skill,
         previousAuthoringFailure: skill.verificationLog,
+        previousAuthoringDraft:
+          skill.refusedBody || skill.refusedSmokeTest
+            ? { body: skill.refusedBody ?? '', smokeTest: skill.refusedSmokeTest ?? '' }
+            : undefined,
       },
       surfaceRows.map(toSurfaceRecord),
       Date.now(),

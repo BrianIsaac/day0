@@ -192,6 +192,13 @@ describe('the static gate on an authored skill, through the authoring action', (
     const registered = await readSkill(harness, skillId);
     expect(registered.refusedBody).toBeUndefined();
     expect(registered.refusedSmokeTest).toBeUndefined();
+
+    const retryPrompt = recorded.users[1]!;
+    expect(retryPrompt).toContain('SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`');
+    expect(retryPrompt).toContain('--- Required correction ---');
+    expect(retryPrompt).toContain(`Refused SKILL.md:\n${failed.refusedBody}`);
+    expect(retryPrompt).toContain(`Refused smoke.py:\n${smokeTest}`);
+    expect(retryPrompt).not.toContain('xoxb-');
   });
 
   it('keeps the draft a smoke-test preflight refuses, and drops it again when the model itself fails', async (): Promise<void> => {

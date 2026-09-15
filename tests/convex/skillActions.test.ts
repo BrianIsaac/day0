@@ -337,6 +337,43 @@ describe('skill author prompts', (): void => {
     expect(verify).not.toHaveBeenCalled();
   });
 
+  it('hands the refused draft back with the reasons and asks for one corrected full replacement', (): void => {
+    const refusedBody = '# Refresh\n## Inputs\n- analytics-surface: the tile\n## Procedure\nOpen <analytics-surface>.';
+    const refusedSmokeTest = 'def run(inputs: dict) -> dict:\n    return {"actions": []}\nprint(run({}))';
+    const prompt = buildAuthorPrompt(
+      {
+        ...skill,
+        previousAuthoringFailure:
+          'the authored skill is not a reusable procedure: SKILL.md uses `<analytics-surface>` without declaring it under `## Inputs`',
+        previousAuthoringDraft: { body: refusedBody, smokeTest: refusedSmokeTest },
+      },
+      [],
+      now,
+    );
+
+    expect(prompt).toContain('Previous authoring attempt failed before registration:');
+    expect(prompt).toContain('SKILL.md uses `<analytics-surface>` without declaring it under `## Inputs`');
+    expect(prompt).toContain('--- Required correction ---');
+    expect(prompt).toContain('Return one corrected full replacement of both SKILL.md and smoke.py');
+    expect(prompt).toContain('Refused SKILL.md:\n' + refusedBody);
+    expect(prompt).toContain('Refused smoke.py:\n' + refusedSmokeTest);
+    expect(prompt).not.toContain('do not repeat the rejected output');
+    expect(prompt.endsWith('Author SKILL.md and smoke.py now.')).toBe(true);
+    expect(prompt.indexOf('Refused SKILL.md:')).toBeLessThan(prompt.indexOf('Refused smoke.py:'));
+    expect(prompt.indexOf('Previous authoring attempt')).toBeLessThan(prompt.indexOf('--- Required correction ---'));
+  });
+
+  it('keeps the draft-free failure notice when nothing was kept', (): void => {
+    const prompt = buildAuthorPrompt(
+      { ...skill, previousAuthoringFailure: 'authoring failed before any sandbox ran: model unavailable' },
+      [],
+      now,
+    );
+    expect(prompt).toContain('Correct that failure in this attempt; do not repeat the rejected output.');
+    expect(prompt).not.toContain('Refused SKILL.md');
+    expect(prompt).not.toContain('--- Required correction ---');
+  });
+
   it('tells the next authoring attempt why the prior smoke source was rejected', (): void => {
     const prompt = buildAuthorPrompt(
       {
