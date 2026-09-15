@@ -199,12 +199,13 @@ export type RestoreStep =
 export function issueRestoreSteps(
   before: IssueSnapshot,
   after: { stateId: string; assigneeId: string | null; commentIds: readonly string[] },
+  written: { commentIds: readonly string[]; stateId?: string; assigneeId?: string | null } = { commentIds: [] },
 ): RestoreStep[] {
   const steps: RestoreStep[] = after.commentIds
-    .filter((id: string): boolean => !before.commentIds.includes(id))
+    .filter((id: string): boolean => !before.commentIds.includes(id) && written.commentIds.includes(id))
     .map((commentId: string): RestoreStep => ({ kind: 'delete-comment', commentId }));
-  if (after.stateId !== before.stateId) steps.push({ kind: 'move', stateId: before.stateId });
-  if (after.assigneeId !== before.assigneeId) {
+  if (after.stateId !== before.stateId && after.stateId === written.stateId) steps.push({ kind: 'move', stateId: before.stateId });
+  if (after.assigneeId !== before.assigneeId && after.assigneeId === written.assigneeId) {
     steps.push({ kind: 'assign', assigneeId: before.assigneeId });
   }
   return steps;

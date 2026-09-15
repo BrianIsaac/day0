@@ -58,7 +58,7 @@ import { pickFreePorts, portsFromBase, portsRefusal } from './ports';
 import { waitUntil, type Runner, type ServerHandle, type ServerStarter } from './process';
 import { shotPath } from './output';
 import type { RunRecord } from './report';
-import { botMessagesSince, type SlackClient } from './slack';
+import { belongsToWorkItems, botMessagesSince, type SlackClient } from './slack';
 
 /** The agent the rehearsal deploys. */
 export const AGENT_NAME = 'rehearsal worker';
@@ -469,18 +469,22 @@ const assignTicket: Phase = {
     const viewer = requireState(ctx.state, 'viewer');
     const before = requireState(ctx.state, 'ticketBefore');
     ctx.state.slackStartTs = ((ctx.now() / 1000) - SLACK_START_SLACK_S).toFixed(6);
+    ctx.ledger.register(`${TICKET} assignee back to ${before.assigneeId ?? 'unassigned'}`, async () => {
+      const current = await readIssueSnapshot(ctx.linear, TICKET);
+      if (current.assigneeId === viewer.id) await assignIssue(ctx.linear, before.id, before.assigneeId);
+    });
     await assignIssue(ctx.linear, before.id, viewer.id);
     ctx.record.writes.push(`Linear: ${TICKET} assigned to ${viewer.name} (${viewer.id})`);
-    ctx.ledger.register(`${TICKET} assignee back to ${before.assigneeId ?? 'unassigned'}`, async () => {
-      await assignIssue(ctx.linear, before.id, before.assigneeId);
-    });
     if (ctx.slack && ctx.state.managerDmChannelId) {
       const slack = ctx.slack;
       const channel = ctx.state.managerDmChannelId;
       const botId = requireState(ctx.state, 'slackBot').botId;
       const startTs = ctx.state.slackStartTs;
-      ctx.ledger.register(`the bot's DMs in ${channel} since the boundary deleted`, async () => {
-        const messages = botMessagesSince(await slack.history(channel, startTs), botId, startTs);
+      ctx.ledger.register(`this work item's bot DMs in ${channel} deleted`, async () => {
+        const messages = botMessagesSince(
+          await slack.history(channel, startTs), botId, startTs,
+          ctx.state.ticketItemId ? [ctx.state.ticketItemId] : [],
+        );
         const failures: string[] = [];
         for (const message of messages) {
           try {
@@ -621,7 +625,7 @@ const approveBatch: Phase = {
 const approveClosing: Phase = {
   name: 'approve-closing',
   writes: [
-    `Linear save_comment on ${TICKET} quoting the read-back (deleted at cleanup: comment ids not in the snapshot)`,
+    `Linear save_comment on ${TICKET} quoting the read-back (deleted at cleanup: new comments attributed to this work item)`,
     `Linear ${TICKET} moved to Done (moved back at cleanup to the snapshot's state)`,
   ],
   run: async (ctx) => {
@@ -630,7 +634,21 @@ const approveClosing: Phase = {
     const linear = ctx.linear;
     ctx.ledger.register(`${TICKET} state and comments back to the snapshot`, async () => {
       const after = await readIssueSnapshot(linear, TICKET);
-      for (const step of issueRestoreSteps(before, after)) {
+      const item = await ticketRow(ctx);
+      const comments = await readComments(linear, before.id);
+      const ownedComments = comments.filter(comment => belongsToWorkItems(comment.body, [item._id]));
+      const ledgers = [item.output, item.output?.initial];
+      const wroteCurrentState = ledgers.some(output => output?.actions?.some((action, index) => {
+        const receipt = output.applied?.[index];
+        if (!receipt?.ok || receipt.held || receipt.awaitingApproval) return false;
+        if (action.tool !== 'mcp.call' || action.args.surface !== 'linear' || action.args.tool !== 'save_issue') return false;
+        const args = JSON.parse(action.args.toolArgsJson ?? '{}') as Record<string, unknown>;
+        return [before.id, before.identifier].includes(String(args.id)) && args.state === after.stateName;
+      }));
+      for (const step of issueRestoreSteps(before, after, {
+        commentIds: ownedComments.map(comment => comment.id),
+        ...(wroteCurrentState ? { stateId: after.stateId } : {}),
+      })) {
         if (step.kind === 'delete-comment') await deleteComment(linear, step.commentId);
         if (step.kind === 'move') await moveIssue(linear, before.id, step.stateId);
         if (step.kind === 'assign') await assignIssue(linear, before.id, step.assigneeId);

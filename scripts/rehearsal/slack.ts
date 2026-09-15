@@ -95,9 +95,15 @@ export class SlackClient {
   }
 }
 
+/** A terminal server provenance trailer attributes a write to this isolated bed. */
+export function belongsToWorkItems(text: string, workItemIds: readonly string[]): boolean {
+  const match = /(?:^|\n)-- [^\n]+ \(Day0\) · run ([^/\s]+)\/[^/\s]+\s*$/.exec(text);
+  return match !== null && workItemIds.includes(match[1]!);
+}
+
 /**
- * The bot's own messages at or after the run start, the only ones the run
- * may delete.
+ * Only messages with both the bot identity and this bed's work-item provenance
+ * may be deleted; timestamps alone do not establish ownership.
  *
  * Args:
  *   messages: A conversation history.
@@ -111,10 +117,12 @@ export function botMessagesSince(
   messages: readonly SlackMessage[],
   botId: string,
   startTs: string,
+  workItemIds: readonly string[] = [],
 ): SlackMessage[] {
   const start = Number.parseFloat(startTs);
   return messages.filter(
     (message: SlackMessage): boolean =>
-      message.botId === botId && Number.parseFloat(message.ts) >= start,
+      message.botId === botId && Number.parseFloat(message.ts) >= start &&
+      belongsToWorkItems(message.text, workItemIds),
   );
 }

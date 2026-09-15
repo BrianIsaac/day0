@@ -116,12 +116,20 @@ describe('putting an issue back', (): void => {
     commentIds: ['c1'],
   };
 
+  it('leaves concurrent comments and changed assignments outside the recorded writes', () => {
+    expect(issueRestoreSteps(before, {
+      stateId: 's-in-progress', assigneeId: 'other-user', commentIds: ['c1', 'ours', 'human'],
+    }, { commentIds: ['ours'], stateId: 's-done', assigneeId: 'u1' })).toEqual([
+      { kind: 'delete-comment', commentId: 'ours' },
+    ]);
+  });
+
   it('undoes the state, the assignee and every comment the run added, and nothing else', (): void => {
     const steps = issueRestoreSteps(before, {
       stateId: 's-done',
       assigneeId: 'u1',
       commentIds: ['c1', 'c2', 'c3'],
-    });
+    }, { commentIds: ['c2', 'c3'], stateId: 's-done', assigneeId: 'u1' });
     expect(steps).toEqual([
       { kind: 'delete-comment', commentId: 'c2' },
       { kind: 'delete-comment', commentId: 'c3' },
