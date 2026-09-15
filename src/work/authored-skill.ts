@@ -47,7 +47,7 @@ function escapeRegExp(value: string): string {
  *   channel and thread, and each percentage, amount, whole number and quoted
  *   phrase in the title and summary.
  */
-export function instanceLiterals(instance: AuthoredSkillInstance): string[] {
+export function instanceLiterals(instance: AuthoredSkillInstance, documentedProcedure = ''): string[] {
   const prose = `${instance.title}\n${instance.contentSummary}`;
   const found: string[] = [instance.externalId];
   for (const ref of instance.contentRefs) {
@@ -63,7 +63,16 @@ export function instanceLiterals(instance: AuthoredSkillInstance): string[] {
     for (const match of prose.matchAll(pattern)) found.push(match[0]);
   }
   for (const match of prose.matchAll(PERCENTAGE)) found.push(match[0].replace(/\s?%$/, ''));
-  for (const match of prose.matchAll(QUOTED)) found.push(match[1]!);
+  for (const match of prose.matchAll(QUOTED)) {
+    const label = match[1]!;
+    const isControl = /\b(?:click|press|select)\s+$/i.test(prose.slice(0, match.index));
+    const documentedControl = new RegExp(
+      `\\b(?:click|press|select)\\s+[\\x60"“]?${escapeRegExp(label)}(?:[\\x60"”.,;\\s]|$)`,
+      'i',
+    );
+    if (isControl && documentedControl.test(documentedProcedure)) continue;
+    found.push(label);
+  }
   return [
     ...new Set(
       found.map((value: string): string => value.trim()).filter(
@@ -106,6 +115,7 @@ export function authoredSkillIssues(args: {
   body: string;
   smokeTest: string;
   instance?: AuthoredSkillInstance | null;
+  documentedProcedure?: string;
 }): string[] {
   const issues: string[] = [];
   issues.push(...doubleBraceIssues('SKILL.md', args.body));
@@ -123,7 +133,7 @@ export function authoredSkillIssues(args: {
   }
 
   if (args.instance) {
-    const found = instanceLiterals(args.instance)
+    const found = instanceLiterals(args.instance, args.documentedProcedure)
       .map((literal: string): { literal: string; where: string[] } => ({
         literal,
         where: [

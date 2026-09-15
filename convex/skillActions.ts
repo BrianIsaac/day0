@@ -367,7 +367,10 @@ export const authorAndRegisterSkill = action({
     const instance: Doc<'workItems'> | null = skill.proposedFor
       ? await ctx.runQuery(internal.work.getInternal, { workItemId: skill.proposedFor })
       : null;
-    const issues = authoredSkillIssues({ body, smokeTest, instance });
+    const issues = authoredSkillIssues({
+      body, smokeTest, instance,
+      documentedProcedure: SURFACE_MODE === 'real' ? linkedRunbookSection(skill, surfaceRows.map(toSurfaceRecord), pageRows) : '',
+    });
     if (issues.length > 0) {
       const reason = `the authored skill is not a reusable procedure: ${issues.join('; ')}`;
       return await recordAuthoringFailure(ctx, args.skillId, runId, {

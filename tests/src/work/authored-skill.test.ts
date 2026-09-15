@@ -70,6 +70,21 @@ describe('the values a skill must not repeat from its first work item', (): void
 });
 
 describe('the static gate on an authored skill', (): void => {
+  it('allows a documented fixed control label quoted by the candidate', () => {
+    expect(authoredSkillIssues({
+      body: reusableBody, smokeTest: reusableSmoke,
+      instance: { ...tileTicket, contentSummary: 'Enter 74% and press "Save".' },
+      documentedProcedure: 'Sign in, update the figure, and press Save.',
+    })).toEqual([]);
+  });
+
+  it('still refuses quoted output values even when a runbook repeats them', () => {
+    expect(authoredSkillIssues({
+      body: reusableBody + '\nPost "coverage refreshed".', smokeTest: reusableSmoke,
+      instance: tileTicket, documentedProcedure: 'Post "coverage refreshed".',
+    }).some(issue => issue.includes('coverage refreshed'))).toBe(true);
+  });
+
   it('passes a parameterised procedure whose smoke test runs two representative inputs', (): void => {
     expect(
       authoredSkillIssues({ body: reusableBody, smokeTest: reusableSmoke, instance: tileTicket }),
