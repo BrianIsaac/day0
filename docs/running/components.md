@@ -33,9 +33,12 @@ nothing listening, or one running that day0 was never told about.
 ## `backend` - day0 itself
 
 **What it is.** The Convex backend: day0's database and the code that runs in
-it. The 1:1 that produces a charter, the orientation run that proposes a
-connection, the approval gate, the work loop, the skill author and the ledger
-are all here.
+it. The 1:1 that produces a charter, the rules the manager confirms or strikes
+on it, its amendments and open questions, the orientation run that proposes a
+connection, the approval gate, the work loop with its one scope judgement and
+the re-evaluation of parked work, the retry waivers, the batched approvals, the
+notes and digests the manager receives, the skill author with its static gate,
+and the ledger are all here.
 
 **What day0 uses it for.** Everything. It also mounts your documentation folder
 read-only, so a folder source needs no other component.
@@ -225,7 +228,14 @@ material. It removes detected phone numbers, personal addresses, government
 and account identifiers and dates of birth; it keeps email addresses in stored
 pages and removes them from provider outcomes. Detection still has misses and
 false positives; these policy choices are not a guarantee of complete redaction. A deterministic guard keeps the model from
-taking a placeholder, a stored marker or an identifier for a secret.
+taking a placeholder, a stored marker or an identifier for a secret. One false
+positive is known on this tree: a runbook that names its tools in prose (a bare
+product name such as `linear`, a snake_case tool name such as `save_comment`)
+can have those words stored as credentials and replaced by markers in the
+stored page, so the executor reads a how-to with its tool names redacted and
+the system's card shows a stored credential instead of a landing form. The
+real-mode rehearsal records that as a stop; the guard does not yet exempt those
+shapes.
 
 **When you need it.** Always in real mode. Without it a documentation sync
 refuses to persist a page rather than store it in the clear, and a provider
@@ -266,3 +276,16 @@ it does not cover a secret day0 never stored.
 before it becomes callable. Both are described where they are set up, in the
 repository README; neither is a way for day0 to reach one of your systems, which
 is what the components above are for.
+
+## Rehearsing the real path
+
+`pnpm rehearse:real` is not a component but it starts them: a fresh clone in
+its own compose project with the `real`, `sandbox`, `browser`, `demo` and
+`redactor` profiles (no Notion, so one token fewer in the bed), your `docs-local`
+folder mounted read-only, and the Linear key and Slack bot token typed into the
+connection cards by a browser from a separate 0600 secrets file. `--dry-run`
+stops at the first provider write, after the bring-up, the 1:1, the charter,
+orientation and the cards; a live run assigns the demonstration ticket, drives
+the work through the dashboard, checks the ledger and undoes every write it made
+before it removes the project and the clone. `--warm-from <project>` copies the
+redactor's wheel and model volumes from a project that already has them.
