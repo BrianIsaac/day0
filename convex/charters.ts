@@ -20,7 +20,7 @@ import {
 } from '../src/agent/charter-amendment';
 import {
   CONSTRAINT_KINDS,
-  effectiveCharter,
+  strikeOutcome,
   type CharterConstraint,
 } from '../src/agent/charter-constraints';
 import { identityFromCharter, toolsFromCharter } from '../src/agent/charter-workspace';
@@ -164,16 +164,28 @@ export async function renderWorkspaceFromCharter(
   await writeFileImpl(ctx, { agentId, fileName: 'TOOLS.md', content: toolsFromCharter(charter) });
 }
 
+/** A strike or an approval either lands or names the reason it was refused. */
+const strikeResultValidator = v.union(
+  v.object({ ok: v.literal(true) }),
+  v.object({ ok: v.literal(false), reason: v.string() }),
+);
+
+export type StrikeResult = { ok: true } | { ok: false; reason: string };
+
 /**
  * Strike or restore one constraint on a drafted charter.
  *
  * The draft's clauses are left as synthesised until approval, so a strike
  * costs nothing to reverse and the manager reads the same draft throughout;
- * `approve` is where the struck wording leaves the clauses.
+ * `approve` is where the struck wording leaves the clauses. The effective
+ * charter is computed here all the same, with the function approval uses,
+ * so a strike approval could not honour is refused now, with the reason,
+ * and the flag is never set.
  */
 export const setConstraintStruck = mutation({
   args: { charterId: v.id('charters'), index: v.number(), struck: v.boolean() },
-  handler: async (ctx, args): Promise<{ ok: true }> => {
+  returns: strikeResultValidator,
+  handler: async (ctx, args): Promise<StrikeResult> => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
     if (charter.approved) {
       throw new Error('the charter is approved; amend it to strike a constraint');
@@ -185,14 +197,28 @@ export const setConstraintStruck = mutation({
       throw new Error(`no constraint at index ${args.index}`);
     }
     constraints[args.index] = { ...target, struck: args.struck };
-    await ctx.db.patch(args.charterId, { body: { ...body, constraints } });
+    const toggled: Charter = { ...body, constraints };
+    if (args.struck) {
+      const outcome = strikeOutcome(toggled);
+      if (!outcome.ok) return { ok: false, reason: outcome.reason };
+    }
+    await ctx.db.patch(args.charterId, { body: toggled });
     return { ok: true };
   },
 });
 
+/**
+ * Approve the draft, applying its strikes to the clauses.
+ *
+ * A strike is refused by `setConstraintStruck` before it is ever flagged,
+ * so the refusal here is a last guard for a body that reached the table
+ * some other way; it returns the reason rather than throwing, and leaves
+ * the row as it was.
+ */
 export const approve = mutation({
   args: { charterId: v.id('charters') },
-  handler: async (ctx, args) => {
+  returns: strikeResultValidator,
+  handler: async (ctx, args): Promise<StrikeResult> => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
     const drafted = charter.body as Charter;
     const struck = (drafted.constraints ?? []).filter(
@@ -203,7 +229,9 @@ export const approve = mutation({
     // struck the row is patched for approval only and the draft stays
     // byte-identical.
     if (struck.length > 0) {
-      const approved = effectiveCharter(drafted);
+      const outcome = strikeOutcome(drafted);
+      if (!outcome.ok) return { ok: false, reason: outcome.reason };
+      const approved = outcome.charter;
       await ctx.db.patch(args.charterId, {
         body: approved,
         approved: true,

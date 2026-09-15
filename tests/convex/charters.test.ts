@@ -9,6 +9,7 @@ import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import type { Charter } from '../../src/agent/charter';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
+import { strikeRefusalBody } from '../fixtures/charter-strike-refusal-2026-09-15';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -104,6 +105,102 @@ describe('striking a constraint before approval', (): void => {
     await expect(
       owner.mutation(api.charters.setConstraintStruck, { charterId, index: 0, struck: true }),
     ).rejects.toThrow(/approved/i);
+  });
+});
+
+/** A draft whose one will-not-do clause is the only clause bounding Linear, and carries a derived word. */
+function boundedBody(struck?: boolean): Charter {
+  const body = runThroughBody();
+  body.proposedBoundaries.willNotDo = ['Change owned Linear tickets outside Q3 close.'];
+  body.proposedBoundaries.escalationTriggers = [];
+  body.constraints = [
+    {
+      kind: 'candidate-property',
+      quote: 'Tickets have an owner.',
+      wording: ['owned'],
+      origin: 'derived',
+      ...(struck === undefined ? {} : { struck }),
+    },
+  ];
+  return body;
+}
+
+const BOUNDED_REFUSAL =
+  'strike refused: \u201cChange owned Linear tickets outside Q3 close.\u201d is the only clause that bounds Linear';
+
+describe('a strike the effective charter cannot honour', (): void => {
+  it('is refused at toggle time with the reason, and the draft is left unflagged', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { charterId } = await seedDraft(harness, boundedBody());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const before = await charter(harness, charterId);
+    const result = await owner.mutation(api.charters.setConstraintStruck, {
+      charterId,
+      index: 0,
+      struck: true,
+    });
+    expect(result).toEqual({ ok: false, reason: BOUNDED_REFUSAL });
+    const after = await charter(harness, charterId);
+    expect(JSON.stringify(after.body)).toBe(JSON.stringify(before.body));
+
+    expect(await owner.mutation(api.charters.approve, { charterId })).toEqual({ ok: true });
+    const approved = await charter(harness, charterId);
+    expect(approved.approved).toBe(true);
+    expect(JSON.stringify(approved.body)).toBe(JSON.stringify(before.body));
+  });
+
+  it('is returned as a reason by approve when the flag reached the row some other way', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedDraft(harness, boundedBody(true));
+    const owner = harness.withIdentity({ subject: 'owner' });
+    expect(await owner.mutation(api.charters.approve, { charterId })).toEqual({
+      ok: false,
+      reason: BOUNDED_REFUSAL,
+    });
+    const row = await charter(harness, charterId);
+    expect(row.approved).toBe(false);
+    expect(row.body).toEqual(boundedBody(true));
+    const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(agent?.state).toBe('charter-pending');
+    expect(await eventsOf(harness, agentId)).toEqual([]);
+  });
+});
+
+describe('the 15 September strike the card offered and approval refused', (): void => {
+  it('strikes the derived rule as its whole clause and approves', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedDraft(harness, strikeRefusalBody(false));
+    const owner = harness.withIdentity({ subject: 'owner' });
+    expect(
+      await owner.mutation(api.charters.setConstraintStruck, { charterId, index: 2, struck: true }),
+    ).toEqual({ ok: true });
+    expect(await owner.mutation(api.charters.approve, { charterId })).toEqual({ ok: true });
+
+    const row = await charter(harness, charterId);
+    expect(row.approved).toBe(true);
+    const body = row.body as Charter;
+    expect(body.proposedBoundaries.willNotDo).toEqual(['Access or execute work in Northstar CRM.']);
+    expect(body.proposedBoundaries.willDo).toEqual(strikeRefusalBody().proposedBoundaries.willDo);
+    expect(body.proposedBoundaries.escalationTriggers).toEqual(
+      strikeRefusalBody().proposedBoundaries.escalationTriggers,
+    );
+    expect(body.proposedFunction).toBe(strikeRefusalBody().proposedFunction);
+    expect(
+      [
+        body.proposedFunction,
+        ...body.proposedBoundaries.willDo,
+        ...body.proposedBoundaries.willNotDo,
+        ...body.proposedBoundaries.escalationTriggers,
+      ].join('\n'),
+    ).not.toMatch(/ownership/i);
+    expect(body.constraints).toEqual(strikeRefusalBody().constraints);
+    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).not.toMatch(/ownership/i);
+    const approved = (await eventsOf(harness, agentId)).find((e) => e.type === 'charter.approved');
+    expect(approved?.payload).toEqual({
+      charterId,
+      version: '0.0',
+      struckConstraints: ['Take ownership of Northstar CRM-dependent work that Brain must handle.'],
+    });
   });
 });
 
