@@ -26,3 +26,21 @@ print(json.dumps({'text': text, 'spans': redactor.predict(text, ['password'], 0.
     expect(result.text).toBe('\u{1f9ea} Password: <redacted>');
   });
 });
+
+describe('sidecar health', () => {
+  it('fails when HTTP is responsive but prediction finds no password', () => {
+    const output = execFileSync('python3', ['-c', `
+import importlib.util, io, json
+spec = importlib.util.spec_from_file_location('redactor_server', 'redactor/server.py')
+server = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(server)
+requests = []
+def urlopen(request, **kwargs):
+    requests.append(request if isinstance(request, str) else request.full_url)
+    return io.BytesIO(json.dumps({'ok': True, 'spans': []}).encode())
+server.urllib.request.urlopen = urlopen
+print(json.dumps({'status': server.probe(), 'requests': requests}))
+`], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    expect(JSON.parse(output)).toEqual({ status: 1, requests: ['http://127.0.0.1:8000/v1/spans'] });
+  });
+});

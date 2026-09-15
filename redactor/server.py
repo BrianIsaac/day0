@@ -215,9 +215,21 @@ class Handler(BaseHTTPRequestHandler):
 
 def probe() -> int:
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/healthz", timeout=10) as response:
+        text = "the password is hunter2"
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{PORT}/v1/spans",
+            data=json.dumps({"text": text, "labels": ["password"], "threshold": 0.3}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
             body = json.loads(response.read().decode("utf-8"))
-            return 0 if body.get("ok") else 1
+            detected = any(
+                span.get("label") == "password"
+                and span.get("start") == text.index("hunter2")
+                and span.get("end") == len(text)
+                for span in body.get("spans", [])
+            )
+            return 0 if detected else 1
     except Exception:  # noqa: BLE001 - any failure is an unhealthy container
         return 1
 
