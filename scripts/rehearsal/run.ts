@@ -46,6 +46,8 @@ import {
   moveIssue,
   readComments,
   readIssueSnapshot,
+  readStateHistory,
+  stateMovedByActor,
   readMutationNames,
   readViewer,
   ticketRestRefusal,
@@ -631,6 +633,7 @@ const approveClosing: Phase = {
   run: async (ctx) => {
     const dashboard = requireState(ctx.state, 'dashboard');
     const before = requireState(ctx.state, 'ticketBefore');
+    const viewer = requireState(ctx.state, 'viewer');
     const linear = ctx.linear;
     ctx.ledger.register(`${TICKET} state and comments back to the snapshot`, async () => {
       const after = await readIssueSnapshot(linear, TICKET);
@@ -638,13 +641,19 @@ const approveClosing: Phase = {
       const comments = await readComments(linear, before.id);
       const ownedComments = comments.filter(comment => belongsToWorkItems(comment.body, [item._id]));
       const ledgers = [item.output, item.output?.initial];
-      const wroteCurrentState = ledgers.some(output => output?.actions?.some((action, index) => {
+      const receiptedCurrentState = ledgers.some(output => output?.actions?.some((action, index) => {
         const receipt = output.applied?.[index];
         if (!receipt?.ok || receipt.held || receipt.awaitingApproval) return false;
         if (action.tool !== 'mcp.call' || action.args.surface !== 'linear' || action.args.tool !== 'save_issue') return false;
         const args = JSON.parse(action.args.toolArgsJson ?? '{}') as Record<string, unknown>;
         return [before.id, before.identifier].includes(String(args.id)) && args.state === after.stateName;
       }));
+      // A move whose receipt was lost is still attributed by the provider's
+      // own history: this key moved it from the snapshot's state to this one.
+      const wroteCurrentState = receiptedCurrentState || (
+        after.stateId !== before.stateId &&
+        stateMovedByActor(await readStateHistory(linear, before.id), viewer.id, before.stateId, after.stateId)
+      );
       for (const step of issueRestoreSteps(before, after, {
         commentIds: ownedComments.map(comment => comment.id),
         ...(wroteCurrentState ? { stateId: after.stateId } : {}),

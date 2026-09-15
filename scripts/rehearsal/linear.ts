@@ -65,6 +65,13 @@ export interface IssueComment {
   createdAt: string;
 }
 
+/** One entry of an issue's history, reduced to who moved it between which states. */
+export interface IssueStateChange {
+  actorId: string | null;
+  fromStateId: string | null;
+  toStateId: string | null;
+}
+
 const VIEWER = `query RehearsalViewer { viewer { id name } }`;
 
 const ISSUE_SNAPSHOT = `query RehearsalIssue($id: String!) {
@@ -79,6 +86,12 @@ const ISSUE_SNAPSHOT = `query RehearsalIssue($id: String!) {
 
 const ISSUE_COMMENTS = `query RehearsalComments($id: String!) {
   issue(id: $id) { comments { nodes { id body createdAt } } }
+}`;
+
+const ISSUE_STATE_HISTORY = `query RehearsalStateHistory($id: String!) {
+  issue(id: $id) {
+    history { nodes { id createdAt actor { id } fromState { id } toState { id } } }
+  }
 }`;
 
 const MUTATION_NAMES = `query RehearsalMutations { __type(name: "Mutation") { fields { name } } }`;
@@ -129,6 +142,62 @@ export async function readIssueSnapshot(
     assigneeId: data.issue.assignee?.id ?? null,
     commentIds: data.issue.comments.nodes.map((node) => node.id),
   };
+}
+
+/**
+ * The issue's history as state changes with their actors, oldest first.
+ *
+ * Args:
+ *   client: The client.
+ *   issueId: The issue's id.
+ *
+ * Returns:
+ *   Every history entry; one that changed no state carries null states.
+ */
+export async function readStateHistory(client: LinearClient, issueId: string): Promise<IssueStateChange[]> {
+  const data = await client.request<{
+    issue: {
+      history: {
+        nodes: Array<{
+          actor: { id: string } | null;
+          fromState: { id: string } | null;
+          toState: { id: string } | null;
+        }>;
+      };
+    } | null;
+  }>(ISSUE_STATE_HISTORY, { id: issueId });
+  if (!data.issue) throw new Error(`Linear has no issue ${issueId}.`);
+  return data.issue.history.nodes.map((node): IssueStateChange => ({
+    actorId: node.actor?.id ?? null,
+    fromStateId: node.fromState?.id ?? null,
+    toStateId: node.toState?.id ?? null,
+  }));
+}
+
+/**
+ * Whether the key's own user moved the issue from the snapshot's state to
+ * its current one: attribution the provider keeps, so a landed move whose
+ * receipt was lost is still the run's to put back.
+ *
+ * Args:
+ *   history: The issue's state changes.
+ *   actorId: The key's user.
+ *   fromStateId: The snapshot's state.
+ *   toStateId: The current state.
+ *
+ * Returns:
+ *   True when that actor made exactly that change.
+ */
+export function stateMovedByActor(
+  history: readonly IssueStateChange[],
+  actorId: string,
+  fromStateId: string,
+  toStateId: string,
+): boolean {
+  return history.some(
+    (change: IssueStateChange): boolean =>
+      change.actorId === actorId && change.fromStateId === fromStateId && change.toStateId === toStateId,
+  );
 }
 
 /** Every comment on the issue, oldest first as Linear orders them. */

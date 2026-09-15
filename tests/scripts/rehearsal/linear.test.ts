@@ -9,7 +9,9 @@ import {
   readComments,
   readIssueSnapshot,
   readMutationNames,
+  readStateHistory,
   readViewer,
+  stateMovedByActor,
   type IssueSnapshot,
 } from '../../../scripts/rehearsal/linear';
 
@@ -103,6 +105,31 @@ describe('the Linear client', (): void => {
     const client = new LinearClient('k', fetch);
     await expect(readMutationNames(client)).resolves.toEqual(['commentDelete', 'issueUpdate']);
     await expect(readComments(client, 'i7')).resolves.toEqual([{ id: 'c1', body: 'hi', createdAt: 't' }]);
+  });
+});
+
+describe('who moved the issue', (): void => {
+  it('reads the state history with the actor and both states of each change', async (): Promise<void> => {
+    const { fetch, calls } = fakeFetch(() => ({ data: { issue: { history: { nodes: [
+      { id: 'h1', createdAt: 't1', actor: { id: 'u1' }, fromState: { id: 's-backlog' }, toState: { id: 's-done' } },
+      { id: 'h2', createdAt: 't2', actor: null, fromState: null, toState: null },
+    ] } } } }));
+    await expect(readStateHistory(new LinearClient('k', fetch), 'i7')).resolves.toEqual([
+      { actorId: 'u1', fromStateId: 's-backlog', toStateId: 's-done' },
+      { actorId: null, fromStateId: null, toStateId: null },
+    ]);
+    expect(calls[0]?.body.variables).toEqual({ id: 'i7' });
+    expect(calls[0]?.body.query).toContain('history');
+  });
+
+  it('attributes the current state to the key only when its own change produced it', (): void => {
+    const ours = { actorId: 'u1', fromStateId: 's-backlog', toStateId: 's-done' };
+    const theirs = { actorId: 'other', fromStateId: 's-backlog', toStateId: 's-done' };
+    const elsewhere = { actorId: 'u1', fromStateId: 's-done', toStateId: 's-review' };
+    expect(stateMovedByActor([ours], 'u1', 's-backlog', 's-done')).toBe(true);
+    expect(stateMovedByActor([theirs], 'u1', 's-backlog', 's-done')).toBe(false);
+    expect(stateMovedByActor([ours, elsewhere], 'u1', 's-backlog', 's-review')).toBe(false);
+    expect(stateMovedByActor([], 'u1', 's-backlog', 's-done')).toBe(false);
   });
 });
 
