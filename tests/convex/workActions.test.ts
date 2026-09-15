@@ -1,7 +1,8 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -33,6 +34,19 @@ import type {
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+
+// The redaction component the actions reach through DAY0_REDACTOR_URL, served
+// in-process from the recorded span model.
+let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
+beforeAll(async (): Promise<void> => {
+  redactorDouble = await serveSpanModel();
+  process.env.DAY0_REDACTOR_URL = redactorDouble.url;
+});
+afterAll(async (): Promise<void> => {
+  delete process.env.DAY0_REDACTOR_URL;
+  await redactorDouble?.close();
+});
+
 
 const recorded = vi.hoisted(() => ({
   mcp: [] as Array<{ server: string; tool: string; args: unknown; bearer: string }>,
@@ -380,7 +394,10 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   };
 });
 
+const realFetch = globalThis.fetch;
 vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<Response> => {
+  // The redaction component is reached over the same global; its calls are its own.
+  if (redactorDouble && String(input).startsWith(redactorDouble.url)) return realFetch(input, init);
   const headers = (init?.headers ?? {}) as Record<string, string>;
   recorded.http.push({
     url: String(input),
@@ -1592,7 +1609,9 @@ describe('executing an approved plan through the gate', (): void => {
       expect(recorded.mcp.map((call) => [call.tool, call.args])).toEqual([
         ['get_issue', { id: 'iss-1' }],
       ]);
-      expect(recorded.http).toHaveLength(0);
+      // The decision notice and its public acknowledgement go over Slack once the
+      // plan is pending; the read itself writes nothing to any surface.
+      expect(recorded.http.filter((call) => !call.url.endsWith('/chat.postMessage'))).toEqual([]);
       expect(recorded.planRecords).toEqual([
         { surface: 'linear', tool: 'get_issue', text: 'get_issue on linear · {"id":"get_issue-id"}' },
       ]);

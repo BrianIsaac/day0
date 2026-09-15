@@ -11,7 +11,9 @@ import {
   TOOL_NOT_ALLOWED,
   type ParsedMcpCall,
 } from './policy';
-import { injectSecret, redactValue } from './secrets';
+import { injectSecret } from './secrets';
+import { redactOutcome, redactSecret } from './redact';
+import type { SpanModel } from '../redaction/client';
 import { createSecretMcpClient } from './mcp-client';
 import {
   browserComponent,
@@ -75,6 +77,8 @@ export interface McpAdapterDeps {
   beforeTransport?: BeforeSurfaceTransport;
   /** The browser driver's address; only the browser floor uses it. */
   browserMcpUrl?: string;
+  /** The span model outcomes are redacted with; undefined degrades to the structural floor. */
+  spanModel?: SpanModel;
 }
 
 /**
@@ -566,10 +570,12 @@ export class McpAdapter implements SurfaceAdapter {
             )?.arguments,
           );
           if ('reason' in resolved) {
+            const redacted = await redactOutcome(resolved.reason, bearer, this.deps.spanModel);
             return {
               tool: action.tool,
               ok: false,
-              reason: clipEffect(redactValue(resolved.reason, bearer), EFFECT_LENGTH),
+              reason: clipEffect(redacted.text, EFFECT_LENGTH),
+              ...(redacted.redaction ? { redaction: redacted.redaction } : {}),
               idempotencyKey,
             };
           }
@@ -580,13 +586,18 @@ export class McpAdapter implements SurfaceAdapter {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }
         const result = interpretToolResult(await tool.execute(toolArgs, {}));
-        const text = redactValue(result.text, bearer);
+        const redacted = await redactOutcome(result.text, bearer, this.deps.spanModel);
+        const text = redacted.text;
+        const redaction = redacted.redaction ? { redaction: redacted.redaction } : {};
         if (result.isError) {
-          const reason = result.errorMessage ? redactValue(result.errorMessage, bearer) : text;
+          const reason = result.errorMessage
+            ? (await redactOutcome(result.errorMessage, bearer, this.deps.spanModel)).text
+            : text;
           return {
             tool: action.tool,
             ok: false,
             reason: clipEffect(reason || 'the server reported an error', EFFECT_LENGTH),
+            ...redaction,
             idempotencyKey,
           };
         }
@@ -608,8 +619,9 @@ export class McpAdapter implements SurfaceAdapter {
             writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH,
           ),
           providerId: result.providerId
-            ? clipEffect(redactValue(result.providerId, bearer), EFFECT_LENGTH)
+            ? clipEffect(redactSecret(result.providerId, bearer), EFFECT_LENGTH)
             : undefined,
+          ...redaction,
           idempotencyKey,
         };
       } finally {
@@ -620,18 +632,21 @@ export class McpAdapter implements SurfaceAdapter {
       // A driver that was configured and has since stopped reads as the same
       // absence as one that was never configured, and says so with the same
       // code rather than with a transport error nobody can act on.
-      const reason =
+      const failure =
         browserDriven && isDriverUnreachable(error)
-          ? BROWSER_DRIVER_ABSENT_REASON
-          : clipEffect(
-              redactValue(error instanceof Error ? error.message : String(error), bearer),
-              EFFECT_LENGTH,
+          ? undefined
+          : await redactOutcome(
+              error instanceof Error ? error.message : String(error),
+              bearer,
+              this.deps.spanModel,
             );
+      const reason = failure ? clipEffect(failure.text, EFFECT_LENGTH) : BROWSER_DRIVER_ABSENT_REASON;
       return {
         tool: action.tool,
         ok: false,
         reason,
         ...(writeAttempted ? { outcomeUnknown: true } : {}),
+        ...(failure?.redaction ? { redaction: failure.redaction } : {}),
         idempotencyKey,
       };
     }

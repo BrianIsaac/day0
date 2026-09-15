@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { serveSpanModel } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -19,6 +20,19 @@ import {
   safeSyncError,
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
+
+// The redaction component the actions reach through DAY0_REDACTOR_URL, served
+// in-process from the recorded span model.
+let redactorDouble: { url: string; close: () => Promise<void> } | undefined;
+beforeAll(async (): Promise<void> => {
+  redactorDouble = await serveSpanModel();
+  process.env.DAY0_REDACTOR_URL = redactorDouble.url;
+});
+afterAll(async (): Promise<void> => {
+  delete process.env.DAY0_REDACTOR_URL;
+  await redactorDouble?.close();
+});
+
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -79,7 +93,7 @@ describe('documentation sync action helpers', (): void => {
   it('redacts explicit and recognisable credential values from errors', (): void => {
     expect(safeSyncError(new Error('failed token-value'), 'token-value')).toBe('failed <redacted>');
     expect(safeSyncError(new Error(`failed xox${'b'}-contract-value`))).toBe('failed <redacted>');
-    expect(safeSyncError(new Error(`failed ${token(['secret'], '_', 'contract-value')}`))).toBe(
+    expect(safeSyncError(new Error(`failed ${token(['secret'], '_', 'contract-value-0123456789abcdefghijklmnop')}`))).toBe(
       'failed <redacted>',
     );
   });

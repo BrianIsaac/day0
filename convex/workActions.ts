@@ -8,6 +8,7 @@ import {
   inferRequiredPermissions,
   type EvaluateLookups,
 } from '../src/work/evaluate';
+import { spanModelFromEnv } from '../src/redaction/client';
 import {
   candidateRecordRead,
   redactCandidateRecordText,
@@ -1070,7 +1071,27 @@ function realAdapterDeps(
     browserMcpUrl,
     fetch: (input: URL, init: RequestInit): Promise<Response> => fetch(input, init),
     beforeTransport,
+    spanModel: spanModelFromEnv(),
   };
+}
+
+/**
+ * Redact a grounding read's effect, reason and provider id before the event
+ * persists them and the planner sees them. A model that was not consulted
+ * is recorded on the row.
+ */
+async function redactGroundingRead(applied: AppliedAction): Promise<AppliedAction> {
+  const model = spanModelFromEnv();
+  const redacted: AppliedAction = { ...applied };
+  let degraded = false;
+  for (const field of ['effect', 'reason', 'providerId'] as const) {
+    const value = applied[field];
+    if (value === undefined) continue;
+    const result = await redactCandidateRecordText(value, model);
+    redacted[field] = result.text;
+    degraded = degraded || result.redaction !== undefined;
+  }
+  return degraded ? { ...redacted, redaction: 'structural-only' } : redacted;
 }
 
 /** Refuse a browser switch that changed after the apply action claimed it. */
@@ -1255,12 +1276,7 @@ async function readCandidateRecord(
         autonomousActions: args.autonomousActions,
       },
     );
-    const applied = rawApplied ? {
-      ...rawApplied,
-      ...(rawApplied.effect !== undefined ? { effect: redactCandidateRecordText(rawApplied.effect) } : {}),
-      ...(rawApplied.reason !== undefined ? { reason: redactCandidateRecordText(rawApplied.reason) } : {}),
-      ...(rawApplied.providerId !== undefined ? { providerId: redactCandidateRecordText(rawApplied.providerId) } : {}),
-    } : undefined;
+    const applied = rawApplied ? await redactGroundingRead(rawApplied) : undefined;
     await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
     if (!applied || !applied.ok || applied.held) {
       return {

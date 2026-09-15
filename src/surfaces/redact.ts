@@ -1,80 +1,36 @@
-import {
-  CONNECTION_PASSWORD,
-  LABELLED_ENTROPY_FLOOR_BITS,
-  REFERENCE_START,
-  URL_SCHEME,
-  shannonBits,
-} from '../docs/redaction';
+import type { SpanModel } from '../redaction/client';
+import { redactStructural, REDACTED, redactText, type RedactionDegradation } from '../redaction/redact';
 
 /**
- * Defence in depth for credential material in surface metadata.
+ * The synchronous redaction floor for surface metadata, prompts and exports.
  *
- * Documentation is redacted at sync time before it is persisted, so the
- * orientation run, the probe and intake should only ever see markers. These
- * helpers exist for the page that was not redacted, the provider error that
- * echoes a header, and the model draft that copies its input: nothing that
- * passes through them can carry a recognisable token shape into a card, an
- * event, a reason or a model prompt.
+ * Documentation is redacted by the span model at sync time and provider
+ * outcomes at persistence, so the orientation run, the probe, intake and the
+ * executor prompt only ever see stored, already-redacted text. These helpers
+ * exist for the places that cannot await a model - a query rendering an
+ * export, a prompt line assembled from stored material, a failure message on
+ * its way into a card - and apply the two layers that need no model: the
+ * exact value a transport holds, and the structural grammar (a URL's userinfo
+ * password, a PEM block, a JSON web token, an `Authorization` header value).
  */
 
-const TOKEN_SHAPE =
-  /(?<![A-Za-z0-9])(?:lin_api_|xox[baprs]-|ntn_|secret_|sk-(?:proj-|svcacct-)?)[A-Za-z0-9._-]{5,}[A-Za-z0-9_-]/gi;
-// A bearer value is at least twelve characters: "Bearer header." in prose is
-// not a credential, "Bearer opaque-value-here" is.
-const BEARER = /\bBearer\s+(?=[^\s,;"'`<>]{12,})[^\s,;"'`<>]+/gi;
-const LABELLED_VALUE =
-  /(^|\n)([^\n:]{0,48}\b(?:token|key|secret|password)\b[^\n:]{0,32}:[ \t]*)`?([^\s`<]+)`?/gi;
-// A password or secret label names a credential outright, and real passwords
-// are short ("hunter2"), so the value is redacted at any entropy. A token or
-// key label also introduces identifiers ("Ticket key: REVOPS-7") and counts,
-// and a URL on any line is a location whose password segment is handled on
-// its own, so those values must clear the documentation redactor's floor.
-const CREDENTIAL_LABEL = /\b(?:secret|password)\b/i;
-
-export const REDACTED = '<redacted>';
+export { REDACTED };
 
 /**
- * Replace every recognisable credential shape in a text.
- *
- * Four shapes are covered: provider-prefixed tokens wherever they occur,
- * the value after `Bearer`, the password segment of a connection string,
- * and the value on a line that labels itself as a
- * token, key, secret or password. A password or secret value is redacted
- * whatever its length; a token or key value only when it clears the
- * documentation redactor's entropy floor, so an issue key or a budget on
- * such a line survives. A reference (`<password>`, `${VAR}`) and a
- * `<credential: ..., stored>` marker are left alone, because they are
- * already the safe form.
+ * Replace every structural secret in a text.
  *
  * Args:
  *   text: Untrusted text from a page, a provider or a model.
  *
  * Returns:
- *   The same text with each shape replaced by `<redacted>`.
+ *   The same text with each structural secret replaced by `<redacted>`.
  */
 export function redactTokenShapes(text: string): string {
-  return text
-    .replace(TOKEN_SHAPE, REDACTED)
-    .replace(BEARER, `Bearer ${REDACTED}`)
-    .replace(CONNECTION_PASSWORD, (match: string, _scheme: string, password: string): string =>
-      REFERENCE_START.test(password)
-        ? match
-        : `${match.slice(0, match.lastIndexOf(`${password}@`))}${REDACTED}@`,
-    )
-    .replace(
-      LABELLED_VALUE,
-      (match: string, lineStart: string, label: string, value: string): string => {
-        if (REFERENCE_START.test(value)) return match;
-        const credential =
-          (CREDENTIAL_LABEL.test(label) && !URL_SCHEME.test(value)) ||
-          shannonBits(value) >= LABELLED_ENTROPY_FLOOR_BITS;
-        return credential ? `${lineStart}${label}${REDACTED}` : match;
-      },
-    );
+  return redactStructural(text);
 }
 
 /**
- * Decide whether a text carries a recognisable credential shape.
+ * Decide whether a text carries a structural secret.
  *
  * Args:
  *   text: Untrusted text.
@@ -83,22 +39,56 @@ export function redactTokenShapes(text: string): string {
  *   True when redaction would change the text.
  */
 export function containsTokenShape(text: string): boolean {
-  return redactTokenShapes(text) !== text;
+  return redactStructural(text) !== text;
 }
 
 /**
- * Remove an exact secret value and every token shape from a text.
+ * Remove an exact secret value and every structural secret from a text.
  *
  * Args:
  *   text: Untrusted text that may quote the secret.
  *   secret: The decrypted value to remove exactly, or an empty string.
  *
  * Returns:
- *   Text with the exact value and every recognisable shape redacted.
+ *   Text with the exact value and every structural secret redacted.
  */
 export function redactSecret(text: string, secret: string): string {
-  const withoutExactValue = secret ? text.replaceAll(secret, REDACTED) : text;
-  return redactTokenShapes(withoutExactValue);
+  return redactStructural(text, secret ? [secret] : []);
+}
+
+export interface RedactedOutcome {
+  text: string;
+  /** Set when the span model was not consulted and only the two floors ran. */
+  redaction?: RedactionDegradation;
+}
+
+/**
+ * Redact a provider outcome before it is persisted to the ledger.
+ *
+ * The transport's own credential is removed exactly, the structural grammar
+ * runs, and the span model decides the rest under the `outcome` policy. A
+ * model that cannot be reached does not lose the outcome: the row is
+ * persisted with the two floors applied and says so in `redaction`.
+ *
+ * Args:
+ *   text: A provider effect, reason or error message.
+ *   secret: The decrypted credential the transport sent, or an empty string.
+ *   model: The span model, or undefined when none is configured.
+ *
+ * Returns:
+ *   The redacted text and whether the model was part of it.
+ */
+export async function redactOutcome(
+  text: string,
+  secret: string,
+  model: SpanModel | undefined,
+): Promise<RedactedOutcome> {
+  const result = await redactText(text, 'outcome', {
+    model,
+    known: secret ? [secret] : [],
+    onUnavailable: 'structural',
+  });
+  return result.degraded ? { text: result.text, redaction: result.degraded } : { text: result.text };
 }
 
 /**

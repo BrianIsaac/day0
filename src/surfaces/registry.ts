@@ -1,3 +1,4 @@
+import type { SpanModel } from '../redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import { actionIdempotencyKey } from '../work/idempotency';
@@ -54,6 +55,8 @@ export interface RealAdapterDeps {
   now?: () => number;
   /** The browser driver's address; only a `browser-driven` surface uses it. */
   browserMcpUrl?: string;
+  /** The span model provider outcomes are redacted with; undefined degrades to the structural floor. */
+  spanModel?: SpanModel;
 }
 
 export interface ApplyOptions {
@@ -138,12 +141,14 @@ export function resolveAdapters(
       now,
       beforeTransport: deps.beforeTransport,
       browserMcpUrl: deps.browserMcpUrl,
+      spanModel: deps.spanModel,
     });
     const http = new HttpAdapter(surfaces, {
       decrypt: deps.decrypt,
       fetch: deps.fetch,
       now,
       beforeTransport: deps.beforeTransport,
+      spanModel: deps.spanModel,
     });
     for (const tool of mcp.tools) adapters.set(tool, mcp);
     for (const tool of http.tools) adapters.set(tool, http);

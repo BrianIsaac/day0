@@ -4,7 +4,8 @@ import type { Charter } from '../agent/charter';
 import type { SurfaceMode, SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
 import { redactTokenShapes } from '../surfaces/redact';
-import { redactCredentials } from '../docs/redaction';
+import type { SpanModel } from '../redaction/client';
+import { redactText } from '../redaction/redact';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
@@ -339,29 +340,40 @@ export function candidateRecordRead(
 export function renderCandidateRecord(record: CandidateRecord): string[] {
   const heading = `--- Candidate record, read from ${record.surface} (${record.tool}) ---`;
   const text = 'unavailable' in record ? record.unavailable : record.text;
-  const bounded = redactCandidateRecordText(text);
+  // The record was redacted by the span model when it was read and persisted;
+  // the prompt applies the synchronous floor again and bounds it.
+  const bounded = boundCandidateRecordText(redactTokenShapes(text));
   return [heading, 'unavailable' in record ? `record unavailable: ${bounded}` : bounded];
 }
 
-/** Redact and bound a grounding result before persistence or prompt construction. */
-export function redactCandidateRecordText(text: string): string {
-  const redact = (value: string): string =>
-    redactTokenShapes(redactCredentials(value, 'Candidate record').markdown);
-  // Provider records are JSON inside an effect string. Decode string values
-  // before applying the documentation redactor's line-based rules.
-  const decoded = text.replace(/"(?:[^"\\]|\\.)*"/g, (literal): string => {
-    try {
-      return JSON.stringify(redact(JSON.parse(literal) as string));
-    } catch {
-      return literal;
-    }
-  });
-  // The adapter may truncate a record inside a JSON string.
-  const redacted = redact(decoded.replace(/\\[nr]/g, '\n'));
+/** Clip a record to what the planner may see. */
+export function boundCandidateRecordText(text: string): string {
+  return text.length > CANDIDATE_RECORD_LENGTH ? `${text.slice(0, CANDIDATE_RECORD_LENGTH)}…` : text;
+}
 
-  return redacted.length > CANDIDATE_RECORD_LENGTH
-    ? `${redacted.slice(0, CANDIDATE_RECORD_LENGTH)}…`
-    : redacted;
+/**
+ * Redact and bound a grounding result before persistence or prompt construction.
+ *
+ * Provider records are JSON inside an effect string, so escaped line breaks
+ * are decoded first: a labelled password on an escaped description line is
+ * then a labelled password on a line, for the model and the grammar alike.
+ * Without a model the two floors run and the caller records that.
+ *
+ * Args:
+ *   text: The adapter's effect, reason or provider id.
+ *   model: The span model, or undefined when none is configured.
+ *
+ * Returns:
+ *   The redacted, decoded and bounded text and whether the model was consulted.
+ */
+export async function redactCandidateRecordText(
+  text: string,
+  model?: SpanModel,
+): Promise<{ text: string; redaction?: 'structural-only' }> {
+  const decoded = text.replace(/\\[nr]/g, '\n');
+  const result = await redactText(decoded, 'record', { model, onUnavailable: 'structural' });
+  const bounded = boundCandidateRecordText(result.text);
+  return result.degraded ? { text: bounded, redaction: result.degraded } : { text: bounded };
 }
 
 export interface DraftPlanArgs {

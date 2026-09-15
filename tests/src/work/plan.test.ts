@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { Charter } from '../../../src/agent/charter';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { WorkCandidate } from '../../../src/work/types';
@@ -10,6 +11,7 @@ import {
   planPreconditionAudit,
   planSystemPrompt,
   planUserPrompt,
+  redactCandidateRecordText,
   renderCandidateRecord,
   SCOPE_NOT_GATE_PLANNER,
 } from '../../../src/work/plan';
@@ -658,13 +660,22 @@ describe('the candidate record read before the plan', (): void => {
     expect(planUserPrompt({ candidate: ticket, charter })).not.toContain('Candidate record');
   });
 
-  it('redacts a token-shaped value in the record the way documentation is redacted, and bounds it', (): void => {
+  it('redacts the record with the span model when it is read, applies the floor when rendered, and bounds it', async (): Promise<void> => {
     const text = [
       'get_issue on linear · {"identifier":"REVOPS-7",',
       '"description":"api token: lin_api_0123456789abcdefghijklmnopqrstuvwxyz\nservice password: Zq9!vT2#kL8mNp4rXs7wYb3e"}',
     ].join('');
-    const rendered = renderCandidateRecord({ surface: 'linear', tool: 'get_issue', text }).join('\n');
-    expect(rendered).not.toContain('lin_api_0123456789');
+    const read = await redactCandidateRecordText(text, new RecordedSpanModel());
+    expect(read.redaction).toBeUndefined();
+    expect(read.text).not.toContain('lin_api_0123456789');
+    expect(read.text).not.toContain('Zq9!vT2#kL8mNp4rXs7wYb3e');
+    expect(read.text).toContain('"identifier":"REVOPS-7"');
+    // Without a model the read still loses the provider token to the structural
+    // floor and says only that floor ran.
+    const floor = await redactCandidateRecordText(text);
+    expect(floor.redaction).toBe('structural-only');
+    expect(floor.text).not.toContain('lin_api_0123456789');
+    const rendered = renderCandidateRecord({ surface: 'linear', tool: 'get_issue', text: read.text }).join('\n');
     expect(rendered).not.toContain('Zq9!vT2#kL8mNp4rXs7wYb3e');
     expect(rendered).toContain('"identifier":"REVOPS-7"');
     const long = renderCandidateRecord({
@@ -686,18 +697,20 @@ describe('the candidate record read before the plan', (): void => {
 
 
 describe('serialized candidate record credentials', () => {
-  it.each(['text', 'unavailable'] as const)('redacts escaped description lines in %s', (field) => {
+  it.each(['text', 'unavailable'] as const)('redacts escaped description lines in %s', async (field) => {
     const password = 'Zq9!vT2#kL8mNp4rXs7wYb3e';
     const body = `get_issue on linear · ${JSON.stringify({
       identifier: 'REVOPS-7',
       description: `Refresh the tile.\nService password: ${password}`,
     })}`;
+    const redacted = (await redactCandidateRecordText(body, new RecordedSpanModel())).text;
     const record = field === 'text'
-      ? { surface: 'linear', tool: 'get_issue', text: body }
-      : { surface: 'linear', tool: 'get_issue', unavailable: body };
+      ? { surface: 'linear', tool: 'get_issue', text: redacted }
+      : { surface: 'linear', tool: 'get_issue', unavailable: redacted };
     const prompt = renderCandidateRecord(record).join('\n');
     expect(prompt).not.toContain(password);
     expect(prompt).toContain('REVOPS-7');
+    expect(prompt).toContain('Service password: <redacted>');
   });
 });
 

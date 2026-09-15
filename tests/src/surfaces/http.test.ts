@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
@@ -81,6 +82,7 @@ function adapter(
     fetch: fetchImpl.fetch,
     now: (): number => now,
     beforeTransport,
+    spanModel: new RecordedSpanModel(),
   });
 }
 

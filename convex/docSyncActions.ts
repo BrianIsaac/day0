@@ -8,6 +8,8 @@ import { readerFor } from '../src/docs/readers';
 import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef, redactCredentials } from '../src/docs/redaction';
+import { spanModelFromEnv } from '../src/redaction/client';
+import { redactSecret } from '../src/surfaces/redact';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
 
 export const SYNC_BATCH_SIZE = 25;
@@ -40,7 +42,7 @@ export function categoryForPage(
 }
 
 /**
- * Redact provider secrets and token-shaped values from a persisted error.
+ * Redact the provider secret and every structural secret from a persisted error.
  *
  * Args:
  *   error: Reader failure.
@@ -51,10 +53,7 @@ export function categoryForPage(
  */
 export function safeSyncError(error: unknown, secret?: string): string {
   const message = error instanceof Error ? error.message : String(error);
-  const redacted = secret ? message.replaceAll(secret, '<redacted>') : message;
-  return redacted
-    .replace(/(?:ntn_|lin_api_|xox[bpa]-|secret_)[A-Za-z0-9._-]+/gi, '<redacted>')
-    .slice(0, 500);
+  return redactSecret(message, secret ?? '').slice(0, 500);
 }
 
 /**
@@ -107,9 +106,13 @@ export async function persistPageBatch(
   const safePages: DocPage[] = [];
   const credentialRefs: string[] = [];
   let redactions = 0;
+  // Sync fails closed: a page the model could not read is not persisted.
+  const model = spanModelFromEnv();
   for (const page of pages) {
     const unwrapped = unwrapWholePageFence(page.markdown);
-    const result = redactCredentials(unwrapped, markdownPageTitle(unwrapped, page.title));
+    const result = await redactCredentials(unwrapped, markdownPageTitle(unwrapped, page.title), {
+      model,
+    });
     const title = markdownPageTitle(result.markdown, result.title);
     for (const [index, credential] of result.credentials.entries()) {
       const ref = credentialSourceRef(page.ref, credential, result.credentials.length, index);

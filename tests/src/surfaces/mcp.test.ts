@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RecordedSpanModel } from '../../fixtures/redaction-double';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
@@ -118,6 +119,7 @@ function adapter(
     now: (): number => now,
     beforeTransport,
     browserMcpUrl: DRIVER,
+    spanModel: new RecordedSpanModel(),
   });
 }
 

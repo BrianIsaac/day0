@@ -91,6 +91,11 @@ export interface ActionOutcome {
   /** A placeholder written by the auto phase for a row the manager has not decided. */
   awaitingApproval?: boolean;
   /**
+   * Set when the span model was not consulted before this row was persisted,
+   * so only the exact-value and structural layers protected its text.
+   */
+  redaction?: 'structural-only';
+  /**
    * What authorised a surface row the adapter was asked to apply: the
    * manager's approval of the literal payload, the autonomous-actions
    * toggle, or the agent's standing grant (a read or the manager DM in the

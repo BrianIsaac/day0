@@ -11,7 +11,9 @@ import {
   TOOL_NOT_ALLOWED,
   type ParsedHttpRequest,
 } from './policy';
-import { hasPlaceholder, injectSecret, redactValue, SecretTemplateError } from './secrets';
+import { hasPlaceholder, injectSecret, SecretTemplateError } from './secrets';
+import { redactOutcome, redactSecret } from './redact';
+import type { SpanModel } from '../redaction/client';
 import { isSlackApiEndpoint, slackApiBaseUrl } from './slack-endpoint';
 import type {
   AdapterRun,
@@ -33,6 +35,8 @@ export interface HttpAdapterDeps {
   fetch: FetchLike;
   now: () => number;
   beforeTransport?: BeforeSurfaceTransport;
+  /** The span model outcomes are redacted with; undefined degrades to the structural floor. */
+  spanModel?: SpanModel;
 }
 
 /**
@@ -242,7 +246,6 @@ export class HttpAdapter implements SurfaceAdapter {
       });
       const bounded = await readBoundedResponse(response);
       const raw = bounded.text;
-      const text = redactValue(raw, secret);
       if (bounded.exceeded) {
         return {
           tool: action.tool,
@@ -252,6 +255,9 @@ export class HttpAdapter implements SurfaceAdapter {
           idempotencyKey,
         };
       }
+      const redacted = await redactOutcome(raw, secret, this.deps.spanModel);
+      const text = redacted.text;
+      const redaction = redacted.redaction ? { redaction: redacted.redaction } : {};
       let payload: unknown;
       try {
         payload = JSON.parse(raw);
@@ -265,11 +271,14 @@ export class HttpAdapter implements SurfaceAdapter {
       const summary = clipEffect(text, effectLength);
       if (!ok) {
         const providerError =
-          typeof envelope?.error === 'string' ? ` · ${redactValue(envelope.error, secret)}` : '';
+          typeof envelope?.error === 'string'
+            ? ` · ${(await redactOutcome(envelope.error, secret, this.deps.spanModel)).text}`
+            : '';
         return {
           tool: action.tool,
           ok: false,
           reason: clipEffect(`HTTP ${response.status}${providerError} · ${summary}`, EFFECT_LENGTH),
+          ...redaction,
           idempotencyKey,
         };
       }
@@ -278,8 +287,9 @@ export class HttpAdapter implements SurfaceAdapter {
         ok: true,
         effect: clipEffect(`HTTP ${response.status} · ${summary}`, effectLength),
         providerId: providerIdFrom(payload)
-          ? clipEffect(redactValue(providerIdFrom(payload) ?? '', secret), EFFECT_LENGTH)
+          ? clipEffect(redactSecret(providerIdFrom(payload) ?? '', secret), EFFECT_LENGTH)
           : undefined,
+        ...redaction,
         idempotencyKey,
       };
     } catch (error) {
@@ -291,11 +301,13 @@ export class HttpAdapter implements SurfaceAdapter {
             : error instanceof Error
               ? error.message
               : String(error);
+      const redacted = await redactOutcome(message, secret, this.deps.spanModel);
       return {
         tool: action.tool,
         ok: false,
-        reason: clipEffect(redactValue(message, secret), EFFECT_LENGTH),
+        reason: clipEffect(redacted.text, EFFECT_LENGTH),
         ...(writeAttempted ? { outcomeUnknown: true } : {}),
+        ...(redacted.redaction ? { redaction: redacted.redaction } : {}),
         idempotencyKey,
       };
     }

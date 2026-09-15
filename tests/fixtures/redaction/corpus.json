@@ -600,7 +600,7 @@
       "text": "HTTP 200 · {\"ok\":true,\"user\":{\"id\":\"U0123ABCDEF\",\"name\":\"priya.nair\",\"real_name\":\"Priya Nair\",\"profile\":{\"email\":\"priya.nair@acme.example\",\"phone\":\"+65 9123 4567\",\"title\":\"Senior analyst\"},\"tz\":\"Asia/Singapore\"}}",
       "spans": [
         { "value": "U0123ABCDEF", "kind": "working", "label": "identifier" },
-        { "value": "priya.nair", "kind": "pii", "label": "username", "role": "coworker" },
+        { "value": "\"name\":\"priya.nair\"", "kind": "pii", "label": "username", "role": "coworker" },
         { "value": "Priya Nair", "kind": "pii", "label": "person", "role": "coworker" },
         { "value": "priya.nair@acme.example", "kind": "pii", "label": "email" },
         { "value": "+65 9123 4567", "kind": "pii", "label": "phone" },
