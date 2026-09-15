@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import {
   blockedPlanReason,
   browserTransportRefusal,
+  closingStopReason,
   completionFailure,
   dependentTransitionRefusal,
   findMatchingSkillForCandidate,
@@ -1023,6 +1024,46 @@ describe('work action completion evidence', (): void => {
         initialFailure: 'browser_snapshot timed out',
       }),
     ).toContain('cannot change ticket state after a prerequisite failure');
+  });
+});
+
+describe('stopping blocked work with only a manager message left', (): void => {
+  const slack = {
+    slug: 'slack', displayName: 'Slack', class: 'chat', verdict: 'connected', credentialLanded: true,
+    lastVerifiedAt: 1, path: 'documented-api', endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage'], managerDmChannelId: 'D0MANAGER',
+  } as const;
+  const dm = (text: string) => ({
+    tool: 'http.request' as const,
+    args: {
+      surface: 'slack', method: 'POST', path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel: 'D0MANAGER', text }),
+    },
+  });
+  const run = (text: string) => ({
+    plan: {
+      summary: 'Confirm the owner, then add the audit note and close.',
+      steps: ['Confirm REVOPS-7 has an owner', 'Comment and close REVOPS-7'],
+      expectedOutputType: 'ticket-update' as const, riskNotes: '', reversibility: 'reversible', estimatedMinutes: 5,
+    },
+    outcomes: [
+      { step: 1, status: 'blocked' as const, evidence: 'get_issue shows no assignee.' },
+      { step: 2, status: 'blocked' as const, evidence: 'Nothing to close without an owner.' },
+    ],
+    initialActions: [{ tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"iss-1"}' } }],
+    initialApplied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'wi:run:0' }],
+    closingActions: [dm(text)],
+    surfaces: [slack as never],
+  });
+
+  it('lets a question or an ask for a decision through', (): void => {
+    expect(closingStopReason(run('Who should own REVOPS-7 so I can continue?'))).toBeUndefined();
+    expect(closingStopReason(run('Please assign REVOPS-7 an owner and I will pick it up.'))).toBeUndefined();
+  });
+
+  it('still stops on a note that asks the manager nothing', (): void => {
+    expect(closingStopReason(run('REVOPS-7 has no owner, so nothing was changed and I stopped.'))).toContain('blocked');
   });
 });
 

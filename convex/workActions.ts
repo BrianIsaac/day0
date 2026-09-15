@@ -78,6 +78,7 @@ import {
   NOT_AUTOMATIC,
   mcpEndpointRefusal,
   parseSurfaceAction,
+  type ParsedSurfaceAction,
   pathRefusal,
   surfaceRefusal,
   toolRefusal,
@@ -927,6 +928,22 @@ export function blockedPlanReason(
 }
 
 /**
+ * A manager message that puts something to the manager: a question, or an
+ * ask for a decision. A note that only reports is not a way to unblock the
+ * work, so a stop still withholds it.
+ */
+const MANAGER_ASK = /\?|\b(?:please|could you|can you|would you|let me know|decide|approve|confirm|needs?)\b/i;
+
+/** The text a manager message carries, whichever transport it takes. */
+function managerMessageText(parsed: ParsedSurfaceAction): string {
+  if (parsed.kind === 'mcp.call') {
+    const text = ['text', 'message', 'body'].map((key) => parsed.toolArgs[key]).find((value) => typeof value === 'string');
+    return typeof text === 'string' ? text : '';
+  }
+  return typeof parsed.bodyJson?.text === 'string' ? parsed.bodyJson.text : '';
+}
+
+/**
  * Why the run stops before its closing actions reach the gate, if it does.
  *
  * A run stops when nothing has landed and no decision could still complete
@@ -961,7 +978,8 @@ export function closingStopReason(run: {
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok) return false;
     const surface = run.surfaces.find(row => row.slug === parsed.action.surface);
-    return surface !== undefined && isManagerDm(parsed.action, surface);
+    return surface !== undefined && isManagerDm(parsed.action, surface) &&
+      MANAGER_ASK.test(managerMessageText(parsed.action));
   });
   if (escalationOnly) return undefined;
   if (run.initialFailure) return run.initialFailure;
