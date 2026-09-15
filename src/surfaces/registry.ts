@@ -81,6 +81,8 @@ export interface ApplyOptions {
    * (comment before status, shared-write attribution) see what landed.
    */
   priorLedger?: ReadonlyArray<AppliedAction | undefined>;
+  /** Landed work from earlier phases supplies ordering evidence, never another transport call. */
+  prerequisiteLedger?: { actions: readonly MockAction[]; applied: readonly AppliedAction[] };
   /**
    * Number of actions already emitted by an earlier run phase. It shifts only
    * the durable action identity; policy ordering remains local to this phase.
@@ -260,6 +262,11 @@ export async function applySurfaceActions(
       : undefined;
   const applied: AppliedAction[] = [];
   const parsedByIndex: Array<ParsedSurfaceAction | undefined> = [];
+  const prerequisites = options.prerequisiteLedger;
+  const earlierActions = (prerequisites?.actions ?? []).map(action => {
+    const parsed = parseSurfaceAction(action);
+    return parsed.ok ? parsed.action : undefined;
+  });
   try {
     for (const [index, action] of actions.entries()) {
       const durableIndex = index + (options.idempotencyIndexOffset ?? 0);
@@ -358,7 +365,12 @@ export async function applySurfaceActions(
         applied.push(refused(action.tool, NOT_AUTOMATIC, idempotencyKey));
         continue;
       }
-      if (statusChangeWithoutComment(parsed.action, index, parsedByIndex, applied)) {
+      if (statusChangeWithoutComment(
+        parsed.action,
+        earlierActions.length + index,
+        [...earlierActions, ...parsedByIndex],
+        [...(prerequisites?.applied ?? []), ...applied],
+      )) {
         applied.push(refused(action.tool, STATUS_WITHOUT_COMMENT, idempotencyKey));
         continue;
       }
@@ -368,9 +380,9 @@ export async function applySurfaceActions(
           parsed.action,
           surface,
           credentialKind,
-          index,
-          parsedByIndex,
-          applied,
+          earlierActions.length + index,
+          [...earlierActions, ...parsedByIndex],
+          [...(prerequisites?.applied ?? []), ...applied],
         )
       ) {
         applied.push(refused(action.tool, SHARED_WRITE_WITHOUT_ATTRIBUTION, idempotencyKey));

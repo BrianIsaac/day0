@@ -1,3 +1,5 @@
+import { closingResume } from '../src/work/closing-resume';
+import type { ExecutionPlan } from '../src/work/types';
 import { v } from 'convex/values';
 import {
   internalMutation,
@@ -1485,8 +1487,13 @@ export const retryFailed = mutation({
       : skipReason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)
         ? 'scope'
         : undefined;
+    const resume = SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
+      ? closingResume(row.output, row.plan as ExecutionPlan, row.skipReason, await ctx.db
+          .query('surfaces').withIndex('by_agent', q => q.eq('agentId', row.agentId)).take(100))
+      : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
+      ...(resume ? { output: resume } : {}),
       skipReason: undefined,
       executionRunId: undefined,
       applyPhase: undefined,

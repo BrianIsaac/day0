@@ -11,6 +11,7 @@ import { dependentActionCap } from '../../src/work/execute-skill';
 import { CLOSING_SET_CAP, type ExecutionOutput, type ExecutionPlan } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
+import { auditRetryPlan, auditPrerequisites, auditPrerequisiteLedger, auditClosing, closingTransportFailure } from './fixtures/closing-retry-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /**
@@ -51,6 +52,7 @@ const recorded = vi.hoisted(() => ({
   model: [] as Array<{ agent: string; user: string }>,
   instructions: [] as Array<{ agent: string; instructions: string }>,
   planCalls: 0,
+  closingReply: undefined as unknown,
   prewritten: false,
   repairClosing: false,
 }));
@@ -183,7 +185,7 @@ vi.mock('../../src/lib/mastra', () => ({
       if (recorded.repairClosing && name.endsWith('-argument-repair'))
         return { toolArgsJson: '{"issueId":"REVOPS-7","body":"Checked and finished."}' } as T;
       if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
-      if (name.endsWith('-dependent')) return closing as T;
+      if (name.endsWith('-dependent')) return (recorded.closingReply ?? closing) as T;
       if (recorded.repairClosing && name.endsWith('-initial'))
         return {
           ...phaseOne,
@@ -466,12 +468,82 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     recorded.model.length = 0;
     recorded.instructions.length = 0;
     recorded.planCalls = 0;
+    recorded.closingReply = undefined;
     recorded.prewritten = false;
     recorded.repairClosing = false;
     restoreSurfaceMode();
   });
 
-  it('refuses a prewritten Done transition under autonomy through the real executor', async () => {
+  it('runs phase one again when a prerequisite did not land', async () => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(t);
+    await t.run(async ctx => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed', plan: cleanPlan, skipReason: 'snapshot failed',
+        output: {
+          ...phaseOne, actions: [...phaseOne.actions, ...closing.actions],
+          applied: phaseOne.actions.map(action => ({ tool: action.tool, ok: false, reason: 'snapshot failed' })),
+          planStepOutcomes: closing.planStepOutcomes,
+        },
+      });
+    });
+
+    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await t.finishInProgressScheduledFunctions();
+    expect(recorded.model.some(call => call.agent.endsWith('-initial'))).toBe(true);
+    expect(recorded.model.some(call => call.agent.endsWith('-dependent'))).toBe(false);
+  });
+
+  it.each([[false, false], [true, false], [true, true]])('resumes the 16 September closing failure; comment landed: %s, omitted: %s', async (commentLanded, omitComment) => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(t);
+    recorded.closingReply = omitComment ? { ...auditClosing, actions: auditClosing.actions.slice(1) } : auditClosing;
+    await t.run(async ctx => {
+      await ctx.db.patch(workItemId, {
+        externalId: 'REVOPS-5', title: 'Audit note', contentRefs: ['ticket://REVOPS-5'],
+        state: 'failed', plan: auditRetryPlan,
+        skipReason: closingTransportFailure,
+        output: {
+          draft: '', notes: '', needsDependentPhase: false,
+          actions: [...auditPrerequisites, ...auditClosing.actions],
+          applied: [...auditPrerequisiteLedger,
+            commentLanded
+              ? { tool: 'mcp.call', ok: true, effect: 'comment-91', idempotencyKey: 'previous-run:5' }
+              : { tool: 'mcp.call', ok: false, reason: closingTransportFailure },
+            { tool: 'mcp.call', ok: false, reason: commentLanded ? closingTransportFailure : 'status change without audit comment' }],
+          planStepOutcomes: auditClosing.planStepOutcomes,
+        },
+      });
+    });
+    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Retry the closing note from the recorded read-back.' });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const resumed = await readItem(t, workItemId);
+    expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', initialFailure: closingTransportFailure });
+    expect(ledger(resumed).slice(0, 5)).toEqual(auditPrerequisiteLedger);
+    expect(recorded.model).toEqual([]);
+    await t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const held = await readItem(t, workItemId);
+    await t.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: omitComment ? [0] : [0, 1],
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const completed = await readItem(t, workItemId);
+    expect(completed.state).toBe('completed');
+    expect(recorded.mcp.map(call => call.tool)).toEqual(commentLanded ? ['save_issue'] : ['save_comment', 'save_issue']);
+    if (commentLanded && !omitComment) {
+      expect(ledger(completed)[6]).toMatchObject({ ok: true, effect: 'comment-91', reason: expect.stringContaining('already landed') });
+      expect(ledger(completed)[6]!.idempotencyKey).toBe(`${workItemId}:${resumed.executionRunId}:6`);
+    }
+    expect(recorded.model).toHaveLength(1);
+    expect(recorded.model[0]!.user).toContain('Retry the closing note');
+    expect(recorded.model[0]!.user).toContain(closingTransportFailure);
+  });
+
+  it('records the audit correction and keeps a prewritten Done out of phase one under autonomy', async () => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(t);
     recorded.prewritten = true;
@@ -492,7 +564,10 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await new Promise((resolve) => setTimeout(resolve, 0));
     await t.finishInProgressScheduledFunctions();
     expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toEqual([]);
-    expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
+    const events = await t.run(ctx => ctx.db.query('events').collect());
+    expect(events.filter(event => event.type === 'audit.corrected')).toMatchObject([
+      { payload: { workItemId, removedIndices: [1, 2], reason: 'prewritten closing actions' } },
+    ]);
     expect(recorded.model.filter((call) => call.agent.endsWith('-initial'))).toHaveLength(2);
   }, 30_000);
 

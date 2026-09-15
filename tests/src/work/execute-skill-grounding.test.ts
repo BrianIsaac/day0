@@ -968,6 +968,61 @@ describe('deferral by data, not by judgement', (): void => {
     }
   });
 
+  it('accepts the 16 September second retry deferring Done until the ordered audit comment lands', () => {
+    const retryTicket = { ...ticket, externalId: 'REVOPS-5', contentRefs: ['ticket://REVOPS-5'] };
+    const retryDone = { ...done, args: { ...done.args, toolArgsJson: '{"id":"REVOPS-5","state":"Done"}' } };
+    const retryPlan = {
+      ...plan,
+      steps: ['Add the comment "Audit checked" to REVOPS-5 in Linear.', 'After the comment lands, move the Linear issue to Done.'],
+    };
+    const comment: MockAction = { tool: 'mcp.call', args: {
+      surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit checked"}',
+    } };
+    const deferred: ExecutionOutput = {
+      draft: '', notes: '', needsDependentPhase: true, actions: [comment],
+      procedureTrails: [{ trailId: 'Emit linear save_issue', state: 'deferred',
+        reason: 'Wait until the audit comment lands before the Done move.', dependsOnActionIndex: 0, dependsOnField: 'id' }],
+    };
+    const retryContext = { ...recordContext, plan: retryPlan, skillBody: '' };
+    expect(deferralAudit(deferred, retryTicket, retryContext)).toEqual([]);
+    expect(deferralAudit({ ...deferred, actions: [comment, retryDone], procedureTrails: [] }, retryTicket, retryContext))
+      .toEqual([expect.stringContaining('prewrote a closing action')]);
+    expect(deferralAudit(deferred, retryTicket, { ...retryContext, plan: { ...retryPlan, steps: retryPlan.steps.slice(0, 1) } }))
+      .toEqual([expect.stringContaining('deferred an action with no result dependency')]);
+  });
+
+  it('removes only prewritten closing actions after the single repair still fails', async () => {
+    const prewritten = {
+      draft: 'Read, commented and closed.', notes: '', needsDependentPhase: true,
+      actions: [getIssue, auditComment, done], procedureTrails: [], deferredActions: null,
+    };
+    recorded.outputs.push(prewritten, prewritten);
+    const corrected: number[][] = [];
+    const output = await runSkill({
+      ...runArgs, plan: readBackPlan, surfaces: [linear], mockEnv: tileRunbook,
+      onAuditCorrection: indices => { corrected.push(indices); },
+    });
+    expect(recorded.users).toHaveLength(2);
+    expect(output.actions).toEqual([getIssue]);
+    expect(output.needsDependentPhase).toBe(true);
+    expect(corrected).toEqual([[1, 2]]);
+  });
+
+  it('does not structurally correct a closing action when another audit issue remains', async () => {
+    const invalid = {
+      draft: '', notes: '', needsDependentPhase: true, actions: [getIssue, done], procedureTrails: [],
+      deferredActions: [{ description: 'Refresh tile', reason: 'Waiting', dependsOnActionIndex: null, dependsOnField: null }],
+    };
+    recorded.outputs.push(invalid, invalid);
+    const corrected: number[][] = [];
+    await expect(runSkill({
+      ...runArgs, plan: readBackPlan, surfaces: [linear], mockEnv: tileRunbook,
+      onAuditCorrection: indices => { corrected.push(indices); },
+    })).rejects.toThrow('remained invalid after one repair');
+    expect(corrected).toEqual([]);
+    expect(recorded.users).toHaveLength(2);
+  });
+
   it('gives a run whose plan promises a result its closing phase, and moves a prewritten close there through the one repair', async (): Promise<void> => {
     const prewritten = {
       draft: 'Read, commented and closed.',

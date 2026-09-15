@@ -97,7 +97,7 @@ const PROCEDURE_TRAIL_OUTPUT =
   '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.';
 
 const REAL_PROCEDURE_TRAIL_OUTPUT =
-  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read or snapshot) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
+  '  4. Procedure trails — one `procedureTrails` row for every parsed runtime trail listed below. Each row has exactly one state: MAPPED with an emitted zero-based actionIndex, INAPPLICABLE with a reason, or DEFERRED with a human-readable reason, dependsOnActionIndex (zero-based into this response, a read, snapshot, or prior write that the plan or runbook orders before this action) and dependsOnField (the result field consumed). Declare every action left for the closing phase in a deferred trail row or, for work outside the parsed inventory, in deferredActions with a description, reason and the same two dependency fields. Use null for deferredActions when there is no additional closing work. A payload already fixed by the candidate, runbook and surface record must be emitted now; reason wording is not evidence of a dependency.';
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 
@@ -881,6 +881,7 @@ export interface RunSkillArgs {
   now?: number;
   /** Evidence hook for deliberate model calls after the initial executor turn. */
   onAdditionalModelCall?: () => void;
+  onAuditCorrection?: (removedIndices: number[]) => void | Promise<void>;
   /**
    * The manager's written reason for rejecting the previous attempt at this
    * work item. A retry that ignored it would repeat the rejected draft.
@@ -959,6 +960,7 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
   initialOutput: ExecutionOutput;
   initialLedger: AppliedAction[];
   initialFailure?: string;
+  resumedClosing?: boolean;
 }
 
 function agentIdentityPart(value: string): string {
@@ -1638,6 +1640,31 @@ export interface DeferralAuditContext {
   now: number;
 }
 
+function orderedWriteDependency(
+  description: string,
+  prior: ParsedSurfaceAction,
+  context: DeferralAuditContext,
+): boolean {
+  if (prior.kind !== 'mcp.call' || actionIntent(prior) !== 'write') return false;
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`\\b${escape(prior.surface)}\\b`, 'i').test(description)) return false;
+  const nextTool = description.match(/\b(?:save|update|create|post|delete|add)[_.][a-z_]+\b/i)?.[0];
+  const status = /\b(?:save_issue|update_issue|done|status|state change)\b/i.test(description);
+  const before = isAuditComment(prior) ? '(?:comment|save_comment|create_comment)' : escape(prior.tool);
+  const after = status
+    ? '(?:save_issue|update_issue|(?:move|mark|set|change)[^.;\\n]{0,60}(?:done|status|state)|state change)'
+    : nextTool ? escape(nextTool) : undefined;
+  if (!after) return false;
+  const ordered = new RegExp(`\\b${before}\\b[^.;\\n]{0,100}\\b(?:then|before)\\b[^.;\\n]{0,100}\\b${after}\\b|\\b(?:after|once|when)\\b[^.;\\n]{0,50}\\b${before}\\b[^.;\\n]{0,100}\\b${after}\\b`, 'i');
+  const texts = [...context.plan.steps, ...context.skillBody.split(/\n/)];
+  if (texts.some(text => !/\b(?:do not|never|don't)\b/i.test(text) && ordered.test(text))) return true;
+  return context.plan.steps.some((step, index) => {
+    const next = context.plan.steps[index + 1];
+    return next !== undefined && !/\b(?:do not|never|don't)\b/i.test(`${step} ${next}`) &&
+      new RegExp(`\\b${before}\\b`, 'i').test(step) && new RegExp(`\\b${after}\\b`, 'i').test(next);
+  });
+}
+
 /**
  * Refuse a phase-one output that defers work on judgement rather than on data.
  *
@@ -1665,6 +1692,7 @@ export function deferralAudit(
   output: Pick<ExecutionOutput, 'actions' | 'notes' | 'procedureTrails' | 'needsDependentPhase' | 'deferredActions'>,
   candidate: WorkCandidate,
   context: DeferralAuditContext,
+  prewrittenIndices: number[] = [],
 ): string[] {
   if (context.mode === 'mock' || output.needsDependentPhase !== true) return [];
   const issues: string[] = [];
@@ -1692,9 +1720,11 @@ export function deferralAudit(
     const action = typeof index === 'number' && Number.isInteger(index) && index >= 0
       ? output.actions[index] : undefined;
     const parsed = action && isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
-    if (field && parsed?.ok && actionIntent(parsed.action) === 'read' && !fixedBrowserWork) continue;
+    if (field && parsed?.ok && !fixedBrowserWork && (
+      actionIntent(parsed.action) === 'read' || orderedWriteDependency(row.trailId, parsed.action, context)
+    )) continue;
     issues.push(
-      `deferred an action with no result dependency: procedure trail ${row.trailId} is deferred for "${state.reason}"; declare dependsOnActionIndex pointing at a read or snapshot in this response and dependsOnField naming its result field; work whose payload is already fixed by the candidate, runbook and surface record must be emitted now`,
+      `deferred an action with no result dependency: procedure trail ${row.trailId} is deferred for "${state.reason}"; declare dependsOnActionIndex pointing at a read or snapshot, or a prior write the plan or runbook orders before this action, in this response and dependsOnField naming its result field; work whose payload is already fixed by the candidate, runbook and surface record must be emitted now`,
     );
   }
   const targeted = new Set(
@@ -1742,6 +1772,7 @@ export function deferralAudit(
           return fixed !== undefined && sameFixedValue(fixed, body);
         });
     if (fixedBody) return;
+    prewrittenIndices.push(index);
     issues.push(
       `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan promises a result), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
     );
@@ -1992,6 +2023,35 @@ export function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   return lines.join('\n');
 }
 
+function removePrewrittenClosingActions(output: ExecutionOutput, indices: readonly number[]): ExecutionOutput {
+  const removed = new Set(indices);
+  const reindex = (index: number): number => index - indices.filter(removedIndex => removedIndex < index).length;
+  return {
+    ...output,
+    needsDependentPhase: true,
+    actions: output.actions.filter((_, index) => !removed.has(index)),
+    procedureTrailLimitations: output.procedureTrailLimitations?.filter(row => !removed.has(row.actionIndex))
+      .map(row => ({ ...row, actionIndex: reindex(row.actionIndex) })),
+    procedureTrails: output.procedureTrails?.map(row => {
+      const state = procedureTrailState(row);
+      if (state.state === 'mapped') {
+        return removed.has(state.actionIndex)
+          ? { trailId: row.trailId, state: 'deferred' as const, reason: 'Audit removed the prewritten closing action; author it from the applied prerequisite ledger.' }
+          : { trailId: row.trailId, state: 'mapped' as const, actionIndex: reindex(state.actionIndex) };
+      }
+      if ('dependsOnActionIndex' in row && typeof row.dependsOnActionIndex === 'number') {
+        return { ...row, dependsOnActionIndex: removed.has(row.dependsOnActionIndex) ? null : reindex(row.dependsOnActionIndex) };
+      }
+      return row;
+    }),
+    deferredActions: output.deferredActions?.map(row => ({
+      ...row,
+      dependsOnActionIndex: row.dependsOnActionIndex === null || removed.has(row.dependsOnActionIndex)
+        ? null : reindex(row.dependsOnActionIndex),
+    })) ?? null,
+  };
+}
+
 /** Build the complete system prompt, including the final live-mode override. */
 export function executorInstructions(args: {
   mode: SurfaceMode;
@@ -2160,10 +2220,16 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       surfaces: args.surfaces ?? [],
       phase: 'initial',
     });
+    const prewrittenIndices: number[] = [];
     const remainingIssues = [
       ...remaining.issues,
-      ...deferralAudit(repaired, candidate, deferralContext),
+      ...deferralAudit(repaired, candidate, deferralContext, prewrittenIndices),
     ];
+    if (prewrittenIndices.length > 0 && remainingIssues.length === prewrittenIndices.length) {
+      const corrected = removePrewrittenClosingActions({ ...repaired, procedureTrailLimitations: remaining.limitations }, prewrittenIndices);
+      await args.onAuditCorrection?.(prewrittenIndices);
+      return corrected;
+    }
     if (remainingIssues.length > 0) {
       throw new Error(
         `executor procedure contract remained invalid after one repair: ${remainingIssues.join('; ')}`,
@@ -2684,7 +2750,7 @@ export async function runDependentSkill(
     '',
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
-    ...(args.initialFailure ? ['', `Prerequisite phase failure: ${args.initialFailure}`] : []),
+    ...(args.initialFailure ? ['', `${args.resumedClosing ? 'Previous closing attempt failure (prerequisites succeeded; retry the closing set)' : 'Prerequisite phase failure'}: ${args.initialFailure}`] : []),
     '',
     'Produce the truthful closing draft, notes, plan-step outcomes, procedure-trail accounting, and at most one bounded set of closing actions now.',
   ].join('\n');
