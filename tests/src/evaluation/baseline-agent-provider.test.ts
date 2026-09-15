@@ -31,6 +31,8 @@ function snapshot(): MockSurfaceSnapshot {
   } as unknown as MockSurfaceSnapshot;
 }
 
+const COLD_IMPORT_TIMEOUT_MS = 30_000;
+
 afterEach((): void => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -135,5 +137,8 @@ describe('ordinary-agent hosted provider boundary', (): void => {
         ]),
       );
     },
+    // Each case imports the provider client afresh after resetModules; under
+    // a full parallel run that cold import alone can pass the default budget.
+    COLD_IMPORT_TIMEOUT_MS,
   );
 });

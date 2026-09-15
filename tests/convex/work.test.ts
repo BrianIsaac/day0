@@ -10,6 +10,8 @@ import { PLAN_CANCELLED_REASON } from '../../convex/work';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { autonomousActionsOn } from '../../src/work/autonomy';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
+import type { Charter } from '../../src/agent/charter';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -1115,6 +1117,171 @@ describe('single-use manager decisions', (): void => {
         (name) => name === 'managerChannelActions:sendDecisionNotice',
       ),
     ).toHaveLength(1);
+  });
+});
+
+describe('approving a plan with answers', (): void => {
+  afterEach(restoreSurfaceMode);
+
+  const lookerPlan = {
+    summary: 'Refresh the Looker pipeline tile and comment on the ticket.',
+    steps: ['Read REVOPS-7.', 'Refresh the Looker pipeline tile.', 'Comment on REVOPS-7.'],
+    riskNotes: 'The runbook does not say which figure to enter if the standup deck and the sheet disagree.',
+    reversibility: 'reversible',
+    estimatedMinutes: 10,
+    expectedOutputType: 'ticket-update',
+  };
+
+  async function askedAtPlan(
+    harness: Harness,
+  ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; charterId: Id<'charters'>; question: Doc<'managerQuestions'> }> {
+    const { agentId, workItemId } = await seed(harness, 'claimed');
+    const charterId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('charters', {
+          agentId,
+          version: '0.0',
+          body: runThroughBody(),
+          approved: true,
+          approvedAt: 2,
+          createdAt: 2,
+        }),
+    );
+    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    const [question] = await harness.run(
+      async (ctx) =>
+        await ctx.db.query('managerQuestions').withIndex('by_work_item', (q) => q.eq('workItemId', workItemId)).collect(),
+    );
+    if (!question) throw new Error('the plan asked no question');
+    return { agentId, workItemId, charterId, question };
+  }
+
+  it('answers the question and the note, amends the charter, and approves in one decision', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, charterId, question } = await askedAtPlan(harness);
+    expect(question.question).toBe('Who owns the Looker pipeline tile.');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approvePlan, {
+        workItemId,
+        answers: [{ questionId: question._id, text: '  Priya owns it;  ask her before changing the source. ' }],
+        note: 'Use the sheet figure.',
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.managerAnswers).toEqual([
+      {
+        question: 'Who owns the Looker pipeline tile.',
+        answer: 'Priya owns it; ask her before changing the source.',
+        answeredAt: expect.any(Number),
+        questionId: question._id,
+      },
+      { question: lookerPlan.riskNotes, answer: 'Use the sheet figure.', answeredAt: expect.any(Number) },
+    ]);
+    const answered = await harness.run(async (ctx) => await ctx.db.get(question._id));
+    expect(answered?.answer).toMatchObject({ text: 'Priya owns it; ask her before changing the source.', via: 'plan-approval' });
+    const latest = await harness.withIdentity(OWNER).query(api.charters.latest, { agentId });
+    expect(latest).toMatchObject({ version: '0.1', approved: true, supersedes: charterId });
+    expect(latest?._id).toBe(answered?.answer?.amendedCharterId);
+    const body = latest?.body as Charter;
+    expect(body.openQuestions).not.toContain('Who owns the Looker pipeline tile.');
+    expect(body.answeredQuestions).toEqual([
+      expect.objectContaining({ question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it; ask her before changing the source.' }),
+    ]);
+    const approvals = await eventsOfType(harness, agentId, 'work.plan-approved');
+    expect(approvals.map((event) => event.payload)).toEqual([
+      {
+        workItemId,
+        decidedVia: 'dashboard',
+        answered: [
+          { question: 'Who owns the Looker pipeline tile.', questionId: question._id },
+          { question: lookerPlan.riskNotes },
+        ],
+      },
+    ]);
+    expect(await eventTypes(harness, agentId)).toContain('charter.amended');
+  });
+
+  it('approves without answers as before, and leaves the question open', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, question } = await askedAtPlan(harness);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
+    ).resolves.toEqual({ ok: true });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.managerAnswers).toBeUndefined();
+    expect((await harness.run(async (ctx) => await ctx.db.get(question._id)))?.answer).toBeUndefined();
+    expect((await eventsOfType(harness, agentId, 'work.plan-approved'))[0]?.payload).toEqual({
+      workItemId,
+      decidedVia: 'dashboard',
+    });
+    expect(await harness.withIdentity(OWNER).query(api.managerQuestions.openForAgent, { agentId })).toHaveLength(1);
+  });
+
+  it('refuses an answer to a question asked on another item, an empty answer and a stranger, and approves nothing then', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, question } = await askedAtPlan(harness);
+    const other = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-2',
+          title: 'Northstar account clean-up',
+          contentSummary: 'Merge the duplicate Northstar accounts.',
+          contentRefs: [],
+          state: 'claimed',
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.work.setPlan, {
+      workItemId: other,
+      plan: { summary: 'Merge the accounts.', steps: ['Read the accounts.', 'Draft the merge.'], riskNotes: '' },
+    });
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.work.approvePlan, { workItemId: other, answers: [{ questionId: question._id, text: 'Priya.' }] }),
+    ).rejects.toThrow('not asked on this work item');
+    await expect(
+      owner.mutation(api.work.approvePlan, { workItemId, answers: [{ questionId: question._id, text: '   ' }] }),
+    ).rejects.toThrow('cannot be empty');
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).mutation(api.work.approvePlan, {
+        workItemId,
+        answers: [{ questionId: question._id, text: 'Priya.' }],
+      }),
+    ).rejects.toThrow(/forbidden/);
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+    expect((await readItem(harness, other)).state).toBe('plan-pending');
+    expect((await harness.run(async (ctx) => await ctx.db.get(question._id)))?.answer).toBeUndefined();
+  });
+
+  it('clears the answers when the run completes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId } = await seed(harness, 'executing');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        managerAnswers: [{ question: 'Who owns the tile.', answer: 'Priya.', answeredAt: 2 }],
+      });
+    });
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId,
+      runId,
+      output: {
+        ...pendingOutput,
+        applied: [{ tool: 'mcp.call', ok: true, effect: 'landed', idempotencyKey: 'k0' }],
+      },
+    });
+    expect((await readItem(harness, workItemId)).managerAnswers).toBeUndefined();
   });
 });
 

@@ -9,6 +9,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
+import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   HELD_NOT_APPROVED,
@@ -434,6 +435,9 @@ export const setPlan = internalMutation({
       payload: { workItemId: args.workItemId, plan: args.plan },
       createdAt: Date.now(),
     });
+    // The charter's open questions this plan touches are asked here, before
+    // execution, and once per question for the agent.
+    await askOpenQuestionsAtPlan(ctx, row, args.plan);
     return { stored: true };
   },
 });
@@ -947,23 +951,88 @@ function decidedPatch(
   };
 }
 
+/** One answer the manager gave with plan approval, as the row carries it. */
+type ManagerAnswerRow = NonNullable<Doc<'workItems'>['managerAnswers']>[number];
+
+/**
+ * Record the manager's answers given with the approval, in the same
+ * transaction as the approval.
+ *
+ * An answer to one of the charter's open questions goes through the
+ * question's own record, which amends the charter when the question is
+ * still open there; the note answers the planner's own risk notes and goes
+ * nowhere but this run. Every answer reaches the executor as approved
+ * evidence. A question asked on another work item is refused: the manager
+ * answers what this plan raised.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The plan-pending work item.
+ *   answers: The answers to the charter's questions asked on this item.
+ *   note: The manager's answer to the planner's note, if any.
+ *
+ * Returns:
+ *   The rows to keep on the work item, empty when nothing was answered.
+ */
+async function answerPlanQuestions(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  answers: ReadonlyArray<{ questionId: Id<'managerQuestions'>; text: string }>,
+  note: string | undefined,
+): Promise<ManagerAnswerRow[]> {
+  const now = Date.now();
+  const kept: ManagerAnswerRow[] = [];
+  for (const entry of answers) {
+    const record = await ctx.db.get(entry.questionId);
+    if (!record || record.workItemId !== row._id) {
+      throw new Error('that question was not asked on this work item');
+    }
+    await answerQuestionInTransaction(ctx, record, entry.text, 'plan-approval');
+    kept.push({
+      question: record.question,
+      answer: entry.text.replace(/\s+/g, ' ').trim(),
+      answeredAt: now,
+      questionId: record._id,
+    });
+  }
+  const trimmedNote = note?.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
+  if (trimmedNote) {
+    const plan = row.plan as { riskNotes?: string } | undefined;
+    const riskNotes = plan?.riskNotes?.trim();
+    kept.push({
+      question: riskNotes ? riskNotes : "the planner's note",
+      answer: trimmedNote,
+      answeredAt: now,
+    });
+  }
+  return kept;
+}
+
 async function approvePlanInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   via: DecisionVia,
   messageTs?: string,
+  answers: ManagerAnswerRow[] = [],
 ): Promise<void> {
   if (row.state !== 'plan-pending') {
     throw new Error(`workItem state is ${row.state}; expected plan-pending`);
   }
   await ctx.db.patch(row._id, {
     state: 'plan-approved',
+    ...(answers.length > 0 ? { managerAnswers: answers } : {}),
     ...decidedPatch(row, 'plan', via, 'approved', messageTs),
   });
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.plan-approved',
-    payload: { workItemId: row._id, decidedVia: via },
+    payload: {
+      workItemId: row._id,
+      decidedVia: via,
+      ...(answers.length > 0
+        ? { answered: answers.map((entry) => ({ question: entry.question, questionId: entry.questionId })) }
+        : {}),
+    },
     createdAt: Date.now(),
   });
   if (via === 'channel') {
@@ -974,10 +1043,25 @@ async function approvePlanInTransaction(
 }
 
 export const approvePlan = mutation({
-  args: { workItemId: v.id('workItems') },
+  args: {
+    workItemId: v.id('workItems'),
+    /** Answers to the charter's open questions asked on this plan; each amends the charter. */
+    answers: v.optional(
+      v.array(v.object({ questionId: v.id('managerQuestions'), text: v.string() })),
+    ),
+    /** The manager's answer to the planner's own note, for this run. */
+    note: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    await approvePlanInTransaction(ctx, row, 'dashboard');
+    if (row.state !== 'plan-pending') {
+      throw new Error(`workItem state is ${row.state}; expected plan-pending`);
+    }
+    // Approve-with-answer is one decision: the answers land, the charter is
+    // amended where a question is still open there, and the plan is approved
+    // in the same transaction, or none of it happens.
+    const answers = await answerPlanQuestions(ctx, row, args.answers ?? [], args.note);
+    await approvePlanInTransaction(ctx, row, 'dashboard', undefined, answers);
     return { ok: true };
   },
 });
@@ -1408,6 +1492,7 @@ export const setCompleted = internalMutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
       managerFeedback: undefined,
+      managerAnswers: undefined,
     });
     await ctx.db.insert('events', {
       agentId: row.agentId,

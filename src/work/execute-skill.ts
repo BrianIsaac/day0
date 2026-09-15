@@ -3,10 +3,14 @@ import { Agent } from '@mastra/core/agent';
 import { agentJson, MODEL_CONFIG, MODEL_PROVIDER_MAX_RETRIES } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
 import {
+  type ArgumentRepairAttempt,
+  CLOSING_SET_CAP,
+  DEFERRED_SEQUENCE_ALLOWANCE,
   DEPENDENT_ACTION_CAP,
   type DependentExecutionOutput,
   type ExecutionOutput,
   type ExecutionPlan,
+  type ManagerAnswer,
   type MockAction,
   type MockSurfaceSnapshot,
   type PlanStepOutcome,
@@ -19,16 +23,19 @@ import {
   actionIntent,
   isAuditComment,
   isManagerDm,
+  isStatusChange,
   isSurfaceTool,
   parseSurfaceAction,
   targetChannel,
   targetIssueReferences,
   type ParsedMcpCall,
+  type ParsedSurfaceAction,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
+import { promisesResult } from './plan-steps';
 import { replyTargetLine } from './reply-target';
 
 export { replyTargetLine };
@@ -683,12 +690,38 @@ export function executeSchemaForProcedureContract(
   });
 }
 
+/**
+ * How many closing actions this run's closing phase may emit.
+ *
+ * The closing set is always allowed. A deferred sequence is allowed on top
+ * only when phase one declared a deferral: a deferred procedure-trail row or
+ * a `deferredActions` row, each of which the deferral audit has already tied
+ * to a read in that phase. A phase one that declared nothing gets no room for
+ * work it did not say it was leaving.
+ *
+ * Args:
+ *   initial: The phase-one output as persisted.
+ *
+ * Returns:
+ *   The cap for the closing phase.
+ */
+export function dependentActionCap(
+  initial: Pick<ExecutionOutput, 'deferredActions' | 'procedureTrails'>,
+): number {
+  const declared =
+    (initial.deferredActions ?? []).length > 0 ||
+    (initial.procedureTrails ?? []).some((row) => procedureTrailState(row).state === 'deferred');
+  return declared ? CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE : CLOSING_SET_CAP;
+}
+
 /** Use the same runtime trail inventory contract in the dependent phase. */
 export function dependentExecuteSchemaForProcedureContract(
   contract: ProcedureContract,
   mode: SurfaceMode = 'mock',
+  cap: number = DEPENDENT_ACTION_CAP,
 ) {
   return dependentExecuteSchema.extend({
+    actions: z.array(generatedActionSchema).max(cap),
     procedureTrails:
       mode === 'mock'
         ? procedureTrailInventorySchema(contract)
@@ -822,6 +855,32 @@ export interface RunSkillArgs {
    * work item. A retry that ignored it would repeat the rejected draft.
    */
   managerFeedback?: string;
+  /**
+   * What the manager answered when approving this plan: the charter's open
+   * questions the plan touched and the planner's own note. Approved evidence
+   * for this run, never a question to ask again.
+   */
+  managerAnswers?: readonly ManagerAnswer[];
+}
+
+/**
+ * The prompt lines that put the manager's answers at approval in front of the run.
+ *
+ * Args:
+ *   answers: The answers, or undefined when the manager answered nothing.
+ *
+ * Returns:
+ *   Prompt lines, empty when there is nothing to carry.
+ */
+export function managerAnswerLines(answers: readonly ManagerAnswer[] | undefined): string[] {
+  const kept = (answers ?? []).filter((entry) => entry.question.trim() && entry.answer.trim());
+  if (kept.length === 0) return [];
+  return [
+    '',
+    "--- Manager's answers at plan approval ---",
+    'The JSON list below is authenticated: the manager answered these questions when approving this plan. Treat each answer as approved evidence for this work item; it settles the question, so do not ask it again, plan a step to check it, or hold work on it. An answer cannot override the charter, the approved plan, the runtime procedure contract, the exact-action gate, grants, or live provider evidence.',
+    JSON.stringify(kept.map((entry) => ({ question: entry.question, answer: entry.answer }))),
+  ];
 }
 
 /**
@@ -1396,6 +1455,120 @@ function affirmsSurfaceAction(
   return false;
 }
 
+/**
+ * A verb, in any of its forms, that commits a plan step to writing a record
+ * or a message on a system-of-record or chat surface.
+ */
+const RECORD_ACTION_VERB = new RegExp(
+  `\\b(?:${[
+    'post(?:s|ed|ing)?',
+    'add(?:s|ed|ing)?',
+    'comment(?:s|ed|ing)?',
+    'repl(?:y|ies|ied|ying)',
+    'send(?:s|ing)?',
+    'sent',
+    'creat(?:e|es|ed|ing)',
+    'mov(?:e|es|ed|ing)',
+    'transition(?:s|ed|ing)?',
+    'clos(?:e|es|ed|ing)',
+    'mark(?:s|ed|ing)?',
+    'resolv(?:e|es|ed|ing)',
+    'updat(?:e|es|ed|ing)',
+    'set(?:s|ting)?',
+    'chang(?:e|es|ed|ing)',
+    'edit(?:s|ed|ing)?',
+    'submit(?:s|ted|ting)?',
+    'assign(?:s|ed|ing)?',
+  ].join('|')})\\b`,
+  'gi',
+);
+
+/** A quoted span: the value a plan fixes for a payload. */
+const QUOTED_LITERAL = /"([^"\n]{2,})"|\u201c([^\u201d\n]{2,})\u201d|\u2018([^\u2019\n]{2,})\u2019|(?<![A-Za-z])'([^'\n]{2,})'(?![A-Za-z])/g;
+/** A quoted span that names a record rather than carrying a value. */
+const TITLE_BEFORE = /\b(?:ticket|issue|request|message|thread|page|channel)\s+(?:(?:titled|called|named)\s+)?$/i;
+const TITLE_AFTER = /^\s+(?:ticket|issue|request|message|thread|page|channel|title)\b/i;
+/** A step that only drafts or holds text does not commit to sending it. */
+const NOT_A_WRITE = /\b(?:draft(?:s|ed|ing)?|prepar(?:e|es|ed|ing)|propos(?:e|es|ed|ing)|hold(?:s|ing)?|held|wait(?:s|ed|ing)?)\b/i;
+
+/**
+ * The values a plan clause fixes for a write: its quoted spans, less those
+ * that name a record (a title) or the candidate itself.
+ */
+function fixedPayloadLiterals(clause: string, candidate: Pick<WorkCandidate, 'externalId'>): string[] {
+  const literals: string[] = [];
+  for (const match of clause.matchAll(QUOTED_LITERAL)) {
+    const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? '';
+    const before = clause.slice(0, match.index);
+    const after = clause.slice(match.index + match[0].length);
+    if (TITLE_BEFORE.test(before) || TITLE_AFTER.test(after)) continue;
+    if (value.trim() === candidate.externalId) continue;
+    literals.push(value);
+  }
+  return literals;
+}
+
+/**
+ * Whether a clause commits to a write on a record or chat surface whose
+ * payload it fixes: an ungoverned record verb, a quoted value that is not a
+ * reference, no result vocabulary and no drafting or holding verb. Such a
+ * payload is determined before any result exists, so it belongs in phase
+ * one whatever the transport carries it.
+ *
+ * Args:
+ *   clause: One clause of a plan step.
+ *   surface: The surface the clause names.
+ *   candidate: The work candidate, whose own id is a reference.
+ *
+ * Returns:
+ *   The fixed literal, or undefined when the clause fixes nothing.
+ */
+function fixesRecordPayload(
+  clause: string,
+  surface: Pick<SurfaceRecord, 'slug' | 'displayName'>,
+  candidate: Pick<WorkCandidate, 'externalId'>,
+): string | undefined {
+  if (namesResultDependency(clause) || NOT_A_WRITE.test(clause)) return undefined;
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const stripped = clause
+    .replace(new RegExp(escape(surface.displayName), 'gi'), ' ')
+    .replace(new RegExp(escape(surface.slug), 'gi'), ' ');
+  const committed = [...stripped.matchAll(RECORD_ACTION_VERB)].some(
+    (verb) => !GOVERNING_NEGATION.test(stripped.slice(0, verb.index)),
+  );
+  if (!committed) return undefined;
+  return fixedPayloadLiterals(clause, candidate)[0];
+}
+
+/**
+ * Whether an action closes the work: the audit comment on the originating
+ * issue, its state change, or the reply into the candidate's source thread.
+ */
+function isClosingAction(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  candidate: Pick<WorkCandidate, 'replyTarget'>,
+): boolean {
+  if (actionIntent(parsed) !== 'write') return false;
+  if (isAuditComment(parsed) || isStatusChange(parsed)) return true;
+  if (surface.class !== 'chat' || isManagerDm(parsed, surface)) return false;
+  const channel = targetChannel(parsed);
+  return channel !== undefined && channel === candidate.replyTarget?.channel;
+}
+
+/** The serialised payload of a surface action, for literal matching. */
+function actionPayloadText(action: MockAction): string {
+  return [action.args.toolArgsJson, action.args.body, action.args.path]
+    .filter((value): value is string => typeof value === 'string')
+    .join('\n');
+}
+
+function describeSurfaceAction(parsed: ParsedSurfaceAction): string {
+  return parsed.kind === 'mcp.call'
+    ? `${parsed.surface} ${parsed.tool}`
+    : `${parsed.surface} ${parsed.method} ${parsed.path}`;
+}
+
 function namesSurface(text: string, surface: Pick<SurfaceRecord, 'slug' | 'displayName'>): boolean {
   const lower = text.toLowerCase();
   if (lower.includes(surface.slug.toLowerCase())) return true;
@@ -1415,13 +1588,16 @@ export interface DeferralAuditContext {
  * Refuse a phase-one output that defers work on judgement rather than on data.
  *
  * A dependent phase is legitimate only for payloads that consume a prior
- * result. Two things are checked in code: every DEFERRED procedure-trail row
- * must declare a read or snapshot index and the result field it consumes, and every connected browser-driven
- * surface an affirmative approved plan step acts on must either have an
- * action in this phase or a `notes` sentence naming the surface and the
- * result its sequence waits for. A browser sequence is the decidable case:
- * the runbook carries every literal and says the session cannot be split.
- * Mock mode emits everything in one phase and is never audited.
+ * result. Three things are checked in code: every DEFERRED procedure-trail
+ * row must declare a read or snapshot index and the result field it
+ * consumes; every connected browser-driven surface an affirmative approved
+ * plan step acts on must either have an action in this phase or a `notes`
+ * sentence naming the surface and the result its sequence waits for (the
+ * runbook carries every literal and says the session cannot be split); and
+ * every connected MCP or HTTP surface a plan clause commits to write with a
+ * quoted value must have a write in this phase, because that payload was
+ * fixed before any result existed. Mock mode emits everything in one phase
+ * and is never audited.
  *
  * Args:
  *   output: The phase-one output as the model returned it.
@@ -1485,6 +1661,55 @@ export function deferralAudit(
     if (namesSurface(output.notes, surface) && namesResultDependency(output.notes)) continue;
     issues.push(
       `deferred an action with no result dependency: the documented ${surface.displayName} (${surface.slug}) sequence has no action in this phase; its payload is fixed by the candidate and the runbook, so emit the whole sequence now, or say in notes which prior result it consumes`,
+    );
+  }
+  // A closing action consumes this phase's results by definition: the audit
+  // comment on the originating issue, its state change and the reply into
+  // the source thread report what happened. Written now, before anything
+  // has, they are predictions; the closing phase authors them from the
+  // ledger. The manager DM is the escalation channel and may go now. A
+  // closing action whose value the plan fixes is the one exception: that
+  // value existed before the run.
+  const fixedLiterals = context.surfaces.flatMap((surface) =>
+    context.plan.steps
+      .flatMap((step) => step.split(/[.;\n]/))
+      .filter((clause) => namesSurface(clause, surface))
+      .flatMap((clause) =>
+        NOT_A_WRITE.test(clause) ? [] : fixedPayloadLiterals(clause, candidate),
+      ),
+  );
+  output.actions.forEach((action, index): void => {
+    const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+    if (!parsed?.ok) return;
+    const surface = context.surfaces.find((row) => row.slug === parsed.action.surface);
+    if (!surface || !isClosingAction(parsed.action, surface, candidate)) return;
+    const payload = actionPayloadText(action);
+    if (fixedLiterals.some((literal) => payload.includes(literal))) return;
+    issues.push(
+      `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan promises a result), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
+    );
+  });
+  // The same rule on every other transport, in the code-decidable form: a
+  // write whose value the approved plan quotes is fixed before any result
+  // exists, and the gate holds it like any other write.
+  const written = new Set(
+    output.actions.flatMap((action): string[] => {
+      const parsed = isSurfaceTool(action.tool) ? parseSurfaceAction(action) : undefined;
+      return parsed?.ok && actionIntent(parsed.action) === 'write' ? [parsed.action.surface] : [];
+    }),
+  );
+  for (const surface of context.surfaces) {
+    if (surface.path !== 'mcp' && surface.path !== 'documented-api') continue;
+    if (verdictFor(surface, context.now) !== 'connected') continue;
+    if (written.has(surface.slug)) continue;
+    const fixed = context.plan.steps
+      .flatMap((step) => step.split(/[.;\n]/))
+      .filter((clause) => namesSurface(clause, surface))
+      .map((clause) => fixesRecordPayload(clause, surface, candidate))
+      .find((literal): literal is string => literal !== undefined);
+    if (fixed === undefined) continue;
+    issues.push(
+      `deferred an action with no result dependency: the documented ${surface.displayName} (${surface.slug}) write carrying "${fixed}" has no action in this phase; its payload is fixed by the plan, the candidate and the runbook, so emit it now`,
     );
   }
   return issues;
@@ -1780,6 +2005,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
+    ...managerAnswerLines(args.managerAnswers),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -1811,10 +2037,15 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     user: userPrompt,
     schema: runtimeSchema,
   });
+  // In real mode a plan that promises a read, a check or a result gives the
+  // run its closing phase whatever the model said, so the audit below sees
+  // the phase as the gate will stage it.
+  const closingPhase = (flag: boolean): boolean =>
+    mode === 'real' ? flag || plan.steps.some(promisesResult) : flag;
   const output: ExecutionOutput = {
     draft: raw.draft,
     notes: raw.notes,
-    needsDependentPhase: raw.needsDependentPhase,
+    needsDependentPhase: closingPhase(raw.needsDependentPhase),
     actions: raw.actions.map(materialiseGeneratedAction),
     procedureTrails: raw.procedureTrails,
     ...(mode === 'real' ? { deferredActions: deferredActionsSchema.parse(raw.deferredActions ?? null) } : {}),
@@ -1860,7 +2091,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     const repaired: ExecutionOutput = {
       draft: repairedRaw.draft,
       notes: repairedRaw.notes,
-      needsDependentPhase: repairedRaw.needsDependentPhase,
+      needsDependentPhase: closingPhase(repairedRaw.needsDependentPhase),
       actions: repairedRaw.actions.map(materialiseGeneratedAction),
       procedureTrails: repairedRaw.procedureTrails,
       deferredActions: deferredActionsSchema.parse(repairedRaw.deferredActions ?? null),
@@ -1972,13 +2203,161 @@ export function isArgumentFailure(reason: string | undefined): boolean {
   return reason !== undefined && ARGUMENT_FAILURE.test(reason);
 }
 
-/** A phase-one read the provider refused for its arguments, with what it needs to be re-authored. */
-export interface RepairableRead {
+/** One MCP call refused for its argument names, with what its one repair needs. */
+export interface RepairableCall {
   index: number;
   action: MockAction;
   call: ParsedMcpCall;
   surface: SurfaceRecord;
   reason: string;
+}
+
+/** A phase-one read the provider refused for its arguments, with what it needs to be re-authored. */
+export type RepairableRead = RepairableCall;
+
+/**
+ * Why the probed schema of a tool refuses a call's argument names, if it does.
+ *
+ * Orientation records the top-level argument names of every allowed tool.
+ * A call carrying a name the schema does not list is a validation error the
+ * provider would return after approval; deciding it here, before the hold,
+ * costs no transport. A tool with no probed names cannot be checked.
+ *
+ * Args:
+ *   call: The parsed MCP call.
+ *   surface: Its surface, with the probed argument names.
+ *
+ * Returns:
+ *   The refusal, worded as the provider words one, or undefined.
+ */
+export function probedArgumentIssue(
+  call: ParsedMcpCall,
+  surface: Pick<SurfaceRecord, 'slug' | 'toolArguments'>,
+): string | undefined {
+  const probed = surface.toolArguments?.find((entry) => entry.tool === call.tool)?.arguments;
+  if (!probed || probed.length === 0) return undefined;
+  const unknown = Object.keys(call.toolArgs).filter((key) => !probed.includes(key));
+  if (unknown.length === 0) return undefined;
+  return `Tool input validation failed against the probed schema: unknown argument${unknown.length === 1 ? '' : 's'} ${unknown.join(', ')} for ${call.tool} on ${surface.slug}; the schema accepts ${probed.join(', ')}`;
+}
+
+/**
+ * The writes about to be held whose argument names the probed schema
+ * refuses. Reads are the provider's to refuse after they run; a write that
+ * would be refused is caught here so the manager approves a payload that
+ * can land.
+ *
+ * Args:
+ *   actions: The phase's actions.
+ *   surfaces: The agent's surfaces.
+ *
+ * Returns:
+ *   The repairable rows, in action order.
+ */
+export function repairableWriteArguments(
+  actions: readonly MockAction[],
+  surfaces: readonly SurfaceRecord[],
+): RepairableCall[] {
+  const rows: RepairableCall[] = [];
+  actions.forEach((action, index): void => {
+    if (!isSurfaceTool(action.tool)) return;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || parsed.action.kind !== 'mcp.call') return;
+    if (actionIntent(parsed.action) !== 'write') return;
+    const surface = surfaces.find((row) => row.slug === parsed.action.surface);
+    if (!surface) return;
+    const reason = probedArgumentIssue(parsed.action, surface);
+    if (reason) rows.push({ index, action, call: parsed.action, surface, reason });
+  });
+  return rows;
+}
+
+export interface RepairHeldWriteArgumentsArgs {
+  actions: readonly MockAction[];
+  surfaces: readonly SurfaceRecord[];
+  skill: Pick<SelectedSkill, 'name'>;
+  candidate: WorkCandidate;
+  /** The one model call per refused row; defaults to `repairToolArguments`. */
+  repair?: (args: RepairToolArgumentsArgs) => Promise<MockAction | undefined>;
+  onAdditionalModelCall?: () => void;
+}
+
+/**
+ * Give every write the probed schema refuses one repair before it is held.
+ *
+ * Each row costs one model call and nothing else: the corrected payload
+ * replaces the first attempt in the set the manager sees, and the attempt
+ * is recorded beside it. A repair the schema still refuses, or that the
+ * model could not produce, leaves the first attempt in place and records
+ * that the repair failed, so the manager decides with that in view. Nothing
+ * here reaches a surface.
+ *
+ * Args:
+ *   args: The phase's actions, the surfaces, the skill and the candidate.
+ *
+ * Returns:
+ *   The actions with repaired rows replaced, and every attempt made.
+ */
+export async function repairHeldWriteArguments(
+  args: RepairHeldWriteArgumentsArgs,
+): Promise<{ actions: MockAction[]; argumentRepairs: ArgumentRepairAttempt[] }> {
+  const actions = [...args.actions];
+  const argumentRepairs: ArgumentRepairAttempt[] = [];
+  const repair = args.repair ?? repairToolArguments;
+  for (const row of repairableWriteArguments(args.actions, args.surfaces)) {
+    const attempt: ArgumentRepairAttempt = {
+      index: row.index,
+      reason: row.reason,
+      toolArgsJson: row.action.args.toolArgsJson ?? JSON.stringify(row.call.toolArgs),
+      repaired: false,
+    };
+    let replacement: MockAction | undefined;
+    try {
+      replacement = await repair({
+        skill: args.skill,
+        candidate: args.candidate,
+        row,
+        onAdditionalModelCall: args.onAdditionalModelCall,
+      });
+    } catch {
+      replacement = undefined;
+    }
+    const parsed = replacement ? parseSurfaceAction(replacement) : undefined;
+    if (
+      parsed?.ok &&
+      parsed.action.kind === 'mcp.call' &&
+      probedArgumentIssue(parsed.action, row.surface) === undefined
+    ) {
+      actions[row.index] = replacement!;
+      attempt.repaired = true;
+    }
+    argumentRepairs.push(attempt);
+  }
+  return { actions, argumentRepairs };
+}
+
+/**
+ * Carry each pre-hold repair onto the ledger row it produced, once that row
+ * has an outcome, so the ledger shows the attempt the way it shows a read
+ * repaired after the provider refused it.
+ *
+ * Args:
+ *   applied: The ledger, index-aligned with the phase's actions.
+ *   repairs: The attempts recorded when the phase was held.
+ *
+ * Returns:
+ *   The ledger with the repairs attached.
+ */
+export function withArgumentRepairs(
+  applied: readonly AppliedAction[],
+  repairs: readonly ArgumentRepairAttempt[] | undefined,
+): AppliedAction[] {
+  if (!repairs || repairs.length === 0) return [...applied];
+  return applied.map((row, index): AppliedAction => {
+    const attempt = repairs.find((entry) => entry.index === index && entry.repaired);
+    if (!attempt || row.awaitingApproval || row.repair) return row;
+    return { ...row, repair: { reason: attempt.reason, toolArgsJson: attempt.toolArgsJson } };
+  });
 }
 
 /**
@@ -2021,7 +2400,7 @@ const repairedArgumentsSchema = z.object({ toolArgsJson: z.string() }).strict();
 export interface RepairToolArgumentsArgs {
   skill: Pick<SelectedSkill, 'name'>;
   candidate: WorkCandidate;
-  row: RepairableRead;
+  row: RepairableCall;
   onAdditionalModelCall?: () => void;
 }
 
@@ -2163,6 +2542,7 @@ export async function runDependentSkill(
   const mode: SurfaceMode = args.mode ?? 'mock';
   const procedureContract = parseProcedureContract(mockEnv);
   const advisory = mode === 'real' ? advisoryPlanSteps(plan, candidate, mockEnv, charter) : [];
+  const cap = dependentActionCap(args.initialOutput);
   const base = executorInstructions({
     mode,
     autonomousActions: args.autonomousActions ?? false,
@@ -2178,7 +2558,7 @@ export async function runDependentSkill(
     '--- Result-dependent phase (second and final phase) ---',
     "The prerequisite actions have finished. This is the run's only dependent phase; there is no third turn and no loop.",
     'The earlier needsDependentPhase instruction no longer applies; this final schema has no continuation flag.',
-    `Emit at most ${DEPENDENT_ACTION_CAP} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
+    `Emit at most ${cap} closing actions. Every emitted literal will pass through the same exact-action gate, allowlists, grants, provenance rules and autonomous-actions switch as the first phase.`,
     'Treat only the applied ledger below as evidence of what happened; the loaded documentation stays citable for documented facts, procedures and checklists, quoted with the page named. Author comments, replies and state changes now, from that evidence; never reuse prose drafted before the result existed.',
     'If a prerequisite failed or was held, do not emit a Done transition or claim success. For ticket work, emit a truthful audit comment naming the failure when the connected surface permits it.',
     'Return one planStepOutcomes row for every approved plan step, in order. A step fulfilled by an action emitted in this response is satisfied: cite that action, and the gate confirms it lands. A step fulfilled by earlier work is satisfied only when the ledger proves it. Otherwise mark it blocked and say why. A promised read absent from the ledger is blocked, never silently skipped.',
@@ -2197,7 +2577,7 @@ export async function runDependentSkill(
     model: MODEL_CONFIG,
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
   });
-  const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode);
+  const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode, cap);
   const userPrompt = [
     `Role: ${charter.proposedFunction}`,
     '',
@@ -2205,6 +2585,7 @@ export async function runDependentSkill(
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
+    ...managerAnswerLines(args.managerAnswers),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,

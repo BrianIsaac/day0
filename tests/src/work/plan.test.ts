@@ -14,6 +14,7 @@ import {
   redactCandidateRecordText,
   renderCandidateRecord,
   SCOPE_NOT_GATE_PLANNER,
+  THREAD_READ_LIMIT,
 } from '../../../src/work/plan';
 
 describe('plan drafter action mode', (): void => {
@@ -567,6 +568,7 @@ describe('the candidate record read before the plan', (): void => {
     expect(candidateRecordRead(ticket, [linear], now)).toEqual({
       surface: 'linear',
       tool: 'get_issue',
+      subject: 'record',
       action: {
         tool: 'mcp.call',
         args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
@@ -594,7 +596,92 @@ describe('the candidate record read before the plan', (): void => {
     });
   });
 
-  it('reads nothing for a chat ask, a browser surface, a disconnected surface or a surface with no record tool', (): void => {
+  const slack: SurfaceRecord = {
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now - 60_000,
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage', 'conversations.history', 'conversations.replies'],
+  };
+  const mention: WorkCandidate = {
+    ...candidate,
+    sourceCategory: 'event-stream',
+    sourceSystem: 'slack',
+    externalId: 'C0PUBLIC:1787746453.202809',
+    title: 'Slack mention in #revops-asks',
+    contentRefs: ['https://app.slack.com/client/T0/C0PUBLIC/thread/C0PUBLIC-1787746453202809'],
+    replyTarget: { channel: 'C0PUBLIC', channelName: 'revops-asks', threadTs: '1787746453.202809' },
+  };
+
+  it('reads a chat ask\'s thread with the documented thread tool, bounded, under the surface credential', (): void => {
+    expect(candidateRecordRead(mention, [linear, slack], now)).toEqual({
+      surface: 'slack',
+      tool: 'conversations.replies',
+      subject: 'thread',
+      action: {
+        tool: 'http.request',
+        args: {
+          surface: 'slack',
+          method: 'GET',
+          path: `/conversations.replies?channel=C0PUBLIC&ts=1787746453.202809&inclusive=true&limit=${THREAD_READ_LIMIT}`,
+          headersJson: '{"Authorization":"Bearer {{secret}}"}',
+        },
+      },
+    });
+    // A thread that was itself a reply reads from its parent, where the ask's thread lives.
+    const threaded = { ...mention, replyTarget: { ...mention.replyTarget!, threadTs: '1787746000.000100' } };
+    expect(candidateRecordRead(threaded, [slack], now)?.action.args.path).toContain('ts=1787746000.000100');
+    // Only the history tool allowed: the channel up to the ask, same bound.
+    const historyOnly: SurfaceRecord = { ...slack, toolAllowlist: ['chat.postMessage', 'conversations.history'] };
+    expect(candidateRecordRead(mention, [historyOnly], now)).toMatchObject({
+      tool: 'conversations.history',
+      subject: 'thread',
+      action: {
+        args: {
+          method: 'GET',
+          path: `/conversations.history?channel=C0PUBLIC&latest=1787746453.202809&inclusive=true&limit=${THREAD_READ_LIMIT}`,
+        },
+      },
+    });
+  });
+
+  it('reads no thread when the chat surface documents no history tool, is not a documented API, is disconnected, or the ask has no thread', (): void => {
+    expect(candidateRecordRead(mention, [{ ...slack, toolAllowlist: ['chat.postMessage'] }], now)).toBeUndefined();
+    expect(candidateRecordRead(mention, [{ ...slack, path: 'browser-driven' }], now)).toBeUndefined();
+    expect(candidateRecordRead(mention, [{ ...slack, verdict: 'absent' }], now)).toBeUndefined();
+    expect(candidateRecordRead({ ...mention, replyTarget: undefined }, [slack], now)).toBeUndefined();
+    expect(candidateRecordRead(mention, [linear], now)).toBeUndefined();
+  });
+
+  it('carries the thread in the plan prompt, named as a thread, after the candidate', (): void => {
+    const user = planUserPrompt({
+      candidate: mention,
+      charter,
+      surfaces: [slack],
+      record: {
+        surface: 'slack',
+        tool: 'conversations.replies',
+        subject: 'thread',
+        text: 'HTTP 200 · {"ok":true,"messages":[{"ts":"1787746453.202809","text":"<@U0DAY0> are the three deals covered?"}]}',
+      },
+      now,
+    });
+    expect(user).toContain('--- Candidate thread, read from slack (conversations.replies) ---');
+    expect(user).toContain('are the three deals covered?');
+    expect(user.indexOf('--- Candidate ---')).toBeLessThan(user.indexOf('--- Candidate thread'));
+    expect(user.indexOf('--- Candidate thread')).toBeLessThan(user.indexOf('--- Surfaces ---'));
+    expect(
+      renderCandidateRecord({
+        surface: 'slack', tool: 'conversations.replies', subject: 'thread', unavailable: 'no grant (slack:read)',
+      }).join('\n'),
+    ).toContain('thread unavailable: no grant (slack:read)');
+  });
+
+  it('reads nothing for an inbox ask, a browser surface, a disconnected surface or a surface with no record tool', (): void => {
     expect(
       candidateRecordRead(
         { ...ticket, sourceCategory: 'inbox', sourceSystem: 'slack' },
@@ -628,6 +715,7 @@ describe('the candidate record read before the plan', (): void => {
       record: {
         surface: 'linear',
         tool: 'get_issue',
+        subject: 'record',
         text: 'get_issue on linear · {"identifier":"REVOPS-7","state":"Todo","description":""}',
       },
       now,
@@ -649,6 +737,7 @@ describe('the candidate record read before the plan', (): void => {
       record: {
         surface: 'linear',
         tool: 'get_issue',
+        subject: 'record',
         unavailable: 'Tool input validation failed: unknown argument issueId',
       },
       now,
@@ -675,12 +764,13 @@ describe('the candidate record read before the plan', (): void => {
     const floor = await redactCandidateRecordText(text);
     expect(floor.redaction).toBe('structural-only');
     expect(floor.text).not.toContain('lin_api_0123456789');
-    const rendered = renderCandidateRecord({ surface: 'linear', tool: 'get_issue', text: read.text }).join('\n');
+    const rendered = renderCandidateRecord({ surface: 'linear', tool: 'get_issue', subject: 'record', text: read.text }).join('\n');
     expect(rendered).not.toContain('Zq9!vT2#kL8mNp4rXs7wYb3e');
     expect(rendered).toContain('"identifier":"REVOPS-7"');
     const long = renderCandidateRecord({
       surface: 'linear',
       tool: 'get_issue',
+      subject: 'record',
       text: 'x'.repeat(CANDIDATE_RECORD_LENGTH + 500),
     }).join('\n');
     expect(long.length).toBeLessThan(CANDIDATE_RECORD_LENGTH + 100);
@@ -689,6 +779,7 @@ describe('the candidate record read before the plan', (): void => {
       renderCandidateRecord({
         surface: 'linear',
         tool: 'get_issue',
+        subject: 'record',
         unavailable: 'refused: Bearer lin_api_0123456789abcdefghijklmnop was rejected',
       }).join('\n'),
     ).not.toContain('lin_api_0123456789');
@@ -705,8 +796,8 @@ describe('serialized candidate record credentials', () => {
     })}`;
     const redacted = (await redactCandidateRecordText(body, new RecordedSpanModel())).text;
     const record = field === 'text'
-      ? { surface: 'linear', tool: 'get_issue', text: redacted }
-      : { surface: 'linear', tool: 'get_issue', unavailable: redacted };
+      ? { surface: 'linear', tool: 'get_issue', subject: 'record' as const, text: redacted }
+      : { surface: 'linear', tool: 'get_issue', subject: 'record' as const, unavailable: redacted };
     const prompt = renderCandidateRecord(record).join('\n');
     expect(prompt).not.toContain(password);
     expect(prompt).toContain('REVOPS-7');

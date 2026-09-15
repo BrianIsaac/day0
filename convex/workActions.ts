@@ -17,21 +17,27 @@ import {
   type DraftPlanArgs,
 } from '../src/work/plan';
 import {
+  dependentActionCap,
   repairableReadFailures,
   repairFailedReads,
+  repairHeldWriteArguments,
   repairToolArguments,
+  withArgumentRepairs,
   runDependentSkill,
   runSkill,
 } from '../src/work/execute-skill';
 import type { Charter } from '../src/agent/charter';
 import {
-  DEPENDENT_ACTION_CAP,
+  type ArgumentRepairAttempt,
   type DependentExecutionOutput,
   type ExecutionPlan,
+  type ManagerAnswer,
+  type MockAction,
   type PlanStepOutcome,
   type WorkCandidate,
   type WorkSourceCategory,
 } from '../src/work/types';
+import { instructionText, promisesClose, promisesResult } from '../src/work/plan-steps';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
 import { asAgentId } from '../src/lib/ids';
@@ -397,7 +403,15 @@ async function executeApprovedPlanHandler(
     charter,
     internalCaller,
     managerFeedback: item.managerFeedback?.reason,
+    managerAnswers: managerAnswersOf(item),
   });
+}
+
+/** The manager's answers at approval, as the executor reads them. */
+function managerAnswersOf(item: Doc<'workItems'>): ManagerAnswer[] | undefined {
+  const rows = item.managerAnswers;
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map((row) => ({ question: row.question, answer: row.answer }));
 }
 
 export const executeApprovedPlan = action({
@@ -439,6 +453,8 @@ async function holdDay0Actions(
     internalCaller: boolean;
     /** The manager's reason for rejecting the previous attempt, if this is a retry. */
     managerFeedback?: string;
+    /** What the manager answered when approving the plan. */
+    managerAnswers?: readonly ManagerAnswer[];
   },
 ): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
   let additionalModelCalls = 0;
@@ -467,14 +483,29 @@ async function holdDay0Actions(
       mode: SURFACE_MODE,
       autonomousActions: autonomousActionsOn(agent),
       managerFeedback: args.managerFeedback,
+      managerAnswers: args.managerAnswers,
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
     });
-    const stagedOutput =
+    const staged =
       SURFACE_MODE === 'real'
         ? prerequisiteOutput(output, args.plan)
         : { ...output, needsDependentPhase: false };
+    // A write whose argument names the probed schema refuses is re-authored
+    // once here, so the payload the manager approves is one the provider
+    // can accept; nothing reaches a surface in the repair.
+    const stagedOutput =
+      SURFACE_MODE === 'real'
+        ? await repairedForHold(staged, {
+            surfaces,
+            skill: { name: args.skill.name },
+            candidate: args.candidate,
+            onAdditionalModelCall: () => {
+              additionalModelCalls += 1;
+            },
+          })
+        : staged;
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
       // Nothing to wait for is not a failed prerequisite: the closing phase
       // authors the whole set and accounts for every plan step, and a step
@@ -531,6 +562,38 @@ async function holdDay0Actions(
 /** A ledger as the row carries it between the two phases. */
 type LedgerOutput = ExecutionOutput & { applied?: Array<AppliedAction | undefined> };
 
+/**
+ * The phase's actions with every write the probed schema refuses given its
+ * one repair, and the attempts recorded on the output for the card.
+ *
+ * Args:
+ *   output: The phase's output as the executor returned it.
+ *   context: The surfaces, the skill, the candidate and the model-call hook.
+ *
+ * Returns:
+ *   The output the gate holds.
+ */
+async function repairedForHold<T extends { actions: MockAction[] }>(
+  output: T,
+  context: {
+    surfaces: readonly SurfaceRecord[];
+    skill: { name: string };
+    candidate: WorkCandidate;
+    onAdditionalModelCall: () => void;
+  },
+): Promise<T & { argumentRepairs?: ArgumentRepairAttempt[] }> {
+  const repaired = await repairHeldWriteArguments({
+    actions: output.actions,
+    surfaces: context.surfaces,
+    skill: context.skill,
+    candidate: context.candidate,
+    repair: repairToolArguments,
+    onAdditionalModelCall: context.onAdditionalModelCall,
+  });
+  if (repaired.argumentRepairs.length === 0) return output;
+  return { ...output, actions: repaired.actions, argumentRepairs: repaired.argumentRepairs };
+}
+
 interface DependentAuthoringOutput extends ExecutionOutput {
   phase: 'dependent-authoring';
   applied: AppliedAction[];
@@ -550,85 +613,22 @@ function isDependentPendingOutput(
   return (output as { phase?: unknown }).phase === 'dependent';
 }
 
-const RESULT_STEP =
-  /\b(read|read-back|check|identify|inspect|verify|validate|find|look up|snapshot|evidence|result)\b/gi;
-const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/gi;
-const CLAUSE_BOUNDARY = /\b(?:after|before|but|once|then|until)\b|[.;\n]/gi;
-const NEGATED_INSTRUCTION = /\b(?:defer|do not|don't|hold|never|not|wait for|without|withhold)\b/i;
-/** A term that names a period is a noun phrase ("close week", "close of quarter"), not a verb. */
-const PERIOD_NOUN = /^\s*(?:of\s+(?:the\s+)?)?(?:day|week|month|quarter|year|period|cycle|date)s?\b/i;
-/** A term after a determiner or "end" is a noun ("the close", "month-end close"), not a verb. */
-const NOUN_MARKER = /\b(?:the|a|an|our|its|their|this|that|each|every|end|of)\s+$/i;
-const QUOTED_SPAN = /"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g;
-
-/** Titles are references; quoted surface names and target states still impose obligations. */
-function instructionText(step: string): string {
-  return step.replace(QUOTED_SPAN, (span: string, offset: number): string => {
-    const before = step.slice(0, offset);
-    const after = step.slice(offset + span.length);
-    const titleContext =
-      /\b(?:ticket|issue|request|message)\s+(?:(?:titled|called|named)\s+)?$/i.test(before) ||
-      /^\s+(?:ticket|issue|request|message|title|mismatch)\b/i.test(after);
-    return titleContext ? ' ' : span.slice(1, -1);
-  });
-}
-
-/**
- * Whether at least one occurrence is an instruction to act rather than to
- * withhold. A term inside a hyphenated compound on either side ("read-back",
- * "close-week"), after a determiner or "end", or followed by a period noun is
- * vocabulary, not an instruction.
- */
-function affirmedStepTerm(rawStep: string, terms: RegExp): boolean {
-  const step = instructionText(rawStep);
-  terms.lastIndex = 0;
-  for (let match = terms.exec(step); match; match = terms.exec(step)) {
-    if (step[match.index - 1] === '-') continue;
-    const after = step.slice(match.index + match[0].length);
-    if (after.startsWith('-') || PERIOD_NOUN.test(after)) continue;
-    const prefix = step.slice(0, match.index);
-    if (NOUN_MARKER.test(prefix)) continue;
-    CLAUSE_BOUNDARY.lastIndex = 0;
-    let boundary = 0;
-    for (
-      let separator = CLAUSE_BOUNDARY.exec(prefix);
-      separator;
-      separator = CLAUSE_BOUNDARY.exec(prefix)
-    ) {
-      boundary = CLAUSE_BOUNDARY.lastIndex;
-    }
-    if (!NEGATED_INSTRUCTION.test(prefix.slice(boundary))) return true;
-  }
-  return false;
-}
-
-function promisesResult(step: string): boolean {
-  return affirmedStepTerm(step, RESULT_STEP);
-}
-
-function promisesClose(step: string): boolean {
-  return affirmedStepTerm(step, CLOSE_STEP);
-}
-
 /** Whether the approved plan or emitted prerequisites require one result-aware turn. */
 export function needsDependentPhase(output: ExecutionOutput, plan: ExecutionPlan): boolean {
   return output.needsDependentPhase === true || plan.steps.some(promisesResult);
 }
 
-/** Keep result-independent prerequisites; every later literal is re-authored from the ledger. */
+/**
+ * Stage a phase-one output for the gate.
+ *
+ * The deferral audit in `runSkill` has already refused a closing action
+ * written before its result existed and a fixed-payload write left out, so
+ * every action here is one phase one may carry: the batch after the last
+ * read is kept whole. The flag is settled the same way the executor settled
+ * it, so a persisted output from before the audit reads the same.
+ */
 export function prerequisiteOutput(output: ExecutionOutput, plan: ExecutionPlan): ExecutionOutput {
-  const dependent = needsDependentPhase(output, plan);
-  if (!dependent) return { ...output, needsDependentPhase: false };
-  let lastRead = -1;
-  output.actions.forEach((action, index): void => {
-    const parsed = parseSurfaceAction(action);
-    if (parsed.ok && actionIntent(parsed.action) === 'read') lastRead = index;
-  });
-  return {
-    ...output,
-    needsDependentPhase: true,
-    actions: lastRead < 0 ? [] : output.actions.slice(0, lastRead + 1),
-  };
+  return { ...output, needsDependentPhase: needsDependentPhase(output, plan) };
 }
 
 function successfulReadSurfaces(
@@ -855,13 +855,15 @@ export const authorDependentActions = internalAction({
         mode: 'real',
         autonomousActions: autonomousActionsOn(agent),
         managerFeedback: item.managerFeedback?.reason,
+        managerAnswers: managerAnswersOf(item),
         initialOutput: initial,
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,
       });
-      if (output.actions.length > DEPENDENT_ACTION_CAP) {
+      const cap = dependentActionCap(initial);
+      if (output.actions.length > cap) {
         throw new Error(
-          `dependent phase emitted ${output.actions.length} actions; cap is ${DEPENDENT_ACTION_CAP}`,
+          `dependent phase emitted ${output.actions.length} actions; cap is ${cap}`,
         );
       }
       validatePlanStepOutcomes({
@@ -881,8 +883,14 @@ export const authorDependentActions = internalAction({
         initialFailure: initial.initialFailure,
       });
       if (transitionRefusal) throw new Error(transitionRefusal);
+      const held = await repairedForHold(output, {
+        surfaces,
+        skill: { name: skill.name },
+        candidate: rowToCandidate(item),
+        onAdditionalModelCall: (): void => {},
+      });
       const dependent: DependentPendingOutput = {
-        ...output,
+        ...held,
         phase: 'dependent',
         actionIndexOffset: initial.actions.length,
         initial,
@@ -995,18 +1003,21 @@ export const applyApprovedActions = internalAction({
         knownValues,
       );
       const grants = new Set(grantRows.map((grant) => grant.scope));
-      const applied = await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
-        deps,
-        grants,
-        approvedIndexes: new Set(claim.approvedIndexes),
-        heldReasons: new Map(claim.heldReasons),
-        deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
-        priorLedger,
-        idempotencyIndexOffset: actionIndexOffset,
-        autoPhase: claim.phase === 'auto',
-        autonomousActions: claim.autonomousActions,
-        replyTarget: claim.replyTarget,
-      });
+      const applied = withArgumentRepairs(
+        await applySurfaceActions(ctx, SURFACE_MODE, surfaces, run, output.actions ?? [], {
+          deps,
+          grants,
+          approvedIndexes: new Set(claim.approvedIndexes),
+          heldReasons: new Map(claim.heldReasons),
+          deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
+          priorLedger,
+          idempotencyIndexOffset: actionIndexOffset,
+          autoPhase: claim.phase === 'auto',
+          autonomousActions: claim.autonomousActions,
+          replyTarget: claim.replyTarget,
+        }),
+        output.argumentRepairs,
+      );
       if (
         SURFACE_MODE === 'real' &&
         claim.phase === 'auto' &&
@@ -1220,12 +1231,13 @@ async function planGrounding(
 }
 
 /**
- * Read the candidate's own record before the plan is drafted.
+ * Read what the candidate points at before the plan is drafted: a ticket's
+ * own record, or the thread a chat ask sits in.
  *
  * One standing-authority read through the same registry, rules and adapter as
  * an executed action, keyed on an event minted for it so the ledger row is on
  * the timeline. A failed read, including a provider error body, becomes
- * "record unavailable" with the reason; nothing here stops the plan.
+ * "unavailable" with the reason; nothing here stops the plan.
  *
  * Args:
  *   ctx: Convex action context.
@@ -1286,20 +1298,14 @@ async function readCandidateRecord(
       ? await redactGroundingRead(rawApplied, spanModelFromEnv(), args.knownValues)
       : undefined;
     await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
+    const { surface, tool, subject } = read;
     if (!applied || !applied.ok || applied.held) {
-      return {
-        surface: read.surface,
-        tool: read.tool,
-        unavailable: applied?.reason ?? 'the read did not land',
-      };
+      return { surface, tool, subject, unavailable: applied?.reason ?? 'the read did not land' };
     }
-    return { surface: read.surface, tool: read.tool, text: applied.effect ?? '(empty record)' };
+    return { surface, tool, subject, text: applied.effect ?? `(empty ${subject})` };
   } catch (error) {
-    return {
-      surface: read.surface,
-      tool: read.tool,
-      unavailable: error instanceof Error ? error.message : String(error),
-    };
+    const { surface, tool, subject } = read;
+    return { surface, tool, subject, unavailable: error instanceof Error ? error.message : String(error) };
   }
 }
 

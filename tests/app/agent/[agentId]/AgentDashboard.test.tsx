@@ -10,9 +10,15 @@ vi.mock('convex/react', () => ({
 import type { Doc } from '../../../../convex/_generated/dataModel';
 import {
   ActionPayload,
+  AmendCharterPanel,
+  CharterCard,
+  ConstraintList,
   DashboardHeader,
   DraftDetails,
+  PendingActions,
+  PlanApprovalForm,
   PlanExecutionLedger,
+  RepairNote,
   WorkItemCard,
   eventLabel,
   phasedLedger,
@@ -61,6 +67,105 @@ describe('held action payload', (): void => {
     expect(markup).not.toContain('channelSlug');
     expect(markup).not.toContain('&quot;status&quot;');
     expect(markup).not.toContain('cells');
+  });
+});
+
+describe('a write re-authored once before the hold', (): void => {
+  const reason =
+    'Tool input validation failed against the probed schema: unknown argument comment for save_comment on linear; the schema accepts issueId, body';
+  const first = '{"issueId":"REVOPS-7","comment":"Set to 74%."}';
+  const held = {
+    tool: 'mcp.call' as const,
+    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-7","body":"Set to 74%."}' },
+  };
+  const resolved = async (): Promise<void> => undefined;
+
+  it('tells the manager the held payload is the second attempt and shows the first beside it', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[held]}
+        verdicts={[{ disposition: 'held', reason: 'held for approval' }]}
+        surfaces={[]}
+        repairs={[{ index: 0, reason, toolArgsJson: first, repaired: true }]}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain('arguments re-authored once before the hold · this payload is the second attempt');
+    expect(markup).toContain('the schema accepts issueId, body');
+    expect(markup).toContain('first attempt: {&quot;issueId&quot;:&quot;REVOPS-7&quot;,&quot;comment&quot;');
+    expect(markup).toContain('Set to 74%.');
+  });
+
+  it('says when the one repair produced nothing and the first attempt stands, and stays silent with no repair', (): void => {
+    const failed = renderToStaticMarkup(
+      <RepairNote repair={{ reason, toolArgsJson: first, repaired: false }} />,
+    );
+    expect(failed).toContain('the one repair produced nothing usable · first attempt stands');
+    expect(renderToStaticMarkup(<RepairNote repair={undefined} />)).toBe('');
+    const untouched = renderToStaticMarkup(
+      <PendingActions
+        actions={[held]}
+        verdicts={[{ disposition: 'held', reason: 'held for approval' }]}
+        surfaces={[]}
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(untouched).not.toContain('re-authored');
+  });
+});
+
+describe('a question at plan approval', (): void => {
+  const question = {
+    _id: 'q1',
+    _creationTime: 1,
+    agentId: 'a1',
+    key: 'who owns the looker pipeline tile',
+    question: 'Who owns the Looker pipeline tile.',
+    context: { touchedBy: 'plan', text: 'Refresh the Looker pipeline tile.', words: ['looker', 'pipeline', 'tile'] },
+    askedAt: 1,
+    workItemId: 'w1',
+    charterId: 'c1',
+  } as unknown as Doc<'managerQuestions'>;
+  const noop = (): void => undefined;
+
+  it('shows the question with where it came from, an answer field, the planner\'s note, and one approve button', (): void => {
+    const markup = renderToStaticMarkup(
+      <PlanApprovalForm
+        riskNotes="The runbook does not say which figure to enter if the deck and the sheet disagree."
+        questions={[question]}
+        onApprove={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(markup).toContain('A question for you before this plan runs');
+    expect(markup).toContain('Who owns the Looker pipeline tile.');
+    expect(markup).toContain('from the charter · touched by the plan: looker, pipeline, tile');
+    expect(markup).toContain('aria-label="answer: Who owns the Looker pipeline tile."');
+    expect(markup).toContain('Planner');
+    expect(markup).toContain('which figure to enter if the deck and the sheet disagree');
+    expect(markup).toContain('aria-label="answer to the planner');
+    expect(markup).toContain('Approve plan with answers');
+    expect(markup).toContain('Cancel');
+  });
+
+  it('keeps the plain approve button when the plan raises nothing, and skips an answered question', (): void => {
+    const plain = renderToStaticMarkup(
+      <PlanApprovalForm riskNotes="" questions={[]} onApprove={noop} onCancel={noop} />,
+    );
+    expect(plain).toContain('>Approve plan<');
+    expect(plain).not.toContain('aria-label="answer');
+    const answered = renderToStaticMarkup(
+      <PlanApprovalForm
+        riskNotes=""
+        questions={[{ ...question, answer: { text: 'Priya.', answeredAt: 2, via: 'dashboard' } } as Doc<'managerQuestions'>]}
+        onApprove={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(answered).not.toContain('Who owns the Looker pipeline tile.');
+    expect(answered).toContain('>Approve plan<');
   });
 });
 
@@ -162,6 +267,39 @@ describe('sending a finished item back', (): void => {
         onResendDecision={resolved}
       />,
     );
+
+  it('shows what the manager answered at approval once the plan is running', (): void => {
+    const row = {
+      ...item('completed'),
+      plan: { summary: 'Refresh the tile.', steps: ['Refresh'], riskNotes: '', reversibility: 'r', estimatedMinutes: 1, expectedOutputType: 'ticket-update' },
+      managerAnswers: [{ question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.', answeredAt: 2 }],
+    } as unknown as Doc<'workItems'>;
+    const markup = render(row);
+    expect(markup).toContain('Answered at approval');
+    expect(markup).toContain('Who owns the Looker pipeline tile.');
+    expect(markup).toContain('Priya owns it.');
+    expect(render(item('completed'))).not.toContain('Answered at approval');
+  });
+
+  it('shows a landed row that was re-authored before the hold with its first attempt', (): void => {
+    const row = item('completed');
+    const markup = render({
+      ...row,
+      output: {
+        ...landedDm,
+        applied: [
+          {
+            ...landedDm.applied[0]!,
+            repair: { reason: 'unknown argument comment for save_comment on linear', toolArgsJson: '{"comment":"x"}' },
+          },
+        ],
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(markup).toContain('arguments re-authored once before the hold');
+    expect(markup).toContain('unknown argument comment for save_comment on linear');
+    expect(markup).toContain('first attempt: {&quot;comment&quot;:&quot;x&quot;}');
+    expect(render(row)).not.toContain('re-authored');
+  });
 
   it('distinguishes degraded provider evidence in both successful and failed runs', () => {
     for (const state of ['completed', 'failed'] as const) {
@@ -279,5 +417,148 @@ describe('phone approval delivery', (): void => {
       expect(markup).not.toContain('request not delivered');
       expect(markup).not.toContain('Resend');
     }
+  });
+});
+
+describe('charter confirm-or-strike list', (): void => {
+  const constraints = [
+    {
+      kind: 'candidate-property' as const,
+      quote: "if it's a ticket it has an owner and a priority",
+      wording: ['owned, prioritized'],
+      origin: 'synthesis' as const,
+    },
+    {
+      kind: 'system-boundary' as const,
+      quote: 'Never post to public channels.',
+      wording: ['Post to public Slack channels.'],
+      origin: 'derived' as const,
+      struck: true,
+    },
+  ];
+
+  it('shows each rule in the manager\'s words beside the clause phrase, with Strike and Restore before approval', (): void => {
+    const markup = renderToStaticMarkup(
+      <ConstraintList
+        constraints={constraints}
+        approved={false}
+        onStrike={() => undefined}
+        onRestore={() => undefined}
+      />,
+    );
+    expect(markup).toContain('Confirm or strike each one');
+    expect(markup).toContain('if it&#x27;s a ticket it has an owner and a priority');
+    expect(markup).toContain('owned, prioritized');
+    expect(markup).toContain('what work qualifies');
+    expect(markup).toContain('found by checking the clauses');
+    expect(markup).toContain('>Strike<');
+    expect(markup).toContain('>Restore<');
+    expect(markup).toContain('line-through');
+  });
+
+  it('keeps the list as a record after approval; Strike amends, nothing restores', (): void => {
+    const record = renderToStaticMarkup(<ConstraintList constraints={constraints} approved={true} />);
+    expect(record).toContain('Rules this charter enforces');
+    expect(record).toContain('struck');
+    expect(record).not.toContain('>Strike<');
+    expect(record).not.toContain('>Restore<');
+    const amendable = renderToStaticMarkup(
+      <ConstraintList constraints={constraints} approved={true} onStrike={() => undefined} />,
+    );
+    expect(amendable).toContain('>Strike<');
+    expect(amendable).not.toContain('>Restore<');
+  });
+
+  it('renders nothing for a charter drafted before constraints existed', (): void => {
+    expect(renderToStaticMarkup(<ConstraintList constraints={[]} approved={false} />)).toBe('');
+  });
+
+  it('names the struck count on the Approve button', (): void => {
+    const charter = {
+      _id: 'charter-1',
+      _creationTime: 1,
+      agentId: 'agent-1',
+      version: '0.0',
+      approved: false,
+      createdAt: 1,
+      body: {
+        whyThisHire: 'Close week.',
+        proposedFunction: 'Own routine revenue operations work from owned, prioritized Linear tickets.',
+        shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+        proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+        namedCollaborators: [],
+        priorityReading: [],
+        openQuestions: [],
+        constraints,
+      },
+    } as unknown as Doc<'charters'>;
+    const markup = renderToStaticMarkup(<CharterCard charter={charter} />);
+    expect(markup).toContain('Approve without 1 struck rule');
+  });
+});
+
+describe('amending an approved charter from the card', (): void => {
+  const charter = {
+    _id: 'charter-2',
+    _creationTime: 2,
+    agentId: 'agent-1',
+    version: '0.1',
+    approved: true,
+    approvedAt: 2,
+    supersedes: 'charter-1',
+    createdAt: 2,
+    body: {},
+  } as unknown as Doc<'charters'>;
+  const body = {
+    whyThisHire: 'Close week.',
+    proposedFunction: 'Own routine revenue operations work from Linear tickets.',
+    shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+    proposedBoundaries: {
+      willDo: ['Handle Linear tickets in the Q3 close project.'],
+      willNotDo: ['Post to public Slack channels.'],
+      escalationTriggers: [],
+    },
+    namedCollaborators: [],
+    namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'Work is in Linear.' }],
+    priorityReading: [],
+    openQuestions: ['Whether Northstar CRM access will be granted.'],
+    answeredQuestions: [{ question: 'Who owns the Looker tile.', answer: 'Priya.', answeredAt: 'x' }],
+  };
+
+  it('offers every typed change: the function, each clause list, the open questions, a rule and the systems', (): void => {
+    const markup = renderToStaticMarkup(
+      <AmendCharterPanel charter={charter} body={body} error={null} onAmend={async () => true} />,
+    );
+    expect(markup).toContain('next version v0.2');
+    expect(markup).toContain('value="Own routine revenue operations work from Linear tickets."');
+    expect(markup).toContain('value="Handle Linear tickets in the Q3 close project."');
+    expect(markup).toContain('Add to escalation triggers');
+    expect(markup).toContain('Whether Northstar CRM access will be granted.');
+    expect(markup).toContain('>Answer<');
+    expect(markup).toContain('Who owns the Looker tile.');
+    expect(markup).toContain('— Priya.');
+    expect(markup).toContain('>Add rule<');
+    expect(markup).toContain('Linear (kanban)');
+    expect(markup).toContain('>Add system<');
+    expect(markup).toContain('>Remove<');
+  });
+
+  it('shows the refusal the backend returned', (): void => {
+    const markup = renderToStaticMarkup(
+      <AmendCharterPanel
+        charter={charter}
+        body={body}
+        error="the amendment changes nothing"
+        onAmend={async () => false}
+      />,
+    );
+    expect(markup).toContain('the amendment changes nothing');
+  });
+
+  it('is absent from a charter awaiting approval', (): void => {
+    const draft = { ...charter, approved: false, body } as unknown as Doc<'charters'>;
+    const markup = renderToStaticMarkup(<CharterCard charter={draft} />);
+    expect(markup).not.toContain('Amend this charter');
+    expect(markup).toContain('>Approve<');
   });
 });
