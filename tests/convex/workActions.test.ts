@@ -27,6 +27,7 @@ import {
 } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
 import { STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
+import { actionIdempotencyKey } from '../../src/work/idempotency';
 import type {
   DependentExecutionOutput,
   ExecutionOutput,
@@ -1543,6 +1544,76 @@ describe('executing an approved plan through the gate', (): void => {
       `${workItemId}:${runId}:1`,
       `${workItemId}:${runId}:2`,
     ]);
+  });
+
+  it('applies a batch approval per item through the gate, each with its own idempotency keys', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: first } = await seed(harness, 'real');
+    const second = await harness.run(async (ctx) =>
+      await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'iss-2',
+        title: 'Add the second audit note',
+        contentSummary: 'linear ticket work',
+        contentRefs: [],
+        state: 'plan-approved',
+        plan: { summary: 'Comment then close.', steps: ['comment', 'close'], expectedOutputType: 'ticket-update', riskNotes: '', reversibility: 'reversible', estimatedMinutes: 5 },
+        observedAt: 1,
+        createdAt: 1,
+      }),
+    );
+    for (const workItemId of [first, second]) {
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    }
+    const parked = await Promise.all([readItem(harness, first), readItem(harness, second)]);
+    expect(parked.map((row) => row.state)).toEqual(['actions-pending', 'actions-pending']);
+    const members = parked.map((row) => {
+      if (!row.pendingRunId) throw new Error('pending run missing');
+      const verdicts = row.actionVerdicts ?? [];
+      return {
+        workItemId: row._id,
+        pendingRunId: row.pendingRunId,
+        approvedIndexes: verdicts.flatMap((verdict, index) => (verdict.disposition === 'held' ? [index] : [])),
+      };
+    });
+    expect(members.map((member) => member.approvedIndexes)).toEqual([[0, 1, 3], [0, 1, 3]]);
+    recorded.mcp.length = 0;
+
+    // The batch schedules one apply per member; let those start and finish
+    // rather than racing them by hand.
+    await harness.withIdentity(OWNER).mutation(api.work.approveActionsBatch, { members });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await harness.finishInProgressScheduledFunctions();
+
+    const done = await Promise.all([readItem(harness, first), readItem(harness, second)]);
+    expect(done.map((row) => [row.state, row.skipReason])).toEqual([
+      ['completed', undefined],
+      ['completed', undefined],
+    ]);
+    for (const [row, member] of [
+      [done[0], members[0]],
+      [done[1], members[1]],
+    ] as const) {
+      expect(ledger(row).map((entry) => entry.idempotencyKey)).toEqual(
+        [0, 1, 2, 3].map((actionIndex) => actionIdempotencyKey({ workItemId: row._id, runId: member.pendingRunId, actionIndex })),
+      );
+      expect(ledger(row).map((entry) => [entry.ok, entry.held ?? false])).toEqual([
+        [true, false],
+        [true, false],
+        [true, false],
+        [true, false],
+      ]);
+    }
+    // Both items' literal payloads reached the provider, once each.
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => call.args)).toEqual([
+      { issueId: 'iss-1', body: expect.stringContaining('Prepared the close summary.') },
+      { issueId: 'iss-1', body: expect.stringContaining('Prepared the close summary.') },
+    ]);
+    expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toHaveLength(2);
   });
 
   it('stops a blocked closing phase with its comment and DM withheld, and sends nothing', async (): Promise<void> => {

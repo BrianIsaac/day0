@@ -21,6 +21,7 @@ import { applySurfaceActions } from '../src/surfaces/registry';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import type { BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import {
+  batchRequestLines,
   decisionIdFromBytes,
   decisionRequestText,
   managerMessageAction,
@@ -157,7 +158,7 @@ export const requestDecision = internalAction({
     });
     if (!prepared.prepared) return { sent: false, reason: prepared.reason };
 
-    const text = decisionRequestText({
+    let text = decisionRequestText({
         agentName: prepared.agentName,
         title: prepared.title,
         id: prepared.decisionId,
@@ -168,6 +169,34 @@ export const requestDecision = internalAction({
         surfaces: prepared.surfaces,
         closingPhase: ((prepared.output ?? {}) as { phase?: unknown }).phase === 'dependent',
       });
+    // Other held action sets are already waiting on this channel: offer one
+    // code that decides them all, each named with its own.
+    if (args.kind === 'actions' && prepared.openActionDecisions.length > 0 && prepared.pendingRunId) {
+      const batchId = decisionIdFromBytes(randomBytes(32));
+      const members = [
+        {
+          workItemId: args.workItemId,
+          decisionId: prepared.decisionId,
+          pendingRunId: prepared.pendingRunId,
+          title: prepared.title,
+        },
+        ...prepared.openActionDecisions,
+      ];
+      const batch = await ctx.runMutation(internal.work.prepareDecisionBatch, {
+        agentId: prepared.agentId,
+        batchId,
+        surfaceSlug: prepared.surface.slug,
+        channel: prepared.surface.managerDmChannelId ?? '',
+        members: members.map(({ workItemId, decisionId, pendingRunId }) => ({
+          workItemId,
+          decisionId,
+          pendingRunId,
+        })),
+      });
+      if (batch.prepared) {
+        text = [text, ...batchRequestLines({ id: batchId, members })].join('\n');
+      }
+    }
     try {
       const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text, prepared.decisionId);
       await ctx.runMutation(internal.work.recordDecisionRequest, {

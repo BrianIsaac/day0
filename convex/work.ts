@@ -30,6 +30,7 @@ import {
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
 import {
+  batchDecisionNoticeText,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
   undeliveredDecisionReason,
@@ -538,6 +539,42 @@ export const prepareDecisionRequest = internalMutation({
     if (args.kind === 'actions' && heldIndexes.length === 0) {
       return { prepared: false as const, reason: 'no held actions need a decision' };
     }
+    // The other held action sets already asked on this channel, so the
+    // request can offer one code for all of them.
+    const openActionDecisions =
+      args.kind === 'actions'
+        ? (
+            await ctx.db
+              .query('workItems')
+              .withIndex('by_agent_state', (q) =>
+                q.eq('agentId', row.agentId).eq('state', 'actions-pending'),
+              )
+              .collect()
+          ).flatMap((other) => {
+            const decision = other.decision;
+            if (
+              other._id === row._id ||
+              !decision ||
+              decision.kind !== 'actions' ||
+              !decision.ts ||
+              decision.decidedAt ||
+              decision.surfaceSlug !== chat.slug ||
+              decision.channel !== chat.managerDmChannelId ||
+              !other.pendingRunId ||
+              other.approvedIndexes !== undefined
+            ) {
+              return [];
+            }
+            return [
+              {
+                workItemId: other._id,
+                decisionId: decision.id,
+                pendingRunId: other.pendingRunId,
+                title: other.title,
+              },
+            ];
+          })
+        : [];
     const requestRunId = await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.decision-requesting',
@@ -577,6 +614,8 @@ export const prepareDecisionRequest = internalMutation({
       surface: toSurfaceRecord(chat),
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+      pendingRunId: row.pendingRunId,
+      openActionDecisions,
     };
   },
 });
@@ -884,6 +923,113 @@ export const recordManagerReplyNotice = internalMutation({
     return true;
   },
 });
+
+/**
+ * Decide every member of a batch that is still exactly as it was sent.
+ *
+ * A member counts as open only while its own code is undecided, its item is
+ * still parked and its pending run is the one whose payloads the request
+ * showed; anything else is left as it is and named in the acknowledgement.
+ * Each open member goes through the same transaction as a single reply, so
+ * its apply keeps its own idempotency keys.
+ */
+async function resolveChannelBatch(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  batch: Doc<'decisionBatches'>,
+  args: { userId: string; messageTs: string; reply: { verb: 'approve' | 'reject'; id: string; reason?: string } },
+) {
+  if (batch.surfaceSlug !== surface.slug || batch.channel !== surface.managerDmChannelId) {
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'work.decision-ignored',
+      payload: {
+        surfaceId: surface._id,
+        messageTs: args.messageTs,
+        userId: args.userId,
+        reason: 'batch belongs to another manager channel',
+      },
+      createdAt: Date.now(),
+    });
+    return { status: 'ignored' as const, reason: 'batch belongs to another manager channel' };
+  }
+  const anchor = batch.members[0]?.workItemId;
+  if (batch.decidedAt) {
+    if (batch.decidedTs === args.messageTs) return { status: 'already-decided' as const, notified: false };
+    const notified = anchor
+      ? await queueManagerReplyNotice(ctx, {
+          surfaceId: surface._id,
+          workItemId: anchor,
+          decisionId: batch.id,
+          messageTs: args.messageTs,
+          kind: 'received',
+          text: `Batch ${batch.id} was already ${batch.outcome ?? 'decided'}.`,
+        })
+      : false;
+    return { status: 'already-decided' as const, notified };
+  }
+  const decided: string[] = [];
+  const skipped: Array<{ decisionId: string; reason: string }> = [];
+  for (const member of batch.members) {
+    const item = await ctx.db.get(member.workItemId);
+    const decision = item?.decision;
+    if (!item || !decision || decision.id !== member.decisionId) {
+      skipped.push({ decisionId: member.decisionId, reason: 'no longer open' });
+      continue;
+    }
+    if (decision.decidedAt) {
+      skipped.push({ decisionId: member.decisionId, reason: `already ${decision.outcome ?? 'decided'}` });
+      continue;
+    }
+    if (
+      item.state !== 'actions-pending' ||
+      item.pendingRunId !== member.pendingRunId ||
+      item.approvedIndexes !== undefined
+    ) {
+      skipped.push({ decisionId: member.decisionId, reason: 'the run moved on' });
+      continue;
+    }
+    if (args.reply.verb === 'approve') {
+      const actionCount = actionsOf(item.output).length;
+      const heldIndexes = indexesWith(verdictList(item.actionVerdicts, actionCount), 'held');
+      await approveActionsInTransaction(
+        ctx,
+        item,
+        { workItemId: item._id, pendingRunId: member.pendingRunId, approvedIndexes: heldIndexes },
+        'channel',
+        args.messageTs,
+      );
+    } else {
+      await rejectActionsInTransaction(
+        ctx,
+        item,
+        { workItemId: item._id, pendingRunId: member.pendingRunId, reason: args.reply.reason ?? '' },
+        'channel',
+        args.messageTs,
+      );
+    }
+    decided.push(member.decisionId);
+  }
+  const outcome = args.reply.verb === 'approve' ? 'approved' : 'rejected';
+  await ctx.db.patch(batch._id, { decidedAt: Date.now(), outcome, decidedTs: args.messageTs });
+  await ctx.db.insert('events', {
+    agentId: surface.agentId,
+    type: 'work.decision-batch-decided',
+    payload: { batchId: batch.id, outcome, decided, skipped, messageTs: args.messageTs },
+    createdAt: Date.now(),
+  });
+  if (anchor) {
+    await queueManagerReplyNotice(ctx, {
+      surfaceId: surface._id,
+      workItemId: anchor,
+      decisionId: batch.id,
+      messageTs: args.messageTs,
+      kind: 'received',
+      text: batchDecisionNoticeText({ id: batch.id, verb: args.reply.verb, decided, skipped }),
+    });
+  }
+  return { status: 'decided' as const, outcome: args.reply.verb, decided, skipped };
+}
 
 async function queueManagerReplyNotice(
   ctx: MutationCtx,
@@ -2063,6 +2209,92 @@ export const approveActions = mutation({
   },
 });
 
+/**
+ * Approve held actions across several items in one transaction.
+ *
+ * Each member is the same exact approval the single-item control sends: the
+ * run whose literal payloads were shown fences it, and the indexes name the
+ * rows. The batch is all or nothing, so a member whose run moved on refuses
+ * the whole batch and the manager decides again from a fresh list; every
+ * member's apply keeps its own idempotency keys, keyed by its item and run.
+ */
+export const approveActionsBatch = mutation({
+  args: {
+    members: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        pendingRunId: v.id('events'),
+        approvedIndexes: v.array(v.number()),
+      }),
+    ),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ ok: true; approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }> }> => {
+    if (args.members.length === 0) throw new Error('a batch approves at least one item');
+    const seen = new Set<string>();
+    const approved: Array<{ workItemId: Id<'workItems'>; approvedIndexes: number[] }> = [];
+    for (const member of args.members) {
+      if (seen.has(member.workItemId)) throw new Error('an item appears twice in the batch');
+      seen.add(member.workItemId);
+      const row = await assertOwnsWorkItem(ctx, member.workItemId);
+      const result = await approveActionsInTransaction(ctx, row, member, 'dashboard');
+      approved.push({ workItemId: member.workItemId, approvedIndexes: result.approvedIndexes });
+    }
+    return { ok: true, approved };
+  },
+});
+
+/** Record one batch code over the open action decisions it was issued for. */
+export const prepareDecisionBatch = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    batchId: v.string(),
+    surfaceSlug: v.string(),
+    channel: v.string(),
+    members: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        decisionId: v.string(),
+        pendingRunId: v.id('events'),
+      }),
+    ),
+  },
+  handler: async (ctx, args): Promise<{ prepared: boolean; reason?: string }> => {
+    if (!/^[23456789abcdefghjkmnpqrstuvwxyz]{6}$/.test(args.batchId)) {
+      throw new Error('batch id is not a six-character random token');
+    }
+    if (args.members.length < 2) return { prepared: false, reason: 'a batch names at least two decisions' };
+    const [itemCollision, batchCollision] = await Promise.all([
+      ctx.db
+        .query('workItems')
+        .withIndex('by_agent_decision', (q) => q.eq('agentId', args.agentId).eq('decision.id', args.batchId))
+        .first(),
+      ctx.db
+        .query('decisionBatches')
+        .withIndex('by_agent_id', (q) => q.eq('agentId', args.agentId).eq('id', args.batchId))
+        .first(),
+    ]);
+    if (itemCollision || batchCollision) return { prepared: false, reason: 'batch id collision' };
+    await ctx.db.insert('decisionBatches', {
+      agentId: args.agentId,
+      id: args.batchId,
+      surfaceSlug: args.surfaceSlug,
+      channel: args.channel,
+      members: args.members,
+      requestedAt: Date.now(),
+    });
+    await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'work.decision-batch-issued',
+      payload: { batchId: args.batchId, members: args.members },
+      createdAt: Date.now(),
+    });
+    return { prepared: true };
+  },
+});
+
 async function approveActionsInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
@@ -2288,7 +2520,14 @@ export const resolveChannelDecision = internalMutation({
         q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
       )
       .first();
-    if (!row?.decision) return await unknown('unknown decision id');
+    if (!row?.decision) {
+      const batch = await ctx.db
+        .query('decisionBatches')
+        .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
+        .first();
+      if (!batch) return await unknown('unknown decision id');
+      return await resolveChannelBatch(ctx, surface, batch, args);
+    }
     if (
       row.decision.surfaceSlug !== surface.slug ||
       row.decision.channel !== surface.managerDmChannelId

@@ -271,6 +271,40 @@ describe('provider timestamp order', (): void => {
 });
 
 describe('real surface intake', (): void => {
+  it('hands a batch code reply to the resolver like any single code', async (): Promise<void> => {
+    const surface = surfaceRow('slack', 'Slack', 'chat', {
+      credentialId: id<'credentials'>('credential-slack'),
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['conversations.list', 'conversations.history'],
+      providerIdentityId: 'UBOT',
+      providerWorkspaceId: 'TTEAM',
+      managerDmChannelId: 'DMANAGER',
+      managerUserId: 'UMANAGER',
+      lastPolledAt: Date.parse('2026-08-26T01:00:00.000Z'),
+      lastDecisionPolledAt: Date.parse('2026-08-26T01:04:00.000Z'),
+    });
+    const harness = runtimeHarness(
+      [surface],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(id<'credentials'>('credential-slack')), 'slack-test-value']]),
+    );
+    const fetcher = async (): Promise<Response> =>
+      slackResponse({
+        ok: true,
+        messages: [{ ts: '1770000001.000100', user: 'UMANAGER', text: 'approve bq2wxy' }],
+        response_metadata: { next_cursor: '' },
+      });
+    await runDecisionSweep(harness.runtime, { mode: 'real', now: (): number => Date.parse('2026-08-26T01:05:00.000Z'), fetcher });
+    expect(harness.decisions).toEqual([
+      {
+        surfaceId: id<'surfaces'>('surface-slack'),
+        userId: 'UMANAGER',
+        messageTs: '1770000001.000100',
+        reply: { verb: 'approve', id: 'bq2wxy' },
+      },
+    ]);
+  });
+
   it('polls manager decisions without scanning work channels or advancing discovery', async (): Promise<void> => {
     const discoveryCheckpoint = Date.parse('2026-08-26T01:00:00.000Z');
     const decisionCheckpoint = Date.parse('2026-08-26T01:04:00.000Z');

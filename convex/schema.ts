@@ -549,6 +549,31 @@ export default defineSchema({
     .index('by_extId', ['sourceSystem', 'externalId']),
 
   /**
+   * One code that decides every held action set open on the manager's
+   * channel at the moment it was issued. Each member is named by its item,
+   * its own decision code and the run whose literal payloads were shown, so
+   * the batch decides exactly what the manager was sent and nothing that
+   * moved on since.
+   */
+  decisionBatches: defineTable({
+    agentId: v.id('agents'),
+    id: v.string(),
+    surfaceSlug: v.string(),
+    channel: v.string(),
+    members: v.array(
+      v.object({
+        workItemId: v.id('workItems'),
+        decisionId: v.string(),
+        pendingRunId: v.id('events'),
+      }),
+    ),
+    requestedAt: v.number(),
+    decidedAt: v.optional(v.number()),
+    outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
+    decidedTs: v.optional(v.string()),
+  }).index('by_agent_id', ['agentId', 'id']),
+
+  /**
    * What the gate tells the manager about a finished run: that work landed,
    * or that the run stopped. Sent one per run or gathered into a digest,
    * claimed once either way, with the provider ts as delivery evidence.
