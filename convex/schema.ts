@@ -58,6 +58,9 @@ export default defineSchema({
     body: v.any(),
     approved: v.boolean(),
     approvedAt: v.optional(v.number()),
+    /** The version this amendment replaced. Every row is kept; the newest is
+     * the active one, so the chain is the charter's history. */
+    supersedes: v.optional(v.id('charters')),
     createdAt: v.number(),
   })
     .index('by_agent', ['agentId'])

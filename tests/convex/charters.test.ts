@@ -1,14 +1,19 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { describe, expect, it } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { afterEach, describe, expect, it } from 'vitest';
+import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import type { Charter } from '../../src/agent/charter';
 
 type Harness = TestConvex<typeof schema>;
+
+afterEach((): void => {
+  restoreSurfaceMode();
+});
 
 /** The 14 September draft: the owner phrase encoded twice, one constraint listing it. */
 export function runThroughBody(): Charter {
@@ -206,5 +211,261 @@ describe('approving a charter with a struck constraint', (): void => {
     const row = await charter(harness, charterId);
     expect(row.approved).toBe(true);
     expect((row.body as Charter).proposedBoundaries.willDo[0]).toContain('owned, prioritized');
+  });
+});
+
+async function seedApproved(
+  harness: Harness,
+  body: Charter = runThroughBody(),
+): Promise<{ agentId: Id<'agents'>; charterId: Id<'charters'> }> {
+  const seeded = await seedDraft(harness, body);
+  await harness.run(async (ctx) => {
+    await ctx.db.patch(seeded.charterId, { approved: true, approvedAt: 3 });
+    await ctx.db.patch(seeded.agentId, { state: 'active' });
+  });
+  return seeded;
+}
+
+async function scheduledJobs(harness: Harness): Promise<Array<{ name: string; args: unknown[] }>> {
+  const jobs = await harness.run(
+    async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+  );
+  return jobs.map((job) => ({ name: job.name, args: job.args }));
+}
+
+async function latestCharter(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'charters'>> {
+  const row = await harness.withIdentity({ subject: 'owner' }).query(api.charters.latest, { agentId });
+  if (!row) throw new Error('no charter');
+  return row;
+}
+
+describe('amending an approved charter', (): void => {
+  it('creates v0.1 that supersedes v0.0, with the diff on the event, the workspace re-rendered and no orientation', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApproved(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const changes = [
+      { kind: 'edit-function' as const, text: 'Own routine revenue operations work from Linear tickets for the RevOps team.' },
+    ];
+    const result = await owner.mutation(api.charters.amend, { agentId, changes, reason: 'Ownership is not a rule.' });
+    expect(result.version).toBe('0.1');
+
+    const amended = await latestCharter(harness, agentId);
+    expect(amended._id).toBe(result.charterId);
+    expect(amended).toMatchObject({ version: '0.1', approved: true, supersedes: charterId });
+    expect(amended.approvedAt).toEqual(expect.any(Number));
+    const body = amended.body as Charter;
+    expect(body.version).toBe('0.1');
+    expect(body.proposedFunction).toBe('Own routine revenue operations work from Linear tickets for the RevOps team.');
+    expect(body.proposedBoundaries).toEqual(runThroughBody().proposedBoundaries);
+
+    const previous = await charter(harness, charterId);
+    expect(previous.version).toBe('0.0');
+    expect((previous.body as Charter).proposedFunction).toBe(runThroughBody().proposedFunction);
+    expect(await owner.query(api.charters.listForAgent, { agentId })).toHaveLength(2);
+
+    const event = (await eventsOf(harness, agentId)).find((e) => e.type === 'charter.amended');
+    expect(event?.payload).toEqual({
+      charterId: result.charterId,
+      previousCharterId: charterId,
+      version: '0.1',
+      previousVersion: '0.0',
+      via: 'dashboard',
+      reason: 'Ownership is not a rule.',
+      changes,
+      diff: [
+        {
+          field: 'proposedFunction',
+          before: runThroughBody().proposedFunction,
+          after: 'Own routine revenue operations work from Linear tickets for the RevOps team.',
+        },
+      ],
+    });
+    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).toContain(
+      'Role: Own routine revenue operations work from Linear tickets for the RevOps team.',
+    );
+    expect(await workspaceFile(harness, agentId, 'TOOLS.md')).toContain('# TOOLS');
+    expect(await scheduledJobs(harness)).toEqual([
+      { name: 'work:reevaluatePending', args: [{ agentId, reason: 'charter.amended v0.1' }] },
+    ]);
+  });
+
+  it('numbers a second amendment v0.2 over v0.1', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const first = await owner.mutation(api.charters.amend, {
+      agentId,
+      changes: [{ kind: 'edit-clause', field: 'escalationTriggers', index: 1, text: 'A request to change a forecast.' }],
+    });
+    const second = await owner.mutation(api.charters.amend, {
+      agentId,
+      changes: [{ kind: 'edit-clause', field: 'escalationTriggers', index: 0, text: '' }],
+    });
+    expect(second.version).toBe('0.2');
+    const amended = await latestCharter(harness, agentId);
+    expect(amended.supersedes).toBe(first.charterId);
+    expect((amended.body as Charter).proposedBoundaries.escalationTriggers).toEqual([
+      'A request to change a forecast.',
+    ]);
+  });
+
+  it('refuses a draft, a stranger, a change that changes nothing and a clause the charter lacks', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const draft = await seedDraft(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const edit = { kind: 'edit-function' as const, text: 'Something else.' };
+    await expect(owner.mutation(api.charters.amend, { agentId: draft.agentId, changes: [edit] })).rejects.toThrow(
+      /not approved/,
+    );
+    await owner.mutation(api.charters.approve, { charterId: draft.charterId });
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).mutation(api.charters.amend, { agentId: draft.agentId, changes: [edit] }),
+    ).rejects.toThrow(/forbidden/);
+    await expect(
+      owner.mutation(api.charters.amend, {
+        agentId: draft.agentId,
+        changes: [{ kind: 'edit-function', text: runThroughBody().proposedFunction }],
+      }),
+    ).rejects.toThrow(/changes nothing/);
+    await expect(
+      owner.mutation(api.charters.amend, {
+        agentId: draft.agentId,
+        changes: [{ kind: 'edit-clause', field: 'willDo', index: 7, text: 'x' }],
+      }),
+    ).rejects.toThrow(/no willDo clause at index 7/);
+    expect(await owner.query(api.charters.listForAgent, { agentId: draft.agentId })).toHaveLength(1);
+    expect(await scheduledJobs(harness)).toEqual([]);
+  });
+
+  it('strikes a constraint after approval, removing its wording from the clauses', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.charters.amend, { agentId, changes: [{ kind: 'strike-constraint', index: 0 }] });
+    const body = (await latestCharter(harness, agentId)).body as Charter;
+    expect(body.proposedFunction).toBe('Own routine revenue operations work from Linear tickets for the RevOps team.');
+    expect(body.proposedBoundaries.willDo[0]).toBe('Handle Linear tickets in the Q3 close project.');
+    expect(body.constraints?.[0]).toMatchObject({ struck: true });
+    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).not.toMatch(/owned/);
+  });
+
+  it('adds a rule and answers an open question', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+      agentId,
+      changes: [
+        {
+          kind: 'add-constraint',
+          constraint: { kind: 'system-boundary', quote: 'Never edit the forecast sheet.', clause: 'willNotDo' },
+        },
+        { kind: 'answer-question', question: 'Who owns the Looker pipeline tile.', answer: 'Priya.' },
+      ],
+    });
+    const body = (await latestCharter(harness, agentId)).body as Charter;
+    expect(body.proposedBoundaries.willNotDo).toEqual(['Post to public Slack channels.', 'Never edit the forecast sheet.']);
+    expect(body.constraints?.[2]).toMatchObject({ origin: 'manager', wording: ['Never edit the forecast sheet.'] });
+    expect(body.openQuestions).toEqual(['Whether Northstar CRM access will be granted.']);
+    expect(body.answeredQuestions).toEqual([
+      { question: 'Who owns the Looker pipeline tile.', answer: 'Priya.', answeredAt: expect.any(String) },
+    ]);
+    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).toContain('Never edit the forecast sheet.');
+  });
+});
+
+describe('amending the named systems', (): void => {
+  it('in real mode declares an added system and orients that surface only', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: runThroughBody().namedSystems,
+    });
+    expect(await scheduledJobs(harness)).toEqual([]);
+
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+      agentId,
+      changes: [
+        { kind: 'add-system', system: { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile is in Looker.' } },
+      ],
+    });
+
+    const surfaces = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(surfaces.map((surface) => surface.slug).sort()).toEqual(['linear', 'looker', 'slack']);
+    const looker = surfaces.find((surface) => surface.slug === 'looker');
+    expect(looker).toMatchObject({ verdict: 'declared', class: 'analytics' });
+    expect(looker?.discoveryEvidence).toEqual([
+      expect.objectContaining({ kind: 'charter', quote: 'The pipeline tile is in Looker.', current: true }),
+    ]);
+    const jobs = await scheduledJobs(harness);
+    expect(jobs).toEqual(
+      expect.arrayContaining([
+        { name: 'orientationActions:orientOne', args: [{ surfaceId: looker?._id }] },
+        { name: 'work:reevaluatePending', args: [{ agentId, reason: 'charter.amended v0.1' }] },
+      ]),
+    );
+    expect(jobs).toHaveLength(2);
+    expect(surfaces.find((surface) => surface.slug === 'linear')?.orientationJobId).toBeUndefined();
+    expect((await latestCharter(harness, agentId)).body).toMatchObject({
+      namedSystems: [...runThroughBody().namedSystems, { name: 'Looker', class: 'analytics' }],
+    });
+  });
+
+  it('in real mode retires the charter evidence of a removed system and leaves its verdict', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: runThroughBody().namedSystems,
+    });
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+      agentId,
+      changes: [{ kind: 'remove-system', name: 'Slack' }],
+    });
+    const slack = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'slack'))
+          .unique(),
+    );
+    expect(slack).toMatchObject({ verdict: 'declared' });
+    expect(slack?.discoveryEvidence).toEqual([expect.objectContaining({ kind: 'charter', current: false })]);
+    expect((await scheduledJobs(harness)).map((job) => job.name)).toEqual(['work:reevaluatePending']);
+    expect(((await latestCharter(harness, agentId)).body as Charter).namedSystems).toEqual([
+      runThroughBody().namedSystems[0],
+    ]);
+  });
+
+  it('in mock mode records the system on the charter and touches no surface', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.charters.amend, {
+      agentId,
+      changes: [
+        { kind: 'add-system', system: { name: 'Looker', class: 'analytics', whereMentioned: 'The pipeline tile.' } },
+      ],
+    });
+    const surfaces = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(surfaces).toEqual([]);
+    expect((await scheduledJobs(harness)).map((job) => job.name)).toEqual(['work:reevaluatePending']);
+    expect(((await latestCharter(harness, agentId)).body as Charter).namedSystems).toHaveLength(3);
   });
 });

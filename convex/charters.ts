@@ -1,3 +1,4 @@
+import { makeFunctionReference } from 'convex/server';
 import { v } from 'convex/values';
 import {
   mutation,
@@ -9,9 +10,22 @@ import {
 import type { Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsCharter } from './ownership';
 import { writeFileImpl } from './workspace';
+import { declareCharterSystem, retireCharterSystem, scheduleOrientationFor } from './surfaces';
 import type { Charter } from '../src/agent/charter';
-import { effectiveCharter, type CharterConstraint } from '../src/agent/charter-constraints';
+import {
+  applyCharterChanges,
+  charterDiff,
+  nextCharterVersion,
+  type CharterChange,
+} from '../src/agent/charter-amendment';
+import {
+  CONSTRAINT_KINDS,
+  effectiveCharter,
+  type CharterConstraint,
+} from '../src/agent/charter-constraints';
 import { identityFromCharter, toolsFromCharter } from '../src/agent/charter-workspace';
+import { SYSTEM_CLASSES } from '../src/agent/system-classes';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
  * Charter CRUD + binary-plus-edit approval mutation. Every public
@@ -216,6 +230,193 @@ export const approve = mutation({
       createdAt: Date.now(),
     });
     return { ok: true };
+  },
+});
+
+const listClauseField = v.union(
+  v.literal('willDo'),
+  v.literal('willNotDo'),
+  v.literal('escalationTriggers'),
+);
+
+const literals = <T extends string>(values: readonly T[]) =>
+  v.union(...(values.map((value) => v.literal(value)) as [ReturnType<typeof v.literal<T>>]));
+
+/** One typed change to an approved charter; see `src/agent/charter-amendment.ts`. */
+export const charterChangeValidator = v.union(
+  v.object({ kind: v.literal('edit-function'), text: v.string() }),
+  v.object({
+    kind: v.literal('edit-clause'),
+    field: listClauseField,
+    index: v.number(),
+    text: v.string(),
+  }),
+  v.object({ kind: v.literal('answer-question'), question: v.string(), answer: v.string() }),
+  v.object({
+    kind: v.literal('add-constraint'),
+    constraint: v.object({
+      kind: literals(CONSTRAINT_KINDS),
+      quote: v.string(),
+      clause: listClauseField,
+    }),
+  }),
+  v.object({ kind: v.literal('strike-constraint'), index: v.number() }),
+  v.object({
+    kind: v.literal('add-system'),
+    system: v.object({
+      name: v.string(),
+      class: literals(SYSTEM_CLASSES),
+      whereMentioned: v.string(),
+    }),
+  }),
+  v.object({ kind: v.literal('remove-system'), name: v.string() }),
+);
+
+/** Who sent an amendment. */
+export type AmendmentVia = 'dashboard' | 'plan-approval' | 'channel';
+
+/**
+ * The re-evaluation trigger the intake stage owns, named here so an
+ * amendment schedules it without depending on it. Parked work is
+ * re-evaluated against the current charter, never reconciled against the
+ * diff.
+ */
+export const REEVALUATE_PENDING = makeFunctionReference<
+  'mutation',
+  { agentId: Id<'agents'>; reason: string }
+>('work:reevaluatePending');
+
+/**
+ * Amend the agent's approved charter: one new version, one event, the
+ * workspace re-rendered, orientation for an added system, and a
+ * re-evaluation of parked work, all in this transaction.
+ *
+ * Every row is kept. The new row is approved on insert (the manager sent the
+ * change) and supersedes the previous one, so `latest` switches the whole
+ * app to the new version in one write. The event carries the changes as
+ * sent and the per-field diff, because no store gives actor, reason and diff
+ * for free.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   args: The agent, the changes, who sent them and an optional reason.
+ *
+ * Returns:
+ *   The new charter row's id and version.
+ *
+ * Raises:
+ *   Error: When the agent has no approved charter, a change names something
+ *     the charter lacks, or the changes leave the body as it was.
+ */
+export async function amendCharterInTransaction(
+  ctx: MutationCtx,
+  args: {
+    agentId: Id<'agents'>;
+    changes: readonly CharterChange[];
+    via: AmendmentVia;
+    reason?: string;
+  },
+): Promise<{ charterId: Id<'charters'>; version: string; previousVersion: string }> {
+  const previous = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+    .order('desc')
+    .first();
+  if (!previous) throw new Error('the agent has no charter to amend');
+  if (!previous.approved) {
+    throw new Error('the charter is not approved yet; approve it or request changes instead');
+  }
+  const now = Date.now();
+  const before = previous.body as Charter;
+  const version = nextCharterVersion(previous.version);
+  const applied = applyCharterChanges(before, args.changes, new Date(now));
+  const after: Charter = { ...applied.charter, version };
+  const diff = charterDiff(before, after);
+  if (diff.length === 0) throw new Error('the amendment changes nothing');
+
+  const charterId = await ctx.db.insert('charters', {
+    agentId: args.agentId,
+    version,
+    body: after,
+    approved: true,
+    approvedAt: now,
+    supersedes: previous._id,
+    createdAt: now,
+  });
+  await renderWorkspaceFromCharter(ctx, args.agentId, after);
+  await ctx.db.insert('events', {
+    agentId: args.agentId,
+    type: 'charter.amended',
+    payload: {
+      charterId,
+      previousCharterId: previous._id,
+      version,
+      previousVersion: previous.version,
+      via: args.via,
+      ...(args.reason?.trim() ? { reason: args.reason.trim() } : {}),
+      changes: args.changes,
+      diff,
+    },
+    createdAt: now,
+  });
+
+  // Systems become surfaces in real mode only, as at approval; the hosted
+  // mock keeps its synthetic surfaces and files no orientation.
+  if (SURFACE_MODE === 'real') {
+    for (const system of applied.systemsAdded) {
+      const declared = await declareCharterSystem(ctx, { agentId: args.agentId, system, now });
+      if (!declared.surfaceId) continue;
+      const surface = await ctx.db.get(declared.surfaceId);
+      if (surface) await scheduleOrientationFor(ctx, surface);
+    }
+    for (const system of applied.systemsRemoved) {
+      await retireCharterSystem(ctx, { agentId: args.agentId, system, now });
+    }
+  }
+
+  await scheduleReevaluation(ctx, args.agentId, `charter.amended v${version}`, now);
+  return { charterId, version, previousVersion: previous.version };
+}
+
+/**
+ * Place the re-evaluation job. The amendment has landed by the time this
+ * runs, so a deployment without the trigger records that it could not be
+ * scheduled rather than losing the amendment.
+ */
+async function scheduleReevaluation(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  reason: string,
+  now: number,
+): Promise<void> {
+  try {
+    await ctx.scheduler.runAfter(0, REEVALUATE_PENDING, { agentId, reason });
+  } catch (error) {
+    await ctx.db.insert('events', {
+      agentId,
+      type: 'charter.reevaluation-unscheduled',
+      payload: { reason, error: (error as Error).message ?? String(error) },
+      createdAt: now,
+    });
+  }
+}
+
+/** Amend the owner's approved charter from the dashboard. */
+export const amend = mutation({
+  args: {
+    agentId: v.id('agents'),
+    changes: v.array(charterChangeValidator),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{ charterId: Id<'charters'>; version: string }> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    const result = await amendCharterInTransaction(ctx, {
+      agentId: args.agentId,
+      changes: args.changes,
+      via: 'dashboard',
+      reason: args.reason,
+    });
+    return { charterId: result.charterId, version: result.version };
   },
 });
 

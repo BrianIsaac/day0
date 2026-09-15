@@ -237,7 +237,27 @@ export function effectiveCharter(charter: Charter): Charter {
     (constraint: CharterConstraint): boolean => constraint.struck === true,
   );
   if (struck.length === 0) return charter;
-  const phrases = struck.flatMap((constraint: CharterConstraint): string[] => constraint.wording);
+  return withoutClauseWording(
+    charter,
+    struck.flatMap((constraint: CharterConstraint): string[] => constraint.wording),
+  );
+}
+
+/**
+ * The charter with the given phrases removed from its four clause fields.
+ *
+ * The rules are those of `effectiveCharter`: a list clause emptied by the
+ * removal is dropped and the proposed function is never emptied.
+ *
+ * Args:
+ *   charter: The charter to edit.
+ *   phrases: Whole-word phrases to remove.
+ *
+ * Returns:
+ *   A copy with the phrases gone; the same charter when there are none.
+ */
+export function withoutClauseWording(charter: Charter, phrases: readonly string[]): Charter {
+  if (phrases.length === 0) return charter;
   const list = (clauses: readonly string[]): string[] =>
     clauses
       .map((clause: string): string => withoutPhrases(clause, phrases))

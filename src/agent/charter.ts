@@ -86,7 +86,19 @@ export interface Charter {
    * list existed, which read as having nothing to confirm.
    */
   constraints?: CharterConstraint[];
+  /**
+   * Open questions the manager has answered, each answer written into the
+   * charter by an amendment. Absent until the first answer.
+   */
+  answeredQuestions?: AnsweredQuestion[];
   createdAt: string;
+}
+
+export interface AnsweredQuestion {
+  question: string;
+  answer: string;
+  /** ISO timestamp of the amendment that recorded the answer. */
+  answeredAt: string;
 }
 
 export const DAY_ONE_TOPICS = [
@@ -515,6 +527,13 @@ export function renderCharter(c: Charter, date = new Date()): string {
     'OPEN QUESTIONS — to follow up',
     ...renderBullets(c.openQuestions, '  '),
     '',
+    ...((c.answeredQuestions ?? []).length > 0
+      ? [
+          'ANSWERED QUESTIONS                                         [from manager, after approval]',
+          ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} — ${q.answer}`),
+          '',
+        ]
+      : []),
   ];
   return lines.join('\n');
 }
