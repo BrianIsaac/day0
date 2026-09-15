@@ -959,6 +959,7 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
   initialOutput: ExecutionOutput;
   initialLedger: AppliedAction[];
   initialFailure?: string;
+  resumedClosing?: boolean;
 }
 
 function agentIdentityPart(value: string): string {
@@ -2684,7 +2685,7 @@ export async function runDependentSkill(
     '',
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
-    ...(args.initialFailure ? ['', `Prerequisite phase failure: ${args.initialFailure}`] : []),
+    ...(args.initialFailure ? ['', `${args.resumedClosing ? 'Previous closing attempt failure (prerequisites succeeded; retry the closing set)' : 'Prerequisite phase failure'}: ${args.initialFailure}`] : []),
     '',
     'Produce the truthful closing draft, notes, plan-step outcomes, procedure-trail accounting, and at most one bounded set of closing actions now.',
   ].join('\n');

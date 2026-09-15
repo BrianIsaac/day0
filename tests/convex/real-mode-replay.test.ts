@@ -471,6 +471,72 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     restoreSurfaceMode();
   });
 
+  it('runs phase one again when a prerequisite did not land', async () => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(t);
+    await t.run(async ctx => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed', plan: cleanPlan, skipReason: 'snapshot failed',
+        output: {
+          ...phaseOne, actions: [...phaseOne.actions, ...closing.actions],
+          applied: phaseOne.actions.map(action => ({ tool: action.tool, ok: false, reason: 'snapshot failed' })),
+          planStepOutcomes: closing.planStepOutcomes,
+        },
+      });
+    });
+
+    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await t.finishInProgressScheduledFunctions();
+    expect(recorded.model.some(call => call.agent.endsWith('-initial'))).toBe(true);
+    expect(recorded.model.some(call => call.agent.endsWith('-dependent'))).toBe(false);
+  });
+
+  it('resumes the 16 September closing failure after reconciliation without another browser session', async () => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(t);
+    const prerequisites = [
+      ...phaseOne.actions.slice(1, 4),
+      browser('browser_snapshot', '{}'),
+      { tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } },
+    ];
+    const applied = prerequisites.map(action => ({ tool: action.tool, ok: true, effect: SNAPSHOT }));
+    await t.run(async ctx => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed', plan: cleanPlan,
+        skipReason: 'Failed to connect to MCP server linear',
+        output: {
+          draft: '', notes: '', needsDependentPhase: false,
+          actions: [...prerequisites, ...closing.actions],
+          applied: [...applied,
+            { tool: 'mcp.call', ok: false, reason: 'Failed to connect to MCP server linear' },
+            { tool: 'mcp.call', ok: false, reason: 'status change without audit comment' },
+            { tool: 'http.request', ok: false, reason: 'not applied' }],
+          planStepOutcomes: closing.planStepOutcomes,
+        },
+      });
+    });
+    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Retry the closing note from the recorded read-back.' });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const resumed = await readItem(t, workItemId);
+    expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', applied, initialFailure: 'Failed to connect to MCP server linear' });
+    expect(recorded.model).toEqual([]);
+    await t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const held = await readItem(t, workItemId);
+    await t.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [0, 1],
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(t, workItemId)).state).toBe('completed');
+    expect(recorded.mcp.map(call => call.tool)).toEqual(['save_comment', 'save_issue']);
+    expect(recorded.model).toHaveLength(1);
+    expect(recorded.model[0]!.user).toContain('Retry the closing note');
+    expect(recorded.model[0]!.user).toContain('Failed to connect to MCP server linear');
+  });
+
   it('refuses a prewritten Done transition under autonomy through the real executor', async () => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(t);

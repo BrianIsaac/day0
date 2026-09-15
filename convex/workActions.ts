@@ -486,6 +486,13 @@ async function executeApprovedPlanHandler(
     skillId: pickedSkill._id,
   });
   if (!claim.claimed) return { ok: false, reason: claim.reason };
+  const resume = item.output as DependentAuthoringOutput | undefined;
+  if (SURFACE_MODE === 'real' && resume?.resumedClosing && resume.phase === 'dependent-authoring') {
+    const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
+      workItemId: args.workItemId, runId: claim.runId, output: resume,
+    });
+    return { ok: prepared.prepared, reason: 'resuming closing actions from the previous ledger' };
+  }
   return await holdDay0Actions(ctx, {
     workItemId: args.workItemId,
     agentId,
@@ -696,6 +703,7 @@ async function repairedForHold<T extends { actions: MockAction[] }>(
 
 interface DependentAuthoringOutput extends ExecutionOutput {
   phase: 'dependent-authoring';
+  resumedClosing?: boolean;
   applied: AppliedAction[];
   initialFailure?: string;
 }
@@ -837,7 +845,7 @@ export function dependentTransitionRefusal(args: {
 function flattenedDependentOutput(
   output: DependentPendingOutput,
   applied: AppliedAction[],
-): ExecutionOutput & { applied: AppliedAction[]; planStepOutcomes: PlanStepOutcome[] } {
+): ExecutionOutput & { applied: AppliedAction[]; planStepOutcomes: PlanStepOutcome[]; prerequisiteCount: number } {
   return {
     draft: output.draft,
     notes: output.notes,
@@ -865,6 +873,7 @@ function flattenedDependentOutput(
       : {}),
     applied: [...output.initial.applied, ...applied],
     planStepOutcomes: output.planStepOutcomes,
+    prerequisiteCount: output.initial.actions.length,
   };
 }
 
@@ -1033,6 +1042,7 @@ export const authorDependentActions = internalAction({
         initialOutput: initial,
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,
+        resumedClosing: initial.resumedClosing,
       });
       const cap = dependentActionCap(initial);
       if (output.actions.length > cap) {
@@ -1055,7 +1065,7 @@ export const authorDependentActions = internalAction({
         plan,
         actions: output.actions,
         planStepOutcomes: output.planStepOutcomes,
-        initialFailure: initial.initialFailure,
+        initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
       });
       if (transitionRefusal) throw new Error(transitionRefusal);
       const held = await repairedForHold(output, {
@@ -1066,7 +1076,7 @@ export const authorDependentActions = internalAction({
       });
       const repairedTransitionRefusal = dependentTransitionRefusal({
         plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes,
-        initialFailure: initial.initialFailure,
+        initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
       });
       if (repairedTransitionRefusal) throw new Error(repairedTransitionRefusal);
       const dependent: DependentPendingOutput = {
@@ -1081,7 +1091,7 @@ export const authorDependentActions = internalAction({
         initialActions: initial.actions,
         initialApplied: initial.applied,
         closingActions: held.actions,
-        initialFailure: initial.initialFailure,
+        initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
         surfaces,
       });
       if (stop) {
@@ -1108,7 +1118,7 @@ export const authorDependentActions = internalAction({
       }
       if (dependent.actions.length === 0) {
         const finalOutput = flattenedDependentOutput(dependent, []);
-        const reason = initial.initialFailure ?? blockedPlanReason(output.planStepOutcomes);
+        const reason = (initial.resumedClosing ? undefined : initial.initialFailure) ?? blockedPlanReason(output.planStepOutcomes);
         if (reason) {
           await ctx.runMutation(internal.work.setFailed, {
             workItemId: args.workItemId,
@@ -1610,7 +1620,7 @@ async function finishRun(
     }
     const finalOutput = flattenedDependentOutput(output, settled);
     const finalReason =
-      output.initial.initialFailure ??
+      (output.initial.resumedClosing ? undefined : output.initial.initialFailure) ??
       reason ??
       blockedPlanReason(output.planStepOutcomes, {
         plan: (await ctx.runQuery(internal.work.getInternal, { workItemId }))?.plan as ExecutionPlan,
