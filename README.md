@@ -441,6 +441,13 @@ Real mode adds optional components, and each one is a Compose profile. `real` is
 
 What each is for, and what it never sees, is in [`docs/running/components.md`](docs/running/components.md).
 
+On Linux x86-64 with Python 3.12, the redactor's first CPU start downloads about
+251 MB of pinned wheels and 1.16 GB of weights and tokenizer files, plus the
+container image if it is not cached. These downloads need network access; inference
+runs locally without an account. CUDA wheels require additional space; their download
+size has not been verified here. Detection can miss secrets, and structural-only
+outcomes are labelled as limited redaction in the dashboard.
+
 ### Setup
 
 The route is the [OpenAI-key one](#run-it-with-an-openai-key) plus a documentation folder, the real-mode variables and the components. Two things about the order are load-bearing and neither is obvious, so the sequence below is the whole of it:
@@ -1319,6 +1326,11 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 | `redactor` | 对文档和 ledger 做脱敏的 span 模型 | 真实模式下始终需要：没有它，文档同步会拒绝存储页面，provider 结果只会记录结构层脱敏 |
 
 每个组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。
+
+在 Linux x86-64、Python 3.12 环境下，redactor 首次以 CPU 启动时会下载约
+251 MB 的固定版本 wheel，以及 1.16 GB 的权重和分词器文件；若镜像未缓存，还需下载镜像。
+下载需要联网，推理在本地运行，无需账户。CUDA wheel 需要更多空间，此处尚未验证其下载大小。
+检测可能漏掉秘密；仅完成结构层脱敏的结果会在仪表盘中显示有限脱敏提示。
 
 #### 安装步骤
 

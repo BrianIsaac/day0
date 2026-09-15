@@ -203,19 +203,20 @@ starts by default.
 volume at first start and its model snapshot is fetched into another and
 verified file by file against `redactor/models.sha256` before it is served; a
 file that does not match refuses to start, and the health check says so. It
-calls nothing hosted.
+performs no hosted inference. Inference runs locally; first startup downloads
+pinned wheels and the verified snapshot.
 
-**What day0 uses it for.** Every text that is persisted after being read from
-somewhere else goes through it first: a documentation page at sync, a provider's
-effect, reason or id before the ledger keeps it, and the ticket record the
-planner reads. The model finds spans; what happens to each kind of span in each
-place is data in `src/redaction/policy.ts`. A secret is always removed (and, on a
-page, stored as an encrypted credential with a marker left behind). A coworker's
-name, a username, a channel, a ticket id, a date, a figure or an audit line is
-never removed: it is the material the work is about. Phone numbers, personal
-addresses, government and account identifiers and dates of birth are removed
-everywhere; an email address is kept on a page that says who to ask and removed
-from what a provider echoed back. A deterministic guard keeps the model from
+**What day0 uses it for.** Documentation pages at sync, HTTP and MCP provider
+outcomes (effect, reason and id), and the ticket record the planner reads go
+through the component. Other metadata, prompts and export use the synchronous
+structural floor; export is not a complete personal-data scrub. The model finds spans; what happens to each kind of span in each
+place is data in `src/redaction/policy.ts`. Detected secret spans are removed (and, on a page, stored as encrypted
+credentials with markers left behind). The policy keeps coworker names,
+usernames, channels, ticket ids, dates, figures and audit lines as working
+material. It removes detected phone numbers, personal addresses, government
+and account identifiers and dates of birth; it keeps email addresses in stored
+pages and removes them from provider outcomes. Detection still has misses and
+false positives; these policy choices are not a guarantee of complete redaction. A deterministic guard keeps the model from
 taking a placeholder, a stored marker or an identifier for a secret.
 
 **When you need it.** Always in real mode. Without it a documentation sync
@@ -234,9 +235,14 @@ keeps no log of what it was sent.
 
 **The GPU.** `pnpm redactor:up` reserves the GPU the way `pnpm model:up` does
 and installs the CUDA build of its wheels; `pnpm convex:up --profile redactor`
-is the CPU configuration and runs anywhere. Measured on the demonstration
-laptop: a typical provider outcome takes under 200 ms on the CPU and under 20 ms
-on the GPU; a long documentation page up to 2 s and 30 ms.
+uses the CPU configuration by default. The reviewed CPU installation was Linux
+x86-64 with Python 3.12. Its 37 pinned wheels total about 251 MB, and the five
+verified snapshot files total 1.16 GB. CUDA download size was not measured in
+this review. The live CPU corpus took a median 838 ms and p95 1,238 ms per case,
+including container-exec overhead. Calls have a 10-second deadline; a timeout
+fails documentation sync closed and marks provider evidence as limited redaction.
+The dashboard displays that limitation. Exact matching covers the credential
+supplied by the transport, not every credential stored for other systems.
 
 ---
 
