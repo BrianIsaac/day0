@@ -11,7 +11,9 @@
  * secrets wherever they occur, whatever a model thinks. The last one is a
  * grammar and not a guess only because the label is the line's own word for
  * it; a value that names a reference, a placeholder or a plain lowercase word
- * is left to the model. The grammar is synchronous and
+ * is left to the model. One personal-data format sits beside them: a
+ * national identifier whose check letter verifies (the Singapore NRIC and
+ * FIN), which no context keeps. The grammar is synchronous and
  * dependency-free, which is why it is also the floor applied where no model
  * can be called: a Convex query rendering an export, and the prompt text
  * assembled from material that was redacted when stored. What is gone is
@@ -23,6 +25,7 @@ import { guardReason } from './guard';
 export type StructuralLabel =
   | 'connection password'
   | 'password'
+  | 'national id'
   | 'private key'
   | 'json web token'
   | 'header value'
@@ -32,6 +35,8 @@ export interface StructuralSpan {
   start: number;
   end: number;
   label: StructuralLabel;
+  /** What the format carries: a secret, or an identifier the policy removes everywhere. */
+  kind: 'secret' | 'id-number';
 }
 
 /**
@@ -103,6 +108,38 @@ const LOGIN_PAIR =
   /(?<![A-Za-z0-9_])(?:login|credentials?|user(?:name)?[ \t]*\/[ \t]*pass(?:word)?)[ \t]*[:=：][ \t]*([^\s/`'"]+)[ \t]*\/[ \t]*([^\s`'",;)]+)/gi;
 /** A bare value that is only lowercase letters is a word before it is a password. */
 const LOWERCASE_WORD = /^[a-z]+$/;
+/** A Singapore NRIC or FIN: a series letter, seven digits and a check letter. */
+const NATIONAL_ID = /(?<![A-Za-z0-9])([STFGM])(\d{7})([A-Z])(?![A-Za-z0-9])/g;
+const NATIONAL_ID_WEIGHTS = [2, 7, 6, 5, 4, 3, 2];
+const NATIONAL_ID_CHECK: Readonly<Record<string, { offset: number; letters: string }>> = {
+  S: { offset: 0, letters: 'JZIHGFEDCBA' },
+  T: { offset: 4, letters: 'JZIHGFEDCBA' },
+  F: { offset: 0, letters: 'XWUTRQPNMLK' },
+  G: { offset: 4, letters: 'XWUTRQPNMLK' },
+  M: { offset: 3, letters: 'KLJNPQRTUWX' },
+};
+
+/**
+ * Whether a series letter, seven digits and a check letter are a valid
+ * national identifier, by the published checksum.
+ *
+ * Args:
+ *   series: The leading letter.
+ *   digits: The seven digits.
+ *   check: The trailing letter.
+ *
+ * Returns:
+ *   True when the check letter is the one the digits produce.
+ */
+export function nationalIdVerifies(series: string, digits: string, check: string): boolean {
+  const rule = NATIONAL_ID_CHECK[series];
+  if (!rule) return false;
+  const sum = [...digits].reduce(
+    (total: number, digit: string, index: number): number => total + Number(digit) * NATIONAL_ID_WEIGHTS[index]!,
+    rule.offset,
+  );
+  return rule.letters[sum % 11] === check;
+}
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}'"]+$/;
 /** What a labelled password sheds at its end; `!` and `?` stay, a password may end in one. */
 const PASSWORD_TRAILING = /[.,;:)\]}'"]+$/;
@@ -126,22 +163,22 @@ export function structuralSpans(text: string): StructuralSpan[] {
   for (const match of text.matchAll(CONNECTION_PASSWORD)) {
     if (match.index === undefined || REFERENCE_START.test(match[2])) continue;
     const start = match.index + match[0].lastIndexOf(`${match[2]}@`);
-    spans.push({ start, end: start + match[2].length, label: 'connection password' });
+    spans.push({ start, end: start + match[2].length, label: 'connection password', kind: 'secret' });
   }
   for (const match of text.matchAll(PEM_BLOCK)) {
     if (match.index === undefined || !match[1]) continue;
     const start = match.index + match[0].indexOf(match[1]);
-    spans.push({ start, end: start + match[1].length, label: 'private key' });
+    spans.push({ start, end: start + match[1].length, label: 'private key', kind: 'secret' });
   }
   for (const match of text.matchAll(JSON_WEB_TOKEN)) {
     if (match.index === undefined) continue;
-    spans.push({ start: match.index, end: match.index + match[0].length, label: 'json web token' });
+    spans.push({ start: match.index, end: match.index + match[0].length, label: 'json web token', kind: 'secret' });
   }
   for (const match of text.matchAll(PROVIDER_PREFIX)) {
     if (match.index === undefined) continue;
     const group = match.slice(1).findIndex((value): boolean => value !== undefined);
     const label = PROVIDER_SHAPES[Math.max(group, 0)].label;
-    spans.push({ start: match.index, end: match.index + match[0].length, label });
+    spans.push({ start: match.index, end: match.index + match[0].length, label, kind: 'secret' });
   }
   for (const pattern of [HEADER_VALUE, CREDENTIAL_HEADER, CURL_USER]) {
     for (const match of text.matchAll(pattern)) {
@@ -149,7 +186,7 @@ export function structuralSpans(text: string): StructuralSpan[] {
       const value = match[1].replace(TRAILING_PUNCTUATION, '');
       if (REFERENCE_START.test(value) || UPPER_NAME.test(value) || value.startsWith('<credential:')) continue;
       const start = match.index + match[0].lastIndexOf(match[1]);
-      spans.push({ start, end: start + value.length, label: 'header value' });
+      spans.push({ start, end: start + value.length, label: 'header value', kind: 'secret' });
     }
   }
   for (const match of text.matchAll(LOGIN_PAIR)) {
@@ -157,7 +194,7 @@ export function structuralSpans(text: string): StructuralSpan[] {
     const value = match[2].replace(PASSWORD_TRAILING, '');
     if (!value || guardReason(value)) continue;
     const start = match.index + match[0].lastIndexOf(match[2]);
-    spans.push({ start, end: start + value.length, label: 'password' });
+    spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
   }
   for (const match of text.matchAll(LABELLED_PASSWORD)) {
     if (match.index === undefined) continue;
@@ -166,7 +203,11 @@ export function structuralSpans(text: string): StructuralSpan[] {
     const value = quoted === undefined ? raw.replace(PASSWORD_TRAILING, '') : raw;
     if (!value || guardReason(value) || (quoted === undefined && LOWERCASE_WORD.test(value))) continue;
     const start = match.index + match[0].lastIndexOf(raw);
-    spans.push({ start, end: start + value.length, label: 'password' });
+    spans.push({ start, end: start + value.length, label: 'password', kind: 'secret' });
+  }
+  for (const match of text.matchAll(NATIONAL_ID)) {
+    if (match.index === undefined || !nationalIdVerifies(match[1], match[2], match[3])) continue;
+    spans.push({ start: match.index, end: match.index + match[0].length, label: 'national id', kind: 'id-number' });
   }
   return mergeSpans(spans);
 }

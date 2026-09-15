@@ -138,3 +138,20 @@ describe('the labelled password grammar', (): void => {
     }
   });
 });
+
+describe('the national identifier grammar', (): void => {
+  it('takes a Singapore NRIC or FIN whose check letter verifies, as an id number', (): void => {
+    const text = 'Escalation note from HR: Ines Ferreira, NRIC S1234567D, FIN G1234567X, staff no. T0123456789.';
+    const spans = structuralSpans(text);
+    expect(spans.map((span) => [text.slice(span.start, span.end), span.kind, span.label])).toEqual([
+      ['S1234567D', 'id-number', 'national id'],
+      ['G1234567X', 'id-number', 'national id'],
+    ]);
+  });
+
+  it('leaves a value with the shape but the wrong check letter, or inside a longer token, alone', (): void => {
+    for (const text of ['S1234567A', 'ref S1234567D9', 'M1234567K is not valid', 'T1234567D']) {
+      expect(structuralSpans(text), text).toEqual([]);
+    }
+  });
+});

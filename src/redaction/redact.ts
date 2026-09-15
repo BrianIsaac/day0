@@ -7,7 +7,7 @@
  *      JSON-escaped and URL-encoded: defence in depth that a model miss must
  *      never get past, and never degraded;
  *   2. the structural grammar, for the formats whose secret position is
- *      syntax;
+ *      syntax, and the one identifier format no context keeps;
  *   3. the span model, whose secret spans pass the guard and whose personal
  *      data spans are kept or removed by the entity policy for the context.
  *
@@ -179,7 +179,7 @@ export async function redactText(
   const known = knownValueSpans(base, options.known ?? []);
   const structural = structuralSpans(base).map(
     (span): Omit<Finding, 'redacted'> => ({
-      kind: 'secret',
+      kind: span.kind,
       label: span.label,
       start: span.start,
       end: span.end,

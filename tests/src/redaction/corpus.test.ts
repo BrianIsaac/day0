@@ -28,10 +28,7 @@ const PII_KINDS: Readonly<Record<string, EntityKind>> = {
  * What the recorded model still misses and damages, listed so that a change
  * is a change to this list and a reader sees exactly what is not caught.
  */
-const EXPECTED_MISSES: string[] = [
-  // A Singapore NRIC in an HR note.
-  'pii-personal-record:id-number',
-];
+const EXPECTED_MISSES: string[] = [];
 const EXPECTED_DAMAGE: string[] = [];
 
 describe('the labelled redaction corpus', (): void => {

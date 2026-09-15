@@ -81,3 +81,12 @@ describe('the damaged working spans the review named', (): void => {
     expect(out.text).toContain('{\\"name\\":\\"Username\\",\\"value\\":\\"revops\\"}');
   });
 });
+
+describe('the personal-data miss the review named', (): void => {
+  it('pii-personal-record: the NRIC goes with the rest of the record, the name stays', async (): Promise<void> => {
+    const { out } = await redactCase('pii-personal-record');
+    expect(out.text).not.toContain('S1234567D');
+    expect(out.text).toContain('NRIC <redacted: id-number>');
+    expect(out.text).toContain('Ines Ferreira');
+  });
+});
