@@ -10,6 +10,9 @@ vi.mock('convex/react', () => ({
 import type { Doc } from '../../../../convex/_generated/dataModel';
 import {
   ActionPayload,
+  AmendCharterPanel,
+  CharterCard,
+  ConstraintList,
   DashboardHeader,
   DraftDetails,
   PendingActions,
@@ -347,5 +350,148 @@ describe('phone approval delivery', (): void => {
       expect(markup).not.toContain('request not delivered');
       expect(markup).not.toContain('Resend');
     }
+  });
+});
+
+describe('charter confirm-or-strike list', (): void => {
+  const constraints = [
+    {
+      kind: 'candidate-property' as const,
+      quote: "if it's a ticket it has an owner and a priority",
+      wording: ['owned, prioritized'],
+      origin: 'synthesis' as const,
+    },
+    {
+      kind: 'system-boundary' as const,
+      quote: 'Never post to public channels.',
+      wording: ['Post to public Slack channels.'],
+      origin: 'derived' as const,
+      struck: true,
+    },
+  ];
+
+  it('shows each rule in the manager\'s words beside the clause phrase, with Strike and Restore before approval', (): void => {
+    const markup = renderToStaticMarkup(
+      <ConstraintList
+        constraints={constraints}
+        approved={false}
+        onStrike={() => undefined}
+        onRestore={() => undefined}
+      />,
+    );
+    expect(markup).toContain('Confirm or strike each one');
+    expect(markup).toContain('if it&#x27;s a ticket it has an owner and a priority');
+    expect(markup).toContain('owned, prioritized');
+    expect(markup).toContain('what work qualifies');
+    expect(markup).toContain('found by checking the clauses');
+    expect(markup).toContain('>Strike<');
+    expect(markup).toContain('>Restore<');
+    expect(markup).toContain('line-through');
+  });
+
+  it('keeps the list as a record after approval; Strike amends, nothing restores', (): void => {
+    const record = renderToStaticMarkup(<ConstraintList constraints={constraints} approved={true} />);
+    expect(record).toContain('Rules this charter enforces');
+    expect(record).toContain('struck');
+    expect(record).not.toContain('>Strike<');
+    expect(record).not.toContain('>Restore<');
+    const amendable = renderToStaticMarkup(
+      <ConstraintList constraints={constraints} approved={true} onStrike={() => undefined} />,
+    );
+    expect(amendable).toContain('>Strike<');
+    expect(amendable).not.toContain('>Restore<');
+  });
+
+  it('renders nothing for a charter drafted before constraints existed', (): void => {
+    expect(renderToStaticMarkup(<ConstraintList constraints={[]} approved={false} />)).toBe('');
+  });
+
+  it('names the struck count on the Approve button', (): void => {
+    const charter = {
+      _id: 'charter-1',
+      _creationTime: 1,
+      agentId: 'agent-1',
+      version: '0.0',
+      approved: false,
+      createdAt: 1,
+      body: {
+        whyThisHire: 'Close week.',
+        proposedFunction: 'Own routine revenue operations work from owned, prioritized Linear tickets.',
+        shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+        proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+        namedCollaborators: [],
+        priorityReading: [],
+        openQuestions: [],
+        constraints,
+      },
+    } as unknown as Doc<'charters'>;
+    const markup = renderToStaticMarkup(<CharterCard charter={charter} />);
+    expect(markup).toContain('Approve without 1 struck rule');
+  });
+});
+
+describe('amending an approved charter from the card', (): void => {
+  const charter = {
+    _id: 'charter-2',
+    _creationTime: 2,
+    agentId: 'agent-1',
+    version: '0.1',
+    approved: true,
+    approvedAt: 2,
+    supersedes: 'charter-1',
+    createdAt: 2,
+    body: {},
+  } as unknown as Doc<'charters'>;
+  const body = {
+    whyThisHire: 'Close week.',
+    proposedFunction: 'Own routine revenue operations work from Linear tickets.',
+    shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+    proposedBoundaries: {
+      willDo: ['Handle Linear tickets in the Q3 close project.'],
+      willNotDo: ['Post to public Slack channels.'],
+      escalationTriggers: [],
+    },
+    namedCollaborators: [],
+    namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'Work is in Linear.' }],
+    priorityReading: [],
+    openQuestions: ['Whether Northstar CRM access will be granted.'],
+    answeredQuestions: [{ question: 'Who owns the Looker tile.', answer: 'Priya.', answeredAt: 'x' }],
+  };
+
+  it('offers every typed change: the function, each clause list, the open questions, a rule and the systems', (): void => {
+    const markup = renderToStaticMarkup(
+      <AmendCharterPanel charter={charter} body={body} error={null} onAmend={async () => true} />,
+    );
+    expect(markup).toContain('next version v0.2');
+    expect(markup).toContain('value="Own routine revenue operations work from Linear tickets."');
+    expect(markup).toContain('value="Handle Linear tickets in the Q3 close project."');
+    expect(markup).toContain('Add to escalation triggers');
+    expect(markup).toContain('Whether Northstar CRM access will be granted.');
+    expect(markup).toContain('>Answer<');
+    expect(markup).toContain('Who owns the Looker tile.');
+    expect(markup).toContain('— Priya.');
+    expect(markup).toContain('>Add rule<');
+    expect(markup).toContain('Linear (kanban)');
+    expect(markup).toContain('>Add system<');
+    expect(markup).toContain('>Remove<');
+  });
+
+  it('shows the refusal the backend returned', (): void => {
+    const markup = renderToStaticMarkup(
+      <AmendCharterPanel
+        charter={charter}
+        body={body}
+        error="the amendment changes nothing"
+        onAmend={async () => false}
+      />,
+    );
+    expect(markup).toContain('the amendment changes nothing');
+  });
+
+  it('is absent from a charter awaiting approval', (): void => {
+    const draft = { ...charter, approved: false, body } as unknown as Doc<'charters'>;
+    const markup = renderToStaticMarkup(<CharterCard charter={draft} />);
+    expect(markup).not.toContain('Amend this charter');
+    expect(markup).toContain('>Approve<');
   });
 });

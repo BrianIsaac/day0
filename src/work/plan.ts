@@ -10,6 +10,7 @@ import { renderHowTos, renderTeamDocs } from './documents';
 import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
+import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
 
 /**
  * Layer-3 plan drafter. Lifted from Protean's `src/work/plan.ts` and
@@ -72,20 +73,6 @@ export function planSystemPrompt(
 const VERIFICATION_VERB =
   /\b(?:confirm(?:s|ed|ing)?|verif(?:y|ies|ied|ying)|check(?:s|ed|ing)?|ensur(?:e|es|ed|ing)|validat(?:e|es|ed|ing)|mak(?:e|es|ing) sure|establish(?:es|ed|ing)?|double-check(?:s|ed|ing)?)\b/i;
 
-/** A candidate property a plan may be tempted to gate on, with the words that name it. */
-const CANDIDATE_PROPERTIES: ReadonlyArray<{ property: string; words: RegExp }> = [
-  {
-    property: 'ownership',
-    words: /\b(?:owner|owners|owned|ownership|assignee|assignees|assigned|assignment|unassigned)\b/i,
-  },
-  { property: 'priority', words: /\bpriorit(?:y|ies|ised|ized|ise|ize)\b/i },
-  {
-    property: 'age',
-    words: /\b(?:age|stale|staleness|days old|older than|created date|creation date)\b/i,
-  },
-];
-
-type CandidateProperty = (typeof CANDIDATE_PROPERTIES)[number];
 const CANDIDATE_CLASS = /\b(?:tickets?|requests?|items?|issues?|mentions?)\b/gi;
 const PREMODIFIER_WORD = /^[a-z]+(?:-[a-z]+)*$/;
 const PREMODIFIER_CONNECTOR = new Set(['and', 'or', 'plus']);

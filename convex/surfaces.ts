@@ -249,56 +249,110 @@ export const seedFromCharter = internalMutation({
   handler: async (ctx, args): Promise<Id<'surfaces'>[]> => {
     const surfaceIds: Id<'surfaces'>[] = [];
     const now = Date.now();
-    const surfaces = await ctx.db
-      .query('surfaces')
-      .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
-      .collect();
     for (const system of args.namedSystems) {
-      if (system.class === 'docs') continue;
-      const slug = surfaceSlug(system.name);
-      const matches = charterMatches(surfaces, system);
-      if (matches.length > 1) {
-        await recordCharterMatchAmbiguity(ctx, {
-          agentId: args.agentId,
-          system,
-          matches,
-          now,
-        });
-        continue;
-      }
-      const existing = matches[0];
-      if (existing) {
-        const discoveryEvidence = await attachCharterEvidence(ctx, existing, system, now);
-        existing.discoveryEvidence = discoveryEvidence;
-        surfaceIds.push(existing._id);
-        continue;
-      }
-      const evidence: DiscoveryEvidence = {
-        kind: 'charter',
-        ref: 'manager 1:1',
-        quote: system.whereMentioned,
-        current: true,
-        firstSeenAt: now,
-        lastSeenAt: now,
-      };
-      const surfaceId = await ctx.db.insert('surfaces', {
-        agentId: args.agentId,
-        slug,
-        displayName: system.name,
-        class: system.class,
-        verdict: 'declared',
-        whereFound: [{ ref: 'manager 1:1', quote: system.whereMentioned }],
-        discoveryEvidence: [evidence],
-        credentialLanded: false,
-        createdAt: now,
-      });
-      const inserted = await ctx.db.get(surfaceId);
-      if (inserted) surfaces.push(inserted);
-      surfaceIds.push(surfaceId);
+      const declared = await declareCharterSystem(ctx, { agentId: args.agentId, system, now });
+      if (declared.surfaceId) surfaceIds.push(declared.surfaceId);
     }
     return surfaceIds;
   },
 });
+
+/**
+ * Declare the surface one charter-named system stands for.
+ *
+ * A system of class `docs` gets no surface. A mention that resolves to one
+ * existing surface refreshes that surface's charter evidence; a mention that
+ * resolves to several is recorded as ambiguous and left alone; anything else
+ * inserts a declared row. Charter approval seeds every named system through
+ * here, and a charter amendment that adds one system calls it for that
+ * system alone.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   args: The agent, the system as the charter names it, and the time.
+ *
+ * Returns:
+ *   The surface the system now stands on, and whether this call created it.
+ */
+export async function declareCharterSystem(
+  ctx: MutationCtx,
+  args: { agentId: Id<'agents'>; system: CharterSystemSeed; now: number },
+): Promise<{ surfaceId: Id<'surfaces'> | null; created: boolean }> {
+  const { system, now } = args;
+  if (system.class === 'docs') return { surfaceId: null, created: false };
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
+    .collect();
+  const matches = charterMatches(surfaces, system);
+  if (matches.length > 1) {
+    await recordCharterMatchAmbiguity(ctx, { agentId: args.agentId, system, matches, now });
+    return { surfaceId: null, created: false };
+  }
+  const existing = matches[0];
+  if (existing) {
+    await attachCharterEvidence(ctx, existing, system, now);
+    return { surfaceId: existing._id, created: false };
+  }
+  const evidence: DiscoveryEvidence = {
+    kind: 'charter',
+    ref: 'manager 1:1',
+    quote: system.whereMentioned,
+    current: true,
+    firstSeenAt: now,
+    lastSeenAt: now,
+  };
+  const surfaceId = await ctx.db.insert('surfaces', {
+    agentId: args.agentId,
+    slug: surfaceSlug(system.name),
+    displayName: system.name,
+    class: system.class,
+    verdict: 'declared',
+    whereFound: [{ ref: 'manager 1:1', quote: system.whereMentioned }],
+    discoveryEvidence: [evidence],
+    credentialLanded: false,
+    createdAt: now,
+  });
+  return { surfaceId, created: true };
+}
+
+/**
+ * Retire the charter's claim on the surfaces a named system stood for.
+ *
+ * The charter evidence is marked no longer current; the surface, its verdict
+ * and any documentation evidence stay, because the system may still be
+ * documented and connected. Nothing is deleted.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   args: The agent, the system as the charter named it, and the time.
+ *
+ * Returns:
+ *   How many surfaces had their charter evidence retired.
+ */
+export async function retireCharterSystem(
+  ctx: MutationCtx,
+  args: { agentId: Id<'agents'>; system: CharterSystemSeed; now: number },
+): Promise<number> {
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
+    .collect();
+  let retired = 0;
+  for (const surface of charterMatches(surfaces, args.system)) {
+    const evidence = surface.discoveryEvidence ?? [];
+    if (!evidence.some((item): boolean => item.kind === 'charter' && item.current)) continue;
+    await ctx.db.patch(surface._id, {
+      discoveryEvidence: evidence.map((item): DiscoveryEvidence =>
+        item.kind === 'charter' && item.current
+          ? { ...item, current: false, lastSeenAt: args.now }
+          : item,
+      ),
+    });
+    retired += 1;
+  }
+  return retired;
+}
 
 /** Reconcile one source's current system names into an agent's surface set. */
 export async function reconcileDocumentedSystems(
@@ -548,20 +602,38 @@ export const scheduleOrientation = internalMutation({
   args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface || surface.verdict !== 'declared') return false;
-    if (surface.orientationJobId) {
-      const job = await ctx.db.system.get(surface.orientationJobId);
-      if (job && (job.state.kind === 'pending' || job.state.kind === 'inProgress')) return false;
-    }
-    const orientationJobId = await ctx.scheduler.runAfter(
-      0,
-      internal.orientationActions.orientOne,
-      { surfaceId: surface._id },
-    );
-    await ctx.db.patch(surface._id, { orientationJobId });
-    return true;
+    if (!surface) return false;
+    return await scheduleOrientationFor(ctx, surface);
   },
 });
+
+/**
+ * Schedule orientation for one declared surface unless a job is already on it.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   surface: The surface row as read in this transaction.
+ *
+ * Returns:
+ *   Whether a job was placed.
+ */
+export async function scheduleOrientationFor(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<boolean> {
+  if (surface.verdict !== 'declared') return false;
+  if (surface.orientationJobId) {
+    const job = await ctx.db.system.get(surface.orientationJobId);
+    if (job && (job.state.kind === 'pending' || job.state.kind === 'inProgress')) return false;
+  }
+  const orientationJobId = await ctx.scheduler.runAfter(
+    0,
+    internal.orientationActions.orientOne,
+    { surfaceId: surface._id },
+  );
+  await ctx.db.patch(surface._id, { orientationJobId });
+  return true;
+}
 
 /**
  * Record that an orientation job failed before it could decide.

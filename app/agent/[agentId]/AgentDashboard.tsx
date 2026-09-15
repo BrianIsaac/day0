@@ -27,6 +27,14 @@ import { toSurfaceRecord } from '../../../src/surfaces/records';
 import { summariseAction, type ReplyTarget } from '../../../src/surfaces/summary';
 import type { ActionAuthority, SurfaceRecord } from '../../../src/surfaces/types';
 import { verdictFor } from '../../../src/surfaces/verdict';
+import type { CharterConstraint } from '../../../src/agent/charter-constraints';
+import {
+  LIST_CLAUSE_FIELDS,
+  nextCharterVersion,
+  type CharterChange,
+  type ListClauseField,
+} from '../../../src/agent/charter-amendment';
+import { SYSTEM_CLASSES, type SystemClass } from '../../../src/agent/system-classes';
 import { replyTargetFor } from '../../../src/work/reply-target';
 import {
   providerReconciliationEntries,
@@ -507,21 +515,132 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
   );
 }
 
-function CharterCard({ charter }: { charter: Doc<'charters'> }) {
+/** The charter body as the card reads it; `constraints` is absent on charters drafted before the list existed. */
+export interface CharterCardBody {
+  whyThisHire: string;
+  proposedFunction: string;
+  shortTermGoals: { day30: string; day60: string; day90: string };
+  proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
+  namedCollaborators: Array<{ name: string; topic: string }>;
+  namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
+  priorityReading: string[];
+  openQuestions: string[];
+  constraints?: CharterConstraint[];
+  answeredQuestions?: Array<{ question: string; answer: string; answeredAt: string }>;
+}
+
+const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
+  'candidate-property': 'what work qualifies',
+  'system-boundary': 'where I may act',
+  'reporting-line': 'who I report to',
+};
+
+/**
+ * The confirm-or-strike list: every rule the draft will enforce, in the
+ * manager's own words, beside the clause phrases that encode it.
+ *
+ * Before approval each row can be struck or restored; the clauses on the card
+ * stay as drafted until Approve, which is when struck wording leaves them.
+ * After approval the list is the record of what was confirmed and what was
+ * struck.
+ */
+export function ConstraintList({
+  constraints,
+  approved,
+  onStrike,
+  onRestore,
+}: {
+  constraints: CharterConstraint[];
+  approved: boolean;
+  /** Strike a confirmed rule; before approval a draft flag, after it an amendment. */
+  onStrike?: (index: number) => void;
+  /** Restore a struck rule; only a draft can, because a strike after approval has already left the clauses. */
+  onRestore?: (index: number) => void;
+}) {
+  if (constraints.length === 0) return null;
+  return (
+    <div className="text-xs">
+      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+        {approved ? 'Rules this charter enforces' : 'These words will limit the work. Confirm or strike each one.'}
+      </div>
+      <ul className="space-y-1.5">
+        {constraints.map((constraint, index) => (
+          <li
+            key={index}
+            className={`flex items-start gap-2 p-2 rounded-md border ${
+              constraint.struck
+                ? 'border-[var(--color-border)] text-[var(--color-muted)]'
+                : 'border-[var(--color-warn)]/40'
+            }`}
+          >
+            <div className="flex-1 min-w-0">
+              <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
+                &ldquo;{constraint.quote}&rdquo;
+              </p>
+              <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
+                {CONSTRAINT_KIND_LABEL[constraint.kind]}
+                {constraint.wording.length > 0 ? (
+                  <>
+                    {' · in the charter as '}
+                    {constraint.wording.map((phrase, i) => (
+                      <span key={i}>
+                        {i > 0 ? ', ' : ''}
+                        <span className="font-mono text-[var(--color-fg)]">{phrase}</span>
+                      </span>
+                    ))}
+                  </>
+                ) : (
+                  ' · no clause carries it'
+                )}
+                {constraint.origin === 'derived' ? ' · found by checking the clauses' : ''}
+                {constraint.origin === 'manager' ? ' · added by you' : ''}
+                {constraint.struck ? ' · struck' : ''}
+              </p>
+            </div>
+            {!constraint.struck && onStrike ? (
+              <button
+                onClick={() => onStrike(index)}
+                className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)]"
+              >
+                Strike
+              </button>
+            ) : constraint.struck && onRestore ? (
+              <button
+                onClick={() => onRestore(index)}
+                className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)]"
+              >
+                Restore
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
   const approve = useMutation(api.charters.approve);
   const requestChanges = useMutation(api.charters.requestChanges);
+  const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
+  const amend = useMutation(api.charters.amend);
   const postApproval = useAction(api.onboarding.postCharterApproval);
   const [posting, setPosting] = useState(false);
-  const body = charter.body as {
-    whyThisHire: string;
-    proposedFunction: string;
-    shortTermGoals: { day30: string; day60: string; day90: string };
-    proposedBoundaries: { willDo: string[]; willNotDo: string[]; escalationTriggers: string[] };
-    namedCollaborators: Array<{ name: string; topic: string }>;
-    namedSystems?: Array<{ name: string; class: string; whereMentioned: string }>;
-    priorityReading: string[];
-    openQuestions: string[];
-  };
+  const [amendError, setAmendError] = useState<string | null>(null);
+  const body = charter.body as CharterCardBody;
+  const constraints = body.constraints ?? [];
+  const struckCount = constraints.filter((constraint) => constraint.struck).length;
+
+  async function sendAmendment(change: CharterChange): Promise<boolean> {
+    setAmendError(null);
+    try {
+      await amend({ agentId: charter.agentId, changes: [change] });
+      return true;
+    } catch (error) {
+      setAmendError((error as Error).message ?? 'The amendment was refused.');
+      return false;
+    }
+  }
 
   async function onApprove() {
     setPosting(true);
@@ -569,6 +688,28 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             <BoundaryList label="Open questions" items={body.openQuestions} />
           </div>
         </details>
+        <ConstraintList
+          constraints={constraints}
+          approved={charter.approved}
+          onStrike={(index) =>
+            charter.approved
+              ? void sendAmendment({ kind: 'strike-constraint', index })
+              : void setConstraintStruck({ charterId: charter._id, index, struck: true })
+          }
+          onRestore={
+            charter.approved
+              ? undefined
+              : (index) => void setConstraintStruck({ charterId: charter._id, index, struck: false })
+          }
+        />
+        {charter.approved ? (
+          <AmendCharterPanel
+            charter={charter}
+            body={body}
+            error={amendError}
+            onAmend={sendAmendment}
+          />
+        ) : null}
         {!charter.approved ? (
           <div className="flex gap-2 pt-1">
             <button
@@ -576,7 +717,9 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
               disabled={posting}
               className="px-4 py-2 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
             >
-              Approve
+              {struckCount > 0
+                ? `Approve without ${struckCount} struck ${struckCount === 1 ? 'rule' : 'rules'}`
+                : 'Approve'}
             </button>
             <button
               onClick={() => requestChanges({ charterId: charter._id })}
@@ -588,6 +731,292 @@ function CharterCard({ charter }: { charter: Doc<'charters'> }) {
         ) : null}
       </div>
     </Card>
+  );
+}
+
+const CLAUSE_LIST_LABEL: Record<ListClauseField, string> = {
+  willDo: 'Will do',
+  willNotDo: 'Will NOT do',
+  escalationTriggers: 'Escalation triggers',
+};
+
+const AMEND_INPUT =
+  'flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs text-[var(--color-fg)]';
+const AMEND_BUTTON =
+  'shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50';
+
+/**
+ * One line of text the manager can rewrite or remove; Save sends the
+ * amendment. Callers key it by the text, so a new version remounts it with
+ * the new text rather than syncing state from props.
+ */
+function EditableLine({
+  text,
+  onSave,
+  onRemove,
+}: {
+  text: string;
+  onSave: (text: string) => void;
+  onRemove?: () => void;
+}) {
+  const [draft, setDraft] = useState(text);
+  const changed = draft.trim() !== text.trim();
+  return (
+    <div className="flex items-center gap-1">
+      <input className={AMEND_INPUT} value={draft} onChange={(e) => setDraft(e.target.value)} />
+      <button className={AMEND_BUTTON} disabled={!changed || !draft.trim()} onClick={() => onSave(draft)}>
+        Save
+      </button>
+      {onRemove ? (
+        <button className={AMEND_BUTTON} onClick={onRemove}>
+          Remove
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** A single input with a button, cleared when the submission is accepted. */
+function AddLine({
+  placeholder,
+  label,
+  onAdd,
+}: {
+  placeholder: string;
+  label: string;
+  onAdd: (text: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState('');
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        className={AMEND_INPUT}
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <button
+        className={AMEND_BUTTON}
+        disabled={!draft.trim()}
+        onClick={async () => {
+          if (await onAdd(draft)) setDraft('');
+        }}
+      >
+        {label}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Amend an approved charter from the card: each Save, Answer, Add or Remove
+ * is one typed change and one new version. The list of versions below the
+ * editors is the charter's history; nothing here edits a row in place.
+ */
+export function AmendCharterPanel({
+  charter,
+  body,
+  error,
+  onAmend,
+}: {
+  charter: Doc<'charters'>;
+  body: CharterCardBody;
+  error: string | null;
+  onAmend: (change: CharterChange) => Promise<boolean>;
+}) {
+  const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
+  const now = useNow();
+  const [rule, setRule] = useState<{ quote: string; kind: CharterConstraint['kind']; clause: ListClauseField }>({
+    quote: '',
+    kind: 'candidate-property',
+    clause: 'willDo',
+  });
+  const [system, setSystem] = useState<{ name: string; class: SystemClass; whereMentioned: string }>({
+    name: '',
+    class: 'other',
+    whereMentioned: '',
+  });
+  const answered = body.answeredQuestions ?? [];
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+        Amend this charter · next version v{nextCharterVersion(charter.version)}
+      </summary>
+      <div className="mt-2 space-y-3 pl-3 border-l border-[var(--color-border)]">
+        {error ? <p className="text-[var(--color-warn)]">{error}</p> : null}
+        <div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Proposed function</div>
+          <EditableLine
+            key={body.proposedFunction}
+            text={body.proposedFunction}
+            onSave={(text) => void onAmend({ kind: 'edit-function', text })}
+          />
+        </div>
+        {LIST_CLAUSE_FIELDS.map((field) => (
+          <div key={field}>
+            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+              {CLAUSE_LIST_LABEL[field]}
+            </div>
+            <div className="space-y-1">
+              {body.proposedBoundaries[field].map((item, index) => (
+                <EditableLine
+                  key={`${index}:${item}`}
+                  text={item}
+                  onSave={(text) => void onAmend({ kind: 'edit-clause', field, index, text })}
+                  onRemove={() => void onAmend({ kind: 'edit-clause', field, index, text: '' })}
+                />
+              ))}
+              <AddLine
+                placeholder={`Add to ${CLAUSE_LIST_LABEL[field].toLowerCase()}`}
+                label="Add"
+                onAdd={(text) =>
+                  onAmend({ kind: 'edit-clause', field, index: body.proposedBoundaries[field].length, text })
+                }
+              />
+            </div>
+          </div>
+        ))}
+        {body.openQuestions.length > 0 || answered.length > 0 ? (
+          <div>
+            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Open questions</div>
+            <div className="space-y-1.5">
+              {body.openQuestions.map((question) => (
+                <div key={question}>
+                  <p className="text-[var(--color-fg)] mb-0.5">{question}</p>
+                  <AddLine
+                    placeholder="Your answer"
+                    label="Answer"
+                    onAdd={(answer) => onAmend({ kind: 'answer-question', question, answer })}
+                  />
+                </div>
+              ))}
+              {answered.map((entry) => (
+                <p key={entry.question} className="text-[var(--color-muted)]">
+                  {entry.question} <span className="text-[var(--color-fg)]">— {entry.answer}</span>
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Add a rule</div>
+          <div className="flex flex-wrap items-center gap-1">
+            <input
+              className={AMEND_INPUT}
+              placeholder="In your own words"
+              value={rule.quote}
+              onChange={(e) => setRule({ ...rule, quote: e.target.value })}
+            />
+            <select
+              className={AMEND_INPUT}
+              value={rule.kind}
+              onChange={(e) => setRule({ ...rule, kind: e.target.value as CharterConstraint['kind'] })}
+            >
+              <option value="candidate-property">what work qualifies</option>
+              <option value="system-boundary">where I may act</option>
+              <option value="reporting-line">who I report to</option>
+            </select>
+            <select
+              className={AMEND_INPUT}
+              value={rule.clause}
+              onChange={(e) => setRule({ ...rule, clause: e.target.value as ListClauseField })}
+            >
+              {LIST_CLAUSE_FIELDS.map((field) => (
+                <option key={field} value={field}>
+                  under {CLAUSE_LIST_LABEL[field].toLowerCase()}
+                </option>
+              ))}
+            </select>
+            <button
+              className={AMEND_BUTTON}
+              disabled={!rule.quote.trim()}
+              onClick={async () => {
+                if (
+                  await onAmend({
+                    kind: 'add-constraint',
+                    constraint: { kind: rule.kind, quote: rule.quote, clause: rule.clause },
+                  })
+                ) {
+                  setRule({ ...rule, quote: '' });
+                }
+              }}
+            >
+              Add rule
+            </button>
+          </div>
+        </div>
+        <div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Systems named</div>
+          <div className="space-y-1">
+            {(body.namedSystems ?? []).map((named) => (
+              <div key={named.name} className="flex items-center gap-1">
+                <span className="flex-1 min-w-0 text-[var(--color-fg)]">
+                  {named.name} ({named.class})
+                </span>
+                <button
+                  className={AMEND_BUTTON}
+                  onClick={() => void onAmend({ kind: 'remove-system', name: named.name })}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <div className="flex flex-wrap items-center gap-1">
+              <input
+                className={AMEND_INPUT}
+                placeholder="System name"
+                value={system.name}
+                onChange={(e) => setSystem({ ...system, name: e.target.value })}
+              />
+              <select
+                className={AMEND_INPUT}
+                value={system.class}
+                onChange={(e) => setSystem({ ...system, class: e.target.value as SystemClass })}
+              >
+                {SYSTEM_CLASSES.map((systemClass) => (
+                  <option key={systemClass} value={systemClass}>
+                    {systemClass}
+                  </option>
+                ))}
+              </select>
+              <input
+                className={AMEND_INPUT}
+                placeholder="Where it is used, in your words"
+                value={system.whereMentioned}
+                onChange={(e) => setSystem({ ...system, whereMentioned: e.target.value })}
+              />
+              <button
+                className={AMEND_BUTTON}
+                disabled={!system.name.trim() || !system.whereMentioned.trim()}
+                onClick={async () => {
+                  if (await onAmend({ kind: 'add-system', system })) {
+                    setSystem({ name: '', class: 'other', whereMentioned: '' });
+                  }
+                }}
+              >
+                Add system
+              </button>
+            </div>
+          </div>
+        </div>
+        {versions && versions.length > 1 ? (
+          <div>
+            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Versions</div>
+            <ul className="space-y-0.5 text-[var(--color-muted)]">
+              {versions.map((row) => (
+                <li key={row._id}>
+                  v{row.version}
+                  {row._id === charter._id ? ' · current' : ''}
+                  {row.supersedes ? ' · amendment' : ' · from the 1:1'}
+                  {' · '}
+                  <span title={clockTimeWithSeconds(row.createdAt)}>{relativeTime(row.createdAt, now)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

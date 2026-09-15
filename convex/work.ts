@@ -9,6 +9,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
+import { askOpenQuestionsAtPlan } from './managerQuestions';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   HELD_NOT_APPROVED,
@@ -434,6 +435,9 @@ export const setPlan = internalMutation({
       payload: { workItemId: args.workItemId, plan: args.plan },
       createdAt: Date.now(),
     });
+    // The charter's open questions this plan touches are asked here, before
+    // execution, and once per question for the agent.
+    await askOpenQuestionsAtPlan(ctx, row, args.plan);
     return { stored: true };
   },
 });
