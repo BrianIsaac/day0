@@ -47,6 +47,9 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
  */
 const LABEL_THEN_VALUE =
   /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"，。]+)[`'"，。]?$/i;
+const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
+const PASSWORD_ASSIGNMENT = /(?:password|passwd|pwd|passcode|pin|密码|口令)\s*(?:[:=：]|\bis\b|是|为)\s*[`'"]?$/i;
+const ASSIGNED_VALUE = /^(?:[:=：]\s*|[ \t]+(?:is|是|为)[ \t]*)([^\s`'"，。<>\\]+(?:\r?\n[0-9]+)?)/i;
 const LEADING_PUNCTUATION = /^[(\[{'"`]+/;
 /** Sentence punctuation a model swallows; `!` and `?` stay, a password may end in one. */
 const TRAILING_PUNCTUATION = /[.,;:)\]}'"`]+$/;
@@ -78,16 +81,32 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const trailing = TRAILING_PUNCTUATION.exec(value);
   if (trailing) end -= trailing[0].length;
   value = text.slice(start, end);
+  // Some detectors return the assignment label rather than its value.
+  // Only extend a password label across explicit assignment syntax.
+  if (label === 'password' && PASSWORD_LABEL.test(value)) {
+    const assigned = ASSIGNED_VALUE.exec(text.slice(end));
+    if (!assigned) return undefined;
+    start = end + assigned[0].indexOf(assigned[1]);
+    end = start + assigned[1].length;
+    value = text.slice(start, end);
+  }
+  const explicitPassword = label === 'password' && PASSWORD_ASSIGNMENT.test(text.slice(0, start));
+  const wrappedPassword = explicitPassword && /^[^\s]+\r?\n[0-9]+$/.test(value);
   const narrowed = label === 'private key' ? null : LABEL_THEN_VALUE.exec(value);
   if (narrowed && narrowed[1] !== value) {
     start += value.lastIndexOf(narrowed[1]);
     end = start + narrowed[1].length;
     value = text.slice(start, end);
-  } else if (/\s/.test(value) && label !== 'private key') {
+  } else if (/\s/.test(value) && label !== 'private key' && !wrappedPassword) {
     return undefined;
   }
   if (end <= start) return undefined;
-  const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => shape.pattern.test(value));
+  const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
+    if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
+      return false;
+    }
+    return shape.pattern.test(value);
+  });
   return rejected ? undefined : { start, end };
 }
 

@@ -69,3 +69,23 @@ describe('the guard between a model span and the stored text', (): void => {
     expect(guardSecretSpan(text, spanOf(text, 'AAAA\nBBBB'), 'private key')).toEqual(spanOf(text, 'AAAA\nBBBB'));
   });
 });
+
+describe('explicit password assignments', () => {
+  it.each([
+    ['Looker password: revops2026', 'Looker password', 'revops2026'],
+    ['密码：revops2026', '密码', 'revops2026'],
+    ['Password: abc', 'abc', 'abc'],
+    ['Password: 123', '123', '123'],
+    ['Password: revops\n2026', 'revops\n2026', 'revops\n2026'],
+    ['{"message":"Looker password: revops2026\\nNext step"}', 'Looker password', 'revops2026'],
+  ])('keeps the value span for %s', (text, candidate, value) => {
+    expect(guardSecretSpan(text, spanOf(text, candidate), 'password')).toEqual(spanOf(text, value));
+  });
+
+  it.each(['{{secret}}', '<credential: looker password, stored>', '74%', 'https://example.test', 'REVOPS-7'])(
+    'keeps working material after a label: %s', (value) => {
+      const text = `Password: ${value}`;
+      expect(guardSecretSpan(text, spanOf(text, 'Password'), 'password')).toBeUndefined();
+    },
+  );
+});
