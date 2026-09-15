@@ -13,6 +13,7 @@ import {
   allSourcesSynced,
   batchHeld,
   CARDS,
+  closingHeld,
   competingClaims,
   failedSource,
   orientationDone,
@@ -594,14 +595,11 @@ const approveBatch: Phase = {
   run: async (ctx) => {
     const dashboard = requireState(ctx.state, 'dashboard');
     const title = requireState(ctx.state, 'ticketTitle');
-    const before = await ticketRow(ctx);
-    const initialLength = before.output?.initial?.applied?.length ?? 0;
     await dashboard.approveAll(title);
     const item = await waitFor(ctx, 'the closing phase to park with the comment held', 15 * 60_000, async () => {
       const row = await ticketRow(ctx);
       if (['failed', 'cancelled', 'skipped'].includes(row.state)) throw new StopRun(`${TICKET} ${row.state}: ${row.skipReason ?? ''}`);
-      const appliedInitial = (row.output?.initial?.applied?.length ?? 0) > initialLength || (row.output?.applied?.length ?? 0) > 0;
-      return row.state === 'actions-pending' && appliedInitial && batchHeld(row) ? row : undefined;
+      return closingHeld(row, TILE_SLUG) ? row : undefined;
     });
     await shot(ctx, 'closing-held');
     recordCheck(ctx, checkClosingCommentQuotesReadBack(item));

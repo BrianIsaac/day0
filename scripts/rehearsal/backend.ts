@@ -3,7 +3,7 @@
  * queries the dashboard renders from, and the pure selections over those rows
  * every wait and check is written against.
  */
-import type { WorkItemView } from './checks';
+import { browserSequenceOf, type WorkItemView } from './checks';
 
 export interface AgentRow {
   _id: string;
@@ -278,4 +278,20 @@ export function batchHeld(item: Pick<WorkItemRow, 'state' | 'actionVerdicts'>): 
     item.state === 'actions-pending' &&
     (item.actionVerdicts ?? []).some((verdict): boolean => verdict.disposition === 'held')
   );
+}
+
+/**
+ * Whether the item is parked at the closing phase: a held batch whose current
+ * action set carries no action on the browser-driven surface, because the
+ * closing set replaced the tile sequence once it applied.
+ *
+ * Args:
+ *   item: The item.
+ *   tileSlug: The browser-driven surface's slug.
+ *
+ * Returns:
+ *   True when the closing set is held.
+ */
+export function closingHeld(item: WorkItemView & Pick<WorkItemRow, 'state'>, tileSlug: string = TILE_SLUG): boolean {
+  return batchHeld(item) && browserSequenceOf(item, tileSlug).length === 0;
 }

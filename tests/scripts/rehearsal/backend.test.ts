@@ -3,6 +3,7 @@ import {
   agentNamed,
   allSourcesSynced,
   batchHeld,
+  closingHeld,
   competingClaims,
   failedSource,
   orientationDone,
@@ -78,5 +79,15 @@ describe('selections over the backend rows', (): void => {
     expect(batchHeld({ state: 'actions-pending', actionVerdicts: [{ disposition: 'auto' }, { disposition: 'held' }] })).toBe(true);
     expect(batchHeld({ state: 'actions-pending', actionVerdicts: [{ disposition: 'auto' }] })).toBe(false);
     expect(batchHeld({ state: 'executing', actionVerdicts: [{ disposition: 'held' }] })).toBe(false);
+  });
+
+  it('tells the closing hold from the phase-one hold by the tile actions in the current set', (): void => {
+    const tile = { tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool: 'browser_navigate' } };
+    const comment = { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment' } };
+    const phaseOne = { state: 'actions-pending', actionVerdicts: [{ disposition: 'auto' as const }, { disposition: 'held' as const }], output: { actions: [comment, tile] } };
+    expect(closingHeld(phaseOne)).toBe(false);
+    const closing = { state: 'actions-pending', actionVerdicts: [{ disposition: 'held' as const }], output: { actions: [comment] } };
+    expect(closingHeld(closing)).toBe(true);
+    expect(closingHeld({ ...closing, state: 'completed' })).toBe(false);
   });
 });
