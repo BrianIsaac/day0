@@ -537,7 +537,7 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     expect(recorded.model[0]!.user).toContain('Failed to connect to MCP server linear');
   });
 
-  it('refuses a prewritten Done transition under autonomy through the real executor', async () => {
+  it('records the audit correction and keeps a prewritten Done out of phase one under autonomy', async () => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(t);
     recorded.prewritten = true;
@@ -558,7 +558,10 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await new Promise((resolve) => setTimeout(resolve, 0));
     await t.finishInProgressScheduledFunctions();
     expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toEqual([]);
-    expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
+    const events = await t.run(ctx => ctx.db.query('events').collect());
+    expect(events.filter(event => event.type === 'audit.corrected')).toMatchObject([
+      { payload: { workItemId, removedIndices: [1, 2], reason: 'prewritten closing actions' } },
+    ]);
     expect(recorded.model.filter((call) => call.agent.endsWith('-initial'))).toHaveLength(2);
   }, 30_000);
 

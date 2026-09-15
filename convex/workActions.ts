@@ -588,6 +588,12 @@ async function holdDay0Actions(
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
+      onAuditCorrection: async removedIndices => {
+        await ctx.runMutation(internal.events.log, {
+          agentId: args.agentId, type: 'audit.corrected',
+          payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason: 'prewritten closing actions' },
+        });
+      },
     });
     const staged =
       SURFACE_MODE === 'real'
