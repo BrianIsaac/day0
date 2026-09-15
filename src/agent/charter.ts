@@ -6,6 +6,7 @@ import {
   CONSTRAINT_KINDS,
   deriveConstraints,
   normaliseConstraints,
+  withoutProvenanceSuffixes,
   type CharterConstraint,
 } from './charter-constraints';
 export type { CharterConstraint } from './charter-constraints';
@@ -125,6 +126,7 @@ const SYSTEM_PROMPT = [
   'You captured seven free-form answers from the manager. Distil them into a structured charter the manager can approve in under 10 minutes of cognitive load.',
   '',
   'Provenance discipline: every evidence clause carries source "from manager 1:1 day-1" because v0.0 has no other source.',
+  'Clauses carry no provenance suffix: never append "(from manager 1:1 day-1)" or any similar note to the function, a boundary, a goal, a reading item or an evidence text. Provenance is the source field on evidence rows and is shown beside each clause by the card.',
   'Conservative defaults: in proposedBoundaries.willDo, prefer concrete narrow actions; in willNotDo, list adjacent roles you must NOT step on.',
   'If the manager left a topic vague (e.g. "figure it out"), capture it under openQuestions instead of inventing a goal.',
   'List every product or service the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
@@ -365,7 +367,9 @@ export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSys
 }
 
 function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt: string): Charter {
-  const charter: Charter = {
+  // Stripped before the constraints are verified, so wording is matched
+  // against the clauses the manager will read.
+  const charter: Charter = withoutProvenanceSuffixes({
     version: args.version,
     source: 'day-1 manager 1:1',
     whyThisHire: raw.whyThisHire,
@@ -383,7 +387,7 @@ function assemble(raw: RawCharterPayload, args: SynthesiseCharterArgs, createdAt
     },
     openQuestions: raw.openQuestions,
     createdAt,
-  };
+  });
   const listed = normaliseConstraints(raw.constraints ?? [], charter);
   return {
     ...charter,

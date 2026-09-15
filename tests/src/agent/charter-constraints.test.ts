@@ -8,10 +8,17 @@ import {
   removeWording,
   strikeOutcome,
   strikePreview,
+  stripProvenanceSuffix,
   withoutConstraints,
+  withoutProvenanceSuffixes,
   type CharterConstraint,
 } from '../../../src/agent/charter-constraints';
 import { strikeRefusalBody } from '../../fixtures/charter-strike-refusal-2026-09-15';
+import {
+  CLEAN_CLAUSES_2026_09_16,
+  GLM_DRAFT_2026_09_16,
+  PROVENANCE_SUFFIX_2026_09_16,
+} from '../../fixtures/charter-glm-draft-2026-09-16';
 
 /** The 14 September wording: one manager phrase became two premodifiers. */
 function runThrough(constraints: CharterConstraint[] = []): Charter {
@@ -84,7 +91,73 @@ describe('removeWording', (): void => {
   });
 });
 
+describe('stripProvenanceSuffix', (): void => {
+  it('removes a trailing provenance suffix in its bracketed and dashed forms, keeping the full stop', (): void => {
+    expect(stripProvenanceSuffix('Handle owned, prioritized Linear tickets in the Q3 close project (from manager 1:1 day-1).')).toBe(
+      'Handle owned, prioritized Linear tickets in the Q3 close project.',
+    );
+    expect(stripProvenanceSuffix('Post to public Slack channels [from manager 1:1]')).toBe('Post to public Slack channels');
+    expect(stripProvenanceSuffix('Escalate a P0 ticket - from manager 1:1 day-1')).toBe('Escalate a P0 ticket');
+    expect(stripProvenanceSuffix('Draft replies to asks in #revops-asks (source: manager 1:1, day 1).')).toBe(
+      'Draft replies to asks in #revops-asks.',
+    );
+    expect(stripProvenanceSuffix('Own routine tickets (from manager 1:1 day-1) (from manager 1:1 day-1).')).toBe(
+      'Own routine tickets.',
+    );
+  });
+
+  it('leaves brackets that are part of the clause alone', (): void => {
+    for (const clause of [
+      'Escalate to the manager (Brian).',
+      'Attend the weekly 1:1 (Fridays).',
+      'Read the day-1 notes (onboarding page).',
+      'Meet Priya (pipeline) before the Friday standup.',
+    ]) {
+      expect(stripProvenanceSuffix(clause)).toBe(clause);
+    }
+  });
+});
+
+describe('withoutProvenanceSuffixes', (): void => {
+  it('cleans every clause of the GLM draft that carried the suffix', (): void => {
+    const charter: Charter = {
+      ...runThrough(),
+      whyThisHire: GLM_DRAFT_2026_09_16.whyThisHire,
+      proposedFunction: GLM_DRAFT_2026_09_16.proposedFunction,
+      evidence: GLM_DRAFT_2026_09_16.evidence,
+      shortTermGoals: GLM_DRAFT_2026_09_16.shortTermGoals,
+      proposedBoundaries: GLM_DRAFT_2026_09_16.proposedBoundaries,
+      priorityReading: GLM_DRAFT_2026_09_16.priorityReading,
+    };
+    const cleaned = withoutProvenanceSuffixes(charter);
+    expect(cleaned.whyThisHire).toBe(CLEAN_CLAUSES_2026_09_16.whyThisHire);
+    expect(cleaned.proposedFunction).toBe(CLEAN_CLAUSES_2026_09_16.proposedFunction);
+    expect(cleaned.evidence).toEqual([{ text: CLEAN_CLAUSES_2026_09_16.evidenceText, source: 'from manager 1:1 day-1' }]);
+    expect(cleaned.shortTermGoals).toEqual(CLEAN_CLAUSES_2026_09_16.shortTermGoals);
+    expect(cleaned.proposedBoundaries).toEqual({
+      willDo: CLEAN_CLAUSES_2026_09_16.willDo,
+      willNotDo: CLEAN_CLAUSES_2026_09_16.willNotDo,
+      escalationTriggers: CLEAN_CLAUSES_2026_09_16.escalationTriggers,
+    });
+    expect(cleaned.priorityReading).toEqual(CLEAN_CLAUSES_2026_09_16.priorityReading);
+    expect(JSON.stringify(cleaned)).not.toContain(PROVENANCE_SUFFIX_2026_09_16.trim());
+    expect(withoutProvenanceSuffixes(runThrough())).toEqual(runThrough());
+  });
+});
+
 describe('normaliseConstraints', (): void => {
+  it('strips the suffix from wording before checking the clauses carry it', (): void => {
+    const result = normaliseConstraints(GLM_DRAFT_2026_09_16.constraints, runThrough());
+    expect(result).toEqual([
+      {
+        kind: 'system-boundary',
+        quote: 'Never post to public channels.',
+        wording: ['Post to public Slack channels.'],
+        origin: 'synthesis',
+      },
+    ]);
+  });
+
   it('keeps only wording the clauses carry and drops a constraint with no quote', (): void => {
     const charter = runThrough();
     const result = normaliseConstraints(
