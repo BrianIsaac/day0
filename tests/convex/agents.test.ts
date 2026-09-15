@@ -577,4 +577,41 @@ describe('the autonomous-actions switch', (): void => {
     ).toBeUndefined();
     expect(await harness.run(async (ctx) => await ctx.db.query('events').collect())).toEqual([]);
   });
+
+  it('lets only the owner choose the manager notification mode, and records the change', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await expect(
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
+    ).rejects.toThrow('forbidden');
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'per-run' })).resolves.toEqual({
+      ok: true,
+      managerNotifications: 'per-run',
+      changed: false,
+    });
+    await expect(owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' })).resolves.toEqual({
+      ok: true,
+      managerNotifications: 'digest',
+      changed: true,
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.managerNotifications).toBe('digest');
+    const changes = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+      (event) => event.type === 'agent.notifications-changed',
+    );
+    expect(changes.map((event) => event.payload)).toEqual([{ from: 'per-run', to: 'digest', reason: 'set by the manager' }]);
+  });
+
 });

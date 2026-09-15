@@ -40,6 +40,11 @@ export default defineSchema({
      * actions; skill and surface approval are unchanged. See
      * `src/work/autonomy.ts`. */
     autonomousActions: v.optional(v.boolean()),
+    /** How the manager hears about run outcomes over the chat surface.
+     * Absent reads as `per-run`: the landed note goes out as it happens and
+     * a stop is never sent. `digest` keeps both for one hourly message.
+     * Decision requests are sent at once in either mode. */
+    managerNotifications: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
     /** REMOVED 26 Aug (late): the posture ladder this toggle replaced. Kept
      * optional for one more deployment so rows the ladder wrote still
      * validate at push; nothing reads or writes it. Delete once the primary
@@ -542,6 +547,24 @@ export default defineSchema({
     ])
     .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId']),
+
+  /**
+   * What the gate tells the manager about a finished run: that work landed,
+   * or that the run stopped. Sent one per run or gathered into a digest,
+   * claimed once either way, with the provider ts as delivery evidence.
+   */
+  managerNotes: defineTable({
+    agentId: v.id('agents'),
+    workItemId: v.id('workItems'),
+    kind: v.union(v.literal('landed'), v.literal('stopped')),
+    text: v.string(),
+    createdAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    /** The digest send that claimed this note, when it went out in one. */
+    digestId: v.optional(v.id('events')),
+    providerTs: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  }).index('by_agent', ['agentId']),
 
   /** One idempotent manager-DM acknowledgement per parsed provider reply. */
   managerDecisionNotices: defineTable({

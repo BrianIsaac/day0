@@ -45,7 +45,14 @@ import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { landedWork, stoppedReason } from '../src/work/stop';
+import { landedWork, stopDetail, stoppedReason } from '../src/work/stop';
+import {
+  digestText,
+  landedNoteText,
+  managerNotificationMode,
+  stoppedNoteText,
+  type ManagerNoteKind,
+} from '../src/work/manager-notes';
 
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /** The longest rejection reason kept in full for the retry to read. */
@@ -1431,6 +1438,18 @@ export const setCompleted = internalMutation({
       payload: { workItemId: args.workItemId, output: args.output },
       createdAt: Date.now(),
     });
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+        .collect()
+    ).map(toSurfaceRecord);
+    const landed = landedWork(args.output, surfaces);
+    if (landed.length > 0) {
+      await queueManagerNote(ctx, row, 'landed', (agentName) =>
+        landedNoteText({ agentName, title: row.title, landed, outcome: 'completed' }),
+      );
+    }
   },
 });
 
@@ -1466,7 +1485,8 @@ export const setFailed = internalMutation({
         .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
         .collect()
     ).map(toSurfaceRecord);
-    const stopped = args.stopped ?? landedWork(args.output, surfaces).length === 0;
+    const landed = landedWork(args.output, surfaces);
+    const stopped = args.stopped ?? landed.length === 0;
     const reason = stopped ? stoppedReason(args.reason) : args.reason;
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
@@ -1491,6 +1511,220 @@ export const setFailed = internalMutation({
       },
       createdAt: Date.now(),
     });
+    if (args.stopped === false) return;
+    if (stopped) {
+      await queueManagerNote(ctx, row, 'stopped', (agentName) =>
+        stoppedNoteText({ agentName, title: row.title, reason: stopDetail(reason) }),
+      );
+    } else {
+      await queueManagerNote(ctx, row, 'landed', (agentName) =>
+        landedNoteText({ agentName, title: row.title, landed, outcome: 'failed', reason }),
+      );
+    }
+  },
+});
+
+/**
+ * Keep a note for the manager about a finished run, and send it when the
+ * mode says so.
+ *
+ * Per run, a landed note is sent at once and a stop is not kept at all:
+ * nothing needs deciding, and the card and the ledger already say so. In
+ * digest mode both are kept for the hourly send. Without a manager channel
+ * there is nowhere to send, so nothing is kept.
+ */
+async function queueManagerNote(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  kind: ManagerNoteKind,
+  text: (agentName: string) => string,
+): Promise<void> {
+  const agent = await ctx.db.get(row.agentId);
+  if (!agent) return;
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .collect();
+  if (!surfaces.some(isManagerChannel)) return;
+  const mode = managerNotificationMode(agent);
+  if (kind === 'stopped' && mode === 'per-run') return;
+  const noteId = await ctx.db.insert('managerNotes', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    kind,
+    text: text(agent.name),
+    createdAt: Date.now(),
+  });
+  if (mode === 'per-run') {
+    await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerNote, { noteId });
+  }
+}
+
+/** The delivery fields every manager message needs, for one agent's manager channel. */
+async function managerDelivery(ctx: MutationCtx, agentId: Id<'agents'>) {
+  const [agent, surfaceRows, grants] = await Promise.all([
+    ctx.db.get(agentId),
+    ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .collect(),
+    ctx.db
+      .query('permissionGrants')
+      .withIndex('by_agent_scope', (q) => q.eq('agentId', agentId))
+      .collect(),
+  ]);
+  const chat = surfaceRows
+    .filter(isManagerChannel)
+    .sort(
+      (left, right) =>
+        (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
+          (right.waterfallPosition ?? Number.MAX_SAFE_INTEGER) || left.createdAt - right.createdAt,
+    )[0];
+  if (!agent || !chat) return undefined;
+  return {
+    agentId,
+    agentName: agent.name,
+    surface: toSurfaceRecord(chat),
+    surfaces: surfaceRows.map(toSurfaceRecord),
+    grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
+  };
+}
+
+/** Claim one per-run note for sending. */
+export const prepareManagerNote = internalMutation({
+  args: { noteId: v.id('managerNotes') },
+  handler: async (ctx, args) => {
+    const note = await ctx.db.get(args.noteId);
+    if (!note || note.claimedAt !== undefined || note.providerTs !== undefined) {
+      return { prepared: false as const };
+    }
+    const delivery = await managerDelivery(ctx, note.agentId);
+    if (!delivery) return { prepared: false as const };
+    const requestRunId = await ctx.db.insert('events', {
+      agentId: note.agentId,
+      type: 'work.manager-note-sending',
+      payload: { workItemId: note.workItemId, noteId: note._id, kind: note.kind },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(note._id, { claimedAt: Date.now() });
+    return {
+      prepared: true as const,
+      ...delivery,
+      requestRunId,
+      workItemId: note.workItemId,
+      text: note.text,
+    };
+  },
+});
+
+export const recordManagerNote = internalMutation({
+  args: {
+    noteId: v.id('managerNotes'),
+    ts: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const note = await ctx.db.get(args.noteId);
+    if (!note) return;
+    const failure = args.failure?.slice(0, 240);
+    await ctx.db.patch(note._id, {
+      ...(args.ts ? { providerTs: args.ts } : {}),
+      ...(failure ? { failure } : {}),
+    });
+    if (failure) {
+      await ctx.db.insert('events', {
+        agentId: note.agentId,
+        type: 'work.manager-note-failed',
+        payload: { workItemId: note.workItemId, noteId: note._id, kind: note.kind, reason: failure },
+        createdAt: Date.now(),
+      });
+    }
+  },
+});
+
+/** The agents whose kept notes are due in a digest. */
+export const digestCandidates = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Id<'agents'>[]> => {
+    const agents = await ctx.db.query('agents').collect();
+    const due: Id<'agents'>[] = [];
+    for (const agent of agents) {
+      if (managerNotificationMode(agent) !== 'digest') continue;
+      const notes = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+        .collect();
+      if (notes.some((note) => note.claimedAt === undefined && note.providerTs === undefined)) {
+        due.push(agent._id);
+      }
+    }
+    return due;
+  },
+});
+
+/** Claim every kept note of one agent for a single digest send. */
+export const prepareManagerDigest = internalMutation({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent || managerNotificationMode(agent) !== 'digest') return { prepared: false as const };
+    const notes = (
+      await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+        .collect()
+    )
+      .filter((note) => note.claimedAt === undefined && note.providerTs === undefined)
+      .sort((left, right) => left.createdAt - right.createdAt);
+    if (notes.length === 0) return { prepared: false as const };
+    const delivery = await managerDelivery(ctx, args.agentId);
+    if (!delivery) return { prepared: false as const };
+    const digestId = await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: 'work.manager-digest-sending',
+      payload: { noteIds: notes.map((note) => note._id), count: notes.length },
+      createdAt: Date.now(),
+    });
+    for (const note of notes) {
+      await ctx.db.patch(note._id, { claimedAt: Date.now(), digestId });
+    }
+    return {
+      prepared: true as const,
+      ...delivery,
+      requestRunId: digestId,
+      workItemId: notes[0].workItemId,
+      noteIds: notes.map((note) => note._id),
+      text: digestText({ agentName: agent.name, notes }),
+    };
+  },
+});
+
+export const recordManagerDigest = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    noteIds: v.array(v.id('managerNotes')),
+    ts: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const failure = args.failure?.slice(0, 240);
+    for (const noteId of args.noteIds) {
+      const note = await ctx.db.get(noteId);
+      if (!note) continue;
+      // A digest that did not land releases its notes for the next one.
+      await ctx.db.patch(noteId, {
+        ...(args.ts ? { providerTs: args.ts } : { claimedAt: undefined, digestId: undefined }),
+        ...(failure ? { failure } : {}),
+      });
+    }
+    if (failure) {
+      await ctx.db.insert('events', {
+        agentId: args.agentId,
+        type: 'work.manager-digest-failed',
+        payload: { noteIds: args.noteIds, reason: failure },
+        createdAt: Date.now(),
+      });
+    }
   },
 });
 

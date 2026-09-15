@@ -239,3 +239,52 @@ export const sendManagerReplyNotice = internalAction({
     }
   },
 });
+
+/** Send one per-run note the gate kept for the manager. */
+export const sendManagerNote = internalAction({
+  args: { noteId: v.id('managerNotes') },
+  handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
+    const prepared = await ctx.runMutation(internal.work.prepareManagerNote, args);
+    if (!prepared.prepared) return { sent: false, reason: 'note already claimed' };
+    try {
+      const result = await deliverManagerMessage(ctx, prepared.workItemId, prepared, prepared.text);
+      await ctx.runMutation(internal.work.recordManagerNote, { ...args, ts: result.providerId });
+      return { sent: true };
+    } catch (error) {
+      const reason = safeFailureMessage(error, '', 'Manager note failed.');
+      await ctx.runMutation(internal.work.recordManagerNote, { ...args, failure: reason });
+      return { sent: false, reason };
+    }
+  },
+});
+
+/** Send every agent's kept notes as one digest; the cron's hourly job. */
+export const sendManagerDigests = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ sent: number; failed: number }> => {
+    const agents = await ctx.runQuery(internal.work.digestCandidates, {});
+    let sent = 0;
+    let failed = 0;
+    for (const agentId of agents) {
+      const prepared = await ctx.runMutation(internal.work.prepareManagerDigest, { agentId });
+      if (!prepared.prepared) continue;
+      try {
+        const result = await deliverManagerMessage(ctx, prepared.workItemId, prepared, prepared.text);
+        await ctx.runMutation(internal.work.recordManagerDigest, {
+          agentId,
+          noteIds: prepared.noteIds,
+          ts: result.providerId,
+        });
+        sent += 1;
+      } catch (error) {
+        await ctx.runMutation(internal.work.recordManagerDigest, {
+          agentId,
+          noteIds: prepared.noteIds,
+          failure: safeFailureMessage(error, '', 'Manager digest failed.'),
+        });
+        failed += 1;
+      }
+    }
+    return { sent, failed };
+  },
+});

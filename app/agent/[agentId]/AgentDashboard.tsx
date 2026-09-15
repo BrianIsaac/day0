@@ -38,6 +38,11 @@ import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
 import { isStopped, stopDetail } from '../../../src/work/stop';
+import {
+  managerNotificationMode,
+  NOTIFICATION_MODE_LABELS,
+  type ManagerNotificationMode,
+} from '../../../src/work/manager-notes';
 import type { AgentMetrics } from '../../../convex/metrics';
 
 interface Props {
@@ -360,6 +365,51 @@ export function AutonomyControl({
   );
 }
 
+/**
+ * How the manager hears about run outcomes over the chat surface: as each
+ * run finishes, or in one hourly digest. Decision requests are sent at once
+ * in either mode, so the choice only quietens what is for information.
+ */
+export function NotificationModeControl({
+  mode,
+  onChange,
+}: {
+  mode: ManagerNotificationMode;
+  onChange: (mode: ManagerNotificationMode) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <label
+      className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
+      title="Decision requests are always sent at once. This sets how you hear that work landed or a run stopped."
+    >
+      <span>Manager DMs</span>
+      <select
+        aria-label="Manager DMs"
+        value={mode}
+        disabled={busy}
+        onChange={(event) => {
+          const next = event.target.value as ManagerNotificationMode;
+          setBusy(true);
+          setError(null);
+          onChange(next)
+            .catch((err: unknown) => setError((err as Error).message))
+            .finally(() => setBusy(false));
+        }}
+        className="bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
+      >
+        {(Object.keys(NOTIFICATION_MODE_LABELS) as ManagerNotificationMode[]).map((option) => (
+          <option key={option} value={option}>
+            {NOTIFICATION_MODE_LABELS[option]}
+          </option>
+        ))}
+      </select>
+      {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
+    </label>
+  );
+}
+
 export function DashboardHeader({
   agent,
   charter,
@@ -370,6 +420,7 @@ export function DashboardHeader({
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
+  const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
     deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
     'day-one-in-progress': {
@@ -408,6 +459,12 @@ export function DashboardHeader({
           {/* In real mode the chip is the manager's autonomous-actions
               switch; the hosted mock has no gate for the switch to change, so
               it keeps the static label. */}
+          {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
+            <NotificationModeControl
+              mode={managerNotificationMode(agent)}
+              onChange={(mode) => setManagerNotifications({ agentId: agent._id, mode })}
+            />
+          ) : null}
           {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
             <AutonomyControl
               on={autonomousActionsOn(agent)}

@@ -1864,6 +1864,102 @@ describe('the exact-action gate', (): void => {
     ]);
   });
 
+  it('keeps a note for the manager when work landed, and none for a stop, per run', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', undefined, { withSlack: true });
+    const comment = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'x' }) },
+    };
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId,
+      runId,
+      output: {
+        draft: '',
+        notes: '',
+        actions: [comment],
+        applied: [{ tool: 'mcp.call', ok: true, effect: 'commented on REVOPS-1', idempotencyKey: 'a' }],
+      },
+    });
+    const notes = await harness.run(
+      async (ctx) => await ctx.db.query('managerNotes').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+    );
+    expect(notes.map((note) => [note.kind, note.workItemId, note.claimedAt])).toEqual([['landed', workItemId, undefined]]);
+    expect(notes[0].text).toBe('Priya finished “Add the close-summary audit note”: 1 change landed.\n- commented on REVOPS-1');
+    expect(await scheduledFunctionNames(harness)).toContain('managerChannelActions:sendManagerNote');
+
+    // A stop is read on the card, not sent: nothing needs deciding.
+    const { workItemId: stoppedItem, runId: stoppedRun } = await seed(harness, 'executing', undefined, { withSlack: true });
+    await harness.mutation(internal.work.setFailed, {
+      workItemId: stoppedItem,
+      runId: stoppedRun,
+      reason: 'the read did not land',
+      output: { draft: '', notes: '', actions: [comment], applied: [{ tool: 'mcp.call', ok: false, reason: 'timeout', idempotencyKey: 'a' }] },
+    });
+    const all = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+    expect(all.filter((note) => note.workItemId === stoppedItem)).toEqual([]);
+
+    // Without a manager channel there is nowhere to send, so nothing is kept.
+    const bare = convexTest(schema, allConvexModules());
+    const { workItemId: bareItem, runId: bareRun } = await seed(bare, 'executing');
+    await bare.mutation(internal.work.setCompleted, {
+      workItemId: bareItem,
+      runId: bareRun,
+      output: { draft: '', notes: '', actions: [comment], applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'a' }] },
+    });
+    expect(await bare.run(async (ctx) => await ctx.db.query('managerNotes').collect())).toEqual([]);
+  });
+
+  it('keeps both landed and stopped notes for the hourly digest without sending them', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing', undefined, { withSlack: true });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'digest' });
+    });
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      runId,
+      reason: 'the read did not land',
+      output: { draft: '', notes: '', actions: [], applied: [] },
+    });
+    const { workItemId: landedItem, runId: landedRun } = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'Close REVOPS-2',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'executing',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const run = await ctx.db.insert('events', { agentId, type: 'work.execution-claimed', payload: { workItemId: id }, createdAt: 1 });
+      await ctx.db.patch(id, { executionRunId: run });
+      return { workItemId: id, runId: run };
+    });
+    await harness.mutation(internal.work.setCompleted, {
+      workItemId: landedItem,
+      runId: landedRun,
+      output: {
+        draft: '',
+        notes: '',
+        actions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{}' } }],
+        applied: [{ tool: 'mcp.call', ok: true, effect: 'commented', idempotencyKey: 'a' }],
+      },
+    });
+    const notes = await harness.run(
+      async (ctx) => await ctx.db.query('managerNotes').withIndex('by_agent', (q) => q.eq('agentId', agentId)).collect(),
+    );
+    expect(notes.map((note) => note.kind)).toEqual(['stopped', 'landed']);
+    expect(notes[0].text).toBe('Priya stopped on “Add the close-summary audit note”: the read did not land. Nothing landed; Retry stands in day0.');
+    expect(await scheduledFunctionNames(harness)).not.toContain('managerChannelActions:sendManagerNote');
+    expect(await harness.query(internal.work.digestCandidates, {})).toEqual([agentId]);
+  });
+
   it('records a failure with nothing landed as stopped, and one after a landed write as failed', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

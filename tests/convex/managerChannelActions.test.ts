@@ -414,3 +414,97 @@ it('does not transport a request superseded while its credential was being read'
   expect(row?.decision?.ts).toBe('1787768500.000100');
   expect(row?.decision?.requestFailedAt).toBeUndefined();
 });
+
+describe('the notes the gate sends for the manager', (): void => {
+  function recordSends(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({
+          url: input.href,
+          authorization: new Headers(init.headers).get('authorization') ?? '',
+          body: String(init.body),
+        });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+  }
+
+  async function keepNote(
+    harness: ReturnType<typeof convexTest>,
+    agentId: Id<'agents'>,
+    workItemId: Id<'workItems'>,
+    kind: 'landed' | 'stopped',
+    text: string,
+  ): Promise<Id<'managerNotes'>> {
+    return await harness.run(
+      async (ctx) => await ctx.db.insert('managerNotes', { agentId, workItemId, kind, text, createdAt: Date.now() }),
+    );
+  }
+
+  it('sends a landed note once and records the provider ts', async (): Promise<void> => {
+    recordSends();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    const noteId = await keepNote(harness, agentId, workItemId, 'landed', 'ops worker finished “Verify the runbook”: 1 change landed.');
+
+    await expect(harness.action(internal.managerChannelActions.sendManagerNote, { noteId })).resolves.toEqual({ sent: true });
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0].body)).toMatchObject({ channel: 'D0MANAGER' });
+    expect(JSON.parse(sent[0].body).text).toContain('ops worker finished “Verify the runbook”: 1 change landed.');
+    expect(await harness.run(async (ctx) => await ctx.db.get(noteId))).toMatchObject({
+      claimedAt: expect.any(Number),
+      providerTs: 'provider-1',
+    });
+    await expect(harness.action(internal.managerChannelActions.sendManagerNote, { noteId })).resolves.toEqual({
+      sent: false,
+      reason: 'note already claimed',
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('sends one digest for every kept note and nothing on the next hour', async (): Promise<void> => {
+    recordSends();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'digest' });
+    });
+    const first = await keepNote(harness, agentId, workItemId, 'stopped', 'ops worker stopped on “A”: no owner.');
+    const second = await keepNote(harness, agentId, workItemId, 'landed', 'ops worker finished “B”: 1 change landed.');
+
+    await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 1, failed: 0 });
+    expect(sent).toHaveLength(1);
+    const text = JSON.parse(sent[0].body).text as string;
+    expect(text).toContain('ops worker: 2 updates since the last digest.');
+    expect(text).toContain('ops worker stopped on “A”: no owner.');
+    expect(text).toContain('ops worker finished “B”: 1 change landed.');
+    for (const noteId of [first, second]) {
+      expect(await harness.run(async (ctx) => await ctx.db.get(noteId))).toMatchObject({
+        providerTs: 'provider-1',
+        digestId: expect.any(String),
+      });
+    }
+    await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 0, failed: 0 });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('releases the notes of a digest that did not land for the next one', async (): Promise<void> => {
+    vi.stubGlobal('fetch', vi.fn(async (): Promise<Response> => new Response('{"ok":false,"error":"channel_not_found"}', { status: 200, headers: { 'content-type': 'application/json' } })));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { managerNotifications: 'digest' });
+    });
+    const noteId = await keepNote(harness, agentId, workItemId, 'landed', 'x');
+    await expect(harness.action(internal.managerChannelActions.sendManagerDigests, {})).resolves.toEqual({ sent: 0, failed: 1 });
+    const note = await harness.run(async (ctx) => await ctx.db.get(noteId));
+    expect(note?.providerTs).toBeUndefined();
+    expect(note?.claimedAt).toBeUndefined();
+    expect(note?.failure).toBeTruthy();
+    expect(await harness.query(internal.work.digestCandidates, {})).toEqual([agentId]);
+  });
+});

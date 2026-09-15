@@ -19,6 +19,7 @@ import {
   landedHeadline,
   ManagerFeedbackNote,
   MetricsCard,
+  NotificationModeControl,
   PendingActions,
   pendingHeadline,
   PlanExecutionLedger,
@@ -415,6 +416,18 @@ describe('judge-facing dashboard evidence', (): void => {
     expect(html).toContain('at its final authority check');
     expect(html).toContain('Actions already approved by you keep their exact approval');
     expect(html).not.toContain('role="dialog"');
+  });
+});
+
+describe('the manager DM mode control', (): void => {
+  it('offers per-run and hourly digest, with the current mode selected', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(NotificationModeControl, { mode: 'digest', onChange: async (): Promise<void> => undefined }),
+    );
+    expect(html).toContain('Manager DMs');
+    expect(html).toContain('<option value="per-run">per run</option>');
+    expect(html).toContain('<option value="digest" selected="">hourly digest</option>');
+    expect(html).toContain('Decision requests are always sent at once');
   });
 });
 
