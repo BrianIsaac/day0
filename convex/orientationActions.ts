@@ -9,6 +9,7 @@ import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
+import { storedCredentialGuardReason } from './credentialCryptoActions';
 import { browserTitleMarker } from '../src/surfaces/browser';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
@@ -59,6 +60,9 @@ type StoredCredentialSummary = {
   kind: 'value' | 'location' | 'oauth';
   label: string;
   revokedAt?: number;
+  status?: 'suspect' | 'superseded';
+  ciphertext?: string;
+  iv?: string;
 };
 
 /** The stored row an orientation run attaches to a surface. */
@@ -983,7 +987,7 @@ export function candidateCredentialRefs(pageRef: string, label: string): string[
  *   itself is unavailable (lane A not deployed).
  */
 async function resolveStoredCredential(
-  ctx: { runQuery: ActionCtx['runQuery'] },
+  ctx: OrientationCtx,
   userId: string,
   sourceId: Id<'docSources'>,
   pageRef: string,
@@ -1002,8 +1006,15 @@ async function resolveStoredCredential(
       return undefined;
     }
     if (!row) continue;
-    if (row.revokedAt !== undefined) continue;
+    if (row.revokedAt !== undefined || row.status !== undefined) continue;
     if (row.label.trim().toLowerCase() === wanted) {
+      const reason = row.kind === 'location' ? undefined : storedCredentialGuardReason(row);
+      if (reason) {
+        await ctx.runMutation(internal.credentials.markSuspect, {
+          credentialId: row._id, ciphertext: row.ciphertext, reason,
+        });
+        continue;
+      }
       return { credentialId: row._id, kind: row.kind };
     }
   }
@@ -1255,7 +1266,9 @@ export async function orientSurface(
     endpoint,
     credentialId: stored?.credentialId,
     credentialKind: stored?.kind,
-    credentialLocation: credential.found === 'value' ? undefined : credential.summary,
+    credentialLocation: credential.found === 'value'
+      ? stored ? undefined : 'Ask the system administrator to land a valid credential; the stored marker could not be resolved.'
+      : credential.summary,
     expiresInDays: draft.expiresInDays,
   });
   return { outcome: recorded ? 'proposed' : 'skipped', surfaceId: surface._id };

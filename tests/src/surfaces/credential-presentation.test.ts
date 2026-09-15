@@ -285,3 +285,12 @@ describe('channels the app has not been invited to', (): void => {
     expect(presentChannelsNotJoined(['#revops'])).toContain('Invite this employee to #revops');
   });
 });
+
+it('offers replacement beneath an authentication failure even with a bound credential', () => {
+  const input = {
+    credentialId: 'credential-1',
+    verdict: 'ungranted',
+    summary: { _id: 'credential-1', label: 'Slack bot token', source: 'entered' as const },
+  };
+  expect(presentSurfaceCredential(input)).toMatchObject({ canLand: true, kind: 'landing' });
+});

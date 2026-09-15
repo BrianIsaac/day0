@@ -685,17 +685,46 @@ export const finishSync = internalMutation({
       .withIndex('by_user_source_ref', (index) =>
         index.eq('userId', source.userId).eq('source.sourceId', source._id),
       )
-      .collect();
+      .take(1_001);
+    if (credentials.length > 1_000) throw new Error('Source exceeds 1,000 credentials.');
     for (const credential of credentials) {
-      // Only a page-derived credential is retired when its page stops carrying
-      // it. A typed value and an OAuth grant were never on a page, so a sync
-      // has nothing to say about them.
-      if (
-        typeof credential.source !== 'string' &&
-        !currentCredentialRefs.has(credential.source.ref) &&
-        !credential.revokedAt
-      ) {
-        await ctx.db.patch(credential._id, { revokedAt: Date.now() });
+      if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref)) continue;
+      await ctx.db.patch(credential._id, {
+        status: 'superseded',
+        statusReason: 'No longer detected in synced documentation.',
+        revokedAt: credential.revokedAt ?? Date.now(),
+      });
+      const surfaces = await ctx.db.query('surfaces')
+        .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
+        .take(1_001);
+      if (surfaces.length > 1_000) throw new Error('Credential exceeds 1,000 bound surfaces.');
+      for (const surface of surfaces) {
+        const request = surface.request as { credential?: Record<string, unknown> } | undefined;
+        const location = surface.credentialLocation ??
+          'Ask the system administrator to land a valid credential using the linked documentation.';
+        await ctx.db.patch(surface._id, {
+          credentialId: undefined,
+          credentialKind: undefined,
+          credentialRef: undefined,
+          credentialLocation: location,
+          credentialLanded: false,
+          request: request ? { ...request, credential: {
+            ...request.credential, found: 'location', location, governanceFinding: undefined,
+          } } : undefined,
+          verdict: ['connected', 'approved', 'listed-dead'].includes(surface.verdict) ? 'ungranted' : surface.verdict,
+          reason: 'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.',
+          // A probe that already decrypted the retired value cannot reconnect this surface.
+          probeGeneration: (surface.probeGeneration ?? 0) + 1,
+          toolAllowlist: undefined,
+          toolArguments: undefined,
+          lastVerifiedAt: undefined,
+          providerIdentityId: undefined,
+          providerWorkspaceId: undefined,
+          managerDmChannelId: undefined,
+          managerUserId: undefined,
+          managerName: undefined,
+          channelsNotJoined: undefined,
+        });
       }
     }
     const pageCount = run.pageCount + args.pageCount;

@@ -158,3 +158,27 @@ describe('working material the model mistakes for a secret', (): void => {
   });
 });
 
+
+it.each(['channels:history', 'im:write', 'im:history', 'users:read.email', 'linear:read', 'slack:write', 'repo:status', 'verbs:get'])(
+  'keeps scope %s and partial spans in scope lists', (value) => {
+    for (const text of [`["${value}"]`, `'${value}', 'other:read'`, `Use \`${value}\``, `${value}, other:read`]) {
+      expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toBeUndefined();
+      const tail = value.split(':')[1];
+      expect(guardSecretSpan(text, spanOf(text, tail), 'credential')).toBeUndefined();
+    }
+    expect(guardReason(value)).toBe('permission scope');
+  },
+);
+
+it('keeps long and versioned permission identifiers without treating opaque halves as scopes', () => {
+  for (const value of ['organization:read_all_repository_members_and_permissions', 'version2026:read']) {
+    const text = `["${value}"]`;
+    expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toBeUndefined();
+    expect(guardReason(value)).toBe('permission scope');
+  }
+  for (const value of ['scope:a1b2c3d4e5f6g7h8', 'scope:q7mz2kv9r5tp8wn4', 'scope:qwertyuiopasdfghj', 'scope:123456789', 'scope:MixedCase9Token']) {
+    const text = `["${value}"]`;
+    expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toEqual(spanOf(text, value));
+    expect(guardReason(value)).toBeUndefined();
+  }
+});

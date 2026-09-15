@@ -1,5 +1,8 @@
 /** @vitest-environment node */
 
+import { randomBytes } from 'node:crypto';
+import { encrypt } from '../../src/lib/credential-crypto';
+import { presentSurfaceCredential } from '../../src/surfaces/credential-presentation';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -734,6 +737,7 @@ describe('orientation run', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
   });
 
   it('discovers systems from the linked real documentation before orientation', async (): Promise<void> => {
@@ -1009,6 +1013,32 @@ describe('orientation run', (): void => {
     expect(surface.whereFound).toEqual([
       expect.objectContaining({ ref: 'Northstar CRM', quote: 'Northstar CRM' }),
     ]);
+  });
+
+  it('refuses a stored scope at orientation and marks it suspect without exposing its value', async () => {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    model.pathFor = () => 'documented-api';
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId } = await seedOrientation(harness, {
+      'slack.md': '# Slack automation policy\nSlack API: https://slack.com/api/\n<credential: slack credential, stored>\nThe installing administrator lands the bot token.',
+    }, [{ name: 'Slack', class: 'chat' }]);
+    const credentialId = await harness.run(async (ctx) => await ctx.db.insert('credentials', {
+      userId: 'owner', kind: 'value', label: 'slack credential',
+      source: { sourceId, ref: 'slack.md' }, createdAt: 1,
+      ...encrypt('channels:history', key),
+    }));
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
+    const slack = (await surfacesBySlug(harness, agentId)).slack;
+    expect(slack.credentialId).toBeUndefined();
+    expect(await harness.query(internal.credentials.getInternal, { credentialId })).toMatchObject({
+      status: 'suspect', statusReason: 'permission scope',
+    });
+    const request = slack.request as { credential: { found: 'value'; method: 'bot-token' } };
+    expect(presentSurfaceCredential({ credential: request.credential, credentialLocation: slack.credentialLocation }).canLand).toBe(true);
+    expect(JSON.stringify(slack)).not.toContain('channels:history');
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow('unavailable');
+    expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual([]);
   });
 
   it('builds credential findings from all four sanitised Notion fixtures', async (): Promise<void> => {
@@ -1370,6 +1400,7 @@ describe('the browser floor in orientation', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
   });
 
   it('proposes browser-driven for a page that documents a web UI and denies an API', async (): Promise<void> => {

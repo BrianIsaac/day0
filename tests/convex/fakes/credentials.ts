@@ -1,3 +1,4 @@
+import { encrypt } from '../../../src/lib/credential-crypto';
 import type { GenericId } from 'convex/values';
 import { v } from 'convex/values';
 import { internalAction, internalQuery } from '../../../convex/_generated/server';
@@ -48,11 +49,13 @@ export const bySourceForStore = internalQuery({
     kind: 'value' | 'location' | 'oauth';
     label: string;
     revokedAt?: number;
+    ciphertext: string;
+    iv: string;
   } | null> => {
     const row = fakeCredentialState().rows.get(
       fakeCredentialKey(args.userId, String(args.sourceId), args.ref),
     );
-    return row ? { _id: row._id, kind: 'value', label: row.label, revokedAt: row.revokedAt } : null;
+    return row ? { _id: row._id, kind: 'value', label: row.label, revokedAt: row.revokedAt, ...encrypt(row.plaintext, process.env.DAY0_CREDENTIAL_KEY!) } : null;
   },
 });
 

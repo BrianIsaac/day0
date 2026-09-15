@@ -7,6 +7,7 @@ import {
   decrypt as decryptCredential,
   encrypt as encryptCredential,
 } from '../src/lib/credential-crypto';
+import { guardReason } from '../src/redaction/guard';
 import { OWNER_KNOWN_VALUE_CAP, OWNER_KNOWN_VALUES_CAP_REASON } from '../src/redaction/known-values';
 
 /**
@@ -51,7 +52,7 @@ export const open = internalAction({
 export const ownerValues = internalAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<string[]> => {
-    const { overflow, rows }: { overflow: boolean; rows: Array<{ ciphertext: string; iv: string }> } =
+    const { overflow, rows }: { overflow: boolean; rows: Array<{ ciphertext: string; iv: string; pageDerived: boolean }> } =
       await ctx.runQuery(internal.credentials.activeValuesForOwner, { userId: args.userId });
     if (overflow) {
       console.error(
@@ -69,8 +70,20 @@ export const ownerValues = internalAction({
       } catch {
         continue;
       }
-      if (plaintext) values.add(plaintext);
+      // A false page detection must not perpetuate itself through exact-value redaction.
+      if (plaintext && !(row.pageDerived && guardReason(plaintext))) values.add(plaintext);
     }
     return [...values];
   },
 });
+
+/** Inspect a stored value in-process; only a fixed guard reason leaves this boundary. */
+export function storedCredentialGuardReason(row: { ciphertext?: string; iv?: string }): string | undefined {
+  if (row.ciphertext === undefined || row.iv === undefined) return 'credential material unavailable';
+  try {
+    const value = decryptCredential({ ciphertext: row.ciphertext, iv: row.iv }, requireCredentialKey());
+    return guardReason(value);
+  } catch {
+    return 'credential material unreadable';
+  }
+}

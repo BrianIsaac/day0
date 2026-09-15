@@ -116,6 +116,8 @@ export const persistEncrypted = internalMutation({
       appId: args.appId,
       lastUsedAt: args.reactivate ? undefined : existing.lastUsedAt,
       revokedAt: args.reactivate ? undefined : existing.revokedAt,
+      status: undefined,
+      statusReason: undefined,
     });
     return existing._id;
   },
@@ -134,6 +136,8 @@ export const updateMetadata = internalMutation({
       kind: args.kind,
       label: args.label,
       appId: args.appId,
+      status: undefined,
+      statusReason: undefined,
     });
   },
 });
@@ -172,7 +176,7 @@ export const activeValuesForOwner = internalQuery({
   handler: async (
     ctx,
     args,
-  ): Promise<{ overflow: boolean; rows: Array<{ _id: Id<'credentials'>; ciphertext: string; iv: string }> }> => {
+  ): Promise<{ overflow: boolean; rows: Array<{ _id: Id<'credentials'>; ciphertext: string; iv: string; pageDerived: boolean }> }> => {
     const rows = await ctx.db
       .query('credentials')
       .withIndex('by_userId', (index) => index.eq('userId', args.userId))
@@ -180,8 +184,8 @@ export const activeValuesForOwner = internalQuery({
     return {
       overflow: rows.length > OWNER_KNOWN_VALUE_CAP,
       rows: rows.flatMap((row) =>
-        !row.revokedAt && row.ciphertext !== undefined && row.iv !== undefined
-          ? [{ _id: row._id, ciphertext: row.ciphertext, iv: row.iv }]
+        !row.revokedAt && !row.status && row.ciphertext !== undefined && row.iv !== undefined
+          ? [{ _id: row._id, ciphertext: row.ciphertext, iv: row.iv, pageDerived: typeof row.source !== 'string' }]
           : [],
       ),
     };
@@ -338,6 +342,7 @@ export const decrypt = internalAction({
     if (
       !credential ||
       credential.revokedAt ||
+      credential.status !== undefined ||
       credential.ciphertext === undefined ||
       credential.iv === undefined
     ) {
@@ -383,6 +388,8 @@ export const summaryForOwner = query({
       createdAt: credential.createdAt,
       lastUsedAt: credential.lastUsedAt,
       revokedAt: credential.revokedAt,
+      status: credential.status,
+      statusReason: credential.statusReason,
     }));
   },
 });
@@ -394,5 +401,15 @@ export const countStored = internalQuery({
     const credentials = await ctx.db.query('credentials').take(1_001);
     if (credentials.length > 1_000) throw new Error('Credential count exceeds the setup limit.');
     return credentials.filter((credential) => !credential.revokedAt).length;
+  },
+});
+
+/** Quarantine only the ciphertext orientation inspected, without racing a rotation. */
+export const markSuspect = internalMutation({
+  args: { credentialId: v.id('credentials'), ciphertext: v.optional(v.string()), reason: v.string() },
+  handler: async (ctx, args): Promise<void> => {
+    const row = await ctx.db.get(args.credentialId);
+    if (!row || row.ciphertext !== args.ciphertext || row.revokedAt || row.status === 'superseded') return;
+    await ctx.db.patch(row._id, { status: 'suspect', statusReason: args.reason });
   },
 });
