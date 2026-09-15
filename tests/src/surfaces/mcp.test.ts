@@ -125,6 +125,12 @@ function adapter(
 }
 
 describe('MCP adapter', (): void => {
+  it('applies outcome redaction to extracted provider identifiers', async () => {
+    const client = fakeClient({ linear_save_comment: async () => ({ id: 'password: hunter2' }) });
+    const result = await adapter(client).apply(ctx, run, commentCall, 0, 'k');
+    expect(result.providerId).toBe('password: <redacted>');
+  });
+
   it('marks the row degraded when redacting its extracted error fails', async () => {
     let calls = 0;
     const spanModel = { name: 'intermittent', spans: async () => {

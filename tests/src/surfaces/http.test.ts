@@ -88,6 +88,12 @@ function adapter(
 }
 
 describe('HTTP adapter', (): void => {
+  it('applies outcome redaction to extracted provider identifiers', async () => {
+    const result = await adapter(fakeFetch(() => Response.json({ id: 'password: hunter2' })))
+      .apply(ctx, run, post, 0, 'k');
+    expect(result.providerId).toBe('password: <redacted>');
+  });
+
   it('marks the row degraded when redacting its extracted error fails', async () => {
     let calls = 0;
     const spanModel = { name: 'intermittent', spans: async () => {

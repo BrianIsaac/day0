@@ -12,7 +12,7 @@ import {
   type ParsedHttpRequest,
 } from './policy';
 import { hasPlaceholder, injectSecret, SecretTemplateError } from './secrets';
-import { redactOutcome, redactSecret } from './redact';
+import { redactOutcome } from './redact';
 import type { SpanModel } from '../redaction/client';
 import { isSlackApiEndpoint, slackApiBaseUrl } from './slack-endpoint';
 import type {
@@ -283,14 +283,15 @@ export class HttpAdapter implements SurfaceAdapter {
           idempotencyKey,
         };
       }
+      const rawId = providerIdFrom(payload);
+      const identifier = rawId ? await redactOutcome(rawId, secret, this.deps.spanModel) : undefined;
       return {
         tool: action.tool,
         ok: true,
         effect: clipEffect(`HTTP ${response.status} · ${summary}`, effectLength),
-        providerId: providerIdFrom(payload)
-          ? clipEffect(redactSecret(providerIdFrom(payload) ?? '', secret), EFFECT_LENGTH)
-          : undefined,
+        providerId: identifier ? clipEffect(identifier.text, EFFECT_LENGTH) : undefined,
         ...redaction,
+        ...(identifier?.redaction ? { redaction: identifier.redaction } : {}),
         idempotencyKey,
       };
     } catch (error) {

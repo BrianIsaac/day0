@@ -12,7 +12,7 @@ import {
   type ParsedMcpCall,
 } from './policy';
 import { injectSecret } from './secrets';
-import { redactOutcome, redactSecret } from './redact';
+import { redactOutcome } from './redact';
 import type { SpanModel } from '../redaction/client';
 import { createSecretMcpClient } from './mcp-client';
 import {
@@ -613,6 +613,9 @@ export class McpAdapter implements SurfaceAdapter {
           browserDriven && call.tool === 'browser_snapshot'
             ? browserSnapshotEvidence(text)
             : undefined;
+        const identifier = result.providerId
+          ? await redactOutcome(result.providerId, bearer, this.deps.spanModel)
+          : undefined;
         return {
           tool: action.tool,
           ok: true,
@@ -620,10 +623,9 @@ export class McpAdapter implements SurfaceAdapter {
             `${call.tool} on ${surface.slug} · ${(evidence ?? text) || 'ok'}`,
             writeAttempted ? EFFECT_LENGTH : READ_EFFECT_LENGTH,
           ),
-          providerId: result.providerId
-            ? clipEffect(redactSecret(result.providerId, bearer), EFFECT_LENGTH)
-            : undefined,
+          providerId: identifier ? clipEffect(identifier.text, EFFECT_LENGTH) : undefined,
           ...redaction,
+          ...(identifier?.redaction ? { redaction: identifier.redaction } : {}),
           idempotencyKey,
         };
       } finally {
