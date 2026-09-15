@@ -531,6 +531,37 @@ export default defineSchema({
     .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId']),
 
+  /** One question for the manager per (agent, question key): an open
+   * question of the charter, asked once at the first plan approval whose plan
+   * or candidate touched it. The answer becomes a charter amendment. The
+   * record shape is `ManagerQuestionRecord` in `src/agent/manager-questions.ts`. */
+  managerQuestions: defineTable({
+    agentId: v.id('agents'),
+    /** Stable across charter versions: the normalised question text. */
+    key: v.string(),
+    question: v.string(),
+    context: v.object({
+      touchedBy: v.union(v.literal('plan'), v.literal('candidate')),
+      text: v.string(),
+      words: v.array(v.string()),
+    }),
+    askedAt: v.number(),
+    workItemId: v.id('workItems'),
+    /** The charter version whose open question this was. */
+    charterId: v.id('charters'),
+    answer: v.optional(
+      v.object({
+        text: v.string(),
+        answeredAt: v.number(),
+        via: v.union(v.literal('dashboard'), v.literal('plan-approval'), v.literal('channel')),
+        amendedCharterId: v.optional(v.id('charters')),
+      }),
+    ),
+  })
+    .index('by_agent', ['agentId'])
+    .index('by_agent_key', ['agentId', 'key'])
+    .index('by_work_item', ['workItemId']),
+
   /** One idempotent manager-DM acknowledgement per parsed provider reply. */
   managerDecisionNotices: defineTable({
     agentId: v.id('agents'),

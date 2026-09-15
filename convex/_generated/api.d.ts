@@ -26,6 +26,7 @@ import type * as events from "../events.js";
 import type * as exportActions from "../exportActions.js";
 import type * as intakeActions from "../intakeActions.js";
 import type * as managerChannelActions from "../managerChannelActions.js";
+import type * as managerQuestions from "../managerQuestions.js";
 import type * as metrics from "../metrics.js";
 import type * as mock from "../mock.js";
 import type * as mockSeed from "../mockSeed.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   exportActions: typeof exportActions;
   intakeActions: typeof intakeActions;
   managerChannelActions: typeof managerChannelActions;
+  managerQuestions: typeof managerQuestions;
   metrics: typeof metrics;
   mock: typeof mock;
   mockSeed: typeof mockSeed;
