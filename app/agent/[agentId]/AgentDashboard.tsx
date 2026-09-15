@@ -1057,6 +1057,7 @@ interface LedgerRow {
   providerId?: string;
   outcomeUnknown?: boolean;
   idempotencyKey?: string;
+  redaction?: 'structural-only';
 }
 
 interface PlanStepOutcomeRow {
@@ -1652,6 +1653,13 @@ export function WorkItemCard({
           account of the work; this list is what the work environment actually
           received. A reader who only ever sees the draft cannot tell the two
           apart, which is the whole of the failure this panel answers. */}
+      {appliedActions.some((action) => action.redaction === 'structural-only') ? (
+        <p className="mt-3 p-2 rounded-md border border-[var(--color-warn)]/30 text-xs text-[var(--color-warn)]">
+          Limited redaction: some provider evidence was checked only against known credential values
+          and credential formats. It may still contain secrets or personal data.
+        </p>
+      ) : null}
+
       {landedActions.length > 0 ? (
         <div className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs">
           <p className="text-[var(--color-ok)] font-medium mb-1">{landedHeadline(landedActions)}</p>
