@@ -160,12 +160,27 @@ describe('the static gate on an authored skill', (): void => {
     ]);
   });
 
-  it('says how to declare each undeclared placeholder and quotes the taught example line once', (): void => {
+  it('passes the 16 Sep body once its bare declarations name the placeholders the body uses, and still refuses one it does not declare', (): void => {
     const body = [
       '# Value refresh on an analytics surface',
       '## Inputs',
       '- analytics-surface: the tile the work names.',
-      '- requested-value: the figure the candidate names.',
+      '- `requested-value`: the figure the candidate names.',
+      '| `<record-id>` | the candidate id |',
+      '## Procedure',
+      'Open <analytics-surface>, enter <requested-value>, comment on <record-id>.',
+    ].join('\n');
+    expect(authoredSkillIssues({ body, smokeTest: reusableSmoke })).toEqual([]);
+    expect(authoredSkillIssues({ body: `${body}\nThen post to <reply-channel>.`, smokeTest: reusableSmoke })).toEqual([
+      'SKILL.md uses `<reply-channel>` without declaring it under `## Inputs`; declare it there as a line starting with `<reply-channel>`, as in: - `<record-id>`: the candidate\'s identifier on the surface the work came from (the `Refs:` line or the candidate id).',
+    ]);
+  });
+
+  it('says how to declare each undeclared placeholder and quotes the taught example line once', (): void => {
+    const body = [
+      '# Value refresh on an analytics surface',
+      '## Inputs',
+      'The tile the work names is analytics-surface and the figure it states is requested-value.',
       '## Procedure',
       'Open <analytics-surface>, enter <requested-value>, comment on <record-id>.',
     ].join('\n');
