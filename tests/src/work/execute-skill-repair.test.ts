@@ -1463,6 +1463,20 @@ describe('real-mode argument repair', (): void => {
       expect(withArgumentRepairs([readRow, landed], undefined)).toEqual([readRow, landed]);
     });
 
+    it.each([
+      '{"issueId":"REVOPS-7","body":"Set to 99%."}',
+      '{"issueId":"REVOPS-8","body":"Set to 74%."}',
+      '{"issueId":"Set to 74%.","body":"REVOPS-7"}',
+      '{"body":"Set to 74%."}',
+    ])('refuses a key repair that changes or loses a payload value: %s', async (toolArgsJson) => {
+      recorded.outputs.push({ toolArgsJson });
+      const result = await repairHeldWriteArguments({
+        actions: [write(WRONG_KEY)], surfaces: [linear], skill: { name: 'refresh-tile' }, candidate,
+      });
+      expect(result.actions).toEqual([write(WRONG_KEY)]);
+      expect(result.argumentRepairs[0]?.repaired).toBe(false);
+    });
+
     it('keeps the first attempt and says the repair failed when the model returns nothing usable or a payload the schema still refuses', async (): Promise<void> => {
       recorded.outputs.push({ toolArgsJson: 'not json' });
       const unparsable = await repairHeldWriteArguments({

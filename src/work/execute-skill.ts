@@ -2327,6 +2327,23 @@ export interface RepairHeldWriteArgumentsArgs {
   onAdditionalModelCall?: () => void;
 }
 
+function argumentValue(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) =>
+    entry && typeof entry === 'object' && !Array.isArray(entry)
+      ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b)))
+      : entry);
+}
+
+function preservesWriteValues(row: RepairableCall, replacement: ParsedMcpCall): boolean {
+  if (replacement.surface !== row.call.surface || replacement.tool !== row.call.tool) return false;
+  const names = row.surface.toolArguments?.find((entry) => entry.tool === row.call.tool)?.arguments ?? [];
+  const original = Object.entries(row.call.toolArgs);
+  if (original.some(([key, value]) => names.includes(key) &&
+    argumentValue(replacement.toolArgs[key]) !== argumentValue(value))) return false;
+  const values = (args: Record<string, unknown>) => Object.values(args).map(argumentValue).sort();
+  return JSON.stringify(values(row.call.toolArgs)) === JSON.stringify(values(replacement.toolArgs));
+}
+
 /**
  * Give every write the probed schema refuses one repair before it is held.
  *
@@ -2371,6 +2388,7 @@ export async function repairHeldWriteArguments(
     if (
       parsed?.ok &&
       parsed.action.kind === 'mcp.call' &&
+      preservesWriteValues(row, parsed.action) &&
       probedArgumentIssue(parsed.action, row.surface) === undefined
     ) {
       actions[row.index] = replacement!;
