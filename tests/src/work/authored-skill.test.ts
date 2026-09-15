@@ -78,6 +78,14 @@ describe('the static gate on an authored skill', (): void => {
     })).toEqual([]);
   });
 
+  it('still refuses a documented control label the candidate quotes as a value rather than as a control', () => {
+    expect(authoredSkillIssues({
+      body: reusableBody + '\nSet the status to "Save".', smokeTest: reusableSmoke,
+      instance: { ...tileTicket, contentSummary: 'Set the status to "Save" once the figure is entered.' },
+      documentedProcedure: 'Sign in, update the figure, and press Save.',
+    }).some(issue => issue.includes('Save'))).toBe(true);
+  });
+
   it('still refuses quoted output values even when a runbook repeats them', () => {
     expect(authoredSkillIssues({
       body: reusableBody + '\nPost "coverage refreshed".', smokeTest: reusableSmoke,
