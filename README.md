@@ -452,7 +452,18 @@ outcomes are labelled as limited redaction in the dashboard.
 
 ### Setup
 
-The route is the [OpenAI-key one](#run-it-with-an-openai-key) plus a documentation folder, the real-mode variables and the components. Two things about the order are load-bearing and neither is obvious, so the sequence below is the whole of it:
+One command from a fresh clone, and one choice: where the model runs.
+
+```bash
+pnpm install --frozen-lockfile
+./setup-real.sh --route featherless     # GLM 5.3 Flash through Featherless; the key is asked for, hidden, or read from FEATHERLESS_API_KEY
+./setup-real.sh --route local           # the bundled model (qwen3:8b), pulled once, on the GPU where there is one
+pnpm dev                                # prints an unlock URL - open that, not localhost:3000
+```
+
+`./setup-real.sh` checks Node 22, pnpm 9 and Docker Compose v2, installs the dependencies if `node_modules` is missing, and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence below in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run and writes nothing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
+
+What the command does, step by step, is the [OpenAI-key route](#run-it-with-an-openai-key) plus a documentation folder, the real-mode variables and the components. By hand it is this sequence, and two things about the order are load-bearing:
 
 ```bash
 pnpm install
@@ -460,7 +471,7 @@ cp .env.example .env.local
 pnpm dev:no-auth-key             # BEFORE the first `up`: see below
 ```
 
-Then set these in `.env.local`, on top of what `pnpm dev:no-auth-key` just wrote:
+Then set these in `.env.local`, on top of what `pnpm dev:no-auth-key` just wrote (the setup writes every one of them; on the Featherless route it also writes `OPENAI_BASE_URL=https://api.featherless.ai/v1`, `OPENAI_MODEL=zai-org/GLM-5.3-Flash`, `OPENAI_JSON_MODE=prompt`, `OPENAI_MAX_OUTPUT_TOKENS=32768` and `OPENAI_REASONING_EFFORT=low`):
 
 ```bash
 COMPOSE_PROJECT_NAME=day0                           # whatever you set, `check:setup` reads the same file
@@ -472,7 +483,7 @@ OPENAI_MODEL=gpt-5.6-terra
 
 DAY0_SURFACE_MODE=real
 NEXT_PUBLIC_DEMO_BOSS_EMAIL=you@example.com         # your Slack address; stored on the agent at deploy
-DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
+DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created with a placeholder page if missing
 DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile browser
 DAY0_REDACTOR_URL=http://redactor:8000              # paired with pnpm redactor:up
 ```
@@ -492,10 +503,12 @@ pnpm check:setup                 # every component, every setup, before you open
 pnpm dev                         # prints an unlock URL - open that, not localhost:3000
 ```
 
-Four things in that sequence are the ones that cost you an afternoon:
+Six things in that sequence are the ones that cost you an afternoon:
 
 - **`pnpm dev:no-auth-key` comes before the first `pnpm convex:up`, not after it.** It writes two real-mode values as well as the three no-auth ones: `DAY0_CREDENTIAL_KEY`, which encrypts every stored credential and which `pnpm sync:env` refuses real mode without, and `DAY0_NOTION_MCP_AUTH_TOKEN`, which authenticates the private hop to the Notion component. `--profile docs-notion` exits immediately without the second - `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion` - so on the account-free and OpenAI-key routes above the order is a preference and here it is a requirement.
+- **`DAY0_DOCS_HOST_DIR` has to be in the file, not just the directory on disk.** The compose file binds it read-only with `:?`, so a hand-made `.env.local` that lacks the line fails at `docker compose up` with `required variable DAY0_DOCS_HOST_DIR is missing a value`, even though `pnpm convex:up` has just created `./docs-local` for you. The setup writes the line every time.
 - **The admin key belongs to the volume, not to the project.** `pnpm convex:admin-key` generates it inside the backend container, and a backend on a fresh data volume issues a fresh key. Coming to real mode from an earlier stack, the key already in `.env.local` is the *old* backend's: `pnpm sync:env` then fails to authenticate against the new one. Regenerate it whenever the volume is new.
+- **A redactor venv built for the CPU is emptied by a GPU start.** `redactor/start.sh` keys its virtual environment on the requirements file its device selects, and `pnpm redactor:up` reserves the GPU wherever an NVIDIA driver answers. Volumes warmed on the CPU (`--warm-from` copies them) therefore get wiped and rebuilt from CUDA wheels, minutes of download where ten seconds were expected. The setup reads the venv's stamp first and starts it on the device it was built for under `--gpu auto`; by hand, `MODEL_GPU=off pnpm redactor:up` is the same thing.
 - **Push the env before the functions, and restart after.** `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key, so `pnpm sync:env` has to be first. A module then keeps whatever env it was first evaluated with, and the backend has been up since the first `up`, so `pnpm convex:restart` after the push is what makes it read the values you just pushed. One push is enough; nothing needs pushing twice.
 - **`pnpm check:setup` guesses the Compose project.** It looks for one called `day0` unless `COMPOSE_PROJECT_NAME` says otherwise, and Compose names the project after your directory. In a clone called anything else, an unset name is a checker that reports every component as absent while `docker ps` shows them running. Set it in `.env.local`; both read that file. And read the whole output rather than the summary lines - the component notes underneath them are where the real gaps are.
 
@@ -551,10 +564,11 @@ Closing actions carry a different approval identity from phase one, so a delayed
 
 ```bash
 pnpm sandbox:down
+pnpm redactor:down
 pnpm convex:down --profile docs-notion --profile browser --profile demo
 ```
 
-`pnpm convex:down` removes the network on its way out and cannot while a container is still attached to it, so name the same profiles you brought up. The data volume survives both, which is what lets you stop for the day and come back to the same agent; `pnpm convex:down -- -v` is the one that throws it away.
+`pnpm convex:down` removes the network on its way out and cannot while a container is still attached to it, so stop the sandbox and the redactor first and name the same profiles you brought up. The data volume survives all three, which is what lets you stop for the day and come back to the same agent; `pnpm convex:down -- -v` is the one that throws it away, and `./setup-real.sh --route <r> --reset` does that and sets up again.
 
 ## Convex cloud + Clerk
 
@@ -1361,7 +1375,18 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 
 #### 安装步骤
 
-该路径等于[使用 OpenAI key 的路径](#使用-openai-key-运行)加上文档目录、真实模式变量和上述组件。其中两处顺序是必需的，因此完整序列如下：
+从全新 clone 开始只需一条命令，以及一个选择：模型在哪里运行。
+
+```bash
+pnpm install --frozen-lockfile
+./setup-real.sh --route featherless     # 通过 Featherless 使用 GLM 5.3 Flash；key 以隐藏方式询问，或从 FEATHERLESS_API_KEY 读取
+./setup-real.sh --route local           # 内置模型（qwen3:8b），只拉取一次，有 GPU 时使用 GPU
+pnpm dev                                # prints an unlock URL - open that, not localhost:3000
+```
+
+`./setup-real.sh` 会检查 Node 22、pnpm 9 和 Docker Compose v2，在缺少 `node_modules` 时安装依赖，然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成下面的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线。
+
+这条命令逐步做的事，等于[使用 OpenAI key 的路径](#使用-openai-key-运行)加上文档目录、真实模式变量和上述组件。手动执行时序列如下，其中两处顺序是必需的：
 
 ```bash
 pnpm install
@@ -1369,7 +1394,7 @@ cp .env.example .env.local
 pnpm dev:no-auth-key             # BEFORE the first `up`: see below
 ```
 
-然后在 `pnpm dev:no-auth-key` 写入的内容之上，于 `.env.local` 中设置：
+然后在 `pnpm dev:no-auth-key` 写入的内容之上，于 `.env.local` 中设置（setup 会写入其中每一项；在 Featherless 路线上还会写入 `OPENAI_BASE_URL=https://api.featherless.ai/v1`、`OPENAI_MODEL=zai-org/GLM-5.3-Flash`、`OPENAI_JSON_MODE=prompt`、`OPENAI_MAX_OUTPUT_TOKENS=32768` 和 `OPENAI_REASONING_EFFORT=low`）：
 
 ```bash
 COMPOSE_PROJECT_NAME=day0                           # whatever you set, `check:setup` reads the same file
@@ -1381,7 +1406,7 @@ OPENAI_MODEL=gpt-5.6-terra
 
 DAY0_SURFACE_MODE=real
 NEXT_PUBLIC_DEMO_BOSS_EMAIL=you@example.com         # your Slack address; stored on the agent at deploy
-DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created empty if missing
+DAY0_DOCS_HOST_DIR=./docs-local                     # your runbooks; created with a placeholder page if missing
 DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp # paired with --profile browser
 DAY0_REDACTOR_URL=http://redactor:8000              # paired with pnpm redactor:up
 ```
@@ -1401,10 +1426,12 @@ pnpm check:setup                 # every component, every setup, before you open
 pnpm dev                         # prints an unlock URL - open that, not localhost:3000
 ```
 
-其中四点最容易耗掉一整个下午：
+其中六点最容易耗掉一整个下午：
 
 - **`pnpm dev:no-auth-key` 必须在第一次 `pnpm convex:up` 之前执行。** 除三个无认证 key 外，它还写入两个真实模式变量：加密所有已存凭据的 `DAY0_CREDENTIAL_KEY`（缺少它时 `pnpm sync:env` 会拒绝真实模式），以及用于认证到 Notion 组件私有链路的 `DAY0_NOTION_MCP_AUTH_TOKEN`。缺少后者时 `--profile docs-notion` 会立即退出并输出 `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion`。因此在上面两条路径中顺序只是习惯，在这里是硬性要求。
+- **`DAY0_DOCS_HOST_DIR` 必须写在文件里，光有磁盘上的目录不够。** compose 文件用 `:?` 以只读方式绑定它，所以缺少这一行的手写 `.env.local` 会在 `docker compose up` 时报 `required variable DAY0_DOCS_HOST_DIR is missing a value`，即使 `pnpm convex:up` 刚刚为你创建了 `./docs-local`。setup 每次都会写入这一行。
 - **admin key 属于数据卷，而不属于 compose project。** `pnpm convex:admin-key` 在 backend 容器内生成 key，使用全新数据卷的 backend 会签发全新的 key。从旧的 stack 切换到真实模式时，`.env.local` 中保存的是旧 backend 的 key，`pnpm sync:env` 会认证失败。只要数据卷是新的，就重新生成一次。
+- **为 CPU 构建的 redactor venv 会被 GPU 启动清空。** `redactor/start.sh` 以其设备所选的 requirements 文件为虚拟环境的键，而 `pnpm redactor:up` 只要 NVIDIA 驱动有应答就会预留 GPU。因此在 CPU 上预热的卷（`--warm-from` 复制的就是它们）会被清空并用 CUDA wheel 重建：本该十秒完成的事变成几分钟的下载。setup 会先读取 venv 的 stamp，在 `--gpu auto` 下按它构建时的设备启动；手动执行时 `MODEL_GPU=off pnpm redactor:up` 效果相同。
 - **先推送 env，再推送 functions，之后重启。** `convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push，因此 `pnpm sync:env` 必须在前。module 会保留首次求值时的 env，而 backend 从第一次 `up` 起就一直在运行，因此 push 之后执行 `pnpm convex:restart` 才能让它读到刚推送的值。push 一次即可，不需要重复 push。
 - **`pnpm check:setup` 会猜测 Compose project 名称。** 除非 `COMPOSE_PROJECT_NAME` 另有说明，它按 `day0` 查找，而 Compose 按目录名命名 project。目录名不同又没有设置该变量时，症状是 `docker ps` 显示组件全部运行，而 check:setup 报告组件全部缺失。在 `.env.local` 中设置一次即可，两边读的是同一个文件。另外要读完整输出，而不只是摘要行：真正的缺口写在摘要行下方的组件说明里。
 
@@ -1461,10 +1488,11 @@ secrets 文件（权限 0600）保存 `LINEAR_API_KEY` 和 `SLACK_BOT_TOKEN`；�
 
 ```bash
 pnpm sandbox:down
+pnpm redactor:down
 pnpm convex:down --profile docs-notion --profile browser --profile demo
 ```
 
-`pnpm convex:down` 退出时会删除 compose network，仍有容器连接时无法完成，因此要写上启动时使用的相同 profile。数据卷在这两条命令后仍然保留，因此可以随时停止并回到同一个 Agent；`pnpm convex:down -- -v` 才会删除数据卷。
+`pnpm convex:down` 退出时会删除 compose network，仍有容器连接时无法完成，因此先停掉沙箱和 redactor，再写上启动时使用的相同 profile。数据卷在这三条命令后仍然保留，因此可以随时停止并回到同一个 Agent；`pnpm convex:down -- -v` 才会删除数据卷，而 `./setup-real.sh --route <r> --reset` 会删除数据卷并重新完成安装。
 
 ### 评测快速开始
 
