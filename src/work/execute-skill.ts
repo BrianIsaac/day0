@@ -36,7 +36,7 @@ import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
-import { planReadsBeforeClosing } from './obligations';
+import { closingPhaseOwed } from './obligations';
 import { replyTargetLine } from './reply-target';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding } from './evidence-claims';
@@ -2411,11 +2411,11 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     user: userPrompt,
     schema: runtimeSchema,
   });
-  // In real mode a plan that declares a read gives the run its closing phase
-  // whatever the model said, so the audit below sees the phase as the gate
-  // will stage it.
+  // In real mode a plan that declares a read, or declares nothing usable,
+  // gives the run its closing phase whatever the model said, so the audit
+  // below sees the phase as the gate will stage it.
   const closingPhase = (flag: boolean): boolean =>
-    mode === 'real' ? flag || planReadsBeforeClosing(plan) : flag;
+    mode === 'real' ? flag || closingPhaseOwed(plan) : flag;
   const output: ExecutionOutput = {
     draft: raw.draft,
     notes: raw.notes,

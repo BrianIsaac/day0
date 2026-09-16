@@ -872,6 +872,19 @@ describe('work action completion evidence', (): void => {
         { ...plan, obligations: undefined },
       ).needsDependentPhase,
     ).toBe(false);
+    // Obligations asked for and not settled are read as reading: the closing phase stays, and the gates owe nothing they cannot see.
+    expect(
+      prerequisiteOutput(
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: [read] },
+        { ...plan, obligations: undefined, obligationsFailedOpen: 'timeout' },
+      ).needsDependentPhase,
+    ).toBe(true);
+    expect(
+      prerequisiteOutput(
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: [read] },
+        { ...plan, steps: ['Comment on REVOPS-7'] },
+      ).needsDependentPhase,
+    ).toBe(true);
   });
 
   it('refuses to call a declared Linear read satisfied when no such ledger row landed', (): void => {

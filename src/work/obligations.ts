@@ -114,6 +114,23 @@ export function planReadsBeforeClosing(plan: Pick<ExecutionPlan, 'steps' | 'obli
   return readingSteps(plan).length > 0;
 }
 
+/**
+ * Whether a real-mode run gets its closing phase from the plan: the plan
+ * declares a read, or its obligations were asked for and not settled. The
+ * judgement failing open with nothing from the planner, or a declared set
+ * that no longer lines up with the steps, is read as reading, so a comment,
+ * a reply or a state change is still authored from the ledger and audited
+ * rather than prewritten in phase one; the gates that would owe a read or a
+ * transition still owe nothing they cannot see. A plan that was never
+ * judged (mock mode, a row from before the field existed) is left to the
+ * executor's own flag, and mock mode never consults this.
+ */
+export function closingPhaseOwed(plan: Pick<ExecutionPlan, 'steps' | 'obligations' | 'obligationsFailedOpen'>): boolean {
+  if (planReadsBeforeClosing(plan)) return true;
+  if (plan.obligationsFailedOpen !== undefined) return true;
+  return plan.obligations !== undefined && planObligations(plan) === undefined;
+}
+
 /** The plan's declared word on the ticket state, or undefined when it declares nothing. */
 export function planTransition(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): PlanTransition | undefined {
   return planObligations(plan)?.transition;

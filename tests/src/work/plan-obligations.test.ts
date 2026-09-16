@@ -38,6 +38,7 @@ import {
   type ObligationEvent,
 } from '../../../src/work/plan-obligations';
 import {
+  closingPhaseOwed,
   declaredReads,
   planReadsBeforeClosing,
   readingSteps,
@@ -316,9 +317,13 @@ describe('the judgement inside plan drafting', (): void => {
       onObligationEvent: (event) => { events.push(event); },
     });
     expect(plan.obligations).toBeUndefined();
+    expect(plan.obligationsFailedOpen).toBe('timeout');
     expect(events).toEqual([{ type: 'plan.obligations-failed-open', payload: { reason: 'timeout' } }]);
     expect(declaredReads(plan, [linear, tile])).toEqual([]);
     expect(planReadsBeforeClosing(plan)).toBe(false);
+    // The gates owe nothing they cannot see, but the run keeps its closing phase: unsettled obligations are read as reading.
+    expect(closingPhaseOwed(plan)).toBe(true);
+    expect(closingPhaseOwed({ ...plan, obligationsFailedOpen: undefined })).toBe(false);
   });
 
   it('judges the Slack plan with Northstar CRM in the message text as owing nothing of Northstar', async (): Promise<void> => {

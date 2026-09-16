@@ -692,7 +692,9 @@ async function withObligations(
     planner,
   );
   for (const event of settled.events) await onObligationEvent?.(event);
-  return settled.obligations ? { ...plan, obligations: settled.obligations } : plan;
+  if (settled.obligations) return { ...plan, obligations: settled.obligations };
+  const failedOpen = settled.events.find((event) => event.type === 'plan.obligations-failed-open');
+  return failedOpen ? { ...plan, obligationsFailedOpen: failedOpen.payload.reason } : plan;
 }
 
 export function renderPlanSummary(plan: ExecutionPlan): string {

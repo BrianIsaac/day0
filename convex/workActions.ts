@@ -43,8 +43,8 @@ import {
   type WorkSourceCategory,
 } from '../src/work/types';
 import {
+  closingPhaseOwed,
   declaredReads,
-  planReadsBeforeClosing,
   transitionPromised,
   type DeclaredRead,
 } from '../src/work/obligations';
@@ -812,9 +812,13 @@ function isDependentPendingOutput(
   return (output as { phase?: unknown }).phase === 'dependent';
 }
 
-/** Whether the approved plan or emitted prerequisites require one result-aware turn. */
+/**
+ * Whether the approved plan or emitted prerequisites require one result-aware
+ * turn: the output asked for one, the plan declares a read, or the plan
+ * declares nothing usable and is read as reading (`closingPhaseOwed`).
+ */
 export function needsDependentPhase(output: ExecutionOutput, plan: ExecutionPlan): boolean {
-  return output.needsDependentPhase === true || planReadsBeforeClosing(plan);
+  return output.needsDependentPhase === true || closingPhaseOwed(plan);
 }
 
 /**

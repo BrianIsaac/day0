@@ -859,7 +859,11 @@ describe('bounded plan correction failure', () => {
     planRecorded.outputs.push(initial, new Error('Correction request unavailable'));
     await expect(draftExecutionPlan({
       candidate, charter, autonomousActions: false, surfaceMode: 'real',
-    })).resolves.toEqual({ ...initial, advisorySteps: [1] });
+    })).resolves.toEqual({
+      ...initial, advisorySteps: [1],
+      // The judgement is unscripted here, so it fails open and the plan records why; the gates then owe nothing.
+      obligationsFailedOpen: 'obligations judgement unscripted',
+    });
     expect(planRecorded.users).toHaveLength(2);
   });
 });

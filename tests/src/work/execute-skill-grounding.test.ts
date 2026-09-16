@@ -1135,11 +1135,40 @@ describe('deferral by data, not by judgement', (): void => {
     });
     const single = await runSkill({
       ...runArgs,
-      plan: { ...plan, steps: ['Comment on REVOPS-7 in Linear.'] },
+      plan: {
+        ...plan, steps: ['Comment on REVOPS-7 in Linear.'],
+        obligations: { steps: [{ kind: 'write' as const, reads: [], writes: ['linear'] }], transition: 'none' as const, transitionStep: null, basis: 'judgement' as const },
+      },
       surfaces: [linear],
       mockEnv: tileRunbook,
     });
     expect(single.needsDependentPhase).toBe(false);
+  });
+
+  it('gives a real-mode run whose obligations failed open its closing phase, so a prewritten close is audited instead of landing', async (): Promise<void> => {
+    // The judgement failed open and the planner supplied nothing: the plan carries the reason and no obligations. On main
+    // the prose ("read back") forced the closing phase; with the classifiers gone, unsettled obligations must be read as reading.
+    const prewritten = {
+      draft: 'Read, commented and closed.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [getIssue, auditComment, done],
+      procedureTrails: [],
+      deferredActions: null,
+    };
+    recorded.outputs.push(prewritten, prewritten);
+    const corrections: Array<[number[], string]> = [];
+    const output = await runSkill({
+      ...runArgs,
+      plan: { ...readBackPlan, obligations: undefined, obligationsFailedOpen: 'the judgement reply did not satisfy the schema' },
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); },
+    });
+    expect(recorded.users[1]).toContain('prewrote a closing action');
+    expect(output.needsDependentPhase).toBe(true);
+    expect(output.actions).toEqual([getIssue]);
+    expect(corrections).toEqual([[[1, 2], 'prewritten closing actions']]);
   });
 
   it('preserves the 2 September approved plan shapes and complete browser batch', () => {

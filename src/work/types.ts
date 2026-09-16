@@ -144,6 +144,14 @@ export interface ExecutionPlan {
   advisorySteps?: number[];
   /** The declared obligations the gates verify against the ledger; see `PlanObligations`. */
   obligations?: PlanObligations;
+  /**
+   * Why the judgement could not settle the obligations when the planner
+   * supplied none either: the plan then declares nothing, the gates owe
+   * nothing they cannot see, and the run keeps its closing phase so nothing
+   * is prewritten on the strength of an unread ledger. Absent on a plan
+   * drafted in mock mode or before the field existed.
+   */
+  obligationsFailedOpen?: string;
 }
 
 /** The four verbs that write to the per-agent mock environment. */
