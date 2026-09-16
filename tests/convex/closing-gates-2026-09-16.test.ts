@@ -26,6 +26,7 @@ import {
   TILE_AUDIT_LINE,
 } from './fixtures/closing-gates-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 
 /**
  * The 16 September second run's two closing phases, replayed from the point
@@ -185,6 +186,10 @@ async function seedAtClosing(harness: Harness, run: Run): Promise<{ agentId: Id<
   });
 }
 
+const call = (surface: string, tool: string, args: Record<string, unknown>): MockAction => ({
+  tool: 'mcp.call', args: { surface, tool, toolArgsJson: JSON.stringify(args) },
+});
+
 async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
   const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
   if (!row) throw new Error('work item missing');
@@ -293,6 +298,33 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     expect((await readItem(t, workItemId)).state).toBe('completed');
     // The tile was not touched again: only the closing writes reached a provider.
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+  });
+
+  it('holds a Done the REVOPS-5 plan withholds for the manager, even with autonomous actions on', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId } = await seedAtClosing(t, REVOPS_5);
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
+    // The closing phase moves the ticket the plan said to leave alone.
+    recorded.closingReply = {
+      ...auditNoteClosing,
+      actions: [...auditNoteClosing.actions, call('linear', 'save_issue', { id: 'REVOPS-5', state: 'Done' })],
+    };
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId })).resolves.toEqual({
+      ok: true, reason: 'dependent actions applying',
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const held = await readItem(t, workItemId);
+    expect(held.state).toBe('actions-pending');
+    expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual(['auto', 'held']);
+    expect(held.actionVerdicts?.[1]?.reason).toBe(HELD_WITHHELD_TRANSITION);
+    // The comment landed on its own; the Done did not.
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment']]);
+    await t.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [1],
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(t, workItemId)).state).toBe('completed');
     expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
   });
 

@@ -12,6 +12,7 @@ import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
 import {
   type ActionVerdict,
   describeAction,
+  HELD_WITHHELD_TRANSITION,
   normaliseActionVerdict,
   reviewPayload,
   skillApprovalRefusal,
@@ -21,6 +22,7 @@ import {
   autonomousActionsOn,
   autonomyLabel,
   HELD_BEFORE_AUTONOMY_NOTE,
+  HELD_WITHHELD_TRANSITION_NOTE,
   HELD_WHILE_SUPERVISED_NOTE,
   SUPERVISED_LABEL,
 } from '../../../src/work/autonomy';
@@ -2098,7 +2100,14 @@ export function PendingActions({
       <p className="text-[var(--color-warn)] font-medium mb-1">{pendingHeadline(verdicts)}</p>
       {heldIndexes.length > 0 ? (
         <p className="text-[var(--color-muted)] mb-1">
-          {autonomousActions ? HELD_BEFORE_AUTONOMY_NOTE : HELD_WHILE_SUPERVISED_NOTE}
+          {heldIndexes.every((index) => {
+            const verdict = verdicts[index];
+            return verdict?.disposition === 'held' && verdict.reason === HELD_WITHHELD_TRANSITION;
+          })
+            ? HELD_WITHHELD_TRANSITION_NOTE
+            : autonomousActions
+              ? HELD_BEFORE_AUTONOMY_NOTE
+              : HELD_WHILE_SUPERVISED_NOTE}
         </p>
       ) : null}
       {actions.length === 0 ? (

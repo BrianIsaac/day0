@@ -179,5 +179,14 @@ export function withholdsClose(text: string): boolean {
  */
 export function planPromisesClose(plan: Pick<ExecutionPlan, 'summary' | 'steps'>): boolean {
   if (!plan.steps.some(promisesClose)) return false;
-  return !withholdsClose(plan.summary) && !plan.steps.some(withholdsClose);
+  return !planWithholdsClose(plan);
+}
+
+/**
+ * Whether a plan says in its own words that the ticket state is left where
+ * it is, in its summary or in any step. The gate holds a state change
+ * against such a plan for the manager, whatever the autonomy switch says.
+ */
+export function planWithholdsClose(plan: Pick<ExecutionPlan, 'summary' | 'steps'>): boolean {
+  return withholdsClose(plan.summary) || plan.steps.some(withholdsClose);
 }

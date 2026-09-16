@@ -26,6 +26,8 @@ import {
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
+import { HELD_BEFORE_AUTONOMY_NOTE, HELD_WITHHELD_TRANSITION_NOTE } from '../../../../src/work/autonomy';
+import { HELD_WITHHELD_TRANSITION } from '../../../../src/surfaces/policy';
 import { strikeOutcome, strikePreview } from '../../../../src/agent/charter-constraints';
 import type { Charter } from '../../../../src/agent/charter';
 import { strikeRefusalBody } from '../../../fixtures/charter-strike-refusal-2026-09-15';
@@ -130,6 +132,30 @@ describe('a write re-authored once before the hold', (): void => {
       />,
     );
     expect(untouched).not.toContain('re-authored');
+  });
+});
+
+describe('a ticket state change the plan withholds', (): void => {
+  const resolved = async (): Promise<void> => undefined;
+  const done = {
+    tool: 'mcp.call' as const,
+    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"REVOPS-5","state":"Done"}' },
+  };
+
+  it('says the move is the manager\'s call, not that the run predates the switch', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[done]}
+        verdicts={[{ disposition: 'held', reason: HELD_WITHHELD_TRANSITION }]}
+        surfaces={[]}
+        autonomousActions
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain(HELD_WITHHELD_TRANSITION_NOTE);
+    expect(markup).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
+    expect(markup).toContain(HELD_WITHHELD_TRANSITION);
   });
 });
 

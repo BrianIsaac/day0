@@ -23,6 +23,7 @@ import {
 import { toSurfaceRecord } from '../src/surfaces/records';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
+import { planWithholdsClose } from '../src/work/plan-steps';
 import { replyTargetFor } from '../src/work/reply-target';
 import {
   AUTONOMOUS_WIP_LIMIT,
@@ -2211,7 +2212,11 @@ async function reviewHeldActions(
       ),
       grants,
       Date.now(),
-      { autonomousActions, replyTarget: replyTargetFor(row) },
+      {
+        autonomousActions,
+        replyTarget: replyTargetFor(row),
+        transitionWithheld: row.plan ? planWithholdsClose(row.plan as ExecutionPlan) : false,
+      },
     ),
     autonomousActions,
   };
