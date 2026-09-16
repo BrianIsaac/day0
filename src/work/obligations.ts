@@ -152,9 +152,16 @@ export function transitionPromised(plan: Pick<ExecutionPlan, 'steps' | 'obligati
  * Whether the plan makes the state change the manager's decision: it
  * withholds the transition in its own words, or conditions it on the
  * manager's approval. The exact-action gate holds such a change for the
- * manager whatever the autonomy switch says.
+ * manager whatever the autonomy switch says. When the planner and the
+ * judgement disagreed, either reading that leaves the change to the manager
+ * holds it: a click the manager did not need costs a click, a Done that
+ * landed on its own when the manager meant to hold it cannot be taken back.
  */
 export function transitionWithheld(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): boolean {
-  const transition = planTransition(plan);
-  return transition !== undefined && WITHHELD_TRANSITIONS.has(transition);
+  const declared = planObligations(plan);
+  if (!declared) return false;
+  return (
+    WITHHELD_TRANSITIONS.has(declared.transition) ||
+    (declared.plannerTransition !== undefined && WITHHELD_TRANSITIONS.has(declared.plannerTransition))
+  );
 }

@@ -370,6 +370,7 @@ export async function settlePlanObligations(
     transitionStep: bounded.transitionStep,
     basis: 'judgement',
     reason: judged.reason.trim(),
+    ...(planner && planner.transition !== bounded.transition ? { plannerTransition: planner.transition } : {}),
   };
   const events: ObligationEvent[] = [{ type: 'plan.obligations-judged', payload: { obligations } }];
   if (planner) {

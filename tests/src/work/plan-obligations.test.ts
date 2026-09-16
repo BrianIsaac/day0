@@ -447,16 +447,34 @@ describe('each gate against a judgement that failed open and one that contradict
     expect(blockedPlanReason(outcomes(3, 'blocked'), { plan: judged, actions: [comment], applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'k' }] })).toContain('remained blocked');
   });
 
-  it('the withheld-transition hold: the planner\'s "withheld" holds the Done only while unchecked; the judgement\'s evidence condition lets it land', async (): Promise<void> => {
+  it('the withheld-transition hold: the planner\'s "withheld" holds the Done unchecked, and still holds it when the judgement reads an evidence condition instead', async (): Promise<void> => {
     model.judgement = new Error('provider unavailable');
     const open = await drafted();
     expect(transitionWithheld(open)).toBe(true);
     expect(transitionWithheld({ ...open, obligations: undefined })).toBe(false);
+    // The two declarations disagree on whether the state change is the manager's: the judgement's answer stands for
+    // what the closing set must carry (the Done is owed), and the more careful reading stands for the hold (it waits).
     model.judgement = refreshJudgement;
     const judged = await drafted();
-    expect(transitionWithheld(judged)).toBe(false);
+    expect(judged.obligations?.transition).toBe('conditional-on-evidence');
+    expect(judged.obligations?.plannerTransition).toBe('withheld');
+    expect(transitionPromised(judged)).toBe(true);
+    expect(transitionWithheld(judged)).toBe(true);
+    // Agreed, or the planner silent, the judgement's evidence condition lets the Done land on its own.
+    const agreed = await settlePlanObligations({ plan: run4RefreshPlan, charter, surfaces, documents, now: NOW }, { ...plannerFields, transition: 'conditional-on-evidence' });
+    expect(agreed.obligations?.plannerTransition).toBeUndefined();
+    expect(transitionWithheld({ ...run4RefreshPlan, obligations: agreed.obligations })).toBe(false);
+    const silent = await settlePlanObligations({ plan: run4RefreshPlan, charter, surfaces, documents, now: NOW }, undefined);
+    expect(transitionWithheld({ ...run4RefreshPlan, obligations: silent.obligations })).toBe(false);
+    // The other way round: the planner promised, the judgement makes it the manager's; held.
     model.judgement = { ...refreshJudgement, transition: 'conditional-on-manager' };
-    expect(transitionWithheld(await drafted())).toBe(true);
+    const held = await settlePlanObligations({ plan: run4RefreshPlan, charter, surfaces, documents, now: NOW }, { ...plannerFields, transition: 'promised' });
+    expect(transitionWithheld({ ...run4RefreshPlan, obligations: held.obligations })).toBe(true);
+    // A disagreement on the step alone, or between two readings that both leave the Done to land, records nothing to hold on.
+    model.judgement = refreshJudgement;
+    const promised = await settlePlanObligations({ plan: run4RefreshPlan, charter, surfaces, documents, now: NOW }, { ...plannerFields, transition: 'promised' });
+    expect(promised.obligations?.plannerTransition).toBe('promised');
+    expect(transitionWithheld({ ...run4RefreshPlan, obligations: promised.obligations })).toBe(false);
   });
 
   it('the resume selector: resumes on the ledger alone when the judgement failed open, and demands the judgement\'s tile read', async (): Promise<void> => {

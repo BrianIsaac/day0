@@ -127,6 +127,13 @@ export interface PlanObligations {
   failedOpen?: string;
   /** The judgement's one-line reason for the transition. */
   reason?: string;
+  /**
+   * The planner's own word on the ticket state when it differed from the
+   * judgement's. The judgement's `transition` says what the closing set
+   * must carry; the hold reads both, so a state change either reading
+   * leaves to the manager waits for the manager.
+   */
+  plannerTransition?: PlanTransition;
 }
 
 export interface ExecutionPlan {
