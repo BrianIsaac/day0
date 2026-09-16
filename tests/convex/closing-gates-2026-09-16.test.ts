@@ -398,6 +398,21 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     expect(output.refusedClosing).toBeUndefined();
   });
 
+  it('lands the run 3 REVOPS-7 comment and Done on their own under autonomy: "otherwise leave it in progress" is the alternative branch, not a withheld transition', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId } = await seedAtClosing(t, REVOPS_7_RUN_3);
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
+    recorded.closingReply = run3RefreshClosing;
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId })).resolves.toEqual({
+      ok: true, reason: 'dependent actions applying',
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await readItem(t, workItemId);
+    expect(done.state).toBe('completed');
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect(recorded.http).toEqual([]);
+  });
+
   it('holds the REVOPS-5 audit comment without a transition, as the plan says, then lands it on approval', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId, runId } = await seedAtClosing(t, REVOPS_5);

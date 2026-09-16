@@ -39,6 +39,13 @@ const IMPERATIVE_PREFIX = /^\s*(?:(?:and|or|then|also|finally|now|please|do not|
 const NO_TRANSITION =
   /\bno (?:status|state) (?:change|transition)\b|\b(?:status|state) (?:is )?(?:unchanged|stays|remains)\b|\bleave (?:\S+\s+){0,3}(?:open|unchanged|as is|in progress|to the manager)\b/i;
 const QUOTED_SPAN = /"[^"\n]*"|“[^”\n]*”/g;
+/**
+ * The alternative branch of a stated condition, to the sentence end
+ * ("set ... to Done only if ...; otherwise leave it in progress"). What it
+ * says about the state holds only when the condition fails, so it is not
+ * the plan's word on the transition.
+ */
+const ALTERNATIVE_BRANCH = /\b(?:otherwise|or else|else|failing that|if not)\b[^.;\n]*/gi;
 
 /** Titles are references; quoted surface names and target states still impose obligations. */
 export function instructionText(step: string): string {
@@ -165,11 +172,14 @@ export function promisesClose(step: string): boolean {
 /**
  * Whether a step, or the plan's summary, says in its own words that the
  * ticket state is left where it is: a close term under a negation ("do not
- * move REVOPS-5 to Done"), or a phrase such as "no status change".
+ * move REVOPS-5 to Done"), or a phrase such as "no status change". The
+ * alternative branch of a condition ("otherwise leave it in progress") is
+ * read out first: it withholds only when the condition fails.
  */
 export function withholdsClose(text: string): boolean {
-  if (NO_TRANSITION.test(instructionText(text))) return true;
-  return occurrences(text, CLOSE_STEP, { nounHead: CLOSE_NOUN_HEAD, determinerIsVocabulary: false }).some(
+  const stated = instructionText(text).replace(ALTERNATIVE_BRANCH, ' ');
+  if (NO_TRANSITION.test(stated)) return true;
+  return occurrences(stated, CLOSE_STEP, { nounHead: CLOSE_NOUN_HEAD, determinerIsVocabulary: false }).some(
     (occurrence) => !affirmed(occurrence),
   );
 }

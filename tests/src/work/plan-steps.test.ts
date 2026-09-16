@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planPromisesClose, promisedReads, promisesClose, promisesResult, withholdsClose } from '../../../src/work/plan-steps';
+import { planPromisesClose, planWithholdsClose, promisedReads, promisesClose, promisesResult, withholdsClose } from '../../../src/work/plan-steps';
 import {
   auditNotePlan,
   refreshPlan,
@@ -82,6 +82,17 @@ describe('a plan that withholds the transition in its own words', (): void => {
     expect(withholdsClose('Leave REVOPS-5 open for the manager to close.')).toBe(true);
     expect(withholdsClose('Move REVOPS-7 to Done once the audit comment is saved.')).toBe(false);
     expect(withholdsClose(REVOPS_5_STEP_2)).toBe(false);
+  });
+
+  it('does not read the alternative branch of a stated condition as withholding, as the run 3 REVOPS-7 step 3 has it', (): void => {
+    expect(withholdsClose(RUN_3_REVOPS_7_STEP_3)).toBe(false);
+    expect(planWithholdsClose(run3RefreshPlan)).toBe(false);
+    expect(planPromisesClose(run3RefreshPlan)).toBe(true);
+    expect(withholdsClose('Move it to Done when the checks pass, otherwise leave it open.')).toBe(false);
+    expect(withholdsClose('Close REVOPS-7 if the figure matches; else hold the Done transition.')).toBe(false);
+    // The plan's own word before the alternative still withholds.
+    expect(withholdsClose('Do not move REVOPS-5 to Done; otherwise the checklist is void.')).toBe(true);
+    expect(withholdsClose('Leave REVOPS-5 open for the manager to close, otherwise the audit fails.')).toBe(true);
   });
 
   it('never promised the close, even when another step reads as completing something', (): void => {
