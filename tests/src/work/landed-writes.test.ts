@@ -75,6 +75,13 @@ describe('the writes earlier runs landed', () => {
     expect(writeTarget(parsed(dm), dm, surfaces)).toBeUndefined();
     expect(writeTarget(parsed(done), done, surfaces)).toBeUndefined();
     expect(writeTarget(parsed(read), read, surfaces)).toBeUndefined();
+    // A threaded message in the manager's DM channel is still the escalation channel, never reused.
+    const dmThread = post({ channel: 'D0MANAGER', thread_ts: '1789.5', text: 'Following up on the Done.' });
+    expect(writeTarget(parsed(dmThread), dmThread, surfaces)).toBeUndefined();
+    // A reply under a landed comment lands in a different place from a top-level comment on the ticket.
+    const replyComment = call('linear', 'save_comment', { issueId: 'REVOPS-5', parentId: 'comment-1', body: 'Follow-up after the read.' });
+    expect(writeTarget(parsed(replyComment), replyComment, surfaces)).toEqual({ key: 'linear|comment|revops-5/comment-1', kind: 'comment', target: 'REVOPS-5/comment-1' });
+    expect(reusedLedger([replyComment], [{ action: comment, applied: row({ providerId: 'comment-1' }) }], run, { surfaces })).toEqual([undefined]);
   });
 
   it('reads a correction request from the note, not an acceptance or a direction about the ticket', () => {

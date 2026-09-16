@@ -86,11 +86,20 @@ export function landedWritesOf(output: unknown): LandedWrite[] {
   });
 }
 
+/** The comment a reply comment sits under, when the action names one. */
+function parentComment(parsed: ParsedSurfaceAction): string | undefined {
+  if (parsed.kind !== 'mcp.call') return undefined;
+  const parent = ['parentId', 'parent_id', 'parentCommentId', 'parent'].map((key) => parsed.toolArgs[key]).find((value) => typeof value === 'string' && value.trim() !== '');
+  return typeof parent === 'string' ? parent.trim() : undefined;
+}
+
 /**
  * The place a comment or message lands, as a key two actions share when
- * they would land in the same place: a ticket for a comment, a channel and
- * thread for a chat message. The manager DM is the escalation channel and
- * has no target here; a status change or a read has none either.
+ * they would land in the same place: a ticket (and the comment a reply
+ * sits under) for a comment, a channel and thread for a chat message. Any
+ * message into the manager's DM channel, threaded or not, is the
+ * escalation channel and has no target here; a status change or a read
+ * has none either.
  */
 export function writeTarget(
   parsed: ParsedSurfaceAction,
@@ -101,10 +110,17 @@ export function writeTarget(
   const surface = surfaces.find((row) => row.slug === parsed.surface);
   if (surface && isManagerDm(parsed, surface)) return undefined;
   const issue = isAuditComment(parsed) ? targetIssue(parsed)?.trim() : undefined;
-  if (issue) return { key: `${parsed.surface}|comment|${issue.toLowerCase()}`, kind: 'comment', target: issue };
+  if (issue) {
+    const parent = parentComment(parsed);
+    const target = parent ? `${issue}/${parent}` : issue;
+    return { key: `${parsed.surface}|comment|${target.toLowerCase()}`, kind: 'comment', target };
+  }
   if (messageTexts(action).length === 0) return undefined;
   const target = messageTarget(parsed);
-  return target ? { key: `${parsed.surface}|message|${target}`, kind: 'message', target } : undefined;
+  if (!target) return undefined;
+  const channel = target.split('/')[0];
+  if (surface?.managerDmChannelId && channel === surface.managerDmChannelId.trim()) return undefined;
+  return { key: `${parsed.surface}|message|${target}`, kind: 'message', target };
 }
 
 /** Whether a comment action rewrites an existing comment by its id. */
