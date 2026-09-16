@@ -1038,8 +1038,11 @@ export const authorDependentActions = internalAction({
     let initial: DependentAuthoringOutput | undefined;
     // The set the closing phase authored, kept on the row if a gate refuses
     // it: nothing in it reaches a surface, and the manager and the retry
-    // both need to read it against the refusal.
+    // both need to read it against the refusal. It is model-authored text
+    // that never passes the apply path's scrub, so the owner's stored
+    // values are resolved here and removed from it before the row keeps it.
     let authored: DependentExecutionOutput | undefined;
+    let knownValues: readonly string[] = [];
     try {
       const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, {
         workItemId: args.workItemId,
@@ -1060,6 +1063,7 @@ export const authorDependentActions = internalAction({
       if (!agent) throw new Error('agent not found');
       const skill = skills.find((row: Doc<'skills'>): boolean => row._id === item.skillId);
       if (!skill) throw new Error('dependent phase skill is no longer registered');
+      knownValues = await knownValuesForAgent(ctx, agent);
       const plan = item.plan as ExecutionPlan;
       const output = await runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
@@ -1193,7 +1197,7 @@ export const authorDependentActions = internalAction({
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
-        ...(initial ? { output: withRefusedClosing(initial, authored, reason) } : {}),
+        ...(initial ? { output: scrubKnownValues(withRefusedClosing(initial, authored, reason), knownValues) } : {}),
       });
       return { ok: false, reason };
     }

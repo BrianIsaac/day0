@@ -27,6 +27,9 @@ import {
 } from './fixtures/closing-gates-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
+import { encrypt } from '../../src/lib/credential-crypto';
+import { REDACTED } from '../../src/redaction/redact';
+import { randomBytes } from 'node:crypto';
 
 /**
  * The 16 September second run's two closing phases, replayed from the point
@@ -100,6 +103,9 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 
 type Harness = TestConvex<typeof schema>;
 const OWNER = { subject: 'owner' };
+const CREDENTIAL_KEY = randomBytes(32).toString('base64');
+/** The tile login the owner stores; a closing set that quotes it must not reach the row in clear. */
+const TILE_PASSWORD = 'tile-pass-9x7Q';
 
 interface Run {
   externalId: string;
@@ -209,6 +215,7 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
   beforeEach((): void => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', CREDENTIAL_KEY);
   });
 
   afterEach((): void => {
@@ -299,6 +306,33 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     expect((await readItem(t, workItemId)).state).toBe('completed');
     // The tile was not touched again: only the closing writes reached a provider.
     expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+  });
+
+  it('scrubs a stored credential value out of the refused closing set before the row keeps it', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await seedAtClosing(t, REVOPS_7);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('credentials', {
+        userId: 'owner', kind: 'value', label: 'Looker password', source: 'entered', createdAt: 1,
+        ...encrypt(TILE_PASSWORD, CREDENTIAL_KEY),
+      });
+    });
+    // The closing comment quotes the login it saw in the runbook, and the set omits the promised Done, so the gate refuses it.
+    recorded.closingReply = {
+      ...refreshClosing,
+      actions: [
+        call('linear', 'save_comment', { issueId: 'REVOPS-7', body: `${REVOPS_7_COMMENT} Signed in as revops / ${TILE_PASSWORD}.` }),
+        refreshClosing.actions[2]!,
+      ],
+    };
+    const refusal = await t.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    expect(refusal.ok).toBe(false);
+    const failed = await readItem(t, workItemId);
+    const kept = JSON.stringify((failed.output as { refusedClosing: unknown }).refusedClosing);
+    expect(kept).toContain(REVOPS_7_COMMENT);
+    expect(kept).not.toContain(TILE_PASSWORD);
+    expect(kept).toContain(REDACTED);
+    expect(JSON.stringify(failed.output)).not.toContain(TILE_PASSWORD);
   });
 
   it('holds a Done the REVOPS-5 plan withholds for the manager, even with autonomous actions on', async (): Promise<void> => {
