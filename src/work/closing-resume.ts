@@ -1,8 +1,8 @@
-import { actionIdempotencyKey } from './idempotency';
+import { reusedLedger } from './landed-writes';
 import { actionIntent, isAuditComment, isStatusChange, parseSurfaceAction } from '../surfaces/policy';
-import type { AppliedAction } from '../surfaces/types';
+import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
 import { promisedReads, promisesResult } from './plan-steps';
-import type { ExecutionOutput, ExecutionPlan, PlanStepOutcome, RefusedClosing } from './types';
+import type { ExecutionOutput, ExecutionPlan, LandedWrite, PlanStepOutcome, RefusedClosing } from './types';
 
 export interface ClosingResume extends ExecutionOutput {
   phase: 'dependent-authoring';
@@ -116,43 +116,20 @@ export function closingResume(output: unknown, plan: ExecutionPlan, failure: str
   };
 }
 
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'undefined';
-}
-
-function payload(action: ExecutionOutput['actions'][number]): string | undefined {
-  const parsed = parseSurfaceAction(action);
-  if (!parsed.ok) return undefined;
-  if (parsed.action.kind === 'http.request' && parsed.action.bodyJson) {
-    return canonical({ ...parsed.action, body: undefined });
-  }
-  return canonical(parsed.action);
-}
-
+/**
+ * The rows a resumed closing set reuses from the previous attempt: a row of
+ * identical payload, or a comment or message on a target the attempt
+ * already landed on; see `reusedLedger`.
+ */
 export function resumedClosingLedger(
   actions: ExecutionOutput['actions'],
   previous: ClosingResume['previousClosing'] | undefined,
   run: { workItemId: string; runId: string; actionIndexOffset: number },
+  options: { surfaces?: readonly SurfaceRecord[]; managerFeedback?: string } = {},
 ): Array<AppliedAction | undefined> {
-  return actions.map((action, index) => {
-    const key = payload(action);
-    if (!key || !previous) return undefined;
-    const priorIndex = previous.actions.findIndex((prior, position) => {
-      const entry = previous.applied[position];
-      return entry?.ok && !entry.held && !entry.awaitingApproval && payload(prior) === key;
-    });
-    if (priorIndex < 0) return undefined;
-    return {
-      ...previous.applied[priorIndex]!,
-      reason: 'This closing action already landed in the previous attempt; reused its recorded result.',
-      idempotencyKey: actionIdempotencyKey({
-        workItemId: run.workItemId, runId: run.runId, actionIndex: run.actionIndexOffset + index,
-      }),
-    };
+  const sources: LandedWrite[] = (previous?.actions ?? []).flatMap((action, index): LandedWrite[] => {
+    const entry = previous?.applied[index];
+    return entry ? [{ action, applied: entry }] : [];
   });
+  return reusedLedger(actions, sources, run, options);
 }

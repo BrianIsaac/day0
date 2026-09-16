@@ -447,6 +447,27 @@ export function targetChannel(parsed: ParsedSurfaceAction): string | undefined {
   return undefined;
 }
 
+/**
+ * The place a chat message is put: its channel, and the thread inside it
+ * when the action names one, as "channel/thread". Two messages with the
+ * same target land in the same place.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *
+ * Returns:
+ *   The target, or undefined when the action names no channel.
+ */
+export function messageTarget(parsed: ParsedSurfaceAction): string | undefined {
+  const channel = targetChannel(parsed);
+  if (!channel) return undefined;
+  const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
+  const thread = Object.entries(record ?? {}).find(
+    ([key, value]) => isThreadKey(key) && semanticKey(key) !== 'replybroadcast' && typeof value === 'string' && value.trim() !== '',
+  )?.[1];
+  return typeof thread === 'string' ? `${channel.trim()}/${thread.trim()}` : channel.trim();
+}
+
 /** Whether every destination alias supplied by an action names one exact channel. */
 function targetsOnlyChannel(parsed: ParsedSurfaceAction, expected: string): boolean {
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;

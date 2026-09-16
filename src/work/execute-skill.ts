@@ -39,7 +39,8 @@ import { promisesResult } from './plan-steps';
 import { replyTargetLine } from './reply-target';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, unsupportedClaimIssues, type ClaimEvidence } from './evidence-claims';
-import type { RefusedClosing } from './types';
+import type { LandedWrite, RefusedClosing } from './types';
+import { landedWriteLines } from './landed-writes';
 
 export { replyTargetLine };
 
@@ -897,6 +898,8 @@ export interface RunSkillArgs {
    * for this run, never a question to ask again.
    */
   managerAnswers?: readonly ManagerAnswer[];
+  /** Writes earlier runs of this item landed; the prompts list them and a same-target comment is reused, not sent. */
+  landedWrites?: readonly LandedWrite[];
 }
 
 /**
@@ -2167,6 +2170,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
     ...managerAnswerLines(args.managerAnswers),
+    ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -2803,6 +2807,7 @@ export async function runDependentSkill(
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
     ...managerAnswerLines(args.managerAnswers),
+    ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
