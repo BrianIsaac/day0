@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { closingResume, resumedClosingLedger } from '../../../src/work/closing-resume';
 import type { ExecutionPlan } from '../../../src/work/types';
+import { run3RefreshPlan, RUN_3_REVOPS_7_STEP_1 } from '../../convex/fixtures/closing-gates-2026-09-16';
 
 const plan: ExecutionPlan = {
   summary: 'Audit the tile', steps: ['Read the Looker tile.', 'Read the Linear issues.', 'Comment then close.'],
@@ -105,9 +106,9 @@ describe('resuming after a closing gate refusal', () => {
       applied: [...prerequisites.map(() => landed), { tool: 'mcp.call', ok: false, reason: 'Failed to connect to MCP server linear' }],
       planStepOutcomes: [1, 2].map(step => ({ step, status: 'satisfied', evidence: 'ledger row 4: visible figure 74%' })),
     }, runPlan, 'Failed to connect to MCP server linear', tileSurfaces)).toMatchObject({ resumedClosing: true });
-    // A named surface that was not read still sends the retry back through phase one.
+    // A named surface that was never touched (the ledger holds a Linear read only) still sends the retry back through phase one.
     expect(closingResume({
-      ...gateRefusal, actions: prerequisites.slice(0, 3), applied: prerequisites.slice(0, 3).map(() => landed),
+      ...gateRefusal, actions: [action('linear', 'list_issues')], applied: [landed],
     }, { ...runPlan, steps: [runPlan.steps[0]!, 'Read back the figure from the Looker pipeline tile.', ...runPlan.steps.slice(2)] }, refused.reason, tileSurfaces)).toBeUndefined();
   });
 
@@ -116,5 +117,18 @@ describe('resuming after a closing gate refusal', () => {
     expect(closingResume({ ...gateRefusal, applied: [landed, { ...landed, held: true }] }, plan, refused.reason, surfaces)).toBeUndefined();
     expect(closingResume({ ...gateRefusal, actions: [gateRefusal.actions[1]], applied: [landed] }, plan, refused.reason, surfaces)).toBeUndefined();
     expect(closingResume({ ...gateRefusal, actions: [], applied: [] }, plan, refused.reason, surfaces)).toBeUndefined();
+  });
+
+  it('reads the binding the gate reads: a write target is no promised read, a bare condition is one only when nothing else reads the surface', () => {
+    const tileSurfaces = [...surfaces, { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' }];
+    const tile = (tool: string) => ({ tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool, toolArgsJson: '{}' } });
+    const prerequisites = [tile('browser_navigate'), tile('browser_fill_form'), tile('browser_click'), tile('browser_fill_form'), tile('browser_click'), tile('browser_snapshot')];
+    const landedRow = { ...gateRefusal, actions: prerequisites, applied: prerequisites.map(() => landed) };
+    // The run 3 plan: step 3 names Linear as the write target under a condition on the tile read-back; no Linear read is owed.
+    expect(closingResume(landedRow, run3RefreshPlan, refused.reason, tileSurfaces)).toMatchObject({ resumedClosing: true, phase: 'dependent-authoring' });
+    // A Linear read owed only by a condition no other step covers still sends the retry back through phase one.
+    expect(closingResume(landedRow, {
+      ...run3RefreshPlan, steps: [RUN_3_REVOPS_7_STEP_1, 'Move REVOPS-7 to Done only if Linear reports the ticket in Backlog.'],
+    }, refused.reason, tileSurfaces)).toBeUndefined();
   });
 });
