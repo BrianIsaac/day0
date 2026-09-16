@@ -1380,6 +1380,31 @@ describe('the evidence invariant in the closing phase', (): void => {
     expect(output.actions).toEqual([RUN_3_RETRY_ACTION_CORRECTED]);
   });
 
+  it('lets a closing message cite the comment an earlier run landed, listed under the writes already landed, without a repair', async (): Promise<void> => {
+    const landedComment: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-5', body: 'Q3 close summary — three checks.\n1. Pipeline coverage confirmed. 68%.\nNot confirmed: checks 1, 2 and 3.' }) },
+    };
+    const dm: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: JSON.stringify({ channel: 'D0MANAGER', text: 'The audit comment landed in the earlier run as comment-6098cba6. Moving the ticket to Done as you said.' }) },
+    };
+    const doneAction: MockAction = { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'REVOPS-5', state: 'Done' }) } };
+    recorded.outputs.push({ ...run3Reply(doneAction) as object, actions: [dm, doneAction] });
+    let additionalCalls = 0;
+    const output = await runDependentSkill({
+      ...run3Args,
+      landedWrites: [{ action: landedComment, applied: { tool: 'mcp.call', ok: true, providerId: 'comment-6098cba6', idempotencyKey: 'wi_95/run_1/5' } }],
+      onAdditionalModelCall: () => {
+        additionalCalls += 1;
+      },
+    });
+    expect(additionalCalls).toBe(0);
+    expect(recorded.users).toHaveLength(1);
+    expect(recorded.users[0]).toContain('linear · save_comment · REVOPS-5 · provider id comment-6098cba6');
+    expect(output.actions).toEqual([dm, doneAction]);
+  });
+
   it('fails the run when the repair still names only the check the manager accepted', async (): Promise<void> => {
     recorded.outputs.push(run3Reply(RUN_3_RETRY_ACTION), run3Reply(RUN_3_RETRY_ACTION));
     await expect(runDependentSkill(run3Args)).rejects.toThrow(

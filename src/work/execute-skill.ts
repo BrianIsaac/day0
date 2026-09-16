@@ -2227,13 +2227,14 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     };
     // Nothing has been applied when phase one writes, so a message it sends
     // may describe what this response does and nothing more: the evidence
-    // it may cite is the documentation, the manager's words and the actions
-    // beside it. On 16 September a phase-one DM said the audit comment was
-    // posted before any comment existed. Only chat messages are read here;
-    // a ticket comment in phase one is prewritten, and the deferral audit
-    // names it as such.
+    // it may cite is the documentation, the manager's words, the actions
+    // beside it and the writes earlier runs of this item landed, which the
+    // prompt lists. On 16 September a phase-one DM said the audit comment
+    // was posted before any comment existed. Only chat messages are read
+    // here; a ticket comment in phase one is prewritten, and the deferral
+    // audit names it as such.
     const claimEvidence: ClaimEvidence = {
-      ledger: '',
+      ledger: landedWriteLines(args.landedWrites, args.surfaces ?? []).join('\n'),
       documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
       managerFeedback: [
         ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
@@ -2862,7 +2863,10 @@ export async function runDependentSkill(
   // so it is where a message asserting what the results do not show is
   // refused; the mock path authors everything in one phase and is not read.
   const claimEvidence: ClaimEvidence = {
-    ledger: appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
+    ledger: [
+      appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
+      ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+    ].join('\n'),
     documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
     managerFeedback: [
       ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
