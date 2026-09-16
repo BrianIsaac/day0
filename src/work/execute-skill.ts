@@ -1089,6 +1089,33 @@ function refusalsOf(findings: readonly ClaimFinding[]): AuditRefusal[] {
   return findings.map(({ index, issue }) => ({ index, reason: issue }));
 }
 
+/**
+ * Withhold every message the evidence check refuses, then read the messages
+ * that stand again until none is refused. A message the check accepted on
+ * the strength of one beside it (the escalation DM that says the thread
+ * reply was sent, supported by the reply's own thread) loses that support
+ * when the one beside it is withheld, and goes with it. Each round records
+ * the indices in the set it corrected; the rounds are bounded by the
+ * number of actions, since every round withholds at least one.
+ */
+async function withholdUnsupported<T extends CorrectableOutput>(
+  output: T,
+  findingsOf: (actions: readonly MockAction[]) => ClaimFinding[],
+  record: RunSkillArgs['onAuditCorrection'],
+): Promise<T> {
+  let corrected = output;
+  for (let round = 0; round <= output.actions.length; round += 1) {
+    const findings = findingsOf(corrected.actions);
+    if (findings.length === 0) break;
+    corrected = withholdActions(corrected, refusalsOf(findings));
+    await record?.(
+      findings.map((finding) => finding.index),
+      `${WITHHELD_BY_EVIDENCE}: ${findings.map((finding) => finding.issue).join('; ')}`,
+    );
+  }
+  return corrected;
+}
+
 /** The most of a refused closing set the retry prompt carries, shared across its actions; the row keeps the whole of it. */
 export const REFUSED_CLOSING_PROMPT_CHARS = 6000;
 /** The least any one refused action is shown, so a long comment cannot crowd the others out. */
@@ -2413,12 +2440,11 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     if (kept.length > 0) {
       await args.onAuditCorrection?.([], `${DEFERRALS_KEPT}: ${kept.join('; ')}`);
     }
-    const findings = unsupportedClaimFindings(corrected.actions, claimEvidence, (action) => isChatMessage(action, chatSurfaces));
-    if (findings.length > 0) {
-      corrected = withholdActions(corrected, refusalsOf(findings));
-      await args.onAuditCorrection?.(findings.map((finding) => finding.index), `${WITHHELD_BY_EVIDENCE}: ${findings.map((finding) => finding.issue).join('; ')}`);
-    }
-    return corrected;
+    return await withholdUnsupported(
+      corrected,
+      (actions) => unsupportedClaimFindings(actions, claimEvidence, (action) => isChatMessage(action, chatSurfaces)),
+      args.onAuditCorrection,
+    );
   }
 
   const issues = mockActionContractIssues(output, candidate, plan, procedureContract);
@@ -3031,11 +3057,7 @@ export async function runDependentSkill(
         : candidateOutput;
     const gate = gateIssues(output);
     if (gate.length > 0) throw new ClosingGateRefusal(gate, withLimitations(output));
-    const findings = claimFindings(output.actions);
-    if (findings.length > 0) {
-      output = withholdActions(output, refusalsOf(findings));
-      await args.onAuditCorrection?.(findings.map((finding) => finding.index), `${WITHHELD_BY_EVIDENCE}: ${findings.map((finding) => finding.issue).join('; ')}`);
-    }
+    output = await withholdUnsupported(output, claimFindings, args.onAuditCorrection);
   }
   return trailAttention.limitations.length > 0
     ? { ...output, procedureTrailLimitations: trailAttention.limitations }

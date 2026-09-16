@@ -1441,3 +1441,63 @@ describe('the evidence invariant in the closing phase', (): void => {
     ]);
   });
 });
+
+describe('what stands after the evidence check withholds a message', (): void => {
+  const chat: SurfaceRecord[] = [
+    { slug: 'slack', displayName: 'Slack', class: 'chat', path: 'documented-api', endpoint: 'https://slack.com/api/', toolAllowlist: ['chat.postMessage'], managerDmChannelId: 'D0MANAGER', verdict: 'connected', credentialLanded: true, lastVerifiedAt: 1 },
+  ];
+  const post = (body: Record<string, unknown>): MockAction => ({
+    tool: 'http.request',
+    args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }), body: JSON.stringify(body) },
+  });
+  /** The run 4 Slack shape: the thread reply asserts what no ledger row carries, and the escalation DM says the reply was sent. */
+  const reply = post({ channel: 'C0REVOPSASKS', thread_ts: '1789000000.000200', text: 'All three standup deals are reconciled against the tracker.' });
+  const escalation = post({ channel: 'D0MANAGER', text: 'Reply sent in thread 1789000000.000200 confirming the deals are reconciled.' });
+  const mentionCandidate: WorkCandidate = {
+    ...candidate, sourceCategory: 'event-stream', sourceSystem: 'slack', externalId: 'C0REVOPSASKS:1789000000.000200',
+    title: 'Mention in #revops-asks', contentSummary: 'What is pipeline coverage after Friday?', contentRefs: ['slack://C0REVOPSASKS/1789000000.000200'],
+  };
+  const closingArgs = {
+    skill: { name: 'chat-thread-reply', description: 'Reply in the thread.', body: '# Skill' },
+    plan: { summary: 'Reply in the thread and escalate the gap.', steps: ['Reply in the originating thread.', 'Escalate the reconciliation gap to the manager DM.'], expectedOutputType: 'message' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1 },
+    candidate: mentionCandidate, charter, mockEnv, mode: 'real' as const, surfaces: chat,
+    initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+    initialLedger: [],
+  };
+  const closing = (actions: MockAction[]) => ({
+    draft: '', notes: '', actions, procedureTrails: [],
+    planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'this response', basis: 'ledger' }, { step: 2, status: 'satisfied', evidence: 'this response', basis: 'ledger' }],
+  });
+
+  beforeEach((): void => {
+    recorded.users.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('withholds the DM that asserted a withheld reply was sent: a message supported only by one beside it goes with it', async (): Promise<void> => {
+    recorded.outputs.push(closing([reply, escalation]), closing([reply, escalation]));
+    const corrections: Array<[number[], string]> = [];
+    const output = await runDependentSkill({ ...closingArgs, onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); } });
+    expect(recorded.users).toHaveLength(2);
+    // The first pass names the reply alone: the DM stood on the reply's thread beside it.
+    expect(recorded.users[1]).toContain('action 0 (slack POST /chat.postMessage)');
+    expect(recorded.users[1]).not.toContain('action 1 (slack POST /chat.postMessage)');
+    expect(output.actions).toEqual([]);
+    expect(output.withheldActions).toEqual([
+      { action: reply, reason: expect.stringContaining('All three standup deals are reconciled') },
+      { action: escalation, reason: expect.stringContaining('Reply sent in thread 1789000000.000200') },
+    ]);
+    expect(corrections).toEqual([
+      [[0], expect.stringContaining(WITHHELD_BY_EVIDENCE)],
+      [[0], expect.stringContaining('Reply sent in thread')],
+    ]);
+  });
+
+  it('keeps a DM that stands on its own after the reply beside it is withheld', async (): Promise<void> => {
+    const honest = post({ channel: 'D0MANAGER', text: 'Could not confirm the per-deal reconciliation: no tracker surface is connected. Do you want one set up?' });
+    recorded.outputs.push(closing([reply, honest]), closing([reply, honest]));
+    const output = await runDependentSkill(closingArgs);
+    expect(output.actions).toEqual([honest]);
+    expect(output.withheldActions?.map((row) => row.action)).toEqual([reply]);
+  });
+});
