@@ -25,6 +25,9 @@ export const HELD_BROWSER_SEQUENCE =
   'held with the rest of this browser session, which runs in one browser';
 
 export const HELD_MUTATION = 'system-of-record mutation held for the manager';
+/** Why a ticket state change waits under the switch: the approved plan said the state stays where it is. */
+export const HELD_WITHHELD_TRANSITION =
+  'ticket state transition the approved plan withholds; held for the manager';
 export const HELD_WRITE = 'write held for the manager';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
 export const AWAITING_APPROVAL = "awaiting the manager's approval";
@@ -869,12 +872,21 @@ export interface ReviewScope {
   autonomousActions: boolean;
   /** Exact source channel and thread for event-stream replies. */
   replyTarget?: ReplyTarget;
+  /**
+   * Whether the approved plan withholds the ticket state transition in its
+   * own words ("do not move REVOPS-5 to Done", "no status change"). A state
+   * change is then the manager's decision, and the switch does not stand in
+   * for it.
+   */
+  transitionWithheld?: boolean;
 }
 
 /**
  * Decide at hold time what the gate will do with one action.
  *
- * Refusals come first and are the same whether the toggle is on or off.
+ * Refusals come first and are the same whether the toggle is on or off, and
+ * so is a ticket state change the approved plan withholds: that decision
+ * is the manager's, and the switch does not stand in for it.
  * With autonomous actions off, an applicable row is `auto` when it is a
  * read or the manager DM and `held` for every other write - a public post
  * or thread reply, a system-of-record mutation, a create or a delete, or any
@@ -902,6 +914,9 @@ export function reviewAction(
   if (refusal.refused) return { disposition: 'refused', reason: refusal.reason };
   const replyRefusal = replyTargetRefusal(refusal.parsed, refusal.surface, scope.replyTarget);
   if (replyRefusal) return { disposition: 'refused', reason: replyRefusal };
+  if (scope.transitionWithheld && isStatusChange(refusal.parsed)) {
+    return { disposition: 'held', reason: HELD_WITHHELD_TRANSITION };
+  }
   if (scope.autonomousActions) return { disposition: 'auto' };
   switch (actionClass(refusal.parsed, refusal.surface)) {
     case 'read':

@@ -11,6 +11,7 @@ import {
   HELD_BROWSER_SEQUENCE,
   HELD_MUTATION,
   HELD_PUBLIC_POST,
+  HELD_WITHHELD_TRANSITION,
   heldReason,
   isAutomatic,
   isAuditComment,
@@ -1080,6 +1081,27 @@ describe('a browser sequence is reviewed as one session', (): void => {
       { autonomousActions: true },
     );
     expect(verdicts.map((v) => v.disposition)).toEqual(['auto', 'auto']);
+  });
+});
+
+describe('a ticket state transition the approved plan withholds', (): void => {
+  const grants = new Set(['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write']);
+  const stateChange: MockAction = {
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'REVOPS-5', state: 'Done' }) },
+  };
+  const withheld: ReviewScope = { autonomousActions: true, transitionWithheld: true };
+
+  it('is held for the manager under the switch, while the comment and the DM still apply on their own', (): void => {
+    expect(reviewActions([comment('Audit note.', 'REVOPS-5'), stateChange, chatPost('D0MANAGER')], [linear, slack], grants, now, withheld)).toEqual([
+      { disposition: 'auto' },
+      { disposition: 'held', reason: HELD_WITHHELD_TRANSITION },
+      { disposition: 'auto' },
+    ]);
+    expect(reviewAction(stateChange, [linear, slack], grants, now, autonomous)).toEqual({ disposition: 'auto' });
+    expect(reviewAction(stateChange, [linear, slack], grants, now, { ...supervised, transitionWithheld: true })).toEqual({
+      disposition: 'held', reason: HELD_WITHHELD_TRANSITION,
+    });
   });
 });
 

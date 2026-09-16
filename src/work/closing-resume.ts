@@ -2,7 +2,7 @@ import { actionIdempotencyKey } from './idempotency';
 import { actionIntent, isAuditComment, isStatusChange, parseSurfaceAction } from '../surfaces/policy';
 import type { AppliedAction } from '../surfaces/types';
 import { promisesResult } from './plan-steps';
-import type { ExecutionOutput, ExecutionPlan, PlanStepOutcome } from './types';
+import type { ExecutionOutput, ExecutionPlan, PlanStepOutcome, RefusedClosing } from './types';
 
 export interface ClosingResume extends ExecutionOutput {
   phase: 'dependent-authoring';
@@ -10,16 +10,77 @@ export interface ClosingResume extends ExecutionOutput {
   resumedClosing: true;
   initialFailure: string;
   previousClosing: { actions: ExecutionOutput['actions']; applied: AppliedAction[] };
+  /** The closing set the previous attempt's gate refused, for the closing prompt to correct. */
+  refusedClosing?: RefusedClosing;
+}
+
+type Surface = { slug: string; displayName: string };
+
+function landedEntry(entry: AppliedAction | undefined): boolean {
+  return entry?.ok === true && !entry.held && !entry.awaitingApproval;
+}
+
+function isRead(action: ExecutionOutput['actions'][number]): boolean {
+  const parsed = parseSurfaceAction(action);
+  return parsed.ok && actionIntent(parsed.action) === 'read';
+}
+
+/**
+ * Whether every surface a promised-result step names was read in the
+ * prerequisites. A step that names no surface ("take a browser_snapshot and
+ * read back the audit line", in the same session as the step before it)
+ * has nothing here to check; the landed-read rule beside this one is what
+ * covers it.
+ */
+function promisedSurfacesRead(actions: readonly ExecutionOutput['actions'][number][], plan: ExecutionPlan, surfaces: readonly Surface[]): boolean {
+  const reads = new Set(actions.flatMap(action => {
+    const parsed = parseSurfaceAction(action);
+    return parsed.ok && actionIntent(parsed.action) === 'read' ? [parsed.action.surface] : [];
+  }));
+  for (const step of plan.steps.filter(promisesResult)) {
+    const named = surfaces.filter(surface => [surface.slug, surface.displayName].some(name =>
+      step.toLowerCase().includes(name.toLowerCase()),
+    ));
+    if (named.some(surface => !reads.has(surface.slug))) return false;
+  }
+  return true;
+}
+
+/**
+ * A run that died inside its closing gate: the row still carries the
+ * prerequisite phase whole (the ledger is the phase boundary, nothing of
+ * the closing set reached a surface) and, when the gate refused an
+ * authored set, that set with its reason. The prerequisites landed, so the
+ * retry authors the closing set again from the same ledger.
+ */
+function gateRefusalResume(row: ExecutionOutput & { phase?: unknown; applied?: AppliedAction[]; refusedClosing?: RefusedClosing }, plan: ExecutionPlan, failure: string, surfaces: readonly Surface[]): ClosingResume | undefined {
+  if (row.phase !== 'dependent-authoring' || !Array.isArray(row.actions) || !Array.isArray(row.applied)) return undefined;
+  if (row.actions.length === 0 || row.applied.length !== row.actions.length) return undefined;
+  if (row.applied.some(entry => !landedEntry(entry))) return undefined;
+  if (!row.actions.some(isRead)) return undefined;
+  if (!promisedSurfacesRead(row.actions, plan, surfaces)) return undefined;
+  const refused = row.refusedClosing;
+  return {
+    draft: row.draft, notes: row.notes,
+    actions: row.actions, applied: row.applied,
+    needsDependentPhase: true, phase: 'dependent-authoring', resumedClosing: true,
+    initialFailure: failure,
+    previousClosing: { actions: refused?.actions ?? [], applied: [] },
+    ...(refused ? { refusedClosing: refused } : {}),
+  };
 }
 
 /** Older completed ledgers have no phase boundary; only an unambiguous closing suffix is reusable. */
-export function closingResume(output: unknown, plan: ExecutionPlan, failure: string | undefined, surfaces: readonly { slug: string; displayName: string }[]): ClosingResume | undefined {
+export function closingResume(output: unknown, plan: ExecutionPlan, failure: string | undefined, surfaces: readonly Surface[]): ClosingResume | undefined {
   if (!output || typeof output !== 'object' || !failure) return undefined;
   const row = output as ExecutionOutput & {
+    phase?: unknown;
     applied?: AppliedAction[];
     planStepOutcomes?: PlanStepOutcome[];
     prerequisiteCount?: number;
+    refusedClosing?: RefusedClosing;
   };
+  if (row.phase === 'dependent-authoring') return gateRefusalResume(row, plan, failure, surfaces);
   if (!Array.isArray(row.actions) || !Array.isArray(row.applied)) return undefined;
   const boundary = row.prerequisiteCount ?? row.actions.findIndex(action => {
     const parsed = parseSurfaceAction(action);
@@ -32,24 +93,12 @@ export function closingResume(output: unknown, plan: ExecutionPlan, failure: str
     const entry = applied[index];
     return !entry?.ok || entry.held || entry.awaitingApproval;
   })) return undefined;
-  if (!actions.some(action => {
-    const parsed = parseSurfaceAction(action);
-    return parsed.ok && actionIntent(parsed.action) === 'read';
-  })) return undefined;
+  if (!actions.some(isRead)) return undefined;
   const prerequisites = plan.steps.flatMap((step, index) => promisesResult(step) ? [index + 1] : []);
   if (prerequisites.length === 0 || prerequisites.some(step => !row.planStepOutcomes?.some(
     outcome => outcome.step === step && outcome.status === 'satisfied' && outcome.basis !== 'manager-feedback' && outcome.evidence.trim(),
   ))) return undefined;
-  const reads = new Set(actions.flatMap(action => {
-    const parsed = parseSurfaceAction(action);
-    return parsed.ok && actionIntent(parsed.action) === 'read' ? [parsed.action.surface] : [];
-  }));
-  for (const step of plan.steps.filter(promisesResult)) {
-    const named = surfaces.filter(surface => [surface.slug, surface.displayName].some(name =>
-      step.toLowerCase().includes(name.toLowerCase()),
-    ));
-    if (named.length === 0 || named.some(surface => !reads.has(surface.slug))) return undefined;
-  }
+  if (!promisedSurfacesRead(actions, plan, surfaces)) return undefined;
   const closingActions = row.actions.slice(boundary);
   const closingApplied = row.applied.slice(boundary);
   if (row.prerequisiteCount === undefined && closingActions.some(action => {

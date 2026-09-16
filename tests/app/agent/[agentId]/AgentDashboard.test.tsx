@@ -18,6 +18,7 @@ import {
   PendingActions,
   PlanApprovalForm,
   PlanExecutionLedger,
+  RefusedClosingDetails,
   RefusedDraftDetails,
   RepairNote,
   WorkItemCard,
@@ -25,6 +26,8 @@ import {
   phasedLedger,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
+import { HELD_BEFORE_AUTONOMY_NOTE, HELD_WITHHELD_TRANSITION_NOTE } from '../../../../src/work/autonomy';
+import { HELD_WITHHELD_TRANSITION } from '../../../../src/surfaces/policy';
 import { strikeOutcome, strikePreview } from '../../../../src/agent/charter-constraints';
 import type { Charter } from '../../../../src/agent/charter';
 import { strikeRefusalBody } from '../../../fixtures/charter-strike-refusal-2026-09-15';
@@ -132,6 +135,30 @@ describe('a write re-authored once before the hold', (): void => {
   });
 });
 
+describe('a ticket state change the plan withholds', (): void => {
+  const resolved = async (): Promise<void> => undefined;
+  const done = {
+    tool: 'mcp.call' as const,
+    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"REVOPS-5","state":"Done"}' },
+  };
+
+  it('says the move is the manager\'s call, not that the run predates the switch', (): void => {
+    const markup = renderToStaticMarkup(
+      <PendingActions
+        actions={[done]}
+        verdicts={[{ disposition: 'held', reason: HELD_WITHHELD_TRANSITION }]}
+        surfaces={[]}
+        autonomousActions
+        onApprove={resolved}
+        onReject={resolved}
+      />,
+    );
+    expect(markup).toContain(HELD_WITHHELD_TRANSITION_NOTE);
+    expect(markup).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
+    expect(markup).toContain(HELD_WITHHELD_TRANSITION);
+  });
+});
+
 describe('a question at plan approval', (): void => {
   const question = {
     _id: 'q1',
@@ -182,6 +209,34 @@ describe('a question at plan approval', (): void => {
     );
     expect(answered).not.toContain('Who owns the Looker pipeline tile.');
     expect(answered).toContain('>Approve plan<');
+  });
+});
+
+describe('refused closing set', (): void => {
+  it('shows the refused actions, the reason and the outcomes the set claimed, and nothing when there is none', (): void => {
+    const markup = renderToStaticMarkup(
+      <RefusedClosingDetails
+        refused={{
+          actions: [
+            {
+              tool: 'mcp.call',
+              args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-7","body":"Refreshed the tile to 74%."}' },
+            },
+          ],
+          planStepOutcomes: [{ step: 3, status: 'satisfied', evidence: 'the audit comment in this response' }],
+          draft: 'd',
+          notes: '',
+          reason: 'approved plan step 3 promised a Linear read, but no landed read or blocking ledger reason was recorded',
+          at: 1,
+        }}
+      />,
+    );
+    expect(markup).toContain('Refused closing set · 1 action · never sent');
+    expect(markup).toContain('approved plan step 3 promised a Linear read');
+    expect(markup).toContain('mcp.call linear · save_comment');
+    expect(markup).toContain('Refreshed the tile to 74%.');
+    expect(markup).toContain('Step 3 · satisfied - the audit comment in this response');
+    expect(renderToStaticMarkup(<RefusedClosingDetails refused={undefined} />)).toBe('');
   });
 });
 
