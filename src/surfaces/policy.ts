@@ -1098,6 +1098,21 @@ export function isStatusChange(parsed: ParsedSurfaceAction): boolean {
 }
 
 /**
+ * The state a status change sets, as its arguments carry it ("Done", a
+ * workflow state id), or undefined when the call is not a status change.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *
+ * Returns:
+ *   The target state string, or undefined.
+ */
+export function statusChangeTarget(parsed: ParsedSurfaceAction): string | undefined {
+  if (!isStatusChange(parsed) || parsed.kind !== 'mcp.call') return undefined;
+  return firstString(parsed.toolArgs, STATUS_KEYS);
+}
+
+/**
  * The ticket an MCP call addresses, when its arguments name one.
  *
  * Args:
