@@ -103,10 +103,15 @@ function distinctiveTokens(text: string): string[] {
   return out;
 }
 
+/**
+ * The units a reader takes a claim from: sentences, lines, and the clauses
+ * a semicolon joins. A hedge after the semicolon ("...; check 2 recorded
+ * as not confirmed") says nothing about the claim before it.
+ */
 function sentencesOf(text: string): string[] {
   return text
     .replace(TRAILER, '')
-    .split(/(?<=[.!?])\s+|\n+/)
+    .split(/(?<=[.!?])\s+|\n+|;\s*/)
     .map((sentence: string): string => sentence.replace(/^\s*(?:\d+[.)]|[-*])\s*/, '').trim())
     .filter((sentence: string): boolean => words(sentence).length > 1);
 }
