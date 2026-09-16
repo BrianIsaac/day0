@@ -144,19 +144,19 @@ export const auditNoteClosing = {
 /**
  * The REVOPS-7 plan from the 16 September third run (fresh clone of main
  * 1465d2a with the closing-gates fix and its review merged, GLM 5.3 Flash,
- * real mode, autonomy on). Step 3 is the run handover's verbatim text; steps
- * 1 and 2 are as the fix brief records them, step 1 with the brief's own
- * elision of the navigation target. Phase one landed the six browser actions
- * and the snapshot read the audit line at 07:42:48 UTC; the closing phase
- * authored the comment and the Done, and the gate refused them as a Linear
- * read step 3 never promised.
+ * real mode, autonomy on). Every step, the summary and the reversibility
+ * note are the run's own text as the review brief records them from the
+ * bed, the em dash in step 1 included. Phase one landed the six browser
+ * actions and the snapshot read the audit line at 07:42:48 UTC; the closing
+ * phase authored the comment and the Done, and the gate refused them as a
+ * Linear read step 3 never promised.
  */
 export const RUN_3_TILE_AUDIT_LINE = 'Last updated by revops at 2026-09-16 07:42:48 UTC';
 export const RUN_3_TILE_READ_BACK = `visible figure 74% · ${RUN_3_TILE_AUDIT_LINE}`;
 
 /** Run 3 REVOPS-7 step 1: the browser sequence and the read-back, on the tile. */
 export const RUN_3_REVOPS_7_STEP_1 =
-  "On the looker-pipeline-tile surface, run the documented browser sequence in one session: navigate ..., click 'Save', then browser_snapshot to read back the visible figure and the audit line 'Last updated by <user> at <time> UTC'. If the page redirects, login fails, or the audit line does not appear, record the observed failure and stop.";
+  "On the looker-pipeline-tile surface, run the documented browser sequence in one session: navigate to http://looker-tile:8080/, fill Username (revops) and Password ({{secret}}), click 'Sign in', fill 'Pipeline coverage' with 74% (the approved figure from the Friday standup summary — do not compute a replacement), click 'Save', then browser_snapshot to read back the visible figure and the audit line 'Last updated by <user> at <time> UTC'. If the page redirects, login fails, or the audit line does not appear, record the observed failure and stop.";
 /** Run 3 REVOPS-7 step 2: the audit comment, a write on Linear. */
 export const RUN_3_REVOPS_7_STEP_2 =
   'On linear, add an audit comment to REVOPS-7 quoting the visible figure and the exact audit line as evidence the refresh landed (or the observed failure if it did not), with the standard provenance trailer.';
@@ -165,9 +165,11 @@ export const RUN_3_REVOPS_7_STEP_3 =
   "On linear, set REVOPS-7 state to 'Done' only if the refresh landed and the audit line was read back; otherwise leave it in progress with the failure noted in the comment.";
 
 export const run3RefreshPlan: ExecutionPlan = {
-  summary: 'Execute REVOPS-7: refresh the Looker pipeline coverage tile to the approved 74% figure via the documented browser sequence, read back the audit line, then comment on and close the Linear ticket.',
+  summary: 'Execute REVOPS-7 per the Looker tile runbook: refresh the pipeline coverage tile to the approved 74% via the connected browser surface, read back the audit line as evidence, then close the loop on Linear with an audit comment and status change.',
   steps: [RUN_3_REVOPS_7_STEP_1, RUN_3_REVOPS_7_STEP_2, RUN_3_REVOPS_7_STEP_3],
-  expectedOutputType: 'ticket-update', riskNotes: '', reversibility: 'Re-enter the previous figure.', estimatedMinutes: 5,
+  expectedOutputType: 'ticket-update', riskNotes: '',
+  reversibility: 'The tile holds a single value and can be re-entered by hand by the operations lead; the Linear comment and status change are individually reversible via Linear.',
+  estimatedMinutes: 5,
 };
 
 export const run3RefreshPrerequisites: MockAction[] = refreshPrerequisites;
