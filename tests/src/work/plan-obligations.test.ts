@@ -44,7 +44,16 @@ import {
   transitionPromised,
   transitionWithheld,
 } from '../../../src/work/obligations';
-import { RUN_4_REVOPS_7_STEP_2, run4RefreshPlan, run4SlackPlan } from '../../convex/fixtures/plan-obligations-2026-09-16';
+import {
+  RUN_4_REVOPS_7_STEP_2,
+  run4RefreshClosing,
+  run4RefreshPlan,
+  run4RefreshPrerequisiteLedger,
+  run4RefreshPrerequisites,
+  run4SlackPlan,
+} from '../../convex/fixtures/plan-obligations-2026-09-16';
+import { blockedPlanReason, dependentTransitionRefusal, validatePlanStepOutcomes } from '../../../convex/workActions';
+import { closingResume } from '../../../src/work/closing-resume';
 
 const NOW = Date.parse('2026-09-16T10:00:00.000Z');
 
@@ -345,15 +354,16 @@ describe('what the gates read from a plan', (): void => {
     expect(transitionPromised(stale)).toBe(false);
   });
 
-  it('reads the transition as promised for an evidence condition and as withheld for the manager\'s decision', (): void => {
+  it('reads a manager-conditioned transition as both owed and withheld: emitted, then held for the manager', (): void => {
     const withTransition = (transition: ExecutionPlan['obligations'] extends infer O ? O extends { transition: infer T } ? T : never : never) => ({
       ...base,
       obligations: { steps: [{ kind: 'read' as const, reads: ['linear'], writes: [] }, { kind: 'write' as const, reads: [], writes: ['linear'] }], transition, transitionStep: 2, basis: 'judgement' as const },
     });
     expect(transitionPromised(withTransition('promised'))).toBe(true);
     expect(transitionPromised(withTransition('conditional-on-evidence'))).toBe(true);
-    expect(transitionPromised(withTransition('conditional-on-manager'))).toBe(false);
+    expect(transitionPromised(withTransition('conditional-on-manager'))).toBe(true);
     expect(transitionWithheld(withTransition('conditional-on-manager'))).toBe(true);
+    expect(transitionPromised(withTransition('withheld'))).toBe(false);
     expect(transitionWithheld(withTransition('withheld'))).toBe(true);
     expect(transitionWithheld(withTransition('none'))).toBe(false);
     expect(transitionPromised(withTransition('none'))).toBe(false);
@@ -370,5 +380,92 @@ describe('what the gates read from a plan', (): void => {
     expect(declaredReads(plan, [linear, slack])).toEqual([{ step: 1, surface: linear }, { step: 2, surface: slack }]);
     expect(declaredReads(plan, [linear])).toEqual([{ step: 1, surface: linear }]);
     expect(readingSteps(plan)).toEqual([1, 2]);
+  });
+});
+
+describe('each gate against a judgement that failed open and one that contradicted the planner', (): void => {
+  const outcomes = (count: number, status: 'satisfied' | 'blocked' = 'satisfied') =>
+    Array.from({ length: count }, (_, index) => ({ step: index + 1, status, evidence: 'in this response' }));
+  const comment = run4RefreshClosing.actions[0]!;
+  const done = run4RefreshClosing.actions[1]!;
+  const plannerFields = {
+    steps: [
+      { kind: 'write' as const, reads: [], writes: ['looker-pipeline-tile'] },
+      { kind: 'write' as const, reads: [], writes: ['linear'] },
+      { kind: 'report' as const, reads: [], writes: [] },
+    ],
+    transition: 'withheld' as const,
+    transitionStep: 3,
+  };
+
+  beforeEach((): void => {
+    model.calls.length = 0;
+    model.plans.length = 0;
+  });
+
+  /** The plan as drafting stores it: the settled obligations on the run 4 REVOPS-7 plan. */
+  const drafted = async (): Promise<ExecutionPlan> => {
+    const settled = await settlePlanObligations({ plan: run4RefreshPlan, charter, surfaces, documents, now: NOW }, plannerFields);
+    return settled.obligations ? { ...run4RefreshPlan, obligations: settled.obligations } : { ...run4RefreshPlan, obligations: undefined };
+  };
+
+  it('validatePlanStepOutcomes: skips the reads it cannot see when the judgement failed open, and owes the judgement\'s read over the planner\'s', async (): Promise<void> => {
+    model.judgement = new Error('provider unavailable');
+    const open = await drafted();
+    expect(open.obligations?.basis).toBe('planner');
+    expect(() =>
+      validatePlanStepOutcomes({ plan: open, outcomes: outcomes(3), initialActions: [], initialLedger: [], surfaces: [linear, tile] }),
+    ).not.toThrow();
+    model.judgement = refreshJudgement;
+    const judged = await drafted();
+    expect(judged.obligations?.basis).toBe('judgement');
+    expect(() =>
+      validatePlanStepOutcomes({ plan: judged, outcomes: outcomes(3), initialActions: [], initialLedger: [], surfaces: [linear, tile] }),
+    ).toThrow('approved plan step 1 declares a read of Looker pipeline tile');
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: judged, outcomes: outcomes(3), initialActions: run4RefreshPrerequisites, initialLedger: run4RefreshPrerequisiteLedger, surfaces: [linear, tile],
+      }),
+    ).not.toThrow();
+  });
+
+  it('dependentTransitionRefusal: owes nothing it cannot see when the judgement failed open, and reads the judgement\'s transition over the planner\'s', async (): Promise<void> => {
+    model.judgement = new Error('provider unavailable');
+    const open = await drafted();
+    // The planner's unchecked "withheld" stands: a set without the Done is not refused.
+    expect(dependentTransitionRefusal({ plan: open, actions: [comment], planStepOutcomes: outcomes(3) })).toBeUndefined();
+    expect(dependentTransitionRefusal({ plan: { ...open, obligations: undefined }, actions: [comment], planStepOutcomes: outcomes(3) })).toBeUndefined();
+    model.judgement = refreshJudgement;
+    const judged = await drafted();
+    expect(dependentTransitionRefusal({ plan: judged, actions: [comment], planStepOutcomes: outcomes(3) })).toContain('omitted the approved ticket state transition');
+    expect(dependentTransitionRefusal({ plan: judged, actions: [comment, done], planStepOutcomes: outcomes(3) })).toBeUndefined();
+    expect(blockedPlanReason(outcomes(3, 'blocked'), { plan: judged, actions: [comment], applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'k' }] })).toContain('remained blocked');
+  });
+
+  it('the withheld-transition hold: the planner\'s "withheld" holds the Done only while unchecked; the judgement\'s evidence condition lets it land', async (): Promise<void> => {
+    model.judgement = new Error('provider unavailable');
+    const open = await drafted();
+    expect(transitionWithheld(open)).toBe(true);
+    expect(transitionWithheld({ ...open, obligations: undefined })).toBe(false);
+    model.judgement = refreshJudgement;
+    const judged = await drafted();
+    expect(transitionWithheld(judged)).toBe(false);
+    model.judgement = { ...refreshJudgement, transition: 'conditional-on-manager' };
+    expect(transitionWithheld(await drafted())).toBe(true);
+  });
+
+  it('the resume selector: resumes on the ledger alone when the judgement failed open, and demands the judgement\'s tile read', async (): Promise<void> => {
+    const landed = { tool: 'mcp.call', ok: true, idempotencyKey: 'k' };
+    const linearOnly = {
+      phase: 'dependent-authoring', draft: '', notes: '', needsDependentPhase: true,
+      actions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } }],
+      applied: [landed],
+    };
+    model.judgement = new Error('provider unavailable');
+    expect(closingResume(linearOnly, await drafted(), 'gate refused', [linear, tile])).toMatchObject({ resumedClosing: true });
+    model.judgement = refreshJudgement;
+    const judged = await drafted();
+    expect(closingResume(linearOnly, judged, 'gate refused', [linear, tile])).toBeUndefined();
+    expect(closingResume({ ...linearOnly, actions: run4RefreshPrerequisites, applied: run4RefreshPrerequisites.map(() => landed) }, judged, 'gate refused', [linear, tile])).toMatchObject({ resumedClosing: true });
   });
 });

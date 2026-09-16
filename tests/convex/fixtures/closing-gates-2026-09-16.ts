@@ -1,5 +1,5 @@
 import type { AppliedAction } from '../../../src/surfaces/types';
-import type { ExecutionPlan, MockAction, PlanStepOutcome } from '../../../src/work/types';
+import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from '../../../src/work/types';
 
 /**
  * The two plans whose closing sets the gates refused in the 16 September
@@ -29,6 +29,20 @@ export const TILE_READ_BACK = `visible figure 74% · ${TILE_AUDIT_LINE}`;
 export const REVOPS_7_STEP_3 =
   'Add an audit comment on REVOPS-7 via linear save_comment quoting the visible figure and the exact audit line as evidence (comment precedes any status change).';
 
+/** The run 2 REVOPS-7 plan's declared obligations, as the judgement returns them: the sequence writes the tile, the snapshot reads it, the comment and the Done write Linear. */
+export const refreshObligations: PlanObligations = {
+  steps: [
+    { kind: 'write', reads: [], writes: ['looker-pipeline-tile'], reason: 'the documented sequence saves the figure' },
+    { kind: 'read', reads: ['looker-pipeline-tile'], writes: [], reason: 'the snapshot reads the figure and the audit line back' },
+    { kind: 'write', reads: [], writes: ['linear'], reason: 'the comment quotes the read-back as evidence; Linear is only written' },
+    { kind: 'conditional-write', reads: [], writes: ['linear'], reason: 'the Done follows only when the audit line confirmed the change' },
+  ],
+  transition: 'conditional-on-evidence',
+  transitionStep: 4,
+  basis: 'judgement',
+  reason: 'step 4 moves REVOPS-7 to Done only if the audit line confirmed the change',
+};
+
 export const refreshPlan: ExecutionPlan = {
   summary: 'Execute REVOPS-7: refresh the Looker pipeline coverage tile to the approved 74% figure via the documented browser sequence, then record evidence and close the Linear ticket.',
   steps: [
@@ -38,6 +52,7 @@ export const refreshPlan: ExecutionPlan = {
     'Move REVOPS-7 to Done via linear save_issue only if the audit line confirmed the change landed.',
   ],
   expectedOutputType: 'ticket-update', riskNotes: '', reversibility: 'Re-enter the previous figure.', estimatedMinutes: 5,
+  obligations: refreshObligations,
 };
 
 const tile = (tool: string, args: Record<string, unknown>): MockAction => call('looker-pipeline-tile', tool, args);
@@ -83,6 +98,21 @@ export const REVOPS_5_STEP_2 =
 export const REVOPS_5_STEP_5 =
   'Do not move REVOPS-5 to Done: per the checklist the ticket moves to Done only when all three checks are confirmed or the manager says so; flag the Done decision to the manager in the completion note.';
 
+/** The run 2 REVOPS-5 plan's declared obligations: the tile and Linear are read, check 2 is reported, the comment writes Linear, and the Done is withheld in the plan's own words. */
+export const auditNoteObligations: PlanObligations = {
+  steps: [
+    { kind: 'read', reads: ['looker-pipeline-tile'], writes: [], reason: 'the sign-in and snapshot read the tile for check 1' },
+    { kind: 'read', reads: ['linear'], writes: [], reason: 'list_issues on the Q3 close project for check 3' },
+    { kind: 'report', reads: [], writes: [], reason: 'the tracker has no connected surface; the check is reported, nothing is read' },
+    { kind: 'write', reads: [], writes: ['linear'], reason: 'the audit comment on REVOPS-5' },
+    { kind: 'report', reads: [], writes: [], reason: 'the plan leaves the state alone and flags the decision to the manager' },
+  ],
+  transition: 'withheld',
+  transitionStep: 5,
+  basis: 'judgement',
+  reason: 'step 5 says not to move REVOPS-5 to Done',
+};
+
 export const auditNotePlan: ExecutionPlan = {
   summary: 'Compose the close-summary audit note on REVOPS-5 per the Q3 close checklist: gather evidence for the three checks from the connected surfaces (Looker tile audit line, Linear ticket states), post the audit comment, and hold the Done transition because the deal-reconciliation check has no connected evidence source.',
   steps: [
@@ -95,6 +125,7 @@ export const auditNotePlan: ExecutionPlan = {
   expectedOutputType: 'ticket-update', riskNotes: '',
   reversibility: 'The audit comment is additive and can be rewritten via save_comment id or superseded by a follow-up comment; no status change is planned, so the ticket state is untouched.',
   estimatedMinutes: 4,
+  obligations: auditNoteObligations,
 };
 
 /** The two manager DMs REVOPS-5's phase one sent, in order, as the run sent them. */
@@ -164,12 +195,26 @@ export const RUN_3_REVOPS_7_STEP_2 =
 export const RUN_3_REVOPS_7_STEP_3 =
   "On linear, set REVOPS-7 state to 'Done' only if the refresh landed and the audit line was read back; otherwise leave it in progress with the failure noted in the comment.";
 
+/** The run 3 REVOPS-7 plan's declared obligations: step 1 writes and reads the tile, steps 2 and 3 only write Linear, the Done is conditional on the read-back. */
+export const run3RefreshObligations: PlanObligations = {
+  steps: [
+    { kind: 'write', reads: ['looker-pipeline-tile'], writes: ['looker-pipeline-tile'], reason: 'the documented sequence saves the figure and reads the audit line back' },
+    { kind: 'write', reads: [], writes: ['linear'], reason: 'the comment quotes the read-back; Linear is only written' },
+    { kind: 'conditional-write', reads: [], writes: ['linear'], reason: 'the Done follows only when the refresh landed and the audit line was read back' },
+  ],
+  transition: 'conditional-on-evidence',
+  transitionStep: 3,
+  basis: 'judgement',
+  reason: 'step 3 sets REVOPS-7 to Done only if the refresh landed',
+};
+
 export const run3RefreshPlan: ExecutionPlan = {
   summary: 'Execute REVOPS-7 per the Looker tile runbook: refresh the pipeline coverage tile to the approved 74% via the connected browser surface, read back the audit line as evidence, then close the loop on Linear with an audit comment and status change.',
   steps: [RUN_3_REVOPS_7_STEP_1, RUN_3_REVOPS_7_STEP_2, RUN_3_REVOPS_7_STEP_3],
   expectedOutputType: 'ticket-update', riskNotes: '',
   reversibility: 'The tile holds a single value and can be re-entered by hand by the operations lead; the Linear comment and status change are individually reversible via Linear.',
   estimatedMinutes: 5,
+  obligations: run3RefreshObligations,
 };
 
 export const run3RefreshPrerequisites: MockAction[] = refreshPrerequisites;

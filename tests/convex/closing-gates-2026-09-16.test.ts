@@ -30,6 +30,25 @@ import {
   run3RefreshPrerequisites,
   TILE_AUDIT_LINE,
 } from './fixtures/closing-gates-2026-09-16';
+import {
+  run4AuditNoteClosing,
+  run4AuditNotePlan,
+  run4RefreshClosing,
+  run4RefreshPlan,
+  run4RefreshPrerequisiteLedger,
+  run4RefreshPrerequisites,
+  run4SlackClosing,
+  run4SlackPlan,
+  run4SlackPrerequisiteLedger,
+  run4SlackPrerequisites,
+  run4TileSequence,
+  RUN_4_LIST_ISSUES_EFFECT,
+  RUN_4_REVOPS_5_COMMENT,
+  RUN_4_REVOPS_7_COMMENT,
+  RUN_4_SLACK_ESCALATION,
+  RUN_4_SLACK_REPLY,
+  RUN_4_TILE_READ_BACK,
+} from './fixtures/plan-obligations-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 import { encrypt } from '../../src/lib/credential-crypto';
@@ -118,6 +137,8 @@ interface Run {
   plan: ExecutionPlan;
   prerequisites: MockAction[];
   ledger: AppliedAction[];
+  /** A chat ask instead of a ticket: the source and the thread the reply belongs in. */
+  chat?: { sourceSystem: string; contentRefs: string[] };
 }
 
 /** An agent with the run's three surfaces and one work item that has landed its phase one and awaits its closing phase. */
@@ -176,8 +197,12 @@ async function seedAtClosing(harness: Harness, run: Run): Promise<{ agentId: Id<
       credentialId: 'cred-looker', ...live,
     } as never);
     const workItemId = await ctx.db.insert('workItems', {
-      agentId, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: run.externalId, title: run.title,
-      contentSummary: `${run.title} in the Q3 close project.`, contentRefs: [`ticket://${run.externalId}`], priority: 'Medium',
+      agentId,
+      sourceCategory: run.chat ? 'event-stream' : 'ticket-queue',
+      sourceSystem: run.chat?.sourceSystem ?? 'linear',
+      externalId: run.externalId, title: run.title,
+      contentSummary: `${run.title} in the Q3 close project.`,
+      contentRefs: run.chat?.contentRefs ?? [`ticket://${run.externalId}`], priority: 'Medium',
       state: 'executing', skillId, plan: run.plan,
       verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] },
       observedAt: 1, createdAt: 1,
@@ -218,6 +243,24 @@ const REVOPS_5: Run = {
 const REVOPS_7_RUN_3: Run = {
   externalId: 'REVOPS-7', title: 'Refresh the Looker pipeline tile', plan: run3RefreshPlan,
   prerequisites: run3RefreshPrerequisites, ledger: run3RefreshPrerequisiteLedger,
+};
+const REVOPS_7_RUN_4: Run = {
+  externalId: 'REVOPS-7', title: 'Refresh the Looker pipeline tile', plan: run4RefreshPlan,
+  prerequisites: run4RefreshPrerequisites, ledger: run4RefreshPrerequisiteLedger,
+};
+const SLACK_RUN_4: Run = {
+  externalId: 'C0REVOPSASKS:1789000000.000200', title: 'Mention in #revops-asks', plan: run4SlackPlan,
+  prerequisites: run4SlackPrerequisites, ledger: run4SlackPrerequisiteLedger,
+  chat: { sourceSystem: 'slack', contentRefs: ['slack://C0REVOPSASKS/1789000000.000200'] },
+};
+const run4AuditNotePrerequisites: MockAction[] = [...run4TileSequence, call('linear', 'list_issues', { team: 'REVOPS', project: 'Q3 close' })];
+const REVOPS_5_RUN_4: Run = {
+  externalId: 'REVOPS-5', title: 'Add the close-summary audit note', plan: run4AuditNotePlan,
+  prerequisites: run4AuditNotePrerequisites,
+  ledger: run4AuditNotePrerequisites.map((action, index) => ({
+    tool: action.tool, ok: true, authority: 'autonomous', idempotencyKey: `run-5d:${index}`,
+    effect: index === 5 ? RUN_4_TILE_READ_BACK : index === 6 ? RUN_4_LIST_ISSUES_EFFECT : 'ok',
+  })),
 };
 
 describe('the 16 September closing phases, replayed through the real gate', (): void => {
@@ -432,5 +475,86 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment']]);
     expect((recorded.mcp[0]!.args as { body: string }).body).toContain(REVOPS_5_COMMENT);
     expect(recorded.http).toEqual([]);
+  });
+});
+
+describe('the 16 September run 4 closing phases, replayed through the real gate', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', CREDENTIAL_KEY);
+  });
+
+  afterEach((): void => {
+    recorded.mcp.length = 0;
+    recorded.http.length = 0;
+    recorded.model.length = 0;
+    recorded.closingReply = undefined;
+    restoreSurfaceMode();
+  });
+
+  it('lands the REVOPS-7 comment and Done under autonomy: "Emit a save_comment on linear" is a write, the tile read landed', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId } = await seedAtClosing(t, REVOPS_7_RUN_4);
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
+    recorded.closingReply = run4RefreshClosing;
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId })).resolves.toEqual({
+      ok: true, reason: 'dependent actions applying',
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await readItem(t, workItemId);
+    expect(done.state).toBe('completed');
+    expect(done.skipReason).toBeUndefined();
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect((recorded.mcp[0]!.args as { body: string }).body).toContain(RUN_4_REVOPS_7_COMMENT);
+    expect((done.output as { refusedClosing?: unknown }).refusedClosing).toBeUndefined();
+  });
+
+  it('lands the Slack reply that names Northstar CRM, an absent surface, and the escalation DM', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId } = await seedAtClosing(t, SLACK_RUN_4);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+      await ctx.db.insert('surfaces', {
+        agentId, slug: 'northstar-crm', displayName: 'Northstar CRM', class: 'crm', verdict: 'absent',
+        credentialLanded: false, whereFound: [], createdAt: 1, discoveryEvidence: [],
+      } as never);
+    });
+    recorded.closingReply = run4SlackClosing;
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId })).resolves.toEqual({
+      ok: true, reason: 'dependent actions applying',
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await readItem(t, workItemId);
+    expect(done.state).toBe('completed');
+    expect(done.skipReason).toBeUndefined();
+    expect(recorded.mcp).toEqual([]);
+    expect(recorded.http.map((call) => (call.body as { channel: string; text: string }).channel)).toEqual(['C0REVOPSASKS', 'D0MANAGER']);
+    expect((recorded.http[0]!.body as { text: string }).text).toContain(RUN_4_SLACK_REPLY);
+    expect((recorded.http[1]!.body as { text: string }).text).toContain(RUN_4_SLACK_ESCALATION);
+  });
+
+  it('lands the REVOPS-5 audit comment and holds the Done the plan conditions on the manager, autonomy on', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId } = await seedAtClosing(t, REVOPS_5_RUN_4);
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
+    recorded.closingReply = run4AuditNoteClosing;
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId })).resolves.toEqual({
+      ok: true, reason: 'dependent actions applying',
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const held = await readItem(t, workItemId);
+    expect(held.state).toBe('actions-pending');
+    expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual(['auto', 'held']);
+    expect(held.actionVerdicts?.[1]?.reason).toBe(HELD_WITHHELD_TRANSITION);
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment']]);
+    expect((recorded.mcp[0]!.args as { body: string }).body).toContain(RUN_4_REVOPS_5_COMMENT);
+    await t.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [1],
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await readItem(t, workItemId);
+    expect(done.state).toBe('completed');
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
   });
 });

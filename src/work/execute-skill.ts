@@ -35,7 +35,7 @@ import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
-import { promisesResult } from './plan-steps';
+import { planReadsBeforeClosing } from './obligations';
 import { replyTargetLine } from './reply-target';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, unsupportedClaimIssues, type ClaimEvidence } from './evidence-claims';
@@ -1821,7 +1821,7 @@ export function deferralAudit(
     if (fixedBody) return;
     prewrittenIndices.push(index);
     issues.push(
-      `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan promises a result), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
+      `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan declares a read), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
     );
   });
   // The same rule on every other transport, in the code-decidable form: a
@@ -2204,11 +2204,11 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     user: userPrompt,
     schema: runtimeSchema,
   });
-  // In real mode a plan that promises a read, a check or a result gives the
-  // run its closing phase whatever the model said, so the audit below sees
-  // the phase as the gate will stage it.
+  // In real mode a plan that declares a read gives the run its closing phase
+  // whatever the model said, so the audit below sees the phase as the gate
+  // will stage it.
   const closingPhase = (flag: boolean): boolean =>
-    mode === 'real' ? flag || plan.steps.some(promisesResult) : flag;
+    mode === 'real' ? flag || planReadsBeforeClosing(plan) : flag;
   const output: ExecutionOutput = {
     draft: raw.draft,
     notes: raw.notes,

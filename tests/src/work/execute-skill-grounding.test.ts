@@ -874,6 +874,13 @@ describe('deferral by data, not by judgement', (): void => {
       'Read REVOPS-7 in Linear.',
       'Comment on REVOPS-7 in Linear quoting the read-back figure, then move it to Done.',
     ],
+    obligations: {
+      steps: [
+        { kind: 'read' as const, reads: ['linear'], writes: [] },
+        { kind: 'write' as const, reads: [], writes: ['linear'] },
+      ],
+      transition: 'promised' as const, transitionStep: 2, basis: 'judgement' as const,
+    },
   };
 
   it('refuses a closing action prewritten in phase one before its result exists', (): void => {
@@ -1039,7 +1046,7 @@ describe('deferral by data, not by judgement', (): void => {
     expect(recorded.users).toHaveLength(2);
   });
 
-  it('gives a run whose plan promises a result its closing phase, and moves a prewritten close there through the one repair', async (): Promise<void> => {
+  it('gives a run whose plan declares a read its closing phase, and moves a prewritten close there through the one repair', async (): Promise<void> => {
     const prewritten = {
       draft: 'Read, commented and closed.',
       notes: '',
@@ -1104,7 +1111,7 @@ describe('deferral by data, not by judgement', (): void => {
     expect(recorded.users[0]).not.toContain("Manager's answers");
   });
 
-  it('leaves the flag alone in mock mode and when the plan promises no result', async (): Promise<void> => {
+  it('leaves the flag alone in mock mode and when the plan declares no read', async (): Promise<void> => {
     recorded.outputs.push({
       draft: 'd',
       notes: '',

@@ -21,8 +21,16 @@ export interface DeclaredRead {
   surface: ObligationSurface;
 }
 
-/** The transitions under which the plan commits the run to changing the ticket state. */
-const PROMISED_TRANSITIONS: ReadonlySet<PlanTransition> = new Set(['promised', 'conditional-on-evidence']);
+/**
+ * The transitions under which the closing set must carry the ticket state
+ * change or account for its absence: an unconditional close, one the
+ * evidence settles, and one the manager decides, which the gate then holds.
+ */
+const PROMISED_TRANSITIONS: ReadonlySet<PlanTransition> = new Set([
+  'promised',
+  'conditional-on-evidence',
+  'conditional-on-manager',
+]);
 /** The transitions under which the state change is the manager's decision, whatever the switch says. */
 const WITHHELD_TRANSITIONS: ReadonlySet<PlanTransition> = new Set(['withheld', 'conditional-on-manager']);
 
@@ -113,8 +121,10 @@ export function planTransition(plan: Pick<ExecutionPlan, 'steps' | 'obligations'
 
 /**
  * Whether the plan commits the run to the ticket's state transition:
- * unconditionally, or under a condition the evidence settles. A closing set
- * that leaves the state alone must then account for it with a blocked step.
+ * unconditionally, under a condition the evidence settles, or on the
+ * manager's decision. A closing set that leaves the state alone must then
+ * account for it with a blocked step; a manager-conditioned change is
+ * emitted and held (see `transitionWithheld`), never left out.
  */
 export function transitionPromised(plan: Pick<ExecutionPlan, 'steps' | 'obligations'>): boolean {
   const transition = planTransition(plan);

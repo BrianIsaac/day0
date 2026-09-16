@@ -27,7 +27,7 @@ export const HELD_BROWSER_SEQUENCE =
 export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 /** Why a ticket state change waits under the switch: the approved plan said the state stays where it is. */
 export const HELD_WITHHELD_TRANSITION =
-  'ticket state transition the approved plan withholds; held for the manager';
+  'ticket state transition the approved plan leaves to the manager; held for the manager';
 export const HELD_WRITE = 'write held for the manager';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
 export const AWAITING_APPROVAL = "awaiting the manager's approval";

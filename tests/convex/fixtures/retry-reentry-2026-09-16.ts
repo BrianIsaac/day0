@@ -1,4 +1,4 @@
-import type { ExecutionPlan, MockAction, PlanStepOutcome } from '../../../src/work/types';
+import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from '../../../src/work/types';
 import {
   RUN_3_AUDIT_LINE,
   RUN_3_RETRY_COMMENT_CORRECTED,
@@ -33,6 +33,21 @@ export { RUN_3_AUDIT_LINE, RUN_3_RETRY_COMMENT_CORRECTED, RUN_3_RETRY_NOTE };
 export const RUN_3_REVOPS_5_STEP_5 =
   'After the comment lands and all confirmable checks are resolved, emit save_issue {id: REVOPS-5, state: Done} \u2014 held for manager approval; if the manager does not confirm, the issue stays in progress with the comment as trace.';
 
+/** The run 3 REVOPS-5 plan's declared obligations: the tile and Linear are read, check 2 is reported, the comment writes Linear, and the Done waits on the manager. */
+export const run3AuditNoteObligations: PlanObligations = {
+  steps: [
+    { kind: 'read', reads: ['looker-pipeline-tile'], writes: [], reason: 'the sign-in and the read-only snapshot for check 1' },
+    { kind: 'read', reads: ['linear'], writes: [], reason: 'list_issues on the Q3 close project for check 3' },
+    { kind: 'report', reads: [], writes: [], reason: 'the tracker has no connected surface; the note reports the check' },
+    { kind: 'write', reads: [], writes: ['linear'], reason: 'the audit comment on REVOPS-5' },
+    { kind: 'conditional-write', reads: [], writes: ['linear'], reason: 'the Done is held for the manager\'s approval' },
+  ],
+  transition: 'conditional-on-manager',
+  transitionStep: 5,
+  basis: 'judgement',
+  reason: 'step 5 moves REVOPS-5 to Done only after the manager approves',
+};
+
 export const run3AuditNotePlan: ExecutionPlan = {
   summary: 'REVOPS-5 (Q3 close, REVOPS team): compose the close-summary audit note per the Q3 close checklist, post it as a Linear comment, then move the issue to Done only after manager approval. All writes are held (autonomous actions off); reads and the manager DM land now.',
   steps: [
@@ -45,6 +60,7 @@ export const run3AuditNotePlan: ExecutionPlan = {
   expectedOutputType: 'ticket-update', riskNotes: '',
   reversibility: 'The comment can be rewritten via save_comment with its id; the status change to Done is reversible by setting the prior state. Both are held for exact-action approval before landing.',
   estimatedMinutes: 20,
+  obligations: run3AuditNoteObligations,
 };
 
 /** The reads both runs' phase one made: tile sign-in and snapshot, then the issue list. */
