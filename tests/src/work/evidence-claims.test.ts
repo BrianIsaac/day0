@@ -19,6 +19,13 @@ import {
   UNSUPPORTED_CLAIM_2026_09_15,
   UNSUPPORTED_COMMENT_2026_09_15,
 } from '../../fixtures/work/closing-comments-2026-09-15';
+import {
+  LEDGER_2026_09_16_RUN_3,
+  RUN_3_RETRY_ACTION,
+  RUN_3_RETRY_ACTION_CORRECTED,
+  RUN_3_RETRY_COMMENT,
+  RUN_3_RETRY_NOTE,
+} from '../../fixtures/work/audit-note-2026-09-16-run-3';
 
 const documentation = [`${CHECKLIST_PAGE.title}\n${CHECKLIST_PAGE.body}`];
 
@@ -269,5 +276,59 @@ describe('the telegraphic form a status message takes', (): void => {
     expect(unsupportedClaims('Tile refreshed to 74%; figure verified against the standup deck.', nothing)).toHaveLength(2);
     expect(unsupportedClaims('Starting the REVOPS-5 audit note: check 1 read from the tile, check 3 from the Linear issue list.', nothing)).toEqual([]);
     expect(unsupportedClaims('Posting the audit comment next; the Done move waits for you.', nothing)).toEqual([]);
+  });
+});
+
+describe('the 16 September run 3 retry comment: numbered checks and a not-confirmed line', (): void => {
+  const evidenceRun3: ClaimEvidence = {
+    ledger: appliedLedgerPrompt(LEDGER_2026_09_16_RUN_3.actions, LEDGER_2026_09_16_RUN_3.applied),
+    documentation,
+    managerFeedback: [RUN_3_RETRY_NOTE],
+  };
+  const comment = (body: string): MockAction => ({
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-5', body }) },
+  });
+
+  it('quotes the ledger in every claim, so the sentence check alone lets it stand', (): void => {
+    expect(unsupportedClaims(RUN_3_RETRY_COMMENT, evidenceRun3)).toEqual([]);
+  });
+
+  it('is refused: check 3 reads as unmet (Backlog, not Done) and the closing line names only check 2', (): void => {
+    const issues = unsupportedClaimIssues([RUN_3_RETRY_ACTION], evidenceRun3);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('check 3');
+    expect(issues[0]).toContain('names check 2');
+    expect(issues[0]).toContain('Backlog');
+    expect(issues[0]).toContain("manager's acceptance");
+  });
+
+  it('passes once the closing line names checks 2 and 3, with the acceptance beside the evidence', (): void => {
+    expect(unsupportedClaimIssues([RUN_3_RETRY_ACTION_CORRECTED], evidenceRun3)).toEqual([]);
+  });
+
+  it('does not judge free prose, a list with no closing line, or a check whose evidence is met', (): void => {
+    const prose = 'REVOPS-6 is at Backlog and REVOPS-7 is at Backlog; check 3 is not confirmed. Not confirmed: check 2.';
+    expect(unsupportedClaimIssues([comment(prose)], evidenceRun3)).toEqual([]);
+    expect(unsupportedClaimIssues([SUPPORTED_ACTION_2026_09_16], evidence16)).toEqual([]);
+    const allMet = [
+      '1. Pipeline coverage confirmed. The tile shows 74%; audit line: Last updated by revops at 2026-09-16 07:42:48 UTC.',
+      '2. Close tickets at Done. As Linear reports them: REVOPS-6 — Done; REVOPS-7 — Done.',
+      'Not confirmed: none.',
+    ].join('\n');
+    expect(unsupportedClaimIssues([comment(allMet)], evidenceRun3)).toEqual([]);
+  });
+
+  it('reads an absent read and a not-confirmed phrase as unmet, whichever check carries it', (): void => {
+    const absentRead = [
+      '1. Pipeline coverage confirmed. The tile could not be read: the sign-in page redirected.',
+      '2. Close tickets at Done. As Linear reports them: REVOPS-6 — Done; REVOPS-7 — Done.',
+      'Not confirmed: none.',
+    ].join('\n');
+    const issues = unsupportedClaimIssues([comment(absentRead)], evidenceRun3);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('check 1');
+    const namedByHead = absentRead.replace('Not confirmed: none.', 'Not confirmed: pipeline coverage — the tile could not be read.');
+    expect(unsupportedClaimIssues([comment(namedByHead)], evidenceRun3)).toEqual([]);
   });
 });
