@@ -103,6 +103,22 @@ describe('resuming after a closing gate refusal', () => {
     });
   });
 
+  it('carries the writes earlier runs landed through the resume on both paths, so a later retry still knows the comment is on the ticket', () => {
+    const landedWrites = [{
+      action: { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit"}' } },
+      applied: { tool: 'mcp.call', ok: true, providerId: 'comment-6098cba6', idempotencyKey: 'earlier' },
+    }];
+    expect(closingResume({ ...gateRefusal, landedWrites }, plan, refused.reason, surfaces)).toMatchObject({ resumedClosing: true, landedWrites });
+    const prerequisites = [action('looker', 'browser_snapshot'), action('linear', 'list_issues')];
+    expect(closingResume({
+      draft: '', notes: '', prerequisiteCount: 2, landedWrites,
+      actions: [...prerequisites, action('linear', 'save_comment')],
+      applied: [landed, landed, { tool: 'mcp.call', ok: false, reason: 'Failed to connect to MCP server linear' }],
+      planStepOutcomes: [1, 2].map(step => ({ step, status: 'satisfied', evidence: 'ledger row 1: the issues' })),
+    }, plan, 'Failed to connect to MCP server linear', surfaces)).toMatchObject({ resumedClosing: true, landedWrites });
+    expect(closingResume(gateRefusal, plan, refused.reason, surfaces)).not.toHaveProperty('landedWrites');
+  });
+
   it('resumes when a promised-result step names no surface, as the 16 September REVOPS-7 plan does', () => {
     // The run's own words: step 2 promises the read-back without naming the tile surface.
     const runPlan: ExecutionPlan = {

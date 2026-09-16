@@ -6,6 +6,8 @@ import type { ExecutionOutput, ExecutionPlan, LandedWrite, PlanStepOutcome, Refu
 
 export interface ClosingResume extends ExecutionOutput {
   phase: 'dependent-authoring';
+  /** The writes earlier runs landed, carried from the failed row so the resumed closing set still sees them. */
+  landedWrites?: LandedWrite[];
   applied: AppliedAction[];
   resumedClosing: true;
   initialFailure: string;
@@ -48,6 +50,11 @@ function promisedSurfacesRead(actions: readonly ExecutionOutput['actions'][numbe
  * authored set, that set with its reason. The prerequisites landed, so the
  * retry authors the closing set again from the same ledger.
  */
+/** The landed writes a failed row carries, to ride on the resume it becomes. */
+function carriedWrites(row: { landedWrites?: unknown }): { landedWrites: LandedWrite[] } | Record<string, never> {
+  return Array.isArray(row.landedWrites) && row.landedWrites.length > 0 ? { landedWrites: row.landedWrites as LandedWrite[] } : {};
+}
+
 function gateRefusalResume(row: ExecutionOutput & { phase?: unknown; applied?: AppliedAction[]; refusedClosing?: RefusedClosing }, plan: ExecutionPlan, failure: string, surfaces: readonly Surface[]): ClosingResume | undefined {
   if (row.phase !== 'dependent-authoring' || !Array.isArray(row.actions) || !Array.isArray(row.applied)) return undefined;
   if (row.actions.length === 0 || row.applied.length !== row.actions.length) return undefined;
@@ -62,6 +69,7 @@ function gateRefusalResume(row: ExecutionOutput & { phase?: unknown; applied?: A
     initialFailure: failure,
     previousClosing: { actions: refused?.actions ?? [], applied: [] },
     ...(refused ? { refusedClosing: refused } : {}),
+    ...carriedWrites(row),
   };
 }
 
@@ -113,6 +121,7 @@ export function closingResume(output: unknown, plan: ExecutionPlan, failure: str
     needsDependentPhase: true, phase: 'dependent-authoring', resumedClosing: true,
     initialFailure: failure,
     previousClosing: { actions: closingActions, applied: closingApplied },
+    ...carriedWrites(row),
   };
 }
 
