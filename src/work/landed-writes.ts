@@ -73,7 +73,12 @@ export function landedWritesOf(output: unknown): LandedWrite[] {
   );
   const seen = new Set<string>();
   return [...earlier, ...own].filter((row) => {
-    const key = row.applied.idempotencyKey || JSON.stringify(row.action);
+    // A reused row carries the provider id of the row it reused under a new
+    // idempotency key, so the provider id is the identity when there is one.
+    const surface = parseSurfaceAction(row.action);
+    const key = row.applied.providerId
+      ? `${surface.ok ? surface.action.surface : row.action.tool}|${row.applied.providerId}`
+      : row.applied.idempotencyKey || JSON.stringify(row.action);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -211,6 +216,27 @@ export function reusedLedger(
   });
 }
 
+/**
+ * The rows the prompt shows within its cap: every comment or message (the
+ * rows the rule is about) as far as the cap allows, newest first when it
+ * does not, and the untargeted writes (browser saves, state changes) only
+ * in the room that leaves, so a run of browser writes never pushes the one
+ * landed comment out of the list.
+ */
+function shownWrites(writes: readonly LandedWrite[], surfaces: readonly SurfaceRecord[]): LandedWrite[] {
+  if (writes.length <= PROMPT_ROWS) return [...writes];
+  const targeted = new Set(writes.filter((write) => {
+    const parsed = parsedWrite(write.action);
+    return parsed !== undefined && writeTarget(parsed, write.action, surfaces) !== undefined;
+  }));
+  const keep = new Set([...targeted].slice(-PROMPT_ROWS));
+  for (const write of [...writes].reverse()) {
+    if (keep.size >= PROMPT_ROWS) break;
+    if (!targeted.has(write)) keep.add(write);
+  }
+  return writes.filter((write) => keep.has(write));
+}
+
 function describe(parsed: ParsedSurfaceAction): string {
   return parsed.kind === 'mcp.call' ? parsed.tool : `${parsed.method} ${parsed.path}`;
 }
@@ -229,7 +255,7 @@ function describe(parsed: ParsedSurfaceAction): string {
  */
 export function landedWriteLines(writes: readonly LandedWrite[] | undefined, surfaces: readonly SurfaceRecord[] = []): string[] {
   if (!writes || writes.length === 0) return [];
-  const shown = writes.slice(-PROMPT_ROWS);
+  const shown = shownWrites(writes, surfaces);
   const rows = shown.map((write, index): string => {
     const parsed = parsedWrite(write.action);
     if (!parsed) return `  ${index}. ${write.action.tool} · provider id ${write.applied.providerId ?? '(none)'}`;

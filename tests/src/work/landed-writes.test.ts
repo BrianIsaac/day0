@@ -51,6 +51,24 @@ describe('the writes earlier runs landed', () => {
     expect(landedWritesOf(undefined)).toEqual([]);
   });
 
+  it('counts a reused row and the row it reused once, and never trims a comment or message row out of the prompt behind untargeted writes', () => {
+    // After a retry reused the comment, the row carries the original in landedWrites and the reuse in its own ledger.
+    const afterReuse = {
+      landedWrites: [{ action: comment, applied: row({ providerId: 'comment-1', idempotencyKey: 'a' }) }],
+      actions: [read, comment, done],
+      applied: [row(), row({ providerId: 'comment-1', idempotencyKey: 'work:retry:6', reason: 'reused landed comment comment-1: not sent again' }), row({ providerId: 'lin-5' })],
+    };
+    expect(landedWritesOf(afterReuse).map((write) => write.applied.providerId)).toEqual(['comment-1', 'lin-5']);
+    // Thirty browser writes after one comment: the comment is the row the rule is about, and stays.
+    const clicks = Array.from({ length: 30 }, (_, index) => ({
+      action: call('looker-pipeline-tile', 'browser_click', { element: 'Save', attempt: index }), applied: row({ idempotencyKey: `click-${index}` }),
+    }));
+    const lines = landedWriteLines([{ action: comment, applied: row({ providerId: 'comment-1' }) }, ...clicks], surfaces);
+    expect(lines[1]).toBe('--- Writes earlier runs of this item already landed (31, last 24 shown) ---');
+    expect(lines.filter((line) => line.includes('save_comment'))).toHaveLength(1);
+    expect(lines.filter((line) => line.includes('browser_click'))).toHaveLength(23);
+  });
+
   it('names a comment by its ticket and a message by its channel and thread, and gives the manager DM and a state change no target', () => {
     expect(writeTarget(parsed(comment), comment, surfaces)).toEqual({ key: 'linear|comment|revops-5', kind: 'comment', target: 'REVOPS-5' });
     expect(writeTarget(parsed(reply), reply, surfaces)).toEqual({ key: 'slack|message|C0REVOPS/1789.1', kind: 'message', target: 'C0REVOPS/1789.1' });
