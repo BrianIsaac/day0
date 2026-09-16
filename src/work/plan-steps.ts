@@ -9,8 +9,10 @@ import type { ExecutionPlan } from './types';
 /** A verb that reads, checks or captures something the closing phase reasons from. */
 const RESULT_VERB =
   /\b(read|check|identify|inspect|verify|validate|find|look up|snapshot)\b/gi;
-/** A noun for such a result; a promise only outside a clause that writes. */
+/** A noun for such a result; a promise only outside a clause that writes, unless a capture verb governs it. */
 const RESULT_NOUN = /\b(evidence|result)\b/gi;
+/** A verb that gathers a result ("gather evidence", "capture the result"): the noun after it is a promise wherever it sits. */
+const CAPTURE_VERB = /\b(?:gather|capture|collect|obtain|retrieve|extract|pull)\s+(?:the\s+|any\s+|its\s+|all\s+)?$/i;
 const CLOSE_STEP = /\b(close|closed|complete|completed|done|resolve|resolved)\b/gi;
 /** An instruction that changes a surface: the clause it heads is a write. */
 const WRITE_STEP =
@@ -135,7 +137,9 @@ export function promisedResultTerm(step: string): string | undefined {
   const verb = occurrences(step, RESULT_VERB).find(affirmed);
   if (verb) return verb.term;
   const noun = occurrences(step, RESULT_NOUN).find(
-    (occurrence) => affirmed(occurrence) && !writesInClause(occurrence.clause),
+    (occurrence) =>
+      affirmed(occurrence) &&
+      (CAPTURE_VERB.test(occurrence.clausePrefix) || !writesInClause(occurrence.clause)),
   );
   return noun?.term;
 }

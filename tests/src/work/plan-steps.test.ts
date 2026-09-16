@@ -15,6 +15,18 @@ describe('what a plan step promises, read from the 16 September plans', (): void
     expect(refreshPlan.steps.map(promisesResult)).toEqual([false, true, false, false]);
   });
 
+  it('reads a result a capture verb gathers as a promise, even when the same clause writes', (): void => {
+    for (const wording of [
+      'Gather evidence from the Looker pipeline tile and post it to Linear.',
+      'Collect evidence for the three checks and post the audit comment in one go.',
+    ]) {
+      expect(promisesResult(wording), wording).toBe(true);
+    }
+    expect(promisesResult('Record the result of the read-back on REVOPS-7.')).toBe(false);
+    expect(promisesResult('Obtain the audit line as evidence and send it to the manager.')).toBe(false);
+    expect(promisesResult('Post one save_comment on REVOPS-5 with the three checks in checklist order, quoting evidence.')).toBe(false);
+  });
+
   it('still reads a captured result noun outside a write as a promise', (): void => {
     expect(promisesResult('Capture the Looker pipeline tile read-back evidence')).toBe(true);
     expect(promisesResult('Capture evidence of the figure from the Looker pipeline tile.')).toBe(true);
