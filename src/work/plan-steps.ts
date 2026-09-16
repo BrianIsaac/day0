@@ -186,15 +186,45 @@ export function promisesClose(step: string): boolean {
 }
 
 /**
+ * The text with every clause that carries a condition read out, when the
+ * plan promises the close: "If the audit line is absent, leave it in
+ * progress" and "leave it in progress if the audit line is absent" are one
+ * branch of a conditional close, the same instruction as "set it to Done
+ * only if ...; otherwise leave it in progress" in another word order. A
+ * clause ends at a connective or a colon, so the explanation after "Do
+ * not move REVOPS-5 to Done:" never lends its condition to the
+ * withholding before it. When the plan promises no close, a withholding
+ * under a condition is its only word on the state and stays.
+ */
+function withoutConditionalBranches(text: string, closePromised: boolean): string {
+  if (!closePromised) return text;
+  return text
+    .split(/(?<=[.;\n])/)
+    .map((sentence) =>
+      sentence
+        .split(/(?<=:)|(?=\b(?:after|before|but|once|then|until)\b)/i)
+        .map((clause) => (CONDITION_MARKER.test(clause) ? ' ' : clause))
+        .join(''),
+    )
+    .join('');
+}
+
+/**
  * Whether a step, or the plan's summary, says in its own words that the
  * ticket state is left where it is: a close term under a negation ("do not
  * move REVOPS-5 to Done"), or a phrase such as "no status change". The
  * alternative branch of a promised close ("set ... to Done only if ...;
  * otherwise leave it in progress") is read out first: it withholds only
- * when the condition fails.
+ * when the condition fails. So is a withholding under a condition, when
+ * the plan promises the close (see `withoutConditionalBranches`).
+ *
+ * Args:
+ *   text: A plan step or summary.
+ *   closePromised: Whether the plan promises the close anywhere; the text's
+ *     own promise by default.
  */
-export function withholdsClose(text: string): boolean {
-  const stated = withoutAlternativeToClose(instructionText(text));
+export function withholdsClose(text: string, closePromised: boolean = promisesClose(text)): boolean {
+  const stated = withoutConditionalBranches(withoutAlternativeToClose(instructionText(text)), closePromised);
   if (NO_TRANSITION.test(stated)) return true;
   return occurrences(stated, CLOSE_STEP, { nounHead: CLOSE_NOUN_HEAD, determinerIsVocabulary: false }).some(
     (occurrence) => !affirmed(occurrence),
@@ -218,7 +248,8 @@ export function planPromisesClose(plan: Pick<ExecutionPlan, 'summary' | 'steps'>
  * against such a plan for the manager, whatever the autonomy switch says.
  */
 export function planWithholdsClose(plan: Pick<ExecutionPlan, 'summary' | 'steps'>): boolean {
-  return withholdsClose(plan.summary) || plan.steps.some(withholdsClose);
+  const closePromised = plan.steps.some(promisesClose);
+  return withholdsClose(plan.summary, closePromised) || plan.steps.some((step) => withholdsClose(step, closePromised));
 }
 
 /** A surface an approved plan may name, by slug or display name. */
@@ -244,7 +275,7 @@ export interface PromisedRead {
  * A word that opens a condition. A result term after it refers to a read
  * the plan makes elsewhere ("only if the audit line was read back").
  */
-const CONDITION_MARKER = /\b(?:only if|if|unless|whenever|when|provided(?: that)?|so long as|as long as|as soon as|in case)\b/i;
+const CONDITION_MARKER = /(?<!\beven\s)\b(?:only if|if|unless|whenever|when|provided(?: that)?|so long as|as long as|as soon as|in case)\b/i;
 /** A sentence ends at a full stop that is not part of an ellipsis, a semicolon or a line break. */
 const SENTENCE_END = /(?<!\.)\.(?!\.)|[;\n]/g;
 /** A connective that starts a new clause inside a sentence. */

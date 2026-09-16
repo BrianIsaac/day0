@@ -114,6 +114,40 @@ describe('a plan that withholds the transition in its own words', (): void => {
     expect(withholdsClose("Set REVOPS-7 state to 'Done' if the figure matches, otherwise leave it open.")).toBe(false);
   });
 
+  it('reads a withholding under a condition as one branch of the close the plan promises, in either word order', (): void => {
+    // The same instruction as the run 3 step 3, with the branches the other way round: under autonomy one landed and the other was held.
+    for (const wording of [
+      'If the audit line is absent, leave it in progress; otherwise set REVOPS-7 to Done.',
+      'If the audit line is absent, leave REVOPS-7 in progress. Otherwise set REVOPS-7 to Done.',
+      'Set REVOPS-7 to Done if the audit line was read back. If it was not, leave it in progress.',
+      'Leave REVOPS-7 in progress if the audit line is absent; set it to Done otherwise.',
+      'Set REVOPS-7 to Done unless the audit line is absent, in which case leave it in progress.',
+      'If all three checks are confirmed, move REVOPS-5 to Done; if any is not, leave it in progress and flag the manager.',
+      'When the figure matches, close REVOPS-7; when it does not, do not close it.',
+      'Set REVOPS-7 to Done, but if the audit line is absent leave it in progress.',
+    ]) {
+      expect(withholdsClose(wording), wording).toBe(false);
+      expect(promisesClose(wording), wording).toBe(true);
+      expect(planPromisesClose({ summary: 'Close REVOPS-7 when the checks pass.', steps: [wording] }), wording).toBe(true);
+    }
+    // The condition may sit in another step of the same plan.
+    expect(planWithholdsClose({ summary: 'Refresh and close.', steps: ['Set REVOPS-7 to Done.', 'If the audit line is absent, leave it in progress.'] })).toBe(false);
+  });
+
+  it('keeps a withholding under a condition when the plan promises no close, and an unconditional one beside a promised close', (): void => {
+    for (const wording of [
+      'Do not move REVOPS-7 to Done unless the audit line was read back.',
+      'If the audit line is absent, leave REVOPS-7 in progress.',
+      REVOPS_5_STEP_5,
+      'Do not move REVOPS-5 to Done, even if all checks pass; the manager will close it.',
+      'Do not move REVOPS-5 to Done: the ticket moves to Done only when the manager says so. Then close the loop with a comment.',
+    ]) {
+      expect(withholdsClose(wording), wording).toBe(true);
+    }
+    expect(planWithholdsClose({ summary: 'Comment only.', steps: ['Post the comment.', 'If the audit line is absent, leave it in progress.'] })).toBe(true);
+    expect(planWithholdsClose(auditNotePlan)).toBe(true);
+  });
+
   it('never promised the close, even when another step reads as completing something', (): void => {
     expect(planPromisesClose(refreshPlan)).toBe(true);
     expect(planPromisesClose(auditNotePlan)).toBe(false);
