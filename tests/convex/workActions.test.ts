@@ -50,6 +50,12 @@ import {
   refreshPrerequisiteLedger,
   refreshPrerequisites,
   REVOPS_5_STEP_5,
+  RUN_3_REVOPS_7_STEP_1,
+  run3RefreshClosing,
+  run3RefreshOutcomes,
+  run3RefreshPlan,
+  run3RefreshPrerequisiteLedger,
+  run3RefreshPrerequisites,
 } from './fixtures/closing-gates-2026-09-16';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
@@ -4637,14 +4643,99 @@ describe('the closing gates against the 16 September plans', (): void => {
       return '';
     };
     const write = reason('Add an audit comment on REVOPS-7 via linear save_comment once you verify the visible figure in Linear.');
-    expect(write).toBe('approved plan step 1 is a write step that also promised to verify on Linear, but no landed Linear read or blocking ledger reason was recorded');
+    expect(write).toBe('approved plan step 1 is a write step that also promised to verify on Linear in "you verify the visible figure in Linear", but no landed Linear read or blocking ledger reason was recorded');
     expect(write).not.toContain('promised a Linear read');
     expect(reason('Capture evidence from Linear; then add an audit comment on REVOPS-7.')).toBe(
-      'approved plan step 1 is a write step that also promised Linear evidence, but no landed Linear read or blocking ledger reason was recorded',
+      'approved plan step 1 is a write step that also promised Linear evidence in "Capture evidence from Linear", but no landed Linear read or blocking ledger reason was recorded',
     );
     expect(reason('Verify the visible figure in Linear.')).toBe(
-      'approved plan step 1 promised a Linear read, but no landed Linear read or blocking ledger reason was recorded',
+      'approved plan step 1 promised a Linear read in "Verify the visible figure in Linear", but no landed Linear read or blocking ledger reason was recorded',
     );
+  });
+
+  it('accepts the run 3 REVOPS-7 closing set: the read-back in step 3 is of the tile, and Linear is only the write target', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: run3RefreshPlan,
+        outcomes: run3RefreshOutcomes,
+        initialActions: run3RefreshPrerequisites,
+        initialLedger: run3RefreshPrerequisiteLedger,
+        surfaces,
+      }),
+    ).not.toThrow();
+    expect(
+      dependentTransitionRefusal({
+        plan: run3RefreshPlan,
+        actions: run3RefreshClosing.actions,
+        planStepOutcomes: run3RefreshOutcomes,
+      }),
+    ).toBeUndefined();
+    // With no tile action landed, the tile read step 1 promised is what is missing, named by its clause and its surface.
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: run3RefreshPlan,
+        outcomes: run3RefreshOutcomes,
+        initialActions: [],
+        initialLedger: [],
+        surfaces,
+      }),
+    ).toThrow(
+      'approved plan step 1 is a write step that also promised to read on Looker pipeline tile in "browser_snapshot to read back the visible figure and the audit line \'Last updated by <user> at <time> UTC\'", but no landed Looker pipeline tile read or blocking ledger reason was recorded',
+    );
+  });
+
+  it('still refuses the run 2 REVOPS-5 closing set when the Linear read step 2 promised did not land', (): void => {
+    const withoutLinear = auditNotePrerequisites.flatMap((action, index) =>
+      action.args.surface === 'linear' ? [] : [{ action, entry: auditNotePrerequisiteLedger[index]! }],
+    );
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: auditNotePlan,
+        outcomes: auditNoteOutcomes,
+        initialActions: withoutLinear.map((row) => row.action),
+        initialLedger: withoutLinear.map((row) => row.entry),
+        surfaces,
+      }),
+    ).toThrow(/approved plan step 2 is a write step that also promised to read on Linear in "Read the Q3 close project tickets in Linear team REVOPS via get_issue\/list_issues and record each ticket identifier and its state as Linear reports it, as evidence for check 3", but no landed Linear read/);
+  });
+
+  it('reads a condition that names a surface as a promised read only when no other step reads that surface', (): void => {
+    const conditional = 'Move REVOPS-7 to Done via linear save_issue only if Linear reports the ticket in Backlog.';
+    const outcomes = (count: number): PlanStepOutcome[] =>
+      Array.from({ length: count }, (_, index) => ({ step: index + 1, status: 'satisfied' as const, evidence: 'in this response' }));
+    const plan = (steps: string[]) => ({
+      summary: 'Close the ticket.', steps, expectedOutputType: 'ticket-update' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1,
+    });
+    expect(() =>
+      validatePlanStepOutcomes({ plan: plan([conditional]), outcomes: outcomes(1), initialActions: [], initialLedger: [], surfaces }),
+    ).toThrow(
+      'approved plan step 1 promised a Linear read in the condition "only if Linear reports the ticket in Backlog" and no other step reads Linear, but no landed Linear read or blocking ledger reason was recorded',
+    );
+    // Another step reads Linear: the condition refers to that read, and that step carries the obligation.
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: plan(['Read REVOPS-7 in Linear via get_issue.', conditional]), outcomes: outcomes(2), initialActions: [], initialLedger: [], surfaces,
+      }),
+    ).toThrow('approved plan step 1 promised a Linear read in "Read REVOPS-7 in Linear via get_issue"');
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: plan(['Read REVOPS-7 in Linear via get_issue.', conditional]),
+        outcomes: outcomes(2),
+        initialActions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } }],
+        initialLedger: [{ tool: 'mcp.call', ok: true, effect: 'REVOPS-7 Backlog', idempotencyKey: 'read' }],
+        surfaces,
+      }),
+    ).not.toThrow();
+    // The run 3 shape: the condition names no surface, so the step promises no read at all.
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: plan([RUN_3_REVOPS_7_STEP_1, "On linear, set REVOPS-7 state to 'Done' only if the refresh landed and the audit line was read back."]),
+        outcomes: outcomes(2),
+        initialActions: run3RefreshPrerequisites,
+        initialLedger: run3RefreshPrerequisiteLedger,
+        surfaces,
+      }),
+    ).not.toThrow();
   });
 
   it('accepts the REVOPS-7 closing set: step 3 is a write quoting the read-back as evidence, not a Linear read', (): void => {

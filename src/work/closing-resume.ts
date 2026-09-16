@@ -1,7 +1,7 @@
 import { actionIdempotencyKey } from './idempotency';
 import { actionIntent, isAuditComment, isStatusChange, parseSurfaceAction } from '../surfaces/policy';
 import type { AppliedAction } from '../surfaces/types';
-import { promisesResult } from './plan-steps';
+import { promisedReads, promisesResult } from './plan-steps';
 import type { ExecutionOutput, ExecutionPlan, PlanStepOutcome, RefusedClosing } from './types';
 
 export interface ClosingResume extends ExecutionOutput {
@@ -26,24 +26,19 @@ function isRead(action: ExecutionOutput['actions'][number]): boolean {
 }
 
 /**
- * Whether every surface a promised-result step names was read in the
- * prerequisites. A step that names no surface ("take a browser_snapshot and
- * read back the audit line", in the same session as the step before it)
- * has nothing here to check; the landed-read rule beside this one is what
- * covers it.
+ * Whether every surface the plan promises to read was read in the
+ * prerequisites, bound by `promisedReads`, the same binding the closing
+ * gate reads. A step that names no surface ("take a browser_snapshot and
+ * read back the audit line", in the same session as the step before it) or
+ * names one only as a write target has nothing here to check; the
+ * landed-read rule beside this one is what covers it.
  */
 function promisedSurfacesRead(actions: readonly ExecutionOutput['actions'][number][], plan: ExecutionPlan, surfaces: readonly Surface[]): boolean {
   const reads = new Set(actions.flatMap(action => {
     const parsed = parseSurfaceAction(action);
-    return parsed.ok && actionIntent(parsed.action) === 'read' ? [parsed.action.surface] : [];
+    return parsed.ok && actionIntent(parsed.action) === 'read' ? [parsed.action.surface.toLowerCase()] : [];
   }));
-  for (const step of plan.steps.filter(promisesResult)) {
-    const named = surfaces.filter(surface => [surface.slug, surface.displayName].some(name =>
-      step.toLowerCase().includes(name.toLowerCase()),
-    ));
-    if (named.some(surface => !reads.has(surface.slug))) return false;
-  }
-  return true;
+  return promisedReads(plan.steps, surfaces).every(read => reads.has(read.surface.slug.toLowerCase()));
 }
 
 /**
