@@ -12,6 +12,8 @@ import {
   PUBLISHED_PORTS,
   QUICKSTART_COMMANDS,
   REPOSITORY_URL,
+  RUN_WAYS,
+  RUN_WAY_VERBS_NOTE,
   STOP_AND_RESTART,
   TIMING_CAVEAT,
   TRAPS,
@@ -20,7 +22,7 @@ import {
 export const metadata: Metadata = {
   title: 'Set up Day0',
   description:
-    'Run Day0 on your own machine: what you need, the five commands, what a first success looks like, and what to do when it stops.',
+    'Run Day0 on your own machine: what you need, the four ways to run it, the five commands, what a first success looks like, and what to do when it stops.',
 };
 
 /**
@@ -28,9 +30,10 @@ export const metadata: Metadata = {
  *
  * A visitor arrives here from the landing page having never run the product,
  * and this page may be the only instruction they read, so it carries the whole
- * path rather than a pointer to one: prerequisites, the choice the command will
- * ask them to make, the commands, what success looks like, what was measured,
- * the two traps a rehearsal found, and how to stop.
+ * path rather than a pointer to one: prerequisites, the four ways to run it
+ * with a complete command list each, the choice the command will ask them to
+ * make, the commands, what success looks like, what was measured, the two
+ * traps a rehearsal found, and how to stop.
  *
  * It collects nothing. There is no form, no field and no control anywhere on
  * it: the one secret this setup needs is asked for by the command, in a hidden
@@ -44,6 +47,7 @@ const REVISION = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.NEXT_PUBLIC_SO
 
 const SECTIONS = [
   { id: 'before', title: 'Before you start' },
+  { id: 'ways', title: 'Four ways to run it' },
   { id: 'model', title: 'How it reaches a model' },
   { id: 'commands', title: 'The commands' },
   { id: 'success', title: 'What first success looks like' },
@@ -120,7 +124,8 @@ export default function SetupPage() {
             The same product this demo records, running locally: a self-hosted backend, a seeded
             mock office to work in, and a sandbox that verifies the skills the agent writes. The
             backend and sandbox run locally. A hosted model receives your chat and relevant
-            synthetic office content; the account-free route runs the model locally too.
+            synthetic office content; the account-free route runs the model locally too. Real
+            mode swaps the mock office for your own documentation and systems, on the same stack.
           </p>
           <div
             role="note"
@@ -202,16 +207,86 @@ export default function SetupPage() {
               </code>
               . Two installations on one machine need different ports and different Compose project
               names, and the command refuses to attach a new installation to another one&rsquo;s
-              data. Use --model-port for the local model server. The app stays on port 3000; free
-              that port before running pnpm dev.
+              data. Use --model-port for the local model server and --app-port for the app, which
+              pnpm dev otherwise serves on 3000.
             </p>
           </Section>
 
           <Section
-            id="model"
+            id="ways"
             index={2}
+            title="Four ways to run it"
+            lede="In the order they cost you: nothing installed, nothing signed up for, one key, then your own systems. Each block is complete on its own, and every command in it is one this repository ships."
+          >
+            <div className="space-y-3">
+              {RUN_WAYS.map((way, index) => (
+                <Panel key={way.id}>
+                  <div className="flex items-baseline gap-3 mb-2">
+                    <span className="font-mono text-xs text-[var(--color-accent)]">
+                      {String(index + 1).padStart(2, '0')}
+                    </span>
+                    <h3 id={`run-${way.id}`} className="text-sm font-semibold tracking-tight">
+                      {way.title}
+                    </h3>
+                  </div>
+                  <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
+                    {way.body}
+                  </p>
+                  {way.links ? (
+                    <ul className="space-y-1.5">
+                      {way.links.map((link) => (
+                        <li key={link.href}>
+                          <Link
+                            href={link.href}
+                            className="text-sm text-[var(--color-accent)] underline underline-offset-4"
+                          >
+                            {link.label}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {way.commands ? (
+                    <code className="font-mono text-xs text-[var(--color-accent)] leading-relaxed block overflow-x-auto whitespace-nowrap">
+                      {way.commands.map((command) => (
+                        <span key={command} className="block">
+                          {command}
+                        </span>
+                      ))}
+                    </code>
+                  ) : null}
+                  {way.after ? (
+                    <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-3">
+                      {way.after}
+                    </p>
+                  ) : null}
+                  {way.verbs ? (
+                    <ul className="space-y-2 mt-3">
+                      {way.verbs.map((verb) => (
+                        <li key={verb.command} className="flex flex-col sm:flex-row sm:gap-4">
+                          <code className="font-mono text-xs text-[var(--color-accent)] leading-relaxed sm:w-52 sm:shrink-0">
+                            {verb.command}
+                          </code>
+                          <span className="text-sm text-[var(--color-muted)] leading-relaxed">
+                            {verb.what}
+                          </span>
+                        </li>
+                      ))}
+                      <li className="text-sm text-[var(--color-muted)] leading-relaxed">
+                        {RUN_WAY_VERBS_NOTE}
+                      </li>
+                    </ul>
+                  ) : null}
+                </Panel>
+              ))}
+            </div>
+          </Section>
+
+          <Section
+            id="model"
+            index={3}
             title="How it reaches a model"
-            lede="The setup command asks how to reach a model, then asks for the key or confirms a local download. Both routes support the loop; they differ over who runs the model."
+            lede="The setup command asks how to reach a model, then asks for the key or confirms a local download. Both routes support the loop; they differ over who runs the model. Naming the route on the command line, as the blocks above do, skips the question."
           >
             <div className="space-y-3">
               {MODEL_ROUTES.map((route) => (
@@ -236,13 +311,18 @@ export default function SetupPage() {
               . It performs the same local setup and writes paired host/backend model addresses. Set
               OPENAI_MODEL and, if required, OPENAI_API_KEY in .env.local for that endpoint, then
               run pnpm sync:env before starting the app. A host-loopback endpoint must also be
-              reachable from the backend container via host.docker.internal.
+              reachable from the backend container via host.docker.internal. The fourth answer,{' '}
+              <code className="font-mono text-[var(--color-fg)]">
+                pnpm setup:local --route featherless
+              </code>
+              , reaches a hosted model through Featherless with a Featherless key, and is the route
+              real mode offers by name.
             </p>
           </Section>
 
           <Section
             id="commands"
-            index={3}
+            index={4}
             title="The commands"
             lede="Five, from an empty directory. The fourth is the one that does the work; run it again whenever you want, because it keeps what is already there rather than starting over."
           >
@@ -269,7 +349,7 @@ export default function SetupPage() {
 
           <Section
             id="success"
-            index={4}
+            index={5}
             title="What first success looks like"
             lede="Four things, in this order. The setup command prints the same four when it finishes."
           >
@@ -308,7 +388,7 @@ export default function SetupPage() {
 
           <Section
             id="time"
-            index={5}
+            index={6}
             title="How long it takes"
             lede="Measured on one machine, from a clean clone with nothing copied into it. Each figure says what it does not include."
           >
@@ -340,7 +420,7 @@ export default function SetupPage() {
 
           <Section
             id="stops"
-            index={6}
+            index={7}
             title="If it stops"
             lede="Run pnpm check:setup. It reads .env.local and reports configuration and local service status for the backend, auth, model, sandbox and voice. It does not make a model call or verify provider credentials. These are the traps to check first."
           >
@@ -354,7 +434,7 @@ export default function SetupPage() {
             </div>
           </Section>
 
-          <Section id="stop-restart" index={7} title="Stopping and starting again">
+          <Section id="stop-restart" index={8} title="Stopping and starting again">
             <Panel>
               <p className="text-sm leading-relaxed mb-3">{STOP_AND_RESTART}</p>
               <p className="text-sm text-[var(--color-muted)] leading-relaxed">{DATA_LOCATION}</p>
@@ -363,9 +443,9 @@ export default function SetupPage() {
 
           <Section
             id="detail"
-            index={8}
+            index={9}
             title="Where the detail is"
-            lede="The README carries the hand-run version of every route, which is what to read when you want to know what a command did rather than to run it."
+            lede="The README says what the setup does on every route, step by step, which is what to read when you want to know what a command did rather than to run it."
           >
             <ul className="space-y-3">
               {DETAILED_SECTIONS.map((section) => (
