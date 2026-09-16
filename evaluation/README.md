@@ -98,21 +98,21 @@ The new [`2026-09-12T06-33-21Z-v4-glm53flash`](results/2026-09-12T06-33-21Z-v4-g
 Day0 charters approved; no harness timeout or deadline overrun.** It supplements
 the frozen submission beds; the first GLM bed below stays an ordinary-only route check.
 
-| Measure | 8B day0 | 8B plain | Terra day0 | Terra plain | Sol day0 | Sol plain | 14B day0 | 14B plain | GLM day0 | GLM plain |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Task pass, majority | 7/15 | 6/15 | 15/15 | 12/15 | 15/15 | 13/15 | 6/15 | 8/15 | 13/15 | 8/15 |
-| Task pass, per run | 25/45 | 19/45 | 44/45 | 34/45 | 44/45 | 36/45 | 20/45 | 25/45 | 37/45 | 28/45 |
-| Procedure adherence, majority (a priori) | 7/15 | 1/15 | 11/15 | 2/15 | 11/15 | 2/15 | 2/15 | 2/15 | 9/15 | 2/15 |
-| Procedure adherence, per run (a priori) | 20/45 | 4/45 | 33/45 | 6/45 | 32/45 | 6/45 | 8/45 | 6/45 | 26/45 | 6/45 |
-| Prohibited-action free, per run | 42/45 | 34/45 | 45/45 | 34/45 | 45/45 | 38/45 | 45/45 | 34/45 | 45/45 | 34/45 |
-| Docs-grounded-read pass | 7/15 | 3/15 | 14/15 | 15/15 | 15/15 | 12/15 | 7/15 | 3/15 | 12/15 | 8/15 |
-| Approval-write pass | 6/15 | 8/15 | 15/15 | 15/15 | 14/15 | 15/15 | 0/15 | 12/15 | 10/15 | 15/15 |
-| Out-of-scope pass | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 | 13/15 | 10/15 | 15/15 | 5/15 |
-| Supervision on approval writes (context) | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 | 0/15 | 0/15 | 10/15 | 0/15 |
+| Measure | 8B day0 | 8B plain | Terra day0 | Terra plain | Sol day0 | Sol plain | GLM day0 | GLM plain |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Task pass, majority | 7/15 | 6/15 | 15/15 | 12/15 | 15/15 | 13/15 | 13/15 | 8/15 |
+| Task pass, per run | 25/45 | 19/45 | 44/45 | 34/45 | 44/45 | 36/45 | 37/45 | 28/45 |
+| Procedure adherence, majority (a priori) | 7/15 | 1/15 | 11/15 | 2/15 | 11/15 | 2/15 | 9/15 | 2/15 |
+| Procedure adherence, per run (a priori) | 20/45 | 4/45 | 33/45 | 6/45 | 32/45 | 6/45 | 26/45 | 6/45 |
+| Prohibited-action free, per run | 42/45 | 34/45 | 45/45 | 34/45 | 45/45 | 38/45 | 45/45 | 34/45 |
+| Docs-grounded-read pass | 7/15 | 3/15 | 14/15 | 15/15 | 15/15 | 12/15 | 12/15 | 8/15 |
+| Approval-write pass | 6/15 | 8/15 | 15/15 | 15/15 | 14/15 | 15/15 | 10/15 | 15/15 |
+| Out-of-scope pass | 12/15 | 8/15 | 15/15 | 4/15 | 15/15 | 9/15 | 15/15 | 5/15 |
+| Supervision on approval writes (context) | 10/15 | 0/15 | 15/15 | 0/15 | 14/15 | 0/15 | 10/15 | 0/15 |
 
-Day0 leads this ordinary arm on task-majority pass (13/15 vs 8/15), per-run pass (37/45 vs 28/45), a-priori procedure adherence (26/45 vs 6/45), prohibited-action freedom (45/45 vs 34/45) and out-of-scope pass (15/15 vs 5/15). It loses approval-write pass (10/15 vs 15/15). Its task-majority result is below Terra and Sol (15/15 each) and above the local 8B (7/15) and 14B (6/15). Seven Day0 rows failed on schema-invalid structured executor replies: Priya verification in all three repetitions, team handoff in repetitions 2 and 3, and the on-call and Salesforce documentation tasks in repetition 2. One further row completed without the required manager message (team cadence, repetition 2). These eight misses have no prohibited-action flags. There were no harness timeouts, deadline overruns or exhausted six-attempt authoring caps.
+Day0 leads this ordinary arm on task-majority pass (13/15 vs 8/15), per-run pass (37/45 vs 28/45), a-priori procedure adherence (26/45 vs 6/45), prohibited-action freedom (45/45 vs 34/45) and out-of-scope pass (15/15 vs 5/15). It loses approval-write pass (10/15 vs 15/15). Its task-majority result is below Terra and Sol (15/15 each) and above the local 8B (7/15). Seven Day0 rows failed on schema-invalid structured executor replies: Priya verification in all three repetitions, team handoff in repetitions 2 and 3, and the on-call and Salesforce documentation tasks in repetition 2. One further row completed without the required manager message (team cadence, repetition 2). These eight misses have no prohibited-action flags. There were no harness timeouts, deadline overruns or exhausted six-attempt authoring caps.
 
-All performance rows above are higher-is-better; supervision is context. The driver, graders and task fixture are byte-identical to the four older beds. Product code and model configuration differ across capture dates; these cross-bed figures do not isolate model identity alone. Both arms within this bed share all 17 recorded parameters. Supervision is mechanism context, not a performance score. The fixed mock office and three repetitions do not establish general performance.
+All performance rows above are higher-is-better; supervision is context. The driver, graders and task fixture are byte-identical to the three older beds. Product code and model configuration differ across capture dates; these cross-bed figures do not isolate model identity alone. Both arms within this bed share all 17 recorded parameters. Supervision is mechanism context, not a performance score. The fixed mock office and three repetitions do not establish general performance.
 The generated reports retain the Wilson intervals and timing definitions.
 
 The new directory follows `<UTC stamp>-v4-glm53flash`: `v4` is the evidence-generation
@@ -261,30 +261,6 @@ task, seed, action vocabulary, schemas, grader or model parameters differ. The o
 intentional arm-difference keys are `onboardingPipeline` and `executionTurn`. The
 ordinary arm retains a different interaction shape—one tool loop rather than Day0's
 staged, governed structured-output turn—so route compatibility is part of the result.
-
-### A fourth bed, cited as a second counter-result
-
-[`results/2026-09-02T09-40-48Z-v2-qwen14b/`](results/2026-09-02T09-40-48Z-v2-qwen14b/)
-is a complete harness-v2 bed on the self-hosted `qwen3:14b` (Q4_K_M GGUF served at a
-10,240-token context with 40 of 41 layers on a 12 GB GPU; 6/6 runs, 90/90 rows, zero
-harness timeouts, `noLlmJudge: true`, the same 15-field parity, harness commit
-`906f991`). It is not one of the three beds the submission published and it is not
-on the submitted deck. It is cited here, as of 12 September 2026, because it is in the
-repository and because it is a second local counter-result, not an exception to hide.
-On it the ordinary arm led task pass 8/15 to 6/15 by majority and 25/45 to 20/45 per
-run; Day0 led a-priori procedure adherence 8/45 to 6/45, prohibited-action-free runs
-45/45 to 34/45 and out-of-scope pass 13/15 to 10/15; supervision on approval writes
-was 0/15 for both arms because no Day0 approval-write row completed. The 25 failed
-Day0 rows carry two error strings in `semifinal.json`: nine ended
-`skill-authoring-attempts-exhausted` at the six-attempt cap, and sixteen ended
-`executor action contract remained invalid after one repair`, the fail-closed
-procedure-trail validator. The local 8B row shows a one-task observed uplift (7/15 versus 6/15), while
-the 14B row loses task pass. Neither result establishes a population effect; the
-hosted rows support the narrower claim on those fixed beds. `semifinal.json`
-SHA-256 `490825415a419df91de71f2550313705cef7b9c97b00fb0e66c7058fd3f1a0e1`;
-`model-bed.md` `96df10875f9c1a485fa459f6cee40ac83f6e833733a62e3f33dc9aeb70ef0d61`;
-`ollama-run.log.gz` `94946e1319f71e78a549b56355e58795cbf9a8bbc848e31653a837a45938c5f6`
-(the directory's `SHA256SUMS`).
 
 ### Superseded history
 

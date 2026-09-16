@@ -6,9 +6,9 @@ An autonomous teammate that joins with no role, no skills and no scope.
 
 [**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
 
-![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
+![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, one built-in and three it authored, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
-<p align="center"><i>One agent after a clean real-mode run: the charter it wrote and had approved, three skills it authored and registered, the work it discovered, and the supervision trail for actions that landed or were refused. Captured locally on 2 September 2026.</i></p>
+<p align="center"><i>One agent after a clean real-mode run: the charter it wrote and had approved, four registered skills, one built-in and three it authored, the work it discovered, and the supervision trail for actions that landed or were refused. Captured locally on 3 September 2026.</i></p>
 
 Putting an agent into a real team is an engineering project. Someone defines the role, wires the tools, writes the prompts and encodes what counts as good work, and that work is done again for every team and every organisation that wants one. It is the main reason agents stall at the pilot.
 
@@ -21,6 +21,8 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 - Sign in with Clerk and deploy an agent.
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
 - Watch the work queue advance and the Skills panel show the capabilities it proposes, verifies and registers.
+
+Two recordings: the [mock-office walkthrough](https://youtu.be/UqPnFyQ9Fuo) shows this loop on the hosted mock office, and the [one-minute demo video](https://youtu.be/YgbSmy1shnM) is cut from a real-mode run against the author's own Linear and Slack workspaces, the route [One full run](#one-full-run-from-the-first-page) documents below.
 
 ## Disclosures
 
@@ -81,7 +83,7 @@ A Day-1 one-to-one, held over voice or chat, walks its new boss through seven to
 
 ### It writes its own charter, and waits for a human
 
-From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. Before approving, the manager sees each rule the draft derived from what they said, beside the sentence it came from, and can strike any of them; nothing struck survives as a gate. A rule found by checking the clauses strikes whole any will-not-do or escalation clause that carries it and only its word from a will-do, the card says which, and a strike the charter cannot honour, such as one that would drop the only clause keeping the agent out of a system, is refused on the card with the reason rather than at approval. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes, and a set of scoped, revocable capability grants. After approval the charter is amended, never rewritten: each change is a new version that supersedes the last, with the actor, the reason and the per-field diff on one event, and an amendment schedules re-evaluation of eligible parked skips. Only out-of-scope and quality-fit skips return on a charter change; low-value skips and running approved plans remain as they are. A question the charter left open is asked once, at the first plan that touches it, and the answer is written into the charter with the plan's approval.
+From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. Before approving, the manager sees each rule the draft derived from what they said, beside the sentence it came from, and can strike any of them; nothing struck survives as a gate. A rule found by checking the clauses strikes whole any will-not-do or escalation clause that carries it and only its word from a will-do, the card says which, and a strike the charter cannot honour, such as one that would drop the only clause keeping the agent out of a system, is refused on the card with the reason rather than at approval. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes (in real mode deploy seeds only `boss:message` and `docs:read`, and a surface's read scope arrives when that surface connects), and a set of scoped, revocable capability grants. After approval the charter is amended, never rewritten: each change is a new version that supersedes the last, with the actor, the reason and the per-field diff on one event, and an amendment schedules re-evaluation of eligible parked skips. Only out-of-scope and quality-fit skips return on a charter change; low-value skips and running approved plans remain as they are. A question the charter left open is asked once, at the first plan that touches it, and the answer is written into the charter with the plan's approval.
 
 ![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
@@ -768,7 +770,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Runtime flow
 
-1. **Sign in** (Clerk modal, or nothing at all in no-auth dev mode) and **deploy** on `/`. `api.agents.deploy` inserts the agent and seeds five read-only permission grants. `POST /api/seed` (non-blocking) installs the builtin `see-internal-docs` skill and, in mock mode only, the mock environment. Work items are not seeded here - mock work is generated from the approved charter, while real work arrives from connected surfaces.
+1. **Sign in** (Clerk modal, or nothing at all in no-auth dev mode) and **deploy** on `/`. `api.agents.deploy` inserts the agent and seeds five read-only permission grants; in real mode it seeds only `boss:message` and `docs:read`, and a surface's read scope is granted when that surface connects. `POST /api/seed` (non-blocking) installs the builtin `see-internal-docs` skill and, in mock mode only, the mock environment. Work items are not seeded here - mock work is generated from the approved charter, while real work arrives from connected surfaces.
 2. **Mode picker** on `/agent/[agentId]` — voice or chat.
    - Voice: `GET /api/voice/elevenlabs/start` returns a signed URL; ElevenLabs's post-call webhook hits `POST /api/voice/elevenlabs/webhook`.
    - Chat: `POST /api/voice/chat` streams the configured model until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
@@ -948,7 +950,6 @@ Every number the submission quotes comes from a file in this repository or from 
 | The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
 | The recorded run's supervision figures: charter approved 4 min 26 s after deployment, 7 approved and 1 rejected, 29 s median decision latency, 1 action blocked after revocation, audit trail 32 of 32 | The Supervision card of the 3 September 2026 real-mode run the demo video is cut from, as `metrics:forAgent` computes it from that run's event ledger. That run's ledger export is part of the submission materials rather than this repository | Run [the real-mode route](#run-it-in-real-mode); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#run-it-in-real-mode) |
 | This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), a second run of the same route on the same commit and model, paced for screenshots | The same |
-| The fourth local bed, `qwen3:14b`, where the ordinary arm led task pass | `evaluation/results/2026-09-02T09-40-48Z-v2-qwen14b/` | `pnpm eval:semifinal` with `OPENAI_MODEL=qwen3:14b` |
 
 The two real-mode runs are single observations with the same code and model and different human pacing; neither is a distribution, and the submission names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
 
@@ -1023,7 +1024,7 @@ Day0 是一名自主工作的团队成员；刚加入时，它没有预设角色
 
 Day0 从更早的一步开始。它在空白状态下部署，之后形成的一切都来自与雇用它的人的一次对话。
 
-![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
+![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, one built-in and three it authored, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
 ### 在线演示
 
@@ -1032,6 +1033,8 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 - 使用 Clerk 登录并部署一个 Agent。
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
 - 查看工作队列推进，并在 Skills 面板中看到 Agent 提出、验证和注册能力。
+
+两段录像：[mock office 演示视频](https://youtu.be/UqPnFyQ9Fuo)在托管的 mock office 上展示上述流程；[一分钟演示视频](https://youtu.be/YgbSmy1shnM)剪辑自连接作者本人 Linear 与 Slack workspace 的一次 real-mode 运行，即下文[一次完整运行](#一次完整运行从第一个页面开始)记录的路径。
 
 ### 披露
 
@@ -1092,7 +1095,7 @@ Day-1 一对一通过语音或文字依次讨论七个主题：为什么招聘�
 
 #### 它起草自己的章程，并等待人工确认
 
-Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准前，manager 会看到草稿从你的话里推导出的每条规则，旁边附有它来自的那句话，可以划掉其中任何一条；被划掉的规则不会再作为门槛存在。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围和一组范围受限且可撤销的能力授权。批准之后章程只能修订，不会被重写：每次修改都是一个取代上一版的新版本，操作者、理由和逐字段 diff 记录在同一条事件里，而每次修订都会把在旧版本下被搁置的工作送回重新评估。章程中悬而未决的问题会在第一个涉及它的计划上被问一次，答案随该计划的批准一起写入章程。
+Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准前，manager 会看到草稿从你的话里推导出的每条规则，旁边附有它来自的那句话，可以划掉其中任何一条；被划掉的规则不会再作为门槛存在。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围（real mode 下部署时只生成 `boss:message` 与 `docs:read`，各系统的读取范围在该系统连接时才到达）和一组范围受限且可撤销的能力授权。批准之后章程只能修订，不会被重写：每次修改都是一个取代上一版的新版本，操作者、理由和逐字段 diff 记录在同一条事件里，而每次修订都会把在旧版本下被搁置的工作送回重新评估。章程中悬而未决的问题会在第一个涉及它的计划上被问一次，答案随该计划的批准一起写入章程。
 
 ![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
@@ -1580,7 +1583,6 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 | exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
 | 录制运行的监督数字：部署后 4 分 26 秒章程获批、批准 7 次与拒绝 1 次、决策中位 29 秒、撤权后阻断 1 次、审计轨迹 32/32 | 演示视频所剪辑的 2026 年 9 月 3 日 real-mode 运行的 Supervision 卡片，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的 ledger 导出属于提交材料，不在本仓库中 | 运行[真实模式路径](#在真实模式下运行)；读取卡片，或按[读取 ledger](#在真实模式下运行)中的 `exportActions:exportForAgent` 命令导出 ledger |
 | 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一 commit、同一模型下同一路径的第二次运行，节奏为截图而放慢 | 同上 |
-| 第四个本地评测环境 `qwen3:14b`，其中普通 arm 在 task pass 上领先 | `evaluation/results/2026-09-02T09-40-48Z-v2-qwen14b/` | 设置 `OPENAI_MODEL=qwen3:14b` 后运行 `pnpm eval:semifinal` |
 
 两次 real-mode 运行是同一代码与模型、不同人工节奏下的单次观察；两者都不是分布，提交材料会说明每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
 

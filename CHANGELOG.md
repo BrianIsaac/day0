@@ -91,7 +91,7 @@ Tag `goai-final` at `5fac642`, 16 September 2026. Hosted at `day0-olive.vercel.a
 - `a456448` build(tsconfig): exclude the ignored docs tree from type checking
 - `0e6f229` fix(dashboard): render the active pill from the shared supervised label
 - `f825522` chore(docs): untrack the private planning and research documents
-- Evidence: `4c7601d`, `25206c6`, `cde210c` docs(evaluation): the GLM 5.3 Flash paired bed (`2026-09-12T06-33-21Z-v4-glm53flash`), its revocation containment set, and the re-bed with prompt-mode schema repair (`2026-09-12T07-54-47Z-v5-glm53flash`); `40c166e`, `44de4f5`, `8724063` the baseline-only GLM route check (`2026-09-11T20-08-51Z-v2-glm53flash`) and its provenance; `faf4365` cite the 2 September revocation trials and the 14B counter-result
+- Evidence: `4c7601d`, `25206c6`, `cde210c` docs(evaluation): the GLM 5.3 Flash paired bed (`2026-09-12T06-33-21Z-v4-glm53flash`), its revocation containment set, and the re-bed with prompt-mode schema repair (`2026-09-12T07-54-47Z-v5-glm53flash`); `40c166e`, `44de4f5`, `8724063` the baseline-only GLM route check (`2026-09-11T20-08-51Z-v2-glm53flash`) and its provenance; `faf4365` cite the 2 September revocation trials
 
 ### 4 September 2026
 
@@ -115,11 +115,10 @@ Submitted snapshot `cc4e7a5`, 3 September 2026 (no tag). The recorded real-mode 
 ### 2 September 2026
 
 - `63817f0` feat(evaluation): standardise harness v2 (300 s call abort, 15 min task deadline, six authoring attempts, local sandbox required)
-- `6aa05a9`, `0cfbb5e`, `0dd4f4e` docs(evaluation): define the harness v2 evidence boundary; the three frozen beds `2026-09-02T08-35-22Z-v2-qwen8b`, `2026-09-02T13-59-20Z-v3-terra`, `2026-09-02T14-28-33Z-v3-sol`, and the 14B bed `2026-09-02T09-40-48Z-v2-qwen14b`
+- `6aa05a9`, `0cfbb5e`, `0dd4f4e` docs(evaluation): define the harness v2 evidence boundary; the three frozen beds `2026-09-02T08-35-22Z-v2-qwen8b`, `2026-09-02T13-59-20Z-v3-terra`, `2026-09-02T14-28-33Z-v3-sol`
 - `7dc1f0d`, `c18e589` feat(work, ui): reconcile provider effects before retry; the provider reconciliation control
 - `8f9d84c` fix(discovery): build documented endpoints without URL setters
 - `10d1e5b` feat(ui): cursor toggle for recordings
-- `b5519cc` docs(evaluation): retain qwen3 14b serving evidence
 - Revocation trials: `evaluation/results/revocation-2026-09-02T12-17-54Z/`
 
 ## Real mode and the controlled evaluation, 25 August to 1 September 2026
