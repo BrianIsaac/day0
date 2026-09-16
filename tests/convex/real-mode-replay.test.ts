@@ -604,8 +604,15 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await new Promise((resolve) => setTimeout(resolve, 0));
     await t.finishInProgressScheduledFunctions();
-    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
-    expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
+    // The comment the key repair revealed never reaches Linear: the audit
+    // removes it as prewritten and the run goes on to its closing phase.
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => (call.args as { body?: string }).body)).not.toContain('Checked and finished.');
+    const row = await readItem(t, workItemId);
+    expect(row.skipReason ?? '').not.toContain('repaired action set failed the audit');
+    const events = await t.run(ctx => ctx.db.query('events').collect());
+    expect(events.filter(event => event.type === 'audit.corrected')).toMatchObject([
+      { payload: { workItemId, removedIndices: [1], reason: 'prewritten closing actions' } },
+    ]);
   }, 30_000);
 
   it('plans without the ownership gate, holds the tile batch in phase one, repairs the read once, and closes from the read-back', async (): Promise<void> => {

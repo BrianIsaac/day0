@@ -46,6 +46,8 @@ import {
   executorPreamble,
   runDependentSkill,
   runSkill,
+  DEFERRALS_KEPT,
+  WITHHELD_BY_EVIDENCE,
 } from '../../../src/work/execute-skill';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import { planPreconditionAudit } from '../../../src/work/plan';
@@ -584,7 +586,7 @@ describe('deferral by data, not by judgement', (): void => {
     expect(output.needsDependentPhase).toBe(true);
   });
 
-  it('fails the run with the reason when the repair defers the tile again', async (): Promise<void> => {
+  it('keeps the response and leaves the deferral to the closing phase when the repair defers the tile again', async (): Promise<void> => {
     const gatedOutput: ExecutionOutput = {
       draft: 'Confirming ownership.',
       notes: 'Pending ownership verification.',
@@ -593,10 +595,16 @@ describe('deferral by data, not by judgement', (): void => {
       procedureTrails: [],
     };
     recorded.outputs.push(gatedOutput, gatedOutput);
-    await expect(runSkill({ ...runArgs, mockEnv: tileRunbook })).rejects.toThrow(
-      /remained invalid after one repair: deferred an action with no result dependency/,
-    );
+    const corrections: Array<[number[], string]> = [];
+    const output = await runSkill({
+      ...runArgs, mockEnv: tileRunbook,
+      onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); },
+    });
     expect(recorded.users).toHaveLength(2);
+    expect(output.actions).toEqual([getIssue]);
+    expect(output.needsDependentPhase).toBe(true);
+    expect(corrections).toEqual([[[], expect.stringContaining(`${DEFERRALS_KEPT}: deferred an action with no result dependency`)]]);
+    expect(corrections[0]![1]).toContain('Looker pipeline tile (looker-pipeline-tile) sequence has no action in this phase');
   });
 
   it('rejects result wording without a declared dependency', (): void => {
@@ -1031,19 +1039,24 @@ describe('deferral by data, not by judgement', (): void => {
     expect(corrected).toEqual([[1, 2]]);
   });
 
-  it('does not structurally correct a closing action when another audit issue remains', async () => {
+  it('removes the prewritten close and leaves an unjustified deferral to the closing phase when both remain after the one repair', async () => {
     const invalid = {
       draft: '', notes: '', needsDependentPhase: true, actions: [getIssue, done], procedureTrails: [],
       deferredActions: [{ description: 'Refresh tile', reason: 'Waiting', dependsOnActionIndex: null, dependsOnField: null }],
     };
     recorded.outputs.push(invalid, invalid);
-    const corrected: number[][] = [];
-    await expect(runSkill({
+    const corrections: Array<[number[], string]> = [];
+    const output = await runSkill({
       ...runArgs, plan: readBackPlan, surfaces: [linear], mockEnv: tileRunbook,
-      onAuditCorrection: indices => { corrected.push(indices); },
-    })).rejects.toThrow('remained invalid after one repair');
-    expect(corrected).toEqual([]);
+      onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); },
+    });
     expect(recorded.users).toHaveLength(2);
+    expect(output.actions).toEqual([getIssue]);
+    expect(output.deferredActions).toEqual(invalid.deferredActions);
+    expect(corrections).toEqual([
+      [[1], 'prewritten closing actions'],
+      [[], expect.stringContaining(`${DEFERRALS_KEPT}: deferred an action with no result dependency`)],
+    ]);
   });
 
   it('gives a run whose plan declares a read its closing phase, and moves a prewritten close there through the one repair', async (): Promise<void> => {
@@ -1272,7 +1285,7 @@ describe('the evidence invariant in the closing phase', (): void => {
     expect(executorPreamble('mock')).not.toContain('quote the ledger row, the page or the manager');
   });
 
-  it('refuses the 15 September comment with a reason naming the unsupported claim, once, then fails', async (): Promise<void> => {
+  it('refuses the 15 September comment with a reason naming the unsupported claim, once, then withholds it and keeps the rest', async (): Promise<void> => {
     const revision = {
       draft: 'Close checks complete.',
       notes: '',
@@ -1282,34 +1295,40 @@ describe('the evidence invariant in the closing phase', (): void => {
     };
     recorded.outputs.push(revision, revision);
     let additionalCalls = 0;
-    await expect(
-      runDependentSkill({
-        skill: { name: 'linear-audit-note', description: 'Audit note.', body: '# Skill' },
-        plan: auditPlan,
-        candidate: auditCandidate,
-        charter,
-        mockEnv: withChecklist,
-        mode: 'real',
-        surfaces: [],
-        managerFeedback: MANAGER_FEEDBACK_2026_09_15,
-        initialOutput: {
-          draft: '',
-          notes: '',
-          needsDependentPhase: true,
-          actions: LEDGER_2026_09_15.actions,
-          procedureTrails: [],
-        },
-        initialLedger: LEDGER_2026_09_15.applied,
-        onAdditionalModelCall: () => {
-          additionalCalls += 1;
-        },
-      }),
-    ).rejects.toThrow(UNSUPPORTED_CLAIM_2026_09_15);
+    const corrections: Array<[number[], string]> = [];
+    const output = await runDependentSkill({
+      skill: { name: 'linear-audit-note', description: 'Audit note.', body: '# Skill' },
+      plan: auditPlan,
+      candidate: auditCandidate,
+      charter,
+      mockEnv: withChecklist,
+      mode: 'real',
+      surfaces: [],
+      managerFeedback: MANAGER_FEEDBACK_2026_09_15,
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: LEDGER_2026_09_15.actions,
+        procedureTrails: [],
+      },
+      initialLedger: LEDGER_2026_09_15.applied,
+      onAdditionalModelCall: () => {
+        additionalCalls += 1;
+      },
+      onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); },
+    });
     expect(additionalCalls).toBe(1);
     expect(recorded.users).toHaveLength(2);
     expect(recorded.users[1]).toContain('--- Required procedure-trail correction ---');
     expect(recorded.users[1]).toContain(`"${UNSUPPORTED_CLAIM_2026_09_15}"`);
     expect(recorded.users[1]).toContain('could not confirm');
+    // After the failed repair the comment is withheld with the reason, never sent, and the response goes on without it.
+    expect(output.actions).toEqual([]);
+    expect(output.withheldActions).toEqual([
+      { action: UNSUPPORTED_ACTION_2026_09_15, reason: expect.stringContaining(UNSUPPORTED_CLAIM_2026_09_15) },
+    ]);
+    expect(corrections).toEqual([[[0], expect.stringContaining(WITHHELD_BY_EVIDENCE)]]);
   });
 
   it('passes the 16 September audit note without a repair call', async (): Promise<void> => {
@@ -1412,11 +1431,13 @@ describe('the evidence invariant in the closing phase', (): void => {
     expect(output.actions).toEqual([dm, doneAction]);
   });
 
-  it('fails the run when the repair still names only the check the manager accepted', async (): Promise<void> => {
+  it('withholds the comment that still names only the check the manager accepted after the one repair', async (): Promise<void> => {
     recorded.outputs.push(run3Reply(RUN_3_RETRY_ACTION), run3Reply(RUN_3_RETRY_ACTION));
-    await expect(runDependentSkill(run3Args)).rejects.toThrow(
-      /remained invalid after one repair: .*check 3 \("Close tickets at Done"\) reports Backlog/,
-    );
+    const output = await runDependentSkill(run3Args);
     expect(recorded.users).toHaveLength(2);
+    expect(output.actions).toEqual([]);
+    expect(output.withheldActions).toEqual([
+      { action: RUN_3_RETRY_ACTION, reason: expect.stringMatching(/check 3 \("Close tickets at Done"\) reports Backlog/) },
+    ]);
   });
 });

@@ -17,8 +17,11 @@ import {
   type DraftPlanArgs,
 } from '../src/work/plan';
 import {
+  ClosingGateRefusal,
+  DEFERRALS_KEPT,
   deferralAudit,
   dependentActionCap,
+  removePrewrittenClosingActions,
   repairableReadFailures,
   repairFailedReads,
   repairHeldWriteArguments,
@@ -617,10 +620,10 @@ async function holdDay0Actions(
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
-      onAuditCorrection: async removedIndices => {
+      onAuditCorrection: async (removedIndices, reason) => {
         await ctx.runMutation(internal.events.log, {
           agentId: args.agentId, type: 'audit.corrected',
-          payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason: 'prewritten closing actions' },
+          payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
         });
       },
     });
@@ -633,7 +636,7 @@ async function holdDay0Actions(
     // A write whose argument names the probed schema refuses is re-authored
     // once here, so the payload the manager approves is one the provider
     // can accept; nothing reaches a surface in the repair.
-    const stagedOutput =
+    const repairedStaged =
       SURFACE_MODE === 'real'
         ? await repairedForHold(staged, {
             surfaces,
@@ -644,12 +647,9 @@ async function holdDay0Actions(
             },
           })
         : staged;
-    if (stagedOutput.argumentRepairs?.some((attempt) => attempt.repaired)) {
-      const issues = deferralAudit(stagedOutput, args.candidate, {
-        mode: SURFACE_MODE, plan: args.plan, surfaces, skillBody: args.skill.body, now: Date.now(),
-      });
-      if (issues.length > 0) throw new Error(`repaired action set failed the audit: ${issues.join('; ')}`);
-    }
+    const stagedOutput = repairedStaged.argumentRepairs?.some((attempt) => attempt.repaired)
+      ? await auditRepairedPayloads(ctx, repairedStaged, args, surfaces)
+      : repairedStaged;
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
       // Nothing to wait for is not a failed prerequisite: the closing phase
       // authors the whole set and accounts for every plan step, and a step
@@ -701,6 +701,57 @@ async function holdDay0Actions(
     });
     return result({ ok: false, reason });
   }
+}
+
+/**
+ * The deferral audit on a phase-one output whose payloads the argument
+ * repair changed: a closing action the repair revealed (a comment whose body
+ * only the corrected key carries) is removed as prewritten, a deferral the
+ * audit cannot tie to a result is left to the closing phase, and each
+ * correction is recorded. Nothing here stops the run.
+ */
+async function auditRepairedPayloads<T extends ExecutionOutput>(
+  ctx: ActionCtx,
+  output: T,
+  args: {
+    workItemId: Id<'workItems'>;
+    agentId: Id<'agents'>;
+    runId: Id<'events'>;
+    skill: { body: string };
+    plan: ExecutionPlan;
+    candidate: WorkCandidate;
+  },
+  surfaces: readonly SurfaceRecord[],
+): Promise<T> {
+  const prewrittenIndices: number[] = [];
+  const issues = deferralAudit(output, args.candidate, {
+    mode: SURFACE_MODE, plan: args.plan, surfaces, skillBody: args.skill.body, now: Date.now(),
+  }, prewrittenIndices);
+  const record = async (removedIndices: number[], reason: string): Promise<void> => {
+    await ctx.runMutation(internal.events.log, {
+      agentId: args.agentId, type: 'audit.corrected',
+      payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
+    });
+  };
+  let corrected: T = output;
+  if (prewrittenIndices.length > 0) {
+    const removed = new Set(prewrittenIndices);
+    const reindex = (index: number): number => index - prewrittenIndices.filter((removedIndex) => removedIndex < index).length;
+    corrected = {
+      ...removePrewrittenClosingActions(output, prewrittenIndices),
+      ...(output.argumentRepairs
+        ? {
+            argumentRepairs: output.argumentRepairs
+              .filter((attempt) => !removed.has(attempt.index))
+              .map((attempt) => ({ ...attempt, index: reindex(attempt.index) })),
+          }
+        : {}),
+    } as T;
+    await record(prewrittenIndices, 'prewritten closing actions');
+  }
+  const kept = issues.filter((issue) => !issue.startsWith('prewrote a closing action'));
+  if (kept.length > 0) await record([], `${DEFERRALS_KEPT}: ${kept.join('; ')}`);
+  return corrected;
 }
 
 /** A ledger as the row carries it between the two phases. */
@@ -887,6 +938,7 @@ function flattenedDependentOutput(
   output: DependentPendingOutput,
   applied: AppliedAction[],
 ): ExecutionOutput & { applied: AppliedAction[]; planStepOutcomes: PlanStepOutcome[]; prerequisiteCount: number } {
+  const withheldActions = [...(output.initial.withheldActions ?? []), ...(output.withheldActions ?? [])];
   return {
     draft: output.draft,
     notes: output.notes,
@@ -916,6 +968,7 @@ function flattenedDependentOutput(
     planStepOutcomes: output.planStepOutcomes,
     prerequisiteCount: output.initial.actions.length,
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
+    ...(withheldActions.length > 0 ? { withheldActions } : {}),
   };
 }
 
@@ -1078,6 +1131,37 @@ export const authorDependentActions = internalAction({
       if (!skill) throw new Error('dependent phase skill is no longer registered');
       knownValues = await knownValuesForAgent(ctx, agent);
       const plan = item.plan as ExecutionPlan;
+      const feedback = liveManagerFeedback(item.managerFeedback);
+      const prerequisites = initial;
+      const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
+      // Only a connected surface can be owed: an absent or ungranted one is
+      // dropped from the list the gate holds, whatever the plan declares.
+      const gateSurfaces = surfaces
+        .filter((surface) => verdictFor(surface, Date.now()) === 'connected')
+        .map((surface) => ({ slug: surface.slug, displayName: surface.displayName }));
+      const closingGate = (candidateOutput: DependentExecutionOutput): string[] => {
+        const issues: string[] = [];
+        try {
+          validatePlanStepOutcomes({
+            plan,
+            outcomes: candidateOutput.planStepOutcomes,
+            initialActions: prerequisites.actions,
+            initialLedger: prerequisites.applied,
+            surfaces: gateSurfaces,
+            managerFeedback: feedback,
+          });
+        } catch (error) {
+          issues.push(error instanceof Error ? error.message : String(error));
+        }
+        const transitionRefusal = dependentTransitionRefusal({
+          plan,
+          actions: candidateOutput.actions,
+          planStepOutcomes: candidateOutput.planStepOutcomes,
+          initialFailure,
+        });
+        if (transitionRefusal) issues.push(transitionRefusal);
+        return issues;
+      };
       const output = await runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
@@ -1087,7 +1171,7 @@ export const authorDependentActions = internalAction({
         surfaces,
         mode: 'real',
         autonomousActions: autonomousActionsOn(agent),
-        managerFeedback: liveManagerFeedback(item.managerFeedback),
+        managerFeedback: feedback,
         managerAnswers: managerAnswersOf(item),
         initialOutput: initial,
         initialLedger: initial.applied,
@@ -1095,6 +1179,13 @@ export const authorDependentActions = internalAction({
         resumedClosing: initial.resumedClosing,
         refusedClosing: initial.refusedClosing,
         landedWrites: initial.landedWrites,
+        closingGate,
+        onAuditCorrection: async (removedIndices, reason) => {
+          await ctx.runMutation(internal.events.log, {
+            agentId: item.agentId, type: 'audit.corrected',
+            payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
+          });
+        },
       });
       authored = output;
       const cap = dependentActionCap(initial);
@@ -1103,25 +1194,10 @@ export const authorDependentActions = internalAction({
           `dependent phase emitted ${output.actions.length} actions; cap is ${cap}`,
         );
       }
-      validatePlanStepOutcomes({
-        plan,
-        outcomes: output.planStepOutcomes,
-        initialActions: initial.actions,
-        initialLedger: initial.applied,
-        // Only a connected surface can be owed: an absent or ungranted one
-        // is dropped from the list the gate holds, whatever the plan declares.
-        surfaces: surfaces
-          .filter((surface) => verdictFor(surface, Date.now()) === 'connected')
-          .map((surface) => ({ slug: surface.slug, displayName: surface.displayName })),
-        managerFeedback: liveManagerFeedback(item.managerFeedback),
-      });
-      const transitionRefusal = dependentTransitionRefusal({
-        plan,
-        actions: output.actions,
-        planStepOutcomes: output.planStepOutcomes,
-        initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
-      });
-      if (transitionRefusal) throw new Error(transitionRefusal);
+      // The gate the executor's one repair answered to, checked once more on
+      // the set that came back.
+      const gate = closingGate(output);
+      if (gate.length > 0) throw new ClosingGateRefusal(gate, output);
       const held = await repairedForHold(output, {
         surfaces,
         skill: { name: skill.name },
@@ -1130,10 +1206,9 @@ export const authorDependentActions = internalAction({
       });
       authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
-        plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes,
-        initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
+        plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes, initialFailure,
       });
-      if (repairedTransitionRefusal) throw new Error(repairedTransitionRefusal);
+      if (repairedTransitionRefusal) throw new ClosingGateRefusal([repairedTransitionRefusal], held);
       const dependent: DependentPendingOutput = {
         ...held,
         phase: 'dependent',
@@ -1208,11 +1283,17 @@ export const authorDependentActions = internalAction({
       };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      // A set the obligation gate refused after its one repair stops the run:
+      // the prerequisites landed and stay on the row, the refused set beside
+      // its reason, and Retry resumes at the closing phase from that ledger.
+      const gateRefusal = error instanceof ClosingGateRefusal;
+      const refused = gateRefusal ? error.output : authored;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
-        ...(initial ? { output: scrubKnownValues(withRefusedClosing(initial, authored, reason), knownValues) } : {}),
+        ...(initial ? { output: scrubKnownValues(withRefusedClosing(initial, refused, reason), knownValues) } : {}),
+        ...(gateRefusal ? { stopped: true } : {}),
       });
       return { ok: false, reason };
     }

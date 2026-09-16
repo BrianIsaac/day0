@@ -438,24 +438,51 @@ export function unsupportedClaimIssues(
   evidence: ClaimEvidence,
   only?: (action: MockAction, index: number) => boolean,
 ): string[] {
-  const issues: string[] = [];
+  return unsupportedClaimFindings(actions, evidence, only).map((finding) => finding.issue);
+}
+
+/** One refused message: the action's index in the response and the reason. */
+export interface ClaimFinding {
+  index: number;
+  issue: string;
+}
+
+/**
+ * The same check as `unsupportedClaimIssues`, keyed by action, so a caller
+ * that fails soft can withhold exactly the messages it names.
+ *
+ * Args:
+ *   actions: The actions as the executor emitted them.
+ *   evidence: The ledger, the documentation and the manager's words.
+ *   only: Which actions to read; absent, every message is read.
+ *
+ * Returns:
+ *   One finding per unsupported sentence or inconsistent note, in action order.
+ */
+export function unsupportedClaimFindings(
+  actions: readonly MockAction[],
+  evidence: ClaimEvidence,
+  only?: (action: MockAction, index: number) => boolean,
+): ClaimFinding[] {
+  const findings: ClaimFinding[] = [];
   actions.forEach((action, index): void => {
     if (only && !only(action, index)) return;
     const beside = actions.filter((_, other) => other !== index).map(payloadWithoutMessages);
     const withResponse: ClaimEvidence = { ...evidence, ledger: [evidence.ledger, ...beside].join('\n') };
     for (const text of messageTexts(action)) {
       for (const claim of unsupportedClaims(text, withResponse)) {
-        issues.push(
-          `asserted a fact the ledger, the documentation and the manager's feedback do not carry: action ${index} (${describeAction(action)}) says "${claim}"; quote the ledger row, the page or the manager's words that show it, or write that you could not confirm it and ask`,
-        );
+        findings.push({
+          index,
+          issue: `asserted a fact the ledger, the documentation and the manager's feedback do not carry: action ${index} (${describeAction(action)}) says "${claim}"; quote the ledger row, the page or the manager's words that show it, or write that you could not confirm it and ask`,
+        });
       }
       const inconsistent = inconsistentNotConfirmedLine(text);
       if (inconsistent) {
-        issues.push(`action ${index} (${describeAction(action)}): ${inconsistent}`);
+        findings.push({ index, issue: `action ${index} (${describeAction(action)}): ${inconsistent}` });
       }
     }
   });
-  return issues;
+  return findings;
 }
 
 /**

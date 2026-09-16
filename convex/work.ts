@@ -1490,7 +1490,7 @@ export const retryFailed = mutation({
         ? 'scope'
         : undefined;
     const resume = SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
-      ? closingResume(row.output, row.plan as ExecutionPlan, row.skipReason, (await ctx.db
+      ? closingResume(row.output, row.plan as ExecutionPlan, row.skipReason && stopDetail(row.skipReason), (await ctx.db
           .query('surfaces').withIndex('by_agent', q => q.eq('agentId', row.agentId)).take(100))
           .map(toSurfaceRecord)
           .filter((surface) => verdictFor(surface, Date.now()) === 'connected'))

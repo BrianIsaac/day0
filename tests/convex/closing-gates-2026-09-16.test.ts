@@ -41,9 +41,11 @@ import {
   run4SlackPlan,
   run4SlackPrerequisiteLedger,
   run4SlackPrerequisites,
+  run4AuditNotePhaseOne,
   run4TileSequence,
   RUN_4_LIST_ISSUES_EFFECT,
   RUN_4_REVOPS_5_COMMENT,
+  RUN_4_REVOPS_5_PREWRITTEN_COMMENT,
   RUN_4_REVOPS_7_COMMENT,
   RUN_4_SLACK_ESCALATION,
   RUN_4_SLACK_REPLY,
@@ -51,6 +53,8 @@ import {
 } from './fixtures/plan-obligations-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
+import { STOPPED_PREFIX } from '../../src/work/stop';
+import { DEFERRALS_KEPT } from '../../src/work/execute-skill';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { REDACTED } from '../../src/redaction/redact';
 import { randomBytes } from 'node:crypto';
@@ -67,6 +71,7 @@ const recorded = vi.hoisted(() => ({
   http: [] as Array<{ url: string; body: unknown }>,
   model: [] as Array<{ agent: string; user: string }>,
   closingReply: undefined as unknown,
+  initialReply: undefined as unknown,
 }));
 
 vi.mock('../../src/lib/mastra', () => ({
@@ -81,6 +86,9 @@ vi.mock('../../src/lib/mastra', () => ({
     recorded.model.push({ agent: args.agent.name, user: args.user });
     if (args.agent.name.endsWith('-dependent') && recorded.closingReply) {
       return args.schema.parse(recorded.closingReply) as T;
+    }
+    if (args.agent.name.endsWith('-initial') && recorded.initialReply) {
+      return args.schema.parse(recorded.initialReply) as T;
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
   },
@@ -109,7 +117,8 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                 recorded.mcp.push({ server: options.serverName, tool, args });
                 if (tool === 'save_comment') return text(JSON.stringify({ id: 'comment-16' }));
                 if (tool === 'save_issue') return text(JSON.stringify({ id: 'lin-5', state: { name: 'Done' } }));
-                if (tool === 'browser_snapshot') return text(`- generic [ref=e30]: visible figure 74%\n- generic [ref=e31]: ${TILE_AUDIT_LINE}`);
+                if (tool === 'browser_navigate') return text('- Page URL: http://looker-tile:8080/');
+                if (tool === 'browser_snapshot') return text(TILE_SNAPSHOT);
                 return text('ok');
               },
             },
@@ -124,6 +133,17 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
   recorded.http.push({ url: String(input), body: JSON.parse(String(init?.body)) });
   return new Response(JSON.stringify({ ok: true, ts: '1789000000.000100' }), { status: 200 });
 });
+
+/** The tile as the browser double snapshots it: the sign-in form, the figure and the audit line. */
+const TILE_SNAPSHOT = [
+  '- textbox "Username" [ref=e11]',
+  '- textbox "Password" [ref=e14]',
+  '- button "Sign in" [ref=e15]',
+  '- textbox "Pipeline coverage" [ref=e21]',
+  '- button "Save" [ref=e23]',
+  '- generic [ref=e30]: visible figure 74%',
+  `- generic [ref=e31]: ${TILE_AUDIT_LINE}`,
+].join('\n');
 
 type Harness = TestConvex<typeof schema>;
 const OWNER = { subject: 'owner' };
@@ -141,8 +161,12 @@ interface Run {
   chat?: { sourceSystem: string; contentRefs: string[] };
 }
 
-/** An agent with the run's three surfaces and one work item that has landed its phase one and awaits its closing phase. */
-async function seedAtClosing(harness: Harness, run: Run): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
+/**
+ * An agent with the run's three surfaces and one work item: at its closing
+ * phase with phase one landed (the default), or at plan approval with
+ * nothing run yet.
+ */
+async function seedAtClosing(harness: Harness, run: Run, at: 'closing' | 'plan-approved' = 'closing'): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local', name: 'Priya', userId: 'owner', state: 'active', autonomousActions: false, createdAt: 1,
@@ -203,13 +227,14 @@ async function seedAtClosing(harness: Harness, run: Run): Promise<{ agentId: Id<
       externalId: run.externalId, title: run.title,
       contentSummary: `${run.title} in the Q3 close project.`,
       contentRefs: run.chat?.contentRefs ?? [`ticket://${run.externalId}`], priority: 'Medium',
-      state: 'executing', skillId, plan: run.plan,
+      state: at === 'closing' ? 'executing' : 'plan-approved', skillId, plan: run.plan,
       verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] },
       observedAt: 1, createdAt: 1,
     });
     const runId = await ctx.db.insert('events', {
       agentId, type: 'work.executing', payload: { workItemId }, createdAt: Date.now(),
     });
+    if (at === 'plan-approved') return { agentId, workItemId, runId };
     await ctx.db.patch(workItemId, {
       executionRunId: runId,
       output: {
@@ -230,6 +255,17 @@ async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<
   const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
   if (!row) throw new Error('work item missing');
   return row;
+}
+
+/** Run the scheduled apply and authoring turns until the item comes to rest in one of the given states. */
+async function settle(harness: Harness, workItemId: Id<'workItems'>, states: readonly string[]): Promise<Doc<'workItems'>> {
+  for (let round = 0; round < 40; round += 1) {
+    await harness.finishInProgressScheduledFunctions();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const row = await readItem(harness, workItemId);
+    if (states.includes(row.state)) return row;
+  }
+  throw new Error(`the item did not settle in ${states.join(', ')}`);
 }
 
 const REVOPS_7: Run = {
@@ -313,9 +349,12 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     recorded.closingReply = withoutDone;
     const refusal = await t.action(internal.workActions.authorDependentActions, { workItemId, runId });
     expect(refusal).toEqual({ ok: false, reason: 'dependent phase omitted the approved ticket state transition without a blocked plan step' });
+    // The gate put its refusal to the model once; the set came back the same, so the run stops with the set on the row.
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['dependent', 'dependent']);
+    expect(recorded.model[1]!.user).toContain(refusal.reason);
     const failed = await readItem(t, workItemId);
     expect(failed.state).toBe('failed');
-    expect(failed.skipReason).toBe(refusal.reason);
+    expect(failed.skipReason).toBe(`${STOPPED_PREFIX}${refusal.reason}`);
     expect(failed.output).toMatchObject({
       phase: 'dependent-authoring',
       applied: refreshPrerequisiteLedger,
@@ -490,7 +529,47 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     recorded.http.length = 0;
     recorded.model.length = 0;
     recorded.closingReply = undefined;
+    recorded.initialReply = undefined;
     restoreSurfaceMode();
+  });
+
+  it('lands the REVOPS-5 refresh, read and comment from phase one with the Done held: the deferral audit fails soft after its one repair', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedAtClosing(t, REVOPS_5_RUN_4, 'plan-approved');
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
+    // Phase one as the run returned it, twice: the refresh, the read, a prewritten comment and the Done deferred on the manager's decision.
+    recorded.initialReply = run4AuditNotePhaseOne;
+    recorded.closingReply = run4AuditNoteClosing;
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const held = await settle(t, workItemId, ['actions-pending', 'failed', 'completed']);
+    expect(held.skipReason).toBeUndefined();
+    expect(held.state).toBe('actions-pending');
+    // The audit put its issues to the model once, then corrected the response itself: the prewritten comment out, the deferral left to the closing phase.
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['initial', 'initial', 'dependent']);
+    const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'audit.corrected').map((event) => event.payload)).toMatchObject([
+      { workItemId, removedIndices: [7], reason: 'prewritten closing actions' },
+      { workItemId, removedIndices: [], reason: expect.stringContaining(`${DEFERRALS_KEPT}: deferred an action with no result dependency`) },
+    ]);
+    // Phase one landed the refresh and the read; the closing phase landed the comment; the Done waits for the manager.
+    // The browser adapter snapshots the page around each step of its own accord; the sequence is read without those.
+    expect(recorded.mcp.map((call) => call.tool).filter((tool) => tool !== 'browser_snapshot')).toEqual([
+      'browser_navigate', 'browser_fill_form', 'browser_click', 'browser_fill_form', 'browser_click', 'list_issues', 'save_comment',
+    ]);
+    expect(recorded.mcp.some((call) => call.tool === 'browser_snapshot')).toBe(true);
+    const comments = recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => (call.args as { body: string }).body);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain(RUN_4_REVOPS_5_COMMENT);
+    expect(comments[0]).not.toContain(RUN_4_REVOPS_5_PREWRITTEN_COMMENT);
+    expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual(['auto', 'held']);
+    expect(held.actionVerdicts?.[1]?.reason).toBe(HELD_WITHHELD_TRANSITION);
+    await t.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [1],
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await settle(t, workItemId, ['failed', 'completed']);
+    expect(done.state).toBe('completed');
+    expect(recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args)).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
   });
 
   it('lands the REVOPS-7 comment and Done under autonomy: "Emit a save_comment on linear" is a write, the tile read landed', async (): Promise<void> => {

@@ -20,6 +20,8 @@ import {
   PlanExecutionLedger,
   RefusedClosingDetails,
   RefusedDraftDetails,
+  WithheldActionsDetails,
+  failedItemReason,
   RepairNote,
   WorkItemCard,
   eventLabel,
@@ -237,6 +239,41 @@ describe('refused closing set', (): void => {
     expect(markup).toContain('Refreshed the tile to 74%.');
     expect(markup).toContain('Step 3 · satisfied - the audit comment in this response');
     expect(renderToStaticMarkup(<RefusedClosingDetails refused={undefined} />)).toBe('');
+  });
+});
+
+describe('actions an audit withheld', (): void => {
+  it('shows each withheld action with its reason and payload, and nothing when there is none', (): void => {
+    const markup = renderToStaticMarkup(
+      <WithheldActionsDetails
+        withheld={[
+          {
+            action: {
+              tool: 'http.request',
+              args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: '{"channel":"D0MANAGER","text":"REVOPS-5 audit comment posted with the three checks."}' },
+            },
+            reason: 'asserted a fact the ledger, the documentation and the manager\'s feedback do not carry: action 6 (http.request slack · POST /chat.postMessage) says "REVOPS-5 audit comment posted with the three checks"',
+          },
+        ]}
+      />,
+    );
+    expect(markup).toContain('Withheld by the evidence check · 1 action · never sent');
+    expect(markup).toContain('asserted a fact the ledger');
+    expect(markup).toContain('REVOPS-5 audit comment posted with the three checks.');
+    expect(renderToStaticMarkup(<WithheldActionsDetails withheld={[]} />)).toBe('');
+    expect(renderToStaticMarkup(<WithheldActionsDetails withheld={undefined} />)).toBe('');
+  });
+
+  it('names a stop at the closing gate as one the prerequisites survived', (): void => {
+    expect(failedItemReason({ skipReason: 'stopped: the read did not land' })).toBe(
+      'stopped, nothing landed and nothing to decide: the read did not land',
+    );
+    expect(failedItemReason({
+      skipReason: 'stopped: dependent phase omitted the approved ticket state transition without a blocked plan step',
+      output: { refusedClosing: { actions: [], planStepOutcomes: [], draft: '', notes: '', reason: 'r', at: 1 } },
+    })).toBe(
+      'stopped at the closing gate, the prerequisites landed and Retry resumes there: dependent phase omitted the approved ticket state transition without a blocked plan step',
+    );
   });
 });
 
