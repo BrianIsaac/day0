@@ -2,7 +2,8 @@
 # Real mode in one command, for a fresh clone or the venue laptop.
 #
 #   ./setup-real.sh --route featherless    GLM 5.3 Flash through Featherless; the key is asked for
-#   ./setup-real.sh --route local          the bundled model, on the GPU where there is one
+#   ./setup-real.sh --route local          the bundled model; present and tested models are listed
+#   ./setup-real.sh stop | resume | clear  stop for the day, come back, or throw it away
 #
 # This checks the three tools the setup needs, installs the dependencies if
 # they are not there yet, and hands everything else to the typed, tested entry:
@@ -15,6 +16,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 usage() {
   cat <<'USAGE'
 Usage: ./setup-real.sh --route <featherless|local> [setup flags]
+       ./setup-real.sh stop | resume | clear [--yes] [--purge-env]
 
 Real mode: day0 reads the documentation you point it at and, once you approve
 a card, acts on the systems those pages record. Two routes:
@@ -22,8 +24,10 @@ a card, acts on the systems those pages record. Two routes:
   ./setup-real.sh --route featherless    GLM 5.3 Flash through Featherless.
                                          The key is asked for in a hidden prompt,
                                          or read from FEATHERLESS_API_KEY.
-  ./setup-real.sh --route local          The bundled model (qwen3:8b), pulled
-                                         once, on the GPU where there is one.
+  ./setup-real.sh --route local          The bundled model. What its volume already
+                                         holds and what this project has tested are
+                                         listed first; pick one, or pass --model <id>.
+                                         A model already present is not pulled again.
 
 Useful with either:
   --warm-from <project>   copy another project's redactor volumes: no download
@@ -31,7 +35,15 @@ Useful with either:
   --app-port <n>          the port `pnpm dev` serves on (default 3000)
   --docs <dir>            your documentation folder (default ./docs-local)
   --dry-run               print the plan of commands and write nothing
-  --reset                 take this project down, volumes included, first
+  --reset                 clear this project (containers and volumes) first
+
+Stop for the day, come back, or throw it away; the project is read from .env.local:
+  ./setup-real.sh stop     containers down; the data, model and redactor volumes
+                           and .env.local are kept
+  ./setup-real.sh resume   the same project on the same ports, the admin key kept,
+                           nothing pulled again (running the setup again does the same)
+  ./setup-real.sh clear    containers, volumes and network removed; .env.local kept
+                           unless --purge-env; asks first unless --yes
 
 Everything else, ports and project names included: pnpm setup:local --help
 USAGE
