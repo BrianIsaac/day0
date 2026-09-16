@@ -51,6 +51,23 @@ describe('the writes earlier runs landed', () => {
     expect(landedWritesOf(undefined)).toEqual([]);
   });
 
+  it('never lists a refused closing set, a held row awaiting approval, or a row the provider refused', () => {
+    const refusedComment = call('linear', 'save_comment', { issueId: 'REVOPS-7', body: 'Refused by the gate, never sent.' });
+    const gateRefusal = {
+      phase: 'dependent-authoring',
+      actions: [read, comment],
+      applied: [row(), row({ providerId: 'comment-1', idempotencyKey: 'a' })],
+      refusedClosing: { actions: [refusedComment, done], planStepOutcomes: [], draft: '', notes: '', reason: 'refused', at: 1 },
+    };
+    expect(landedWritesOf(gateRefusal).map((write) => write.applied.providerId)).toEqual(['comment-1']);
+    const pending = {
+      initial: { actions: [read], applied: [row()] },
+      actions: [comment, done, reply],
+      applied: [row({ held: true, awaitingApproval: true }), row({ ok: false, reason: 'not approved' }), row({ providerId: '1789.2', idempotencyKey: 'b' })],
+    };
+    expect(landedWritesOf(pending).map((write) => write.applied.providerId)).toEqual(['1789.2']);
+  });
+
   it('counts a reused row and the row it reused once, and never trims a comment or message row out of the prompt behind untargeted writes', () => {
     // After a retry reused the comment, the row carries the original in landedWrites and the reuse in its own ledger.
     const afterReuse = {

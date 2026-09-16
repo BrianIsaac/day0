@@ -26,6 +26,8 @@ import {
   run3TwoCommentClosing,
   run3TwoCommentPhaseOne,
 } from './fixtures/retry-reentry-2026-09-16';
+import { landedWritesOf } from '../../src/work/landed-writes';
+import { providerReconciliationEntries } from '../../src/work/reconciliation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { randomBytes } from 'node:crypto';
 
@@ -283,6 +285,14 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     expect(reused.reason).toContain(`reused landed comment ${FIRST_COMMENT_ID}`);
     expect(rows[rows.length - 1]).toMatchObject({ ok: true, authority: 'autonomous' });
     expect((done.output as { planStepOutcomes: Array<{ status: string }> }).planStepOutcomes.map((row) => row.status)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied', 'satisfied']);
+    // Provider reconciliation for this row lists the real comment once, under the reused row, and the Done once.
+    const reconciled = providerReconciliationEntries(done.output);
+    expect(reconciled.filter((entry) => entry.providerId === FIRST_COMMENT_ID)).toHaveLength(1);
+    expect(reconciled.filter((entry) => entry.providerId === 'lin-5')).toHaveLength(1);
+    // The next retry's list: both runs' browser writes, the comment once (the reused row carries its provider id), the Done.
+    const listed = landedWritesOf(done.output);
+    expect(listed.map((write) => write.applied.providerId ?? write.action.args?.tool)).toEqual(['browser_fill_form', 'browser_click', FIRST_COMMENT_ID, 'browser_fill_form', 'browser_click', 'lin-5']);
+    expect(listed.filter((write) => write.applied.providerId === FIRST_COMMENT_ID)).toHaveLength(1);
 
     // The retry's phase one signed in and read again: an earlier run's browser
     // writes are not "already landed" for a new session, whatever their payload.
