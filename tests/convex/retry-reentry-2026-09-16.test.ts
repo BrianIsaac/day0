@@ -15,6 +15,7 @@ import {
   RUN_3_FIRST_COMMENT,
   RUN_3_RETRY_COMMENT_CORRECTED,
   RUN_3_RETRY_NOTE,
+  RUN_3_STARTING_COMMENT,
   run3AuditNotePlan,
   run3CorrectionClosing,
   run3FirstClosing,
@@ -22,6 +23,8 @@ import {
   run3ObedientClosing,
   run3RetryClosing,
   run3RetryPhaseOne,
+  run3TwoCommentClosing,
+  run3TwoCommentPhaseOne,
 } from './fixtures/retry-reentry-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { randomBytes } from 'node:crypto';
@@ -129,7 +132,7 @@ const OWNER = { subject: 'owner' };
 const CREDENTIAL_KEY = randomBytes(32).toString('base64');
 
 /** An agent with the run's three surfaces, autonomy on, and REVOPS-5 at the apply of its first phase one. */
-async function seedAtFirstApply(harness: Harness): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'> }> {
+async function seedAtFirstApply(harness: Harness, phaseOne: typeof run3FirstPhaseOne = run3FirstPhaseOne): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local', name: 'Priya', userId: 'owner', state: 'active', autonomousActions: true, createdAt: 1,
@@ -196,8 +199,8 @@ async function seedAtFirstApply(harness: Harness): Promise<{ workItemId: Id<'wor
     // Phase one held nothing: with autonomy on every row is automatic, and the apply is scheduled.
     await ctx.db.patch(workItemId, {
       executionRunId: runId, pendingRunId: runId, applyPhase: 'auto',
-      approvedIndexes: run3FirstPhaseOne.actions.map((_, index) => index),
-      output: run3FirstPhaseOne,
+      approvedIndexes: phaseOne.actions.map((_, index) => index),
+      output: phaseOne,
     });
     return { workItemId, runId };
   });
@@ -313,6 +316,25 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     expect(recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args)).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
     const rows = ledger(done);
     expect(rows[rows.length - 1]).toMatchObject({ ok: true, authority: 'autonomous', providerId: 'lin-5' });
+  });
+
+  it('posts the closing audit comment after a fixed-payload comment phase one landed on the same ticket: two comments the plan asked for', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedAtFirstApply(t, run3TwoCommentPhaseOne);
+    recorded.commentIds.push('comment-start', 'comment-audit');
+    recorded.closingReply = run3TwoCommentClosing;
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await settle(t, workItemId, ['failed', 'completed']);
+    expect(done.skipReason).toBeUndefined();
+    expect(done.state).toBe('completed');
+
+    expect(savedComments().map((comment) => comment.body.split('\n')[0])).toEqual([
+      RUN_3_STARTING_COMMENT,
+      RUN_3_RETRY_COMMENT_CORRECTED.split('\n')[0],
+    ]);
+    const rows = ledger(done);
+    expect(rows[rows.length - 2]).toMatchObject({ ok: true, providerId: 'comment-audit' });
+    expect(rows[rows.length - 2]!.reason ?? '').not.toContain('reused');
   });
 
   it('lets a rewrite with id through when the manager\'s note asks for a correction', async (): Promise<void> => {

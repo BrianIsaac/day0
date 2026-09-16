@@ -1267,9 +1267,12 @@ function priorPhasesLedger(
 /**
  * The rows this phase reuses instead of sending: on a resumed closing set,
  * the previous attempt's landed rows by payload or target; in any phase,
- * the writes earlier runs of this item landed and, in a closing phase, the
- * writes this run's own phase one landed, by target. The manager's note on
- * the retry decides whether a rewrite by id goes through.
+ * the writes earlier runs of this item landed, by target. This run's own
+ * phase one is not a source: the closing phase authors from that ledger
+ * and a second comment it puts on the same ticket is the plan's, as when
+ * phase one landed a fixed-payload comment and the audit comment follows
+ * the reads. The manager's note on the retry decides whether a change to
+ * a landed comment goes through.
  */
 async function reusedRows(
   ctx: ActionCtx,
@@ -1278,9 +1281,7 @@ async function reusedRows(
   run: { workItemId: Id<'workItems'>; runId: Id<'events'>; actionIndexOffset: number },
 ): Promise<Array<AppliedAction | undefined>> {
   const dependent = isDependentPendingOutput(output);
-  const earlier: LandedWrite[] = dependent
-    ? [...(output.initial.landedWrites ?? []), ...landedWritesOf({ actions: output.initial.actions, applied: output.initial.applied })]
-    : (output.landedWrites ?? []);
+  const earlier: LandedWrite[] = (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
   const resumed = dependent && output.initial.resumedClosing;
   if (earlier.length === 0 && !resumed) return output.actions.map(() => undefined);
   const item = await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId });

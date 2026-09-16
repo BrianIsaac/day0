@@ -134,6 +134,25 @@ export const run3ObedientClosing = (commentId: string): typeof run3RetryClosing 
   })),
 });
 
+/** A fixed-payload comment a plan may ask phase one to land before the evidence is read. */
+export const RUN_3_STARTING_COMMENT = 'Starting the Q3 close audit note per the checklist; the evidence follows in the audit comment.';
+
+/** A first run whose phase one lands the reads and a starting comment on the same ticket the closing audit comment goes to. */
+export const run3TwoCommentPhaseOne = {
+  ...run3FirstPhaseOne,
+  actions: [...run3Reads, call('linear', 'save_comment', { issueId: 'REVOPS-5', body: RUN_3_STARTING_COMMENT })],
+};
+
+/** Its closing phase: the audit comment (a second comment on the ticket, as the plan asked) and the Done, every step on the ledger. */
+export const run3TwoCommentClosing = {
+  ...run3RetryClosing,
+  planStepOutcomes: RUN_3_RETRY_OUTCOMES.map((outcome) => ({
+    ...outcome,
+    basis: 'ledger' as const,
+    ...(outcome.step === 5 ? { evidence: 'every check has its evidence in the comment; the Done is in this response' } : {}),
+  })),
+};
+
 /** A retry note that asks for the landed comment to be corrected. */
 export const RUN_3_CORRECTION_NOTE =
   'Fix the audit comment on REVOPS-5: check 3 must be listed as not confirmed too. Then move REVOPS-5 to Done, I accept checks 2 and 3 unconfirmed.';
