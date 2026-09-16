@@ -376,6 +376,53 @@ describe('sending a finished item back', (): void => {
       />,
     );
 
+  it('shows what the plan declares it owes, who declared it, and when the judgement could not be reached', (): void => {
+    const plan = { summary: 'Audit note.', steps: ['Check 1', 'Check 3', 'Check 2', 'Comment', 'Done'], riskNotes: '', reversibility: 'r', estimatedMinutes: 1, expectedOutputType: 'ticket-update' };
+    const judged = render({
+      ...item('completed'),
+      plan: {
+        ...plan,
+        obligations: {
+          steps: [
+            { kind: 'write', reads: ['looker-pipeline-tile'], writes: ['looker-pipeline-tile'] },
+            { kind: 'read', reads: ['linear'], writes: [] },
+            { kind: 'report', reads: [], writes: [] },
+            { kind: 'write', reads: [], writes: ['linear'] },
+            { kind: 'conditional-write', reads: [], writes: ['linear'] },
+          ],
+          transition: 'conditional-on-manager', transitionStep: 5, basis: 'judgement',
+        },
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(judged).toContain('Declared obligations');
+    expect(judged).toContain('judged');
+    expect(judged).toContain('ticket state moved only on your approval, held for you (step 5)');
+    expect(judged).toContain('step 1 reads looker-pipeline-tile; step 2 reads linear');
+    expect(judged).not.toContain('could not be reached');
+
+    const disagreed = render({
+      ...item('completed'),
+      plan: { ...plan, obligations: { steps: [], transition: 'conditional-on-evidence', transitionStep: 5, basis: 'judgement', plannerTransition: 'withheld' } },
+    } as unknown as Doc<'workItems'>);
+    expect(disagreed).toContain('The planner declared the ticket state left where it is');
+    expect(disagreed).toContain('held for you');
+
+    const unchecked = render({
+      ...item('completed'),
+      plan: { ...plan, obligations: { steps: [], transition: 'withheld', transitionStep: 5, basis: 'planner', failedOpen: 'provider unavailable' } },
+    } as unknown as Doc<'workItems'>);
+    expect(unchecked).toContain('unchecked');
+    expect(unchecked).toContain('could not be reached (provider unavailable)');
+
+    const open = render({ ...item('completed'), plan: { ...plan, obligationsFailedOpen: 'the judgement reply did not satisfy the schema' } } as unknown as Doc<'workItems'>);
+    expect(open).toContain('Obligations not settled: the judgement reply did not satisfy the schema');
+    expect(open).toContain('verify no read or ticket state change for this plan');
+
+    const mock = render({ ...item('completed'), plan } as unknown as Doc<'workItems'>);
+    expect(mock).not.toContain('Declared obligations');
+    expect(mock).not.toContain('Obligations not settled');
+  });
+
   it('shows what the manager answered at approval once the plan is running', (): void => {
     const row = {
       ...item('completed'),
