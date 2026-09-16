@@ -62,9 +62,8 @@ describe('landed closing payloads on resume', () => {
   it('lets a rewrite by id through only when the manager\'s note asks for a correction', () => {
     const rewrite = { ...comment('Revised'), args: { ...comment('Revised').args, toolArgsJson: JSON.stringify({ body: 'Revised', issueId: 'REVOPS-5', id: 'comment-6098cba6' }) } };
     expect(resumedClosingLedger([rewrite], previous, run, { managerFeedback: 'Fix the audit comment: name check 3 as well.' })).toEqual([undefined]);
-    expect(resumedClosingLedger([comment('Revised')], previous, run, { managerFeedback: 'Fix the audit comment: name check 3 as well.' })).toEqual([
-      expect.objectContaining({ reason: expect.stringContaining('reused landed comment') }),
-    ]);
+    // A correction the manager asked for is sent, not dropped, even when the model forgot the id: a visible second comment beats a silent no-op.
+    expect(resumedClosingLedger([comment('Revised')], previous, run, { managerFeedback: 'Fix the audit comment: name check 3 as well.' })).toEqual([undefined]);
     expect(resumedClosingLedger([rewrite], previous, run, { managerFeedback: 'Yes, move REVOPS-5 to Done, I accept check 2 unconfirmed.' })).toEqual([
       expect.objectContaining({ reason: expect.stringContaining('reused landed comment') }),
     ]);

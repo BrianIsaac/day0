@@ -93,6 +93,39 @@ describe('the writes earlier runs landed', () => {
     expect(correctionRequested(undefined)).toBe(false);
   });
 
+  it('reads a correction asked for in other words, a pronoun after the noun, and a further comment asked for, and not a correction declined', () => {
+    for (const asked of [
+      'Redo the note.',
+      'The comment names only check 2. Amend it.',
+      'Please rewrite the summary with the audit line.',
+      'Move to Done; the text of the comment is misleading though, fix it.',
+      'The comment is wrong about check 3.',
+      'Add a second comment with the audit line quoted, then move to Done.',
+      'Post another comment naming check 3.',
+      'Leave a new comment saying I accepted check 2, then move it to Done.',
+    ]) {
+      expect(correctionRequested(asked), asked).toBe(true);
+    }
+    for (const declined of [
+      'Do not correct anything, just move it to Done.',
+      "Don't change the comment, just move it to Done.",
+      'No need to fix the comment; move it to Done.',
+      'Leave the comment as it is and move REVOPS-5 to Done.',
+      'The note is fine, move it to Done.',
+      'Post the comment and move it to Done.',
+    ]) {
+      expect(correctionRequested(declined), declined).toBe(false);
+    }
+  });
+
+  it('sends a same-target comment without id when the note asked for the comment to change, rather than dropping the change', () => {
+    const sources: LandedWrite[] = [{ action: comment, applied: row({ providerId: 'comment-1', idempotencyKey: 'a' }) }];
+    const rewritten = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'Audit note, corrected: checks 2 and 3 not confirmed.' });
+    expect(reusedLedger([rewritten], sources, run, { surfaces, managerFeedback: 'Fix the audit comment: name check 3 too.' })).toEqual([undefined]);
+    expect(reusedLedger([rewritten], sources, run, { surfaces, managerFeedback: 'Add a second comment with the audit line quoted.' })).toEqual([undefined]);
+    expect(reusedLedger([rewritten], sources, run, { surfaces, managerFeedback: 'Yes, move REVOPS-5 to Done.' })[0]?.reason).toContain('reused landed comment comment-1');
+  });
+
   it('reuses a same-target comment and thread reply from earlier runs, never a state change or a browser write, and lets a rewrite by id through on a correction', () => {
     const click = call('looker-pipeline-tile', 'browser_click', { element: 'Sign in' });
     const sources: LandedWrite[] = [
@@ -121,6 +154,7 @@ describe('the writes earlier runs landed', () => {
     expect(reusedLedger([call('linear', 'save_issue', { id: 'REVOPS-5', state: 'Cancelled' })], sources, run, { surfaces })).toEqual([undefined]);
     expect(reusedLedger([byId], sources, run, { surfaces, managerFeedback: 'Fix the audit comment: name check 3 too.' })).toEqual([undefined]);
     expect(reusedLedger([byId], sources, run, { surfaces })[0]?.reason).toContain('reused landed comment comment-1');
+    expect(reusedLedger([rewritten], sources, run, { surfaces, managerFeedback: 'Yes, move REVOPS-5 to Done, I accept check 2 unconfirmed.' })[0]?.reason).toContain('reused landed comment comment-1');
     expect(reusedLedger([rewritten], [], run, { surfaces })).toEqual([undefined]);
   });
 

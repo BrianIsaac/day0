@@ -123,33 +123,53 @@ export function writeTarget(
   return { key: `${parsed.surface}|message|${target}`, kind: 'message', target };
 }
 
-/** Whether a comment action rewrites an existing comment by its id. */
-function rewritesById(parsed: ParsedSurfaceAction): boolean {
-  if (parsed.kind !== 'mcp.call') return false;
-  const id = parsed.toolArgs.id;
-  return typeof id === 'string' && id.trim() !== '';
-}
-
-const CORRECTION_VERB = /\b(?:correct|fix|amend|revise|rewrite|reword|edit|update|change|replace)\b/i;
-const CORRECTION_NOUN = /\b(?:comment|note|message|reply|wording|text|body)\b/i;
+const CORRECTION_VERB = /\b(?:correct|fix|amend|revise|rewrite|redo|reword|edit|update|change|replace|adjust)\b/gi;
+const CORRECTION_NOUN = /\b(?:comment|note|message|reply|wording|text|body|summary|write-?up)\b/i;
 const FAULTED = /\b(?:is|was|are|were|reads|read)\s+(?:wrong|incorrect|inaccurate|misleading|incomplete|missing)\b/i;
+/** "Amend it", "fix that": the verb's object is the message an earlier clause named. */
+const PRONOUN_OBJECT = /\b(?:it|that|this|them|that one|this one)\b/i;
+/** A further comment or message asked for outright: "add a second comment", "leave a new note". */
+const FURTHER_MESSAGE =
+  /\b(?:add|post|leave|write|put|send|create|make)\b[^.;!?\n]{0,40}\b(?:another|a second|a new|a further|an additional|one more|a follow-up|a separate)\b[^.;!?\n]{0,24}\b(?:comment|note|message|reply)\b/i;
+/** Words before a correction verb that decline the correction: "do not change", "no need to fix". */
+const DECLINED = /\b(?:do not|don't|never|no need to|not|without|rather than|instead of)\b/i;
+
+/** Whether the clause carries a correction verb that nothing before it declines. */
+function affirmedCorrectionVerb(clause: string, withObject: (after: string) => boolean): boolean {
+  for (const match of clause.matchAll(CORRECTION_VERB)) {
+    const before = clause.slice(0, match.index).trim().split(/\s+/).slice(-4).join(' ');
+    if (DECLINED.test(before)) continue;
+    if (withObject(clause.slice(match.index + match[0].length))) return true;
+  }
+  return false;
+}
 
 /**
  * Whether the manager's note asks for a landed comment or message to be
- * changed, rather than accepting what it says: a correction verb and a
- * message noun within one clause, or a message noun called wrong.
+ * changed, or a further one to be added, rather than accepting what is
+ * there: a correction verb with a message noun (or a pronoun standing for
+ * one named elsewhere in the note) in one clause and nothing declining it,
+ * a message noun called wrong, or a further comment asked for outright.
+ * On such a note a same-target comment or message is sent, not reused: a
+ * visible second comment carrying the change beats a silent no-op that
+ * the ledger reports as reuse.
  *
  * Args:
  *   feedback: The manager's note on the retry, or undefined.
  *
  * Returns:
- *   True when the note asks for a correction.
+ *   True when the note asks for a correction or a further message.
  */
 export function correctionRequested(feedback: string | undefined): boolean {
   if (!feedback?.trim()) return false;
-  return feedback.split(/[.;!?\n]/).some(
-    (clause) => CORRECTION_NOUN.test(clause) && (CORRECTION_VERB.test(clause) || FAULTED.test(clause)),
-  );
+  const namesMessage = CORRECTION_NOUN.test(feedback);
+  return feedback.split(/[.;!?\n]/).some((clause) => {
+    if (FURTHER_MESSAGE.test(clause)) return true;
+    if (CORRECTION_NOUN.test(clause)) {
+      return FAULTED.test(clause) || affirmedCorrectionVerb(clause, () => true);
+    }
+    return namesMessage && affirmedCorrectionVerb(clause, (after) => PRONOUN_OBJECT.test(after.trim().split(/\s+/).slice(0, 2).join(' ')));
+  });
 }
 
 function canonical(value: unknown): string {
@@ -174,9 +194,9 @@ function payload(action: MockAction): string | undefined {
  * The ledger rows a phase's actions reuse from what already landed, by
  * index: a comment or message on a target an earlier landed row already
  * carries, and, only when the caller says the sources are a resumed
- * closing set's previous attempt, a row of identical payload. A rewrite
- * by id goes through when the manager's note asked for a correction; a
- * status change and a read are never reused by target.
+ * closing set's previous attempt, a row of identical payload. When the
+ * manager's note asked for a correction or a further message, nothing is
+ * reused by target; a status change and a read are never reused by target.
  *
  * Identical payloads are reused for a resumed closing set alone: the set
  * is re-authored over the same landed prerequisites, so the same closing
@@ -228,7 +248,11 @@ export function reusedLedger(
     const target = parsed ? writeTarget(parsed, action, surfaces) : undefined;
     const prior = target ? byTarget.get(target.key) : undefined;
     if (!parsed || !prior) return undefined;
-    if (correction && rewritesById(parsed)) return undefined;
+    // The manager asked for the comment to change or for a further one: what
+    // the model wrote for that target is sent, by id as a rewrite when it set
+    // one, as a second comment when it did not. Only an untouched target is
+    // reused.
+    if (correction) return undefined;
     return { ...prior.applied, reason: reusedLandedNote(prior.applied.providerId, prior.kind), idempotencyKey: identity };
   });
 }
