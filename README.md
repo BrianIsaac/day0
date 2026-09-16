@@ -243,7 +243,7 @@ Three ways to run it. They disagree about two things only: who runs the model, a
 | [**An OpenAI key, and you run nothing**](#run-it-with-an-openai-key) | OpenAI | Docker, and one key typed into a hidden prompt | The shortest route if you already have a key. No weights to pull and no GPU question - everything but the model still runs on your machine, and you pay OpenAI per token |
 | [**The full hosted setup**](#convex-cloud--clerk) | Convex, Clerk, OpenAI | three sign-ups, and a JWT template in the Clerk dashboard | Per-user auth, a backend that is not your laptop, and the exact shape the deployed app runs in - the one to pick if you intend to deploy it |
 
-The first two are the same stack, and differ only in where the model lives: a self-hosted Convex backend in Docker and no-auth dev mode, where one fixed local user owns every row and a request from any other machine is refused by design. Each is one command, `pnpm setup:local --route local` or `pnpm setup:local --route key`, and real mode on the same stack is `./setup-real.sh --route featherless` or `./setup-real.sh --route local`. The third replaces both halves with hosted ones and gives you a user per Clerk sign-in; it is the one route the setup command does not automate.
+The first two are the same stack, and differ only in where the model lives: a self-hosted Convex backend in Docker and no-auth dev mode, where one fixed local user owns every row and a request from any other machine is refused by design. Each is one command, `pnpm setup:local --route local` or `pnpm setup:local --route key`, and real mode on the same stack is `./setup.sh --route featherless` or `./setup.sh --route local`. The third replaces both halves with hosted ones and gives you a user per Clerk sign-in; it is the one route the setup command does not automate.
 
 All three need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. With `OPENAI_BASE_URL` unset, the shared model route uses the OpenAI Responses API at `api.openai.com`; setting a custom `OPENAI_BASE_URL` switches it to that endpoint's OpenAI-compatible chat-completions API, including keyless local runtimes. Both arms of an evaluation bed use the same selected route.
 
@@ -451,28 +451,28 @@ One command from a fresh clone, and one choice: where the model runs.
 
 ```bash
 pnpm install --frozen-lockfile
-./setup-real.sh --route featherless     # GLM 5.3 Flash through Featherless; the key is asked for, hidden, or read from FEATHERLESS_API_KEY
-./setup-real.sh --route local           # the bundled model: pick from what is present and what is tested, on the GPU where there is one
+./setup.sh --route featherless     # GLM 5.3 Flash through Featherless; the key is asked for, hidden, or read from FEATHERLESS_API_KEY
+./setup.sh --route local           # the bundled model: pick from what is present and what is tested, on the GPU where there is one
 pnpm dev                                # prints an unlock URL - open that, not localhost:3000
 ```
 
-`./setup-real.sh` checks Node 22, pnpm 9 and Docker Compose v2, installs the dependencies if `node_modules` is missing, and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence below in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run and writes nothing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
+`./setup.sh` checks Node 22, pnpm 9 and Docker Compose v2, installs the dependencies if `node_modules` is missing, and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence below in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run and writes nothing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
 
 On the local route the setup lists the models before anything starts - first what the bundled service's volume already holds, then the list this project has tested (today one entry, `qwen3:8b`, the semi-final local bed; `scripts/models.ts` is the one place to add another), each marked present with its size or will-pull with the download - and asks which to serve: a numbered picker on a terminal, `--model <id>` to name one, `--yes` for the first present model (else the first tested one), and a model already present is not pulled again.
 
 Stop, resume, clear - each reads the project from `.env.local` and refuses the protected projects:
 
 ```bash
-./setup-real.sh stop      # containers down; the data, model and redactor volumes and .env.local stay
-./setup-real.sh resume    # the same project, ports and admin key; no pull, and only changed values are re-synced
-./setup-real.sh clear     # containers, volumes and network removed; .env.local kept unless --purge-env; asks first unless --yes
+./setup.sh stop      # containers down; the data, model and redactor volumes and .env.local stay
+./setup.sh resume    # the same project, ports and admin key; no pull, and only changed values are re-synced
+./setup.sh clear     # containers, volumes and network removed; .env.local kept unless --purge-env; asks first unless --yes
 ```
 
 Running the setup again is the same as `resume`, and `--reset` is `clear` followed by the setup.
 
 ### What the setup does
 
-`./setup-real.sh` is the [OpenAI-key sequence](#what-the-setup-does-1) plus a documentation folder, the real-mode values and the components, in this order. Two things about the order are requirements here where above they were preferences, and `--dry-run` prints the whole plan for this checkout, the key masked, without writing anything.
+`./setup.sh` is the [OpenAI-key sequence](#what-the-setup-does-1) plus a documentation folder, the real-mode values and the components, in this order. Two things about the order are requirements here where above they were preferences, and `--dry-run` prints the whole plan for this checkout, the key masked, without writing anything.
 
 1. **`pnpm dev:no-auth-key`, before the first `up`.** Besides the three no-auth values it writes two real-mode ones: `DAY0_CREDENTIAL_KEY`, which encrypts every stored credential and which `pnpm sync:env` refuses real mode without, and `DAY0_NOTION_MCP_AUTH_TOKEN`, which authenticates the private hop to the Notion component. `--profile docs-notion` exits immediately without the second - `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion` - which is why the order is a requirement here.
 2. **The warm copy, with `--warm-from <project>`.** Another installation's redactor wheel and model volumes are copied into this project's before the first `up`, because a volume compose has already created is empty and the component's first start would fill it by downloading. A copy already present is kept.
@@ -538,7 +538,7 @@ Closing actions carry a different approval identity from phase one, so a delayed
 
 ### Teardown
 
-`./setup-real.sh stop` does what these three commands do, over every profile, and keeps every volume; `./setup-real.sh clear` does the same and removes the volumes:
+`./setup.sh stop` does what these three commands do, over every profile, and keeps every volume; `./setup.sh clear` does the same and removes the volumes:
 
 ```bash
 pnpm sandbox:down
@@ -546,7 +546,7 @@ pnpm redactor:down
 pnpm convex:down --profile docs-notion --profile browser --profile demo
 ```
 
-`pnpm convex:down` removes the network on its way out and cannot while a container is still attached to it, so the sandbox and the redactor go first, and the profiles named are the ones that were brought up. The data volume survives all three, which is what lets you stop for the day and come back to the same agent with `./setup-real.sh resume`; `pnpm convex:down -- -v` is the one that throws it away, and `./setup-real.sh --route <r> --reset` does that and sets up again.
+`pnpm convex:down` removes the network on its way out and cannot while a container is still attached to it, so the sandbox and the redactor go first, and the profiles named are the ones that were brought up. The data volume survives all three, which is what lets you stop for the day and come back to the same agent with `./setup.sh resume`; `pnpm convex:down -- -v` is the one that throws it away, and `./setup.sh --route <r> --reset` does that and sets up again.
 
 ## Convex cloud + Clerk
 
@@ -1378,28 +1378,28 @@ key 是 OpenAI 的，模型为 `gpt-5.6-terra`，除非 `.env.local` 中的 `OPE
 
 ```bash
 pnpm install --frozen-lockfile
-./setup-real.sh --route featherless     # 通过 Featherless 使用 GLM 5.3 Flash；key 以隐藏方式询问，或从 FEATHERLESS_API_KEY 读取
-./setup-real.sh --route local           # 内置模型：从已有的和已测试过的模型中选择，有 GPU 时使用 GPU
+./setup.sh --route featherless     # 通过 Featherless 使用 GLM 5.3 Flash；key 以隐藏方式询问，或从 FEATHERLESS_API_KEY 读取
+./setup.sh --route local           # 内置模型：从已有的和已测试过的模型中选择，有 GPU 时使用 GPU
 pnpm dev                                # prints an unlock URL - open that, not localhost:3000
 ```
 
-`./setup-real.sh` 会检查 Node 22、pnpm 9 和 Docker Compose v2，在缺少 `node_modules` 时安装依赖，然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成下面的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线。
+`./setup.sh` 会检查 Node 22、pnpm 9 和 Docker Compose v2，在缺少 `node_modules` 时安装依赖，然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成下面的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线。
 
 在本地路线上，setup 会在启动任何东西之前先列出模型：先是内置模型服务的卷里已有的模型，然后是本项目测试过的列表（目前只有一项：`qwen3:8b`，半决赛本地 bed 所用；要增加一项，只需在 `scripts/models.ts` 里加一行），每项都标出“已存在”及其大小，或“将拉取”及下载量，然后询问要用哪一个：在终端里是带编号的选择器，`--model <id>` 直接指定，`--yes` 取第一个已存在的模型（没有则取第一个已测试的），已存在的模型不会再次拉取。
 
 停止、恢复、清除：每条命令都从 `.env.local` 读取项目名，并拒绝受保护的项目：
 
 ```bash
-./setup-real.sh stop      # 停掉容器；数据卷、模型卷、redactor 卷和 .env.local 都保留
-./setup-real.sh resume    # 同一个项目、端口和 admin key；不重新拉取，只重新同步有变化的值
-./setup-real.sh clear     # 删除容器、卷和网络；保留 .env.local，除非加 --purge-env；除非加 --yes，否则先询问
+./setup.sh stop      # 停掉容器；数据卷、模型卷、redactor 卷和 .env.local 都保留
+./setup.sh resume    # 同一个项目、端口和 admin key；不重新拉取，只重新同步有变化的值
+./setup.sh clear     # 删除容器、卷和网络；保留 .env.local，除非加 --purge-env；除非加 --yes，否则先询问
 ```
 
 再次运行 setup 与 `resume` 相同；`--reset` 等于先 `clear` 再 setup。
 
 #### 安装过程做了什么
 
-`./setup-real.sh` 等于[使用 OpenAI key 的序列](#安装过程做了什么-1)加上文档目录、真实模式变量和上述组件，按以下顺序执行。其中两处顺序在上面两条路径中只是习惯，在这里是硬性要求；`--dry-run` 会打印针对本 checkout 的完整计划（key 打码），而不写入任何内容。
+`./setup.sh` 等于[使用 OpenAI key 的序列](#安装过程做了什么-1)加上文档目录、真实模式变量和上述组件，按以下顺序执行。其中两处顺序在上面两条路径中只是习惯，在这里是硬性要求；`--dry-run` 会打印针对本 checkout 的完整计划（key 打码），而不写入任何内容。
 
 1. **`pnpm dev:no-auth-key`，在第一次 `up` 之前。** 除三个无认证值外，它还写入两个真实模式变量：加密所有已存凭据的 `DAY0_CREDENTIAL_KEY`（缺少它时 `pnpm sync:env` 会拒绝真实模式），以及用于认证到 Notion 组件私有链路的 `DAY0_NOTION_MCP_AUTH_TOKEN`。缺少后者时 `--profile docs-notion` 会立即退出并输出 `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion`，这就是顺序在这里成为硬性要求的原因。
 2. **预热复制，加 `--warm-from <project>` 时。** 在第一次 `up` 之前，把另一套安装的 redactor wheel 卷和模型卷复制到本项目，因为 compose 已创建的卷是空的，组件首次启动会通过下载来填满它。已存在的副本会被保留。
@@ -1466,7 +1466,7 @@ secrets 文件（权限 0600）保存 `LINEAR_API_KEY` 和 `SLACK_BOT_TOKEN`；�
 
 #### 停止
 
-`./setup-real.sh stop` 对所有 profile 做的就是下面三条命令做的事，并保留所有卷；`./setup-real.sh clear` 在此基础上再删除卷：
+`./setup.sh stop` 对所有 profile 做的就是下面三条命令做的事，并保留所有卷；`./setup.sh clear` 在此基础上再删除卷：
 
 ```bash
 pnpm sandbox:down
@@ -1474,7 +1474,7 @@ pnpm redactor:down
 pnpm convex:down --profile docs-notion --profile browser --profile demo
 ```
 
-`pnpm convex:down` 退出时会删除 compose network，仍有容器连接时无法完成，因此先停掉沙箱和 redactor，再写上启动时使用的相同 profile。数据卷在这三条命令后仍然保留，因此可以随时停止，并用 `./setup-real.sh resume` 回到同一个 Agent；`pnpm convex:down -- -v` 才会删除数据卷，而 `./setup-real.sh --route <r> --reset` 会删除数据卷并重新完成安装。
+`pnpm convex:down` 退出时会删除 compose network，仍有容器连接时无法完成，因此先停掉沙箱和 redactor，再写上启动时使用的相同 profile。数据卷在这三条命令后仍然保留，因此可以随时停止，并用 `./setup.sh resume` 回到同一个 Agent；`pnpm convex:down -- -v` 才会删除数据卷，而 `./setup.sh --route <r> --reset` 会删除数据卷并重新完成安装。
 
 ### 接口与 API 文档
 

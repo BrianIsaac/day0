@@ -2,15 +2,18 @@
 /**
  * One command that sets Day0 up on this machine.
  *
- *   pnpm setup:local                        ask, then do it
- *   pnpm setup:local --route key            you already have an OpenAI-compatible key
- *   pnpm setup:local --route local          no account at all: run the model here
- *   pnpm setup:local --mode real --route featherless   real mode on GLM via Featherless
- *   pnpm setup:local --mode real --route local         real mode on the bundled model
- *   pnpm setup:local stop | resume | clear   stop for the day, come back, or throw it away
+ *   ./setup.sh --route featherless          Local, cloud model: GLM through Featherless
+ *   ./setup.sh --route key                  Local, cloud model: an OpenAI-compatible key
+ *   ./setup.sh --route local                Local, local model: the bundled model, no account
+ *   ./setup.sh stop | resume | clear        stop for the day, come back, or throw it away
+ *   pnpm setup:local [--route ...]          mock mode: the seeded office, for the
+ *                                           evaluation harness and the hosted demo
  *
- * The spelling is deliberate. Plain `pnpm setup` is pnpm's own installation
- * command, so the project script has to be called something else.
+ * `./setup.sh` is `pnpm setup:local --mode real` behind three tool checks, and
+ * the two local ways to run Day0 (the deck's "Local, cloud model" and "Local,
+ * local model") are that one command; they differ only in `--route`. The
+ * spelling of the script is deliberate: plain `pnpm setup` is pnpm's own
+ * installation command, so the project script has to be called something else.
  *
  * Everything below already existed as a separate `pnpm` verb, and the README
  * prints them as a list of ten. This composes them rather than reimplementing
@@ -63,7 +66,7 @@ import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_DOCS_HOST_DIR } from '../src/docs/host-dir';
-import { FIRST_SUCCESS } from '../src/setup/quickstart';
+import { FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../src/setup/quickstart';
 import { composeArguments, PROFILES } from './compose';
 import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
@@ -246,13 +249,18 @@ export class SetupCancelled extends Error {}
 const USAGE = `Usage: pnpm setup:local [options]
        pnpm setup:local stop | resume | clear [options]
 
-  --mode <mock|real>            the seeded office (default), or your own systems
+  --mode <mock|real>            mock (default here): the seeded office, for the
+                                evaluation harness and the hosted demo's workspace;
+                                real (what ./setup.sh passes): your own documentation
+                                and systems
   --route <key|local|featherless|endpoint>
-                                how this installation reaches a model:
-                                  key          an OpenAI-compatible key you have
-                                  local        the bundled model, no account
+                                where the model runs:
                                   featherless  GLM 5.3 Flash through Featherless
+                                  key          an OpenAI-compatible key you have
                                   endpoint     an endpoint you already run
+                                  local        the bundled model, no account
+                                In real mode the first three are "Local, cloud model"
+                                and the last is "Local, local model".
   --project <name>              Compose project name for this installation
   --port <n>                    host port for the backend (default ${DEFAULT_PORTS.backend})
   --site-port <n>               host port for HTTP actions (default ${DEFAULT_PORTS.site})
@@ -273,14 +281,14 @@ const USAGE = `Usage: pnpm setup:local [options]
   --yes                         take the default answer wherever there is one
   --help                        print this
 
-Real mode, one command:
-  ./setup-real.sh --route featherless     GLM through Featherless; the key is asked for
-  ./setup-real.sh --route local           the bundled model; present and tested models are listed
+Real mode, one command (the two local ways to run it):
+  ./setup.sh --route featherless          Local, cloud model; the key is asked for
+  ./setup.sh --route local                Local, local model; present and tested models are listed
 
 Stop for the day, come back, or throw it away (the project is read from .env.local):
-  ./setup-real.sh stop                    containers down, every volume and .env.local kept
-  ./setup-real.sh resume                  the same project, ports, admin key and model; no pull
-  ./setup-real.sh clear                   containers, volumes and network removed; .env.local kept
+  ./setup.sh stop                         containers down, every volume and .env.local kept
+  ./setup.sh resume                       the same project, ports, admin key and model; no pull
+  ./setup.sh clear                        containers, volumes and network removed; .env.local kept
 
 The Convex-cloud-plus-Clerk route is not automated here; it needs accounts and
 a dashboard task. README.md has it, linked from the end of a successful run.`;
@@ -419,6 +427,8 @@ export interface PrerequisiteObservations {
     blocking?: boolean;
     fix?: string;
   }[];
+  /** The entry to name in a port's fix; `pnpm setup:local` when omitted. */
+  entry?: string;
 }
 
 /**
@@ -477,7 +487,7 @@ export function prerequisiteReport(observed: PrerequisiteObservations): Prerequi
       detail: port.free ? 'free' : 'already in use on this machine',
       fix:
         port.fix ??
-        `Move it: \`pnpm setup:local --port <n>\` (or --site-port, --dashboard-port, --model-port), or stop whatever holds ${port.port}.`,
+        `Move it: \`${observed.entry ?? 'pnpm setup:local'} --port <n>\` (or --site-port, --dashboard-port, --model-port), or stop whatever holds ${port.port}.`,
     });
   }
   return results;
@@ -1535,6 +1545,21 @@ export function removableVolume(name: string, project: string): boolean {
 }
 
 /**
+ * The entry a mode is reached by, for every message that tells the reader
+ * what to type: `./setup.sh` is real mode, and a real-mode reader sent to
+ * `pnpm setup:local` would set the same file up in mock mode.
+ *
+ * Args:
+ *   mode: The mode whose entry point to name.
+ *
+ * Returns:
+ *   `./setup.sh` in real mode, `pnpm setup:local` otherwise.
+ */
+export function entryCommand(mode: SetupMode): string {
+  return mode === 'real' ? SETUP_SCRIPT : 'pnpm setup:local';
+}
+
+/**
  * The command line a lifecycle verb is reached by, in the mode's own entry.
  *
  * Args:
@@ -1542,10 +1567,10 @@ export function removableVolume(name: string, project: string): boolean {
  *   mode: The mode whose entry point to name.
  *
  * Returns:
- *   `./setup-real.sh <verb>` in real mode, `pnpm setup:local <verb>` otherwise.
+ *   `./setup.sh <verb>` in real mode, `pnpm setup:local <verb>` otherwise.
  */
 export function verbCommand(verb: SetupCommand, mode: SetupMode): string {
-  return mode === 'real' ? `./setup-real.sh ${verb}` : `pnpm setup:local ${verb}`;
+  return `${entryCommand(mode)} ${verb}`;
 }
 
 /**
@@ -1858,7 +1883,7 @@ function step(
 }
 
 /** One failed step, printed with the state it leaves behind and how to resume. */
-function reportFailure(io: SetupIo, what: string, result: RunResult, project: string): void {
+function reportFailure(io: SetupIo, what: string, result: RunResult, project: string, mode: SetupMode): void {
   io.log('');
   io.log(`error: ${what} failed (status ${result.status}).`);
   const detail = `${result.stdout}${result.stderr}`.trim();
@@ -1870,7 +1895,7 @@ function reportFailure(io: SetupIo, what: string, result: RunResult, project: st
   io.log('');
   io.log(
     'Nothing was removed and nothing was reset. Fix the reason above and run the same ' +
-      'command again: `pnpm setup:local`. It picks up where this stopped, keeps the ' +
+      `command again: \`${entryCommand(mode)}\`. It picks up where this stopped, keeps the ` +
       `settings and keys already in ${ENV_FILE}, and keeps the ${project} data volume.`,
   );
 }
@@ -1951,7 +1976,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
           'attaching to it would put this setup on somebody else’s data.',
       );
       io.log(
-        `       Start your own: \`pnpm setup:local --project ${resolvedProject}-2\`, or set ` +
+        `       Start your own: \`${entryCommand(options.mode)} --project ${resolvedProject}-2\`, or set ` +
           `COMPOSE_PROJECT_NAME=${resolvedProject} in ${ENV_FILE} if that volume really is this checkout’s.`,
       );
       return 1;
@@ -2005,6 +2030,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       docker: versionOf(io, 'docker', ['--version']),
       compose: versionOf(io, 'docker', ['compose', 'version']),
       ports: portResults,
+      entry: entryCommand(options.mode),
     });
     if (!printPrerequisites(io, prerequisites) && !options.dryRun) return 1;
     if (ownStackRunning) {
@@ -2040,8 +2066,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
                 'nothing would finish.',
             );
             io.log(
-              '       Run this again and paste one, or take the route that needs no account at ' +
-                'all: `pnpm setup:local --route local`, which runs the model on this machine.',
+              `       Run this again and paste one, or take ${WAY_NAMES.local}: ` +
+                `\`${entryCommand(options.mode)} --route local\`, which runs the model on this machine and needs no account.`,
             );
             return 1;
           }
@@ -2077,7 +2103,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
           io.log('error: the Featherless key is empty, and every step of the loop is a model call.');
           io.log(
             '       Run this again and paste one (https://featherless.ai/account/api-keys), set ' +
-              'FEATHERLESS_API_KEY in the environment, or take `--route local`.',
+              `FEATHERLESS_API_KEY in the environment, or take ${WAY_NAMES.local}: \`--route local\`.`,
           );
           return 1;
         }
@@ -2091,7 +2117,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
             'publishes there.',
         );
         io.log(
-          `       Move it: \`pnpm setup:local --route local --model-port <n>\`. A native ` +
+          `       Move it: \`${entryCommand(options.mode)} --route local --model-port <n>\`. A native ` +
             '`ollama serve` on this machine is the usual reason.',
         );
         return 1;
@@ -2174,9 +2200,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       }
     } else {
       io.log('');
-      io.log('The office is mock and seeded, on a backend that runs here. Nothing of yours is read.');
-      io.log('  Real mode, on your own documentation and systems: `pnpm setup:local --mode real`,');
-      io.log('  or README.md, "Run it in real mode".');
+      io.log('Mock mode: the office is seeded and synthetic, on a backend that runs here. Nothing of');
+      io.log('  yours is read. It is what the evaluation harness and the hosted demo run on, not one');
+      io.log('  of the two ways to run Day0 on your own documentation and systems. Those are real');
+      io.log(`  mode, one command: \`${SETUP_SCRIPT} --route featherless\` (${WAY_NAMES.cloud}) or`);
+      io.log(`  \`${SETUP_SCRIPT} --route local\` (${WAY_NAMES.local}); README.md, "Local dev".`);
       io.log(
         '  Convex cloud plus Clerk, with a user per sign-in: README.md, "Convex cloud + Clerk".',
       );
@@ -2304,7 +2332,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
           env: { ...environment, ...(extra.env ?? {}), ...(planned.env ?? {}) },
         });
         if (last.status !== 0) {
-          reportFailure(io, label, last, resolvedProject);
+          reportFailure(io, label, last, resolvedProject, options.mode);
           return undefined;
         }
       }
@@ -2315,7 +2343,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(`[${steps.indexOf('reset') + 1}/${steps.length}] docker compose down -v, removing ${resolvedProject} and its volumes`);
       const cleared = clearProject(io, resolvedProject, { ...environment, DAY0_DOCS_HOST_DIR: docsHostDir });
       if (cleared.failure) {
-        reportFailure(io, cleared.failure.what, cleared.failure.result, resolvedProject);
+        reportFailure(io, cleared.failure.what, cleared.failure.result, resolvedProject, options.mode);
         return 1;
       }
       if (cleared.swept.length > 0) {
@@ -2344,7 +2372,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         for (const planned of stepCommands('warm-redactor', context)) {
           const result = io.run(planned.command, planned.args, { env: environment, timeoutMs: 900_000 });
           if (result.status !== 0) {
-            reportFailure(io, `copying ${options.warmFrom}'s redactor volumes`, result, resolvedProject);
+            reportFailure(io, `copying ${options.warmFrom}'s redactor volumes`, result, resolvedProject, options.mode);
             return 1;
           }
         }
@@ -2382,7 +2410,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         env: { ...environment, ...(redactor.mode === 'auto' ? {} : { MODEL_GPU: redactor.mode }) },
       });
       if (redactorUp.status !== 0) {
-        reportFailure(io, 'pnpm redactor:up', redactorUp, resolvedProject);
+        reportFailure(io, 'pnpm redactor:up', redactorUp, resolvedProject, options.mode);
         return 1;
       }
     }
@@ -2395,6 +2423,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         `the backend did not answer on 127.0.0.1:${ports.backend}`,
         { status: null, stdout: '', stderr: '`docker compose logs backend` says why.' },
         resolvedProject,
+        options.mode,
       );
       return 1;
     }
@@ -2413,7 +2442,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       const generated = io.run(generator.command, generator.args, { env: environment, timeoutMs: 60_000 });
       adminKey = generated.status === 0 ? parseAdminKey(generated.stdout) : undefined;
       if (adminKey === undefined) {
-        reportFailure(io, 'generate_admin_key.sh', generated, resolvedProject);
+        reportFailure(io, 'generate_admin_key.sh', generated, resolvedProject, options.mode);
         return 1;
       }
       writeEnvValues(envPath, { CONVEX_SELF_HOSTED_ADMIN_KEY: adminKey });
@@ -2526,7 +2555,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log('');
       const state =
         wrote || started
-          ? `Cancelled. ${ENV_FILE} keeps what was already written, and nothing was reset. Run \`pnpm setup:local\` again to carry on.`
+          ? `Cancelled. ${ENV_FILE} keeps what was already written, and nothing was reset. Run \`${entryCommand(options.mode)}\` again to carry on.`
           : 'Cancelled. Nothing was written and nothing was started.';
       io.log(state);
       return 130;
@@ -2568,7 +2597,7 @@ function lifecycleTarget(io: SetupIo, options: SetupOptions, verb: SetupCommand)
   }
   const envPath = join(io.cwd, ENV_FILE);
   if (!existsSync(envPath)) {
-    return `there is no ${ENV_FILE} here, so there is no installation to ${verb}. The setup writes it: \`pnpm setup:local\`.`;
+    return `there is no ${ENV_FILE} here, so there is no installation to ${verb}. The setup writes it: \`${entryCommand(options.mode)}\`.`;
   }
   const existing = readEnvValues(envPath);
   const project = (existing.COMPOSE_PROJECT_NAME ?? '').trim();
@@ -2785,7 +2814,7 @@ export async function runClear(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(`${ENV_FILE} is kept, keys and settings included; \`--purge-env\` removes it too.`);
     }
     io.log(
-      `Set it up again with \`${options.mode === 'real' ? './setup-real.sh --route <featherless|local>' : 'pnpm setup:local'}\`; ` +
+      `Set it up again with \`${options.mode === 'real' ? `${SETUP_SCRIPT} --route <featherless|local>` : 'pnpm setup:local'}\`; ` +
         'the admin key is minted afresh for the new volume.',
     );
     return 0;
@@ -2975,13 +3004,13 @@ function printPrerequisites(io: SetupIo, results: readonly PrerequisiteResult[])
 async function chooseRoute(options: SetupOptions, io: SetupIo): Promise<SetupRoute> {
   if (options.route) return options.route;
   if (options.assumeYes) return 'key';
-  io.log('How will Day0 reach a model? Every step of the loop is a model call.');
-  io.log('  1  A key you already have, for OpenAI or any OpenAI-compatible provider.');
+  io.log('Where does the model run? Every step of the loop is a model call.');
+  io.log(`  1  ${WAY_NAMES.cloud}, with a key you already have, for OpenAI or any OpenAI-compatible provider.`);
   io.log('     Nothing to download, and no GPU question. You pay per token.');
-  io.log('  2  No account at all: the model runs here, in Docker. One pull, and a');
-  io.log('     hardware question this asks before it starts.');
-  io.log('  3  An endpoint you already run (advanced).');
-  io.log('  4  GLM 5.3 Flash through Featherless, with a Featherless key.');
+  io.log(`  2  ${WAY_NAMES.local}: the bundled model runs here, in Docker, with no account.`);
+  io.log('     One pull, and a hardware question this asks before it starts.');
+  io.log(`  3  ${WAY_NAMES.cloud}, through an endpoint you already run (advanced).`);
+  io.log(`  4  ${WAY_NAMES.cloud}: GLM 5.3 Flash through Featherless, with a Featherless key.`);
   const answer = (await io.ask('Choose 1, 2, 3 or 4 [1]: ')).trim();
   if (answer === '' || answer === '1') return 'key';
   if (answer === '2') return 'local';

@@ -34,9 +34,28 @@ describe('the mode and route line', (): void => {
       OPENAI_BASE_URL: 'https://api.featherless.ai/v1',
       OPENAI_API_KEY: 'synthetic-key-value',
     });
-    expect(line).toBe('Mode real, route featherless (GLM through Featherless, model gpt-5.6-terra (default)).');
+    expect(line).toBe(
+      'Mode real, route featherless (GLM through Featherless, model gpt-5.6-terra (default)): Local, cloud model.',
+    );
     expect(line).not.toContain('synthetic-key-value');
+    expect(
+      modeAndRouteLine({
+        DAY0_SURFACE_MODE: 'real',
+        OPENAI_BASE_URL: 'http://127.0.0.1:11434/v1',
+        CONVEX_OPENAI_BASE_URL: 'http://model:11434/v1',
+        OPENAI_MODEL: 'qwen3:8b',
+      }),
+    ).toBe('Mode real, route local (the bundled model service, model qwen3:8b): Local, local model.');
+    expect(modeAndRouteLine({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' })).toContain(
+      ': Local, cloud model.',
+    );
     expect(modeAndRouteLine({ OPENAI_API_KEY: 'k' })).toContain('Mode mock, route key');
+    expect(modeAndRouteLine({ OPENAI_API_KEY: 'k' })).toContain(
+      ': the seeded mock office, for the evaluation harness and the hosted demo.',
+    );
+    expect(modeAndRouteLine({ DAY0_SURFACE_MODE: 'real' })).toBe(
+      'Mode real, route none (no model: neither OPENAI_API_KEY nor OPENAI_BASE_URL is set).',
+    );
   });
 });
 

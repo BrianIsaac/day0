@@ -76,7 +76,7 @@ describe('the /setup guide', (): void => {
     expect(hosted.links?.map((link) => link.href)).toEqual(['/sign-in', '/demo']);
     expect(local.commands).toContain('pnpm setup:local --route local');
     expect(key.commands).toContain('pnpm setup:local --route key');
-    expect(real.commands).toContain('./setup-real.sh --route featherless');
+    expect(real.commands).toContain('./setup.sh --route featherless');
     expect(real.body).toContain('--route local');
     for (const way of [local, key, real]) {
       // Every command line, in its own block and in the order the file gives.
@@ -91,13 +91,13 @@ describe('the /setup guide', (): void => {
       expect(text).toContain(verb.what);
     }
     expect(real.verbs?.map((verb) => verb.command)).toEqual([
-      './setup-real.sh stop',
-      './setup-real.sh resume',
-      './setup-real.sh clear',
+      './setup.sh stop',
+      './setup.sh resume',
+      './setup.sh clear',
     ]);
     expect(text).toContain(RUN_WAY_VERBS_NOTE);
-    expect(text.indexOf('./setup-real.sh stop')).toBeLessThan(text.indexOf('./setup-real.sh resume'));
-    expect(text.indexOf('./setup-real.sh resume')).toBeLessThan(text.indexOf('./setup-real.sh clear'));
+    expect(text.indexOf('./setup.sh stop')).toBeLessThan(text.indexOf('./setup.sh resume'));
+    expect(text.indexOf('./setup.sh resume')).toBeLessThan(text.indexOf('./setup.sh clear'));
   });
 
   it('offers the key route and the account-free route, with their flags', (): void => {
@@ -142,7 +142,7 @@ describe('the /setup guide', (): void => {
 
   it('says how to stop it, and where the data stays', (): void => {
     expect(text).toContain('pnpm sandbox:down && pnpm convex:down');
-    expect(text).toContain('./setup-real.sh clear');
+    expect(text).toContain('./setup.sh clear');
     expect(text).toContain('_convex_data');
     expect(text).toContain('_redactor_models');
   });

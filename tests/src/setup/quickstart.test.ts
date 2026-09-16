@@ -10,7 +10,7 @@ import {
   PUBLISHED_PORTS,
   QUICKSTART_BLOCK,
   QUICKSTART_COMMANDS,
-  REAL_MODE_SCRIPT,
+  SETUP_SCRIPT,
   REPOSITORY_URL,
   RUN_WAYS,
   SETUP_PAGE_URL,
@@ -36,7 +36,7 @@ const PACKAGE_SCRIPTS: Record<string, string> = (
   }
 ).scripts;
 
-/** The repository root, where `./setup-real.sh` has to be. */
+/** The repository root, where `./setup.sh` has to be. */
 const ROOT = new URL('../../../', import.meta.url);
 
 /** Where the Chinese half of the README starts. */
@@ -150,7 +150,7 @@ describe('the four ways to run it', (): void => {
         if (script !== 'install') expect(Object.keys(PACKAGE_SCRIPTS), command).toContain(script);
         continue;
       }
-      expect(program, command).toBe(REAL_MODE_SCRIPT);
+      expect(program, command).toBe(SETUP_SCRIPT);
       const stat = statSync(new URL(program, ROOT));
       expect(stat.isFile()).toBe(true);
       expect(stat.mode & 0o111, `${program} is executable`).not.toBe(0);
@@ -163,8 +163,8 @@ describe('the four ways to run it', (): void => {
     expect(parseSetupArguments(['--route', 'key']).route).toBe('key');
     expect(local.commands).toContain('pnpm setup:local --route local');
     expect(key.commands).toContain('pnpm setup:local --route key');
-    // `./setup-real.sh <args>` is `pnpm setup:local --mode real <args>`.
-    const realArguments = real.commands!.find((c) => c.startsWith(REAL_MODE_SCRIPT))!.split(' ').slice(1);
+    // `./setup.sh <args>` is `pnpm setup:local --mode real <args>`.
+    const realArguments = real.commands!.find((c) => c.startsWith(SETUP_SCRIPT))!.split(' ').slice(1);
     expect(parseSetupArguments(['--mode', 'real', ...realArguments])).toMatchObject({
       mode: 'real',
       route: 'featherless',

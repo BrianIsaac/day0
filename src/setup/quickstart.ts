@@ -32,8 +32,47 @@ export const QUICKSTART_COMMANDS: readonly string[] = [
 /** The commands as a fenced block, which is the form a README carries. */
 export const QUICKSTART_BLOCK: string = ['```bash', ...QUICKSTART_COMMANDS, '```'].join('\n');
 
-/** The one-command entry for real mode, at the repository root. */
-export const REAL_MODE_SCRIPT = './setup-real.sh';
+/**
+ * The one-command entry at the repository root: real mode, on every route.
+ * `pnpm setup:local` is the same script in mock mode, which the evaluation
+ * harness and the hosted demo's workspace run on and which is not one of the
+ * ways to run it.
+ */
+export const SETUP_SCRIPT = './setup.sh';
+
+/**
+ * The three ways to run it, as the deck's page 22, the README, the `/setup`
+ * page, the setup's own text and `pnpm check:setup` name them. The two local
+ * ways are real mode and differ in one thing only: where the model runs.
+ */
+export const WAY_NAMES = {
+  hosted: 'Hosted demo',
+  cloud: 'Local, cloud model',
+  local: 'Local, local model',
+} as const;
+
+/** The routes `--route` takes, plus the checker's `none`. */
+export type SetupRouteName = 'key' | 'local' | 'featherless' | 'endpoint' | 'none';
+
+/**
+ * Which way to run it a setup describes, for the checker's one line.
+ *
+ * Real mode on the bundled route is the local-model way and real mode on any
+ * other route is the cloud-model way. Mock mode is neither: it is the seeded
+ * office the evaluation harness and the hosted demo use.
+ *
+ * Args:
+ *   mode: `DAY0_SURFACE_MODE`, or its default.
+ *   route: The route the env file describes.
+ *
+ * Returns:
+ *   The way's name, the mock-mode clause, or undefined when nothing applies.
+ */
+export function wayOfSetup(mode: string, route: SetupRouteName): string | undefined {
+  if (mode === 'mock') return 'the seeded mock office, for the evaluation harness and the hosted demo';
+  if (mode !== 'real' || route === 'none') return undefined;
+  return route === 'local' ? WAY_NAMES.local : WAY_NAMES.cloud;
+}
 
 /** Where the hosted way goes; it has no commands. */
 export interface RunWayLink {
@@ -119,22 +158,22 @@ export const RUN_WAYS: readonly RunWay[] = [
       'git clone https://github.com/BrianIsaac/day0.git',
       'cd day0',
       'pnpm install --frozen-lockfile',
-      './setup-real.sh --route featherless',
+      './setup.sh --route featherless',
       'pnpm dev',
     ],
     after:
       'On the local route the setup lists the models before anything starts, first what its model volume already holds and then what this project has tested, each marked present with its size or will-pull with the download, and asks which to serve: a number on a terminal, --model <id> to name one, --yes for the default. A model already present is not pulled again. The redactor\'s first start on the CPU downloads about 251 MB of wheels and 1.16 GB of weights; --warm-from <project> copies another installation\'s volumes instead. First success differs here: link your documentation on the documentation page before you deploy, then hold the 1:1, approve the charter, and approve the connection cards on the Surfaces tab. The command prints those four when it finishes.',
     verbs: [
       {
-        command: './setup-real.sh stop',
+        command: './setup.sh stop',
         what: 'containers down; the data, model and redactor volumes and .env.local are kept',
       },
       {
-        command: './setup-real.sh resume',
+        command: './setup.sh resume',
         what: 'the same project, ports and admin key; nothing pulled again, and only changed values are re-synced',
       },
       {
-        command: './setup-real.sh clear',
+        command: './setup.sh clear',
         what: 'containers, volumes and network removed; .env.local kept unless --purge-env; asks first unless --yes',
       },
     ],
@@ -340,7 +379,7 @@ export const TIMING_CAVEAT =
 
 /** How to stop it, and what survives. */
 export const STOP_AND_RESTART =
-  'Stop it with pnpm sandbox:down && pnpm convex:down. Start it again with pnpm setup:local, which keeps what is already there: the same agent, the same rows, the same generated keys and settings. In real mode the same three things have names: ./setup-real.sh stop keeps every volume, ./setup-real.sh resume brings the same installation back, and ./setup-real.sh clear is the one that throws the volumes away.';
+  'Stop it with pnpm sandbox:down && pnpm convex:down. Start it again with pnpm setup:local, which keeps what is already there: the same agent, the same rows, the same generated keys and settings. In real mode the same three things have names: ./setup.sh stop keeps every volume, ./setup.sh resume brings the same installation back, and ./setup.sh clear is the one that throws the volumes away.';
 
 /** Where the rows live between runs. */
 export const DATA_LOCATION =

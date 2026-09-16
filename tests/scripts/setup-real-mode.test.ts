@@ -415,9 +415,9 @@ describe('a whole real-mode run on the Featherless route', (): void => {
     expect(printed).not.toContain('localhost:3000');
     expect(printed).toContain('Link your documentation first');
     expect(printed).not.toContain('seeded and synthetic');
-    expect(printed).toContain('Stop it with `./setup-real.sh stop`');
-    expect(printed).toContain('`./setup-real.sh resume` brings the same project back');
-    expect(printed).toContain('`./setup-real.sh clear` throws the day0-setup-test_convex_data volume');
+    expect(printed).toContain('Stop it with `./setup.sh stop`');
+    expect(printed).toContain('`./setup.sh resume` brings the same project back');
+    expect(printed).toContain('`./setup.sh clear` throws the day0-setup-test_convex_data volume');
   });
 
   it('never prints the key, never passes it as an argument, and never touches the warm volumes for writing', async (): Promise<void> => {
