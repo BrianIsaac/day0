@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FIRST_SUCCESS } from '../../src/setup/quickstart';
+import { FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../../src/setup/quickstart';
 import {
   attachmentDecision,
   backendIdentityRefusal,
@@ -987,5 +987,21 @@ describe('console input from a pipe', () => {
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toContain('synthetic-secret');
+  });
+});
+
+describe('mock mode says what it is for', (): void => {
+  it('names the harness and the hosted demo, and the two real-mode ways by their entry', async (): Promise<void> => {
+    const { io, output } = harness({
+      answers: ['sk-rehearsal-key'],
+      services: ['backend', 'sandbox'],
+    });
+    expect(await runSetup(keyRoute(), io)).toBe(0);
+    const printed = output.join('\n');
+    expect(printed).toContain('Mock mode: the office is seeded and synthetic');
+    expect(printed).toContain('the evaluation harness and the hosted demo run on');
+    expect(printed).toContain(`\`${SETUP_SCRIPT} --route featherless\` (${WAY_NAMES.cloud})`);
+    expect(printed).toContain(`\`${SETUP_SCRIPT} --route local\` (${WAY_NAMES.local})`);
+    expect(printed).not.toContain('pnpm setup:local --mode real');
   });
 });

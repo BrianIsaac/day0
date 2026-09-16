@@ -25,6 +25,7 @@ import {
   writeEnvValues,
   type SetupIo,
 } from '../../scripts/setup';
+import { SETUP_SCRIPT, WAY_NAMES } from '../../src/setup/quickstart';
 import {
   checkout,
   cleanupCheckouts,
@@ -674,5 +675,37 @@ describe('--dry-run', (): void => {
     expect(text).not.toContain('=x');
     expect(text).toContain('pnpm run convex:up\n');
     expect(text).toContain('only when the file has no key');
+  });
+});
+
+describe('the three ways to run it, in what the setup prints', (): void => {
+  it('names the two local ways in the route question, and takes the answer', async (): Promise<void> => {
+    // The route question, then the key it asks for, then a cancel at the pull.
+    const h = harness({ answers: ['2', 'CANCEL'] });
+    expect(await runSetup(realRoute({ route: undefined, assumeYes: false }), h.io)).toBe(130);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('Where does the model run?');
+    expect(printed).toContain(`1  ${WAY_NAMES.cloud}, with a key you already have`);
+    expect(printed).toContain(`2  ${WAY_NAMES.local}: the bundled model runs here`);
+    expect(printed).toContain(`4  ${WAY_NAMES.cloud}: GLM 5.3 Flash through Featherless`);
+    expect(printed).not.toMatch(/No account at all:/);
+  });
+
+  it('sends a real-mode reader with an empty key to ./setup.sh, never to the mock entry', async (): Promise<void> => {
+    const h = harness({ answers: [''] });
+    expect(await runSetup(realRoute({ route: 'key' }), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(`${WAY_NAMES.local}: \`${SETUP_SCRIPT} --route local\``);
+    expect(printed).not.toContain('pnpm setup:local --route local');
+    expect(ran(h)).not.toContain('convex:up');
+  });
+
+  it('names the real entry when a real-mode step fails', async (): Promise<void> => {
+    const h = harness({
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      failing: [{ match: 'convex:up', status: 1, stderr: 'pull failed' }],
+    });
+    expect(await runSetup(realRoute(), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(`run the same command again: \`${SETUP_SCRIPT}\``);
   });
 });
