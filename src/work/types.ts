@@ -1,5 +1,6 @@
 import type { Charter } from '../agent/charter';
 import type { AgentId } from '../lib/ids';
+import type { AppliedAction } from '../surfaces/types';
 
 /**
  * Work-gathering domain types. Single-tenant Day0 distillation —
@@ -205,9 +206,21 @@ export interface ManagerAnswer {
   answer: string;
 }
 
+/**
+ * A write an earlier run of this work item landed, with the ledger row that
+ * recorded it: the retry's prompts list these, and a comment or message on
+ * a target one of them already carries is reused rather than sent again.
+ */
+export interface LandedWrite {
+  action: MockAction;
+  applied: AppliedAction;
+}
+
 export interface ExecutionOutput {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;
+  /** Writes earlier runs of this item landed; server-derived on a retry, absent on a first run. */
+  landedWrites?: LandedWrite[];
   draft: string;
   notes: string;
   actions: MockAction[];

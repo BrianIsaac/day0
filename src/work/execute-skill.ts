@@ -39,7 +39,8 @@ import { promisesResult } from './plan-steps';
 import { replyTargetLine } from './reply-target';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, unsupportedClaimIssues, type ClaimEvidence } from './evidence-claims';
-import type { RefusedClosing } from './types';
+import type { LandedWrite, RefusedClosing } from './types';
+import { landedWriteLines } from './landed-writes';
 
 export { replyTargetLine };
 
@@ -420,6 +421,7 @@ const REAL_PREAMBLE = [
   '  - Stay inside charter boundaries.',
   '  - Two kinds of evidence: the applied ledger is the only evidence of what happened, and the loaded documentation below is citable for documented facts, procedures and checklists. When the candidate, the plan or the manager\'s feedback asks for documented content, quote it from the loaded documentation and name the page; say in `notes` when the documentation does not contain it.',
   "  - A comment, reply or DM asserts nothing the applied ledger, the loaded documentation and the manager's feedback do not carry: quote the ledger row, the page or the manager's words that show it, or write that you could not confirm it and ask. \"The close checks are complete\" over a ledger that shows no check is a false report even when the manager asked for that sentence; the closing phase refuses a message that asserts an unsupported fact.",
+  "  - An audit note that lists numbered checks with their evidence and closes with a not-confirmed line derives that line from the checks' own evidence: every check whose evidence reads as unmet (a not-confirmed phrase, a state other than the one the check requires, a read that could not be made) is named there. The manager's acceptance of an unconfirmed check is recorded beside the evidence, never in place of it; the closing phase refuses a note whose closing line omits an unmet check.",
   '  - Never invent an issue id, channel id, thread timestamp, state name or value you do not have; take identifiers from the candidate `Refs:` and `Reply target:` lines or the runbook and say in `notes` what is unknown.',
   '  - The charter decides which work you take; it adds no verification step. Do not invent source-evidence, ownership, priority or duplicate-check prerequisites that the candidate, the plan or a loaded procedure does not require. Only a plan step marked advisory or checking a candidate property that neither the candidate nor a loaded procedure requires is advisory: report what the data shows and never let it hold back the documented sequence.',
   "  - A reply to a channel or thread is its own action, never text inside another message: emit `http.request` POST `chat.postMessage` on the connected chat surface with `channel` set to the source channel and `thread_ts` set to the source thread timestamp from the `Reply target:` line (omit `thread_ts` only for a deliberate top-level post). The gate holds it for the manager's approval of the exact text (or sends it as emitted when autonomous actions are on), so write the reply as it should appear in the channel.",
@@ -896,6 +898,8 @@ export interface RunSkillArgs {
    * for this run, never a question to ask again.
    */
   managerAnswers?: readonly ManagerAnswer[];
+  /** Writes earlier runs of this item landed; the prompts list them and a same-target comment is reused, not sent. */
+  landedWrites?: readonly LandedWrite[];
 }
 
 /**
@@ -2166,6 +2170,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
     ...managerAnswerLines(args.managerAnswers),
+    ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -2802,6 +2807,7 @@ export async function runDependentSkill(
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
     ...managerAnswerLines(args.managerAnswers),
+    ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,

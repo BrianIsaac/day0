@@ -1,0 +1,111 @@
+import { describe, expect, it } from 'vitest';
+import { parseSurfaceAction } from '../../../src/surfaces/policy';
+import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
+import {
+  correctionRequested,
+  landedWriteLines,
+  landedWritesOf,
+  reusedLedger,
+  writeTarget,
+} from '../../../src/work/landed-writes';
+import type { LandedWrite, MockAction } from '../../../src/work/types';
+
+const call = (surface: string, tool: string, args: Record<string, unknown>): MockAction => ({
+  tool: 'mcp.call', args: { surface, tool, toolArgsJson: JSON.stringify(args) },
+});
+const post = (body: Record<string, unknown>): MockAction => ({
+  tool: 'http.request',
+  args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: JSON.stringify(body) },
+});
+const row = (extra: Partial<AppliedAction> = {}): AppliedAction => ({ tool: 'mcp.call', ok: true, idempotencyKey: `k${Math.random()}`, ...extra });
+const parsed = (action: MockAction) => {
+  const result = parseSurfaceAction(action);
+  if (!result.ok) throw new Error(result.reason);
+  return result.action;
+};
+const slack = { slug: 'slack', class: 'chat', managerDmChannelId: 'D0MANAGER' } as SurfaceRecord;
+const linear = { slug: 'linear', class: 'kanban' } as SurfaceRecord;
+const surfaces = [slack, linear];
+
+const comment = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'Audit note, first form.' });
+const done = call('linear', 'save_issue', { id: 'REVOPS-5', state: 'Done' });
+const read = call('linear', 'list_issues', { team: 'REVOPS' });
+const reply = post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: 'Tile at 74%.' });
+const dm = post({ channel: 'D0MANAGER', text: 'Done as you asked.' });
+const run = { workItemId: 'work', runId: 'retry', actionIndexOffset: 6 };
+
+describe('the writes earlier runs landed', () => {
+  it('reads a flattened run, a two-phase run and a carried list, keeping each landed write once and no read, held or failed row', () => {
+    const flattened = {
+      actions: [read, comment, done],
+      applied: [row(), row({ providerId: 'comment-1', idempotencyKey: 'a' }), row({ ok: false, reason: 'transport' })],
+    };
+    expect(landedWritesOf(flattened).map((write) => write.applied.providerId)).toEqual(['comment-1']);
+    const twoPhase = {
+      landedWrites: [{ action: comment, applied: row({ providerId: 'comment-1', idempotencyKey: 'a' }) }],
+      initial: { actions: [read, comment], applied: [row(), row({ providerId: 'comment-1', idempotencyKey: 'a' })] },
+      actions: [done, reply],
+      applied: [row({ held: true }), row({ providerId: '1789.2', idempotencyKey: 'b' })],
+    };
+    expect(landedWritesOf(twoPhase).map((write) => write.applied.providerId)).toEqual(['comment-1', '1789.2']);
+    expect(landedWritesOf(undefined)).toEqual([]);
+  });
+
+  it('names a comment by its ticket and a message by its channel and thread, and gives the manager DM and a state change no target', () => {
+    expect(writeTarget(parsed(comment), comment, surfaces)).toEqual({ key: 'linear|comment|revops-5', kind: 'comment', target: 'REVOPS-5' });
+    expect(writeTarget(parsed(reply), reply, surfaces)).toEqual({ key: 'slack|message|C0REVOPS/1789.1', kind: 'message', target: 'C0REVOPS/1789.1' });
+    expect(writeTarget(parsed(dm), dm, surfaces)).toBeUndefined();
+    expect(writeTarget(parsed(done), done, surfaces)).toBeUndefined();
+    expect(writeTarget(parsed(read), read, surfaces)).toBeUndefined();
+  });
+
+  it('reads a correction request from the note, not an acceptance or a direction about the ticket', () => {
+    expect(correctionRequested('Yes, move REVOPS-5 to Done, I accept check 2 unconfirmed.')).toBe(false);
+    expect(correctionRequested('Read REVOPS-7 on Linear with get_issue before you start, then continue.')).toBe(false);
+    expect(correctionRequested('Update the ticket state to Done.')).toBe(false);
+    expect(correctionRequested('Fix the audit comment: check 3 must be listed as not confirmed too.')).toBe(true);
+    expect(correctionRequested('The wording of the note is wrong; rewrite it with the audit line quoted.')).toBe(true);
+    expect(correctionRequested(undefined)).toBe(false);
+  });
+
+  it('reuses a same-target comment and thread reply from earlier runs, a state change only by identical payload, and lets a rewrite by id through on a correction', () => {
+    const sources: LandedWrite[] = [
+      { action: comment, applied: row({ providerId: 'comment-1', effect: 'comment-1', idempotencyKey: 'a' }) },
+      { action: reply, applied: row({ providerId: '1789.2', idempotencyKey: 'b' }) },
+      { action: done, applied: row({ idempotencyKey: 'c' }) },
+    ];
+    const rewritten = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'Audit note, second form.' });
+    const byId = call('linear', 'save_comment', { issueId: 'REVOPS-5', id: 'comment-1', body: 'Audit note, second form.' });
+    const otherThread = post({ channel: 'C0REVOPS', thread_ts: '1789.9', text: 'Tile at 74%.' });
+    const again = post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: 'Tile at 74%, audit line read back.' });
+    const ledger = reusedLedger([rewritten, again, otherThread, done, dm], sources, run, { surfaces });
+    expect(ledger[0]).toMatchObject({ ok: true, providerId: 'comment-1', idempotencyKey: 'work:retry:6' });
+    expect(ledger[0]?.reason).toBe('reused landed comment comment-1: this target already carries the comment an earlier run of this item landed; not sent again');
+    expect(ledger[1]).toMatchObject({ ok: true, providerId: '1789.2', idempotencyKey: 'work:retry:7' });
+    expect(ledger[1]?.reason).toContain('reused landed message 1789.2');
+    expect(ledger[2]).toBeUndefined();
+    expect(ledger[3]).toMatchObject({ ok: true, reason: 'This closing action already landed in the previous attempt; reused its recorded result.' });
+    expect(ledger[4]).toBeUndefined();
+    expect(reusedLedger([call('linear', 'save_issue', { id: 'REVOPS-5', state: 'Cancelled' })], sources, run, { surfaces })).toEqual([undefined]);
+    expect(reusedLedger([byId], sources, run, { surfaces, managerFeedback: 'Fix the audit comment: name check 3 too.' })).toEqual([undefined]);
+    expect(reusedLedger([byId], sources, run, { surfaces })[0]?.reason).toContain('reused landed comment comment-1');
+    expect(reusedLedger([rewritten], [], run, { surfaces })).toEqual([undefined]);
+  });
+
+  it('lists each landed write on one bounded line for the prompt, with the rule after them', () => {
+    const long = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'x'.repeat(200) });
+    const lines = landedWriteLines([
+      { action: comment, applied: row({ providerId: 'comment-1' }) },
+      { action: long, applied: row() },
+      { action: reply, applied: row({ providerId: '1789.2' }) },
+    ], surfaces);
+    expect(lines[1]).toBe('--- Writes earlier runs of this item already landed (3) ---');
+    expect(lines[3]).toBe('  0. linear · save_comment · REVOPS-5 · provider id comment-1 · "Audit note, first form."');
+    expect(lines[4]).toContain(`"${'x'.repeat(160)} ..."`);
+    expect(lines[4]).toContain('provider id (none)');
+    expect(lines[5]).toBe('  2. slack · POST /chat.postMessage · C0REVOPS/1789.1 · provider id 1789.2 · "Tile at 74%."');
+    expect(lines[6]).toContain('rewrite the landed comment with `id` set to its provider id');
+    expect(landedWriteLines([], surfaces)).toEqual([]);
+    expect(landedWriteLines(undefined)).toEqual([]);
+  });
+});

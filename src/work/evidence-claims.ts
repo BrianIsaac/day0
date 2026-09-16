@@ -262,6 +262,114 @@ function payloadWithoutMessages(action: MockAction): string {
 }
 
 /**
+ * A numbered check in an audit note: its number, its head (the check as the
+ * checklist names it) and the evidence written after it.
+ */
+interface EnumeratedCheck {
+  number: number;
+  head: string;
+  evidence: string;
+}
+
+const CHECK_ITEM = /^\s*(\d+)[.)]\s+(\S.*)$/;
+const NOT_CONFIRMED_LINE = /^\s*(?:not confirmed|unconfirmed)\b\s*(?:[:\-\u2013\u2014]|$)/i;
+/** The head of a check ends at its first full stop or colon; what follows is its evidence. */
+const HEAD_END = /[.:]\s+|[.:]$/;
+
+/** Evidence that says the check could not be read or is not confirmed. */
+const UNMET_PHRASE =
+  /\b(?:not confirmed|unconfirmed|(?:could not|cannot|can't|couldn't|unable to)(?: be)? (?:read|confirm(?:ed)?|verif(?:y|ied)|reach(?:ed)?)|not (?:read|readable|reachable|available)|no evidence|unreadable|unavailable|did not (?:load|respond|return))\b/i;
+
+const STATE_WORDS =
+  'done|closed|completed|complete|resolved|cancelled|canceled|backlog|todo|to do|triage|open|in progress|in review|blocked|duplicate';
+/** The state a check requires, named in its head: "Close tickets at Done". */
+const REQUIRED_STATE = new RegExp(`\\b(?:at|to|in|is|are|as|reach(?:es|ed)?|=)\\s+[\`"']?(${STATE_WORDS})\\b`, 'i');
+/** A state the evidence reports for something: "REVOPS-6 (...) \u2014 Backlog", "(Todo)", "is at Backlog". */
+const REPORTED_STATE = new RegExp(`(?:[\\u2014\\u2013\\-:(]|\\b(?:at|in|is|are|state))\\s*[\`"']?(${STATE_WORDS})\\b`, 'gi');
+
+const CHECKS_NAMED = /\bchecks?\s+#?\d+(?:\s*(?:,|and|&|\/|or)\s*(?:checks?\s+)?#?\d+)*/gi;
+
+/**
+ * The numbered checks a message lists and the not-confirmed line that
+ * closes them, when the message has that shape: at least two numbered
+ * lines, each with a head and evidence, and after the last of them a line
+ * opening "Not confirmed". Anything else is free prose and is not judged.
+ */
+function enumeratedChecks(text: string): { checks: EnumeratedCheck[]; closing: string } | undefined {
+  const lines = text.replace(TRAILER, '').split('\n');
+  const checks: EnumeratedCheck[] = [];
+  let lastItem = -1;
+  lines.forEach((line, index): void => {
+    const match = line.match(CHECK_ITEM);
+    if (!match) return;
+    const number = Number(match[1]);
+    if (number !== checks.length + 1) return;
+    const rest = match[2]!.trim();
+    const headEnd = rest.search(HEAD_END);
+    const head = headEnd >= 0 ? rest.slice(0, headEnd) : rest;
+    const evidence = headEnd >= 0 ? rest.slice(headEnd).replace(/^[.:]\s*/, '') : '';
+    if (!evidence.trim()) return;
+    checks.push({ number, head, evidence });
+    lastItem = index;
+  });
+  if (checks.length < 2 || lastItem < 0) return undefined;
+  const closing = lines.slice(lastItem + 1).find((line) => NOT_CONFIRMED_LINE.test(line));
+  return closing ? { checks, closing } : undefined;
+}
+
+/** Why a check's own evidence reads as unmet, or undefined when it reads as met. */
+function unmetReason(check: EnumeratedCheck): string | undefined {
+  const phrase = check.evidence.match(UNMET_PHRASE);
+  if (phrase) return `says "${phrase[0]}"`;
+  const required = check.head.match(REQUIRED_STATE)?.[1];
+  if (!required) return undefined;
+  const reported = [...check.evidence.matchAll(REPORTED_STATE)]
+    .map((match) => match[1]!)
+    .filter((state) => state.toLowerCase() !== required.toLowerCase());
+  if (reported.length === 0) return undefined;
+  return `reports ${[...new Set(reported)].join(' and ')} where the check requires ${required}`;
+}
+
+/** Whether the closing line names a check: by its number, or by the first words of its head. */
+function namedInClosing(check: EnumeratedCheck, closing: string): boolean {
+  const numbers = new Set(
+    [...closing.matchAll(CHECKS_NAMED)].flatMap((match) => (match[0].match(/\d+/g) ?? []).map(Number)),
+  );
+  if (numbers.has(check.number)) return true;
+  const headWords = words(check.head).slice(0, 2);
+  return headWords.length > 0 && normalised(closing).includes(headWords.join(' '));
+}
+
+/**
+ * The consistency the checklist asks of an audit note: every check whose
+ * own evidence reads as unmet (a not-confirmed phrase, a state other than
+ * the one the check requires, a read that could not be made) is named in
+ * the line that closes the list. On 16 September the retry's note showed
+ * both sibling tickets at Backlog under "Close tickets at Done" and its
+ * closing line named check 2 alone, because the manager's note had accepted
+ * check 2; the manager's acceptance is recorded beside the evidence, never
+ * in place of it. Only the enumerated shape is judged; free prose is not.
+ *
+ * Args:
+ *   text: A comment, reply or DM body as the executor wrote it.
+ *
+ * Returns:
+ *   One reason naming every omitted check; empty when the note is consistent or has another shape.
+ */
+export function inconsistentNotConfirmedLine(text: string): string | undefined {
+  const listed = enumeratedChecks(text);
+  if (!listed) return undefined;
+  const omitted = listed.checks.flatMap((check): string[] => {
+    const reason = unmetReason(check);
+    if (!reason || namedInClosing(check, listed.closing)) return [];
+    return [`check ${check.number} ("${check.head}") ${reason} in its own evidence`];
+  });
+  if (omitted.length === 0) return undefined;
+  const named = listed.checks.filter((check) => namedInClosing(check, listed.closing)).map((check) => `check ${check.number}`);
+  return `the not-confirmed line names ${named.length > 0 ? named.join(' and ') : 'no check'} but ${omitted.join('; ')}; name every check whose evidence is unmet in that line, and record the manager's acceptance beside the evidence, never in place of it`;
+}
+
+/**
  * Refuse every message that asserts a fact the sources do not carry.
  *
  * The other actions in the same response count beside the ledger: a
@@ -294,6 +402,10 @@ export function unsupportedClaimIssues(
         issues.push(
           `asserted a fact the ledger, the documentation and the manager's feedback do not carry: action ${index} (${describeAction(action)}) says "${claim}"; quote the ledger row, the page or the manager's words that show it, or write that you could not confirm it and ask`,
         );
+      }
+      const inconsistent = inconsistentNotConfirmedLine(text);
+      if (inconsistent) {
+        issues.push(`action ${index} (${describeAction(action)}): ${inconsistent}`);
       }
     }
   });
