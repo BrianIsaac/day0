@@ -133,4 +133,13 @@ describe('the writes earlier runs landed', () => {
     expect(landedWriteLines([], surfaces)).toEqual([]);
     expect(landedWriteLines(undefined)).toEqual([]);
   });
+
+  it('redacts a structural secret a landed body quotes before the excerpt reaches a prompt', () => {
+    const token = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+    const quoted = post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: `Tile refreshed; the export used Authorization: Bearer ${token} for the pull.` });
+    const line = landedWriteLines([{ action: quoted, applied: row({ providerId: '1789.2' }) }], surfaces)[3]!;
+    expect(line).not.toContain(token);
+    expect(line).toContain('<redacted>');
+    expect(line).toContain('Tile refreshed');
+  });
 });

@@ -7,6 +7,7 @@ import {
   targetIssue,
   type ParsedSurfaceAction,
 } from '../surfaces/policy';
+import { redactTokenShapes } from '../surfaces/redact';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
 import { messageTexts } from './evidence-claims';
 import { actionIdempotencyKey } from './idempotency';
@@ -265,7 +266,10 @@ export function landedWriteLines(writes: readonly LandedWrite[] | undefined, sur
     const excerpt = body
       ? ` · "${body.length > EXCERPT_CHARS ? `${body.slice(0, EXCERPT_CHARS)} ...` : body}"`
       : '';
-    return `  ${index}. ${parsed.surface} · ${describe(parsed)} · ${targetText} · provider id ${write.applied.providerId ?? '(none)'}${excerpt}`;
+    // The row was scrubbed of the owner's exact values when it was persisted;
+    // the structural pass here is the same defence in depth the ledger
+    // prompt applies, so no token shape a landed body quotes reaches a prompt.
+    return redactTokenShapes(`  ${index}. ${parsed.surface} · ${describe(parsed)} · ${targetText} · provider id ${write.applied.providerId ?? '(none)'}${excerpt}`);
   });
   return [
     '',
