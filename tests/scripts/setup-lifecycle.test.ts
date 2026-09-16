@@ -86,7 +86,7 @@ describe('reading the verbs', (): void => {
   });
 
   it('names each verb in the entry point of its mode', (): void => {
-    expect(verbCommand('stop', 'real')).toBe('./setup-real.sh stop');
+    expect(verbCommand('stop', 'real')).toBe('./setup.sh stop');
     expect(verbCommand('resume', 'mock')).toBe('pnpm setup:local resume');
   });
 });
@@ -133,7 +133,7 @@ describe('stop', (): void => {
     expect(readFileSync(join(h.directory, '.env.local'), 'utf8')).toBe(before);
     const printed = h.output.join('\n');
     expect(printed).toContain(`Stopped ${PROJECT}. Kept: ${OWN_VOLUMES.join(', ')}; .env.local with its admin key.`);
-    expect(printed).toContain('Resume with `./setup-real.sh resume`');
+    expect(printed).toContain('Resume with `./setup.sh resume`');
     expect(printed).toContain('something is still serving on 45300, most likely `pnpm dev`');
     expect(printed).not.toContain('day0-redactor-warm');
   });

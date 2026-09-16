@@ -5,17 +5,23 @@ import {
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
   MEASURED_TIMINGS,
+  MOCK_FIRST_SUCCESS,
+  MOCK_OFFICE_NOTE,
   MODEL_ROUTES,
   PREREQUISITES,
   PUBLISHED_PORTS,
   QUICKSTART_BLOCK,
   QUICKSTART_COMMANDS,
-  REAL_MODE_SCRIPT,
+  REAL_MODE_NOTE,
+  REAL_MODE_VERBS,
   REPOSITORY_URL,
   RUN_WAYS,
   SETUP_PAGE_URL,
+  SETUP_SCRIPT,
   TIMING_CAVEAT,
   TRAPS,
+  WAY_NAMES,
+  wayOfSetup,
 } from '../../../src/setup/quickstart';
 import { firstSuccessLines, parseSetupArguments } from '../../../scripts/setup';
 
@@ -36,7 +42,7 @@ const PACKAGE_SCRIPTS: Record<string, string> = (
   }
 ).scripts;
 
-/** The repository root, where `./setup-real.sh` has to be. */
+/** The repository root, where `./setup.sh` has to be. */
 const ROOT = new URL('../../../', import.meta.url);
 
 /** Where the Chinese half of the README starts. */
@@ -55,7 +61,7 @@ describe('the quick-start commands', (): void => {
       'git clone https://github.com/BrianIsaac/day0.git',
       'cd day0',
       'pnpm install --frozen-lockfile',
-      'pnpm setup:local',
+      './setup.sh',
       'pnpm dev',
     ]);
   });
@@ -119,9 +125,15 @@ describe('the README quick starts', (): void => {
   });
 });
 
-describe('the four ways to run it', (): void => {
-  it('are hosted, then account-free, then a key, then real mode', (): void => {
-    expect(RUN_WAYS.map((way) => way.id)).toEqual(['hosted', 'local', 'key', 'real']);
+describe('the three ways to run it', (): void => {
+  it('are hosted, then local with a cloud model, then local with a local model, by the deck\'s names', (): void => {
+    expect(RUN_WAYS.map((way) => way.id)).toEqual(['hosted', 'cloud', 'local']);
+    expect(RUN_WAYS.map((way) => way.title)).toEqual([
+      'Hosted demo',
+      'Local, cloud model',
+      'Local, local model',
+    ]);
+    expect(Object.values(WAY_NAMES)).toEqual(RUN_WAYS.map((way) => way.title));
   });
 
   it('go to pages this app serves, or type commands this repository ships', (): void => {
@@ -136,10 +148,11 @@ describe('the four ways to run it', (): void => {
   });
 
   it('name only commands that exist: a package script by name, or a file at the root', (): void => {
-    const commands = RUN_WAYS.flatMap((way) => [
-      ...(way.commands ?? []),
-      ...(way.verbs ?? []).map((verb) => verb.command),
-    ]);
+    const commands = [
+      ...RUN_WAYS.flatMap((way) => way.commands ?? []),
+      ...REAL_MODE_VERBS.map((verb) => verb.command),
+      ...QUICKSTART_COMMANDS,
+    ];
     expect(commands.length).toBeGreaterThan(10);
     for (const command of commands) {
       const [program, ...rest] = command.split(' ');
@@ -150,34 +163,36 @@ describe('the four ways to run it', (): void => {
         if (script !== 'install') expect(Object.keys(PACKAGE_SCRIPTS), command).toContain(script);
         continue;
       }
-      expect(program, command).toBe(REAL_MODE_SCRIPT);
+      expect(program, command).toBe(SETUP_SCRIPT);
       const stat = statSync(new URL(program, ROOT));
       expect(stat.isFile()).toBe(true);
       expect(stat.mode & 0o111, `${program} is executable`).not.toBe(0);
     }
   });
 
-  it('pass flags and verbs the setup script accepts', (): void => {
-    const [, local, key, real] = RUN_WAYS;
-    expect(parseSetupArguments(['--route', 'local']).route).toBe('local');
-    expect(parseSetupArguments(['--route', 'key']).route).toBe('key');
-    expect(local.commands).toContain('pnpm setup:local --route local');
-    expect(key.commands).toContain('pnpm setup:local --route key');
-    // `./setup-real.sh <args>` is `pnpm setup:local --mode real <args>`.
-    const realArguments = real.commands!.find((c) => c.startsWith(REAL_MODE_SCRIPT))!.split(' ').slice(1);
-    expect(parseSetupArguments(['--mode', 'real', ...realArguments])).toMatchObject({
-      mode: 'real',
-      route: 'featherless',
-    });
-    for (const verb of real.verbs ?? []) {
+  it('are real mode on both local ways, through the one entry, and never the mock one', (): void => {
+    const [, cloud, local] = RUN_WAYS;
+    // `./setup.sh <args>` is `pnpm setup:local --mode real <args>`.
+    for (const way of [cloud, local]) {
+      const args = way.commands!.find((c) => c.startsWith(SETUP_SCRIPT))!.split(' ').slice(1);
+      expect(parseSetupArguments(['--mode', 'real', ...args]).mode).toBe('real');
+      expect(JSON.stringify(way)).not.toContain('pnpm setup:local');
+    }
+    expect(parseSetupArguments(['--mode', 'real', '--route', 'featherless']).route).toBe('featherless');
+    expect(parseSetupArguments(['--mode', 'real', '--route', 'local']).route).toBe('local');
+    for (const verb of REAL_MODE_VERBS) {
       const word = verb.command.split(' ')[1];
       expect(parseSetupArguments(['--mode', 'real', word]).command).toBe(word);
     }
-    for (const flag of ['--model <id>', '--route local', '--warm-from <project>', '--yes']) {
-      expect(`${real.body} ${real.after}`).toContain(flag);
+    for (const flag of ['--route key', '--route endpoint', 'FEATHERLESS_API_KEY']) {
+      expect(cloud.body).toContain(flag);
     }
+    for (const flag of ['--model <id>', '--yes', '--model-port']) {
+      expect(`${local.body} ${local.after}`).toContain(flag);
+    }
+    expect(REAL_MODE_NOTE).toContain('--warm-from <project>');
     for (const flag of ['--purge-env', '--yes']) {
-      expect(real.verbs?.map((verb) => verb.what).join(' ')).toContain(flag);
+      expect(REAL_MODE_VERBS.map((verb) => verb.what).join(' ')).toContain(flag);
     }
     expect(parseSetupArguments(['--mode', 'real', 'clear', '--purge-env', '--yes'])).toMatchObject({
       command: 'clear',
@@ -186,25 +201,49 @@ describe('the four ways to run it', (): void => {
     });
   });
 
-  it('are the commands the README gives for the same routes, in both halves', (): void => {
-    const [, local, key, real] = RUN_WAYS;
+  it('are the commands the README gives for the same ways, in both halves', (): void => {
+    const [, cloud, local] = RUN_WAYS;
     const chineseAt = README.indexOf(CHINESE_HEADING);
-    for (const command of [local.commands![3], key.commands![3], real.commands![3]]) {
+    for (const command of [cloud.commands![3], local.commands![3], ...REAL_MODE_VERBS.map((v) => v.command)]) {
       const offsets = offsetsOf(README, command);
       expect(offsets.length, command).toBeGreaterThanOrEqual(2);
       expect(offsets[0]).toBeLessThan(chineseAt);
       expect(offsets.at(-1)).toBeGreaterThan(chineseAt);
     }
-    for (const verb of real.verbs ?? []) {
-      const offsets = offsetsOf(README, verb.command);
-      expect(offsets.length, verb.command).toBeGreaterThanOrEqual(2);
-      expect(offsets[0]).toBeLessThan(chineseAt);
-      expect(offsets.at(-1)).toBeGreaterThan(chineseAt);
+    for (const name of Object.values(WAY_NAMES)) {
+      expect(README, name).toContain(`## ${name}`);
     }
+    expect(README).toContain('\n### 托管演示\n');
+    expect(README).toContain('\n### 本地运行，云端模型\n');
+    expect(README).toContain('\n### 本地运行，本地模型\n');
+  });
+
+  it('keep the mock office as what the harness and the hosted demo run on, with its own README section', (): void => {
+    expect(MOCK_OFFICE_NOTE.body).toContain('pnpm setup:local');
+    expect(MOCK_OFFICE_NOTE.body).toContain('evaluation harness');
+    expect(README).toContain('\n## Evaluation and the mock office\n');
+    expect(README).toContain('\n### 评测与 mock office\n');
+    const chineseAt = README.indexOf(CHINESE_HEADING);
+    // The mock command appears with the evaluation material, never in a run section.
+    const mockCommand = offsetsOf(README, 'pnpm setup:local --route local');
+    expect(mockCommand.length).toBeGreaterThanOrEqual(2);
+    expect(mockCommand[0]).toBeGreaterThan(README.indexOf('\n## Evaluation quick start\n'));
+    expect(mockCommand.at(-1)).toBeGreaterThan(README.indexOf('\n### 评测快速开始\n'));
+    expect(mockCommand.at(-1)).toBeGreaterThan(chineseAt);
+  });
+
+  it('name the way the checker reports for a mode and a route', (): void => {
+    expect(wayOfSetup('real', 'featherless')).toBe(WAY_NAMES.cloud);
+    expect(wayOfSetup('real', 'key')).toBe(WAY_NAMES.cloud);
+    expect(wayOfSetup('real', 'endpoint')).toBe(WAY_NAMES.cloud);
+    expect(wayOfSetup('real', 'local')).toBe(WAY_NAMES.local);
+    expect(wayOfSetup('real', 'none')).toBeUndefined();
+    expect(wayOfSetup('mock', 'local')).toContain('evaluation harness');
+    expect(wayOfSetup('nonsense', 'local')).toBeUndefined();
   });
 
   it('never name the model a provider sells, as the routes do not', (): void => {
-    const prose = JSON.stringify(RUN_WAYS);
+    const prose = JSON.stringify([RUN_WAYS, REAL_MODE_NOTE, MOCK_OFFICE_NOTE]);
     for (const name of ['GPT-5', 'gpt-5', 'Terra', 'GLM', 'Gemini', 'qwen']) {
       expect(prose).not.toContain(name);
     }
@@ -233,16 +272,20 @@ describe('the prerequisites the page states', (): void => {
   });
 });
 
-describe('the two routes to a model', (): void => {
-  it('offer the key route first and the account-free route second', (): void => {
-    expect(MODEL_ROUTES.map((route) => route.id)).toEqual(['key', 'local']);
+describe('the two places a model runs', (): void => {
+  it('offer the cloud model first and the local model second, through the real-mode entry', (): void => {
+    expect(MODEL_ROUTES.map((route) => route.id)).toEqual(['cloud', 'local']);
+    expect(MODEL_ROUTES.map((route) => route.flag)).toEqual([
+      './setup.sh --route featherless',
+      './setup.sh --route local',
+    ]);
   });
 
   it('say what each costs the reader', (): void => {
     for (const route of MODEL_ROUTES) {
       expect(route.needs.length).toBeGreaterThan(10);
       expect(route.gives.length).toBeGreaterThan(10);
-      expect(route.flag).toMatch(/^pnpm setup:local --route (key|local)$/);
+      expect(route.flag).toMatch(/^\.\/setup\.sh --route (featherless|local)$/);
     }
   });
 
@@ -255,21 +298,34 @@ describe('the two routes to a model', (): void => {
 });
 
 describe('what first success looks like', (): void => {
-  it('is the four steps, ending at the approval that fills the queue', (): void => {
+  it('is real mode\'s four steps: unlock, link the documentation, the charter, the connection cards', (): void => {
     expect(FIRST_SUCCESS).toHaveLength(4);
-    expect(FIRST_SUCCESS[3].detail).toContain('work queue');
+    expect(FIRST_SUCCESS[1].action).toContain('Link your documentation first');
+    expect(FIRST_SUCCESS[2].action).toContain('approve the charter');
+    expect(FIRST_SUCCESS[2].detail).toContain('work queue');
+    expect(FIRST_SUCCESS[3].action).toContain('connection cards');
   });
 
-  it('is what the terminal prints too, so the page and the command agree', (): void => {
+  it('is what the terminal prints in real mode, so the page and the command agree', (): void => {
     const url = 'http://localhost:3000/?day0_key=example';
     // The terminal wraps to its own width; collapsing puts the sentences back
     // together, which is the thing that has to match rather than the layout.
-    const printed = firstSuccessLines(url).join(' ').replace(/\s+/g, ' ');
+    const printed = firstSuccessLines(url, 'real').join(' ').replace(/\s+/g, ' ');
     expect(printed).toContain(url);
     FIRST_SUCCESS.forEach((step, index): void => {
       if (index > 0) expect(printed).toContain(step.action);
       expect(printed).toContain(step.detail);
     });
+  });
+
+  it('keeps the mock office\'s own four for the mock entry, seeded and synthetic', (): void => {
+    expect(MOCK_FIRST_SUCCESS).toHaveLength(4);
+    expect(MOCK_FIRST_SUCCESS[0]).toBe(FIRST_SUCCESS[0]);
+    expect(MOCK_FIRST_SUCCESS[1].detail).toContain('seeded and synthetic');
+    expect(MOCK_FIRST_SUCCESS[3].detail).toContain('work queue');
+    const printed = firstSuccessLines(undefined).join(' ').replace(/\s+/g, ' ');
+    for (const step of MOCK_FIRST_SUCCESS) expect(printed).toContain(step.detail);
+    expect(printed).not.toContain(FIRST_SUCCESS[1].action);
   });
 
   it('warns that the bare address is refused, which is the boundary working', (): void => {
@@ -285,8 +341,9 @@ describe('the traps', (): void => {
     expect(prose).toContain('CONVEX_SELF_HOSTED_ADMIN_KEY');
   });
 
-  it('each hand the reader something to do about it', (): void => {
-    for (const trap of TRAPS) expect(trap.body).toContain('pnpm ');
+  it('each hand the reader something to do about it, through the real-mode entry', (): void => {
+    for (const trap of TRAPS) expect(trap.body).toMatch(/pnpm |\.\/setup\.sh/);
+    expect(TRAPS.map((trap) => trap.body).join(' ')).not.toContain('pnpm setup:local');
   });
 });
 

@@ -35,6 +35,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
 import { isLoopback, setupRoute } from './setup-route';
 
@@ -139,11 +140,17 @@ function resolve(path: string): Values {
   return values;
 }
 
-/** The one line naming the mode and the route, printed first and last. */
+/**
+ * The one line naming the mode, the route and the way to run it, printed first
+ * and last: "Local, cloud model" or "Local, local model" in real mode, and in
+ * mock mode the reminder that this is the harness's and the hosted demo's
+ * office rather than one of the ways.
+ */
 export function modeAndRouteLine(values: Values): string {
   const mode = values.DAY0_SURFACE_MODE || 'mock';
   const { route, detail } = setupRoute(values);
-  return `Mode ${mode}, route ${route} (${detail}).`;
+  const way = wayOfSetup(mode, route);
+  return `Mode ${mode}, route ${route} (${detail})${way === undefined ? '' : `: ${way}`}.`;
 }
 
 /**
@@ -385,6 +392,9 @@ function surfacesSection(values: Values, services: string[] | undefined): Sectio
       status: 'ok',
       lines: [
         'The seeded five-surface environment is active; no provider credentials are read.',
+        'This is the setting the evaluation harness and the hosted demo run on. The two ways to',
+        'run Day0 on your own documentation and systems are real mode: `./setup.sh --route',
+        'featherless` (Local, cloud model) or `./setup.sh --route local` (Local, local model).',
         `Credential key ${values.DAY0_CREDENTIAL_KEY ? 'present' : 'absent'}; stored credentials ${count ?? 'unavailable'}.`,
       ],
     };
