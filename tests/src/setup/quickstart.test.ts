@@ -55,7 +55,7 @@ describe('the quick-start commands', (): void => {
       'git clone https://github.com/BrianIsaac/day0.git',
       'cd day0',
       'pnpm install --frozen-lockfile',
-      'pnpm setup:local',
+      './setup.sh',
       'pnpm dev',
     ]);
   });

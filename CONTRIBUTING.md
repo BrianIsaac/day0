@@ -10,11 +10,11 @@ You need Node 22 or newer, pnpm 9 or newer, and Docker with Compose v2 for anyth
 git clone https://github.com/BrianIsaac/day0.git
 cd day0
 pnpm install --frozen-lockfile
-pnpm setup:local            # the local stack, or follow one of the routes in the README
+./setup.sh                  # real mode; --route featherless|key|endpoint|local says where the model runs
 pnpm dev
 ```
 
-`pnpm setup:local --route local|key` is the account-free and OpenAI-key routes in one command, and `./setup.sh --route featherless|local` is real mode. What each does, step by step, is in the README under [Local dev](README.md#local-dev). `pnpm check:setup` reports which of them the machine you are on is set up for.
+`./setup.sh --route featherless` and `./setup.sh --route local` are the two local ways to run it, Local, cloud model and Local, local model, both real mode. `pnpm setup:local --route local|key` is the same setup in mock mode, the seeded office the evaluation harness and the hosted demo run on, which is what to set up for the harness and the mock-office tests. What each does, step by step, is in the README under [Local dev](README.md#local-dev). `pnpm check:setup` reports which of them the machine you are on is set up for.
 
 The whole loop needs a model. It does not have to be a hosted one: `OPENAI_BASE_URL` points the model layer at any OpenAI-compatible endpoint, including the bundled local one, and `pnpm probe:model` tells you whether an endpoint can drive the loop before you wire it in.
 

@@ -2,7 +2,7 @@
 
 An autonomous teammate that joins with no role, no skills and no scope.
 
-[![Live demo](https://img.shields.io/badge/Live%20demo-day0--olive.vercel.app-2ea043)](https://day0-olive.vercel.app) [![Runs with no accounts](https://img.shields.io/badge/Runs%20with-no%20accounts-1f6feb)](#run-it-with-no-accounts) [![Licence Apache-2.0](https://img.shields.io/badge/Licence-Apache--2.0-blue)](LICENSE)
+[![Live demo](https://img.shields.io/badge/Live%20demo-day0--olive.vercel.app-2ea043)](https://day0-olive.vercel.app) [![Runs with no accounts](https://img.shields.io/badge/Runs%20with-no%20accounts-1f6feb)](#local-local-model) [![Licence Apache-2.0](https://img.shields.io/badge/Licence-Apache--2.0-blue)](LICENSE)
 
 [**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
 
@@ -47,31 +47,36 @@ The container images for the backend, the model service, the sandbox, the redact
 
 **Start here** · [Live demo](#live-demo) · [Disclosures](#disclosures) · [Quick start](#quick-start) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
 
-**Run it** · [No accounts](#run-it-with-no-accounts) · [With an OpenAI key](#run-it-with-an-openai-key) · [On your own systems](#run-it-in-real-mode) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
+**Run it** · [Hosted demo](#hosted-demo) · [Local, cloud model](#local-cloud-model) · [Local, local model](#local-local-model) · [Real mode, what both local ways are](#real-mode) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
 
 **Configure it** · [Environment](#environment) · [Ports](#ports-host-side-and-container-side) · [Phones and tunnels](#testing-from-a-phone-and-tunnels) · [ElevenLabs voice](#elevenlabs-agent-setup) · [The local skill sandbox](#the-local-skill-sandbox) · [The GPU](#the-gpu-is-opt-out-not-opt-in)
 
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
-**Project** · [Controlled evaluation](evaluation/README.md) · [Reproduce the evidence](#reproduce-the-evidence) · [Evaluation quick start](#evaluation-quick-start) · [API and interface documentation](#api-and-interface-documentation) · [Data and compliance](docs/submission/compliance.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Credits](#credits) · [Licence](#licence)
+**Project** · [Controlled evaluation](evaluation/README.md) · [Reproduce the evidence](#reproduce-the-evidence) · [Evaluation quick start](#evaluation-quick-start) · [Evaluation and the mock office](#evaluation-and-the-mock-office) · [API and interface documentation](#api-and-interface-documentation) · [Data and compliance](docs/submission/compliance.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Credits](#credits) · [Licence](#licence)
 
 ## Quick start
 
-The self-hosted backend, seeded mock office and skill-verification sandbox run on your own machine. Choose an OpenAI API key or a model you run locally. The key route sends your chat and relevant synthetic office content to OpenAI; other providers use the advanced endpoint route on the setup page. The setup command prepares the local services.
+Three ways to run it, and the two local ways are real mode: Day0 reads the documentation you link and acts on the systems it names, through approval cards. They differ in one thing only, where the model runs.
 
-You need Node 22+, pnpm 9+, and Docker with Compose v2. `pnpm setup:local` checks each of those, and the ports it is about to publish, before it starts anything.
+- **Hosted demo** - nothing to install. Sign in at [day0-olive.vercel.app](https://day0-olive.vercel.app) for the mock workspace, or open [/demo](https://day0-olive.vercel.app/demo) for the walkthrough without sign-in.
+- **Local, cloud model** - `./setup.sh --route featherless`: GLM 5.3 Flash through Featherless, with a Featherless key; `--route key` for OpenAI or any OpenAI-compatible key, `--route endpoint` for a server you already run. Your chat and relevant content are sent to the provider, which charges per token.
+- **Local, local model** - `./setup.sh --route local`: the bundled model (`qwen3:8b` tested) in Docker on this machine, nothing signed up for and nothing metered.
+
+You need Node 22+, pnpm 9+, and Docker with Compose v2. `./setup.sh` checks each of those, and the ports it is about to publish, before it starts anything.
 
 ```bash
 git clone https://github.com/BrianIsaac/day0.git
 cd day0
 pnpm install --frozen-lockfile
-pnpm setup:local
+./setup.sh
 pnpm dev
 ```
 
-`pnpm setup:local` asks how it should reach a model - a key you already have, no account at all and the model runs here, an endpoint you already run, or a hosted model through Featherless - and, on the key route, for that key in a hidden prompt; `--route key|local|endpoint|featherless` names the answer and skips the question. It then does the rest: the containers, the generated keys written into `.env.local` rather than pasted into it, the two model addresses written as a pair, the function push and `pnpm check:setup`. It finishes by printing an unlock URL. Open that, deploy an agent, hold the Day-1 1:1 in chat, and approve the charter it writes; that first approval is what fills the work queue.
+`./setup.sh` asks where the model runs when `--route` does not say - a hosted model through Featherless, a key you already have, an endpoint you already run, or the bundled model here - then for the key in a hidden prompt where one is needed and for the address your Slack DM is resolved from. It then does the rest: the containers and components, the generated keys written into `.env.local` rather than pasted into it, the two model addresses written as a pair, the function push and `pnpm check:setup`. It finishes by printing an unlock URL. Open that, link your documentation, deploy an agent, hold the Day-1 1:1 in chat, and approve the charter it writes; that first approval is what fills the work queue, and the connection cards on the Surfaces tab are what let it act.
 
-[**Set up Day0**](https://day0-olive.vercel.app/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each route's one command and says what the setup does on it, step by step, and is what to read when something needs fixing.
+[**Set up Day0**](https://day0-olive.vercel.app/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each way's one command and says what the setup does on it, step by step, and is what to read when something needs fixing. Mock mode, the seeded office the hosted demo and the evaluation harness run on, is `pnpm setup:local` and is documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
+
 
 ## What is unusual about it
 
@@ -103,7 +108,7 @@ The skill it writes is a procedure for one operation on one surface class, named
 
 ## One full run, from the first page
 
-Everything below is a single run of the [real-mode walkthrough](#run-it-in-real-mode), start to finish, on a fresh clone of `main` set up by the route printed there. It ran on 3 September 2026 with `OPENAI_MODEL=gpt-5.6-terra`, against the author's own Linear workspace, the author's own Slack workspace, and the synthetic Looker-style pipeline tile this repository ships behind the `demo` profile. One person acted as both the manager and the IT approver, which is what a single-user local run means. The [one-minute demo video](https://youtu.be/YgbSmy1shnM) is a cut of a run like this one and is where the Linear and Slack sides are shown; every screenshot below is the day0 dashboard.
+Everything below is a single run of [real mode](#real-mode), start to finish, on a fresh clone of `main` set up by the route printed there. It ran on 3 September 2026 with `OPENAI_MODEL=gpt-5.6-terra`, against the author's own Linear workspace, the author's own Slack workspace, and the synthetic Looker-style pipeline tile this repository ships behind the `demo` profile. One person acted as both the manager and the IT approver, which is what a single-user local run means. The [one-minute demo video](https://youtu.be/YgbSmy1shnM) is a cut of a run like this one and is where the Linear and Slack sides are shown; every screenshot below is the day0 dashboard.
 
 Elapsed times are counted from the moment the agent was deployed.
 
@@ -229,99 +234,121 @@ The footer of the same card reads 8 decisions requested, 0 partial, 31 actions a
 
 Day0 is a working demonstration rather than a product and has no users. Its measured claim is deliberately narrow: the repository ships a [controlled, programmatically graded comparison](evaluation/README.md) of onboarded Day0 versus an ordinary agent on the same 15 unfamiliar mock-office tasks. It does not claim that this benchmark predicts every real team's work.
 
-The reproducible demo and controlled evaluation work inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue and a social feed - seeded per agent. That environment makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust; the model calls, sandbox, state machine and approval gates are still real. A separate local-only real mode reads linked team documentation, discovers the systems it names and connects to them only through visible approval gates. It is documented in [Run it in real mode](#run-it-in-real-mode).
+The reproducible demo and controlled evaluation work inside a self-contained mock office - team docs, a spreadsheet, chat channels, a ticket queue and a social feed - seeded per agent. That environment makes a run reproducible on a stranger's laptop instead of a screenshot taken on trust; the model calls, sandbox, state machine and approval gates are still real. A separate local-only real mode reads linked team documentation, discovers the systems it names and connects to them only through visible approval gates. Both local ways run in it; it is documented in [Real mode](#real-mode).
 
 The agent core is model-agnostic. `OPENAI_BASE_URL` points the whole layer at any OpenAI-compatible endpoint, so the full loop runs against a model on your own machine with no account anywhere and nothing metered. The sandbox that verifies an authored skill is bundled too, so skill creation finishes on that route rather than stopping one step short of a callable skill. Voice and web research are optional third-party services; without their keys the loop degrades visibly rather than failing silently. [Three ways to run it](#local-dev) are set out below, and `pnpm check:setup` reports which of them the machine you are on is currently set up for.
 
 ## Local dev
 
-Three ways to run it. They disagree about two things only: who runs the model, and who holds the accounts.
+Three ways to run it. The hosted demo needs nothing installed; the two local ways are the same stack in the same mode, real mode, and disagree about one thing only: where the model runs.
 
-| Route | Accounts | Setup it costs you | What it gives you |
+| Way | Accounts | Setup it costs you | What it gives you |
 |---|---|---|---|
-| [**No accounts, and you run the model**](#run-it-with-no-accounts) | none | Docker, and one model to pull - `qwen3:8b` is about 5 GB | The whole loop, skill creation included, with nothing signed up for and nothing metered. How fast it answers is a question about your hardware, not about Day0: `pnpm model:up` uses an NVIDIA GPU wherever it finds one |
-| [**An OpenAI key, and you run nothing**](#run-it-with-an-openai-key) | OpenAI | Docker, and one key typed into a hidden prompt | The shortest route if you already have a key. No weights to pull and no GPU question - everything but the model still runs on your machine, and you pay OpenAI per token |
-| [**The full hosted setup**](#convex-cloud--clerk) | Convex, Clerk, OpenAI | three sign-ups, and a JWT template in the Clerk dashboard | Per-user auth, a backend that is not your laptop, and the exact shape the deployed app runs in - the one to pick if you intend to deploy it |
+| [**Hosted demo**](#hosted-demo) | a sign-in on the hosted app; none for the walkthrough | nothing installed | The product loop on the hosted mock office, which reaches no system of yours, and a recording of one whole run |
+| [**Local, cloud model**](#local-cloud-model) | one model-provider key: Featherless, OpenAI, or any OpenAI-compatible endpoint | Docker, and one key typed into a hidden prompt | Real mode on your own documentation and systems, with nothing to pull and no GPU question - everything but the model runs on your machine, and you pay the provider per token |
+| [**Local, local model**](#local-local-model) | none | Docker, and one model to pull - `qwen3:8b` is about 5 GB | The same real mode, skill creation included, with nothing signed up for and nothing metered. How fast it answers is a question about your hardware, not about Day0: `pnpm model:up` uses an NVIDIA GPU wherever it finds one |
 
-The first two are the same stack, and differ only in where the model lives: a self-hosted Convex backend in Docker and no-auth dev mode, where one fixed local user owns every row and a request from any other machine is refused by design. Each is one command, `pnpm setup:local --route local` or `pnpm setup:local --route key`, and real mode on the same stack is `./setup.sh --route featherless` or `./setup.sh --route local`. The third replaces both halves with hosted ones and gives you a user per Clerk sign-in; it is the one route the setup command does not automate.
+The two local ways are one command, `./setup.sh --route featherless` (or `--route key`, or `--route endpoint`) and `./setup.sh --route local`, on a self-hosted Convex backend in Docker and no-auth dev mode, where one fixed local user owns every row and a request from any other machine is refused by design. [Convex cloud + Clerk](#convex-cloud--clerk) replaces both halves with hosted ones and gives you a user per Clerk sign-in; it is the one route the setup command does not automate. Mock mode, the seeded office the hosted demo works in, is the same stack under `pnpm setup:local`, kept for the evaluation harness and documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
-All three need a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. With `OPENAI_BASE_URL` unset, the shared model route uses the OpenAI Responses API at `api.openai.com`; setting a custom `OPENAI_BASE_URL` switches it to that endpoint's OpenAI-compatible chat-completions API, including keyless local runtimes. Both arms of an evaluation bed use the same selected route.
+Every way needs a model: the charter, the plans, the executor and the skill author are all model calls, and nothing in the loop finishes without one. That model does **not** have to be OpenAI. With `OPENAI_BASE_URL` unset, the shared model route uses the OpenAI Responses API at `api.openai.com`; setting a custom `OPENAI_BASE_URL` switches it to that endpoint's OpenAI-compatible chat-completions API, including keyless local runtimes. Both arms of an evaluation bed use the same selected route.
 
-All three also need somewhere to verify an authored skill, and that is bundled as well: `pnpm sandbox:up` starts a local sandbox on any of them, and Daytona is the hosted alternative. Only Exa is genuinely account-only, and its absence costs the good-habits research rather than the loop.
+Both local ways also need somewhere to verify an authored skill, and that is bundled as well: `pnpm sandbox:up` starts a local sandbox on either of them, and Daytona is the hosted alternative. Only Exa is genuinely account-only, and its absence costs the good-habits research rather than the loop.
 
 Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of the five setups - backend, auth, model, sandbox, voice - separately, and fails only on the states that are actually broken rather than merely incomplete.
 
-All three run against the seeded mock office, which is what makes them safe to try. Pointing the same stack at your own documentation and your own systems is one variable and a few components on top of any of them: [Run it in real mode](#run-it-in-real-mode).
+`pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
 
-## Run it with no accounts
+## Hosted demo
 
-A self-hosted Convex backend in Docker, a local model in Docker, a local verification sandbox in Docker, and no-auth dev mode. Nothing here signs up for anything. The backend is the same open-source binary the cloud service runs; no-auth mode replaces Clerk with one fixed synthetic user, so ownership checks and the per-user data model are unchanged - there is simply only ever one user; the model layer takes any OpenAI-compatible endpoint, so a local runtime is a complete setup rather than a degraded one; and the sandbox is what lets an authored skill actually become callable, which is the half of the headline loop that used to need an account.
+Nothing to install. Sign in at [`day0-olive.vercel.app`](https://day0-olive.vercel.app) to deploy an agent into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open [`/demo`](https://day0-olive.vercel.app/demo) for the recorded walkthrough, which needs no sign-in at all. [Live demo](#live-demo) above says what the deployment runs and links both recordings.
 
-You need Docker with Compose v2, Node 22+ and pnpm 9+. One command from a fresh clone, run from the repository root:
+## Local, cloud model
+
+Real mode on this machine, with the model at a provider. The self-hosted Convex backend, the skill sandbox, the span model that redacts credentials out of what is stored and the browser component run here in Docker, pointed at a documentation folder you provide and the systems it records; the model is the one thing that runs elsewhere. If you already have a key, this is the shorter local way: nothing to pull, nothing left resident afterwards, and the pauses between steps are a hosted model's rather than your laptop's.
 
 ```bash
-pnpm install --frozen-lockfile   # first: everything below is a repo-local binary
-pnpm setup:local --route local   # the bundled model in Docker; asks before it pulls anything
-pnpm dev                         # prints an unlock URL - open that, not localhost:3000
+pnpm install --frozen-lockfile
+./setup.sh --route featherless     # GLM 5.3 Flash through Featherless; the key is asked for, hidden, or read from FEATHERLESS_API_KEY
+pnpm dev                           # prints an unlock URL - open that, not localhost:3000
 ```
 
-`pnpm setup:local` checks Node, pnpm, Docker Compose v2 and the ports it is about to publish before it starts anything; reads the free memory on your GPU and names the model it will pull and its size (`qwen3:8b`, about 5 GB, on a GPU with room, `qwen3:4b`, about 2.5 GB, otherwise) and asks before it pulls; then runs the sequence under [What the setup does](#what-the-setup-does) and ends with the unlock URL. Run it again whenever you like: it keeps the generated keys, the admin key and the data volume, and fills in only what is missing. `--model <id>` names the model instead of taking the one it chose; `--model-port <n>` moves the model server off 11434 when a native `ollama serve` holds it; `--project`, `--port`, `--site-port` and `--dashboard-port` put a second installation beside the first; `--app-port <n>` moves the app off 3000; `--dry-run` prints every command it would run and writes nothing. Without `--route` it asks which of the four routes to take.
+The choice this way offers is the provider. `--route featherless` is the tested one: it writes the settings GLM 5.3 Flash needs through Featherless and takes that key from `FEATHERLESS_API_KEY` or a hidden prompt. `./setup.sh --route key` is OpenAI: the key is OpenAI's, and the model is `gpt-5.6-terra` unless `OPENAI_MODEL` in `.env.local` says otherwise (`--model <id>` names another). `./setup.sh --route endpoint --endpoint <url>` is [a model server you already have](#using-a-model-server-you-already-have). Whichever you take, your chat and relevant content from your documentation are sent to the provider.
 
-Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and approve the charter it writes. No provider was called and no account exists.
+**On the key route the two addresses collapse into one, which is the point.** Empty means `https://api.openai.com/v1`, and that address means the same thing from Next as it does from inside the backend container - so the trap that costs an afternoon on a local model server cannot be sprung. Next reaches it over this machine's ordinary outbound connection and the backend over its container's, and the charter arrives from the Node action just as the chat streams from Next. Leave both variables empty rather than writing the default into them; there is nothing to point anywhere. Featherless is likewise one hosted address both sides reach.
 
-Approving the charter is what fills the work queue, and how far the queue then gets is decided by the charter you just approved rather than by anything in this file. Each item is evaluated against the skills the agent has and the permissions it was deployed with, and only a `claim` verdict goes on to a plan and an execution. Deploy seeds five read scopes, and the one skill that ships is `see-internal-docs`, so the work that runs immediately is the work that can be answered out of the internal docs. A `needs-skill` verdict is the interesting one and it now finishes on this route: the agent proposes a skill, you approve it, the local sandbox runs its smoke test, and on exit 0 with output the skill registers and the work item that asked for it goes back in the queue and completes. `defer - awaiting-permission` is the verdict that still stops where it stops - it names the scope it wanted and then waits, with nothing in the UI that grants one.
+`./setup.sh` checks Node 22, pnpm 9 and Docker Compose v2, installs the dependencies if `node_modules` is missing, and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence under [What the setup does](#what-the-setup-does) in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run and writes nothing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
 
-How fast that is has nothing to do with Day0. This route sets a custom `OPENAI_BASE_URL`, so the agent core makes ordinary OpenAI-compatible chat-completions calls; the wait is a property of the endpoint you pointed it at. The same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, while the OpenAI-key route uses the Responses API and answers as fast as OpenAI does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
+Stop, resume, clear - each reads the project from `.env.local` and refuses the protected projects:
+
+```bash
+./setup.sh stop      # containers down; the data, model and redactor volumes and .env.local stay
+./setup.sh resume    # the same project, ports and admin key; no pull, and only changed values are re-synced
+./setup.sh clear     # containers, volumes and network removed; .env.local kept unless --purge-env; asks first unless --yes
+```
+
+Running the setup again is the same as `resume`, and `--reset` is `clear` followed by the setup.
+
+### What the setup does
+
+`./setup.sh` runs the repository's own `pnpm` verbs in this order, and the order is the part that has cost people an afternoon. Every one of them can still be run by hand, two things about the order are requirements rather than preferences, and `--dry-run` prints the whole plan for this checkout, the key masked, without writing anything.
+
+1. **`pnpm dev:no-auth-key`, before the first `up`.** Besides the three no-auth values it writes two real-mode ones: `DAY0_CREDENTIAL_KEY`, which encrypts every stored credential and which `pnpm sync:env` refuses real mode without, and `DAY0_NOTION_MCP_AUTH_TOKEN`, which authenticates the private hop to the Notion component. `--profile docs-notion` exits immediately without the second - `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion` - which is why the order is a requirement here.
+2. **The warm copy, with `--warm-from <project>`.** Another installation's redactor wheel and model volumes are copied into this project's before the first `up`, because a volume compose has already created is empty and the component's first start would fill it by downloading. A copy already present is kept.
+3. **`pnpm convex:up --profile docs-notion --profile browser --profile demo`**: the backend and the optional components. `DAY0_DOCS_HOST_DIR` has to be in the file, not just the directory on disk: the compose file binds it read-only with `:?`, so a hand-made `.env.local` that lacks the line fails at `docker compose up` with `required variable DAY0_DOCS_HOST_DIR is missing a value` even though the directory exists. The setup writes the line every time, and creates the folder with a placeholder page when it is missing.
+4. **`pnpm model:up` and `pnpm model:pull <model>`, on [Local, local model](#local-local-model) only**, and the pull only when the model the picker chose is not already in the volume.
+5. **`pnpm sandbox:up`**, skipped with `--sandbox daytona`. The default writes `DAYTONA_API_KEY` empty and says so, because Daytona wins whenever its key is present.
+6. **`pnpm redactor:up`, on the device the venv was built for.** `redactor/start.sh` keys its virtual environment on the requirements file its device selects, and a bare `pnpm redactor:up` reserves the GPU wherever an NVIDIA driver answers, so a venv warmed on the CPU (`--warm-from` copies exactly that) would be emptied and rebuilt from CUDA wheels: minutes of download where ten seconds were expected. The setup reads the venv's stamp first; `--gpu auto` follows it, `--gpu on` rebuilds for the GPU and names the wipe before it starts, `--gpu off` never asks. By hand, `MODEL_GPU=off pnpm redactor:up` is the same thing.
+7. **The admin key**, generated inside the backend container and kept only while this volume accepts it. The key belongs to the volume, not to the project: coming to real mode from an earlier stack, the key already in `.env.local` is the *old* backend's, and `pnpm sync:env` then fails to authenticate against the new one. The setup regenerates it whenever the volume is new.
+8. **`pnpm sync:env`** pushes the no-auth JWKS, the key and every `DAY0_*` value before the functions, because `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key. A value the deployment already holds is kept rather than set again.
+9. **`npx convex dev --once`** pushes the functions once; nothing needs pushing twice. The setup puts back the two public URLs the CLI rewrites to container ports.
+10. **`pnpm convex:restart`**, because a module keeps whatever env it was first evaluated with and the backend has been up since step 3. The setup then waits for the redactor to report healthy - the model loaded and verified against `redactor/models.sha256` - and carries on with a note if it has not.
+11. **`pnpm check:setup`** reads the same `.env.local` and reports every component and every setup, with the mode and the route on one line. It looks for the Compose project `COMPOSE_PROJECT_NAME` names, which the setup writes; a hand-made file without it, in a clone called anything but `day0`, is a checker that reports every component as absent while `docker ps` shows them running. Read the whole output rather than the summary lines - the component notes underneath them are where the real gaps are.
+
+On top of the generated values, the setup writes `COMPOSE_PROJECT_NAME`, the ports, `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NEXT_PUBLIC_CONVEX_URL` and `CONVEX_SELF_HOSTED_URL`, `DAY0_SURFACE_MODE=real`, `DAY0_DOCS_HOST_DIR` (default `./docs-local`), `DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`, `DAY0_REDACTOR_URL=http://redactor:8000`, `NEXT_PUBLIC_DEMO_BOSS_EMAIL` (your Slack address, asked for when the file has none because the DM is resolved from it at deploy and cannot be corrected on a live agent; `--boss-email` gives it), `DAY0_SETUP_ROOT`, and the model settings of the route: on the Featherless route `OPENAI_BASE_URL=https://api.featherless.ai/v1`, `OPENAI_MODEL=zai-org/GLM-5.3-Flash`, `OPENAI_JSON_MODE=prompt`, `OPENAI_MAX_OUTPUT_TOKENS=32768` and `OPENAI_REASONING_EFFORT=low`, written every time, with the key stored as `OPENAI_API_KEY`; on the local route the two paired model addresses, `MODEL_PORT` and `OPENAI_MODEL`.
+
+Three things are the cloud-model way's own:
+
+- **The key is asked for, never pasted.** It is read in a hidden prompt, written to `.env.local` with owner-only permissions, never printed and never passed to another program as an argument; `pnpm sync:env` pushes it to the deployment, and a rerun keeps the key already in the file.
+- **Coming from the local-model way, both addresses are cleared for you on the key route.** The setup writes `OPENAI_BASE_URL` and `CONVEX_OPENAI_BASE_URL` empty and `pnpm sync:env` clears the deployment's copy when both are empty, which is the one case where "unset" is a value rather than an omission: a deployment still holding `http://model:11434/v1` would call a model server you have since stopped, and only the actions would fail. The restart that follows is what makes the backend read it, because a module keeps whatever env it was first evaluated with.
+- **This way meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, good-habits research, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.6-terra` a demo run is cents rather than dollars, but it is not zero, which the local-model way is.
+
+## Local, local model
+
+The same real mode, with the model on this machine as well: the bundled model server in Docker beside the backend, the sandbox and the redactor. Nothing here signs up for anything and nothing is metered. The model layer takes any OpenAI-compatible endpoint, so a local runtime is a complete setup rather than a degraded one; and the sandbox is what lets an authored skill actually become callable, which is the half of the headline loop that used to need an account.
+
+```bash
+pnpm install --frozen-lockfile
+./setup.sh --route local           # the bundled model: pick from what is present and what is tested, on the GPU where there is one
+pnpm dev                           # prints an unlock URL - open that, not localhost:3000
+```
+
+The choice this way offers is the model. The setup lists the models before anything starts - first what the bundled service's volume already holds, then the list this project has tested (today one entry, `qwen3:8b`, the semi-final local bed; `scripts/models.ts` is the one place to add another), each marked present with its size or will-pull with the download - and asks which to serve: a numbered picker on a terminal, `--model <id>` to name one, `--yes` for the first present model (else the first tested one), and a model already present is not pulled again. `--model-port <n>` moves the model server off 11434 when a native `ollama serve` holds it. Everything else - the flags, `stop`, `resume` and `clear`, the components and the first day in the browser - is the same as [Local, cloud model](#local-cloud-model) above and [Real mode](#real-mode) below.
+
+How fast that is has nothing to do with Day0. This route sets a custom `OPENAI_BASE_URL`, so the agent core makes ordinary OpenAI-compatible chat-completions calls; the wait is a property of the endpoint you pointed it at. The same `qwen3:8b` answers in seconds on a current GPU and in minutes on a CPU, while the key route of the cloud-model way uses the Responses API and answers as fast as OpenAI does. `pnpm model:up` uses an NVIDIA GPU wherever it finds one, so the fast case is the default rather than something to go looking for.
 
 The bundled server starts with a 16,384-token context because Day0's executor must see the approved charter, discovered documentation, runbook guidance, action schema and work request together. Ollama's smaller server default truncates that prompt from the head without failing the request, which can leave a local model holding the right tool names but not the instructions and evidence that determine their exact arguments. Set `OLLAMA_CONTEXT_LENGTH` higher only when the model supports it and the additional KV cache fits the machine; lowering it below 16,384 is a deliberate quality trade-off, not only a memory optimisation.
 
 Model size shows up in the output as well as on the clock, and the two are worth telling apart before you judge the loop. A small model holds the 1:1, fills the charter and drives the work queue, but it will sometimes decide it has heard enough and call `dayOneComplete` after two topics rather than seven; the charter it writes from that short transcript is a real charter, with thinner evidence in it. A larger model - local or hosted - is the whole of the fix for that, and `pnpm probe:model` tells you whether a given endpoint can drive the loop at all before you wire it into a demo.
-
-**A `failed` work item is the other thing size buys you, and on this route it is an expected outcome rather than a broken one.** An approved plan is executed as a set of named actions against the mock environment, and each one addresses a row by slug - `spreadsheet.appendRow` on a spreadsheet that exists, `ticket.update` on a ticket that exists. A smaller model writes plausible slugs instead of real ones, so some actions land and the invented ones are refused; the item goes to `failed` and the card lists every action that did not reach the environment next to the reason it did not. Nothing is silently half-applied, and the card says so: `Retry` re-runs the *whole* plan, so an action that already landed is applied a second time. Reading that panel is how you tell a small model's invented slug apart from a real fault, and it is the difference between the two runs on the same machine - a hosted model on the same charter dispatches actions against rows that are actually there.
 
 **Slow is not merely slow, though, and this is the failure a local model actually hands you.** Charter synthesis is one Convex action, and it has two ceilings: any single model call inside it gives up after **300 s** without a response header, and the action itself is killed at **600 s**. A model that answers in seconds clears both by a mile. A model that has spilled onto the CPU does not, and what you see then is a 1:1 that ran perfectly and a charter that never arrives - the *same* symptom as the two-addresses mistake below, which is what makes it worth naming here. `npx convex logs` is what tells the two apart: the address mistake fails at once with a connection error, and this one sits there and then reports `UND_ERR_HEADERS_TIMEOUT`, a retry, and `execution timed out (maximum duration 600s)`.
 
 Spilling is a question of free VRAM, not of the model's size on paper, so the fix is a model that fits **what is free on your GPU right now** - which may well mean a smaller one. `docker compose exec model ollama ps` prints the split, and `45%/55% CPU/GPU` on that line is the warning: `qwen3:8b` needs about 6 GB resident, so on a 12 GB card with 7 GB already spoken for it lands half on the CPU, answers a short prompt in ~40 s instead of ~4 s, and never finishes the charter. `qwen3:4b` fits the same gap whole and runs the loop end to end. Switch to the smaller one when `ollama ps` says you are splitting:
 
 ```bash
-pnpm setup:local --route local --model qwen3:4b   # ~2.5 GB, same loop, fits a smaller gap
+./setup.sh --route local --model qwen3:4b   # ~2.5 GB, same loop, fits a smaller gap
 ```
 
 The setup writes `OPENAI_MODEL`, pulls the model, re-syncs the deployment and restarts the backend; `--model qwen3:8b` goes back the same way. On a running stack, `pnpm model:pull qwen3:4b` fetches the weights on their own.
 
-`pnpm build` refuses while `NEXT_PUBLIC_DEV_NO_AUTH=true` is in the environment. The refusal arrives as the cause of a Next build error - `NEXT_PUBLIC_DEV_NO_AUTH=true is a local-development-only flag and was found in a production-like environment`. Same guard as the mode itself: it only ever resolves under `next dev`, and a flag that reached a Vercel project should fail the build rather than ship an open deployment. Unset it for the build.
-
 ### What the setup does
 
-`pnpm setup:local --route local` runs the repository's own `pnpm` verbs in this order, and the order is the part that has cost people an afternoon. Every one of them can still be run by hand, and `pnpm setup:local --dry-run` prints the exact commands for this checkout without writing anything.
+The [eleven steps above](#what-the-setup-does), with the fourth active: **`pnpm model:up`** starts the OpenAI-compatible model server on 11434, on the GPU where there is one ([the GPU is opt-out](#the-gpu-is-opt-out-not-opt-in)), and **`pnpm model:pull <model>`** fetches the weights into the `<project>_model_data` volume, only when the model the picker chose is not already there. `pnpm sync:env` then pushes the two model addresses as a pair, and this is the one that costs an afternoon: the Day-1 chat streams from Next on this machine and reaches the model on loopback, while the charter is synthesised by a Convex Node action inside the backend container, where `127.0.0.1` is the container itself. So `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` is what Next dials and `CONVEX_OPENAI_BASE_URL=http://model:11434/v1` is what the backend dials; the sync pushes the second as the deployment's `OPENAI_BASE_URL` and warns if it was left pointing at loopback. The symptom of getting it wrong is a 1:1 that works perfectly and a charter that never arrives.
 
-1. **`pnpm dev:no-auth-key`** writes `DEV_NO_AUTH_SECRET` (unlocks a browser), `DEV_NO_AUTH_SIGNING_KEY` (signs the token Convex accepts, never leaves the machine) and `DEV_NO_AUTH_JWKS` (its public half) into `.env.local`, generated rather than chosen. `pnpm dev:no-auth-key --force` rotates them, which invalidates every unlocked browser and needs a re-sync.
-2. **`pnpm convex:up`** starts day0's backend on 3210/3211 (`--profile dev` adds the dashboard on 6791) and creates `./docs-local` so the read-only documentation mount has something to bind.
-3. **`pnpm model:up`** starts the OpenAI-compatible model server on 11434, on the GPU where there is one ([the GPU is opt-out](#the-gpu-is-opt-out-not-opt-in)), and **`pnpm model:pull <model>`** fetches the weights into the `<project>_model_data` volume.
-4. **`pnpm sandbox:up`** starts the sandbox that verifies authored skills. It needs nothing from you and touches nothing else: the two meet over a socket on a shared volume the backend mounts whether or not the sandbox is running, so a sandbox started later needs no restart and no setting, and `pnpm check:setup` says which of the two states you are in.
-5. **The admin key** is generated inside the backend container (`pnpm convex:admin-key` by hand) and written to `CONVEX_SELF_HOSTED_ADMIN_KEY`. The key belongs to the volume, not to the project, and every key a backend has ever minted for a volume goes on working, so the setup keeps the one already in the file when this backend accepts it and mints a new one only when the file has none or this volume refuses it.
-6. **`pnpm sync:env`** pushes the values to the deployment, the JWKS before the flag that requires it: `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key. It pushes the two model addresses as a pair, and this is the one that costs an afternoon: the Day-1 chat streams from Next on this machine and reaches the model on loopback, while the charter is synthesised by a Convex Node action inside the backend container, where `127.0.0.1` is the container itself. So `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` is what Next dials and `CONVEX_OPENAI_BASE_URL=http://model:11434/v1` is what the backend dials; the sync pushes the second as the deployment's `OPENAI_BASE_URL` and warns if it was left pointing at loopback. The symptom of getting it wrong is a 1:1 that works perfectly and a charter that never arrives.
-7. **`npx convex dev --once`** pushes the functions. The CLI rewrites `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CONVEX_SITE_URL` to the backend's own container ports as it goes; the setup puts the host addresses back and says that it did.
-8. **`pnpm convex:restart`**, because a module keeps whatever env it was first evaluated with and the backend has been up since step 2.
-9. **`pnpm check:setup`** reads `.env.local` and reports the backend, auth, model, sandbox and voice separately, failing only on what is broken rather than merely incomplete.
-
-Then `pnpm dev` prints an unlock URL. It carries the secret once; after that it lives in an httpOnly cookie. Open `http://localhost:3000` directly and every route answers 403 - that is the boundary working, not a fault.
-
-Beyond the generated keys, the setup writes `COMPOSE_PROJECT_NAME`, the ports, `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NEXT_PUBLIC_CONVEX_URL` and `CONVEX_SELF_HOSTED_URL` (both `http://127.0.0.1:3210`), the two model addresses above, `MODEL_PORT` and `OPENAI_MODEL` into `.env.local`; `OPENAI_API_KEY` stays empty, because there is no account, and `OLLAMA_CONTEXT_LENGTH=16384` comes from `.env.example` for the reason given above.
-
-Teardown, in this order, because `convex:down` removes the compose network on its way out and cannot while the model container is still attached to it:
-
-```bash
-pnpm model:down                  # the model server; the pulled weights stay
-pnpm sandbox:down                # the verification sandbox; it holds nothing
-pnpm convex:down                 # the backend; the data volume stays
-```
-
-`pnpm setup:local stop`, `resume` and `clear` are the same three things by name, read from `.env.local`: `stop` takes every container down and keeps every volume, `resume` is the setup again, and `clear` removes the containers, the volumes and the network, asking first unless `--yes`. The data volume survives `stop`, which is what lets you stop for the day and come back to the same agent.
+On top of the values every route writes, this way writes those two addresses, `MODEL_PORT` and `OPENAI_MODEL` into `.env.local`; `OPENAI_API_KEY` stays empty, because there is no account, and `OLLAMA_CONTEXT_LENGTH=16384` comes from `.env.example` for the reason given above.
 
 ### The local skill sandbox
 
-A skill the agent wrote is not a callable skill until something has run it, and that is the step that used to need an account. `pnpm sandbox:up` starts a container that runs the smoke test, so the account-free route finishes the loop it advertises: `needs-skill` → propose → approve → author → **verify** → register → the work item that asked for the skill goes back in the queue and completes.
+A skill the agent wrote is not a callable skill until something has run it, and that is the step that used to need an account. `pnpm sandbox:up` starts a container that runs the smoke test, so the local-model way finishes the loop it advertises: `needs-skill` → propose → approve → author → **verify** → register → the work item that asked for the skill goes back in the queue and completes.
 
 ```bash
 pnpm sandbox:up                  # start it; the backend already mounts its socket volume
@@ -378,49 +405,9 @@ To throw the volumes away too, all together: `pnpm convex:down --profile model -
 
 Every service in `docker-compose.yml` sits behind a profile, and the profiles are the components: `real` is day0's backend and is added to every `pnpm convex:*` command for you, and each other profile adds one optional component. `pnpm convex:up --help` lists them; what each one is for, when you need it and what it never sees is in `docs/running/components.md`.
 
-### Without Docker for Convex
+## Real mode
 
-`pnpm convex:dev` with nobody logged in does not stop to ask for an account: it creates an **anonymous deployment**, a backend the Convex CLI runs on this machine, and prints `Run npx convex login at any time to create an account and link this deployment`. That is a second account-free route to a backend, and a shorter one - no compose project, no admin key, and no second model address, because a backend running as an ordinary process on this machine reaches `127.0.0.1` the same way Next does:
-
-```bash
-pnpm install
-cp .env.example .env.local
-# NEXT_PUBLIC_DEV_NO_AUTH=true, OPENAI_BASE_URL=http://127.0.0.1:11434/v1, OPENAI_MODEL=qwen3:8b
-pnpm convex:dev                  # anonymous local deployment; writes the Convex keys itself
-pnpm dev:no-auth-key
-./scripts/sync-convex-env.sh
-pnpm dev
-```
-
-You still need a model - a native `ollama serve` on 11434, or `pnpm model:up` and `MODEL_PORT` for the bundled one. What you give up against the self-hosted stack is a deployment you own and can keep: the compose backend has its own volume, its own dashboard, and survives independently of the CLI. Use this route to see the thing run; use the one above to keep working on it.
-
-## Run it with an OpenAI key
-
-Everything the route above runs, minus the model. The same self-hosted Convex backend in Docker and the same no-auth dev mode - so still no Convex account, no Clerk, and one fixed local user - with `api.openai.com` in place of a model server you host. If you already have a key, this is the shortest way to see the loop run: nothing to pull, nothing left resident afterwards, and the pauses between steps are a hosted model's rather than your laptop's.
-
-```bash
-pnpm install --frozen-lockfile
-pnpm setup:local --route key     # asks for the key in a hidden prompt; stored in .env.local, readable only by you
-pnpm dev                         # prints an unlock URL - open that, not localhost:3000
-```
-
-The key is OpenAI's, and the model is `gpt-5.6-terra` unless `OPENAI_MODEL` in `.env.local` says otherwise (`--model <id>` names another). Two more answers exist for other providers: `pnpm setup:local --route featherless` writes the settings GLM 5.3 Flash needs through Featherless and takes that key from `FEATHERLESS_API_KEY` or a hidden prompt, and `pnpm setup:local --route endpoint --endpoint <url>` is [a model server you already have](#using-a-model-server-you-already-have).
-
-**The two addresses collapse into one here, which is the point.** Empty means `https://api.openai.com/v1`, and that address means the same thing from Next as it does from inside the backend container - so the trap that costs an afternoon on a local model server cannot be sprung. Next reaches it over this machine's ordinary outbound connection and the backend over its container's, and the charter arrives from the Node action just as the chat streams from Next. Leave both variables empty rather than writing the default into them; there is nothing to point anywhere.
-
-### What the setup does
-
-The account-free sequence without its model steps: `pnpm dev:no-auth-key`, `pnpm convex:up`, `pnpm sandbox:up`, the admin key, `pnpm sync:env`, `npx convex dev --once`, `pnpm convex:restart`, `pnpm check:setup`. What each is for, and the trap each avoids, is [above](#what-the-setup-does); three things are this route's own:
-
-- **The key is asked for, never pasted.** It is read in a hidden prompt, written to `.env.local` with owner-only permissions, never printed and never passed to another program as an argument; `pnpm sync:env` pushes it to the deployment, and a rerun keeps the key already in the file.
-- **Coming from the local-model route, both addresses are cleared for you.** The setup writes `OPENAI_BASE_URL` and `CONVEX_OPENAI_BASE_URL` empty and `pnpm sync:env` clears the deployment's copy when both are empty, which is the one case where "unset" is a value rather than an omission: a deployment still holding `http://model:11434/v1` would call a model server you have since stopped, and only the actions would fail. The restart that follows is what makes the backend read it, because a module keeps whatever env it was first evaluated with.
-- **This route meters.** The loop is a lot of model calls: seven topics of 1:1, charter synthesis, good-habits research, an evaluation and a plan per work item, and a full authoring pass per skill. On `gpt-5.6-terra` a demo run is cents rather than dollars, but it is not zero, which the account-free route is.
-
-No `pnpm model:up` here, so `pnpm sandbox:down && pnpm convex:down` is the whole teardown, and `pnpm setup:local stop` does the same. And combined with the [anonymous deployment](#without-docker-for-convex) above, this route needs no Docker either: a key, `pnpm convex:dev`, and nothing else running on your machine - at the cost of the local sandbox, which lives in Docker, so skill verification on that combination means a `DAYTONA_API_KEY`.
-
-## Run it in real mode
-
-Everything above runs day0 against a **seeded mock office**: the systems, the tickets and the messages are fixtures, and nothing the agent does leaves your machine. Real mode is the other setting of one variable. Day0 then reads the documentation you point it at, proposes a connection to each system that documentation records, and - once you approve a card - acts on those systems for real: a comment on your ticket, a message in your channel, a form filled in on a web UI it drives through a browser.
+Both local ways are real mode: link your documentation and connect the systems it names through approval cards; those systems still need authorised access. Real mode is local-only. Day0 reads the documentation you point it at, proposes a connection to each system that documentation records, and - once you approve a card - acts on those systems for real: a comment on your ticket, a message in your channel, a form filled in on a web UI it drives through a browser. The **seeded mock office** the hosted demo works in - fixtures for the systems, the tickets and the messages, with nothing the agent does leaving your machine - is the other setting of the same variable, kept for the evaluation harness and documented under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
 It is deliberately restricted to local no-auth development. `DAY0_SURFACE_MODE=real` throws unless `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NODE_ENV=development` and nothing names Vercel, so the mode that can touch live systems cannot be reached on a hosted deployment at all (`src/lib/surface-mode.ts`).
 
@@ -444,49 +431,6 @@ container image if it is not cached. These downloads need network access; infere
 runs locally without an account. CUDA wheels require additional space; their download
 size has not been verified here. Detection can miss secrets, and structural-only
 outcomes are labelled as limited redaction in the dashboard.
-
-### Setup
-
-One command from a fresh clone, and one choice: where the model runs.
-
-```bash
-pnpm install --frozen-lockfile
-./setup.sh --route featherless     # GLM 5.3 Flash through Featherless; the key is asked for, hidden, or read from FEATHERLESS_API_KEY
-./setup.sh --route local           # the bundled model: pick from what is present and what is tested, on the GPU where there is one
-pnpm dev                                # prints an unlock URL - open that, not localhost:3000
-```
-
-`./setup.sh` checks Node 22, pnpm 9 and Docker Compose v2, installs the dependencies if `node_modules` is missing, and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence below in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run and writes nothing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
-
-On the local route the setup lists the models before anything starts - first what the bundled service's volume already holds, then the list this project has tested (today one entry, `qwen3:8b`, the semi-final local bed; `scripts/models.ts` is the one place to add another), each marked present with its size or will-pull with the download - and asks which to serve: a numbered picker on a terminal, `--model <id>` to name one, `--yes` for the first present model (else the first tested one), and a model already present is not pulled again.
-
-Stop, resume, clear - each reads the project from `.env.local` and refuses the protected projects:
-
-```bash
-./setup.sh stop      # containers down; the data, model and redactor volumes and .env.local stay
-./setup.sh resume    # the same project, ports and admin key; no pull, and only changed values are re-synced
-./setup.sh clear     # containers, volumes and network removed; .env.local kept unless --purge-env; asks first unless --yes
-```
-
-Running the setup again is the same as `resume`, and `--reset` is `clear` followed by the setup.
-
-### What the setup does
-
-`./setup.sh` is the [OpenAI-key sequence](#what-the-setup-does-1) plus a documentation folder, the real-mode values and the components, in this order. Two things about the order are requirements here where above they were preferences, and `--dry-run` prints the whole plan for this checkout, the key masked, without writing anything.
-
-1. **`pnpm dev:no-auth-key`, before the first `up`.** Besides the three no-auth values it writes two real-mode ones: `DAY0_CREDENTIAL_KEY`, which encrypts every stored credential and which `pnpm sync:env` refuses real mode without, and `DAY0_NOTION_MCP_AUTH_TOKEN`, which authenticates the private hop to the Notion component. `--profile docs-notion` exits immediately without the second - `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion` - which is why the order is a requirement here.
-2. **The warm copy, with `--warm-from <project>`.** Another installation's redactor wheel and model volumes are copied into this project's before the first `up`, because a volume compose has already created is empty and the component's first start would fill it by downloading. A copy already present is kept.
-3. **`pnpm convex:up --profile docs-notion --profile browser --profile demo`**: the backend and the optional components. `DAY0_DOCS_HOST_DIR` has to be in the file, not just the directory on disk: the compose file binds it read-only with `:?`, so a hand-made `.env.local` that lacks the line fails at `docker compose up` with `required variable DAY0_DOCS_HOST_DIR is missing a value` even though the directory exists. The setup writes the line every time, and creates the folder with a placeholder page when it is missing.
-4. **`pnpm model:up` and `pnpm model:pull <model>`, on the local route only**, and the pull only when the model the picker chose is not already in the volume.
-5. **`pnpm sandbox:up`**, skipped with `--sandbox daytona`. The default writes `DAYTONA_API_KEY` empty and says so, because Daytona wins whenever its key is present.
-6. **`pnpm redactor:up`, on the device the venv was built for.** `redactor/start.sh` keys its virtual environment on the requirements file its device selects, and a bare `pnpm redactor:up` reserves the GPU wherever an NVIDIA driver answers, so a venv warmed on the CPU (`--warm-from` copies exactly that) would be emptied and rebuilt from CUDA wheels: minutes of download where ten seconds were expected. The setup reads the venv's stamp first; `--gpu auto` follows it, `--gpu on` rebuilds for the GPU and names the wipe before it starts, `--gpu off` never asks. By hand, `MODEL_GPU=off pnpm redactor:up` is the same thing.
-7. **The admin key**, generated inside the backend container and kept only while this volume accepts it. The key belongs to the volume, not to the project: coming to real mode from an earlier stack, the key already in `.env.local` is the *old* backend's, and `pnpm sync:env` then fails to authenticate against the new one. The setup regenerates it whenever the volume is new.
-8. **`pnpm sync:env`** pushes the no-auth JWKS, the key and every `DAY0_*` value before the functions, because `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key. A value the deployment already holds is kept rather than set again.
-9. **`npx convex dev --once`** pushes the functions once; nothing needs pushing twice. The setup puts back the two public URLs the CLI rewrites to container ports.
-10. **`pnpm convex:restart`**, because a module keeps whatever env it was first evaluated with and the backend has been up since step 3. The setup then waits for the redactor to report healthy - the model loaded and verified against `redactor/models.sha256` - and carries on with a note if it has not.
-11. **`pnpm check:setup`** reads the same `.env.local` and reports every component and every setup, with the mode and the route on one line. It looks for the Compose project `COMPOSE_PROJECT_NAME` names, which the setup writes; a hand-made file without it, in a clone called anything but `day0`, is a checker that reports every component as absent while `docker ps` shows them running. Read the whole output rather than the summary lines - the component notes underneath them are where the real gaps are.
-
-On top of the generated values, the setup writes `COMPOSE_PROJECT_NAME`, the ports, `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NEXT_PUBLIC_CONVEX_URL` and `CONVEX_SELF_HOSTED_URL`, `DAY0_SURFACE_MODE=real`, `DAY0_DOCS_HOST_DIR` (default `./docs-local`), `DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`, `DAY0_REDACTOR_URL=http://redactor:8000`, `NEXT_PUBLIC_DEMO_BOSS_EMAIL` (your Slack address, asked for when the file has none because the DM is resolved from it at deploy and cannot be corrected on a live agent; `--boss-email` gives it), `DAY0_SETUP_ROOT`, and the model settings of the route: on the Featherless route `OPENAI_BASE_URL=https://api.featherless.ai/v1`, `OPENAI_MODEL=zai-org/GLM-5.3-Flash`, `OPENAI_JSON_MODE=prompt`, `OPENAI_MAX_OUTPUT_TOKENS=32768` and `OPENAI_REASONING_EFFORT=low`, written every time, with the key stored as `OPENAI_API_KEY`; on the local route the two paired model addresses, `MODEL_PORT` and `OPENAI_MODEL`.
 
 ### The documentation is yours
 
@@ -525,7 +469,7 @@ Then, in the browser:
 
 ### Rehearse the real path
 
-The real-mode route above can be run unattended, from a fresh clone, against the operator's own Linear and Slack demonstration workspaces:
+Either local way can be run unattended, from a fresh clone, against the operator's own Linear and Slack demonstration workspaces:
 
 ```bash
 pnpm rehearse:real --secrets <file> --dry-run        # bring-up, onboarding and the cards; no provider write
@@ -602,12 +546,12 @@ Copy `.env.example` to `.env.local` and fill in:
 | `EXA_API_KEY` | Good-habits research |
 | `DAYTONA_API_KEY`, `DAYTONA_API_URL` | The hosted skill-verification sandbox. Optional: without a key the [bundled local sandbox](#the-local-skill-sandbox) does the same job, and with neither an authored skill stops at `authoring` and stays uncallable |
 | `SKILL_SANDBOX_SOCKET`, `SKILL_SANDBOX_TIMEOUT_SECONDS` | The local sandbox. Both have working defaults and the bundled stack needs neither. See [The local skill sandbox](#the-local-skill-sandbox) |
-| `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY` | Self-hosted backend instead of Convex cloud. Set by the steps in [Run it with no accounts](#run-it-with-no-accounts) |
+| `CONVEX_SELF_HOSTED_URL`, `CONVEX_SELF_HOSTED_ADMIN_KEY` | Self-hosted backend instead of Convex cloud. Written by `./setup.sh` and `pnpm setup:local` ([Local dev](#local-dev)) |
 | `CONVEX_BIND_ADDR`, `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT`, `MODEL_PORT` | Host side of the self-hosted stack. See [Ports](#ports-host-side-and-container-side) |
 | `MODEL_GPU`, `MODEL_GPU_COUNT` | Whether the bundled model service reserves a GPU. `auto` (default) uses one where there is one. See [The GPU is opt-out, not opt-in](#the-gpu-is-opt-out-not-opt-in) |
 | `NEXT_PUBLIC_DEV_NO_AUTH`, `DEV_NO_AUTH_SECRET`, `DEV_NO_AUTH_SIGNING_KEY`, `DEV_NO_AUTH_JWKS` | No-auth dev mode. The last three are written by `pnpm dev:no-auth-key`, never by hand |
 | `COMPOSE_PROJECT_NAME` | The Compose project the stack runs as. Unset, Compose names it after the directory you cloned into and `pnpm check:setup` looks for one called `day0` - so set it whenever the directory is not `day0`. See [Ports](#ports-host-side-and-container-side) |
-| `DAY0_SURFACE_MODE` | `mock` (default) drives the seeded mock office; `real` lets the agent act on your own systems through the connections your documentation records. See [Run it in real mode](#run-it-in-real-mode) |
+| `DAY0_SURFACE_MODE` | `mock` (default) drives the seeded mock office; `real` lets the agent act on your own systems through the connections your documentation records. See [Real mode](#real-mode) |
 | `DAY0_DOCS_HOST_DIR`, `DAY0_DOCS_ROOT` | The documentation folder, mounted read-only into the backend. The host path is Compose's (`./docs-local` by default, created empty for you); `/docs` is what Convex actions see. Real mode only |
 | `DAY0_CREDENTIAL_KEY` | Encrypts every stored credential. Written by `pnpm dev:no-auth-key` and pushed to the deployment; `pnpm sync:env` refuses real mode without it |
 | `DAY0_NOTION_MCP_AUTH_TOKEN` | Authenticates the private hop to the bundled Notion component. Written by `pnpm dev:no-auth-key`; `--profile docs-notion` refuses to start without it |
@@ -733,7 +677,7 @@ It resolves values the way the running app does, which matters more than it soun
    - Chat: `POST /api/voice/chat` streams the configured model until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
 3. **Charter synthesis** — `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
 4. **Approval** — the card lists the rules the draft derived from the transcript, each with its quote; the boss strikes any of them, then approves. `api.charters.approve` applies the strikes to the clauses, flips state to `active` and triggers `postCharterApproval` (Exa + the configured model → `## Good-habits memory` block in `AGENTS.md`). Afterwards `api.charters.amend` writes each change as a new version that supersedes the last and schedules `work.reevaluatePending` for the parked work; `work.setPlan` asks each of the charter's open questions once, at the first plan that touches it, and `api.work.approvePlan` takes the answers with the approval.
-5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Run it in real mode](#run-it-in-real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
+5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Real mode](#real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
 6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** one distinct stdout line per representative input set (two), whichever ran. Before any sandbox runs, a static gate refuses a body or smoke test that repeats the identifiers, figures or quoted phrases of the work item that proposed the skill, or uses an input it does not declare; the reason lands on the row for the retry. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not verified · not callable" with a retry.
 7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 20 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
 
@@ -905,10 +849,11 @@ Every number the submission quotes comes from a file in this repository or from 
 | The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` | `pnpm eval:semifinal` with the bed's model in `.env.local`; `pnpm eval:semifinal -- --regrade <path>` re-scores a directory with no model call |
 | The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
-| The recorded run's supervision figures: charter approved 4 min 26 s after deployment, 7 approved and 1 rejected, 29 s median decision latency, 1 action blocked after revocation, audit trail 32 of 32 | The Supervision card of the 3 September 2026 real-mode run the demo video is cut from, as `metrics:forAgent` computes it from that run's event ledger. That run's ledger export is part of the submission materials rather than this repository | Run [the real-mode route](#run-it-in-real-mode); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#run-it-in-real-mode) |
+| The recorded run's supervision figures: charter approved 4 min 26 s after deployment, 7 approved and 1 rejected, 29 s median decision latency, 1 action blocked after revocation, audit trail 32 of 32 | The Supervision card of the 3 September 2026 real-mode run the demo video is cut from, as `metrics:forAgent` computes it from that run's event ledger. That run's ledger export is part of the submission materials rather than this repository | Run [either local way](#local-dev); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#real-mode) |
 | This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), a second run of the same route on the same commit and model, paced for screenshots | The same |
 
 The two real-mode runs are single observations with the same code and model and different human pacing; neither is a distribution, and the submission names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
+
 
 ## Evaluation quick start
 
@@ -939,7 +884,7 @@ Evidence written by an earlier harness is not resumable under v2 and the v1 dire
 
 The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, while the frontier Terra and Sol arms exercise the hosted Responses API; both arms now complete tool-calling work on that fixed route. Day0 leads the ordinary arm on task pass, a-priori procedure adherence, prohibited-action freedom and out-of-scope pass in all three beds, but it does not pass every task-run (44/45 on each hosted model), and this controlled mock-office comparison does not establish universal performance. The ordinary arm is the same model with no onboarding.
 
-It wants Node 22+, pnpm, a self-hosted backend in **mock** mode and the local sandbox. The model is whatever `OPENAI_MODEL` names, and the harness checks that the deployment agrees with `.env.local` before it starts - the two disagreeing is the failure this check exists to catch. With the bundled `qwen3:8b`, keep `OLLAMA_CONTEXT_LENGTH=16384`; changing it means rebuilding the model service and confirming the context in its startup log.
+It wants Node 22+, pnpm, a self-hosted backend in **mock** mode and the local sandbox, which is the stack `pnpm setup:local --route local` prepares ([Evaluation and the mock office](#evaluation-and-the-mock-office) below). The model is whatever `OPENAI_MODEL` names, and the harness checks that the deployment agrees with `.env.local` before it starts - the two disagreeing is the failure this check exists to catch. With the bundled `qwen3:8b`, keep `OLLAMA_CONTEXT_LENGTH=16384`; changing it means rebuilding the model service and confirming the context in its startup log.
 
 ```bash
 pnpm install
@@ -968,6 +913,73 @@ pnpm eval:semifinal -- --arms day0 --runs 1 --tasks EVAL-WRITE-01               
 `pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
 
 The three frozen evidence directories the submission quotes, and their numbers, are listed in [`evaluation/README.md`](evaluation/README.md); earlier directories are kept as superseded audit history and are not used for any conclusion.
+
+## Evaluation and the mock office
+
+Mock mode is the seeded office: team docs, a spreadsheet, chat channels, a ticket queue and a social feed, fixtures shipped in this repository and seeded per agent, so a run is reproducible on a stranger's laptop and nothing the agent does leaves your machine. It is what the [controlled comparison](evaluation/README.md) and its frozen beds ran on, and the workspace the [hosted demo](#live-demo) deploys agents into. It is not one of the ways to run Day0 on your own systems - both local ways are [real mode](#real-mode) - and it is documented here as what it is for: a bed for the harness, and the office the hosted demo shows. In it the model calls, the sandbox, the state machine and the approval gates are still real.
+
+Its command is the same setup in mock mode, with the same choice of where the model runs:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm setup:local --route local   # the bundled model in Docker; asks before it pulls anything
+pnpm setup:local --route key     # or an OpenAI key, asked for in a hidden prompt; --route featherless and --route endpoint as in real mode
+pnpm dev                         # prints an unlock URL - open that, not localhost:3000
+```
+
+`pnpm setup:local` checks Node, pnpm, Docker Compose v2 and the ports it is about to publish before it starts anything; reads the free memory on your GPU and names the model it will pull and its size (`qwen3:8b`, about 5 GB, on a GPU with room, `qwen3:4b`, about 2.5 GB, otherwise) and asks before it pulls; then runs the sequence under [What the setup does](#what-the-setup-does-2) and ends with the unlock URL. Run it again whenever you like: it keeps the generated keys, the admin key and the data volume, and fills in only what is missing. `--model <id>` names the model instead of taking the one it chose; `--model-port <n>` moves the model server off 11434 when a native `ollama serve` holds it; `--project`, `--port`, `--site-port` and `--dashboard-port` put a second installation beside the first; `--app-port <n>` moves the app off 3000; `--dry-run` prints every command it would run and writes nothing. Without `--route` it asks which of the four routes to take.
+
+Open the unlock URL, deploy an agent, hold the Day-1 1:1 in chat mode, and approve the charter it writes. On the local route no provider was called and no account exists; on the key route the three things the [cloud-model way](#local-cloud-model) notes apply here too.
+
+Approving the charter is what fills the work queue, and how far the queue then gets is decided by the charter you just approved rather than by anything in this file. Each item is evaluated against the skills the agent has and the permissions it was deployed with, and only a `claim` verdict goes on to a plan and an execution. Deploy seeds five read scopes, and the one skill that ships is `see-internal-docs`, so the work that runs immediately is the work that can be answered out of the internal docs. A `needs-skill` verdict is the interesting one and it now finishes on this route: the agent proposes a skill, you approve it, the local sandbox runs its smoke test, and on exit 0 with output the skill registers and the work item that asked for it goes back in the queue and completes. `defer - awaiting-permission` is the verdict that still stops where it stops - it names the scope it wanted and then waits, with nothing in the UI that grants one.
+
+**A `failed` work item is the other thing a small model hands you, and on the local route it is an expected outcome rather than a broken one.** An approved plan is executed as a set of named actions against the mock environment, and each one addresses a row by slug - `spreadsheet.appendRow` on a spreadsheet that exists, `ticket.update` on a ticket that exists. A smaller model writes plausible slugs instead of real ones, so some actions land and the invented ones are refused; the item goes to `failed` and the card lists every action that did not reach the environment next to the reason it did not. Nothing is silently half-applied, and the card says so: `Retry` re-runs the *whole* plan, so an action that already landed is applied a second time. Reading that panel is how you tell a small model's invented slug apart from a real fault, and it is the difference between the two runs on the same machine - a hosted model on the same charter dispatches actions against rows that are actually there.
+
+The harness wants exactly this stack: a self-hosted backend in mock mode, the local sandbox and no `DAYTONA_API_KEY`, with `OLLAMA_CONTEXT_LENGTH=16384` for the bundled `qwen3:8b`. [Evaluation quick start](#evaluation-quick-start) above has its commands.
+
+### What the setup does
+
+`pnpm setup:local --route local` runs the repository's own `pnpm` verbs in this order, and the order is the part that has cost people an afternoon. Every one of them can still be run by hand, and `pnpm setup:local --dry-run` prints the exact commands for this checkout without writing anything.
+
+1. **`pnpm dev:no-auth-key`** writes `DEV_NO_AUTH_SECRET` (unlocks a browser), `DEV_NO_AUTH_SIGNING_KEY` (signs the token Convex accepts, never leaves the machine) and `DEV_NO_AUTH_JWKS` (its public half) into `.env.local`, generated rather than chosen. `pnpm dev:no-auth-key --force` rotates them, which invalidates every unlocked browser and needs a re-sync.
+2. **`pnpm convex:up`** starts day0's backend on 3210/3211 (`--profile dev` adds the dashboard on 6791) and creates `./docs-local` so the read-only documentation mount has something to bind.
+3. **`pnpm model:up`** starts the OpenAI-compatible model server on 11434, on the GPU where there is one ([the GPU is opt-out](#the-gpu-is-opt-out-not-opt-in)), and **`pnpm model:pull <model>`** fetches the weights into the `<project>_model_data` volume.
+4. **`pnpm sandbox:up`** starts the sandbox that verifies authored skills. It needs nothing from you and touches nothing else: the two meet over a socket on a shared volume the backend mounts whether or not the sandbox is running, so a sandbox started later needs no restart and no setting, and `pnpm check:setup` says which of the two states you are in.
+5. **The admin key** is generated inside the backend container (`pnpm convex:admin-key` by hand) and written to `CONVEX_SELF_HOSTED_ADMIN_KEY`. The key belongs to the volume, not to the project, and every key a backend has ever minted for a volume goes on working, so the setup keeps the one already in the file when this backend accepts it and mints a new one only when the file has none or this volume refuses it.
+6. **`pnpm sync:env`** pushes the values to the deployment, the JWKS before the flag that requires it: `convex/auth.config.ts` is evaluated against the deployment's env at push time and refuses a no-auth push with no key. It pushes the two model addresses as a pair, and this is the one that costs an afternoon: the Day-1 chat streams from Next on this machine and reaches the model on loopback, while the charter is synthesised by a Convex Node action inside the backend container, where `127.0.0.1` is the container itself. So `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` is what Next dials and `CONVEX_OPENAI_BASE_URL=http://model:11434/v1` is what the backend dials; the sync pushes the second as the deployment's `OPENAI_BASE_URL` and warns if it was left pointing at loopback. The symptom of getting it wrong is a 1:1 that works perfectly and a charter that never arrives.
+7. **`npx convex dev --once`** pushes the functions. The CLI rewrites `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CONVEX_SITE_URL` to the backend's own container ports as it goes; the setup puts the host addresses back and says that it did.
+8. **`pnpm convex:restart`**, because a module keeps whatever env it was first evaluated with and the backend has been up since step 2.
+9. **`pnpm check:setup`** reads `.env.local` and reports the backend, auth, model, sandbox and voice separately, failing only on what is broken rather than merely incomplete.
+
+Then `pnpm dev` prints an unlock URL. It carries the secret once; after that it lives in an httpOnly cookie. Open `http://localhost:3000` directly and every route answers 403 - that is the boundary working, not a fault.
+
+Beyond the generated keys, the setup writes `COMPOSE_PROJECT_NAME`, the ports, `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NEXT_PUBLIC_CONVEX_URL` and `CONVEX_SELF_HOSTED_URL` (both `http://127.0.0.1:3210`), the two model addresses above, `MODEL_PORT` and `OPENAI_MODEL` into `.env.local`; `OPENAI_API_KEY` stays empty, because there is no account, and `OLLAMA_CONTEXT_LENGTH=16384` comes from `.env.example` for the reason given above.
+
+Teardown, in this order, because `convex:down` removes the compose network on its way out and cannot while the model container is still attached to it:
+
+```bash
+pnpm model:down                  # the model server; the pulled weights stay
+pnpm sandbox:down                # the verification sandbox; it holds nothing
+pnpm convex:down                 # the backend; the data volume stays
+```
+
+`pnpm setup:local stop`, `resume` and `clear` are the same three things by name, read from `.env.local`: `stop` takes every container down and keeps every volume, `resume` is the setup again, and `clear` removes the containers, the volumes and the network, asking first unless `--yes`. The data volume survives `stop`, which is what lets you stop for the day and come back to the same agent.
+
+### Without Docker for Convex
+
+`pnpm convex:dev` with nobody logged in does not stop to ask for an account: it creates an **anonymous deployment**, a backend the Convex CLI runs on this machine, and prints `Run npx convex login at any time to create an account and link this deployment`. That is a second account-free route to a backend, and a shorter one - no compose project, no admin key, and no second model address, because a backend running as an ordinary process on this machine reaches `127.0.0.1` the same way Next does:
+
+```bash
+pnpm install
+cp .env.example .env.local
+# NEXT_PUBLIC_DEV_NO_AUTH=true, OPENAI_BASE_URL=http://127.0.0.1:11434/v1, OPENAI_MODEL=qwen3:8b
+pnpm convex:dev                  # anonymous local deployment; writes the Convex keys itself
+pnpm dev:no-auth-key
+./scripts/sync-convex-env.sh
+pnpm dev
+```
+
+You still need a model - a native `ollama serve` on 11434, or `pnpm model:up` and `MODEL_PORT` for the bundled one. What you give up against the self-hosted stack is a deployment you own and can keep: the compose backend has its own volume, its own dashboard, and survives independently of the CLI. Use this route to see the thing run; use the one above to keep working on it.
 
 ## 中文说明
 
@@ -1016,31 +1028,35 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **从这里开始** · [在线演示](#在线演示) · [披露](#披露) · [快速开始](#快速开始) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
 
-**运行** · [无需任何账户](#无需任何账户运行) · [使用 OpenAI key](#使用-openai-key-运行) · [在真实系统上运行](#在真实模式下运行) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
+**运行** · [托管演示](#托管演示) · [本地运行，云端模型](#本地运行云端模型) · [本地运行，本地模型](#本地运行本地模型) · [真实模式：两种本地方式的共同基础](#真实模式) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
 
 **配置** · [环境变量](#environment) · [端口](#ports-host-side-and-container-side) · [手机与隧道](#testing-from-a-phone-and-tunnels) · [ElevenLabs 语音](#elevenlabs-agent-setup) · [本地技能沙箱](#本地技能沙箱) · [GPU](#gpu-默认启用而非默认停用)
 
 **工作原理** · [运行流程](#runtime-flow) · [技术栈](#stack) · [路由](#routes) · [Convex 后端](#convex-backend-convex) · [数据结构](#schema-convexschemats) · [领域逻辑](#domain-logic-src)
 
-**项目** · [受控评测](evaluation/README.md) · [复现证据](#复现证据) · [评测快速开始](#评测快速开始) · [接口与 API 文档](#接口与-api-文档) · [数据来源与合规](docs/submission/compliance.md) · [贡献指南](CONTRIBUTING.md) · [安全](SECURITY.md) · [变更记录](CHANGELOG.md) · [致谢](#credits) · [许可证](#licence)
+**项目** · [受控评测](evaluation/README.md) · [复现证据](#复现证据) · [评测快速开始](#评测快速开始) · [评测与 mock office](#评测与-mock-office) · [接口与 API 文档](#接口与-api-文档) · [数据来源与合规](docs/submission/compliance.md) · [贡献指南](CONTRIBUTING.md) · [安全](SECURITY.md) · [变更记录](CHANGELOG.md) · [致谢](#credits) · [许可证](#licence)
 
 ### 快速开始
 
-自托管后端、预置的 mock office 和用于验证 Agent 自写技能的沙箱都在本机运行。你可以选择 OpenAI API key 或本机运行的模型。key 路径会将你的聊天内容及相关的合成办公内容发送给 OpenAI；其他提供商请使用设置页面中的高级 endpoint 路径。设置命令会准备好本地服务。
+三种运行方式，其中两种本地方式都是 real mode：Day0 读取你链接的文档，并通过审批卡片操作文档中记录的系统。两者只有一处不同：模型在哪里运行。
 
-需要 Node 22+、pnpm 9+，以及带 Compose v2 的 Docker。`pnpm setup:local` 会在启动任何服务之前检查这些工具，以及它将要占用的端口。
+- **托管演示**：无需安装任何东西。在 [day0-olive.vercel.app](https://day0-olive.vercel.app) 登录即可使用 mock workspace，或打开 [/demo](https://day0-olive.vercel.app/demo) 观看无需登录的演示录像。
+- **本地运行，云端模型**：`./setup.sh --route featherless`，通过 Featherless 使用 GLM 5.3 Flash，需要一个 Featherless key；`--route key` 使用 OpenAI 或任意 OpenAI-compatible key，`--route endpoint` 使用你已经在运行的服务器。你的聊天内容及相关内容会发送给该提供商，并按 token 计费。
+- **本地运行，本地模型**：`./setup.sh --route local`，在本机 Docker 中运行内置模型（已测试 `qwen3:8b`），不注册任何账户，也不产生任何费用。
+
+需要 Node 22+、pnpm 9+，以及带 Compose v2 的 Docker。`./setup.sh` 会在启动任何服务之前检查这些工具，以及它将要占用的端口。
 
 ```bash
 git clone https://github.com/BrianIsaac/day0.git
 cd day0
 pnpm install --frozen-lockfile
-pnpm setup:local
+./setup.sh
 pnpm dev
 ```
 
-`pnpm setup:local` 会先问它应当如何调用模型：使用你已有的 key、完全不注册账户并在本机运行模型、你已经在运行的 endpoint，或通过 Featherless 使用托管模型；若选择 key，再通过隐藏输入读取该 key。`--route key|local|endpoint|featherless` 直接指定答案并跳过提问。其余步骤由它完成：启动容器、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的章程；第一次批准会填充工作队列。
+未指定 `--route` 时，`./setup.sh` 会先问模型在哪里运行：通过 Featherless 使用托管模型、使用你已有的 key、你已经在运行的 endpoint，或在本机运行内置模型；需要 key 时通过隐藏输入读取，并询问用于解析 Slack DM 的邮箱地址。其余步骤由它完成：启动容器和各组件、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，链接你的文档，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的章程；第一次批准会填充工作队列，Surfaces 标签页上的连接卡片则决定它能操作什么。
 
-[**Set up Day0**](https://day0-olive.vercel.app/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每条路径的那一条命令，并逐步说明 setup 在该路径上做了什么，遇到问题时应当从那里读起。
+[**Set up Day0**](https://day0-olive.vercel.app/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每种方式的那一条命令，并逐步说明 setup 在该方式下做了什么，遇到问题时应当从那里读起。mock mode 是托管演示和评测 harness 所运行的预置 office，对应 `pnpm setup:local`，在[评测与 mock office](#评测与-mock-office)中按其用途说明。
 
 ### 它的特别之处
 
@@ -1072,7 +1088,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 ### 一次完整运行，从第一个页面开始
 
-以下是[真实模式流程](#在真实模式下运行)的一次完整运行，从头到尾，在按该节所印步骤搭建的 `main` 全新克隆上完成。运行时间为 2026 年 9 月 3 日，`OPENAI_MODEL=gpt-5.6-terra`，连接的是作者本人的 Linear workspace、作者本人的 Slack workspace，以及本仓库通过 `demo` profile 提供的合成 Looker 式 pipeline tile。由同一个人同时担任 manager 与 IT 审批人，这正是单用户本地运行的含义。[一分钟演示视频](https://youtu.be/YgbSmy1shnM)是类似运行的剪辑，Linear 与 Slack 两侧的效果在视频中呈现；下面每一张截图都来自 day0 dashboard。
+以下是[真实模式](#真实模式)的一次完整运行，从头到尾，在按该节所印步骤搭建的 `main` 全新克隆上完成。运行时间为 2026 年 9 月 3 日，`OPENAI_MODEL=gpt-5.6-terra`，连接的是作者本人的 Linear workspace、作者本人的 Slack workspace，以及本仓库通过 `demo` profile 提供的合成 Looker 式 pipeline tile。由同一个人同时担任 manager 与 IT 审批人，这正是单用户本地运行的含义。[一分钟演示视频](https://youtu.be/YgbSmy1shnM)是类似运行的剪辑，Linear 与 Slack 两侧的效果在视频中呈现；下面每一张截图都来自 day0 dashboard。
 
 耗时均从 Agent 部署那一刻开始计算。
 
@@ -1198,79 +1214,101 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 Day0 是一个可运行的演示，而不是已投入生产的产品，目前没有用户。它的量化结论刻意限定在很窄的范围内：仓库提供一项[受控且由程序评分的比较](evaluation/README.md)，让完成入职的 Day0 与普通 Agent 在相同的 15 项陌生 mock-office 任务上运行。该基准不用于预测所有真实团队的工作表现。
 
-可复现演示和受控评测在一个自包含的 mock office 中运行，其中包括团队文档、表格、聊天频道、工单队列和社交信息流，并为每个 Agent 单独生成种子数据。这样，评审可以在自己的机器上复现结果，而不必依赖无法核验的截图；模型调用、沙箱、状态机和审批门仍按真实路径运行。另有一条仅限本机的 real mode：它读取链接的团队文档、发现其中记录的系统，并只在可见审批门之后建立连接。详见[在真实模式下运行](#在真实模式下运行)。
+可复现演示和受控评测在一个自包含的 mock office 中运行，其中包括团队文档、表格、聊天频道、工单队列和社交信息流，并为每个 Agent 单独生成种子数据。这样，评审可以在自己的机器上复现结果，而不必依赖无法核验的截图；模型调用、沙箱、状态机和审批门仍按真实路径运行。另有一条仅限本机的 real mode：它读取链接的团队文档、发现其中记录的系统，并只在可见审批门之后建立连接。两种本地方式都运行在这一模式下，详见[真实模式](#真实模式)。
 
 Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 留空时，共享模型路径通过 OpenAI Responses API 调用 `api.openai.com`；设置自定义 `OPENAI_BASE_URL` 时，则改用该 endpoint 的 OpenAI-compatible chat-completions API，因此无需任何账户也能在本机模型上运行完整流程。一个 evaluation bed 的两个 arm 始终使用同一条已选择路径。用于验证 Agent 自行编写技能的沙箱也随项目提供，因此该路径可以完成技能创建，而不会停在“尚不可调用”的中间状态。语音和网络检索是可选的第三方服务；缺少相应 key 时，系统会明确降级，而不会静默失败。下文给出[三种运行方式](#local-dev)，`pnpm check:setup` 会报告当前机器已经满足哪一种配置。
 
-### 无需任何账户运行
+### 托管演示
 
-该路径使用 Docker 内的自托管 Convex 后端、本地模型和本地验证沙箱，并启用无认证开发模式。整个过程无需注册任何服务。后端使用与云服务相同的开源二进制；无认证模式以一个固定的合成用户替代 Clerk，因此所有权校验和按用户划分的数据模型不变，只是系统中始终只有一个用户。模型层接受任何兼容 OpenAI 的 endpoint，因此本地 runtime 是完整配置，而不是降级配置；本地沙箱则保证 Agent 编写的技能能够经过验证并实际变为可调用状态。
+无需安装任何东西。在 [`day0-olive.vercel.app`](https://day0-olive.vercel.app) 登录，把一个 Agent 部署进托管的 mock office：它在合成内容上运行完整产品流程，不会触及你的任何系统；或打开 [`/demo`](https://day0-olive.vercel.app/demo) 观看演示录像，完全无需登录。上文[在线演示](#在线演示)说明该部署运行的模型，并链接两段录像。
 
-需要带 Compose v2 的 Docker、Node 22+ 和 pnpm 9+。从全新 clone 开始只需一条命令，在仓库根目录执行：
+### 本地运行，云端模型
+
+本机上的 real mode，模型由提供商运行。自托管 Convex backend、技能沙箱、把凭据从存储内容中脱敏的 span 模型以及浏览器组件都在本机 Docker 中运行，指向你提供的文档目录及其记录的系统；只有模型运行在别处。如果你已经有 key，这是较短的本地方式：无需下载模型权重，之后也不会有常驻进程，步骤之间的等待取决于托管模型而不是你的笔记本。
 
 ```bash
-pnpm install --frozen-lockfile   # first: everything below is a repo-local binary
-pnpm setup:local --route local   # the bundled model in Docker; asks before it pulls anything
-pnpm dev                         # prints an unlock URL - open that, not localhost:3000
+pnpm install --frozen-lockfile
+./setup.sh --route featherless     # 通过 Featherless 使用 GLM 5.3 Flash；key 以隐藏方式询问，或从 FEATHERLESS_API_KEY 读取
+pnpm dev                           # prints an unlock URL - open that, not localhost:3000
 ```
 
-`pnpm setup:local` 会在启动任何服务之前检查 Node、pnpm、Docker Compose v2 以及它将要占用的端口；读取 GPU 的空闲显存，说明它将拉取哪个模型及其大小（显存充足时为 `qwen3:8b`，约 5 GB；否则为 `qwen3:4b`，约 2.5 GB），并在拉取前询问；然后按[安装过程做了什么](#安装过程做了什么)中的顺序执行，最后打印 unlock URL。可以随时再次运行：它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。`--model <id>` 直接指定模型而不采用它的选择；`--model-port <n>` 在原生 `ollama serve` 占用 11434 时移动模型服务端口；`--project`、`--port`、`--site-port` 和 `--dashboard-port` 用于在第一套之外再起一套；`--app-port <n>` 把应用从 3000 移开；`--dry-run` 打印将要执行的每条命令而不写入任何内容。不带 `--route` 时它会询问走四条路线中的哪一条。
+这种方式的选择是提供商。`--route featherless` 是经过测试的一条：写入通过 Featherless 使用 GLM 5.3 Flash 所需的设置，并从 `FEATHERLESS_API_KEY` 或隐藏输入读取该 key。`./setup.sh --route key` 使用 OpenAI：key 是 OpenAI 的，模型为 `gpt-5.6-terra`，除非 `.env.local` 中的 `OPENAI_MODEL` 另有指定（`--model <id>` 可指定其他模型）。`./setup.sh --route endpoint --endpoint <url>` 对应[使用已有的模型服务器](#using-a-model-server-you-already-have)。无论选哪一条，你的聊天内容和文档中的相关内容都会发送给该提供商。
 
-打开命令输出的 unlock URL，部署一个 Agent，以文字模式完成 Day-1 一对一，然后批准它起草的章程。此路径不会调用托管模型，也不需要任何服务账户。
+key 路线上两个模型地址归并为同一个默认值。变量留空表示 `https://api.openai.com/v1`，从 Next 和后端容器访问时含义相同。不要把默认 URL 手工写入变量。Featherless 同样是两侧都能访问的同一个托管地址。
 
-批准章程后，系统才会填充工作队列。队列能推进到哪一步取决于刚刚批准的章程，而不是本说明中的固定答案。每个工作项都会依据 Agent 已有技能和部署时授予的权限进行评估，只有 `claim` 判定才会进入计划与执行阶段。部署时会生成五项读取范围；随项目提供的唯一技能是 `see-internal-docs`，因此可以立即执行的是能够从内部文档回答的工作。`needs-skill` 是这条路径最值得检查的判定：Agent 提出技能，人工批准后由本地沙箱运行冒烟测试；测试以退出码 0 结束且有输出时，技能才注册，请求该技能的工作项随后返回队列并完成。`defer - awaiting-permission` 会按设计停下，明确显示所需权限范围并继续等待；界面不会自行授予权限。
+`./setup.sh` 会检查 Node 22、pnpm 9 和 Docker Compose v2，在缺少 `node_modules` 时安装依赖，然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成[安装过程做了什么](#安装过程做了什么)中的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线。
 
-响应速度取决于所连接的模型 endpoint 和硬件，而不是 Day0。本路径设置了自定义 `OPENAI_BASE_URL`，因此 Agent 核心执行普通的 OpenAI-compatible chat-completions 调用；同一个 `qwen3:8b` 在现代 GPU 上可能数秒返回，在 CPU 上可能需要数分钟。使用 OpenAI key 的路径则通过 Responses API 调用 OpenAI，延迟取决于 OpenAI。`pnpm model:up` 在检测到 NVIDIA GPU 时会默认使用它。
+停止、恢复、清除：每条命令都从 `.env.local` 读取项目名，并拒绝受保护的项目：
+
+```bash
+./setup.sh stop      # 停掉容器；数据卷、模型卷、redactor 卷和 .env.local 都保留
+./setup.sh resume    # 同一个项目、端口和 admin key；不重新拉取，只重新同步有变化的值
+./setup.sh clear     # 删除容器、卷和网络；保留 .env.local，除非加 --purge-env；除非加 --yes，否则先询问
+```
+
+再次运行 setup 与 `resume` 相同；`--reset` 等于先 `clear` 再 setup。
+
+#### 安装过程做了什么
+
+`./setup.sh` 按以下顺序运行仓库自带的 `pnpm` 命令，而顺序正是最容易耗掉一个下午的部分。其中每一条仍可手动执行；有两处顺序是硬性要求而不只是习惯；`--dry-run` 会打印针对本 checkout 的完整计划（key 打码），而不写入任何内容。
+
+1. **`pnpm dev:no-auth-key`，在第一次 `up` 之前。** 除三个无认证值外，它还写入两个真实模式变量：加密所有已存凭据的 `DAY0_CREDENTIAL_KEY`（缺少它时 `pnpm sync:env` 会拒绝真实模式），以及用于认证到 Notion 组件私有链路的 `DAY0_NOTION_MCP_AUTH_TOKEN`。缺少后者时 `--profile docs-notion` 会立即退出并输出 `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion`，这就是顺序在这里成为硬性要求的原因。
+2. **预热复制，加 `--warm-from <project>` 时。** 在第一次 `up` 之前，把另一套安装的 redactor wheel 卷和模型卷复制到本项目，因为 compose 已创建的卷是空的，组件首次启动会通过下载来填满它。已存在的副本会被保留。
+3. **`pnpm convex:up --profile docs-notion --profile browser --profile demo`**：backend 和可选组件。`DAY0_DOCS_HOST_DIR` 必须写在文件里，光有磁盘上的目录不够：compose 文件用 `:?` 以只读方式绑定它，所以缺少这一行的手写 `.env.local` 即使目录存在，也会在 `docker compose up` 时报 `required variable DAY0_DOCS_HOST_DIR is missing a value`。setup 每次都会写入这一行，目录不存在时创建并放入一个占位页面。
+4. **`pnpm model:up` 和 `pnpm model:pull <model>`，仅在[本地运行，本地模型](#本地运行本地模型)方式下**，且只有选择器选中的模型尚不在卷中时才拉取。
+5. **`pnpm sandbox:up`**，加 `--sandbox daytona` 时跳过。默认会把 `DAYTONA_API_KEY` 写为空并说明，因为只要 Daytona 的 key 存在它就优先。
+6. **`pnpm redactor:up`，按 venv 构建时的设备启动。** `redactor/start.sh` 以其设备所选的 requirements 文件为虚拟环境的键，而直接执行 `pnpm redactor:up` 只要 NVIDIA 驱动有应答就会预留 GPU，因此在 CPU 上预热的 venv（`--warm-from` 复制的正是它）会被清空并用 CUDA wheel 重建：本该十秒完成的事变成几分钟的下载。setup 会先读取 venv 的 stamp：`--gpu auto` 沿用它，`--gpu on` 为 GPU 重建并在开始前说明会清空，`--gpu off` 从不请求 GPU。手动执行时 `MODEL_GPU=off pnpm redactor:up` 效果相同。
+7. **admin key**，在 backend 容器内生成，只在该卷接受它时保留。key 属于数据卷而不属于 project：从旧的 stack 切换到真实模式时，`.env.local` 中保存的是旧 backend 的 key，`pnpm sync:env` 会认证失败。只要数据卷是新的，setup 就重新生成。
+8. **`pnpm sync:env`** 在推送 functions 之前推送无认证 JWKS、key 和每个 `DAY0_*` 值，因为 `convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。deployment 中已经相同的值会被保留而不是重新设置。
+9. **`npx convex dev --once`** 推送 functions，一次即可，不需要重复 push。setup 会把 CLI 改写成容器端口的两个公开 URL 写回。
+10. **`pnpm convex:restart`**：module 会保留首次求值时的 env，而 backend 从第 3 步起就一直在运行。随后 setup 等待 redactor 报告健康（模型已加载并按 `redactor/models.sha256` 校验），未就绪时留下说明并继续。
+11. **`pnpm check:setup`** 读取同一个 `.env.local`，报告每个组件和每项配置，并用一行给出模式和路线。它按 `COMPOSE_PROJECT_NAME` 查找 Compose project，setup 会写入该值；目录名不是 `day0` 又没有这一行的手写文件，症状是 `docker ps` 显示组件全部运行，而 check:setup 报告组件全部缺失。另外要读完整输出，而不只是摘要行：真正的缺口写在摘要行下方的组件说明里。
+
+除生成的值外，setup 还会写入 `COMPOSE_PROJECT_NAME`、各端口、`NEXT_PUBLIC_DEV_NO_AUTH=true`、`NEXT_PUBLIC_CONVEX_URL` 和 `CONVEX_SELF_HOSTED_URL`、`DAY0_SURFACE_MODE=real`、`DAY0_DOCS_HOST_DIR`（默认 `./docs-local`）、`DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`、`DAY0_REDACTOR_URL=http://redactor:8000`、`NEXT_PUBLIC_DEMO_BOSS_EMAIL`（你的 Slack 地址；文件中没有时会询问，因为 Slack DM 在部署时据此解析，且无法在已运行的 Agent 上更正；`--boss-email` 可直接给出）、`DAY0_SETUP_ROOT`，以及所选路线的模型设置：Featherless 路线上每次都写入 `OPENAI_BASE_URL=https://api.featherless.ai/v1`、`OPENAI_MODEL=zai-org/GLM-5.3-Flash`、`OPENAI_JSON_MODE=prompt`、`OPENAI_MAX_OUTPUT_TOKENS=32768` 和 `OPENAI_REASONING_EFFORT=low`，key 存为 `OPENAI_API_KEY`；本地路线上写入成对的两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL`。
+
+以下三点是云端模型方式独有的：
+
+- **key 通过询问获得，而不是粘贴。** 它通过隐藏输入读取，以仅本人可读的权限写入 `.env.local`，从不打印，也从不作为参数传给其他程序；`pnpm sync:env` 把它推送到 deployment，再次运行时保留文件中已有的 key。
+- **从本地模型方式切换过来时，key 路线上两个地址会自动清空。** setup 把 `OPENAI_BASE_URL` 和 `CONVEX_OPENAI_BASE_URL` 写为空，两者都为空时 `pnpm sync:env` 会清除 deployment 中此前保存的地址；这是"未设置"作为一个值而非遗漏的唯一情形：仍保存着 `http://model:11434/v1` 的 deployment 会去调用一个你早已停掉的模型服务，而且只有 action 会失败。随后的重启才让 backend 读到新值，因为 module 会保留首次求值时的 env。
+- **这种方式会产生模型费用。** 完整流程包括一对一的七个主题、章程生成、good-habits 检索、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
+
+### 本地运行，本地模型
+
+同样的 real mode，只是模型也在本机运行：内置模型服务与 backend、沙箱和 redactor 一起运行在 Docker 中。整个过程无需注册任何服务，也不产生任何费用。模型层接受任何兼容 OpenAI 的 endpoint，因此本地 runtime 是完整配置，而不是降级配置；本地沙箱则保证 Agent 编写的技能能够经过验证并实际变为可调用状态。
+
+```bash
+pnpm install --frozen-lockfile
+./setup.sh --route local           # 内置模型：从已有的和已测试过的模型中选择，有 GPU 时使用 GPU
+pnpm dev                           # prints an unlock URL - open that, not localhost:3000
+```
+
+这种方式的选择是模型。setup 会在启动任何东西之前先列出模型：先是内置模型服务的卷里已有的模型，然后是本项目测试过的列表（目前只有一项：`qwen3:8b`，半决赛本地 bed 所用；要增加一项，只需在 `scripts/models.ts` 里加一行），每项都标出“已存在”及其大小，或“将拉取”及下载量，然后询问要用哪一个：在终端里是带编号的选择器，`--model <id>` 直接指定，`--yes` 取第一个已存在的模型（没有则取第一个已测试的），已存在的模型不会再次拉取。`--model-port <n>` 在原生 `ollama serve` 占用 11434 时移动模型服务端口。其余一切，包括参数、`stop`、`resume`、`clear`、各组件以及浏览器中的第一天，都与上文的[本地运行，云端模型](#本地运行云端模型)和下文的[真实模式](#真实模式)相同。
+
+响应速度取决于所连接的模型 endpoint 和硬件，而不是 Day0。本路径设置了自定义 `OPENAI_BASE_URL`，因此 Agent 核心执行普通的 OpenAI-compatible chat-completions 调用；同一个 `qwen3:8b` 在现代 GPU 上可能数秒返回，在 CPU 上可能需要数分钟。云端模型方式的 key 路线则通过 Responses API 调用 OpenAI，延迟取决于 OpenAI。`pnpm model:up` 在检测到 NVIDIA GPU 时会默认使用它。
 
 内置模型服务以 16,384-token context 启动，因为执行器需要在同一提示中看到已批准章程、发现的文档、runbook 指引、action schema 和工作请求。Ollama 较小的服务端默认值会从提示开头静默截断，而不会让请求失败；这可能使本地模型仍知道正确的工具名，却丢失决定精确参数的指令和证据。只有在模型支持更大 context、且额外 KV cache 能装入机器时，才应把 `OLLAMA_CONTEXT_LENGTH` 调高；把它降到 16,384 以下是明确的质量取舍，不只是内存优化。
 
 模型大小同时影响延迟和输出质量。小模型可以完成一对一、生成章程并驱动工作队列，但有时会在七个主题尚未完成时提前调用 `dayOneComplete`；由较短对话生成的章程仍然有效，但证据更少。更大的本地或托管模型可以改善这一点，`pnpm probe:model` 可在接入演示前确认 endpoint 是否能驱动完整流程。
-
-`failed` 工作项也可能是小模型能力限制，而不是系统故障。批准后的计划会以命名 action 的形式在 mock environment 上执行，每个 action 都用 slug 指向既有记录。小模型可能生成看似合理但并不存在的 slug；有效 action 会落地，虚构目标会被拒绝，工作项进入 `failed`，卡片会列出所有未到达环境的 action 及原因。系统不会静默接受部分成功。`Retry` 会重新执行整个计划，因此已经落地的 action 会再次执行。
 
 本地模型过慢则可能触发明确超时。章程生成中的单次模型调用在 **300 s** 内未收到响应 header 会停止，整个 Convex action 在 **600 s** 被终止。用 `npx convex logs` 区分两类相似症状：地址错误会立即产生连接错误；模型落到 CPU 时，日志会在等待后报告 `UND_ERR_HEADERS_TIMEOUT`、重试以及 `execution timed out (maximum duration 600s)`。
 
 是否落到 CPU 取决于当前可用 VRAM，而不是模型文件标称大小。`docker compose exec model ollama ps` 会显示 CPU/GPU 分配；例如 `45%/55% CPU/GPU` 表明模型已拆分加载。`qwen3:8b` 常驻大约需要 6 GB；如果当前空闲显存不足，可改用能够完整装入 GPU 的模型：
 
 ```bash
-pnpm setup:local --route local --model qwen3:4b   # ~2.5 GB, same loop, fits a smaller gap
+./setup.sh --route local --model qwen3:4b   # ~2.5 GB, same loop, fits a smaller gap
 ```
 
 setup 会写入 `OPENAI_MODEL`、拉取模型、重新同步 deployment 并重启后端；`--model qwen3:8b` 以同样方式切回。在已运行的 stack 上，`pnpm model:pull qwen3:4b` 只拉取权重。
 
-当环境中存在 `NEXT_PUBLIC_DEV_NO_AUTH=true` 时，`pnpm build` 会拒绝生产构建。构建前必须取消该值；如果它进入 Vercel 配置，构建失败是预期的安全保护。
-
 #### 安装过程做了什么
 
-`pnpm setup:local --route local` 按以下顺序运行仓库自带的 `pnpm` 命令，而顺序正是最容易耗掉一个下午的部分。其中每一条仍可手动执行；`pnpm setup:local --dry-run` 会打印针对本 checkout 的确切命令，而不写入任何内容。
+[上文的十一步](#安装过程做了什么)，其中第 4 步生效：**`pnpm model:up`** 在 11434 上启动 OpenAI-compatible 模型服务，有 GPU 时使用 GPU（见 [GPU 默认启用，而非默认停用](#gpu-默认启用而非默认停用)）；**`pnpm model:pull <model>`** 把权重拉取到 `<project>_model_data` 卷中，且只在选择器选中的模型尚不在卷中时才拉取。随后 `pnpm sync:env` 成对推送两个模型地址，而这正是最容易耗掉一个下午的地方：Day-1 chat 由本机上的 Next 流式调用，通过 loopback 访问模型；章程则由 backend 容器内的 Convex Node action 生成，在容器内 `127.0.0.1` 指的是容器自己。因此 `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 是 Next 调用的地址，`CONVEX_OPENAI_BASE_URL=http://model:11434/v1` 是后端调用的地址；同步脚本会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在它错误指向 loopback 时发出警告。配错的症状是一对一正常完成但章程始终不出现。
 
-1. **`pnpm dev:no-auth-key`** 把 `DEV_NO_AUTH_SECRET`（解锁浏览器）、`DEV_NO_AUTH_SIGNING_KEY`（签发 Convex 接受的 token，永不离开本机）和 `DEV_NO_AUTH_JWKS`（其公开部分）写入 `.env.local`，由程序生成而非手工选择。`pnpm dev:no-auth-key --force` 会轮换它们，使所有已解锁浏览器失效，并要求再次同步。
-2. **`pnpm convex:up`** 在 3210/3211 上启动 day0 的后端（`--profile dev` 额外在 6791 上启动 dashboard），并创建 `./docs-local`，让只读文档挂载有内容可绑定。
-3. **`pnpm model:up`** 在 11434 上启动 OpenAI-compatible 模型服务，有 GPU 时使用 GPU（见 [GPU 默认启用，而非默认停用](#gpu-默认启用而非默认停用)）；**`pnpm model:pull <model>`** 把权重拉取到 `<project>_model_data` 卷中。
-4. **`pnpm sandbox:up`** 启动验证自写技能的沙箱。它不需要任何配置，也不影响其他组件：两者通过共享 volume 上的 socket 通信，backend 容器无论沙箱是否运行都挂载该 volume，因此之后启动的沙箱不需要重启也不需要设置；`pnpm check:setup` 会说明当前处于哪种状态。
-5. **admin key** 在 backend 容器内生成（手动执行时为 `pnpm convex:admin-key`），写入 `CONVEX_SELF_HOSTED_ADMIN_KEY`。key 属于数据卷而不属于 project，且 backend 为某个卷签发过的每个 key 都持续有效，因此 setup 在当前 backend 接受文件中已有 key 时保留它，只在文件没有 key 或该卷拒绝时才生成新的。
-6. **`pnpm sync:env`** 把各值推送到 deployment，JWKS 先于依赖它的开关：`convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。它成对推送两个模型地址，而这正是最容易耗掉一个下午的地方：Day-1 chat 由本机上的 Next 流式调用，通过 loopback 访问模型；章程则由 backend 容器内的 Convex Node action 生成，在容器内 `127.0.0.1` 指的是容器自己。因此 `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 是 Next 调用的地址，`CONVEX_OPENAI_BASE_URL=http://model:11434/v1` 是后端调用的地址；同步脚本会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在它错误指向 loopback 时发出警告。配错的症状是一对一正常完成但章程始终不出现。
-7. **`npx convex dev --once`** 推送 functions。CLI 在此过程中会把 `NEXT_PUBLIC_CONVEX_URL` 和 `NEXT_PUBLIC_CONVEX_SITE_URL` 改写成 backend 自己的容器端口；setup 会把宿主机地址写回并说明。
-8. **`pnpm convex:restart`**：module 会保留首次求值时的 env，而 backend 从第 2 步起就一直在运行。
-9. **`pnpm check:setup`** 读取 `.env.local`，分别报告 backend、auth、model、sandbox 和 voice，只在真正损坏而非仅仅未完成的状态上失败。
-
-随后 `pnpm dev` 会输出 unlock URL。它只携带一次 secret；之后 secret 保存在 httpOnly cookie 中。直接打开 `http://localhost:3000` 会得到 403，这是边界生效，不是故障。
-
-除生成的 key 外，setup 还会把 `COMPOSE_PROJECT_NAME`、各端口、`NEXT_PUBLIC_DEV_NO_AUTH=true`、`NEXT_PUBLIC_CONVEX_URL` 和 `CONVEX_SELF_HOSTED_URL`（均为 `http://127.0.0.1:3210`）、上述两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL` 写入 `.env.local`；`OPENAI_API_KEY` 保持为空，因为没有账户；`OLLAMA_CONTEXT_LENGTH=16384` 来自 `.env.example`，原因见上文。
-
-停止服务时按以下顺序执行，因为 `convex:down` 退出时会删除 compose network，仍有 model 容器连接时无法完成：
-
-```bash
-pnpm model:down                  # the model server; the pulled weights stay
-pnpm sandbox:down                # the verification sandbox; it holds nothing
-pnpm convex:down                 # the backend; the data volume stays
-```
-
-`pnpm setup:local stop`、`resume` 和 `clear` 是同样三件事的具名版本，项目名从 `.env.local` 读取：`stop` 停掉所有容器并保留所有卷，`resume` 就是再次运行 setup，`clear` 删除容器、卷和网络（除非加 `--yes`，否则先询问）。数据卷在 `stop` 之后仍然保留，因此可以随时停止并回到同一个 Agent。
+除每条路线都写入的值外，这种方式还会把上述两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL` 写入 `.env.local`；`OPENAI_API_KEY` 保持为空，因为没有账户；`OLLAMA_CONTEXT_LENGTH=16384` 来自 `.env.example`，原因见上文。
 
 #### 本地技能沙箱
 
-Agent 编写的技能在被实际运行验证之前不可调用。`pnpm sandbox:up` 启动运行冒烟测试的容器，使无需账户的路径能够完成 `needs-skill` → propose → approve → author → **verify** → register → 返回队列并完成工作项的完整闭环。
+Agent 编写的技能在被实际运行验证之前不可调用。`pnpm sandbox:up` 启动运行冒烟测试的容器，使本地模型方式能够完成 `needs-skill` → propose → approve → author → **verify** → register → 返回队列并完成工作项的完整闭环。
 
 ```bash
 pnpm sandbox:up                  # start it; the backend already mounts its socket volume
@@ -1307,51 +1345,13 @@ pnpm convex:down                 # the backend; the data volume stays
 
 `convex:down` 会尝试删除 compose network，因此仍有 model container 连接时无法完成。若要同时删除 volumes，执行 `pnpm convex:down --profile model --profile sandbox -- -v`。
 
-#### 不使用 Docker 运行 Convex
+### 真实模式
 
-`pnpm convex:dev` 在无人登录时不会要求注册，而是建立本机匿名 deployment。它不需要 compose project、admin key 或第二个模型地址，因为后端与 Next 都从宿主机访问 `127.0.0.1`：
-
-```bash
-pnpm install
-cp .env.example .env.local
-# NEXT_PUBLIC_DEV_NO_AUTH=true, OPENAI_BASE_URL=http://127.0.0.1:11434/v1, OPENAI_MODEL=qwen3:8b
-pnpm convex:dev                  # anonymous local deployment; writes the Convex keys itself
-pnpm dev:no-auth-key
-./scripts/sync-convex-env.sh
-pnpm dev
-```
-
-仍然需要一个模型，可以使用在 11434 上运行的原生 `ollama serve`，也可以通过 `pnpm model:up` 和 `MODEL_PORT` 使用内置服务。与自托管 compose stack 相比，这种方式适合快速查看系统运行，但 deployment 不由你独立持有；匿名 deployment 也无法使用 Docker volume 中的本地技能沙箱。
-
-### 使用 OpenAI key 运行
-
-该路径运行与上面相同的自托管 Convex backend 和无认证开发模式，但不运行本地模型；`api.openai.com` 替代本机 model server。如果已经有 key，这是最短运行路径：无需下载模型权重，也不涉及 GPU；除模型外的组件仍在本机运行，OpenAI 按 token 计费。
-
-```bash
-pnpm install --frozen-lockfile
-pnpm setup:local --route key     # asks for the key in a hidden prompt; stored in .env.local, readable only by you
-pnpm dev                         # prints an unlock URL - open that, not localhost:3000
-```
-
-key 是 OpenAI 的，模型为 `gpt-5.6-terra`，除非 `.env.local` 中的 `OPENAI_MODEL` 另有指定（`--model <id>` 可指定其他模型）。其他提供商还有两种选择：`pnpm setup:local --route featherless` 写入通过 Featherless 使用 GLM 5.3 Flash 所需的设置，并从 `FEATHERLESS_API_KEY` 或隐藏输入读取该 key；`pnpm setup:local --route endpoint --endpoint <url>` 对应[使用已有的模型服务器](#using-a-model-server-you-already-have)。
-
-这里两个模型地址归并为同一个默认值。变量留空表示 `https://api.openai.com/v1`，从 Next 和后端容器访问时含义相同。不要把默认 URL 手工写入变量。
-
-#### 安装过程做了什么
-
-即无需账户路径的序列去掉模型步骤：`pnpm dev:no-auth-key`、`pnpm convex:up`、`pnpm sandbox:up`、admin key、`pnpm sync:env`、`npx convex dev --once`、`pnpm convex:restart`、`pnpm check:setup`。每一步的用途和它避开的陷阱见[上文](#安装过程做了什么)；以下三点是这条路径独有的：
-
-- **key 通过询问获得，而不是粘贴。** 它通过隐藏输入读取，以仅本人可读的权限写入 `.env.local`，从不打印，也从不作为参数传给其他程序；`pnpm sync:env` 把它推送到 deployment，再次运行时保留文件中已有的 key。
-- **从本地模型路径切换过来时，两个地址会自动清空。** setup 把 `OPENAI_BASE_URL` 和 `CONVEX_OPENAI_BASE_URL` 写为空，两者都为空时 `pnpm sync:env` 会清除 deployment 中此前保存的地址；这是"未设置"作为一个值而非遗漏的唯一情形：仍保存着 `http://model:11434/v1` 的 deployment 会去调用一个你早已停掉的模型服务，而且只有 action 会失败。随后的重启才让 backend 读到新值，因为 module 会保留首次求值时的 env。
-- **这条路径会产生模型费用。** 完整流程包括一对一的七个主题、章程生成、good-habits 检索、每个工作项的评估和计划，以及每个技能的完整编写过程。费用取决于所选模型和服务商。
-
-无需运行 `pnpm model:up`；完整清理命令为 `pnpm sandbox:down && pnpm convex:down`，`pnpm setup:local stop` 效果相同。也可以把该路径与[匿名 deployment](#without-docker-for-convex)组合，从而不使用 Docker 运行 backend；但本地 sandbox 依赖 Docker，这种组合若要验证技能，需要设置 `DAYTONA_API_KEY`。
-
-### 在真实模式下运行
-
-上面所有路径运行的都是 **seeded mock office**：系统、工单和消息都是 fixture，Agent 的任何操作都不会离开本机。真实模式只是一个变量的另一个取值。此时 day0 会读取你指定的文档，为文档记录的每个系统提出连接申请；在你批准卡片之后，它会真正操作这些系统：在你的工单上留言、在你的频道里发消息、通过浏览器在 Web UI 上填写表单。
+两种本地方式都是 real mode：链接你的文档，并通过审批卡片连接文档中记录的系统；这些系统仍然需要经过授权的访问。real mode 只限本机。此时 day0 会读取你指定的文档，为文档记录的每个系统提出连接申请；在你批准卡片之后，它会真正操作这些系统：在你的工单上留言、在你的频道里发消息、通过浏览器在 Web UI 上填写表单。托管演示所使用的 **seeded mock office**（系统、工单和消息都是 fixture，Agent 的任何操作都不会离开本机）是同一个变量的另一个取值，为评测 harness 保留，见[评测与 mock office](#评测与-mock-office)。
 
 该模式被刻意限制在本机无认证开发环境中。除非同一进程中 `NEXT_PUBLIC_DEV_NO_AUTH=true`、`NODE_ENV=development` 且不存在任何 Vercel 变量，否则 `DAY0_SURFACE_MODE=real` 会直接抛错（`src/lib/surface-mode.ts`），因此可以操作真实系统的模式无法在托管部署上启用。
+
+当环境中存在 `NEXT_PUBLIC_DEV_NO_AUTH=true` 时，`pnpm build` 会拒绝生产构建。构建前必须取消该值；如果它进入 Vercel 配置，构建失败是预期的安全保护。
 
 #### 需要的组件
 
@@ -1371,49 +1371,6 @@ key 是 OpenAI 的，模型为 `gpt-5.6-terra`，除非 `.env.local` 中的 `OPE
 251 MB 的固定版本 wheel，以及 1.16 GB 的权重和分词器文件；若镜像未缓存，还需下载镜像。
 下载需要联网，推理在本地运行，无需账户。CUDA wheel 需要更多空间，此处尚未验证其下载大小。
 检测可能漏掉秘密；仅完成结构层脱敏的结果会在仪表盘中显示有限脱敏提示。
-
-#### 安装步骤
-
-从全新 clone 开始只需一条命令，以及一个选择：模型在哪里运行。
-
-```bash
-pnpm install --frozen-lockfile
-./setup.sh --route featherless     # 通过 Featherless 使用 GLM 5.3 Flash；key 以隐藏方式询问，或从 FEATHERLESS_API_KEY 读取
-./setup.sh --route local           # 内置模型：从已有的和已测试过的模型中选择，有 GPU 时使用 GPU
-pnpm dev                                # prints an unlock URL - open that, not localhost:3000
-```
-
-`./setup.sh` 会检查 Node 22、pnpm 9 和 Docker Compose v2，在缺少 `node_modules` 时安装依赖，然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成下面的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线。
-
-在本地路线上，setup 会在启动任何东西之前先列出模型：先是内置模型服务的卷里已有的模型，然后是本项目测试过的列表（目前只有一项：`qwen3:8b`，半决赛本地 bed 所用；要增加一项，只需在 `scripts/models.ts` 里加一行），每项都标出“已存在”及其大小，或“将拉取”及下载量，然后询问要用哪一个：在终端里是带编号的选择器，`--model <id>` 直接指定，`--yes` 取第一个已存在的模型（没有则取第一个已测试的），已存在的模型不会再次拉取。
-
-停止、恢复、清除：每条命令都从 `.env.local` 读取项目名，并拒绝受保护的项目：
-
-```bash
-./setup.sh stop      # 停掉容器；数据卷、模型卷、redactor 卷和 .env.local 都保留
-./setup.sh resume    # 同一个项目、端口和 admin key；不重新拉取，只重新同步有变化的值
-./setup.sh clear     # 删除容器、卷和网络；保留 .env.local，除非加 --purge-env；除非加 --yes，否则先询问
-```
-
-再次运行 setup 与 `resume` 相同；`--reset` 等于先 `clear` 再 setup。
-
-#### 安装过程做了什么
-
-`./setup.sh` 等于[使用 OpenAI key 的序列](#安装过程做了什么-1)加上文档目录、真实模式变量和上述组件，按以下顺序执行。其中两处顺序在上面两条路径中只是习惯，在这里是硬性要求；`--dry-run` 会打印针对本 checkout 的完整计划（key 打码），而不写入任何内容。
-
-1. **`pnpm dev:no-auth-key`，在第一次 `up` 之前。** 除三个无认证值外，它还写入两个真实模式变量：加密所有已存凭据的 `DAY0_CREDENTIAL_KEY`（缺少它时 `pnpm sync:env` 会拒绝真实模式），以及用于认证到 Notion 组件私有链路的 `DAY0_NOTION_MCP_AUTH_TOKEN`。缺少后者时 `--profile docs-notion` 会立即退出并输出 `DAY0_NOTION_MCP_AUTH_TOKEN is required by --profile docs-notion`，这就是顺序在这里成为硬性要求的原因。
-2. **预热复制，加 `--warm-from <project>` 时。** 在第一次 `up` 之前，把另一套安装的 redactor wheel 卷和模型卷复制到本项目，因为 compose 已创建的卷是空的，组件首次启动会通过下载来填满它。已存在的副本会被保留。
-3. **`pnpm convex:up --profile docs-notion --profile browser --profile demo`**：backend 和可选组件。`DAY0_DOCS_HOST_DIR` 必须写在文件里，光有磁盘上的目录不够：compose 文件用 `:?` 以只读方式绑定它，所以缺少这一行的手写 `.env.local` 即使目录存在，也会在 `docker compose up` 时报 `required variable DAY0_DOCS_HOST_DIR is missing a value`。setup 每次都会写入这一行，目录不存在时创建并放入一个占位页面。
-4. **`pnpm model:up` 和 `pnpm model:pull <model>`，仅在本地路线上**，且只有选择器选中的模型尚不在卷中时才拉取。
-5. **`pnpm sandbox:up`**，加 `--sandbox daytona` 时跳过。默认会把 `DAYTONA_API_KEY` 写为空并说明，因为只要 Daytona 的 key 存在它就优先。
-6. **`pnpm redactor:up`，按 venv 构建时的设备启动。** `redactor/start.sh` 以其设备所选的 requirements 文件为虚拟环境的键，而直接执行 `pnpm redactor:up` 只要 NVIDIA 驱动有应答就会预留 GPU，因此在 CPU 上预热的 venv（`--warm-from` 复制的正是它）会被清空并用 CUDA wheel 重建：本该十秒完成的事变成几分钟的下载。setup 会先读取 venv 的 stamp：`--gpu auto` 沿用它，`--gpu on` 为 GPU 重建并在开始前说明会清空，`--gpu off` 从不请求 GPU。手动执行时 `MODEL_GPU=off pnpm redactor:up` 效果相同。
-7. **admin key**，在 backend 容器内生成，只在该卷接受它时保留。key 属于数据卷而不属于 project：从旧的 stack 切换到真实模式时，`.env.local` 中保存的是旧 backend 的 key，`pnpm sync:env` 会认证失败。只要数据卷是新的，setup 就重新生成。
-8. **`pnpm sync:env`** 在推送 functions 之前推送无认证 JWKS、key 和每个 `DAY0_*` 值，因为 `convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。deployment 中已经相同的值会被保留而不是重新设置。
-9. **`npx convex dev --once`** 推送 functions，一次即可，不需要重复 push。setup 会把 CLI 改写成容器端口的两个公开 URL 写回。
-10. **`pnpm convex:restart`**：module 会保留首次求值时的 env，而 backend 从第 3 步起就一直在运行。随后 setup 等待 redactor 报告健康（模型已加载并按 `redactor/models.sha256` 校验），未就绪时留下说明并继续。
-11. **`pnpm check:setup`** 读取同一个 `.env.local`，报告每个组件和每项配置，并用一行给出模式和路线。它按 `COMPOSE_PROJECT_NAME` 查找 Compose project，setup 会写入该值；目录名不是 `day0` 又没有这一行的手写文件，症状是 `docker ps` 显示组件全部运行，而 check:setup 报告组件全部缺失。另外要读完整输出，而不只是摘要行：真正的缺口写在摘要行下方的组件说明里。
-
-除生成的值外，setup 还会写入 `COMPOSE_PROJECT_NAME`、各端口、`NEXT_PUBLIC_DEV_NO_AUTH=true`、`NEXT_PUBLIC_CONVEX_URL` 和 `CONVEX_SELF_HOSTED_URL`、`DAY0_SURFACE_MODE=real`、`DAY0_DOCS_HOST_DIR`（默认 `./docs-local`）、`DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`、`DAY0_REDACTOR_URL=http://redactor:8000`、`NEXT_PUBLIC_DEMO_BOSS_EMAIL`（你的 Slack 地址；文件中没有时会询问，因为 Slack DM 在部署时据此解析，且无法在已运行的 Agent 上更正；`--boss-email` 可直接给出）、`DAY0_SETUP_ROOT`，以及所选路线的模型设置：Featherless 路线上每次都写入 `OPENAI_BASE_URL=https://api.featherless.ai/v1`、`OPENAI_MODEL=zai-org/GLM-5.3-Flash`、`OPENAI_JSON_MODE=prompt`、`OPENAI_MAX_OUTPUT_TOKENS=32768` 和 `OPENAI_REASONING_EFFORT=low`，key 存为 `OPENAI_API_KEY`；本地路线上写入成对的两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL`。
 
 #### 文档由你提供
 
@@ -1455,7 +1412,7 @@ pnpm dev                                # prints an unlock URL - open that, not 
 
 #### 演练真实路径
 
-上面的真实模式路线可以从一个全新 clone 无人值守地跑一遍，对象是操作者自己的 Linear 和 Slack 演示 workspace：
+任一本地方式都可以从一个全新 clone 无人值守地跑一遍，对象是操作者自己的 Linear 和 Slack 演示 workspace：
 
 ```bash
 pnpm rehearse:real --secrets <file> --dry-run        # 搭建、入职和卡片；不向 provider 写入
@@ -1496,7 +1453,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 | 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS` | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:semifinal`；`pnpm eval:semifinal -- --regrade <path>` 在不调用模型的情况下重新评分 |
 | 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
-| 录制运行的监督数字：部署后 4 分 26 秒章程获批、批准 7 次与拒绝 1 次、决策中位 29 秒、撤权后阻断 1 次、审计轨迹 32/32 | 演示视频所剪辑的 2026 年 9 月 3 日 real-mode 运行的 Supervision 卡片，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的 ledger 导出属于提交材料，不在本仓库中 | 运行[真实模式路径](#在真实模式下运行)；读取卡片，或按[读取 ledger](#在真实模式下运行)中的 `exportActions:exportForAgent` 命令导出 ledger |
+| 录制运行的监督数字：部署后 4 分 26 秒章程获批、批准 7 次与拒绝 1 次、决策中位 29 秒、撤权后阻断 1 次、审计轨迹 32/32 | 演示视频所剪辑的 2026 年 9 月 3 日 real-mode 运行的 Supervision 卡片，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的 ledger 导出属于提交材料，不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `exportActions:exportForAgent` 命令导出 ledger |
 | 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一 commit、同一模型下同一路径的第二次运行，节奏为截图而放慢 | 同上 |
 
 两次 real-mode 运行是同一代码与模型、不同人工节奏下的单次观察；两者都不是分布，提交材料会说明每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
@@ -1530,7 +1487,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 
 自托管 8B 的两个 arm 使用 OpenAI-compatible chat-completions 路由，前沿模型 Terra 与 Sol 的两个 arm 使用托管 Responses API；修复路由后，两边都能完成工具调用。三个环境中，Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上都领先普通 arm；但 Day0 并非每个 task-run 都通过（两个托管模型均为 44/45），这项受控 mock-office 比较也不能证明普遍性能。普通 arm 使用同一模型，只是不经过入职流程。
 
-需要 Node 22+、pnpm、处于 **mock** 模式的自托管 backend 和本地 sandbox。模型由 `OPENAI_MODEL` 指定；harness 在开始前会检查 deployment 与 `.env.local` 是否一致，这项检查正是为了捕捉两者不一致的情况。使用内置 `qwen3:8b` 时必须保留 `OLLAMA_CONTEXT_LENGTH=16384`，修改后需重建 model service，并在启动日志中确认 context。
+需要 Node 22+、pnpm、处于 **mock** 模式的自托管 backend 和本地 sandbox，也就是 `pnpm setup:local --route local` 所准备的 stack（见下文[评测与 mock office](#评测与-mock-office)）。模型由 `OPENAI_MODEL` 指定；harness 在开始前会检查 deployment 与 `.env.local` 是否一致，这项检查正是为了捕捉两者不一致的情况。使用内置 `qwen3:8b` 时必须保留 `OLLAMA_CONTEXT_LENGTH=16384`，修改后需重建 model service，并在启动日志中确认 context。
 
 ```bash
 pnpm install
@@ -1559,6 +1516,73 @@ pnpm eval:semifinal -- --arms day0 --runs 1 --tasks EVAL-WRITE-01               
 `pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断，结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
 
 最终提交所引用的三个冻结证据目录及其数字列在 [`evaluation/README.md`](evaluation/README.md)；更早的目录仅保留为 superseded audit history，不用于最终结论。
+
+### 评测与 mock office
+
+mock mode 是预置的 office：团队文档、表格、聊天频道、工单队列和社交信息流，都是随本仓库提供、按 Agent 单独写入的 fixture，因此一次运行可以在陌生人的笔记本上复现，Agent 的任何操作都不会离开你的机器。[受控比较](evaluation/README.md)及其冻结的评测环境运行于其上，[托管演示](#在线演示)也把 Agent 部署到其中。它不是在你自己的系统上运行 Day0 的方式之一（两种本地方式都是 [real mode](#真实模式)），这里按其用途说明：评测 harness 的评测环境，以及托管演示展示的 office。在其中，模型调用、沙箱、状态机和审批门仍然是真实运行的。
+
+它的命令是同一个 setup 的 mock mode，模型在哪里运行的选择也相同：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm setup:local --route local   # the bundled model in Docker; asks before it pulls anything
+pnpm setup:local --route key     # or an OpenAI key, asked for in a hidden prompt; --route featherless and --route endpoint as in real mode
+pnpm dev                         # prints an unlock URL - open that, not localhost:3000
+```
+
+`pnpm setup:local` 会在启动任何服务之前检查 Node、pnpm、Docker Compose v2 以及它将要占用的端口；读取 GPU 的空闲显存，说明它将拉取哪个模型及其大小（显存充足时为 `qwen3:8b`，约 5 GB；否则为 `qwen3:4b`，约 2.5 GB），并在拉取前询问；然后按[安装过程做了什么](#安装过程做了什么-2)中的顺序执行，最后打印 unlock URL。可以随时再次运行：它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。`--model <id>` 直接指定模型而不采用它的选择；`--model-port <n>` 在原生 `ollama serve` 占用 11434 时移动模型服务端口；`--project`、`--port`、`--site-port` 和 `--dashboard-port` 用于在第一套之外再起一套；`--app-port <n>` 把应用从 3000 移开；`--dry-run` 打印将要执行的每条命令而不写入任何内容。不带 `--route` 时它会询问走四条路线中的哪一条。
+
+打开命令输出的 unlock URL，部署一个 Agent，以文字模式完成 Day-1 一对一，然后批准它起草的章程。本地路线不会调用托管模型，也不需要任何服务账户；key 路线上，[云端模型方式](#本地运行云端模型)指出的三点在这里同样适用。
+
+批准章程后，系统才会填充工作队列。队列能推进到哪一步取决于刚刚批准的章程，而不是本说明中的固定答案。每个工作项都会依据 Agent 已有技能和部署时授予的权限进行评估，只有 `claim` 判定才会进入计划与执行阶段。部署时会生成五项读取范围；随项目提供的唯一技能是 `see-internal-docs`，因此可以立即执行的是能够从内部文档回答的工作。`needs-skill` 是这条路径最值得检查的判定：Agent 提出技能，人工批准后由本地沙箱运行冒烟测试；测试以退出码 0 结束且有输出时，技能才注册，请求该技能的工作项随后返回队列并完成。`defer - awaiting-permission` 会按设计停下，明确显示所需权限范围并继续等待；界面不会自行授予权限。
+
+`failed` 工作项也可能是小模型能力限制，而不是系统故障。批准后的计划会以命名 action 的形式在 mock environment 上执行，每个 action 都用 slug 指向既有记录。小模型可能生成看似合理但并不存在的 slug；有效 action 会落地，虚构目标会被拒绝，工作项进入 `failed`，卡片会列出所有未到达环境的 action 及原因。系统不会静默接受部分成功。`Retry` 会重新执行整个计划，因此已经落地的 action 会再次执行。
+
+harness 需要的正是这套 stack：处于 mock 模式的自托管 backend、本地沙箱、不设置 `DAYTONA_API_KEY`，使用内置 `qwen3:8b` 时保留 `OLLAMA_CONTEXT_LENGTH=16384`。命令见上文[评测快速开始](#评测快速开始)。
+
+#### 安装过程做了什么
+
+`pnpm setup:local --route local` 按以下顺序运行仓库自带的 `pnpm` 命令，而顺序正是最容易耗掉一个下午的部分。其中每一条仍可手动执行；`pnpm setup:local --dry-run` 会打印针对本 checkout 的确切命令，而不写入任何内容。
+
+1. **`pnpm dev:no-auth-key`** 把 `DEV_NO_AUTH_SECRET`（解锁浏览器）、`DEV_NO_AUTH_SIGNING_KEY`（签发 Convex 接受的 token，永不离开本机）和 `DEV_NO_AUTH_JWKS`（其公开部分）写入 `.env.local`，由程序生成而非手工选择。`pnpm dev:no-auth-key --force` 会轮换它们，使所有已解锁浏览器失效，并要求再次同步。
+2. **`pnpm convex:up`** 在 3210/3211 上启动 day0 的后端（`--profile dev` 额外在 6791 上启动 dashboard），并创建 `./docs-local`，让只读文档挂载有内容可绑定。
+3. **`pnpm model:up`** 在 11434 上启动 OpenAI-compatible 模型服务，有 GPU 时使用 GPU（见 [GPU 默认启用，而非默认停用](#gpu-默认启用而非默认停用)）；**`pnpm model:pull <model>`** 把权重拉取到 `<project>_model_data` 卷中。
+4. **`pnpm sandbox:up`** 启动验证自写技能的沙箱。它不需要任何配置，也不影响其他组件：两者通过共享 volume 上的 socket 通信，backend 容器无论沙箱是否运行都挂载该 volume，因此之后启动的沙箱不需要重启也不需要设置；`pnpm check:setup` 会说明当前处于哪种状态。
+5. **admin key** 在 backend 容器内生成（手动执行时为 `pnpm convex:admin-key`），写入 `CONVEX_SELF_HOSTED_ADMIN_KEY`。key 属于数据卷而不属于 project，且 backend 为某个卷签发过的每个 key 都持续有效，因此 setup 在当前 backend 接受文件中已有 key 时保留它，只在文件没有 key 或该卷拒绝时才生成新的。
+6. **`pnpm sync:env`** 把各值推送到 deployment，JWKS 先于依赖它的开关：`convex/auth.config.ts` 在 push 时依据 deployment env 求值，缺少 key 时会拒绝无认证模式的 push。它成对推送两个模型地址，而这正是最容易耗掉一个下午的地方：Day-1 chat 由本机上的 Next 流式调用，通过 loopback 访问模型；章程则由 backend 容器内的 Convex Node action 生成，在容器内 `127.0.0.1` 指的是容器自己。因此 `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` 是 Next 调用的地址，`CONVEX_OPENAI_BASE_URL=http://model:11434/v1` 是后端调用的地址；同步脚本会把后者作为 deployment 的 `OPENAI_BASE_URL` 推送，并在它错误指向 loopback 时发出警告。配错的症状是一对一正常完成但章程始终不出现。
+7. **`npx convex dev --once`** 推送 functions。CLI 在此过程中会把 `NEXT_PUBLIC_CONVEX_URL` 和 `NEXT_PUBLIC_CONVEX_SITE_URL` 改写成 backend 自己的容器端口；setup 会把宿主机地址写回并说明。
+8. **`pnpm convex:restart`**：module 会保留首次求值时的 env，而 backend 从第 2 步起就一直在运行。
+9. **`pnpm check:setup`** 读取 `.env.local`，分别报告 backend、auth、model、sandbox 和 voice，只在真正损坏而非仅仅未完成的状态上失败。
+
+随后 `pnpm dev` 会输出 unlock URL。它只携带一次 secret；之后 secret 保存在 httpOnly cookie 中。直接打开 `http://localhost:3000` 会得到 403，这是边界生效，不是故障。
+
+除生成的 key 外，setup 还会把 `COMPOSE_PROJECT_NAME`、各端口、`NEXT_PUBLIC_DEV_NO_AUTH=true`、`NEXT_PUBLIC_CONVEX_URL` 和 `CONVEX_SELF_HOSTED_URL`（均为 `http://127.0.0.1:3210`）、上述两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL` 写入 `.env.local`；`OPENAI_API_KEY` 保持为空，因为没有账户；`OLLAMA_CONTEXT_LENGTH=16384` 来自 `.env.example`，原因见上文。
+
+停止服务时按以下顺序执行，因为 `convex:down` 退出时会删除 compose network，仍有 model 容器连接时无法完成：
+
+```bash
+pnpm model:down                  # the model server; the pulled weights stay
+pnpm sandbox:down                # the verification sandbox; it holds nothing
+pnpm convex:down                 # the backend; the data volume stays
+```
+
+`pnpm setup:local stop`、`resume` 和 `clear` 是同样三件事的具名版本，项目名从 `.env.local` 读取：`stop` 停掉所有容器并保留所有卷，`resume` 就是再次运行 setup，`clear` 删除容器、卷和网络（除非加 `--yes`，否则先询问）。数据卷在 `stop` 之后仍然保留，因此可以随时停止并回到同一个 Agent。
+
+#### 不使用 Docker 运行 Convex
+
+`pnpm convex:dev` 在无人登录时不会要求注册，而是建立本机匿名 deployment。它不需要 compose project、admin key 或第二个模型地址，因为后端与 Next 都从宿主机访问 `127.0.0.1`：
+
+```bash
+pnpm install
+cp .env.example .env.local
+# NEXT_PUBLIC_DEV_NO_AUTH=true, OPENAI_BASE_URL=http://127.0.0.1:11434/v1, OPENAI_MODEL=qwen3:8b
+pnpm convex:dev                  # anonymous local deployment; writes the Convex keys itself
+pnpm dev:no-auth-key
+./scripts/sync-convex-env.sh
+pnpm dev
+```
+
+仍然需要一个模型，可以使用在 11434 上运行的原生 `ollama serve`，也可以通过 `pnpm model:up` 和 `MODEL_PORT` 使用内置服务。与自托管 compose stack 相比，这种方式适合快速查看系统运行，但 deployment 不由你独立持有；匿名 deployment 也无法使用 Docker volume 中的本地技能沙箱。
 
 ## Credits
 

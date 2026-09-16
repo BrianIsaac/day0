@@ -20,12 +20,15 @@ export const REPOSITORY_URL = 'https://github.com/BrianIsaac/day0';
 /** This guide, hosted, so the README can send a reader to the same page. */
 export const SETUP_PAGE_URL = 'https://day0-olive.vercel.app/setup';
 
-/** Everything a newcomer types, in order. */
+/**
+ * Everything a newcomer types, in order. The fourth is real mode, and asks
+ * where the model runs when `--route` does not say.
+ */
 export const QUICKSTART_COMMANDS: readonly string[] = [
   'git clone https://github.com/BrianIsaac/day0.git',
   'cd day0',
   'pnpm install --frozen-lockfile',
-  'pnpm setup:local',
+  './setup.sh',
   'pnpm dev',
 ];
 
@@ -392,27 +395,32 @@ export interface DetailedSection {
   body: string;
 }
 
-/** The hand-run versions, which are what to read when something needs fixing. */
+/** What the setup does on each way, which is what to read when something needs fixing. */
 export const DETAILED_SECTIONS: readonly DetailedSection[] = [
   {
     href: `${REPOSITORY_URL}#local-dev`,
     title: 'Three ways to run it',
-    body: 'What each route costs and what it gives you, including the hosted one this quick start leaves out.',
+    body: 'What each way costs and what it gives you, side by side.',
   },
   {
-    href: `${REPOSITORY_URL}#run-it-with-no-accounts`,
-    title: 'Run it with no accounts',
-    body: 'What the account-free setup does, step by step: what each step is for and the trap it avoids.',
+    href: `${REPOSITORY_URL}#local-cloud-model`,
+    title: 'Local, cloud model',
+    body: 'What the setup does, step by step: what each of the eleven steps is for and the trap it avoids, and why both model addresses stay empty on the key route.',
   },
   {
-    href: `${REPOSITORY_URL}#run-it-with-an-openai-key`,
-    title: 'Run it with a provider key',
-    body: 'The same, for the shorter route, including why both model addresses stay empty on it.',
+    href: `${REPOSITORY_URL}#local-local-model`,
+    title: 'Local, local model',
+    body: 'The model picker, what a small model hands you and how to tell it from a fault, the GPU, and the local skill sandbox.',
   },
   {
-    href: `${REPOSITORY_URL}#run-it-in-real-mode`,
-    title: 'Run it in real mode',
-    body: 'Point it at your own documentation and your own systems. Local only, and deliberately unreachable from a hosted deployment.',
+    href: `${REPOSITORY_URL}#real-mode`,
+    title: 'Real mode, what both local ways are',
+    body: 'The components, linking your documentation, the first day of decisions, the rehearsal and the teardown. Local only, and deliberately unreachable from a hosted deployment.',
+  },
+  {
+    href: `${REPOSITORY_URL}#evaluation-and-the-mock-office`,
+    title: 'Evaluation and the mock office',
+    body: 'Mock mode, the seeded office the evaluation harness and the hosted demo run on: what it is for and its command.',
   },
   {
     href: `${REPOSITORY_URL}#environment`,
