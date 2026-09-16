@@ -165,8 +165,17 @@ clear_key() {
   fi
 }
 
+# A value the deployment already holds is not set again: `convex env set` is
+# one CLI call per key, and a resume after `stop` would otherwise pay for
+# every key to change nothing. The comparison is the whole `KEY=value` line
+# as `convex env list` printed it, so a value it prints differently is simply
+# set again, which is the safe direction.
 set_key() {
   local key="$1" value="$2" note="${3:-}" output
+  if grep -qxF -- "${key}=${value}" <<<"$deployment_env"; then
+    echo "keep ${key} (unchanged)"
+    return 0
+  fi
   echo "set  ${key}${note:+ (${note})}"
   if ! output=$(npx convex env set "$key" "$value" 2>&1); then
     echo "error: failed to set ${key} on the deployment." >&2
