@@ -968,12 +968,16 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
   refusedClosing?: RefusedClosing;
 }
 
-/** The most of a refused closing set the retry prompt carries; the row keeps the whole of it. */
+/** The most of a refused closing set the retry prompt carries, shared across its actions; the row keeps the whole of it. */
 export const REFUSED_CLOSING_PROMPT_CHARS = 6000;
+/** The least any one refused action is shown, so a long comment cannot crowd the others out. */
+const REFUSED_ACTION_PROMPT_FLOOR = 400;
 
 /**
  * The previous attempt's refused closing set as the closing prompt shows
- * it: the refusal, the actions bounded, and the outcomes it claimed.
+ * it: the refusal, every action on a line of its own, each bounded by its
+ * share of the budget, and the outcomes it claimed. A clip is named as a
+ * clip with its counts, so the model corrects the refusal and not the cut.
  *
  * Args:
  *   refused: The set and reason the row kept.
@@ -982,11 +986,21 @@ export const REFUSED_CLOSING_PROMPT_CHARS = 6000;
  *   The prompt lines for the section.
  */
 export function refusedClosingLines(refused: RefusedClosing): string[] {
-  const actions = JSON.stringify(refused.actions);
+  const share = Math.max(
+    REFUSED_ACTION_PROMPT_FLOOR,
+    Math.floor(REFUSED_CLOSING_PROMPT_CHARS / Math.max(1, refused.actions.length)),
+  );
+  const actions = refused.actions.map((action, index): string => {
+    const json = JSON.stringify(action);
+    return json.length > share
+      ? `  ${index}. ${json.slice(0, share)} ... (clipped after ${share} of ${json.length} characters; the row keeps the whole payload)`
+      : `  ${index}. ${json}`;
+  });
   return [
     '--- Previous closing set, refused by the gate (nothing in it reached a surface) ---',
     `Refusal: ${refused.reason}`,
-    `Its actions: ${actions.length > REFUSED_CLOSING_PROMPT_CHARS ? `${actions.slice(0, REFUSED_CLOSING_PROMPT_CHARS)} ... (truncated)` : actions}`,
+    `Its actions, one per line (${refused.actions.length}):`,
+    ...actions,
     `Its plan-step outcomes: ${refused.planStepOutcomes.map((outcome) => `${outcome.step} ${outcome.status} (${outcome.evidence})`).join('; ')}`,
     'Correct what the refusal names and keep what it does not; the prerequisite ledger above is the same evidence.',
   ];
