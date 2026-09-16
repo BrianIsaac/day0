@@ -1079,18 +1079,59 @@ export function wrapIndented(text: string, indent: string, width = 92): string[]
 }
 
 /**
+ * What a first success looks like in real mode: the README's "The
+ * documentation is yours" steps, in order, because the mock steps' second line
+ * ("the office it works in is seeded and synthetic") is untrue here.
+ */
+export const REAL_FIRST_SUCCESS: readonly { action: string; detail: string }[] = [
+  {
+    action: 'Open the unlock URL that pnpm dev prints.',
+    detail:
+      'It carries the key once; after that it is a cookie. Opening http://localhost:3000 directly answers 403, and that is the boundary working rather than a fault.',
+  },
+  {
+    action: 'Link your documentation first, on the documentation page.',
+    detail:
+      'A folder source takes a path relative to the mount, and `.` is the whole of DAY0_DOCS_HOST_DIR. A Notion source takes http://docs-notion-mcp:3000/mcp and your own integration token. Each source shows synced and a page count once read.',
+  },
+  {
+    action: 'Deploy an agent with those sources ticked, hold the Day-1 1:1 in chat, and approve the charter.',
+    detail:
+      'Use the tickets\' own words in the 1:1; the charter records what you said, and the systems the documentation names are the systems that exist.',
+  },
+  {
+    action: 'Approve the connection cards on the Surfaces tab.',
+    detail:
+      'Each card needs both the manager and the IT approval; a Slack card with no DAY0_PUBLIC_URL takes a shared bot token before approval. A system with no approved path stays absent, and work that needs it defers.',
+  },
+];
+
+/**
  * What a first success looks like, printed after the checker's own report.
  *
- * The steps are `src/setup/quickstart.ts`'s, which is also what the `/setup`
- * page renders: a reader who follows the page and a reader who follows this
- * terminal are told the same four things.
+ * The mock steps are `src/setup/quickstart.ts`'s, which is also what the
+ * `/setup` page renders: a reader who follows the page and a reader who
+ * follows this terminal are told the same four things. Real mode has its own
+ * four. The app's origin in a detail follows the unlock URL, so a stack on
+ * another port is not told about 3000.
+ *
+ * Args:
+ *   unlockUrl: The URL the run resolved, or undefined when it could not.
+ *   mode: Mock unless said otherwise.
+ *
+ * Returns:
+ *   Lines to print.
  */
-export function firstSuccessLines(unlockUrl: string | undefined): string[] {
+export function firstSuccessLines(unlockUrl: string | undefined, mode: SetupMode = 'mock'): string[] {
   const lines = ['What a first success looks like:'];
-  FIRST_SUCCESS.forEach((step, index): void => {
+  const origin = unlockUrl === undefined ? undefined : new URL(unlockUrl).origin;
+  const steps = mode === 'real' ? REAL_FIRST_SUCCESS : FIRST_SUCCESS;
+  steps.forEach((step, index): void => {
     const action = index === 0 && unlockUrl !== undefined ? `Open ${unlockUrl}.` : step.action;
+    const detail =
+      origin === undefined ? step.detail : step.detail.replaceAll('http://localhost:3000', origin);
     lines.push(`  ${index + 1}  ${action}`);
-    lines.push(...wrapIndented(step.detail, '     '));
+    lines.push(...wrapIndented(detail, '     '));
   });
   return lines;
 }
@@ -1572,13 +1613,15 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const services = runningServices(io, resolvedProject);
-    // A reset empties the project, so its ports are about to be free and its
-    // volume about to be new; the checks below read it as a fresh installation.
-    const alreadyOurs = !options.reset && decision === 'rerun' && services?.includes('backend') === true;
+    // A running stack of this project's own holds its ports itself, whether it
+    // is being kept or about to be taken down by --reset; only the latter is
+    // read as a fresh installation from the volume onwards.
+    const ownStackRunning = decision === 'rerun' && services?.includes('backend') === true;
+    const alreadyOurs = !options.reset && ownStackRunning;
 
     io.log(`Day0 local setup, ${options.mode} mode, Compose project ${resolvedProject}.`);
     io.log('');
-    const portsToCheck = alreadyOurs
+    const portsToCheck = ownStackRunning
       ? []
       : [
           { name: 'CONVEX_PORT', port: ports.backend },
@@ -1606,8 +1649,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       ports: portResults,
     });
     if (!printPrerequisites(io, prerequisites) && !options.dryRun) return 1;
-    if (alreadyOurs) {
-      io.log(`  ok    ${resolvedProject} is already running here, so its ports are its own.`);
+    if (ownStackRunning) {
+      io.log(
+        `  ok    ${resolvedProject} is already running here, so its ports are its own` +
+          `${options.reset ? '; --reset takes it down first' : ''}.`,
+      );
       io.log('');
     }
 
@@ -1678,7 +1724,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         }
       }
     } else if (route === 'local') {
-      const modelPortFree = alreadyOurs || (await io.portFree(ports.model));
+      const modelPortFree = ownStackRunning || (await io.portFree(ports.model));
       if (!modelPortFree && !options.dryRun) {
         io.log('');
         io.log(
@@ -2070,7 +2116,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     io.log('Next: `pnpm dev`. It prints the same unlock URL and serves the app.');
     if (unlockUrl) io.log(`  ${unlockUrl}`);
     io.log('');
-    for (const line of firstSuccessLines(unlockUrl)) io.log(line);
+    for (const line of firstSuccessLines(unlockUrl, options.mode)) io.log(line);
     io.log('');
     if (real) {
       io.log(

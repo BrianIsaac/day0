@@ -706,6 +706,10 @@ describe('a whole real-mode run on the Featherless route', (): void => {
     const printed = h.output.join('\n');
     expect(printed).toContain('on the CPU: the venv was built for the CPU');
     expect(printed).toContain('http://localhost:45300/?day0_key=unlock-secret');
+    expect(printed.replace(/\s+/g, ' ')).toContain('Opening http://localhost:45300 directly answers 403');
+    expect(printed).not.toContain('localhost:3000');
+    expect(printed).toContain('Link your documentation first');
+    expect(printed).not.toContain('seeded and synthetic');
     expect(printed).toContain('pnpm redactor:down');
     expect(printed).toContain('--profile docs-notion --profile browser --profile demo');
   });
@@ -872,6 +876,18 @@ describe('running it a second time', (): void => {
 });
 
 describe('--reset', (): void => {
+  it('does not read the running stack’s own ports as taken', async (): Promise<void> => {
+    const h = harness({
+      envLocal: ['COMPOSE_PROJECT_NAME=day0-setup-test', 'OPENAI_API_KEY=already-here', `OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`, ''].join('\n'),
+      services: ['backend', 'sandbox', 'redactor'],
+      volumes: ['day0-setup-test_convex_data'],
+      busyPorts: [3210, 3211, 6791],
+    });
+    writeEnvValues(join(h.directory, '.env.local'), { DAY0_SETUP_ROOT: h.directory });
+    expect(await runSetup(realRoute({ reset: true }), h.io)).toBe(0);
+    expect(h.output.join('\n')).toContain('its ports are its own; --reset takes it down first');
+  });
+
   it('takes the project down with its volumes before anything else, and mints a new admin key', async (): Promise<void> => {
     const h = harness({
       envLocal: [
