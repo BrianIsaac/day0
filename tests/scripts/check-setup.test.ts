@@ -6,7 +6,39 @@ import {
   composeRunningServices,
   docSourceDependency,
   main,
+  modeAndRouteLine,
+  setupRoute,
 } from '../../scripts/check-setup';
+
+describe('the mode and route line', (): void => {
+  it('names the route the setup wrote, without any key value', (): void => {
+    expect(
+      setupRoute({
+        OPENAI_BASE_URL: 'https://api.featherless.ai/v1',
+        OPENAI_API_KEY: 'synthetic',
+        OPENAI_MODEL: 'zai-org/GLM-5.3-Flash',
+      }),
+    ).toEqual({ route: 'featherless', detail: 'GLM through Featherless, model zai-org/GLM-5.3-Flash' });
+    expect(
+      setupRoute({
+        OPENAI_BASE_URL: 'http://127.0.0.1:11434/v1',
+        CONVEX_OPENAI_BASE_URL: 'http://model:11434/v1',
+        OPENAI_MODEL: 'qwen3:8b',
+      }).route,
+    ).toBe('local');
+    expect(setupRoute({ OPENAI_API_KEY: 'synthetic' }).route).toBe('key');
+    expect(setupRoute({ OPENAI_BASE_URL: 'https://gateway.example/v1' }).route).toBe('endpoint');
+    expect(setupRoute({}).route).toBe('none');
+    const line = modeAndRouteLine({
+      DAY0_SURFACE_MODE: 'real',
+      OPENAI_BASE_URL: 'https://api.featherless.ai/v1',
+      OPENAI_API_KEY: 'synthetic-key-value',
+    });
+    expect(line).toBe('Mode real, route featherless (GLM through Featherless, model gpt-5.6-terra (default)).');
+    expect(line).not.toContain('synthetic-key-value');
+    expect(modeAndRouteLine({ OPENAI_API_KEY: 'k' })).toContain('Mode mock, route key');
+  });
+});
 
 describe('documentation component setup reporting', (): void => {
   it('uses the resolved component dependency rather than the vendor kind', (): void => {
