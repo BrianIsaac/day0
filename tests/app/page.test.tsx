@@ -56,13 +56,25 @@ describe('signed-out landing page', (): void => {
     expect(html).toContain('One name in. Everything else is learned state.');
   });
 
-  it('offers a stranger the recorded demo first and setup second', (): void => {
+  it('offers a stranger the hosted demo first, through sign-in, and setup second', (): void => {
     expect(html).toContain('Try the demo');
-    expect(html).toContain('href="/demo"');
+    expect(html).toContain('href="/sign-in"');
     expect(html).toContain('Set up Day0');
     expect(html).toContain('href="/setup"');
-    // Both must be links a signed-out visitor can follow, not sign-in prompts.
+    // The demo is the signed-in mock office, so its button goes to sign-in and
+    // nowhere else; the recording is a separate page with its own button.
+    const demo = /<a\b([^>]*)>Try the demo<\/a>/.exec(html)?.[1] ?? '';
+    expect(demo).toContain('href="/sign-in"');
     expect(html).not.toContain('Deploy your first agent');
+  });
+
+  it('keeps the recorded walkthrough as its own page, with a button below the loop', (): void => {
+    const walkthrough = /<a\b([^>]*)>Watch the recorded walkthrough<\/a>/.exec(html)?.[1] ?? '';
+    expect(walkthrough).toContain('href="/demo"');
+    // Below the hero and the four loop steps, not beside the two hero CTAs.
+    expect(html.indexOf('Watch the recorded walkthrough')).toBeGreaterThan(html.indexOf('Skill creation'));
+    const hero = html.slice(html.indexOf('Try the demo'), html.indexOf('Set up Day0'));
+    expect(hero).not.toContain('href="/demo"');
   });
 
   it('boxes the two hero CTAs identically, so neither sits a border taller', (): void => {
@@ -85,7 +97,7 @@ describe('signed-out landing page', (): void => {
   });
 
   it('says what the demo is before the visitor spends a click on it', (): void => {
-    expect(html).toContain('Explore the mock office and its recorded approval flow');
+    expect(html).toContain('Sign in, deploy an agent into the mock office, and hold its Day-1 1:1 yourself.');
   });
 
   it('keeps the source repository, smaller than the two routes into the product', (): void => {

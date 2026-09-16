@@ -474,7 +474,7 @@ export default function SetupPage() {
           <p className="text-sm text-[var(--color-muted)]">
             Only wanted to see it work?{' '}
             <Link href="/demo" className="text-[var(--color-accent)] underline underline-offset-4">
-              Try the demo
+              Watch the recorded walkthrough
             </Link>{' '}
             instead - it is a recording, and it needs nothing installed.
           </p>

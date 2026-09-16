@@ -824,8 +824,12 @@ export function DemoWalkthrough({ snapshot }: { snapshot: HostedDemoSnapshot }) 
       <footer className="mt-16 pt-8 border-t border-[var(--color-border)]">
         <p className="text-sm text-[var(--color-muted)] leading-relaxed">
           This is a recording of one run, not a live agent.{' '}
+          <Link href="/sign-in" className="text-[var(--color-accent)] underline underline-offset-4">
+            Sign in
+          </Link>{' '}
+          to deploy one into the hosted mock office,{' '}
           <Link href="/setup" className="text-[var(--color-accent)] underline underline-offset-4">
-            Set up Day0
+            set up Day0
           </Link>{' '}
           to run your own, or go back to the{' '}
           <Link href="/" className="text-[var(--color-accent)] underline underline-offset-4">
