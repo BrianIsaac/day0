@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planPromisesClose, planWithholdsClose, promisedReads, promisesClose, promisesResult, withholdsClose } from '../../../src/work/plan-steps';
+import { planPromisesClose, planWithholdsClose, promisedReads, promisesClose, promisesResult, promisesWrite, withholdsClose } from '../../../src/work/plan-steps';
 import {
   auditNotePlan,
   refreshPlan,
@@ -71,6 +71,24 @@ describe('what a plan step promises, read from the 16 September plans', (): void
     expect(promisesClose('Move REVOPS-7 to Done via linear save_issue once the audit comment is saved.')).toBe(true);
     expect(promisesClose('Close REVOPS-5 in the Q3 close project.')).toBe(true);
     expect(promisesClose(REVOPS_5_STEP_5)).toBe(false);
+  });
+});
+
+describe('a negation inside a parenthetical aside', (): void => {
+  const RUN_3_STEP_1_VERBATIM =
+    "On the looker-pipeline-tile surface, run the documented browser sequence in one session: navigate to http://looker-tile:8080/, fill Username (revops) and Password ({{secret}}), click 'Sign in', fill 'Pipeline coverage' with 74% (the approved figure from the Friday standup summary — do not compute a replacement), click 'Save', then browser_snapshot to read back the visible figure and the audit line 'Last updated by <user> at <time> UTC'. If the page redirects, login fails, or the audit line does not appear, record the observed failure and stop.";
+
+  it('does not negate the instruction the aside sits in: the run 3 step 1 is a write step', (): void => {
+    expect(promisesWrite(RUN_3_STEP_1_VERBATIM)).toBe(true);
+    expect(promisesResult(RUN_3_STEP_1_VERBATIM)).toBe(true);
+    expect(promisesWrite('Fill the figure (do not compute a replacement) and save the tile.')).toBe(true);
+    expect(promisesClose('Move REVOPS-7 to Done (do not skip the comment).')).toBe(true);
+  });
+
+  it('still reads a negation outside the aside', (): void => {
+    expect(withholdsClose('Do not move REVOPS-5 to Done (the manager closes it).')).toBe(true);
+    expect(promisesClose('Do not move REVOPS-5 to Done (the manager closes it).')).toBe(false);
+    expect(promisesWrite('Do not (under any circumstances) post the comment.')).toBe(false);
   });
 });
 

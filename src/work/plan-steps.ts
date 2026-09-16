@@ -137,9 +137,12 @@ function occurrences(rawStep: string, terms: RegExp, options: OccurrenceOptions 
   return found;
 }
 
-/** Whether the occurrence is an instruction to act rather than to withhold. */
+/** A parenthetical aside closed before the term ("(do not compute a replacement)"): its words are not the clause's instruction. */
+const CLOSED_ASIDE = /\([^()]*\)/g;
+
+/** Whether the occurrence is an instruction to act rather than to withhold; an aside closed before it negates nothing. */
 function affirmed(occurrence: TermOccurrence): boolean {
-  return !NEGATED_INSTRUCTION.test(occurrence.clausePrefix);
+  return !NEGATED_INSTRUCTION.test(occurrence.clausePrefix.replace(CLOSED_ASIDE, ' '));
 }
 
 function writesInClause(clause: string): boolean {
