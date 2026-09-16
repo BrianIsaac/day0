@@ -1501,3 +1501,59 @@ describe('what stands after the evidence check withholds a message', (): void =>
     expect(output.withheldActions?.map((row) => row.action)).toEqual([reply]);
   });
 });
+
+describe('a ticket state change after its audit comment is withheld', (): void => {
+  const linear: SurfaceRecord[] = [
+    { slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp', endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'], verdict: 'connected', credentialLanded: true, lastVerifiedAt: 1 },
+  ];
+  const call = (tool: string, args: Record<string, unknown>): MockAction => ({ tool: 'mcp.call', args: { surface: 'linear', tool, toolArgsJson: JSON.stringify(args) } });
+  const unsupported = call('save_comment', { issueId: 'REVOPS-7', body: 'All three standup deals are reconciled and the Northstar ownership is confirmed.' });
+  const done = call('save_issue', { id: 'REVOPS-7', state: 'Done' });
+  const read = call('get_issue', { id: 'REVOPS-7' });
+  const ticketCandidate: WorkCandidate = { ...candidate, sourceSystem: 'linear', externalId: 'REVOPS-7', title: 'Refresh the Looker pipeline tile', contentRefs: ['ticket://REVOPS-7'] };
+  const closingArgs = (initialActions: MockAction[], initialLedger: Array<{ tool: string; ok: boolean; idempotencyKey: string }>) => ({
+    skill: { name: 'kanban-comment-and-close', description: 'Comment and close.', body: '# Skill' },
+    plan: { summary: 'Comment on REVOPS-7 and close it.', steps: ['Read REVOPS-7.', 'Comment on REVOPS-7 with the result, then move it to Done.'], expectedOutputType: 'ticket-update' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1 },
+    candidate: ticketCandidate, charter, mockEnv, mode: 'real' as const, surfaces: linear,
+    initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: initialActions, procedureTrails: [] },
+    initialLedger,
+  });
+  const closing = (actions: MockAction[]) => ({
+    draft: '', notes: '', actions, procedureTrails: [],
+    planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'ledger row 0', basis: 'ledger' }, { step: 2, status: 'satisfied', evidence: 'this response', basis: 'ledger' }],
+  });
+
+  beforeEach((): void => {
+    recorded.users.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('withholds the Done with the comment it was to follow, naming the comment, so the gate sees the omitted transition instead of the provider refusing the Done', async (): Promise<void> => {
+    recorded.outputs.push(closing([unsupported, done]), closing([unsupported, done]));
+    const corrections: Array<[number[], string]> = [];
+    const output = await runDependentSkill({ ...closingArgs([read], [{ tool: 'mcp.call', ok: true, idempotencyKey: 'r' }]), onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); } });
+    expect(output.actions).toEqual([]);
+    expect(output.withheldActions).toEqual([
+      { action: unsupported, reason: expect.stringContaining('All three standup deals are reconciled') },
+      { action: done, reason: expect.stringContaining('the audit comment on REVOPS-7 it was to follow was withheld') },
+    ]);
+    expect(corrections).toHaveLength(2);
+    expect(corrections[1]).toEqual([[0], expect.stringContaining('the audit comment on REVOPS-7 it was to follow was withheld')]);
+  });
+
+  it('keeps the Done when a comment on the ticket already landed in phase one, and when the withheld message is not its comment', async (): Promise<void> => {
+    const landedComment = call('save_comment', { issueId: 'REVOPS-7', body: 'Refreshed the tile; audit line read back.' });
+    recorded.outputs.push(closing([unsupported, done]), closing([unsupported, done]));
+    const withLanded = await runDependentSkill(closingArgs([read, landedComment], [{ tool: 'mcp.call', ok: true, idempotencyKey: 'r' }, { tool: 'mcp.call', ok: true, idempotencyKey: 'c' }]));
+    expect(withLanded.actions).toEqual([done]);
+    expect(withLanded.withheldActions?.map((row) => row.action)).toEqual([unsupported]);
+
+    const otherTicket = call('save_comment', { issueId: 'REVOPS-6', body: 'All three standup deals are reconciled and the Northstar ownership is confirmed.' });
+    const supported = call('save_comment', { issueId: 'REVOPS-7', body: 'Could not confirm the deal reconciliation: no tracker surface is connected.' });
+    recorded.outputs.length = 0;
+    recorded.outputs.push(closing([otherTicket, supported, done]), closing([otherTicket, supported, done]));
+    const other = await runDependentSkill(closingArgs([read], [{ tool: 'mcp.call', ok: true, idempotencyKey: 'r' }]));
+    expect(other.actions).toEqual([supported, done]);
+    expect(other.withheldActions?.map((row) => row.action)).toEqual([otherTicket]);
+  });
+});

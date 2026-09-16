@@ -1320,6 +1320,9 @@ function withRefusedClosing(
       notes: authored.notes,
       reason,
       at: Date.now(),
+      ...(authored.withheldActions && authored.withheldActions.length > 0
+        ? { withheldActions: authored.withheldActions }
+        : {}),
     },
   };
 }

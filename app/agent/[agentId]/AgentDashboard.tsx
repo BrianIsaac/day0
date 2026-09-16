@@ -1708,6 +1708,8 @@ interface RefusedClosingRow {
   notes: string;
   reason: string;
   at: number;
+  /** Actions the evidence check withheld from the set before the gate refused it. */
+  withheldActions?: WithheldActionRow[];
 }
 
 /**
@@ -2787,7 +2789,13 @@ export function WorkItemCard({
 
       <RefusedClosingDetails refused={output?.refusedClosing} />
 
-      <WithheldActionsDetails withheld={[...(output?.initial?.withheldActions ?? []), ...(output?.withheldActions ?? [])]} />
+      <WithheldActionsDetails
+        withheld={[
+          ...(output?.initial?.withheldActions ?? []),
+          ...(output?.withheldActions ?? []),
+          ...(output?.refusedClosing?.withheldActions ?? []),
+        ]}
+      />
 
       {output ? <DraftDetails output={output} /> : null}
 

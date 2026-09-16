@@ -27,6 +27,7 @@ import {
   isSurfaceTool,
   parseSurfaceAction,
   targetChannel,
+  targetIssue,
   targetIssueReferences,
   type ParsedMcpCall,
   type ParsedSurfaceAction,
@@ -1116,6 +1117,72 @@ async function withholdUnsupported<T extends CorrectableOutput>(
   return corrected;
 }
 
+/** A ticket as the comment-before-status rule keys it: the surface and the issue an action addresses. */
+function commentTargetKey(action: MockAction): string | undefined {
+  if (!isSurfaceTool(action.tool)) return undefined;
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok) return undefined;
+  const issue = targetIssue(parsed.action);
+  return issue === undefined ? undefined : `${parsed.action.surface}:${issue}`;
+}
+
+/** The tickets that already carry a landed audit comment: phase one's, and earlier runs' of this item. */
+function landedCommentTargets(args: Pick<RunDependentSkillArgs, 'initialOutput' | 'initialLedger' | 'landedWrites'>): Set<string> {
+  const landed = new Set<string>();
+  const consider = (action: MockAction, row: AppliedAction | undefined): void => {
+    if (!row?.ok || row.held) return;
+    if (!isSurfaceTool(action.tool)) return;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || !isAuditComment(parsed.action)) return;
+    const key = commentTargetKey(action);
+    if (key) landed.add(key);
+  };
+  args.initialOutput.actions.forEach((action, index) => consider(action, args.initialLedger[index]));
+  for (const write of args.landedWrites ?? []) consider(write.action, write.applied);
+  return landed;
+}
+
+/**
+ * The ticket state changes left standing after their audit comment was
+ * withheld. The registry lands a state change only after a landed audit
+ * comment on the same ticket, so a Done written to follow a withheld comment
+ * would be refused at the provider and read as a provider failure sent to
+ * reconciliation; withheld here, the gate sees the transition omitted and
+ * stops the run at the closing gate, where Retry resumes. A state change
+ * whose ticket already carries a landed comment, from phase one or an
+ * earlier run, or a comment still standing before it, is not touched.
+ */
+function orphanedStatusChanges(output: CorrectableOutput, landed: ReadonlySet<string>): AuditRefusal[] {
+  const withheldComments = new Map<string, MockAction>();
+  for (const row of output.withheldActions ?? []) {
+    if (!isSurfaceTool(row.action.tool)) continue;
+    const parsed = parseSurfaceAction(row.action);
+    const key = commentTargetKey(row.action);
+    if (parsed.ok && isAuditComment(parsed.action) && key && !withheldComments.has(key)) withheldComments.set(key, row.action);
+  }
+  if (withheldComments.size === 0) return [];
+  const refusals: AuditRefusal[] = [];
+  output.actions.forEach((action, index): void => {
+    if (!isSurfaceTool(action.tool)) return;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || !isStatusChange(parsed.action)) return;
+    const key = commentTargetKey(action);
+    if (!key || !withheldComments.has(key) || landed.has(key)) return;
+    const standing = output.actions.slice(0, index).some((earlier) => {
+      if (!isSurfaceTool(earlier.tool)) return false;
+      const other = parseSurfaceAction(earlier);
+      return other.ok && isAuditComment(other.action) && commentTargetKey(earlier) === key;
+    });
+    if (standing) return;
+    const issue = targetIssue(parsed.action) ?? key;
+    refusals.push({
+      index,
+      reason: `a ticket state change lands only after a landed audit comment on the ticket, and the audit comment on ${issue} it was to follow was withheld by the evidence check`,
+    });
+  });
+  return refusals;
+}
+
 /** The most of a refused closing set the retry prompt carries, shared across its actions; the row keeps the whole of it. */
 export const REFUSED_CLOSING_PROMPT_CHARS = 6000;
 /** The least any one refused action is shown, so a long comment cannot crowd the others out. */
@@ -1133,6 +1200,14 @@ const REFUSED_ACTION_PROMPT_FLOOR = 400;
  * Returns:
  *   The prompt lines for the section.
  */
+function describeWithheldAction(action: MockAction): string {
+  if (isSurfaceTool(action.tool)) {
+    const parsed = parseSurfaceAction(action);
+    if (parsed.ok) return describeSurfaceAction(parsed.action);
+  }
+  return action.tool;
+}
+
 export function refusedClosingLines(refused: RefusedClosing): string[] {
   const share = Math.max(
     REFUSED_ACTION_PROMPT_FLOOR,
@@ -1150,6 +1225,12 @@ export function refusedClosingLines(refused: RefusedClosing): string[] {
     `Its actions, one per line (${refused.actions.length}):`,
     ...actions,
     `Its plan-step outcomes: ${refused.planStepOutcomes.map((outcome) => `${outcome.step} ${outcome.status} (${outcome.evidence})`).join('; ')}`,
+    ...(refused.withheldActions && refused.withheldActions.length > 0
+      ? [
+          `Actions the evidence check withheld from that set before the gate read it (${refused.withheldActions.length}), each with why:`,
+          ...refused.withheldActions.map((row, index) => `  ${index}. ${describeWithheldAction(row.action)}: ${row.reason}`),
+        ]
+      : []),
     'Correct what the refusal names and keep what it does not; the prerequisite ledger above is the same evidence.',
   ];
 }
@@ -3058,6 +3139,14 @@ export async function runDependentSkill(
     const gate = gateIssues(output);
     if (gate.length > 0) throw new ClosingGateRefusal(gate, withLimitations(output));
     output = await withholdUnsupported(output, claimFindings, args.onAuditCorrection);
+    const orphaned = orphanedStatusChanges(output, landedCommentTargets(args));
+    if (orphaned.length > 0) {
+      output = withholdActions(output, orphaned);
+      await args.onAuditCorrection?.(
+        orphaned.map((refusal) => refusal.index),
+        `${WITHHELD_BY_EVIDENCE}: ${orphaned.map((refusal) => refusal.reason).join('; ')}`,
+      );
+    }
   }
   return trailAttention.limitations.length > 0
     ? { ...output, procedureTrailLimitations: trailAttention.limitations }

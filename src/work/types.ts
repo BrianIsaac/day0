@@ -349,6 +349,8 @@ export interface RefusedClosing {
   notes: string;
   reason: string;
   at: number;
+  /** Actions the evidence check withheld from the set before the gate refused it; see `WithheldAction`. */
+  withheldActions?: WithheldAction[];
 }
 
 /** Output authored once, after the initial action ledger has settled. */

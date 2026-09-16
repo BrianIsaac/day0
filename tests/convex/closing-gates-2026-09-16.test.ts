@@ -636,4 +636,52 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     expect(done.state).toBe('completed');
     expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
   });
+
+  it('stops at the closing gate when the audit comment is withheld: the Done goes with it, nothing reaches Linear, and the retry resumes at the closing phase', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId } = await seedAtClosing(t, REVOPS_7_RUN_4);
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
+    const unsupported = call('linear', 'save_comment', { issueId: 'REVOPS-7', body: 'All three standup deals are reconciled and the Northstar ownership is confirmed.' });
+    recorded.closingReply = { ...run4RefreshClosing, actions: [unsupported, run4RefreshClosing.actions[1]!] };
+    const refusal = await t.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    // The comment was refused twice and withheld; the Done it was to follow is withheld with it, so the set that reaches the gate omits the transition the plan promised.
+    expect(refusal).toEqual({ ok: false, reason: 'dependent phase omitted the approved ticket state transition without a blocked plan step' });
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['dependent', 'dependent']);
+    const stopped = await readItem(t, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe(`${STOPPED_PREFIX}${refusal.reason}`);
+    expect(stopped.output).toMatchObject({
+      phase: 'dependent-authoring',
+      refusedClosing: { actions: [], reason: refusal.reason },
+    });
+    const withheld = (stopped.output as { refusedClosing: { withheldActions?: Array<{ action: MockAction; reason: string }> } }).refusedClosing.withheldActions;
+    expect(withheld?.map((row) => [row.action, row.reason])).toEqual([
+      [unsupported, expect.stringContaining('All three standup deals are reconciled')],
+      [run4RefreshClosing.actions[1], expect.stringContaining('the audit comment on REVOPS-7 it was to follow was withheld')],
+    ]);
+    expect(recorded.mcp).toEqual([]);
+    const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'audit.corrected').map((event) => event.payload)).toMatchObject([
+      { workItemId, removedIndices: [0], reason: expect.stringContaining('All three standup deals are reconciled') },
+      { workItemId, removedIndices: [0], reason: expect.stringContaining('the audit comment on REVOPS-7 it was to follow was withheld') },
+    ]);
+    recorded.model.length = 0;
+
+    // Reconciled and retried, the item resumes at the closing phase; a supported set then lands under autonomy without touching the tile again.
+    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const resumed = await readItem(t, workItemId);
+    expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', resumedClosing: true, initialFailure: refusal.reason });
+    recorded.closingReply = run4RefreshClosing;
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! })).resolves.toEqual({
+      ok: true, reason: 'dependent actions applying',
+    });
+    // The retry is told what was withheld and why, not only that the transition was omitted.
+    expect(recorded.model[0]!.user).toContain('Actions the evidence check withheld from that set before the gate read it (2)');
+    expect(recorded.model[0]!.user).toContain('All three standup deals are reconciled');
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    expect((await readItem(t, workItemId)).state).toBe('completed');
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+  });
 });
