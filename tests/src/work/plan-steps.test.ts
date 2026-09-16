@@ -34,6 +34,22 @@ describe('what a plan step promises, read from the 16 September plans', (): void
     expect(auditNotePlan.steps.map(promisesClose)).toEqual([false, false, false, false, false]);
   });
 
+  it('reads an imperative close before a noun head as the instruction it is', (): void => {
+    for (const wording of [
+      'Complete task REVOPS-7.',
+      'Close items REVOPS-5 and REVOPS-7 in Linear.',
+      'Resolve work item REVOPS-7 once the comment lands.',
+      'Then close project REVOPS in Linear.',
+    ]) {
+      expect(promisesClose(wording), wording).toBe(true);
+    }
+    expect(withholdsClose('Do not close tasks in this run.')).toBe(true);
+    expect(withholdsClose('Never complete items without the audit comment.')).toBe(true);
+    for (const wording of ['Review close tasks for the quarter.', 'Read the close status page.', 'Summarise the completed close checks.']) {
+      expect(promisesClose(wording), wording).toBe(false);
+    }
+  });
+
   it('still reads an instruction to close as a promise', (): void => {
     expect(promisesClose('Close the ticket once the comment lands.')).toBe(true);
     expect(promisesClose('Move REVOPS-7 to Done via linear save_issue once the audit comment is saved.')).toBe(true);

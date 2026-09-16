@@ -26,6 +26,13 @@ const PERIOD_LABEL = /\b(?:q[1-4]|h[12]|fy\s?\d{2,4}|(?:19|20)\d\d|(?:month|quar
 /** A noun after a close term makes it an adjunct ("close project", "close checklist"). */
 const CLOSE_NOUN_HEAD =
   /^\s+(?:projects?|checklists?|checks|process|calendar|timeline|package|summary|summaries|tasks?|items?|work|notes?|reports?|board|window|meetings?|status)\b/i;
+/**
+ * A clause prefix that leaves the term in imperative position: nothing, or
+ * only a connective, a courtesy or a negation ("Close items ...", "Do not
+ * close tasks ..."). There the noun after the term is its object, not its
+ * head.
+ */
+const IMPERATIVE_PREFIX = /^\s*(?:(?:and|or|then|also|finally|now|please|do not|don't|never|always)\s+)*$/i;
 /** A plan's own words for leaving the ticket state where it is. */
 const NO_TRANSITION =
   /\bno (?:status|state) (?:change|transition)\b|\b(?:status|state) (?:is )?(?:unchanged|stays|remains)\b|\bleave (?:\S+\s+){0,3}(?:open|unchanged|as is|in progress|to the manager)\b/i;
@@ -88,12 +95,11 @@ function occurrences(rawStep: string, terms: RegExp, options: OccurrenceOptions 
     if (step[match.index - 1] === '-') continue;
     const after = step.slice(match.index + match[0].length);
     if (after.startsWith('-') || PERIOD_NOUN.test(after)) continue;
-    if (options.nounHead?.test(after)) continue;
     const prefix = step.slice(0, match.index);
+    const clausePrefix = prefix.slice(clauseStart(prefix));
+    if (options.nounHead?.test(after) && !IMPERATIVE_PREFIX.test(clausePrefix)) continue;
     if (PERIOD_LABEL.test(prefix)) continue;
     if (options.determinerIsVocabulary !== false && NOUN_MARKER.test(prefix)) continue;
-    const start = clauseStart(prefix);
-    const clausePrefix = prefix.slice(start);
     found.push({
       term: match[0].toLowerCase(),
       clause: clausePrefix + match[0] + after.slice(0, clauseEnd(after)),
