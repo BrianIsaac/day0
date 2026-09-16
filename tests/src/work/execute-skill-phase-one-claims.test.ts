@@ -5,14 +5,16 @@ import type { MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types
 import {
   auditNotePlan,
   auditNotePrerequisites,
+  REVOPS_5_DM_2_CLAIM,
 } from '../../convex/fixtures/closing-gates-2026-09-16';
 
 /**
  * The evidence invariant on what phase one says to people: on 16 September
  * REVOPS-5's second phase-one DM said the audit comment was posted before
- * any comment existed. Phase one has no ledger, so a message it sends may
- * describe what the response does and cite the documentation or the
- * manager's words, and nothing else; one repair, then the run fails.
+ * any comment existed, and its first DM was a question the check must let
+ * through. Phase one has no ledger, so a message it sends may describe what
+ * the response does and cite the documentation or the manager's words, and
+ * nothing else; one repair, then the run fails.
  */
 
 const recorded = vi.hoisted(() => ({
@@ -84,7 +86,6 @@ const phaseOne = {
   actions: auditNotePrerequisites,
   procedureTrails: [],
 };
-const CLAIM = 'REVOPS-5 audit comment posted with the three checks in checklist order.';
 const honest = {
   ...phaseOne,
   actions: [
@@ -121,7 +122,8 @@ describe('phase-one messages under the evidence check', (): void => {
     recorded.outputs.push(phaseOne, honest);
     const output = await run();
     expect(recorded.users).toHaveLength(2);
-    expect(recorded.users[1]).toContain(`action 6 (slack POST /chat.postMessage) says "${CLAIM}"`);
+    expect(recorded.users[1]).toContain(`action 6 (slack POST /chat.postMessage) says "${REVOPS_5_DM_2_CLAIM}"`);
+    expect(recorded.users[1]).not.toContain('action 5 (slack POST /chat.postMessage)');
     expect(recorded.users[1]).toContain('asserted a fact the ledger, the documentation and the manager\'s feedback do not carry');
     expect(output.actions).toEqual(honest.actions);
   });
