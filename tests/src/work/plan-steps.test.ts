@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { planPromisesClose, promisesClose, promisesResult, withholdsClose } from '../../../src/work/plan-steps';
+import { planPromisesClose, planWithholdsClose, promisedReads, promisesClose, promisesResult, withholdsClose } from '../../../src/work/plan-steps';
 import {
   auditNotePlan,
   refreshPlan,
   REVOPS_5_STEP_2,
   REVOPS_5_STEP_5,
   REVOPS_7_STEP_3,
+  RUN_3_REVOPS_7_STEP_1,
+  RUN_3_REVOPS_7_STEP_2,
+  RUN_3_REVOPS_7_STEP_3,
+  run3RefreshPlan,
 } from '../../convex/fixtures/closing-gates-2026-09-16';
 
 describe('what a plan step promises, read from the 16 September plans', (): void => {
@@ -80,6 +84,17 @@ describe('a plan that withholds the transition in its own words', (): void => {
     expect(withholdsClose(REVOPS_5_STEP_2)).toBe(false);
   });
 
+  it('does not read the alternative branch of a stated condition as withholding, as the run 3 REVOPS-7 step 3 has it', (): void => {
+    expect(withholdsClose(RUN_3_REVOPS_7_STEP_3)).toBe(false);
+    expect(planWithholdsClose(run3RefreshPlan)).toBe(false);
+    expect(planPromisesClose(run3RefreshPlan)).toBe(true);
+    expect(withholdsClose('Move it to Done when the checks pass, otherwise leave it open.')).toBe(false);
+    expect(withholdsClose('Close REVOPS-7 if the figure matches; else hold the Done transition.')).toBe(false);
+    // The plan's own word before the alternative still withholds.
+    expect(withholdsClose('Do not move REVOPS-5 to Done; otherwise the checklist is void.')).toBe(true);
+    expect(withholdsClose('Leave REVOPS-5 open for the manager to close, otherwise the audit fails.')).toBe(true);
+  });
+
   it('never promised the close, even when another step reads as completing something', (): void => {
     expect(planPromisesClose(refreshPlan)).toBe(true);
     expect(planPromisesClose(auditNotePlan)).toBe(false);
@@ -99,5 +114,83 @@ describe('a plan that withholds the transition in its own words', (): void => {
         steps: ['Complete the three checks in checklist order.', 'Comment on REVOPS-5, then move it to Done.'],
       }),
     ).toBe(true);
+  });
+});
+
+describe('which surface a promised read binds to', (): void => {
+  const linear = { slug: 'linear', displayName: 'Linear' };
+  const tile = { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' };
+  const surfaces = [linear, { slug: 'slack', displayName: 'Slack' }, tile];
+  const bound = (steps: string[]): string[] =>
+    promisedReads(steps, surfaces).map((read) => `${read.step}:${read.surface.slug}${read.conditional ? '?' : ''}`);
+
+  it('binds the run 3 REVOPS-7 read-back to the tile and never to Linear, the write target', (): void => {
+    expect(bound(run3RefreshPlan.steps)).toEqual(['1:looker-pipeline-tile']);
+    expect(bound([RUN_3_REVOPS_7_STEP_3])).toEqual([]);
+    expect(bound([RUN_3_REVOPS_7_STEP_2])).toEqual([]);
+    const [read] = promisedReads([RUN_3_REVOPS_7_STEP_1], surfaces);
+    expect(read).toMatchObject({ step: 1, term: 'read', surface: tile, conditional: false });
+    expect(read!.clause).toBe("browser_snapshot to read back the visible figure and the audit line 'Last updated by <user> at <time> UTC'");
+  });
+
+  it('binds the run 2 reads to the surface each reads from, and an unnamed read-back to nothing', (): void => {
+    expect(bound([auditNotePlan.steps[0]!])).toEqual(['1:looker-pipeline-tile']);
+    expect(bound([REVOPS_5_STEP_2])).toEqual(['1:linear']);
+    expect(bound(auditNotePlan.steps)).toEqual(['1:looker-pipeline-tile', '2:linear']);
+    expect(bound(refreshPlan.steps)).toEqual([]);
+    expect(bound(['Read back the audit line and stop if it is absent.'])).toEqual([]);
+  });
+
+  it('binds a read naming two surfaces to both, and a write beside a read to the read alone', (): void => {
+    expect(bound(['Read the ticket on Linear and the figure on the Looker pipeline tile.'])).toEqual(['1:linear', '1:looker-pipeline-tile']);
+    expect(bound(['Read the figure on the Looker pipeline tile and post it to Linear.'])).toEqual(['1:looker-pipeline-tile']);
+    expect(bound(['Gather evidence from the Looker pipeline tile and post it to Linear.'])).toEqual(['1:looker-pipeline-tile']);
+    expect(bound(['Check the three deals with Linear reads'])).toEqual(['1:linear']);
+    expect(bound(['Capture the Looker pipeline tile read-back evidence'])).toEqual(['1:looker-pipeline-tile']);
+    expect(bound(['Read the connected Linear queue to locate the “Refresh the Looker pipeline tile” request and confirm its issue id.'])).toEqual(['1:linear']);
+  });
+
+  it('never reads a surface named only as a write target', (): void => {
+    for (const wording of [
+      "On linear, set REVOPS-7 state to 'Done' only if the audit line was read back.",
+      'Add a comment on REVOPS-7 via linear save_comment once you read back the figure.',
+      'Verify the figure, then post it on Linear.',
+      'Post the figure to Linear and read the tile.',
+    ]) {
+      expect(bound([wording]), wording).toEqual([]);
+    }
+    expect(bound(['Post the figure to Linear and read the Looker pipeline tile.'])).toEqual(['1:looker-pipeline-tile']);
+  });
+
+  it('reads a surface the sentence opens on as where the sentence acts, through its later clauses but not past its end', (): void => {
+    expect(bound(['On linear, add a comment, then read back the ticket state.'])).toEqual(['1:linear']);
+    expect(bound(['On linear, add a comment. Then read back the figure.'])).toEqual([]);
+    expect(bound(['In Linear, read REVOPS-7 and confirm it has an owner.'])).toEqual(['1:linear']);
+    expect(bound(['Sign in to the Looker pipeline tile, set 74%, save and snapshot the audit line.'])).toEqual(['1:looker-pipeline-tile']);
+    // The read has a surface of its own, so the opening surface is only written.
+    expect(bound(['On linear, add a comment quoting the figure you read on the Looker pipeline tile.'])).toEqual(['1:looker-pipeline-tile']);
+    expect(bound(['Read the ticket on Linear, then post the figure.'])).toEqual(['1:linear']);
+    expect(bound(['Open the Linear REVOPS ticket and inspect any linked context or runbook instructions for the pipeline tile refresh.'])).toEqual(['1:linear']);
+  });
+
+  it('does not take a ticket identifier or a name inside a longer surface name for a mention', (): void => {
+    const withChannel = [...surfaces, { slug: 'revops', displayName: '#revops' }, { slug: 'looker', displayName: 'Looker' }];
+    const names = (step: string): string[] => promisedReads([step], withChannel).map((read) => read.surface.slug);
+    expect(names('Read back the audit line and comment on REVOPS-7')).toEqual([]);
+    expect(names('Read REVOPS-7 in Linear and the figure on the Looker pipeline tile.')).toEqual(['linear', 'looker-pipeline-tile']);
+    expect(names('Read the figure in Looker.')).toEqual(['looker']);
+    expect(names('Read the thread in #revops.')).toEqual(['revops']);
+  });
+
+  it('binds a read in a condition to the surface it names only when no other step reads that surface', (): void => {
+    const conditional = 'Move REVOPS-7 to Done only if Linear reports the ticket in Backlog.';
+    expect(promisedReads([conditional], surfaces)).toEqual([
+      expect.objectContaining({ step: 1, term: 'reports', surface: linear, conditional: true, clause: 'only if Linear reports the ticket in Backlog' }),
+    ]);
+    expect(bound(['Read REVOPS-7 in Linear via get_issue.', conditional])).toEqual(['1:linear']);
+    expect(bound(['Move REVOPS-7 to Done only if the audit line was read back on the Looker pipeline tile.', RUN_3_REVOPS_7_STEP_1])).toEqual(['2:looker-pipeline-tile']);
+    expect(bound(['Move REVOPS-7 to Done only if the audit line was read back on the Looker pipeline tile.'])).toEqual(['1:looker-pipeline-tile?']);
+    // A condition that opens the clause ends at its comma: the read after it is the instruction itself.
+    expect(bound(['If the page redirects, read the error on the Looker pipeline tile and stop.'])).toEqual(['1:looker-pipeline-tile']);
   });
 });

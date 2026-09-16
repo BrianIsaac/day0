@@ -23,6 +23,11 @@ import {
   REVOPS_5_COMMENT,
   REVOPS_7_COMMENT,
   REVOPS_7_DM,
+  RUN_3_REVOPS_7_COMMENT,
+  run3RefreshClosing,
+  run3RefreshPlan,
+  run3RefreshPrerequisiteLedger,
+  run3RefreshPrerequisites,
   TILE_AUDIT_LINE,
 } from './fixtures/closing-gates-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -210,6 +215,10 @@ const REVOPS_5: Run = {
   externalId: 'REVOPS-5', title: 'Audit note', plan: auditNotePlan,
   prerequisites: auditNotePrerequisites, ledger: auditNotePrerequisiteLedger,
 };
+const REVOPS_7_RUN_3: Run = {
+  externalId: 'REVOPS-7', title: 'Refresh the Looker pipeline tile', plan: run3RefreshPlan,
+  prerequisites: run3RefreshPrerequisites, ledger: run3RefreshPrerequisiteLedger,
+};
 
 describe('the 16 September closing phases, replayed through the real gate', (): void => {
   beforeEach((): void => {
@@ -360,6 +369,48 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     expect((await readItem(t, workItemId)).state).toBe('completed');
     expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+  });
+
+  it('accepts the run 3 REVOPS-7 closing set: the read-back step 3 conditions on is of the tile, and Linear is the write target', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId } = await seedAtClosing(t, REVOPS_7_RUN_3);
+    recorded.closingReply = run3RefreshClosing;
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId })).resolves.toEqual({
+      ok: true, reason: "dependent actions pending the manager's approval",
+    });
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['dependent']);
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const held = await readItem(t, workItemId);
+    expect(held.state).toBe('actions-pending');
+    expect(recorded.mcp).toEqual([]);
+    await t.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [0, 1],
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await readItem(t, workItemId);
+    expect(done.state).toBe('completed');
+    expect(done.skipReason).toBeUndefined();
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect((recorded.mcp[0]!.args as { body: string }).body).toContain(RUN_3_REVOPS_7_COMMENT);
+    expect(recorded.http).toEqual([]);
+    const output = done.output as { planStepOutcomes: Array<{ status: string }>; refusedClosing?: unknown };
+    expect(output.planStepOutcomes.map((row) => row.status)).toEqual(['satisfied', 'satisfied', 'satisfied']);
+    expect(output.refusedClosing).toBeUndefined();
+  });
+
+  it('lands the run 3 REVOPS-7 comment and Done on their own under autonomy: "otherwise leave it in progress" is the alternative branch, not a withheld transition', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId } = await seedAtClosing(t, REVOPS_7_RUN_3);
+    await t.run(async (ctx) => { await ctx.db.patch(agentId, { autonomousActions: true }); });
+    recorded.closingReply = run3RefreshClosing;
+    await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId })).resolves.toEqual({
+      ok: true, reason: 'dependent actions applying',
+    });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+    const done = await readItem(t, workItemId);
+    expect(done.state).toBe('completed');
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([['linear', 'save_comment'], ['linear', 'save_issue']]);
+    expect(recorded.http).toEqual([]);
   });
 
   it('holds the REVOPS-5 audit comment without a transition, as the plan says, then lands it on approval', async (): Promise<void> => {

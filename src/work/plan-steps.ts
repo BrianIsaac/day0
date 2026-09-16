@@ -39,6 +39,13 @@ const IMPERATIVE_PREFIX = /^\s*(?:(?:and|or|then|also|finally|now|please|do not|
 const NO_TRANSITION =
   /\bno (?:status|state) (?:change|transition)\b|\b(?:status|state) (?:is )?(?:unchanged|stays|remains)\b|\bleave (?:\S+\s+){0,3}(?:open|unchanged|as is|in progress|to the manager)\b/i;
 const QUOTED_SPAN = /"[^"\n]*"|“[^”\n]*”/g;
+/**
+ * The alternative branch of a stated condition, to the sentence end
+ * ("set ... to Done only if ...; otherwise leave it in progress"). What it
+ * says about the state holds only when the condition fails, so it is not
+ * the plan's word on the transition.
+ */
+const ALTERNATIVE_BRANCH = /\b(?:otherwise|or else|else|failing that|if not)\b[^.;\n]*/gi;
 
 /** Titles are references; quoted surface names and target states still impose obligations. */
 export function instructionText(step: string): string {
@@ -55,6 +62,8 @@ export function instructionText(step: string): string {
 /** One occurrence of a term with the text around it. */
 interface TermOccurrence {
   term: string;
+  /** Where the term starts in the instruction text. */
+  index: number;
   /** The clause the term sits in, from the last boundary before it to the next after it. */
   clause: string;
   /** The clause up to the term. */
@@ -104,6 +113,7 @@ function occurrences(rawStep: string, terms: RegExp, options: OccurrenceOptions 
     if (options.determinerIsVocabulary !== false && NOUN_MARKER.test(prefix)) continue;
     found.push({
       term: match[0].toLowerCase(),
+      index: match.index,
       clause: clausePrefix + match[0] + after.slice(0, clauseEnd(after)),
       clausePrefix,
     });
@@ -162,11 +172,14 @@ export function promisesClose(step: string): boolean {
 /**
  * Whether a step, or the plan's summary, says in its own words that the
  * ticket state is left where it is: a close term under a negation ("do not
- * move REVOPS-5 to Done"), or a phrase such as "no status change".
+ * move REVOPS-5 to Done"), or a phrase such as "no status change". The
+ * alternative branch of a condition ("otherwise leave it in progress") is
+ * read out first: it withholds only when the condition fails.
  */
 export function withholdsClose(text: string): boolean {
-  if (NO_TRANSITION.test(instructionText(text))) return true;
-  return occurrences(text, CLOSE_STEP, { nounHead: CLOSE_NOUN_HEAD, determinerIsVocabulary: false }).some(
+  const stated = instructionText(text).replace(ALTERNATIVE_BRANCH, ' ');
+  if (NO_TRANSITION.test(stated)) return true;
+  return occurrences(stated, CLOSE_STEP, { nounHead: CLOSE_NOUN_HEAD, determinerIsVocabulary: false }).some(
     (occurrence) => !affirmed(occurrence),
   );
 }
@@ -189,4 +202,284 @@ export function planPromisesClose(plan: Pick<ExecutionPlan, 'summary' | 'steps'>
  */
 export function planWithholdsClose(plan: Pick<ExecutionPlan, 'summary' | 'steps'>): boolean {
   return withholdsClose(plan.summary) || plan.steps.some(withholdsClose);
+}
+
+/** A surface an approved plan may name, by slug or display name. */
+export interface NamedSurface {
+  slug: string;
+  displayName: string;
+}
+
+/** A read an approved plan step promises of one surface. */
+export interface PromisedRead {
+  /** The step number, from 1. */
+  step: number;
+  /** The result term that promised the read, lower case. */
+  term: string;
+  /** The clause the term and the surface share. */
+  clause: string;
+  surface: NamedSurface;
+  /** The term sits under a condition, and no step reads the surface outright. */
+  conditional: boolean;
+}
+
+/**
+ * A word that opens a condition. A result term after it refers to a read
+ * the plan makes elsewhere ("only if the audit line was read back").
+ */
+const CONDITION_MARKER = /\b(?:only if|if|unless|whenever|when|provided(?: that)?|so long as|as long as|as soon as|in case)\b/i;
+/** A sentence ends at a full stop that is not part of an ellipsis, a semicolon or a line break. */
+const SENTENCE_END = /(?<!\.)\.(?!\.)|[;\n]/g;
+/** A connective that starts a new clause inside a sentence. */
+const CLAUSE_CONNECTIVE = /\b(?:after|before|but|once|then|until)\b/gi;
+/** A verb of capture: the noun after it is a result the step gathers, and a surface it governs is what is read. */
+const CAPTURE_WORD = /\b(?:gather|capture|collect|obtain|retrieve|extract|pull)\b/gi;
+/** A surface as the subject of what a condition consults ("only if Linear reports the ticket in Backlog"). */
+const SUBJECT_READ = /^\s+(reports?|shows?|confirms?|returns?|lists?|says?|indicates?)\b/i;
+
+interface Span {
+  start: number;
+  end: number;
+}
+
+interface Mention extends Span {
+  surface: NamedSurface;
+}
+
+interface Verb extends Span {
+  reads: boolean;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Every whole-word mention of a listed surface in the text, by slug or
+ * display name. A name followed by a hyphenated number is a ticket
+ * identifier ("REVOPS-7"), not the surface, and a name inside a longer
+ * surface name ("Looker" in "Looker pipeline tile") is that surface's.
+ */
+function surfaceMentions(text: string, surfaces: readonly NamedSurface[]): Mention[] {
+  const mentions: Mention[] = [];
+  for (const surface of surfaces) {
+    for (const name of new Set([surface.slug, surface.displayName].filter(Boolean))) {
+      const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`, 'gi');
+      for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+        const end = match.index + match[0].length;
+        if (/^-\d/.test(text.slice(end))) continue;
+        mentions.push({ surface, start: match.index, end });
+      }
+    }
+  }
+  return mentions
+    .filter((mention) => !mentions.some((other) =>
+      other !== mention && other.start <= mention.start && other.end >= mention.end &&
+      (other.end - other.start) > (mention.end - mention.start)))
+    .sort((a, b) => a.start - b.start);
+}
+
+/** Every instruction verb in the text with whether it reads (a result or capture verb) or writes. */
+function instructionVerbs(text: string): Verb[] {
+  const verbs: Verb[] = [];
+  const scan = (terms: RegExp, reads: boolean): void => {
+    terms.lastIndex = 0;
+    for (let match = terms.exec(text); match; match = terms.exec(text)) {
+      if (text[match.index - 1] === '-' || text[match.index + match[0].length] === '-') continue;
+      if (NOUN_MARKER.test(text.slice(0, match.index))) continue;
+      verbs.push({ start: match.index, end: match.index + match[0].length, reads });
+    }
+  };
+  scan(RESULT_VERB, true);
+  scan(CAPTURE_WORD, true);
+  scan(WRITE_STEP, false);
+  return verbs.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * The instruction verb that governs a surface mention: the nearest before
+ * it, or the first after it when the mention opens the span ("In Linear,
+ * read the ticket"). Undefined when the span has no instruction verb, as
+ * a bare result noun's has ("Evidence from Linear").
+ */
+function governingVerb(mention: Span, verbs: readonly Verb[]): Verb | undefined {
+  const before = verbs.filter((verb) => verb.end <= mention.start);
+  return before.length > 0 ? before[before.length - 1] : verbs.find((verb) => verb.start >= mention.end);
+}
+
+/** Whether a surface mention is what the span reads: its governing verb reads, or nothing governs it. */
+function readGoverns(mention: Span, verbs: readonly Verb[]): boolean {
+  const governing = governingVerb(mention, verbs);
+  return governing === undefined || governing.reads;
+}
+
+/**
+ * Whether a sentence's locus is what a span reads: some read verb in the
+ * span governs no surface mention of its own, or the span has a result
+ * term and no read verb at all ("Sign in to the tile, set 74%, save and
+ * snapshot the audit line": the snapshot is of the tile; "On linear, add a
+ * comment quoting the figure you read on the tile": the read is of the
+ * tile, so Linear is only written).
+ */
+function locusRead(span: Span, verbs: readonly Verb[], mentions: readonly Mention[]): boolean {
+  const readVerbs = verbs.filter((verb) => verb.reads);
+  if (readVerbs.length === 0) return true;
+  const governed = new Set(mentions.map((mention) => governingVerb(mention, verbs)?.start));
+  return readVerbs.some((verb) => !governed.has(verb.start));
+}
+
+/** The sentences of the instruction text, as spans. */
+function sentencesOf(text: string): Span[] {
+  const spans: Span[] = [];
+  let start = 0;
+  SENTENCE_END.lastIndex = 0;
+  for (let match = SENTENCE_END.exec(text); match; match = SENTENCE_END.exec(text)) {
+    spans.push({ start, end: match.index });
+    start = match.index + match[0].length;
+  }
+  spans.push({ start, end: text.length });
+  return spans.filter((span) => text.slice(span.start, span.end).trim() !== '');
+}
+
+/** The clauses of a sentence span, split at the connectives. */
+function clausesOf(text: string, sentence: Span): Span[] {
+  const spans: Span[] = [];
+  let start = sentence.start;
+  CLAUSE_CONNECTIVE.lastIndex = sentence.start;
+  for (let match = CLAUSE_CONNECTIVE.exec(text); match && match.index < sentence.end; match = CLAUSE_CONNECTIVE.exec(text)) {
+    spans.push({ start, end: match.index });
+    start = match.index + match[0].length;
+  }
+  spans.push({ start, end: sentence.end });
+  return spans.filter((span) => text.slice(span.start, span.end).trim() !== '');
+}
+
+/**
+ * A clause split at its condition. A condition that opens the clause ends
+ * at its comma ("If the page redirects, record the failure"), so what
+ * follows is the instruction; one that follows the instruction runs to the
+ * clause end ("set ... to Done only if the audit line was read back").
+ */
+function splitCondition(text: string, clause: Span): { main: Span; condition?: Span } {
+  const body = text.slice(clause.start, clause.end);
+  const marker = CONDITION_MARKER.exec(body);
+  if (!marker) return { main: clause };
+  const at = clause.start + marker.index;
+  if (IMPERATIVE_PREFIX.test(body.slice(0, marker.index))) {
+    const comma = body.indexOf(',', marker.index);
+    if (comma < 0) return { main: { start: clause.start, end: clause.start }, condition: clause };
+    return { main: { start: clause.start + comma + 1, end: clause.end }, condition: { start: clause.start, end: clause.start + comma } };
+  }
+  return { main: { start: clause.start, end: at }, condition: { start: at, end: clause.end } };
+}
+
+/**
+ * The surfaces a sentence opens on, its locus: the mentions in the
+ * sentence's first segment (up to its first comma or colon) when no
+ * instruction verb precedes them there ("On linear, set ...", "On the
+ * looker-pipeline-tile surface, run ...", "Sign in to the Looker pipeline
+ * tile, set 74% ..."). The locus names where every clause of the sentence
+ * acts. A first segment an instruction verb opens ("Read the ticket on
+ * Linear, then ...") has no locus: its mentions are that verb's.
+ */
+function sentenceLocus(text: string, sentence: Span, mentions: readonly Mention[], verbs: readonly Verb[]): Mention[] {
+  const body = text.slice(sentence.start, sentence.end);
+  const comma = body.search(/[,:]/);
+  const segment: Span = { start: sentence.start, end: comma < 0 ? sentence.end : sentence.start + comma };
+  const named = mentions.filter((mention) => mention.start >= segment.start && mention.end <= segment.end);
+  if (named.length === 0) return [];
+  if (verbs.some((verb) => verb.start >= segment.start && verb.end <= named[0]!.start)) return [];
+  return named;
+}
+
+function trimClause(text: string): string {
+  return text.trim().replace(/^[,:\s]+|[,:\s]+$/g, '');
+}
+
+/** The result terms in a span: the step's promising terms that fall inside it. */
+function termsIn(occurrences: readonly TermOccurrence[], span: Span): TermOccurrence[] {
+  return occurrences.filter((occurrence) => occurrence.index >= span.start && occurrence.index < span.end);
+}
+
+/**
+ * The result terms of a step, every occurrence: a result verb, or a result
+ * noun a capture verb governs or that sits outside a clause that writes.
+ */
+function resultOccurrences(step: string): TermOccurrence[] {
+  const verbs = occurrences(step, RESULT_VERB).filter(affirmed);
+  const nouns = occurrences(step, RESULT_NOUN).filter(
+    (occurrence) =>
+      affirmed(occurrence) &&
+      (CAPTURE_VERB.test(occurrence.clausePrefix) || !writesInClause(occurrence.clause)),
+  );
+  return [...verbs, ...nouns].sort((a, b) => a.index - b.index);
+}
+
+/**
+ * Every read an approved plan promises, bound to the surface the read acts
+ * on. A step promises a read of a surface only when a result term and the
+ * surface share a clause and the surface is what is read: the nearest
+ * instruction verb governing the surface reads rather than writes, or the
+ * surface opens the sentence and a read in the clause has no surface of
+ * its own (see `locusRead`). A surface
+ * named as a write target ("On linear, set ... to Done", "post it to
+ * Linear") is never a promised read. A result term under a condition refers
+ * to a read made elsewhere: it binds only when no step reads that surface
+ * outright, and is marked conditional. A read that names no surface binds
+ * to nothing.
+ *
+ * Args:
+ *   steps: The approved plan's steps, in order.
+ *   surfaces: The surfaces the plan may name.
+ *
+ * Returns:
+ *   The promised reads in step order; one per step and surface.
+ */
+export function promisedReads(steps: readonly string[], surfaces: readonly NamedSurface[]): PromisedRead[] {
+  const reads: PromisedRead[] = [];
+  steps.forEach((rawStep, stepIndex): void => {
+    const text = instructionText(rawStep);
+    const occurrences = resultOccurrences(rawStep);
+    const mentions = surfaceMentions(text, surfaces);
+    const verbs = instructionVerbs(text);
+    const found = new Map<string, PromisedRead>();
+    const bind = (span: Span, term: TermOccurrence, surface: NamedSurface, conditional: boolean): void => {
+      const key = `${surface.slug}:${conditional ? 'c' : 'o'}`;
+      if (found.has(key)) return;
+      found.set(key, { step: stepIndex + 1, term: term.term, clause: trimClause(text.slice(span.start, span.end)), surface, conditional });
+    };
+    const within = <T extends Span>(items: readonly T[], span: Span): T[] =>
+      items.filter((item) => item.start >= span.start && item.end <= span.end);
+    for (const sentence of sentencesOf(text)) {
+      const locus = sentenceLocus(text, sentence, mentions, verbs);
+      for (const clause of clausesOf(text, sentence)) {
+        const { main, condition } = splitCondition(text, clause);
+        const mainTerms = termsIn(occurrences, main);
+        if (mainTerms.length > 0) {
+          const spanVerbs = within(verbs, main);
+          const spanMentions = within(mentions, main).filter((mention) => !locus.includes(mention));
+          for (const mention of spanMentions) {
+            if (readGoverns(mention, spanVerbs)) bind(main, mainTerms[0]!, mention.surface, false);
+          }
+          if (locus.length > 0 && locusRead(main, spanVerbs, spanMentions)) {
+            for (const mention of locus) bind(main, mainTerms[0]!, mention.surface, false);
+          }
+        }
+        if (!condition) continue;
+        const spanVerbs = within(verbs, condition);
+        const conditionTerms = termsIn(occurrences, condition);
+        for (const mention of within(mentions, condition)) {
+          const subject = SUBJECT_READ.exec(text.slice(mention.end, condition.end));
+          if (subject) {
+            bind(condition, { term: subject[1]!.toLowerCase(), index: mention.end, clause: '', clausePrefix: '' }, mention.surface, true);
+          } else if (conditionTerms.length > 0 && readGoverns(mention, spanVerbs)) {
+            bind(condition, conditionTerms[0]!, mention.surface, true);
+          }
+        }
+      }
+    }
+    reads.push(...found.values());
+  });
+  const outright = new Set(reads.filter((read) => !read.conditional).map((read) => read.surface.slug));
+  return reads.filter((read) => !read.conditional || !outright.has(read.surface.slug));
 }

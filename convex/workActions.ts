@@ -39,7 +39,7 @@ import {
   type WorkCandidate,
   type WorkSourceCategory,
 } from '../src/work/types';
-import { instructionText, planPromisesClose, promisedResultTerm, promisesResult, promisesWrite } from '../src/work/plan-steps';
+import { planPromisesClose, promisedReads, promisesResult, promisesWrite, type PromisedRead } from '../src/work/plan-steps';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
 import { asAgentId } from '../src/lib/ids';
@@ -765,15 +765,15 @@ function successfulReadSurfaces(
   return surfaces;
 }
 
-function namedInStep(step: string, name: string): boolean {
-  return new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(step);
-}
-
 /**
  * Refuse a silent omission when an approved step explicitly promised a surface read.
  *
- * A step names a surface by its slug or by its display name: a plan says
- * "the Looker pipeline tile", not "looker-pipeline-tile".
+ * A step promises a read of the surface the read acts on, bound by
+ * `promisedReads` (the same binding the closing resume reads): a surface
+ * the step names only as a write target owes nothing, and a read under a
+ * condition refers to a read another step makes. A step names a surface by
+ * its slug or by its display name: a plan says "the Looker pipeline tile",
+ * not "looker-pipeline-tile".
  */
 export function validatePlanStepOutcomes(args: {
   plan: ExecutionPlan;
@@ -800,38 +800,36 @@ export function validatePlanStepOutcomes(args: {
     }
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
-  for (const [index, rawStep] of args.plan.steps.entries()) {
-    const promise = promisedResultTerm(rawStep);
-    if (!promise) continue;
-    const step = instructionText(rawStep);
-    const named = args.surfaces.filter(
-      (surface) => namedInStep(step, surface.slug) || namedInStep(step, surface.displayName),
-    );
-    for (const surface of named) {
-      if (reads.has(surface.slug.toLowerCase())) continue;
-      const outcome = ordered[index];
-      if (outcome.status === 'satisfied' || outcome.evidence.trim() === '') {
-        throw new Error(missingReadReason(index + 1, rawStep, promise, surface.displayName));
-      }
+  for (const read of promisedReads(args.plan.steps, args.surfaces)) {
+    if (reads.has(read.surface.slug.toLowerCase())) continue;
+    const outcome = ordered[read.step - 1]!;
+    if (outcome.status === 'satisfied' || outcome.evidence.trim() === '') {
+      throw new Error(missingReadReason(read, args.plan.steps[read.step - 1]!));
     }
   }
 }
 
 /**
- * Why a promised result has no landed read behind it, in the step's own
- * terms. A step that writes is named as a write that also promised a check,
- * never as a promised read: the message says what the step promised, so a
- * misread step is visible as one.
+ * Why a promised read has no landed read behind it, in the step's own
+ * terms: the clause that promised it and the surface it bound to. A step
+ * that writes is named as a write that also promised a check, never as a
+ * promised read, and a read owed only by a condition is named as such: the
+ * message says what the step promised, so a misread step is visible as one.
  */
-function missingReadReason(step: number, rawStep: string, promise: string, surface: string): string {
+function missingReadReason(read: PromisedRead, rawStep: string): string {
+  const surface = read.surface.displayName;
   const missing = `no landed ${surface} read or blocking ledger reason was recorded`;
-  if (!promisesWrite(rawStep)) {
-    return `approved plan step ${step} promised a ${surface} read, but ${missing}`;
+  const where = `in "${read.clause}"`;
+  if (read.conditional) {
+    return `approved plan step ${read.step} promised a ${surface} read in the condition "${read.clause}" and no other step reads ${surface}, but ${missing}`;
   }
-  const promised = promise === 'evidence' || promise === 'result'
-    ? `promised ${surface} ${promise}`
-    : `promised to ${promise} on ${surface}`;
-  return `approved plan step ${step} is a write step that also ${promised}, but ${missing}`;
+  if (!promisesWrite(rawStep)) {
+    return `approved plan step ${read.step} promised a ${surface} read ${where}, but ${missing}`;
+  }
+  const promised = read.term === 'evidence' || read.term === 'result'
+    ? `promised ${surface} ${read.term}`
+    : `promised to ${read.term} on ${surface}`;
+  return `approved plan step ${read.step} is a write step that also ${promised} ${where}, but ${missing}`;
 }
 
 /**
