@@ -1245,6 +1245,26 @@ function withRefusedClosing(
 }
 
 /**
+ * The ledger the registry's earlier-rows rules read for this phase: the
+ * writes earlier runs of this item landed, then this run's prerequisite
+ * phase when there is one. A status change is never the only trace of who
+ * acted, and the audit comment an earlier run landed on the ticket is that
+ * trace: a retry that obeys the landed-writes rule and emits the Done alone
+ * is right to, and the rule must see the comment it did not repeat.
+ */
+function priorPhasesLedger(
+  output: LedgerOutput | DependentPendingOutput,
+): { actions: readonly MockAction[]; applied: readonly AppliedAction[] } | undefined {
+  const dependent = isDependentPendingOutput(output);
+  const carried = (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
+  if (carried.length === 0) return dependent ? output.initial : undefined;
+  return {
+    actions: [...carried.map((write) => write.action), ...(dependent ? output.initial.actions : [])],
+    applied: [...carried.map((write) => write.applied), ...(dependent ? output.initial.applied : [])],
+  };
+}
+
+/**
  * The rows this phase reuses instead of sending: on a resumed closing set,
  * the previous attempt's landed rows by payload or target; in any phase,
  * the writes earlier runs of this item landed and, in a closing phase, the
@@ -1344,7 +1364,7 @@ export const applyApprovedActions = internalAction({
           heldReasons: new Map(claim.heldReasons),
           deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
           priorLedger,
-          ...(isDependentPendingOutput(output) ? { prerequisiteLedger: output.initial } : {}),
+          ...(priorPhasesLedger(output) ? { prerequisiteLedger: priorPhasesLedger(output) } : {}),
           idempotencyIndexOffset: actionIndexOffset,
           autoPhase: claim.phase === 'auto',
           autonomousActions: claim.autonomousActions,

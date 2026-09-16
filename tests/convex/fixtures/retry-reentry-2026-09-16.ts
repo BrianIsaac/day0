@@ -122,6 +122,18 @@ export const run3RetryClosing = {
   planStepOutcomes: RUN_3_RETRY_OUTCOMES.map((outcome) => ({ basis: 'ledger' as const, ...outcome })),
 };
 
+/** The closing set a retry that obeys the landed-writes rule authors: the Done alone, step 4 satisfied from the landed row. */
+export const run3ObedientClosing = (commentId: string): typeof run3RetryClosing => ({
+  ...run3RetryClosing,
+  draft: 'The audit note landed on REVOPS-5 in the earlier run; the ticket is moved to Done as the manager said.',
+  actions: [call('linear', 'save_issue', { id: 'REVOPS-5', state: 'Done' })],
+  planStepOutcomes: RUN_3_RETRY_OUTCOMES.map((outcome) => ({
+    basis: 'ledger' as const,
+    ...outcome,
+    ...(outcome.step === 4 ? { evidence: `landed comment ${commentId} on REVOPS-5, listed under the writes earlier runs of this item already landed` } : {}),
+  })),
+});
+
 /** A retry note that asks for the landed comment to be corrected. */
 export const RUN_3_CORRECTION_NOTE =
   'Fix the audit comment on REVOPS-5: check 3 must be listed as not confirmed too. Then move REVOPS-5 to Done, I accept checks 2 and 3 unconfirmed.';

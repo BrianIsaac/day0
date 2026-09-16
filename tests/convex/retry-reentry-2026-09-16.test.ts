@@ -19,6 +19,7 @@ import {
   run3CorrectionClosing,
   run3FirstClosing,
   run3FirstPhaseOne,
+  run3ObedientClosing,
   run3RetryClosing,
   run3RetryPhaseOne,
 } from './fixtures/retry-reentry-2026-09-16';
@@ -293,6 +294,25 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
       expect(call.user).toContain('linear · save_comment · REVOPS-5');
       expect(call.user).toContain(RUN_3_RETRY_NOTE);
     }
+  });
+
+  it('lands the Done when the retry obeys the prompt and emits no second comment: the landed comment is the audit trail', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await firstRun(t);
+
+    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+    recorded.initialReply = run3RetryPhaseOne;
+    recorded.closingReply = run3ObedientClosing(FIRST_COMMENT_ID);
+    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const done = await settle(t, workItemId, ['failed', 'completed']);
+    expect(done.skipReason).toBeUndefined();
+    expect(done.state).toBe('completed');
+
+    expect(savedComments()).toHaveLength(1);
+    expect(recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args)).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
+    const rows = ledger(done);
+    expect(rows[rows.length - 1]).toMatchObject({ ok: true, authority: 'autonomous', providerId: 'lin-5' });
   });
 
   it('lets a rewrite with id through when the manager\'s note asks for a correction', async (): Promise<void> => {
