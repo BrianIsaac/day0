@@ -948,7 +948,6 @@ Every number the submission quotes comes from a file in this repository or from 
 | The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
 | The recorded run's supervision figures: charter approved 4 min 26 s after deployment, 7 approved and 1 rejected, 29 s median decision latency, 1 action blocked after revocation, audit trail 32 of 32 | The Supervision card of the 3 September 2026 real-mode run the demo video is cut from, as `metrics:forAgent` computes it from that run's event ledger. That run's ledger export is part of the submission materials rather than this repository | Run [the real-mode route](#run-it-in-real-mode); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#run-it-in-real-mode) |
 | This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), a second run of the same route on the same commit and model, paced for screenshots | The same |
-| The fourth local bed, `qwen3:14b`, where the ordinary arm led task pass | `evaluation/results/2026-09-02T09-40-48Z-v2-qwen14b/` | `pnpm eval:semifinal` with `OPENAI_MODEL=qwen3:14b` |
 
 The two real-mode runs are single observations with the same code and model and different human pacing; neither is a distribution, and the submission names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
 
@@ -1580,7 +1579,6 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 | exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
 | 录制运行的监督数字：部署后 4 分 26 秒章程获批、批准 7 次与拒绝 1 次、决策中位 29 秒、撤权后阻断 1 次、审计轨迹 32/32 | 演示视频所剪辑的 2026 年 9 月 3 日 real-mode 运行的 Supervision 卡片，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的 ledger 导出属于提交材料，不在本仓库中 | 运行[真实模式路径](#在真实模式下运行)；读取卡片，或按[读取 ledger](#在真实模式下运行)中的 `exportActions:exportForAgent` 命令导出 ledger |
 | 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一 commit、同一模型下同一路径的第二次运行，节奏为截图而放慢 | 同上 |
-| 第四个本地评测环境 `qwen3:14b`，其中普通 arm 在 task pass 上领先 | `evaluation/results/2026-09-02T09-40-48Z-v2-qwen14b/` | 设置 `OPENAI_MODEL=qwen3:14b` 后运行 `pnpm eval:semifinal` |
 
 两次 real-mode 运行是同一代码与模型、不同人工节奏下的单次观察；两者都不是分布，提交材料会说明每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
 
