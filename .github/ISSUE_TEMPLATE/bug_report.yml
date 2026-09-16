@@ -16,12 +16,10 @@ body:
       description: Which of the README's ways of running it were you on?
       options:
         - Hosted demo (day0-olive.vercel.app)
-        - Local, no accounts (bundled model)
-        - Local, OpenAI key
-        - Local, another OpenAI-compatible endpoint
+        - Local, cloud model (./setup.sh --route featherless, key or endpoint)
+        - Local, local model (./setup.sh --route local)
         - Convex cloud + Clerk
-        - Real mode (local only)
-        - Evaluation harness (pnpm eval:*)
+        - Evaluation harness or the mock office (pnpm setup:local, pnpm eval:*)
     validations:
       required: true
   - type: input
