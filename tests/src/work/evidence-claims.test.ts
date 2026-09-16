@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { appliedLedgerPrompt } from '../../../src/work/execute-skill';
 import type { MockAction } from '../../../src/work/types';
 import {
+  isChatMessage,
   messageTexts,
   unsupportedClaimIssues,
   unsupportedClaims,
@@ -171,5 +172,40 @@ describe('what counts as support', (): void => {
         ledger: '0. landed · {"tool":"mcp.call"} · get_issue on linear · {"createdAt":"2026-09-15T07:00:00Z"} -- Priya (Day0) · run wi_91/run_4',
       }),
     ).toEqual(['All three checks are complete as of 2026.']);
+  });
+});
+
+describe('which phase-one actions are messages to people', (): void => {
+  const surfaces = [{ slug: 'slack', class: 'chat' }, { slug: 'linear', class: 'kanban' }];
+  const dm: MockAction = {
+    tool: 'http.request',
+    args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: '{"channel":"D01","text":"Comment posted."}' },
+  };
+  const comment: MockAction = {
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-5","body":"Comment posted."}' },
+  };
+
+  it('reads a chat-surface message and a mock chat tool, never a ticket comment', (): void => {
+    expect(isChatMessage(dm, surfaces)).toBe(true);
+    expect(isChatMessage({ tool: 'slack.postMessage', args: { channelSlug: 'revops', body: 'Done.' } }, [])).toBe(true);
+    expect(isChatMessage(comment, surfaces)).toBe(false);
+    const nothing: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+    expect(unsupportedClaimIssues([comment, dm], nothing, (action) => isChatMessage(action, surfaces))).toEqual([
+      expect.stringContaining('action 1 (slack POST /chat.postMessage) says "Comment posted."'),
+    ]);
+  });
+});
+
+describe('the telegraphic form a status message takes', (): void => {
+  const nothing: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+
+  it('reads "audit comment posted" as the claim it is, and lets a plain description stand', (): void => {
+    expect(unsupportedClaims('REVOPS-5 audit comment posted with the three checks in checklist order.', nothing)).toEqual([
+      'REVOPS-5 audit comment posted with the three checks in checklist order.',
+    ]);
+    expect(unsupportedClaims('Tile refreshed to 74%; figure verified against the standup deck.', nothing)).toHaveLength(1);
+    expect(unsupportedClaims('Starting the REVOPS-5 audit note: check 1 read from the tile, check 3 from the Linear issue list.', nothing)).toEqual([]);
+    expect(unsupportedClaims('Posting the audit comment next; the Done move waits for you.', nothing)).toEqual([]);
   });
 });

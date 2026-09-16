@@ -38,7 +38,8 @@ import { renderHowTos, renderTeamDocs } from './documents';
 import { promisesResult } from './plan-steps';
 import { replyTargetLine } from './reply-target';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
-import { unsupportedClaimIssues, type ClaimEvidence } from './evidence-claims';
+import { isChatMessage, unsupportedClaimIssues, type ClaimEvidence } from './evidence-claims';
+import type { RefusedClosing } from './types';
 
 export { replyTargetLine };
 
@@ -963,6 +964,32 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
   initialLedger: AppliedAction[];
   initialFailure?: string;
   resumedClosing?: boolean;
+  /** The closing set the previous attempt's gate refused, shown so this attempt corrects it. */
+  refusedClosing?: RefusedClosing;
+}
+
+/** The most of a refused closing set the retry prompt carries; the row keeps the whole of it. */
+export const REFUSED_CLOSING_PROMPT_CHARS = 6000;
+
+/**
+ * The previous attempt's refused closing set as the closing prompt shows
+ * it: the refusal, the actions bounded, and the outcomes it claimed.
+ *
+ * Args:
+ *   refused: The set and reason the row kept.
+ *
+ * Returns:
+ *   The prompt lines for the section.
+ */
+export function refusedClosingLines(refused: RefusedClosing): string[] {
+  const actions = JSON.stringify(refused.actions);
+  return [
+    '--- Previous closing set, refused by the gate (nothing in it reached a surface) ---',
+    `Refusal: ${refused.reason}`,
+    `Its actions: ${actions.length > REFUSED_CLOSING_PROMPT_CHARS ? `${actions.slice(0, REFUSED_CLOSING_PROMPT_CHARS)} ... (truncated)` : actions}`,
+    `Its plan-step outcomes: ${refused.planStepOutcomes.map((outcome) => `${outcome.step} ${outcome.status} (${outcome.evidence})`).join('; ')}`,
+    'Correct what the refusal names and keep what it does not; the prerequisite ledger above is the same evidence.',
+  ];
 }
 
 function agentIdentityPart(value: string): string {
@@ -2179,12 +2206,34 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       skillBody: skill.body,
       now: args.now ?? Date.now(),
     };
+    // Nothing has been applied when phase one writes, so a message it sends
+    // may describe what this response does and nothing more: the evidence
+    // it may cite is the documentation, the manager's words and the actions
+    // beside it. On 16 September a phase-one DM said the audit comment was
+    // posted before any comment existed. Only chat messages are read here;
+    // a ticket comment in phase one is prewritten, and the deferral audit
+    // names it as such.
+    const claimEvidence: ClaimEvidence = {
+      ledger: '',
+      documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
+      managerFeedback: [
+        ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
+        ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
+      ],
+    };
+    const chatSurfaces = args.surfaces ?? [];
+    const claimIssues = (actions: readonly MockAction[]): string[] =>
+      unsupportedClaimIssues(actions, claimEvidence, (action) => isChatMessage(action, chatSurfaces));
     const trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
       mode,
       surfaces: args.surfaces ?? [],
       phase: 'initial',
     });
-    const issues = [...trailAttention.issues, ...deferralAudit(output, candidate, deferralContext)];
+    const issues = [
+      ...trailAttention.issues,
+      ...deferralAudit(output, candidate, deferralContext),
+      ...claimIssues(output.actions),
+    ];
     if (issues.length === 0) {
       return trailAttention.limitations.length > 0
         ? { ...output, procedureTrailLimitations: trailAttention.limitations }
@@ -2229,9 +2278,16 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     ];
     if (prewrittenIndices.length > 0 && remainingIssues.length === prewrittenIndices.length) {
       const corrected = removePrewrittenClosingActions({ ...repaired, procedureTrailLimitations: remaining.limitations }, prewrittenIndices);
+      const correctedClaims = claimIssues(corrected.actions);
+      if (correctedClaims.length > 0) {
+        throw new Error(
+          `executor procedure contract remained invalid after one repair: ${correctedClaims.join('; ')}`,
+        );
+      }
       await args.onAuditCorrection?.(prewrittenIndices);
       return corrected;
     }
+    remainingIssues.push(...claimIssues(repaired.actions));
     if (remainingIssues.length > 0) {
       throw new Error(
         `executor procedure contract remained invalid after one repair: ${remainingIssues.join('; ')}`,
@@ -2753,6 +2809,7 @@ export async function runDependentSkill(
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
     ...(args.initialFailure ? ['', `${args.resumedClosing ? 'Previous closing attempt failure (prerequisites succeeded; retry the closing set)' : 'Prerequisite phase failure'}: ${args.initialFailure}`] : []),
+    ...(args.refusedClosing ? ['', ...refusedClosingLines(args.refusedClosing)] : []),
     '',
     'Produce the truthful closing draft, notes, plan-step outcomes, procedure-trail accounting, and at most one bounded set of closing actions now.',
   ].join('\n');

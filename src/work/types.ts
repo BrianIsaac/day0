@@ -262,6 +262,21 @@ export interface PlanStepOutcome {
   basis?: 'manager-feedback';
 }
 
+/**
+ * A closing set a gate refused before anything in it reached a surface,
+ * kept on the row with the reason so the manager can read what was
+ * written against why it was turned away, and the retry can correct it
+ * from the same ledger rather than author phase one again.
+ */
+export interface RefusedClosing {
+  actions: MockAction[];
+  planStepOutcomes: PlanStepOutcome[];
+  draft: string;
+  notes: string;
+  reason: string;
+  at: number;
+}
+
 /** Output authored once, after the initial action ledger has settled. */
 export interface DependentExecutionOutput {
   draft: string;

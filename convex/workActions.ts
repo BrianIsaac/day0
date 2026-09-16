@@ -35,10 +35,11 @@ import {
   type ManagerAnswer,
   type MockAction,
   type PlanStepOutcome,
+  type RefusedClosing,
   type WorkCandidate,
   type WorkSourceCategory,
 } from '../src/work/types';
-import { instructionText, promisesClose, promisesResult } from '../src/work/plan-steps';
+import { instructionText, planPromisesClose, promisedResultTerm, promisesResult, promisesWrite } from '../src/work/plan-steps';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
 import { asAgentId } from '../src/lib/ids';
@@ -714,6 +715,8 @@ interface DependentAuthoringOutput extends ExecutionOutput {
   previousClosing?: ClosingResume['previousClosing'];
   applied: AppliedAction[];
   initialFailure?: string;
+  /** The closing set a gate refused, kept with its reason; see `RefusedClosing`. */
+  refusedClosing?: RefusedClosing;
 }
 
 interface DependentPendingOutput extends DependentExecutionOutput {
@@ -798,7 +801,8 @@ export function validatePlanStepOutcomes(args: {
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
   for (const [index, rawStep] of args.plan.steps.entries()) {
-    if (!promisesResult(rawStep)) continue;
+    const promise = promisedResultTerm(rawStep);
+    if (!promise) continue;
     const step = instructionText(rawStep);
     const named = args.surfaces.filter(
       (surface) => namedInStep(step, surface.slug) || namedInStep(step, surface.displayName),
@@ -807,12 +811,27 @@ export function validatePlanStepOutcomes(args: {
       if (reads.has(surface.slug.toLowerCase())) continue;
       const outcome = ordered[index];
       if (outcome.status === 'satisfied' || outcome.evidence.trim() === '') {
-        throw new Error(
-          `approved plan step ${index + 1} promised a ${surface.displayName} read, but no landed read or blocking ledger reason was recorded`,
-        );
+        throw new Error(missingReadReason(index + 1, rawStep, promise, surface.displayName));
       }
     }
   }
+}
+
+/**
+ * Why a promised result has no landed read behind it, in the step's own
+ * terms. A step that writes is named as a write that also promised a check,
+ * never as a promised read: the message says what the step promised, so a
+ * misread step is visible as one.
+ */
+function missingReadReason(step: number, rawStep: string, promise: string, surface: string): string {
+  const missing = `no landed ${surface} read or blocking ledger reason was recorded`;
+  if (!promisesWrite(rawStep)) {
+    return `approved plan step ${step} promised a ${surface} read, but ${missing}`;
+  }
+  const promised = promise === 'evidence' || promise === 'result'
+    ? `promised ${surface} ${promise}`
+    : `promised to ${promise} on ${surface}`;
+  return `approved plan step ${step} is a write step that also ${promised}, but ${missing}`;
 }
 
 /**
@@ -822,7 +841,9 @@ export function validatePlanStepOutcomes(args: {
  * ticket-update plan that promised a close must either carry the transition
  * or account for its absence: a phase that withholds Done because a
  * prerequisite was held, or the evidence was wrong, records the step as
- * blocked, and that record is honoured rather than refused.
+ * blocked, and that record is honoured rather than refused. A plan that
+ * withholds the transition in its own words promised none, and a closing
+ * set that leaves the state alone satisfies it.
  */
 export function dependentTransitionRefusal(args: {
   plan: ExecutionPlan;
@@ -841,7 +862,7 @@ export function dependentTransitionRefusal(args: {
   }
   if (
     args.plan.expectedOutputType !== 'ticket-update' ||
-    !args.plan.steps.some(promisesClose) ||
+    !planPromisesClose(args.plan) ||
     statusChange ||
     args.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
   ) {
@@ -920,7 +941,7 @@ export function blockedPlanReason(
     };
     const everyActionLanded = run.actions.every((_action, index) => landed(index));
     const closePromised =
-      run.plan.expectedOutputType === 'ticket-update' && run.plan.steps.some(promisesClose);
+      run.plan.expectedOutputType === 'ticket-update' && planPromisesClose(run.plan);
     const transitionLanded = run.actions.some((action, index): boolean => {
       const parsed = parseSurfaceAction(action);
       return parsed.ok && isStatusChange(parsed.action) && landed(index);
@@ -1015,6 +1036,10 @@ export const authorDependentActions = internalAction({
     const claim = await ctx.runMutation(internal.work.claimDependentAuthoring, args);
     if (!claim.claimed) return { ok: false, reason: claim.reason };
     let initial: DependentAuthoringOutput | undefined;
+    // The set the closing phase authored, kept on the row if a gate refuses
+    // it: nothing in it reaches a surface, and the manager and the retry
+    // both need to read it against the refusal.
+    let authored: DependentExecutionOutput | undefined;
     try {
       const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, {
         workItemId: args.workItemId,
@@ -1051,7 +1076,9 @@ export const authorDependentActions = internalAction({
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,
         resumedClosing: initial.resumedClosing,
+        refusedClosing: initial.refusedClosing,
       });
+      authored = output;
       const cap = dependentActionCap(initial);
       if (output.actions.length > cap) {
         throw new Error(
@@ -1082,6 +1109,7 @@ export const authorDependentActions = internalAction({
         candidate: rowToCandidate(item),
         onAdditionalModelCall: (): void => {},
       });
+      authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
         plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes,
         initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
@@ -1165,12 +1193,36 @@ export const authorDependentActions = internalAction({
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
-        ...(initial ? { output: initial } : {}),
+        ...(initial ? { output: withRefusedClosing(initial, authored, reason) } : {}),
       });
       return { ok: false, reason };
     }
   },
 });
+
+/**
+ * The prerequisite phase as the row keeps it after a closing gate refused
+ * the authored set: the ledger whole, and the refused set beside its reason.
+ * A previous attempt's refused set is replaced by this one.
+ */
+function withRefusedClosing(
+  initial: DependentAuthoringOutput,
+  authored: DependentExecutionOutput | undefined,
+  reason: string,
+): DependentAuthoringOutput {
+  if (!authored) return initial;
+  return {
+    ...initial,
+    refusedClosing: {
+      actions: authored.actions,
+      planStepOutcomes: authored.planStepOutcomes,
+      draft: authored.draft,
+      notes: authored.notes,
+      reason,
+      at: Date.now(),
+    },
+  };
+}
 
 /**
  * Apply the approved actions of the current phase, with the run id the skill ran under.
