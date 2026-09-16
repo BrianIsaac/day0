@@ -11,7 +11,7 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "setup:local": "tsx scripts/setup.ts",
-    "dev": "tsx scripts/dev-no-auth-key.ts url && next dev -H localhost -p 3000",
+    "dev": "tsx scripts/dev.ts",
     "dev:no-auth-key": "tsx scripts/dev-no-auth-key.ts init",
     "convex:dev": "convex dev",
     "convex:up": "tsx scripts/dev-docs-dir.ts && tsx scripts/compose.ts up -d",

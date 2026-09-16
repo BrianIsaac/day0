@@ -2,9 +2,11 @@
 /**
  * One command that sets Day0 up on this machine.
  *
- *   pnpm setup:local                 ask, then do it
- *   pnpm setup:local --route key     you already have an OpenAI-compatible key
- *   pnpm setup:local --route local   no account at all: run the model here
+ *   pnpm setup:local                        ask, then do it
+ *   pnpm setup:local --route key            you already have an OpenAI-compatible key
+ *   pnpm setup:local --route local          no account at all: run the model here
+ *   pnpm setup:local --mode real --route featherless   real mode on GLM via Featherless
+ *   pnpm setup:local --mode real --route local         real mode on the bundled model
  *
  * The spelling is deliberate. Plain `pnpm setup` is pnpm's own installation
  * command, so the project script has to be called something else.
@@ -12,40 +14,62 @@
  * Everything below already existed as a separate `pnpm` verb, and the README
  * prints them as a list of ten. This composes them rather than reimplementing
  * them: `dev:no-auth-key`, `convex:up`, `model:up`/`model:pull`, `sandbox:up`,
- * the admin-key generator inside the backend container, `sync:env`,
- * `npx convex dev --once`, `convex:restart` and `check:setup`, in the order the
- * README's "six things about that sequence are load-bearing" requires. What it
- * adds is the part a reader cannot get from a list: the prerequisites checked
- * before anything starts, the two model addresses written as a pair so the
- * afternoon-costing trap cannot be sprung, the generated admin key written
- * into the file instead of pasted, one explicit Compose project and host ports
- * used by every child process, and a refusal to point any of it at a cloud
- * deployment or at another checkout's data.
+ * `redactor:up`, the admin-key generator inside the backend container,
+ * `sync:env`, `npx convex dev --once`, `convex:restart` and `check:setup`, in
+ * the order the README's "six things about that sequence are load-bearing"
+ * requires. What it adds is the part a reader cannot get from a list: the
+ * prerequisites checked before anything starts, the two model addresses written
+ * as a pair so the afternoon-costing trap cannot be sprung, the generated admin
+ * key written into the file instead of pasted, one explicit Compose project and
+ * host ports used by every child process, and a refusal to point any of it at
+ * a cloud deployment or at another checkout's data.
+ *
+ * Real mode (`--mode real`) is the same sequence with the real-mode values
+ * written (`DAY0_SURFACE_MODE`, the documentation mount, the browser and
+ * redaction component addresses), the three demo profiles and the two
+ * components started, and two traps closed that the hand sequence sprang this
+ * week: a hand-made env file with no `DAY0_DOCS_HOST_DIR` line, and a redactor
+ * venv warmed on the CPU being emptied by a GPU start.
  *
  * It is local-only and it says so: it refuses to run inside a hosted build, it
  * refuses an inherited cloud selector or deploy key, and it never removes a
- * volume or resets anything as a way of recovering from a failed step.
+ * volume or resets anything as a way of recovering from a failed step. The one
+ * removal it makes is the one asked for by name: `--reset`.
  */
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   realpathSync,
+  statSync,
+  writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
+import { DEFAULT_DOCS_HOST_DIR } from '../src/docs/host-dir';
 import { FIRST_SUCCESS } from '../src/setup/quickstart';
-import { composeArguments } from './compose';
+import { composeArguments, PROFILES } from './compose';
 import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
+import {
+  redactorGpuDecision,
+  requirementsDigests,
+  venvDevice,
+  venvStampCommand,
+  type GpuChoice,
+  type RedactorGpuDecision,
+  type VenvDevice,
+} from './redactor-device';
+import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './rehearsal/docker';
 
 const ENV_FILE = '.env.local';
 const ENV_EXAMPLE = '.env.example';
 
-/** The port `pnpm dev` serves the app on (`package.json`'s `dev` script). */
+/** The port `pnpm dev` serves the app on unless `DAY0_APP_PORT` says otherwise. */
 const APP_PORT = 3000;
 
 /** The container ports the compose file publishes from, whatever the host uses. */
@@ -57,15 +81,24 @@ export const REQUIRED_NODE_MAJOR = 22;
 export const REQUIRED_PNPM_MAJOR = 9;
 export const REQUIRED_COMPOSE_MAJOR = 2;
 
-/** Which of the three model setups this installation uses. */
-export type SetupRoute = 'key' | 'local' | 'endpoint';
+/** Mock is the seeded office; real is the reader's own documentation and systems. */
+export type SetupMode = 'mock' | 'real';
 
-/** Every host port this installation publishes. */
+/** Which of the four model setups this installation uses. */
+export type SetupRoute = 'key' | 'local' | 'endpoint' | 'featherless';
+
+/** What verifies an authored skill: the bundled networkless container, or Daytona. */
+export type SandboxChoice = 'local' | 'daytona';
+
+export type { GpuChoice } from './redactor-device';
+
+/** Every host port this installation publishes, and the one `pnpm dev` serves on. */
 export interface SetupPorts {
   backend: number;
   site: number;
   dashboard: number;
   model: number;
+  app: number;
 }
 
 /** The ports `.env.example` ships, used when neither a flag nor the file says. */
@@ -74,9 +107,33 @@ export const DEFAULT_PORTS: SetupPorts = {
   site: 3211,
   dashboard: 6791,
   model: 11434,
+  app: APP_PORT,
 };
 
+/**
+ * The GLM route through Featherless, as the 12 September probe settled it:
+ * `json_object` comes back empty and `json_schema` "busy" there, so JSON mode
+ * is pinned to prompt injection; the completion budget and low effort are what
+ * the charter call needs to finish.
+ */
+export const FEATHERLESS_SETTINGS: Readonly<Record<string, string>> = {
+  OPENAI_BASE_URL: 'https://api.featherless.ai/v1',
+  OPENAI_MODEL: 'zai-org/GLM-5.3-Flash',
+  OPENAI_JSON_MODE: 'prompt',
+  OPENAI_MAX_OUTPUT_TOKENS: '32768',
+  OPENAI_REASONING_EFFORT: 'low',
+};
+
+/** The optional components real mode starts on top of `real`, `sandbox` and `redactor`. */
+export const REAL_MODE_PROFILES: readonly string[] = ['docs-notion', 'browser', 'demo'];
+
+/** Where the backend reaches the two components real mode starts. */
+export const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
+export const REDACTOR_URL = 'http://redactor:8000';
+
 export interface SetupOptions {
+  /** Mock (the seeded office) or real (the reader's own systems). */
+  mode: SetupMode;
   /** Chosen route, or undefined to ask. */
   route?: SetupRoute;
   /** Compose project name, or undefined to take the file's, then the directory's. */
@@ -87,6 +144,20 @@ export interface SetupOptions {
   model?: string;
   /** An OpenAI-compatible endpoint for the advanced route. */
   endpoint?: string;
+  /** Documentation directory for the read-only mount, real mode only. */
+  docs?: string;
+  /** The GPU question for the bundled model and the redactor. */
+  gpu: GpuChoice;
+  /** A compose project whose redactor volumes are copied into this one. */
+  warmFrom?: string;
+  /** What verifies authored skills in real mode. */
+  sandbox: SandboxChoice;
+  /** The manager's address, stored on the agent at deploy in real mode. */
+  bossEmail?: string;
+  /** Print the plan of commands and write nothing. */
+  dryRun: boolean;
+  /** Take the project down, volumes included, before setting it up. */
+  reset: boolean;
   /** Take the default answer to every question that has one. */
   assumeYes: boolean;
   /** Print usage and do nothing. */
@@ -123,6 +194,10 @@ export interface SetupIo {
   log(line: string): void;
   portFree(port: number): Promise<boolean>;
   waitForBackend(port: number, timeoutMs?: number): Promise<string | undefined>;
+  /** Pause between polls; a test hands in one that returns at once. */
+  sleep?(ms: number): Promise<void>;
+  /** The clock the polls are measured against; a test hands in its own. */
+  now?(): number;
 }
 
 /** The reader stopped at a prompt. Nothing is undone; nothing was reset. */
@@ -130,20 +205,37 @@ export class SetupCancelled extends Error {}
 
 const USAGE = `Usage: pnpm setup:local [options]
 
-  --route <key|local|endpoint>  how this installation reaches a model
+  --mode <mock|real>            the seeded office (default), or your own systems
+  --route <key|local|featherless|endpoint>
+                                how this installation reaches a model:
+                                  key          an OpenAI-compatible key you have
+                                  local        the bundled model, no account
+                                  featherless  GLM 5.3 Flash through Featherless
+                                  endpoint     an endpoint you already run
   --project <name>              Compose project name for this installation
   --port <n>                    host port for the backend (default ${DEFAULT_PORTS.backend})
   --site-port <n>               host port for HTTP actions (default ${DEFAULT_PORTS.site})
   --dashboard-port <n>          host port for the Convex dashboard (default ${DEFAULT_PORTS.dashboard})
   --model-port <n>              host port for the bundled model (default ${DEFAULT_PORTS.model})
+  --app-port <n>                port \`pnpm dev\` serves on (default ${DEFAULT_PORTS.app})
   --model <id>                  model to pull on the bundled route
   --endpoint <url>              OpenAI-compatible endpoint for the advanced route
+  --docs <dir>                  real mode: your documentation folder (default ${DEFAULT_DOCS_HOST_DIR})
+  --gpu <auto|on|off>           the bundled model and the redactor on the GPU (default auto)
+  --warm-from <project>         real mode: copy that project's redactor volumes, no download
+  --sandbox <local|daytona>     real mode: what verifies authored skills (default local)
+  --boss-email <address>        real mode: the manager's address, stored on the agent at deploy
+  --dry-run                     print the plan of commands and write nothing
+  --reset                       take this project down, volumes included, first
   --yes                         take the default answer wherever there is one
   --help                        print this
 
-Real mode and the Convex-cloud-plus-Clerk route are not automated here; they
-need accounts and a dashboard task. README.md has both, linked from the end of
-a successful run.`;
+Real mode, one command:
+  ./setup-real.sh --route featherless     GLM through Featherless; the key is asked for
+  ./setup-real.sh --route local           the bundled model, on the GPU where there is one
+
+The Convex-cloud-plus-Clerk route is not automated here; it needs accounts and
+a dashboard task. README.md has it, linked from the end of a successful run.`;
 
 /**
  * Read the command line.
@@ -158,12 +250,28 @@ a successful run.`;
  *   Error: If a flag is unknown, or its value is not one this helper has.
  */
 export function parseSetupArguments(argv: readonly string[]): SetupOptions {
-  const options: SetupOptions = { ports: {}, assumeYes: false, help: false };
+  const options: SetupOptions = {
+    mode: 'mock',
+    ports: {},
+    gpu: 'auto',
+    sandbox: 'local',
+    dryRun: false,
+    reset: false,
+    assumeYes: false,
+    help: false,
+  };
   const portFlags: Readonly<Record<string, keyof SetupPorts>> = {
     '--port': 'backend',
     '--site-port': 'site',
     '--dashboard-port': 'dashboard',
     '--model-port': 'model',
+    '--app-port': 'app',
+  };
+  const oneOf = <T extends string>(flag: string, value: string, allowed: readonly T[]): T => {
+    if (!(allowed as readonly string[]).includes(value)) {
+      throw new Error(`${flag} "${value}" is not one of: ${allowed.join(', ')}.`);
+    }
+    return value as T;
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -179,18 +287,30 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       options.help = true;
     } else if (argument === '--yes' || argument === '-y') {
       options.assumeYes = true;
+    } else if (argument === '--dry-run') {
+      options.dryRun = true;
+    } else if (argument === '--reset') {
+      options.reset = true;
+    } else if (argument === '--mode') {
+      options.mode = oneOf('--mode', take(), ['mock', 'real'] as const);
     } else if (argument === '--route') {
-      const value = take();
-      if (value !== 'key' && value !== 'local' && value !== 'endpoint') {
-        throw new Error(`--route "${value}" is not one of: key, local, endpoint.`);
-      }
-      options.route = value;
+      options.route = oneOf('--route', take(), ['key', 'local', 'featherless', 'endpoint'] as const);
+    } else if (argument === '--gpu') {
+      options.gpu = oneOf('--gpu', take(), ['auto', 'on', 'off'] as const);
+    } else if (argument === '--sandbox') {
+      options.sandbox = oneOf('--sandbox', take(), ['local', 'daytona'] as const);
     } else if (argument === '--project') {
       options.project = take();
     } else if (argument === '--model') {
       options.model = take();
     } else if (argument === '--endpoint') {
       options.endpoint = take();
+    } else if (argument === '--docs') {
+      options.docs = take();
+    } else if (argument === '--warm-from') {
+      options.warmFrom = take();
+    } else if (argument === '--boss-email') {
+      options.bossEmail = take();
     } else if (argument in portFlags) {
       const value = take();
       const port = Number.parseInt(value, 10);
@@ -400,26 +520,65 @@ export function projectVolumes(project: string): string[] {
   return [`${project}_convex_data`, `${project}_sandbox_socket`];
 }
 
+export interface CheckoutClaim {
+  /** Whether this checkout is a git main worktree rather than a linked one or a copy. */
+  mainWorktree: boolean;
+  /** The project `.env.local` in this checkout names. */
+  fileProject: string;
+}
+
 /**
  * Refuse a project or volume that holds a real run.
  *
+ * The protected names are the operator's own stacks. The one checkout allowed
+ * to set them up is the primary: the git main worktree whose own `.env.local`
+ * already names the project. A linked worktree, a copy with a borrowed env file
+ * or a fresh clone that merely sits in a directory called `day0` is refused,
+ * and the ownership checks that follow (the volume, the containers' working
+ * directory, `DAY0_SETUP_ROOT`) still apply to the primary.
+ *
  * Args:
  *   project: Compose project name the reader asked for.
+ *   claim: What this checkout is and what its env file names; omitted means
+ *     no exception.
  *
  * Raises:
- *   Error: If the name, or either volume it implies, is protected.
+ *   Error: If the name, or either volume it implies, is protected and this is
+ *     not the primary checkout.
  */
-export function assertLocalProject(project: string): void {
+export function assertLocalProject(project: string, claim?: CheckoutClaim): void {
   const clash = [project, ...projectVolumes(project)].find(
     (name: string): boolean =>
       PROTECTED_PROJECTS.includes(name) || PROTECTED_VOLUMES.includes(name),
   );
   if (clash === undefined) return;
+  if (claim?.mainWorktree === true && claim.fileProject.trim() === project) return;
   throw new Error(
-    `"${project}" would use ${projectVolumes(project).join(' and ')}, and ${clash} holds a ` +
-      'real run. This helper never starts, writes to or removes it. Choose another name: ' +
+    `"${project}" would use ${projectVolumes(project).join(' and ')}, and ${clash} is ` +
+      'protected: it holds a real run. This helper never starts, writes to or removes it from anywhere but the ' +
+      `primary checkout, whose own ${ENV_FILE} names it. Choose another name: ` +
       '`pnpm setup:local --project <name>`.',
   );
+}
+
+/**
+ * Whether a checkout is a git main worktree.
+ *
+ * A linked worktree carries a `.git` *file* pointing at the main repository;
+ * only the main worktree has the `.git` directory itself.
+ *
+ * Args:
+ *   root: Checkout root.
+ *
+ * Returns:
+ *   True for a main worktree, false for a linked one or no repository.
+ */
+export function isMainWorktree(root: string): boolean {
+  try {
+    return statSync(join(root, '.git')).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** What to do about a Compose project that already has data. */
@@ -471,13 +630,20 @@ export interface ModelAddresses {
  *   options.endpoint: The reader's own endpoint, on the advanced route.
  *
  * Returns:
- *   Both addresses. Empty pairs mean api.openai.com, which both sides reach.
+ *   Both addresses. Empty pairs mean api.openai.com, which both sides reach;
+ *   Featherless is likewise one hosted address both sides reach.
  */
 export function modelAddresses(
   route: SetupRoute,
   options: { modelPort: number; endpoint?: string },
 ): ModelAddresses {
   if (route === 'key') return { OPENAI_BASE_URL: '', CONVEX_OPENAI_BASE_URL: '' };
+  if (route === 'featherless') {
+    return {
+      OPENAI_BASE_URL: FEATHERLESS_SETTINGS.OPENAI_BASE_URL,
+      CONVEX_OPENAI_BASE_URL: FEATHERLESS_SETTINGS.OPENAI_BASE_URL,
+    };
+  }
   if (route === 'local') {
     return {
       OPENAI_BASE_URL: `http://127.0.0.1:${options.modelPort}/v1`,
@@ -576,15 +742,33 @@ export interface EnvPlanInput {
   apiKey?: string;
   model?: string;
   endpoint?: string;
+  /** Mock unless said otherwise, so the mock path writes exactly what it always did. */
+  mode?: SetupMode;
+  /** Written only when the reader named the app port, or the file already has one. */
+  appPortSelected?: boolean;
+  /** Real mode: the documentation directory, as the reader gave it. */
+  docsHostDir?: string;
+  /** Real mode: what verifies authored skills. */
+  sandbox?: SandboxChoice;
+  /** Real mode: the manager's address, when known. */
+  bossEmail?: string;
+  /** An explicit GPU choice is written; `auto` leaves the file's own value. */
+  gpu?: GpuChoice;
 }
 
 /**
  * The values this installation needs, and only those.
  *
  * Settings that describe this installation (its project, its ports, its two
- * model addresses) are written every time, because they are what the reader
- * selected. Everything else is written only when the file has nothing to say,
- * so a rerun preserves what the reader changed by hand.
+ * model addresses, and in real mode the surface mode, the documentation mount
+ * and the two component addresses) are written every time, because they are
+ * what the reader selected. Everything else is written only when the file has
+ * nothing to say, so a rerun preserves what the reader changed by hand.
+ *
+ * The Featherless route writes its five settings every time: the key came in
+ * through a hidden prompt or the environment and belongs to that base URL, and
+ * a model, JSON mode, budget and effort left over from another route are what
+ * the 12 September probe found returning nothing.
  *
  * Args:
  *   input: Route, project, ports, the file as it stands and any answers given.
@@ -593,7 +777,8 @@ export interface EnvPlanInput {
  *   Names and values to write; an already-correct value is left out entirely.
  */
 export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
-  const { backend, site, dashboard, model } = input.ports;
+  const { backend, site, dashboard, model, app } = input.ports;
+  const mode = input.mode ?? 'mock';
   const addresses = modelAddresses(input.route, { modelPort: model, endpoint: input.endpoint });
   const selected: Record<string, string> = {
     COMPOSE_PROJECT_NAME: input.project,
@@ -608,17 +793,36 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     CONVEX_OPENAI_BASE_URL: addresses.CONVEX_OPENAI_BASE_URL,
   };
   if (input.route === 'local') selected.MODEL_PORT = String(model);
+  if (input.appPortSelected || (input.existing.DAY0_APP_PORT ?? '') !== '') {
+    selected.DAY0_APP_PORT = String(app);
+  }
 
   const whenMissing: Record<string, string> = {
     CONVEX_BIND_ADDR: '127.0.0.1',
     DAY0_SURFACE_MODE: 'mock',
   };
-  if (input.apiKey) whenMissing.OPENAI_API_KEY = input.apiKey;
+  if (input.route === 'featherless') {
+    Object.assign(selected, FEATHERLESS_SETTINGS);
+    if (input.apiKey) selected.OPENAI_API_KEY = input.apiKey;
+  } else if (input.apiKey) {
+    whenMissing.OPENAI_API_KEY = input.apiKey;
+  }
   if (input.model) selected.OPENAI_MODEL = input.model;
+  if (input.gpu !== undefined && input.gpu !== 'auto') selected.MODEL_GPU = input.gpu;
+
+  if (mode === 'real') {
+    selected.DAY0_SURFACE_MODE = 'real';
+    selected.DAY0_DOCS_HOST_DIR = input.docsHostDir ?? DEFAULT_DOCS_HOST_DIR;
+    selected.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
+    selected.DAY0_REDACTOR_URL = REDACTOR_URL;
+    whenMissing.DAY0_DOCS_ROOT = '/docs';
+    if ((input.sandbox ?? 'local') === 'local') selected.DAYTONA_API_KEY = '';
+    if (input.bossEmail) selected.NEXT_PUBLIC_DEMO_BOSS_EMAIL = input.bossEmail;
+  }
 
   const updates: Record<string, string> = { ...selected };
   for (const [name, value] of Object.entries(whenMissing)) {
-    if ((input.existing[name] ?? '') === '') updates[name] = value;
+    if (!(name in selected) && (input.existing[name] ?? '') === '') updates[name] = value;
   }
   for (const name of Object.keys(updates)) {
     if (input.existing[name] === updates[name]) delete updates[name];
@@ -626,27 +830,70 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
   return updates;
 }
 
+export interface SequenceInput {
+  mode?: SetupMode;
+  /** Real mode: whether a warm project's redactor volumes are copied first. */
+  warm?: boolean;
+  /** Real mode: Daytona verifies skills, so the bundled sandbox is not started. */
+  sandbox?: SandboxChoice;
+  /** Whether the project is taken down first. */
+  reset?: boolean;
+}
+
 /**
  * The helpers this route runs, in the order the README calls load-bearing.
  *
+ * Real mode adds the redactor after the sandbox, the warm volume copy before
+ * the first `up` (a volume compose has already created is empty, and the
+ * component's first start would fill it by downloading), and `reset` before
+ * everything when asked for.
+ *
  * Args:
  *   route: The chosen route.
+ *   input: Mode and the real-mode choices; mock when omitted.
  *
  * Returns:
  *   Step names, in order.
  */
-export function sequenceSteps(route: SetupRoute): string[] {
+export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): string[] {
+  const real = (input.mode ?? 'mock') === 'real';
   return [
+    ...(input.reset ? ['reset'] : []),
     'dev:no-auth-key',
+    ...(real && input.warm ? ['warm-redactor'] : []),
     'convex:up',
     ...(route === 'local' ? ['model:up', 'model:pull'] : []),
-    'sandbox:up',
+    ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
+    ...(real ? ['redactor:up'] : []),
     'admin-key',
     'sync:env',
     'convex dev --once',
     'convex:restart',
     'check:setup',
   ];
+}
+
+/** The profiles `pnpm convex:up` is handed, as arguments. */
+export function profileArguments(profiles: readonly string[]): string[] {
+  return profiles.flatMap((profile: string): string[] => ['--profile', profile]);
+}
+
+/**
+ * `docker compose` arguments that take a whole project down, volumes included.
+ *
+ * Every profile the compose file defines is named, so the network can be
+ * removed: compose refuses while a container from an unnamed profile is still
+ * attached to it.
+ *
+ * Args:
+ *   envFile: The env file compose reads.
+ *
+ * Returns:
+ *   Arguments to pass to `docker`.
+ */
+export function resetArguments(envFile: string = ENV_FILE): string[] {
+  const profiles = Object.keys(PROFILES).filter((name: string): boolean => name !== 'real');
+  return composeArguments([...profileArguments(profiles), 'down', '-v', '--remove-orphans'], envFile);
 }
 
 /**
@@ -832,21 +1079,331 @@ export function wrapIndented(text: string, indent: string, width = 92): string[]
 }
 
 /**
+ * What a first success looks like in real mode: the README's "The
+ * documentation is yours" steps, in order, because the mock steps' second line
+ * ("the office it works in is seeded and synthetic") is untrue here.
+ */
+export const REAL_FIRST_SUCCESS: readonly { action: string; detail: string }[] = [
+  {
+    action: 'Open the unlock URL that pnpm dev prints.',
+    detail:
+      'It carries the key once; after that it is a cookie. Opening http://localhost:3000 directly answers 403, and that is the boundary working rather than a fault.',
+  },
+  {
+    action: 'Link your documentation first, on the documentation page.',
+    detail:
+      'A folder source takes a path relative to the mount, and `.` is the whole of DAY0_DOCS_HOST_DIR. A Notion source takes http://docs-notion-mcp:3000/mcp and your own integration token. Each source shows synced and a page count once read.',
+  },
+  {
+    action: 'Deploy an agent with those sources ticked, hold the Day-1 1:1 in chat, and approve the charter.',
+    detail:
+      'Use the tickets\' own words in the 1:1; the charter records what you said, and the systems the documentation names are the systems that exist.',
+  },
+  {
+    action: 'Approve the connection cards on the Surfaces tab.',
+    detail:
+      'Each card needs both the manager and the IT approval; a Slack card with no DAY0_PUBLIC_URL takes a shared bot token before approval. A system with no approved path stays absent, and work that needs it defers.',
+  },
+];
+
+/**
  * What a first success looks like, printed after the checker's own report.
  *
- * The steps are `src/setup/quickstart.ts`'s, which is also what the `/setup`
- * page renders: a reader who follows the page and a reader who follows this
- * terminal are told the same four things.
+ * The mock steps are `src/setup/quickstart.ts`'s, which is also what the
+ * `/setup` page renders: a reader who follows the page and a reader who
+ * follows this terminal are told the same four things. Real mode has its own
+ * four. The app's origin in a detail follows the unlock URL, so a stack on
+ * another port is not told about 3000.
+ *
+ * Args:
+ *   unlockUrl: The URL the run resolved, or undefined when it could not.
+ *   mode: Mock unless said otherwise.
+ *
+ * Returns:
+ *   Lines to print.
  */
-export function firstSuccessLines(unlockUrl: string | undefined): string[] {
+export function firstSuccessLines(unlockUrl: string | undefined, mode: SetupMode = 'mock'): string[] {
   const lines = ['What a first success looks like:'];
-  FIRST_SUCCESS.forEach((step, index): void => {
+  const origin = unlockUrl === undefined ? undefined : new URL(unlockUrl).origin;
+  const steps = mode === 'real' ? REAL_FIRST_SUCCESS : FIRST_SUCCESS;
+  steps.forEach((step, index): void => {
     const action = index === 0 && unlockUrl !== undefined ? `Open ${unlockUrl}.` : step.action;
+    const detail =
+      origin === undefined ? step.detail : step.detail.replaceAll('http://localhost:3000', origin);
     lines.push(`  ${index + 1}  ${action}`);
-    lines.push(...wrapIndented(step.detail, '     '));
+    lines.push(...wrapIndented(detail, '     '));
   });
   return lines;
 }
+
+export interface FeatherlessKey {
+  /** Where the key comes from; `file` means the file's own value is kept as it is. */
+  source: 'environment' | 'file' | 'prompt';
+  /** The variable it was read from, for the terminal; never the value. */
+  variable?: string;
+  /** The value to write, when it is not already the file's own. */
+  key?: string;
+}
+
+/**
+ * Where the Featherless key comes from, without printing it.
+ *
+ * The environment wins (`FEATHERLESS_API_KEY`, then `OPENAI_API_KEY`), so a
+ * venue script can hand the key in without a prompt. A file already on the
+ * Featherless route keeps its own key. The probe script's `FEATHERLESS_API_KEY`
+ * line in the file is taken next, and only then is the reader asked.
+ *
+ * Args:
+ *   environment: The process environment.
+ *   existing: What `.env.local` declares today.
+ *
+ * Returns:
+ *   The source, and the value when one has to be written.
+ */
+export function featherlessKeySource(
+  environment: Readonly<Record<string, string | undefined>>,
+  existing: Readonly<Record<string, string>>,
+): FeatherlessKey {
+  for (const variable of ['FEATHERLESS_API_KEY', 'OPENAI_API_KEY']) {
+    const key = (environment[variable] ?? '').trim();
+    if (key !== '') return { source: 'environment', variable, key };
+  }
+  if (
+    (existing.OPENAI_API_KEY ?? '').trim() !== '' &&
+    (existing.OPENAI_BASE_URL ?? '').trim() === FEATHERLESS_SETTINGS.OPENAI_BASE_URL
+  ) {
+    return { source: 'file', variable: 'OPENAI_API_KEY' };
+  }
+  const probeKey = (existing.FEATHERLESS_API_KEY ?? '').trim();
+  if (probeKey !== '') return { source: 'file', variable: 'FEATHERLESS_API_KEY', key: probeKey };
+  return { source: 'prompt' };
+}
+
+/** Env names whose values are never shown, in a plan or anywhere else. */
+export const SECRET_NAMES: readonly string[] = [
+  'OPENAI_API_KEY',
+  'FEATHERLESS_API_KEY',
+  'CONVEX_SELF_HOSTED_ADMIN_KEY',
+  'DAYTONA_API_KEY',
+  'EXA_API_KEY',
+  'DEV_NO_AUTH_SECRET',
+  'DEV_NO_AUTH_SIGNING_KEY',
+  'DAY0_CREDENTIAL_KEY',
+  'DAY0_NOTION_MCP_AUTH_TOKEN',
+  'ELEVENLABS_API_KEY',
+  'ELEVENLABS_WEBHOOK_SECRET',
+  'CLERK_SECRET_KEY',
+];
+
+/**
+ * An env update as it may be printed: a secret's value is replaced.
+ *
+ * Args:
+ *   name: The variable.
+ *   value: Its value.
+ *
+ * Returns:
+ *   `NAME=value`, or `NAME=<hidden>` for a secret; an emptied secret says so.
+ */
+export function printableUpdate(name: string, value: string): string {
+  if (!SECRET_NAMES.includes(name)) return `${name}=${value}`;
+  return value === '' ? `${name}= (emptied)` : `${name}=<hidden>`;
+}
+
+export interface StepContext {
+  mode: SetupMode;
+  route: SetupRoute;
+  /** The optional profiles handed to `convex:up`; empty in mock mode. */
+  profiles: readonly string[];
+  /** The model to pull on the bundled route. */
+  model?: string;
+  /** Real mode: the project whose redactor volumes are copied. */
+  warmFrom?: string;
+  project: string;
+  /** The pinned node image the volume copy runs in. */
+  image?: string;
+}
+
+export interface PlannedCommand {
+  command: string;
+  args: string[];
+  /** Env values the command is given on top of the shared child environment. */
+  env?: Record<string, string>;
+}
+
+/**
+ * The exact command lines one step runs, shared by the plan and the run.
+ *
+ * Args:
+ *   step: A step name from `sequenceSteps`.
+ *   context: What the step needs to know.
+ *
+ * Returns:
+ *   One or more commands; the admin key step names the generator it may run.
+ */
+export function stepCommands(step: string, context: StepContext): PlannedCommand[] {
+  switch (step) {
+    case 'reset':
+      return [{ command: 'docker', args: resetArguments() }];
+    case 'dev:no-auth-key':
+      return [{ command: 'pnpm', args: ['run', 'dev:no-auth-key'] }];
+    case 'warm-redactor': {
+      if (!context.warmFrom || !context.image) return [];
+      return redactorVolumeClone(context.warmFrom, context.project, context.image).flatMap(
+        (clone): PlannedCommand[] => [
+          { command: 'docker', args: clone.create },
+          { command: 'docker', args: clone.copy },
+        ],
+      );
+    }
+    case 'convex:up':
+      return [{ command: 'pnpm', args: ['run', 'convex:up', ...profileArguments(context.profiles)] }];
+    case 'model:up':
+      return [{ command: 'pnpm', args: ['run', 'model:up'] }];
+    case 'model:pull':
+      return [{ command: 'pnpm', args: ['run', 'model:pull', context.model ?? ''] }];
+    case 'sandbox:up':
+      return [{ command: 'pnpm', args: ['run', 'sandbox:up'] }];
+    case 'redactor:up':
+      return [{ command: 'pnpm', args: ['run', 'redactor:up'] }];
+    case 'admin-key':
+      return [
+        {
+          command: 'docker',
+          args: composeArguments(['exec', '-T', 'backend', './generate_admin_key.sh']),
+        },
+      ];
+    case 'sync:env':
+      return [{ command: 'pnpm', args: ['run', 'sync:env'] }];
+    case 'convex dev --once':
+      return [{ command: 'npx', args: ['convex', 'dev', '--once'] }];
+    case 'convex:restart':
+      return [{ command: 'pnpm', args: ['run', 'convex:restart'] }];
+    case 'check:setup':
+      return [{ command: 'pnpm', args: ['run', 'check:setup'] }];
+    default:
+      throw new Error(`no command for step "${step}"`);
+  }
+}
+
+export interface PlanInput {
+  mode: SetupMode;
+  route: SetupRoute;
+  project: string;
+  ports: SetupPorts;
+  steps: readonly string[];
+  context: StepContext;
+  /** What would be written to the env file. */
+  updates: Readonly<Record<string, string>>;
+  /** Real mode: the redactor decision, when the venv could be read. */
+  redactor?: RedactorGpuDecision;
+  /** Whether the env file would be created from the example first. */
+  createsEnv: boolean;
+  /** Real mode: whether the manager's address is still to be asked. */
+  asksBossEmail?: boolean;
+  /** Whether the provider key is still to be asked for. */
+  asksKey?: boolean;
+}
+
+/**
+ * The plan `--dry-run` prints: what would be written, and every command.
+ *
+ * Args:
+ *   input: The resolved choices.
+ *
+ * Returns:
+ *   Lines to print; no secret value appears in any of them.
+ */
+export function planLines(input: PlanInput): string[] {
+  const lines: string[] = [];
+  lines.push(
+    `Dry run: ${input.mode} mode on the ${input.route} route, Compose project ${input.project}, ` +
+      `backend ${input.ports.backend}, site ${input.ports.site}, dashboard ${input.ports.dashboard}, app ${input.ports.app}.`,
+  );
+  lines.push('');
+  lines.push(`Would write to ${ENV_FILE}${input.createsEnv ? ` (created from ${ENV_EXAMPLE} first)` : ''}:`);
+  const names = Object.keys(input.updates);
+  if (names.length === 0) lines.push('  nothing; the file already says all of this');
+  for (const name of names) lines.push(`  ${printableUpdate(name, input.updates[name])}`);
+  if (input.asksKey) lines.push('  OPENAI_API_KEY=<asked in a hidden prompt, or taken from the environment>');
+  if (input.asksBossEmail) lines.push('  NEXT_PUBLIC_DEMO_BOSS_EMAIL=<asked>');
+  lines.push('');
+  lines.push('Would run, in this order:');
+  input.steps.forEach((step: string, index: number): void => {
+    const commands = stepCommands(step, input.context);
+    const prefix = step === 'redactor:up' && input.redactor && input.redactor.mode !== 'auto'
+      ? `MODEL_GPU=${input.redactor.mode} `
+      : '';
+    if (commands.length === 0) {
+      lines.push(`  ${index + 1}  ${step}: nothing to run`);
+      return;
+    }
+    commands.forEach((planned: PlannedCommand, position: number): void => {
+      const label = position === 0 ? `${index + 1}  ` : '   ';
+      lines.push(`  ${label}${prefix}${[planned.command, ...planned.args].join(' ')}`);
+    });
+    if (step === 'admin-key') {
+      lines.push('     (only when the file has no key or the backend refuses the one it has)');
+    }
+    if (step === 'redactor:up' && input.redactor) lines.push(`     ${input.redactor.reason}`);
+  });
+  lines.push('');
+  lines.push('Nothing was written and nothing was started.');
+  return lines;
+}
+
+/** What `docker compose ps --format json <service>` says about one service. */
+export type ServiceHealth = 'healthy' | 'starting' | 'unhealthy' | 'exited' | 'absent';
+
+/**
+ * Read a service's health out of a compose `ps` listing.
+ *
+ * Args:
+ *   stdout: The listing, one JSON object per line (or one array).
+ *
+ * Returns:
+ *   The health, `absent` when the listing has no container.
+ */
+export function serviceHealth(stdout: string): ServiceHealth {
+  const rows: { State?: string; Health?: string }[] = [];
+  const text = stdout.trim();
+  if (text.startsWith('[')) {
+    try {
+      rows.push(...(JSON.parse(text) as { State?: string; Health?: string }[]));
+    } catch {
+      return 'absent';
+    }
+  } else {
+    for (const line of text.split('\n')) {
+      if (!line.trim().startsWith('{')) continue;
+      try {
+        rows.push(JSON.parse(line) as { State?: string; Health?: string });
+      } catch {
+        // A partial line; the next poll reads a whole one.
+      }
+    }
+  }
+  const row = rows[0];
+  if (!row) return 'absent';
+  if (row.State !== 'running') return 'exited';
+  if (row.Health === 'healthy') return 'healthy';
+  if (row.Health === 'unhealthy') return 'unhealthy';
+  return 'starting';
+}
+
+/** The placeholder page written into a documentation folder this helper created. */
+export const DOCS_STUB = [
+  '# Your documentation goes here',
+  '',
+  'This folder is mounted read-only into the backend as its documentation. Put',
+  'the runbooks, onboarding pages and systems list your team actually uses here',
+  'as Markdown, then link the folder `.` on the documentation page. Day0 reads',
+  'what it finds, redacts credential values before storing anything, and treats',
+  'the systems these pages name as the systems that exist.',
+  '',
+  'Replace this file; it is only here so the folder is not empty.',
+  '',
+].join('\n');
 
 /* Everything below this line talks to the machine: child processes, ports and
    the env file. The tests drive it through the `SetupIo` above rather than
@@ -955,6 +1512,7 @@ function reportFailure(io: SetupIo, what: string, result: RunResult, project: st
 export async function runSetup(options: SetupOptions, io: SetupIo): Promise<number> {
   const envPath = join(io.cwd, ENV_FILE);
   const examplePath = join(io.cwd, ENV_EXAMPLE);
+  const real = options.mode === 'real';
   let wrote = false;
   let started = false;
 
@@ -985,7 +1543,14 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     const project = options.project ?? existing.COMPOSE_PROJECT_NAME?.trim() ?? '';
     const resolvedProject = project !== '' ? project : basename(io.cwd);
-    assertLocalProject(resolvedProject);
+    assertLocalProject(resolvedProject, {
+      mainWorktree: isMainWorktree(io.cwd),
+      fileProject: existing.COMPOSE_PROJECT_NAME ?? '',
+    });
+    if (options.warmFrom !== undefined && options.warmFrom.trim() === resolvedProject) {
+      io.log(`error: --warm-from ${options.warmFrom} names this installation's own project.`);
+      return 1;
+    }
 
     const ports: SetupPorts = {
       backend: options.ports.backend ?? numberFrom(existing.CONVEX_PORT, DEFAULT_PORTS.backend),
@@ -994,15 +1559,18 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         options.ports.dashboard ??
         numberFrom(existing.CONVEX_DASHBOARD_PORT, DEFAULT_PORTS.dashboard),
       model: options.ports.model ?? numberFrom(existing.MODEL_PORT, DEFAULT_PORTS.model),
+      app: options.ports.app ?? numberFrom(existing.DAY0_APP_PORT, DEFAULT_PORTS.app),
     };
+    const docsHostDir =
+      options.docs?.trim() || existing.DAY0_DOCS_HOST_DIR?.trim() || DEFAULT_DOCS_HOST_DIR;
 
     const volumes = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
-    if (volumes.status !== 0) {
+    if (volumes.status !== 0 && !options.dryRun) {
       io.log('error: Docker could not inventory volumes; no installation can be safely selected.');
       return 1;
     }
-    const existingVolumes = volumes.stdout.split('\n').map((name) => name.trim());
-    const decision = attachmentDecision({
+    let existingVolumes = volumes.stdout.split('\n').map((name) => name.trim());
+    let decision = attachmentDecision({
       project: resolvedProject,
       existingVolumes,
       fileProject: existing.COMPOSE_PROJECT_NAME ?? '',
@@ -1027,7 +1595,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
     const containers = io.run('docker', ['ps', '-a', '--filter',
       `label=com.docker.compose.project=${resolvedProject}`, '--format', '{{.ID}}']);
-    if (containers.status !== 0) {
+    if (containers.status !== 0 && !options.dryRun) {
       io.log('error: Docker could not identify this project’s existing containers.');
       return 1;
     }
@@ -1045,11 +1613,13 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
 
     const services = runningServices(io, resolvedProject);
-    const alreadyOurs = decision === 'rerun' && services?.includes('backend') === true;
+    // A running stack of this project's own holds its ports itself, whether it
+    // is being kept or about to be taken down by --reset.
+    const ownStackRunning = decision === 'rerun' && services?.includes('backend') === true;
 
-    io.log(`Day0 local setup, Compose project ${resolvedProject}.`);
+    io.log(`Day0 local setup, ${options.mode} mode, Compose project ${resolvedProject}.`);
     io.log('');
-    const portsToCheck = alreadyOurs
+    const portsToCheck = ownStackRunning
       ? []
       : [
           { name: 'CONVEX_PORT', port: ports.backend },
@@ -1064,10 +1634,10 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     // serves there, and the unlock URL printed at the end names it.
     portResults.push({
       name: 'pnpm dev',
-      port: APP_PORT,
-      free: await io.portFree(APP_PORT),
+      port: ports.app,
+      free: await io.portFree(ports.app),
       blocking: false,
-      fix: `\`pnpm dev\` serves on ${APP_PORT} and the unlock URL names it. Free that port before you run it; the setup below is unaffected.`,
+      fix: `\`pnpm dev\` serves on ${ports.app} and the unlock URL names it. Free that port before you run it, or move it: \`--app-port <n>\`; the setup below is unaffected.`,
     });
     const prerequisites = prerequisiteReport({
       node: versionOf(io, 'node', ['--version']),
@@ -1076,9 +1646,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       compose: versionOf(io, 'docker', ['compose', 'version']),
       ports: portResults,
     });
-    if (!printPrerequisites(io, prerequisites)) return 1;
-    if (alreadyOurs) {
-      io.log(`  ok    ${resolvedProject} is already running here, so its ports are its own.`);
+    if (!printPrerequisites(io, prerequisites) && !options.dryRun) return 1;
+    if (ownStackRunning) {
+      io.log(
+        `  ok    ${resolvedProject} is already running here, so its ports are its own` +
+          `${options.reset ? '; --reset takes it down first' : ''}.`,
+      );
       io.log('');
     }
 
@@ -1086,31 +1659,71 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     let apiKey: string | undefined;
     let model = options.model;
     let endpoint = options.endpoint;
+    let asksKey = false;
 
     if (route === 'key') {
       if ((existing.OPENAI_API_KEY ?? '') === '') {
-        io.log('');
-        io.log(
-          `The key is read here and written to ${ENV_FILE} with owner-only permissions. It is ` +
-            'never printed and never passed to another program as an argument.',
-        );
-        apiKey = (await io.ask('OPENAI_API_KEY (hidden): ', { hidden: true })).trim();
-        if (apiKey === '') {
+        if (options.dryRun) {
+          asksKey = true;
+        } else {
           io.log('');
           io.log(
-            'error: OPENAI_API_KEY is empty, and every step of the loop is a model call, so ' +
-              'nothing would finish.',
+            `The key is read here and written to ${ENV_FILE} with owner-only permissions. It is ` +
+              'never printed and never passed to another program as an argument.',
           );
+          apiKey = (await io.ask('OPENAI_API_KEY (hidden): ', { hidden: true })).trim();
+          if (apiKey === '') {
+            io.log('');
+            io.log(
+              'error: OPENAI_API_KEY is empty, and every step of the loop is a model call, so ' +
+                'nothing would finish.',
+            );
+            io.log(
+              '       Run this again and paste one, or take the route that needs no account at ' +
+                'all: `pnpm setup:local --route local`, which runs the model on this machine.',
+            );
+            return 1;
+          }
+        }
+      }
+    } else if (route === 'featherless') {
+      const source = featherlessKeySource(io.environment, existing);
+      io.log(
+        `GLM 5.3 Flash through Featherless: ${FEATHERLESS_SETTINGS.OPENAI_MODEL} at ` +
+          `${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}, JSON by prompt, ${FEATHERLESS_SETTINGS.OPENAI_MAX_OUTPUT_TOKENS} ` +
+          `output tokens, ${FEATHERLESS_SETTINGS.OPENAI_REASONING_EFFORT} effort.`,
+      );
+      if (source.source === 'environment') {
+        apiKey = source.key;
+        io.log(`  The key is taken from ${source.variable} in the environment and stored as OPENAI_API_KEY.`);
+      } else if (source.source === 'file') {
+        apiKey = source.key;
+        io.log(
+          source.key === undefined
+            ? `  ${ENV_FILE} already carries a key for this route; it is kept.`
+            : `  The key is taken from ${source.variable} in ${ENV_FILE} and stored as OPENAI_API_KEY.`,
+        );
+      } else if (options.dryRun) {
+        asksKey = true;
+      } else {
+        io.log(
+          `  The key is read here and written to ${ENV_FILE} with owner-only permissions. It is ` +
+            'never printed and never passed to another program as an argument.',
+        );
+        apiKey = (await io.ask('Featherless API key (hidden): ', { hidden: true })).trim();
+        if (apiKey === '') {
+          io.log('');
+          io.log('error: the Featherless key is empty, and every step of the loop is a model call.');
           io.log(
-            '       Run this again and paste one, or take the route that needs no account at ' +
-              'all: `pnpm setup:local --route local`, which runs the model on this machine.',
+            '       Run this again and paste one (https://featherless.ai/account/api-keys), set ' +
+              'FEATHERLESS_API_KEY in the environment, or take `--route local`.',
           );
           return 1;
         }
       }
     } else if (route === 'local') {
-      const modelPortFree = alreadyOurs || (await io.portFree(ports.model));
-      if (!modelPortFree) {
+      const modelPortFree = ownStackRunning || (await io.portFree(ports.model));
+      if (!modelPortFree && !options.dryRun) {
         io.log('');
         io.log(
           `error: host port ${ports.model} is already in use, and the bundled model service ` +
@@ -1132,12 +1745,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         '  A model that does not fit spills onto the CPU, and the symptom is a 1:1 that runs ' +
           'perfectly and a charter that never arrives.',
       );
-      if (!options.assumeYes) {
+      if (!options.assumeYes && !options.dryRun) {
         const answer = (await io.ask('  Pull it now? [Y/n] ')).trim().toLowerCase();
         if (answer === 'n' || answer === 'no') throw new SetupCancelled('the pull was declined');
       }
     } else {
-      endpoint = endpoint ?? (await io.ask('OpenAI-compatible endpoint URL: ')).trim();
+      endpoint = endpoint ?? (options.dryRun ? '' : (await io.ask('OpenAI-compatible endpoint URL: ')).trim());
       if (endpoint === '') {
         io.log('error: the advanced route needs an endpoint. Pass `--endpoint <url>`.');
         return 1;
@@ -1153,129 +1766,242 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       );
     }
 
-    io.log('');
-    io.log('The office is mock and seeded, on a backend that runs here. Nothing of yours is read.');
-    io.log('  Real mode, on your own documentation and systems: README.md, "Run it in real mode".');
-    io.log(
-      '  Convex cloud plus Clerk, with a user per sign-in: README.md, "Convex cloud + Clerk".',
-    );
-    io.log('  Neither is automated here: both need accounts, and one needs a dashboard task.');
-
-    if (!existsSync(envPath)) {
-      if (!existsSync(examplePath)) {
-        io.log(
-          `error: neither ${ENV_FILE} nor ${ENV_EXAMPLE} is here. Run this from the repository root.`,
-        );
+    let bossEmail = options.bossEmail?.trim() || existing.NEXT_PUBLIC_DEMO_BOSS_EMAIL?.trim() || '';
+    let asksBossEmail = false;
+    if (real) {
+      io.log('');
+      io.log(`Real mode: day0 reads the documentation in ${docsHostDir} and, once you approve a card,`);
+      io.log('  acts on the systems those pages record. Nothing is read until you link the folder.');
+      if (options.sandbox === 'daytona' && (existing.DAYTONA_API_KEY ?? '').trim() === '') {
+        io.log('');
+        io.log(`error: --sandbox daytona needs DAYTONA_API_KEY in ${ENV_FILE}, and it is empty.`);
+        io.log('       Put the key there, or take the bundled sandbox: `--sandbox local` (the default).');
         return 1;
       }
+      if (bossEmail === '') {
+        if (options.dryRun) {
+          asksBossEmail = true;
+        } else if (options.assumeYes) {
+          io.log('');
+          io.log(
+            'note: NEXT_PUBLIC_DEMO_BOSS_EMAIL is unset. Real mode resolves your Slack DM from it at ' +
+              'deploy and cannot correct a live agent; set it (or pass --boss-email) before you deploy.',
+          );
+        } else {
+          io.log('');
+          io.log('Real mode resolves your Slack DM from your address at deploy, so it is asked now.');
+          bossEmail = (await io.ask('Your email address (NEXT_PUBLIC_DEMO_BOSS_EMAIL): ')).trim();
+        }
+      }
+    } else {
+      io.log('');
+      io.log('The office is mock and seeded, on a backend that runs here. Nothing of yours is read.');
+      io.log('  Real mode, on your own documentation and systems: `pnpm setup:local --mode real`,');
+      io.log('  or README.md, "Run it in real mode".');
+      io.log(
+        '  Convex cloud plus Clerk, with a user per sign-in: README.md, "Convex cloud + Clerk".',
+      );
+      io.log('  That one is not automated here: it needs accounts and a dashboard task.');
+    }
+
+    const createsEnv = !existsSync(envPath);
+    if (createsEnv && !existsSync(examplePath)) {
+      io.log(
+        `error: neither ${ENV_FILE} nor ${ENV_EXAMPLE} is here. Run this from the repository root.`,
+      );
+      return 1;
+    }
+    const exampleValues = createsEnv ? readEnvValues(examplePath) : existing;
+    const updates = setupEnvUpdates({
+      route,
+      project: resolvedProject,
+      ports,
+      existing: exampleValues,
+      apiKey,
+      model,
+      endpoint,
+      mode: options.mode,
+      appPortSelected: options.ports.app !== undefined,
+      docsHostDir,
+      sandbox: options.sandbox,
+      bossEmail: bossEmail || undefined,
+      gpu: options.gpu,
+    });
+    if (existing.DAY0_SETUP_ROOT !== checkoutRoot) updates.DAY0_SETUP_ROOT = checkoutRoot;
+
+    const profiles = real ? REAL_MODE_PROFILES : [];
+    const warm = real && options.warmFrom !== undefined;
+    const steps = sequenceSteps(route, {
+      mode: options.mode,
+      warm,
+      sandbox: options.sandbox,
+      reset: options.reset,
+    });
+    const context: StepContext = {
+      mode: options.mode,
+      route,
+      profiles,
+      model,
+      warmFrom: options.warmFrom,
+      project: resolvedProject,
+      image: warm ? pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8')) : undefined,
+    };
+    const venvVolume = `${resolvedProject}_${REDACTOR_VOLUME_SUFFIXES[0]}`;
+    // The clone module refuses a protected project on either side; better
+    // here, before anything is written, than at the step.
+    if (warm) stepCommands('warm-redactor', context);
+
+    if (options.dryRun) {
+      const venv = existingVolumes.includes(venvVolume)
+        ? readVenvDevice(io, venvVolume, context.image)
+        : warm
+          ? readVenvDevice(io, `${options.warmFrom}_${REDACTOR_VOLUME_SUFFIXES[0]}`, context.image)
+          : 'none';
+      io.log('');
+      for (const line of planLines({
+        mode: options.mode,
+        route,
+        project: resolvedProject,
+        ports,
+        steps,
+        context,
+        updates,
+        redactor: real
+          ? redactorGpuDecision({ gpu: options.gpu, driver: hasNvidiaDriver(io), venv })
+          : undefined,
+        createsEnv,
+        asksBossEmail,
+        asksKey,
+      })) {
+        io.log(line);
+      }
+      return 0;
+    }
+
+    if (createsEnv) {
       writePrivateEnv(envPath, readFileSync(examplePath, 'utf8'));
       wrote = true;
       io.log('');
       io.log(`Created ${ENV_FILE} from ${ENV_EXAMPLE}, readable only by you.`);
     }
-    const updates = setupEnvUpdates({
-      route,
-      project: resolvedProject,
-      ports,
-      existing: readEnvValues(envPath),
-      apiKey,
-      model,
-      endpoint,
-    });
-    if (existing.DAY0_SETUP_ROOT !== checkoutRoot) updates.DAY0_SETUP_ROOT = checkoutRoot;
+    if (real) {
+      const docs = ensureDocsDirectory(docsHostDir, io.cwd);
+      if (docs.created) {
+        io.log(`Created ${docs.path} with a placeholder page; put your team's Markdown there.`);
+      }
+    }
     if (Object.keys(updates).length > 0) {
       writeEnvValues(envPath, updates);
       wrote = true;
       const named = Object.keys(updates).filter(
-        (name: string): boolean => name !== 'OPENAI_API_KEY',
+        (name: string): boolean => !SECRET_NAMES.includes(name),
       );
-      io.log(`Wrote ${named.join(', ')}${updates.OPENAI_API_KEY ? ' and your key' : ''}.`);
+      const secrets = Object.keys(updates).filter((name: string): boolean => SECRET_NAMES.includes(name));
+      io.log(
+        `Wrote ${named.join(', ')}${secrets.length > 0 ? ` and ${secrets.map((name) => printableUpdate(name, updates[name])).join(', ')}` : ''}.`,
+      );
+      if (real && options.sandbox === 'local' && (existing.DAYTONA_API_KEY ?? '') !== '') {
+        io.log('    DAYTONA_API_KEY was emptied so the bundled sandbox verifies skills; `--sandbox daytona` keeps it.');
+      }
     } else {
       io.log('');
       io.log(`${ENV_FILE} already says all of this; nothing was changed in it.`);
     }
 
     const environment = childEnvironment(resolvedProject, ports, checkoutRoot);
-    const steps = sequenceSteps(route);
     const streamed: RunOptions = { env: environment, inherit: true, timeoutMs: 900_000 };
     io.log('');
     io.log(`Starting. Steps: ${steps.join(' → ')}`);
     io.log('');
     started = true;
 
-    const keys = step(
-      io,
-      steps,
-      'dev:no-auth-key',
-      'pnpm dev:no-auth-key',
-      'pnpm',
-      ['run', 'dev:no-auth-key'],
-      { env: environment, timeoutMs: 120_000 },
-    );
-    if (keys.status !== 0) {
-      reportFailure(io, 'pnpm dev:no-auth-key', keys, resolvedProject);
-      return 1;
+    const runStep = (name: string, label: string, extra: RunOptions = {}): RunResult | undefined => {
+      let last: RunResult | undefined;
+      for (const planned of stepCommands(name, context)) {
+        last = step(io, steps, name, label, planned.command, planned.args, {
+          ...streamed,
+          ...extra,
+          env: { ...environment, ...(extra.env ?? {}), ...(planned.env ?? {}) },
+        });
+        if (last.status !== 0) {
+          reportFailure(io, label, last, resolvedProject);
+          return undefined;
+        }
+      }
+      return last;
+    };
+
+    if (options.reset) {
+      io.log(`[${steps.indexOf('reset') + 1}/${steps.length}] docker compose down -v, removing ${resolvedProject} and its volumes`);
+      const down = io.run('docker', resetArguments(), {
+        env: { ...environment, DAY0_DOCS_HOST_DIR: docsHostDir },
+        inherit: true,
+        timeoutMs: 600_000,
+      });
+      if (down.status !== 0) {
+        reportFailure(io, 'docker compose down -v', down, resolvedProject);
+        return 1;
+      }
+      const after = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
+      existingVolumes = after.status === 0 ? after.stdout.split('\n').map((name) => name.trim()) : [];
+      decision = 'fresh';
     }
+
+    const keys = runStep('dev:no-auth-key', 'pnpm dev:no-auth-key', { inherit: false, timeoutMs: 120_000 });
+    if (!keys) return 1;
     for (const line of keys.stdout.split('\n')) {
       if (line.startsWith('Wrote') || line.includes('already carries'))
         io.log(`    ${line.trim()}`);
     }
 
-    const up = step(
-      io,
-      steps,
-      'convex:up',
-      'pnpm convex:up',
-      'pnpm',
-      ['run', 'convex:up'],
-      streamed,
-    );
-    if (up.status !== 0) {
-      reportFailure(io, 'pnpm convex:up', up, resolvedProject);
+    if (warm) {
+      io.log(`[${steps.indexOf('warm-redactor') + 1}/${steps.length}] redactor volumes from ${options.warmFrom}`);
+      const present = REDACTOR_VOLUME_SUFFIXES.filter((suffix: string): boolean =>
+        existingVolumes.includes(`${resolvedProject}_${suffix}`),
+      );
+      if (present.length === REDACTOR_VOLUME_SUFFIXES.length) {
+        io.log('    already present in this project, so they are kept as they are');
+      } else {
+        for (const planned of stepCommands('warm-redactor', context)) {
+          const result = io.run(planned.command, planned.args, { env: environment, timeoutMs: 900_000 });
+          if (result.status !== 0) {
+            reportFailure(io, `copying ${options.warmFrom}'s redactor volumes`, result, resolvedProject);
+            return 1;
+          }
+        }
+        io.log('    copied the installed wheels and the verified model; the redactor will not download');
+      }
+    }
+
+    if (!runStep('convex:up', `pnpm convex:up${profiles.length > 0 ? ` ${profileArguments(profiles).join(' ')}` : ''}`)) {
       return 1;
     }
 
     if (route === 'local') {
-      const modelUp = step(
-        io,
-        steps,
-        'model:up',
-        'pnpm model:up',
-        'pnpm',
-        ['run', 'model:up'],
-        streamed,
-      );
-      if (modelUp.status !== 0) {
-        reportFailure(io, 'pnpm model:up', modelUp, resolvedProject);
-        return 1;
-      }
-      const pull = step(
-        io,
-        steps,
-        'model:pull',
-        `pnpm model:pull ${model}`,
-        'pnpm',
-        ['run', 'model:pull', model ?? ''],
-        { env: environment, inherit: true, timeoutMs: 3_600_000 },
-      );
-      if (pull.status !== 0) {
-        reportFailure(io, `pnpm model:pull ${model}`, pull, resolvedProject);
-        return 1;
-      }
+      const modelGpu: Record<string, string> = options.gpu === 'auto' ? {} : { MODEL_GPU: options.gpu };
+      if (!runStep('model:up', 'pnpm model:up', { env: modelGpu })) return 1;
+      if (!runStep('model:pull', `pnpm model:pull ${model}`, { timeoutMs: 3_600_000 })) return 1;
     }
 
-    const sandbox = step(
-      io,
-      steps,
-      'sandbox:up',
-      'pnpm sandbox:up',
-      'pnpm',
-      ['run', 'sandbox:up'],
-      streamed,
-    );
-    if (sandbox.status !== 0) {
-      reportFailure(io, 'pnpm sandbox:up', sandbox, resolvedProject);
-      return 1;
+    if (steps.includes('sandbox:up') && !runStep('sandbox:up', 'pnpm sandbox:up')) return 1;
+
+    let redactor: RedactorGpuDecision | undefined;
+    if (real) {
+      const inventory = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
+      const nowVolumes = inventory.status === 0 ? inventory.stdout.split('\n').map((name) => name.trim()) : existingVolumes;
+      const venv = nowVolumes.includes(venvVolume) ? readVenvDevice(io, venvVolume, context.image) : 'none';
+      redactor = redactorGpuDecision({ gpu: options.gpu, driver: hasNvidiaDriver(io), venv });
+      const [redactorCommand] = stepCommands('redactor:up', context);
+      io.log(`[${steps.indexOf('redactor:up') + 1}/${steps.length}] pnpm redactor:up`);
+      io.log(`    on the ${redactor.device === 'cuda' ? 'GPU' : 'CPU'}: ${redactor.reason}`);
+      const redactorUp = io.run(redactorCommand.command, redactorCommand.args, {
+        ...streamed,
+        env: { ...environment, ...(redactor.mode === 'auto' ? {} : { MODEL_GPU: redactor.mode }) },
+      });
+      if (redactorUp.status !== 0) {
+        reportFailure(io, 'pnpm redactor:up', redactorUp, resolvedProject);
+        return 1;
+      }
     }
 
     io.log(`    waiting for the backend on 127.0.0.1:${ports.backend}`);
@@ -1300,11 +2026,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         0;
     let adminKey: string | undefined = heldKey;
     if (shouldCaptureAdminKey(heldKey, heldKeyWorks)) {
-      const generated = io.run(
-        'docker',
-        composeArguments(['exec', '-T', 'backend', './generate_admin_key.sh']),
-        { env: environment, timeoutMs: 60_000 },
-      );
+      const [generator] = stepCommands('admin-key', context);
+      const generated = io.run(generator.command, generator.args, { env: environment, timeoutMs: 60_000 });
       adminKey = generated.status === 0 ? parseAdminKey(generated.stdout) : undefined;
       if (adminKey === undefined) {
         reportFailure(io, 'generate_admin_key.sh', generated, resolvedProject);
@@ -1343,33 +2066,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
     io.log('    URL, admin key and Compose service are the same backend');
 
-    const sync = step(
-      io,
-      steps,
-      'sync:env',
-      'pnpm sync:env',
-      'pnpm',
-      ['run', 'sync:env'],
-      streamed,
-    );
-    if (sync.status !== 0) {
-      reportFailure(io, 'pnpm sync:env', sync, resolvedProject);
-      return 1;
-    }
-
-    const push = step(
-      io,
-      steps,
-      'convex dev --once',
-      'npx convex dev --once',
-      'npx',
-      ['convex', 'dev', '--once'],
-      streamed,
-    );
-    if (push.status !== 0) {
-      reportFailure(io, 'npx convex dev --once', push, resolvedProject);
-      return 1;
-    }
+    if (!runStep('sync:env', 'pnpm sync:env')) return 1;
+    if (!runStep('convex dev --once', 'npx convex dev --once')) return 1;
     const corrections = publicUrlCorrections(readEnvValues(envPath), ports);
     if (Object.keys(corrections).length > 0) {
       writeEnvValues(envPath, corrections);
@@ -1379,34 +2077,35 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       );
     }
 
-    const restart = step(
-      io,
-      steps,
-      'convex:restart',
-      'pnpm convex:restart',
-      'pnpm',
-      ['run', 'convex:restart'],
-      streamed,
-    );
-    if (restart.status !== 0) {
-      reportFailure(io, 'pnpm convex:restart', restart, resolvedProject);
-      return 1;
-    }
+    if (!runStep('convex:restart', 'pnpm convex:restart')) return 1;
     await io.waitForBackend(ports.backend, 180_000);
 
+    if (real && redactor) {
+      const health = await waitForRedactor(io, environment, redactor.rebuilds ? 1_800_000 : 300_000);
+      if (health === 'healthy') {
+        io.log('    the redactor is healthy: the model is loaded and verified');
+      } else {
+        io.log(
+          `    note: the redactor is ${health}. Documentation sync waits for it; ` +
+            '`docker compose logs redactor` shows the install, and `pnpm check:setup` reports it.',
+        );
+      }
+    }
+
     io.log('');
+    const [checkerCommand] = stepCommands('check:setup', context);
     const checker = step(
       io,
       steps,
       'check:setup',
       'pnpm check:setup',
-      'pnpm',
-      ['run', 'check:setup'],
+      checkerCommand.command,
+      checkerCommand.args,
       streamed,
     );
 
     const unlock = io.run('pnpm', ['exec', 'tsx', 'scripts/dev-no-auth-key.ts', 'url'], {
-      env: environment,
+      env: { ...environment, PORT: String(ports.app) },
       timeoutMs: 60_000,
     });
     const unlockUrl = /https?:\/\/\S+/.exec(unlock.stdout)?.[0];
@@ -1415,12 +2114,20 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     io.log('Next: `pnpm dev`. It prints the same unlock URL and serves the app.');
     if (unlockUrl) io.log(`  ${unlockUrl}`);
     io.log('');
-    for (const line of firstSuccessLines(unlockUrl)) io.log(line);
+    for (const line of firstSuccessLines(unlockUrl, options.mode)) io.log(line);
     io.log('');
-    io.log(
-      `Stop it with \`pnpm sandbox:down && pnpm convex:down\`. Your data stays in the ` +
-        `${projectVolumes(resolvedProject)[0]} volume, and running this again keeps it.`,
-    );
+    if (real) {
+      io.log(
+        `Stop it with \`pnpm sandbox:down && pnpm redactor:down && pnpm convex:down ${profileArguments(profiles).join(' ')}\`. ` +
+          `Your data stays in the ${projectVolumes(resolvedProject)[0]} volume, and running this again keeps it; ` +
+          '`--reset` is the one that throws it away.',
+      );
+    } else {
+      io.log(
+        `Stop it with \`pnpm sandbox:down && pnpm convex:down\`. Your data stays in the ` +
+          `${projectVolumes(resolvedProject)[0]} volume, and running this again keeps it.`,
+      );
+    }
     if (checker.status !== 0) {
       io.log('');
       io.log(
@@ -1442,6 +2149,98 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
     io.log(`error: ${(error as Error).message}`);
     return 1;
+  }
+}
+
+/**
+ * Make sure the documentation folder exists, writing a placeholder page into
+ * one this helper created so the first sync has something to say.
+ *
+ * Args:
+ *   configured: `DAY0_DOCS_HOST_DIR` as it will be written.
+ *   cwd: Repository root.
+ *
+ * Returns:
+ *   The absolute path and whether it was created now.
+ *
+ * Raises:
+ *   Error: If a non-default path does not exist.
+ */
+function ensureDocsDirectory(configured: string, cwd: string): { path: string; created: boolean } {
+  const path = resolve(cwd, configured);
+  if (existsSync(path)) return { path, created: false };
+  if (path !== resolve(cwd, DEFAULT_DOCS_HOST_DIR)) {
+    throw new Error(
+      `--docs ${configured} does not exist. Create it, or point it at the directory holding the ` +
+        'Markdown the backend should read.',
+    );
+  }
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'README.md'), DOCS_STUB, 'utf8');
+  return { path, created: true };
+}
+
+/** Whether `nvidia-smi -L` names a GPU, which is a reason to try rather than a promise. */
+function hasNvidiaDriver(io: SetupIo): boolean {
+  const probe = io.run('nvidia-smi', ['-L'], { timeoutMs: 30_000 });
+  return probe.status === 0 && /^GPU \d+:/m.test(probe.stdout);
+}
+
+/**
+ * Which device a redactor venv volume was built for, read through the pinned image.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   volume: The venv volume.
+ *   image: The pinned node image, or undefined to read it off the compose file.
+ *
+ * Returns:
+ *   The device, `unknown` when the volume could not be read.
+ */
+function readVenvDevice(io: SetupIo, volume: string, image: string | undefined): VenvDevice {
+  const nodeImage = image ?? pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'));
+  const stamp = io.run('docker', venvStampCommand(volume, nodeImage), { timeoutMs: 120_000 });
+  if (stamp.status !== 0) return 'unknown';
+  return venvDevice(stamp.stdout, requirementsDigests(io.cwd));
+}
+
+/**
+ * Wait for the redactor to report healthy, polling compose.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   environment: The child environment naming the project.
+ *   timeoutMs: The ceiling; a first start that downloads gets the long one.
+ *
+ * Returns:
+ *   The last health read.
+ */
+async function waitForRedactor(
+  io: SetupIo,
+  environment: Record<string, string>,
+  timeoutMs: number,
+): Promise<ServiceHealth> {
+  const sleep =
+    io.sleep ??
+    ((ms: number): Promise<void> => new Promise((resolvePromise) => setTimeout(resolvePromise, ms)));
+  const now = io.now ?? Date.now;
+  const deadline = now() + timeoutMs;
+  let health: ServiceHealth = 'absent';
+  let announced = false;
+  for (;;) {
+    const listing = io.run(
+      'docker',
+      composeArguments(['--profile', 'redactor', 'ps', '-a', '--format', 'json', 'redactor']),
+      { env: environment, timeoutMs: 30_000 },
+    );
+    health = listing.status === 0 ? serviceHealth(listing.stdout) : 'absent';
+    if (health === 'healthy' || health === 'exited' || health === 'absent') return health;
+    if (now() >= deadline) return health;
+    if (!announced) {
+      io.log('    waiting for the redactor to load its model (seconds on a warm volume, minutes on a first start)');
+      announced = true;
+    }
+    await sleep(5_000);
   }
 }
 
@@ -1511,11 +2310,13 @@ async function chooseRoute(options: SetupOptions, io: SetupIo): Promise<SetupRou
   io.log('  2  No account at all: the model runs here, in Docker. One pull, and a');
   io.log('     hardware question this asks before it starts.');
   io.log('  3  An endpoint you already run (advanced).');
-  const answer = (await io.ask('Choose 1, 2 or 3 [1]: ')).trim();
+  io.log('  4  GLM 5.3 Flash through Featherless, with a Featherless key.');
+  const answer = (await io.ask('Choose 1, 2, 3 or 4 [1]: ')).trim();
   if (answer === '' || answer === '1') return 'key';
   if (answer === '2') return 'local';
   if (answer === '3') return 'endpoint';
-  throw new SetupCancelled(`"${answer}" is not one of the three`);
+  if (answer === '4') return 'featherless';
+  throw new SetupCancelled(`"${answer}" is not one of the four`);
 }
 
 let consoleReader: Interface | undefined;

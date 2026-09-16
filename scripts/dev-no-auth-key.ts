@@ -43,6 +43,7 @@ const JWKS_VAR = 'DEV_NO_AUTH_JWKS';
 const FLAG_VAR = 'NEXT_PUBLIC_DEV_NO_AUTH';
 const CREDENTIAL_KEY_VAR = 'DAY0_CREDENTIAL_KEY';
 const NOTION_MCP_AUTH_TOKEN_VAR = 'DAY0_NOTION_MCP_AUTH_TOKEN';
+const APP_PORT_VAR = 'DAY0_APP_PORT';
 
 /** Run key initialisation or print the local unlock URL. */
 async function main(): Promise<void> {
@@ -74,6 +75,7 @@ function readEnvFile(): Record<string, string> {
     JWKS_VAR,
     CREDENTIAL_KEY_VAR,
     NOTION_MCP_AUTH_TOKEN_VAR,
+    APP_PORT_VAR,
   ]) {
     const fromEnvironment = process.env[key];
     if (fromEnvironment) values[key] = fromEnvironment;
@@ -194,9 +196,28 @@ function printUnlockUrl(): void {
     );
   }
 
-  const port = process.env.PORT ?? '3000';
+  const port = appPort(values);
   console.log('No-auth dev mode. Open this once per browser to unlock it:\n');
   console.log(`  http://localhost:${port}/?${UNLOCK_PARAM}=${values[SECRET_VAR]}\n`);
+}
+
+/**
+ * The port the app serves on: `PORT` from the shell, else `DAY0_APP_PORT` from
+ * the file, else 3000. `pnpm dev` (scripts/dev.ts) resolves the same three so
+ * the URL printed here is the one the server answers on. Not exported: this
+ * module runs `main` at import time.
+ *
+ * Args:
+ *   values: The env file with the process environment layered on.
+ *
+ * Returns:
+ *   The port as a string.
+ */
+function appPort(values: Record<string, string>): string {
+  const fromShell = (process.env.PORT ?? '').trim();
+  if (fromShell !== '') return fromShell;
+  const fromFile = (values[APP_PORT_VAR] ?? '').trim();
+  return fromFile !== '' ? fromFile : '3000';
 }
 
 /**
