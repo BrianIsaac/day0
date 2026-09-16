@@ -10,6 +10,8 @@ import {
   MODEL_ROUTES,
   PREREQUISITES,
   QUICKSTART_COMMANDS,
+  RUN_WAYS,
+  RUN_WAY_VERBS_NOTE,
   TRAPS,
 } from '../../../src/setup/quickstart';
 
@@ -50,6 +52,52 @@ describe('the /setup guide', (): void => {
 
   it('names the ports the installation publishes', (): void => {
     for (const port of ['3210', '3211', '6791', '3000', '11434']) expect(text).toContain(port);
+  });
+
+  it('names the four ways to run it, in order, each with its commands', (): void => {
+    const titles = RUN_WAYS.map((way) => way.title);
+    expect(titles).toEqual([
+      'Hosted demo',
+      'Local, no account, and the model runs here',
+      'Local, with a key you already have',
+      'Real mode, on your own documentation and systems',
+    ]);
+    const offsets = titles.map((title) => text.indexOf(title));
+    expect(offsets.every((offset) => offset > 0)).toBe(true);
+    expect([...offsets].sort((a, b) => a - b)).toEqual(offsets);
+    // The section comes before the routes and the commands it names the flags of.
+    expect(offsets[0]).toBeLessThan(text.indexOf(MODEL_ROUTES[0].title));
+
+    const [hosted, local, key, real] = RUN_WAYS;
+    for (const link of hosted.links ?? []) {
+      expect(html).toContain(`href="${link.href}"`);
+      expect(text).toContain(link.label);
+    }
+    expect(hosted.links?.map((link) => link.href)).toEqual(['/sign-in', '/demo']);
+    expect(local.commands).toContain('pnpm setup:local --route local');
+    expect(key.commands).toContain('pnpm setup:local --route key');
+    expect(real.commands).toContain('./setup-real.sh --route featherless');
+    expect(real.body).toContain('--route local');
+    for (const way of [local, key, real]) {
+      // Every command line, in its own block and in the order the file gives.
+      const block = /<span[^>]*>(.*?)<\/span>/gs;
+      const rendered = [...html.matchAll(block)].map((match) => match[1]);
+      for (const command of way.commands ?? []) expect(rendered).toContain(command);
+      expect(text).toContain(way.body);
+      if (way.after) expect(text).toContain(way.after);
+    }
+    for (const verb of real.verbs ?? []) {
+      expect(text).toContain(verb.command);
+      expect(text).toContain(verb.what);
+    }
+    expect(real.verbs?.map((verb) => verb.command)).toEqual([
+      './setup-real.sh stop',
+      './setup-real.sh resume',
+      './setup-real.sh clear',
+    ]);
+    expect(text).toContain(RUN_WAY_VERBS_NOTE);
+    expect(text.indexOf('./setup-real.sh stop')).toBeLessThan(text.indexOf('./setup-real.sh resume'));
+    expect(text.indexOf('./setup-real.sh resume')).toBeLessThan(text.indexOf('./setup-real.sh clear'));
   });
 
   it('offers the key route and the account-free route, with their flags', (): void => {
@@ -94,7 +142,9 @@ describe('the /setup guide', (): void => {
 
   it('says how to stop it, and where the data stays', (): void => {
     expect(text).toContain('pnpm sandbox:down && pnpm convex:down');
+    expect(text).toContain('./setup-real.sh clear');
     expect(text).toContain('_convex_data');
+    expect(text).toContain('_redactor_models');
   });
 
   it('quotes measured figures and labels what they exclude', (): void => {

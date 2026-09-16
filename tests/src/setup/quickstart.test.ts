@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -10,12 +10,14 @@ import {
   PUBLISHED_PORTS,
   QUICKSTART_BLOCK,
   QUICKSTART_COMMANDS,
+  REAL_MODE_SCRIPT,
   REPOSITORY_URL,
+  RUN_WAYS,
   SETUP_PAGE_URL,
   TIMING_CAVEAT,
   TRAPS,
 } from '../../../src/setup/quickstart';
-import { firstSuccessLines } from '../../../scripts/setup';
+import { firstSuccessLines, parseSetupArguments } from '../../../scripts/setup';
 
 /**
  * The commands a newcomer types exist once, here, because they are printed in
@@ -26,6 +28,16 @@ import { firstSuccessLines } from '../../../scripts/setup';
  */
 
 const README = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8');
+
+/** The scripts `pnpm <name>` can run, by name. */
+const PACKAGE_SCRIPTS: Record<string, string> = (
+  JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as {
+    scripts: Record<string, string>;
+  }
+).scripts;
+
+/** The repository root, where `./setup-real.sh` has to be. */
+const ROOT = new URL('../../../', import.meta.url);
 
 /** Where the Chinese half of the README starts. */
 const CHINESE_HEADING = '\n## 中文说明\n';
@@ -104,6 +116,98 @@ describe('the README quick starts', (): void => {
     expect(README).toContain(SETUP_PAGE_URL);
     const quickStart = README.slice(README.indexOf('\n## Quick start\n'), blockOffsets[0] + 2000);
     expect(quickStart).toContain('#local-dev');
+  });
+});
+
+describe('the four ways to run it', (): void => {
+  it('are hosted, then account-free, then a key, then real mode', (): void => {
+    expect(RUN_WAYS.map((way) => way.id)).toEqual(['hosted', 'local', 'key', 'real']);
+  });
+
+  it('go to pages this app serves, or type commands this repository ships', (): void => {
+    const [hosted, ...local] = RUN_WAYS;
+    expect(hosted.commands).toBeUndefined();
+    expect(hosted.links?.map((link) => link.href)).toEqual(['/sign-in', '/demo']);
+    for (const way of local) {
+      expect(way.links).toBeUndefined();
+      expect(way.commands?.slice(0, 3)).toEqual(QUICKSTART_COMMANDS.slice(0, 3));
+      expect(way.commands?.at(-1)).toBe('pnpm dev');
+    }
+  });
+
+  it('name only commands that exist: a package script by name, or a file at the root', (): void => {
+    const commands = RUN_WAYS.flatMap((way) => [
+      ...(way.commands ?? []),
+      ...(way.verbs ?? []).map((verb) => verb.command),
+    ]);
+    expect(commands.length).toBeGreaterThan(10);
+    for (const command of commands) {
+      const [program, ...rest] = command.split(' ');
+      if (program === 'git' || program === 'cd') continue;
+      if (program === 'pnpm') {
+        // `pnpm install` is pnpm's own; everything else is a script by name.
+        const script = rest[0] === 'run' ? rest[1] : rest[0];
+        if (script !== 'install') expect(Object.keys(PACKAGE_SCRIPTS), command).toContain(script);
+        continue;
+      }
+      expect(program, command).toBe(REAL_MODE_SCRIPT);
+      const stat = statSync(new URL(program, ROOT));
+      expect(stat.isFile()).toBe(true);
+      expect(stat.mode & 0o111, `${program} is executable`).not.toBe(0);
+    }
+  });
+
+  it('pass flags and verbs the setup script accepts', (): void => {
+    const [, local, key, real] = RUN_WAYS;
+    expect(parseSetupArguments(['--route', 'local']).route).toBe('local');
+    expect(parseSetupArguments(['--route', 'key']).route).toBe('key');
+    expect(local.commands).toContain('pnpm setup:local --route local');
+    expect(key.commands).toContain('pnpm setup:local --route key');
+    // `./setup-real.sh <args>` is `pnpm setup:local --mode real <args>`.
+    const realArguments = real.commands!.find((c) => c.startsWith(REAL_MODE_SCRIPT))!.split(' ').slice(1);
+    expect(parseSetupArguments(['--mode', 'real', ...realArguments])).toMatchObject({
+      mode: 'real',
+      route: 'featherless',
+    });
+    for (const verb of real.verbs ?? []) {
+      const word = verb.command.split(' ')[1];
+      expect(parseSetupArguments(['--mode', 'real', word]).command).toBe(word);
+    }
+    for (const flag of ['--model <id>', '--route local', '--warm-from <project>', '--yes']) {
+      expect(`${real.body} ${real.after}`).toContain(flag);
+    }
+    for (const flag of ['--purge-env', '--yes']) {
+      expect(real.verbs?.map((verb) => verb.what).join(' ')).toContain(flag);
+    }
+    expect(parseSetupArguments(['--mode', 'real', 'clear', '--purge-env', '--yes'])).toMatchObject({
+      command: 'clear',
+      purgeEnv: true,
+      assumeYes: true,
+    });
+  });
+
+  it('are the commands the README gives for the same routes, in both halves', (): void => {
+    const [, local, key, real] = RUN_WAYS;
+    const chineseAt = README.indexOf(CHINESE_HEADING);
+    for (const command of [local.commands![3], key.commands![3], real.commands![3]]) {
+      const offsets = offsetsOf(README, command);
+      expect(offsets.length, command).toBeGreaterThanOrEqual(2);
+      expect(offsets[0]).toBeLessThan(chineseAt);
+      expect(offsets.at(-1)).toBeGreaterThan(chineseAt);
+    }
+    for (const verb of real.verbs ?? []) {
+      const offsets = offsetsOf(README, verb.command);
+      expect(offsets.length, verb.command).toBeGreaterThanOrEqual(2);
+      expect(offsets[0]).toBeLessThan(chineseAt);
+      expect(offsets.at(-1)).toBeGreaterThan(chineseAt);
+    }
+  });
+
+  it('never name the model a provider sells, as the routes do not', (): void => {
+    const prose = JSON.stringify(RUN_WAYS);
+    for (const name of ['GPT-5', 'gpt-5', 'Terra', 'GLM', 'Gemini', 'qwen']) {
+      expect(prose).not.toContain(name);
+    }
   });
 });
 

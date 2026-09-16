@@ -14,7 +14,7 @@ pnpm setup:local            # the local stack, or follow one of the routes in th
 pnpm dev
 ```
 
-`pnpm setup:local` is the one-command version of the account-free and OpenAI-key routes. The hand-run versions, and the real-mode route, are in the README under [Local dev](README.md#local-dev). `pnpm check:setup` reports which of them the machine you are on is set up for.
+`pnpm setup:local --route local|key` is the account-free and OpenAI-key routes in one command, and `./setup-real.sh --route featherless|local` is real mode. What each does, step by step, is in the README under [Local dev](README.md#local-dev). `pnpm check:setup` reports which of them the machine you are on is set up for.
 
 The whole loop needs a model. It does not have to be a hosted one: `OPENAI_BASE_URL` points the model layer at any OpenAI-compatible endpoint, including the bundled local one, and `pnpm probe:model` tells you whether an endpoint can drive the loop before you wire it in.
 
