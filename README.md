@@ -22,7 +22,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
 - Watch the work queue advance and the Skills panel show the capabilities it proposes, verifies and registers.
 
-Two recordings: the [mock-office walkthrough](https://youtu.be/UqPnFyQ9Fuo) shows this loop on the hosted mock office, and the [one-minute demo video](https://youtu.be/YgbSmy1shnM) is cut from a real-mode run against the author's own Linear and Slack workspaces, the route [One full run](#one-full-run-from-the-first-page) documents below.
+Two recordings: the [mock-office walkthrough](https://youtu.be/UqPnFyQ9Fuo) shows this loop on the hosted mock office, and the [demo video](https://youtu.be/LkqAEKfNExE) is the recorded real-mode run against the author's own Linear and Slack workspaces, the route [One full run](#one-full-run-from-the-first-page) documents below.
 
 ## Disclosures
 
@@ -32,7 +32,7 @@ Three things to know before the rest of this file. Each is repeated where it app
 
 **Third-party dependencies.** Day0's own code is the onboarding pipeline, the charter and the work loop, the skill lifecycle and its static gate, the surface layer and the exact-action gate, the redaction layer, the evaluation harness and the dashboard. It depends on:
 
-- **A model**, reached through any OpenAI-compatible endpoint. The recorded run and two of the three frozen beds used OpenAI's hosted, closed `gpt-5.6-terra` and `gpt-5.6-sol`; the local bed used `qwen3:8b` through the bundled Ollama service, with no account; a further bed used `GLM 5.3 Flash` through Featherless. The hosted demo runs whichever model its deployment's `OPENAI_MODEL` names.
+- **A model**, reached through any OpenAI-compatible endpoint. The run this README documents and two of the four frozen beds used OpenAI's hosted, closed `gpt-5.6-terra` and `gpt-5.6-sol`; the local bed used `qwen3:8b` through the bundled Ollama service, with no account; the recorded run and the fourth bed used `GLM 5.3 Flash` through Featherless. The hosted demo runs whichever model its deployment's `OPENAI_MODEL` names.
 - **Convex** for the backend: the open-source self-hosted binary on the local routes, the cloud service on the hosted route.
 - **Clerk** for sign-in on the hosted route. The local routes replace it with the no-auth mode and one fixed local user.
 - **A span model for redaction**, `urchade/gliner_multi_pii-v1` (Apache-2.0), run locally in the `redactor` component in real mode. Its weights are downloaded on first start and pinned by digest; inference makes no external call.
@@ -108,7 +108,7 @@ The skill it writes is a procedure for one operation on one surface class, named
 
 ## One full run, from the first page
 
-Everything below is a single run of [real mode](#real-mode), start to finish, on a fresh clone of `main` set up by the route printed there. It ran on 3 September 2026 with `OPENAI_MODEL=gpt-5.6-terra`, against the author's own Linear workspace, the author's own Slack workspace, and the synthetic Looker-style pipeline tile this repository ships behind the `demo` profile. One person acted as both the manager and the IT approver, which is what a single-user local run means. The [one-minute demo video](https://youtu.be/YgbSmy1shnM) is a cut of a run like this one and is where the Linear and Slack sides are shown; every screenshot below is the day0 dashboard.
+Everything below is a single run of [real mode](#real-mode), start to finish, on a fresh clone of `main` set up by the route printed there. It ran on 3 September 2026 with `OPENAI_MODEL=gpt-5.6-terra`, against the author's own Linear workspace, the author's own Slack workspace, and the synthetic Looker-style pipeline tile this repository ships behind the `demo` profile. One person acted as both the manager and the IT approver, which is what a single-user local run means. The [demo video](https://youtu.be/LkqAEKfNExE) is the recorded run of the same route, on a later commit and GLM 5.3 Flash, and is where the Linear and Slack sides are shown; every screenshot below is the day0 dashboard.
 
 Elapsed times are counted from the moment the agent was deployed.
 
@@ -849,10 +849,10 @@ Every number the submission quotes comes from a file in this repository or from 
 | The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` | `pnpm eval:semifinal` with the bed's model in `.env.local`; `pnpm eval:semifinal -- --regrade <path>` re-scores a directory with no model call |
 | The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
-| The recorded run's supervision figures: charter approved 4 min 26 s after deployment, 7 approved and 1 rejected, 29 s median decision latency, 1 action blocked after revocation, audit trail 32 of 32 | The Supervision card of the 3 September 2026 real-mode run the demo video is cut from, as `metrics:forAgent` computes it from that run's event ledger. That run's ledger export is part of the submission materials rather than this repository | Run [either local way](#local-dev); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#real-mode) |
-| This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), a second run of the same route on the same commit and model, paced for screenshots | The same |
+| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of the 17 September 2026 real-mode run recorded for the final, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is delivered among the submission's engineering materials rather than in this repository | Run [either local way](#local-dev); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#real-mode) |
+| This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), the route's documented run on `gpt-5.6-terra` at an earlier commit, paced for screenshots | The same |
 
-The two real-mode runs are single observations with the same code and model and different human pacing; neither is a distribution, and the submission names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
+The two real-mode runs are single observations of the same route a fortnight apart, on different commits, different models and different human pacing; the README run exercised a rejection and a revocation and the recorded run did not, so its blocked-after-revocation figure has no value. Neither is a distribution, and the submission names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
 
 
 ## Evaluation quick start
@@ -1003,7 +1003,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
 - 查看工作队列推进，并在 Skills 面板中看到 Agent 提出、验证和注册能力。
 
-两段录像：[mock office 演示视频](https://youtu.be/UqPnFyQ9Fuo)在托管的 mock office 上展示上述流程；[一分钟演示视频](https://youtu.be/YgbSmy1shnM)剪辑自连接作者本人 Linear 与 Slack workspace 的一次 real-mode 运行，即下文[一次完整运行](#一次完整运行从第一个页面开始)记录的路径。
+两段录像：[mock office 演示视频](https://youtu.be/UqPnFyQ9Fuo)在托管的 mock office 上展示上述流程；[演示视频](https://youtu.be/LkqAEKfNExE)是连接作者本人 Linear 与 Slack workspace 的录制 real-mode 运行，即下文[一次完整运行](#一次完整运行从第一个页面开始)记录的路径。
 
 ### 披露
 
@@ -1013,7 +1013,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **第三方依赖。** Day0 自己的代码包括入职流程、章程与工作循环、技能生命周期及其静态门、surface 层与 exact-action gate、脱敏层、评测 harness 和 dashboard。它依赖：
 
-- **一个模型**，通过任意 OpenAI-compatible endpoint 接入。记录的运行和三个冻结评测环境中的两个使用 OpenAI 托管的闭源模型 `gpt-5.6-terra` 与 `gpt-5.6-sol`；本地评测环境使用随附 Ollama 服务运行的 `qwen3:8b`，不需要任何账户；另一个评测环境通过 Featherless 使用 `GLM 5.3 Flash`。托管演示运行其 deployment 的 `OPENAI_MODEL` 所指定的模型。
+- **一个模型**，通过任意 OpenAI-compatible endpoint 接入。本文件记录的运行和四个冻结评测环境中的两个使用 OpenAI 托管的闭源模型 `gpt-5.6-terra` 与 `gpt-5.6-sol`；本地评测环境使用随附 Ollama 服务运行的 `qwen3:8b`，不需要任何账户；录制运行和第四个评测环境通过 Featherless 使用 `GLM 5.3 Flash`。托管演示运行其 deployment 的 `OPENAI_MODEL` 所指定的模型。
 - **Convex** 作为后端：本地路径使用开源的自托管二进制，托管路径使用云服务。
 - **Clerk** 用于托管路径的登录。本地路径以无认证模式和一个固定的本地用户替代它。
 - **用于脱敏的 span 模型** `urchade/gliner_multi_pii-v1`（Apache-2.0），在 real mode 下于 `redactor` 组件中本地运行。权重在首次启动时下载并按 digest 固定；推理不发出任何外部调用。
@@ -1088,7 +1088,7 @@ Agent 根据这次对话起草章程，明确工作范围、边界、协作对�
 
 ### 一次完整运行，从第一个页面开始
 
-以下是[真实模式](#真实模式)的一次完整运行，从头到尾，在按该节所印步骤搭建的 `main` 全新克隆上完成。运行时间为 2026 年 9 月 3 日，`OPENAI_MODEL=gpt-5.6-terra`，连接的是作者本人的 Linear workspace、作者本人的 Slack workspace，以及本仓库通过 `demo` profile 提供的合成 Looker 式 pipeline tile。由同一个人同时担任 manager 与 IT 审批人，这正是单用户本地运行的含义。[一分钟演示视频](https://youtu.be/YgbSmy1shnM)是类似运行的剪辑，Linear 与 Slack 两侧的效果在视频中呈现；下面每一张截图都来自 day0 dashboard。
+以下是[真实模式](#真实模式)的一次完整运行，从头到尾，在按该节所印步骤搭建的 `main` 全新克隆上完成。运行时间为 2026 年 9 月 3 日，`OPENAI_MODEL=gpt-5.6-terra`，连接的是作者本人的 Linear workspace、作者本人的 Slack workspace，以及本仓库通过 `demo` profile 提供的合成 Looker 式 pipeline tile。由同一个人同时担任 manager 与 IT 审批人，这正是单用户本地运行的含义。[演示视频](https://youtu.be/LkqAEKfNExE)是同一路径在更晚 commit 上以 GLM 5.3 Flash 完成的录制运行，Linear 与 Slack 两侧的效果在视频中呈现；下面每一张截图都来自 day0 dashboard。
 
 耗时均从 Agent 部署那一刻开始计算。
 
@@ -1453,10 +1453,10 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 | 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS` | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:semifinal`；`pnpm eval:semifinal -- --regrade <path>` 在不调用模型的情况下重新评分 |
 | 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
-| 录制运行的监督数字：部署后 4 分 26 秒章程获批、批准 7 次与拒绝 1 次、决策中位 29 秒、撤权后阻断 1 次、审计轨迹 32/32 | 演示视频所剪辑的 2026 年 9 月 3 日 real-mode 运行的 Supervision 卡片，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的 ledger 导出属于提交材料，不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `exportActions:exportForAgent` 命令导出 ledger |
-| 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一 commit、同一模型下同一路径的第二次运行，节奏为截图而放慢 | 同上 |
+| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 为决赛录制的 2026 年 9 月 17 日 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出随提交材料中的工程材料交付，不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `exportActions:exportForAgent` 命令导出 ledger |
+| 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一路径在更早 commit 上以 `gpt-5.6-terra` 完成的文档化运行，节奏为截图而放慢 | 同上 |
 
-两次 real-mode 运行是同一代码与模型、不同人工节奏下的单次观察；两者都不是分布，提交材料会说明每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
+两次 real-mode 运行是同一路径相隔两周的单次观察，commit、模型与人工节奏均不同；README 运行经历了一次驳回与一次撤权，录制运行没有，因此其撤权后阻断一项没有数值。两者都不是分布，提交材料会说明每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
 
 ### 评测快速开始
 
