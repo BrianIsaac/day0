@@ -77,8 +77,12 @@ function SignedOutHero() {
               new skills when it hits a gap, and authoring them in a sandbox.
             </p>
             <div data-enter="3" className="flex flex-wrap items-center gap-3">
+              {/* The hosted mock office is the signed-in landing page, so the
+                  demo starts at sign-in and Clerk's fallback redirect returns
+                  the visitor here as the boss. In no-auth dev mode the sign-in
+                  route redirects straight to the dashboard. */}
               <Link
-                href="/demo"
+                href="/sign-in"
                 aria-describedby="demo-cta-help"
                 className="px-6 py-3 rounded-lg border border-transparent bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90 transition"
               >
@@ -92,7 +96,7 @@ function SignedOutHero() {
               </Link>
             </div>
             <p data-enter="3" id="demo-cta-help" className="mt-3 text-sm text-[var(--color-muted)]">
-              Explore the mock office and its recorded approval flow.
+              Sign in, deploy an agent into the mock office, and hold its Day-1 1:1 yourself.
             </p>
             <p data-enter="3" className="mt-5 text-xs text-[var(--color-muted)]">
               <a
@@ -138,6 +142,18 @@ function SignedOutHero() {
               body="When the agent hits a gap it proposes a skill - authored in a sandbox, smoke-tested, and registered."
             />
           </ol>
+          <div
+            data-reveal=""
+            className="mt-10 flex flex-wrap items-center justify-center gap-x-4 gap-y-3 text-sm text-[var(--color-muted)]"
+          >
+            <span>Rather see a whole run before you sign in?</span>
+            <Link
+              href="/demo"
+              className="px-4 py-2 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] text-sm text-[var(--color-fg)] transition"
+            >
+              Watch the recorded walkthrough
+            </Link>
+          </div>
         </div>
       </section>
 
