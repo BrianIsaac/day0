@@ -239,6 +239,7 @@ function keyRoute(overrides: Partial<SetupOptions> = {}): SetupOptions {
     sandbox: 'local',
     dryRun: false,
     reset: false,
+    purgeEnv: false,
     assumeYes: true,
     help: false,
     ...overrides,
@@ -265,6 +266,7 @@ describe('reading the command line', (): void => {
       sandbox: 'local',
       dryRun: false,
       reset: false,
+      purgeEnv: false,
       assumeYes: false,
       help: false,
     });

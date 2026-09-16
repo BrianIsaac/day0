@@ -76,7 +76,7 @@ describe('sync-convex-env.sh', (): void => {
         'SLACK_BOT_TOKEN=value',
         'SLACK_MCP_API_KEY=value',
         'SLACK_MANAGER_DM_CHANNEL_ID=C0',
-        'OPENAI_API_KEY=value',
+        'OPENAI_API_KEY=stale',
       ],
       'OPENAI_API_KEY=value\nDAY0_SURFACE_MODE=mock\n',
     );
@@ -93,6 +93,26 @@ describe('sync-convex-env.sh', (): void => {
       expect(calls).not.toContain(`convex env set ${name} value`);
     }
     expect(calls).toContain('convex env set OPENAI_API_KEY value');
+  });
+
+  it('keeps a value the deployment already holds and sets only what differs', (): void => {
+    const { status, calls } = runSync(
+      ['OPENAI_API_KEY=same', 'OPENAI_MODEL=qwen3:8b', 'NEXT_PUBLIC_DEV_NO_AUTH=true', 'DEV_NO_AUTH_JWKS=data:text/plain;base64,abc'],
+      [
+        'OPENAI_API_KEY=same',
+        'OPENAI_MODEL=qwen3:4b',
+        'NEXT_PUBLIC_DEV_NO_AUTH=true',
+        'DEV_NO_AUTH_JWKS=data:text/plain;base64,abc',
+        'DAY0_SURFACE_MODE=mock',
+        '',
+      ].join('\n'),
+    );
+    expect(status).toBe(0);
+    expect(calls).not.toContain('convex env set OPENAI_API_KEY same');
+    expect(calls).not.toContain('convex env set NEXT_PUBLIC_DEV_NO_AUTH true');
+    expect(calls).not.toContain('convex env set DEV_NO_AUTH_JWKS data:text/plain;base64,abc');
+    expect(calls).toContain('convex env set OPENAI_MODEL qwen3:4b');
+    expect(calls).toContain('convex env set DAY0_SURFACE_MODE mock');
   });
 
   it('never pushes a credential name and clears the key when .env.local drops it', (): void => {

@@ -478,11 +478,23 @@ One command from a fresh clone, and one choice: where the model runs.
 ```bash
 pnpm install --frozen-lockfile
 ./setup-real.sh --route featherless     # GLM 5.3 Flash through Featherless; the key is asked for, hidden, or read from FEATHERLESS_API_KEY
-./setup-real.sh --route local           # the bundled model (qwen3:8b), pulled once, on the GPU where there is one
+./setup-real.sh --route local           # the bundled model: pick from what is present and what is tested, on the GPU where there is one
 pnpm dev                                # prints an unlock URL - open that, not localhost:3000
 ```
 
 `./setup-real.sh` checks Node 22, pnpm 9 and Docker Compose v2, installs the dependencies if `node_modules` is missing, and runs `pnpm setup:local --mode real` with your flags. That does the whole sequence below in order - the no-auth keys, the real-mode values, the components, the admin key for the volume, the env push, one function push, the restart, `pnpm check:setup` - and ends with the unlock URL. Running it again on a configured checkout keeps the generated keys, the admin key and the data volume, and only fills in what is missing. Flags worth knowing (`pnpm setup:local --help` has them all): `--warm-from <project>` copies another Compose project's redactor wheel and model volumes so the first start downloads nothing; `--gpu auto|on|off` decides the redactor's and the bundled model's device, and `auto` keeps a redactor venv that was built for the CPU on the CPU rather than emptying it for CUDA wheels; `--docs <dir>` names your documentation folder (default `./docs-local`, created with a placeholder page if absent); `--project`, `--port`, `--site-port`, `--dashboard-port` and `--app-port` for a second stack beside the first; `--boss-email` for the address the Slack DM is resolved from; `--sandbox daytona` to verify skills with a `DAYTONA_API_KEY` instead of the bundled sandbox; `--dry-run` prints every command it would run and writes nothing; `--reset` takes the project down, volumes included, first. `pnpm check:setup` reports the mode and the route it found on one line.
+
+On the local route the setup lists the models before anything starts - first what the bundled service's volume already holds, then the list this project has tested (today one entry, `qwen3:8b`, the semi-final local bed; `scripts/models.ts` is the one place to add another), each marked present with its size or will-pull with the download - and asks which to serve: a numbered picker on a terminal, `--model <id>` to name one, `--yes` for the first present model (else the first tested one), and a model already present is not pulled again.
+
+Stop, resume, clear - each reads the project from `.env.local` and refuses the protected projects:
+
+```bash
+./setup-real.sh stop      # containers down; the data, model and redactor volumes and .env.local stay
+./setup-real.sh resume    # the same project, ports and admin key; no pull, and only changed values are re-synced
+./setup-real.sh clear     # containers, volumes and network removed; .env.local kept unless --purge-env; asks first unless --yes
+```
+
+Running the setup again is the same as `resume`, and `--reset` is `clear` followed by the setup.
 
 What the command does, step by step, is the [OpenAI-key route](#run-it-with-an-openai-key) plus a documentation folder, the real-mode variables and the components. By hand it is this sequence, and two things about the order are load-bearing:
 
@@ -1447,11 +1459,23 @@ pnpm dev                         # prints an unlock URL - open that, not localho
 ```bash
 pnpm install --frozen-lockfile
 ./setup-real.sh --route featherless     # 通过 Featherless 使用 GLM 5.3 Flash；key 以隐藏方式询问，或从 FEATHERLESS_API_KEY 读取
-./setup-real.sh --route local           # 内置模型（qwen3:8b），只拉取一次，有 GPU 时使用 GPU
+./setup-real.sh --route local           # 内置模型：从已有的和已测试过的模型中选择，有 GPU 时使用 GPU
 pnpm dev                                # prints an unlock URL - open that, not localhost:3000
 ```
 
 `./setup-real.sh` 会检查 Node 22、pnpm 9 和 Docker Compose v2，在缺少 `node_modules` 时安装依赖，然后带着你的参数运行 `pnpm setup:local --mode real`。它按顺序完成下面的整个序列：无认证 key、真实模式变量、各组件、属于数据卷的 admin key、推送 env、一次 functions push、重启、`pnpm check:setup`，最后打印解锁 URL。在已配置好的 checkout 上再次运行时，它会保留已生成的 key、admin key 和数据卷，只补齐缺失的部分。值得了解的参数（`pnpm setup:local --help` 列出全部）：`--warm-from <project>` 复制另一个 Compose 项目的 redactor wheel 和模型卷，首次启动无需下载；`--gpu auto|on|off` 决定 redactor 和内置模型使用的设备，`auto` 会让为 CPU 构建的 redactor venv 继续在 CPU 上运行，而不是清空它去下载 CUDA wheel；`--docs <dir>` 指定你的文档目录（默认 `./docs-local`，不存在时创建并放入一个占位页面）；`--project`、`--port`、`--site-port`、`--dashboard-port` 和 `--app-port` 用于在第一套之外再起一套；`--boss-email` 是解析 Slack DM 所用的地址；`--sandbox daytona` 用 `DAYTONA_API_KEY` 代替内置沙箱验证技能；`--dry-run` 打印将要执行的每条命令而不写入任何内容；`--reset` 先连同数据卷一起拆掉该项目。`pnpm check:setup` 会用一行报告它找到的模式和路线。
+
+在本地路线上，setup 会在启动任何东西之前先列出模型：先是内置模型服务的卷里已有的模型，然后是本项目测试过的列表（目前只有一项：`qwen3:8b`，半决赛本地 bed 所用；要增加一项，只需在 `scripts/models.ts` 里加一行），每项都标出“已存在”及其大小，或“将拉取”及下载量，然后询问要用哪一个：在终端里是带编号的选择器，`--model <id>` 直接指定，`--yes` 取第一个已存在的模型（没有则取第一个已测试的），已存在的模型不会再次拉取。
+
+停止、恢复、清除：每条命令都从 `.env.local` 读取项目名，并拒绝受保护的项目：
+
+```bash
+./setup-real.sh stop      # 停掉容器；数据卷、模型卷、redactor 卷和 .env.local 都保留
+./setup-real.sh resume    # 同一个项目、端口和 admin key；不重新拉取，只重新同步有变化的值
+./setup-real.sh clear     # 删除容器、卷和网络；保留 .env.local，除非加 --purge-env；除非加 --yes，否则先询问
+```
+
+再次运行 setup 与 `resume` 相同；`--reset` 等于先 `clear` 再 setup。
 
 这条命令逐步做的事，等于[使用 OpenAI key 的路径](#使用-openai-key-运行)加上文档目录、真实模式变量和上述组件。手动执行时序列如下，其中两处顺序是必需的：
 

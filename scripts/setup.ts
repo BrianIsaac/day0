@@ -7,6 +7,7 @@
  *   pnpm setup:local --route local          no account at all: run the model here
  *   pnpm setup:local --mode real --route featherless   real mode on GLM via Featherless
  *   pnpm setup:local --mode real --route local         real mode on the bundled model
+ *   pnpm setup:local stop | resume | clear   stop for the day, come back, or throw it away
  *
  * The spelling is deliberate. Plain `pnpm setup` is pnpm's own installation
  * command, so the project script has to be called something else.
@@ -31,10 +32,20 @@
  * week: a hand-made env file with no `DAY0_DOCS_HOST_DIR` line, and a redactor
  * venv warmed on the CPU being emptied by a GPU start.
  *
+ * On the bundled route in real mode the model is chosen before anything
+ * starts: the models the service's volume already holds are listed first, then
+ * the ones this project has tested (`scripts/models.ts`), each marked present
+ * or will-pull with its size; a terminal gets a numbered picker, `--model`
+ * names one, `--yes` takes the default, and a model already present is not
+ * pulled again.
+ *
  * It is local-only and it says so: it refuses to run inside a hosted build, it
  * refuses an inherited cloud selector or deploy key, and it never removes a
- * volume or resets anything as a way of recovering from a failed step. The one
- * removal it makes is the one asked for by name: `--reset`.
+ * volume or resets anything as a way of recovering from a failed step. The
+ * removals it makes are the ones asked for by name: `clear` and `--reset`,
+ * which is `clear` followed by the setup. `stop` takes the containers down and
+ * keeps every volume; `resume`, or simply running the setup again, brings the
+ * same project back on the same ports.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -43,6 +54,7 @@ import {
   readFileSync,
   realpathSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
@@ -56,6 +68,17 @@ import { composeArguments, PROFILES } from './compose';
 import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
 import {
+  defaultModel,
+  manifestListingCommand,
+  modelMenu,
+  modelMenuLines,
+  parseManifestListing,
+  parseOllamaList,
+  pickModel,
+  type ModelMenuEntry,
+  type PresentModel,
+} from './models';
+import {
   redactorGpuDecision,
   requirementsDigests,
   venvDevice,
@@ -65,6 +88,7 @@ import {
   type VenvDevice,
 } from './redactor-device';
 import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './rehearsal/docker';
+import { setupRoute } from './setup-route';
 
 const ENV_FILE = '.env.local';
 const ENV_EXAMPLE = '.env.example';
@@ -89,6 +113,16 @@ export type SetupRoute = 'key' | 'local' | 'endpoint' | 'featherless';
 
 /** What verifies an authored skill: the bundled networkless container, or Daytona. */
 export type SandboxChoice = 'local' | 'daytona';
+
+/** The lifecycle verbs: stop for the day, come back, or throw the project away. */
+export type SetupCommand = 'stop' | 'resume' | 'clear';
+
+/**
+ * Projects whose volumes are only ever copied from (`--warm-from`). They are
+ * not protected in the sense of holding a real run, but nothing here sets
+ * them up, stops them, clears them or resets them either.
+ */
+export const READ_ONLY_PROJECTS: readonly string[] = ['day0-redactor-warm'];
 
 export type { GpuChoice } from './redactor-device';
 
@@ -132,6 +166,8 @@ export const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
 export const REDACTOR_URL = 'http://redactor:8000';
 
 export interface SetupOptions {
+  /** A lifecycle verb instead of the setup itself. */
+  command?: SetupCommand;
   /** Mock (the seeded office) or real (the reader's own systems). */
   mode: SetupMode;
   /** Chosen route, or undefined to ask. */
@@ -158,6 +194,8 @@ export interface SetupOptions {
   dryRun: boolean;
   /** Take the project down, volumes included, before setting it up. */
   reset: boolean;
+  /** `clear`: remove `.env.local` as well. */
+  purgeEnv: boolean;
   /** Take the default answer to every question that has one. */
   assumeYes: boolean;
   /** Print usage and do nothing. */
@@ -198,12 +236,15 @@ export interface SetupIo {
   sleep?(ms: number): Promise<void>;
   /** The clock the polls are measured against; a test hands in its own. */
   now?(): number;
+  /** Whether stdin is a terminal; the model picker asks only then. Absent means yes. */
+  interactive?: boolean;
 }
 
 /** The reader stopped at a prompt. Nothing is undone; nothing was reset. */
 export class SetupCancelled extends Error {}
 
 const USAGE = `Usage: pnpm setup:local [options]
+       pnpm setup:local stop | resume | clear [options]
 
   --mode <mock|real>            the seeded office (default), or your own systems
   --route <key|local|featherless|endpoint>
@@ -218,7 +259,8 @@ const USAGE = `Usage: pnpm setup:local [options]
   --dashboard-port <n>          host port for the Convex dashboard (default ${DEFAULT_PORTS.dashboard})
   --model-port <n>              host port for the bundled model (default ${DEFAULT_PORTS.model})
   --app-port <n>                port \`pnpm dev\` serves on (default ${DEFAULT_PORTS.app})
-  --model <id>                  model to pull on the bundled route
+  --model <id>                  model to serve on the bundled route (real mode lists
+                                what is present and what is tested, and asks)
   --endpoint <url>              OpenAI-compatible endpoint for the advanced route
   --docs <dir>                  real mode: your documentation folder (default ${DEFAULT_DOCS_HOST_DIR})
   --gpu <auto|on|off>           the bundled model and the redactor on the GPU (default auto)
@@ -226,13 +268,19 @@ const USAGE = `Usage: pnpm setup:local [options]
   --sandbox <local|daytona>     real mode: what verifies authored skills (default local)
   --boss-email <address>        real mode: the manager's address, stored on the agent at deploy
   --dry-run                     print the plan of commands and write nothing
-  --reset                       take this project down, volumes included, first
+  --reset                       clear this project (containers and volumes) first
+  --purge-env                   clear: remove .env.local as well
   --yes                         take the default answer wherever there is one
   --help                        print this
 
 Real mode, one command:
   ./setup-real.sh --route featherless     GLM through Featherless; the key is asked for
-  ./setup-real.sh --route local           the bundled model, on the GPU where there is one
+  ./setup-real.sh --route local           the bundled model; present and tested models are listed
+
+Stop for the day, come back, or throw it away (the project is read from .env.local):
+  ./setup-real.sh stop                    containers down, every volume and .env.local kept
+  ./setup-real.sh resume                  the same project, ports, admin key and model; no pull
+  ./setup-real.sh clear                   containers, volumes and network removed; .env.local kept
 
 The Convex-cloud-plus-Clerk route is not automated here; it needs accounts and
 a dashboard task. README.md has it, linked from the end of a successful run.`;
@@ -257,6 +305,7 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     sandbox: 'local',
     dryRun: false,
     reset: false,
+    purgeEnv: false,
     assumeYes: false,
     help: false,
   };
@@ -291,6 +340,13 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       options.dryRun = true;
     } else if (argument === '--reset') {
       options.reset = true;
+    } else if (argument === '--purge-env') {
+      options.purgeEnv = true;
+    } else if (argument === 'stop' || argument === 'resume' || argument === 'clear') {
+      if (options.command !== undefined && options.command !== argument) {
+        throw new Error(`"${options.command}" and "${argument}" are two commands; give one.`);
+      }
+      options.command = argument;
     } else if (argument === '--mode') {
       options.mode = oneOf('--mode', take(), ['mock', 'real'] as const);
     } else if (argument === '--route') {
@@ -544,9 +600,16 @@ export interface CheckoutClaim {
  *
  * Raises:
  *   Error: If the name, or either volume it implies, is protected and this is
- *     not the primary checkout.
+ *     not the primary checkout, or the name is a read-only warm project.
  */
 export function assertLocalProject(project: string, claim?: CheckoutClaim): void {
+  if (READ_ONLY_PROJECTS.includes(project)) {
+    throw new Error(
+      `"${project}" holds the warm redactor volumes this helper copies from (--warm-from). ` +
+        'It is only ever read: nothing here sets it up, stops it, clears it or resets it. ' +
+        'Choose another name: `pnpm setup:local --project <name>`.',
+    );
+  }
   const clash = [project, ...projectVolumes(project)].find(
     (name: string): boolean =>
       PROTECTED_PROJECTS.includes(name) || PROTECTED_VOLUMES.includes(name),
@@ -838,6 +901,8 @@ export interface SequenceInput {
   sandbox?: SandboxChoice;
   /** Whether the project is taken down first. */
   reset?: boolean;
+  /** Bundled route: whether the model has to be pulled; absent means yes. */
+  pull?: boolean;
 }
 
 /**
@@ -846,7 +911,8 @@ export interface SequenceInput {
  * Real mode adds the redactor after the sandbox, the warm volume copy before
  * the first `up` (a volume compose has already created is empty, and the
  * component's first start would fill it by downloading), and `reset` before
- * everything when asked for.
+ * everything when asked for. A model the volume already holds is not pulled
+ * again.
  *
  * Args:
  *   route: The chosen route.
@@ -862,7 +928,7 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     'dev:no-auth-key',
     ...(real && input.warm ? ['warm-redactor'] : []),
     'convex:up',
-    ...(route === 'local' ? ['model:up', 'model:pull'] : []),
+    ...(route === 'local' ? ['model:up', ...(input.pull === false ? [] : ['model:pull'])] : []),
     ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
     ...(real ? ['redactor:up'] : []),
     'admin-key',
@@ -894,6 +960,23 @@ export function profileArguments(profiles: readonly string[]): string[] {
 export function resetArguments(envFile: string = ENV_FILE): string[] {
   const profiles = Object.keys(PROFILES).filter((name: string): boolean => name !== 'real');
   return composeArguments([...profileArguments(profiles), 'down', '-v', '--remove-orphans'], envFile);
+}
+
+/**
+ * `docker compose` arguments that stop a whole project and keep every volume.
+ *
+ * The same profile list as `resetArguments`, for the same reason, and no `-v`:
+ * the data, the model and the redactor volumes are what `resume` comes back to.
+ *
+ * Args:
+ *   envFile: The env file compose reads.
+ *
+ * Returns:
+ *   Arguments to pass to `docker`.
+ */
+export function stopArguments(envFile: string = ENV_FILE): string[] {
+  const profiles = Object.keys(PROFILES).filter((name: string): boolean => name !== 'real');
+  return composeArguments([...profileArguments(profiles), 'down', '--remove-orphans'], envFile);
 }
 
 /**
@@ -1405,6 +1488,88 @@ export const DOCS_STUB = [
   '',
 ].join('\n');
 
+/**
+ * The host ports this installation uses: the command line, then the file,
+ * then the defaults.
+ *
+ * Args:
+ *   named: Ports given on the command line.
+ *   existing: What `.env.local` declares today.
+ *
+ * Returns:
+ *   Every port.
+ */
+export function resolvePorts(
+  named: Partial<SetupPorts>,
+  existing: Readonly<Record<string, string>>,
+): SetupPorts {
+  return {
+    backend: named.backend ?? numberFrom(existing.CONVEX_PORT, DEFAULT_PORTS.backend),
+    site: named.site ?? numberFrom(existing.CONVEX_SITE_PROXY_PORT, DEFAULT_PORTS.site),
+    dashboard: named.dashboard ?? numberFrom(existing.CONVEX_DASHBOARD_PORT, DEFAULT_PORTS.dashboard),
+    model: named.model ?? numberFrom(existing.MODEL_PORT, DEFAULT_PORTS.model),
+    app: named.app ?? numberFrom(existing.DAY0_APP_PORT, DEFAULT_PORTS.app),
+  };
+}
+
+/**
+ * Whether `clear` may remove a volume Docker lists under this project's label.
+ *
+ * The label is what compose's own `down -v` goes by, and the warm copy writes
+ * the same label, so a volume that carries it and this project's name prefix
+ * is this project's. A protected project's volume, or a read-only warm
+ * project's, is never removed whatever label it carries.
+ *
+ * Args:
+ *   name: A volume name.
+ *   project: The project being cleared.
+ *
+ * Returns:
+ *   True when the volume is this project's own to remove.
+ */
+export function removableVolume(name: string, project: string): boolean {
+  if (!name.startsWith(`${project}_`)) return false;
+  if (PROTECTED_VOLUMES.includes(name)) return false;
+  const guarded = [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS];
+  return !guarded.some((other: string): boolean => name.startsWith(`${other}_`));
+}
+
+/**
+ * The command line a lifecycle verb is reached by, in the mode's own entry.
+ *
+ * Args:
+ *   verb: The verb.
+ *   mode: The mode whose entry point to name.
+ *
+ * Returns:
+ *   `./setup-real.sh <verb>` in real mode, `pnpm setup:local <verb>` otherwise.
+ */
+export function verbCommand(verb: SetupCommand, mode: SetupMode): string {
+  return mode === 'real' ? `./setup-real.sh ${verb}` : `pnpm setup:local ${verb}`;
+}
+
+/**
+ * The one line about the hardware the bundled model would run on.
+ *
+ * Args:
+ *   freeVramMiB: Free VRAM on the roomiest card, or undefined for no driver.
+ *
+ * Returns:
+ *   The line, indented for the menu.
+ */
+export function hardwareLine(freeVramMiB: number | undefined): string {
+  if (freeVramMiB === undefined) {
+    return (
+      '  No NVIDIA driver answered, so the model runs on the CPU: the loop finishes, in ' +
+      'minutes rather than seconds.'
+    );
+  }
+  return (
+    `  ${freeVramMiB} MiB free on the GPU. A model larger than that spills onto the CPU, and ` +
+    'the symptom is a 1:1 that runs perfectly and a charter that never arrives.'
+  );
+}
+
 /* Everything below this line talks to the machine: child processes, ports and
    the env file. The tests drive it through the `SetupIo` above rather than
    through Docker. */
@@ -1452,6 +1617,218 @@ function runningServices(io: SetupIo, project: string): string[] | undefined {
     .split('\n')
     .map((service: string): string => service.trim())
     .filter(Boolean);
+}
+
+/**
+ * The containers a project has, and whether every one was started from this
+ * checkout: compose records the working directory on each.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   project: Compose project name.
+ *   checkoutRoot: This checkout, resolved.
+ *
+ * Returns:
+ *   The container ids, and the refusal when Docker did not answer or a
+ *   container belongs to another checkout.
+ */
+function projectContainers(
+  io: SetupIo,
+  project: string,
+  checkoutRoot: string,
+): { ids: string[]; refusal?: string } {
+  const containers = io.run('docker', ['ps', '-a', '--filter',
+    `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
+  if (containers.status !== 0) {
+    return { ids: [], refusal: 'Docker could not identify this project’s existing containers.' };
+  }
+  const ids = containers.stdout.trim().split(/\s+/).filter(Boolean);
+  if (ids.length === 0) return { ids };
+  const owners = io.run('docker', ['inspect', '--format',
+    '{{index .Config.Labels "com.docker.compose.project.working_dir"}}', ...ids]);
+  if (owners.status !== 0 || owners.stdout.trim().split('\n').some(root => root !== checkoutRoot)) {
+    return {
+      ids,
+      refusal: 'existing project containers belong to another checkout or have unknown ownership.',
+    };
+  }
+  return { ids };
+}
+
+/**
+ * The volumes Docker lists under a project's compose label.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   project: Compose project name.
+ *
+ * Returns:
+ *   Volume names; empty when Docker did not answer.
+ */
+function labelledVolumes(io: SetupIo, project: string): string[] {
+  const listing = io.run('docker', [
+    'volume',
+    'ls',
+    '--filter',
+    `label=com.docker.compose.project=${project}`,
+    '--format',
+    '{{.Name}}',
+  ]);
+  if (listing.status !== 0) return [];
+  return listing.stdout
+    .split('\n')
+    .map((name: string): string => name.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Take a project down with its volumes, then remove any volume compose left
+ * behind that carries the project's label and name.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   project: Compose project name.
+ *   environment: The child environment naming the project and the docs mount.
+ *
+ * Returns:
+ *   The volumes swept after compose, or the failure that stopped it.
+ */
+function clearProject(
+  io: SetupIo,
+  project: string,
+  environment: Record<string, string>,
+): { swept: string[]; failure?: { what: string; result: RunResult } } {
+  const down = io.run('docker', resetArguments(), { env: environment, inherit: true, timeoutMs: 600_000 });
+  if (down.status !== 0) return { swept: [], failure: { what: 'docker compose down -v', result: down } };
+  const leftovers = labelledVolumes(io, project).filter((name: string): boolean =>
+    removableVolume(name, project),
+  );
+  if (leftovers.length === 0) return { swept: [] };
+  const removed = io.run('docker', ['volume', 'rm', ...leftovers], { timeoutMs: 120_000 });
+  if (removed.status !== 0) {
+    return { swept: [], failure: { what: `docker volume rm ${leftovers.join(' ')}`, result: removed } };
+  }
+  return { swept: leftovers };
+}
+
+interface ModelInventory {
+  models: PresentModel[];
+  /** Where the answer came from, for the line above the menu. */
+  source: 'service' | 'volume' | 'unreadable' | 'none';
+}
+
+/**
+ * The models the bundled service's volume holds: `ollama list` through the
+ * running service, else the volume's manifests through the pinned node image.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   args.project: Compose project name.
+ *   args.volumes: Volumes Docker already has.
+ *   args.services: This project's running services.
+ *   args.environment: The child environment for the compose call.
+ *
+ * Returns:
+ *   The models and where they were read from.
+ */
+function presentModels(
+  io: SetupIo,
+  args: {
+    project: string;
+    volumes: readonly string[];
+    services: readonly string[];
+    environment: Record<string, string>;
+  },
+): ModelInventory {
+  if (args.services.includes('model')) {
+    const listing = io.run(
+      'docker',
+      composeArguments(['--profile', 'model', 'exec', '-T', 'model', 'ollama', 'list']),
+      { env: args.environment, timeoutMs: 60_000 },
+    );
+    if (listing.status === 0) return { models: parseOllamaList(listing.stdout), source: 'service' };
+  }
+  const volume = `${args.project}_model_data`;
+  if (!args.volumes.includes(volume)) return { models: [], source: 'none' };
+  const image = pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'));
+  const listing = io.run('docker', manifestListingCommand(volume, image), { timeoutMs: 120_000 });
+  if (listing.status !== 0) return { models: [], source: 'unreadable' };
+  return { models: parseManifestListing(listing.stdout), source: 'volume' };
+}
+
+/**
+ * List the models and settle which one the bundled service serves, before
+ * anything starts.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   options: The command line.
+ *   args: The project, its volumes and services, the file's own model and the
+ *     compose environment.
+ *
+ * Returns:
+ *   The chosen entry; `present` says whether a pull is needed.
+ *
+ * Raises:
+ *   SetupCancelled: If the answer at the picker names no entry.
+ */
+async function chooseRealLocalModel(
+  io: SetupIo,
+  options: SetupOptions,
+  args: {
+    project: string;
+    volumes: readonly string[];
+    services: readonly string[];
+    configured?: string;
+    environment: Record<string, string>;
+  },
+): Promise<ModelMenuEntry> {
+  const inventory = presentModels(io, args);
+  const menu = modelMenu(inventory.models, args.configured);
+  io.log('');
+  io.log(`Models for the bundled service, Compose project ${args.project}:`);
+  if (inventory.source === 'service') {
+    io.log('  (present: what `ollama list` reports in the running service)');
+  } else if (inventory.source === 'volume') {
+    io.log(`  (present: read from the ${args.project}_model_data volume; the service is not running)`);
+  } else if (inventory.source === 'unreadable') {
+    io.log(`  (note: the ${args.project}_model_data volume could not be read, so nothing is listed as present)`);
+  } else {
+    io.log('  (nothing is present yet: this project has no model volume)');
+  }
+  for (const line of modelMenuLines(menu)) io.log(line);
+  io.log(hardwareLine(freeVram(io)));
+
+  if (options.model !== undefined) {
+    const named = menu.find((entry: ModelMenuEntry): boolean => entry.id === options.model) ?? {
+      id: options.model,
+      present: false,
+      mark: 'will pull',
+      configured: false,
+    };
+    io.log(`  ${named.id}: ${named.present ? 'present, so nothing is pulled' : 'not present, so it is pulled first'}.`);
+    return named;
+  }
+  const fallback = defaultModel(menu);
+  if (fallback === undefined) throw new Error('the model menu is empty');
+  if (options.dryRun) {
+    io.log(`  Would choose ${fallback.id} (${fallback.mark}); --model <id> chooses another.`);
+    return fallback;
+  }
+  if (options.assumeYes) {
+    io.log(`  --yes: ${fallback.id} (${fallback.mark}).`);
+    return fallback;
+  }
+  if (io.interactive === false) {
+    io.log(`  stdin is not a terminal, so ${fallback.id} is taken (${fallback.mark}); --model <id> chooses another.`);
+    return fallback;
+  }
+  const position = menu.indexOf(fallback) + 1;
+  const answer = await io.ask(`  Choose 1-${menu.length} [${position}]: `);
+  const chosen = pickModel(menu, answer, fallback);
+  if (chosen === undefined) throw new SetupCancelled(`"${answer.trim()}" is not one of the ${menu.length}`);
+  io.log(`  ${chosen.id}: ${chosen.present ? 'present, so nothing is pulled' : 'not present, so it is pulled first'}.`);
+  return chosen;
 }
 
 /**
@@ -1552,15 +1929,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       return 1;
     }
 
-    const ports: SetupPorts = {
-      backend: options.ports.backend ?? numberFrom(existing.CONVEX_PORT, DEFAULT_PORTS.backend),
-      site: options.ports.site ?? numberFrom(existing.CONVEX_SITE_PROXY_PORT, DEFAULT_PORTS.site),
-      dashboard:
-        options.ports.dashboard ??
-        numberFrom(existing.CONVEX_DASHBOARD_PORT, DEFAULT_PORTS.dashboard),
-      model: options.ports.model ?? numberFrom(existing.MODEL_PORT, DEFAULT_PORTS.model),
-      app: options.ports.app ?? numberFrom(existing.DAY0_APP_PORT, DEFAULT_PORTS.app),
-    };
+    const ports = resolvePorts(options.ports, existing);
     const docsHostDir =
       options.docs?.trim() || existing.DAY0_DOCS_HOST_DIR?.trim() || DEFAULT_DOCS_HOST_DIR;
 
@@ -1593,21 +1962,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log('error: this env file belongs to another checkout; choose a fresh project and env file.');
       return 1;
     }
-    const containers = io.run('docker', ['ps', '-a', '--filter',
-      `label=com.docker.compose.project=${resolvedProject}`, '--format', '{{.ID}}']);
-    if (containers.status !== 0 && !options.dryRun) {
-      io.log('error: Docker could not identify this project’s existing containers.');
+    const containers = projectContainers(io, resolvedProject, checkoutRoot);
+    if (containers.refusal !== undefined && (containers.ids.length > 0 || !options.dryRun)) {
+      io.log(`error: ${containers.refusal}`);
       return 1;
     }
-    const ids = containers.stdout.trim().split(/\s+/).filter(Boolean);
-    if (ids.length) {
-      const owners = io.run('docker', ['inspect', '--format',
-        '{{index .Config.Labels "com.docker.compose.project.working_dir"}}', ...ids]);
-      if (owners.status !== 0 || owners.stdout.trim().split('\n').some(root => root !== checkoutRoot)) {
-        io.log('error: existing project containers belong to another checkout or have unknown ownership.');
-        return 1;
-      }
-    } else if (decision === 'rerun' && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
+    if (containers.ids.length === 0 && decision === 'rerun' && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
       io.log('error: existing volumes have no verifiable checkout ownership; choose a fresh project.');
       return 1;
     }
@@ -1660,6 +2020,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     let model = options.model;
     let endpoint = options.endpoint;
     let asksKey = false;
+    let pull: boolean | undefined;
 
     if (route === 'key') {
       if ((existing.OPENAI_API_KEY ?? '') === '') {
@@ -1735,19 +2096,37 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         );
         return 1;
       }
-      const choice = chooseLocalModel(freeVram(io));
-      model = model ?? (existing.OPENAI_BASE_URL?.includes('127.0.0.1:') ? existing.OPENAI_MODEL : undefined) ?? choice.model;
-      io.log('');
-      io.log('Running the model here is a hardware question, so it is asked before the pull.');
-      io.log(`  ${choice.reason}`);
-      io.log(`  Pulling ${model}: ${choice.downloadLabel} to download, ${choice.residentLabel}.`);
-      io.log(
-        '  A model that does not fit spills onto the CPU, and the symptom is a 1:1 that runs ' +
-          'perfectly and a charter that never arrives.',
-      );
-      if (!options.assumeYes && !options.dryRun) {
-        const answer = (await io.ask('  Pull it now? [Y/n] ')).trim().toLowerCase();
-        if (answer === 'n' || answer === 'no') throw new SetupCancelled('the pull was declined');
+      const configured = existing.OPENAI_BASE_URL?.includes('127.0.0.1:')
+        ? existing.OPENAI_MODEL?.trim() || undefined
+        : undefined;
+      if (real) {
+        const chosen = await chooseRealLocalModel(io, options, {
+          project: resolvedProject,
+          volumes: existingVolumes,
+          services: services ?? [],
+          configured,
+          environment: {
+            ...childEnvironment(resolvedProject, ports, checkoutRoot),
+            DAY0_DOCS_HOST_DIR: docsHostDir,
+          },
+        });
+        model = chosen.id;
+        pull = !chosen.present;
+      } else {
+        const choice = chooseLocalModel(freeVram(io));
+        model = model ?? configured ?? choice.model;
+        io.log('');
+        io.log('Running the model here is a hardware question, so it is asked before the pull.');
+        io.log(`  ${choice.reason}`);
+        io.log(`  Pulling ${model}: ${choice.downloadLabel} to download, ${choice.residentLabel}.`);
+        io.log(
+          '  A model that does not fit spills onto the CPU, and the symptom is a 1:1 that runs ' +
+            'perfectly and a charter that never arrives.',
+        );
+        if (!options.assumeYes && !options.dryRun) {
+          const answer = (await io.ask('  Pull it now? [Y/n] ')).trim().toLowerCase();
+          if (answer === 'n' || answer === 'no') throw new SetupCancelled('the pull was declined');
+        }
       }
     } else {
       endpoint = endpoint ?? (options.dryRun ? '' : (await io.ask('OpenAI-compatible endpoint URL: ')).trim());
@@ -1836,6 +2215,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       warm,
       sandbox: options.sandbox,
       reset: options.reset,
+      pull,
     });
     const context: StepContext = {
       mode: options.mode,
@@ -1933,14 +2313,13 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     if (options.reset) {
       io.log(`[${steps.indexOf('reset') + 1}/${steps.length}] docker compose down -v, removing ${resolvedProject} and its volumes`);
-      const down = io.run('docker', resetArguments(), {
-        env: { ...environment, DAY0_DOCS_HOST_DIR: docsHostDir },
-        inherit: true,
-        timeoutMs: 600_000,
-      });
-      if (down.status !== 0) {
-        reportFailure(io, 'docker compose down -v', down, resolvedProject);
+      const cleared = clearProject(io, resolvedProject, { ...environment, DAY0_DOCS_HOST_DIR: docsHostDir });
+      if (cleared.failure) {
+        reportFailure(io, cleared.failure.what, cleared.failure.result, resolvedProject);
         return 1;
+      }
+      if (cleared.swept.length > 0) {
+        io.log(`    removed ${cleared.swept.join(', ')} as well: labelled ${resolvedProject}'s, left behind by compose`);
       }
       const after = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
       existingVolumes = after.status === 0 ? after.stdout.split('\n').map((name) => name.trim()) : [];
@@ -1980,7 +2359,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     if (route === 'local') {
       const modelGpu: Record<string, string> = options.gpu === 'auto' ? {} : { MODEL_GPU: options.gpu };
       if (!runStep('model:up', 'pnpm model:up', { env: modelGpu })) return 1;
-      if (!runStep('model:pull', `pnpm model:pull ${model}`, { timeoutMs: 3_600_000 })) return 1;
+      if (steps.includes('model:pull')) {
+        if (!runStep('model:pull', `pnpm model:pull ${model}`, { timeoutMs: 3_600_000 })) return 1;
+      } else {
+        io.log(`    ${model} is already in the model volume, so nothing is pulled`);
+      }
     }
 
     if (steps.includes('sandbox:up') && !runStep('sandbox:up', 'pnpm sandbox:up')) return 1;
@@ -2118,9 +2501,10 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     io.log('');
     if (real) {
       io.log(
-        `Stop it with \`pnpm sandbox:down && pnpm redactor:down && pnpm convex:down ${profileArguments(profiles).join(' ')}\`. ` +
-          `Your data stays in the ${projectVolumes(resolvedProject)[0]} volume, and running this again keeps it; ` +
-          '`--reset` is the one that throws it away.',
+        `Stop it with \`${verbCommand('stop', options.mode)}\`: every volume and ${ENV_FILE} are kept, and ` +
+          `\`${verbCommand('resume', options.mode)}\` brings the same project back. ` +
+          `\`${verbCommand('clear', options.mode)}\` throws the ${projectVolumes(resolvedProject)[0]} volume and the rest away; ` +
+          '`--reset` is that followed by this setup.',
       );
     } else {
       io.log(
@@ -2149,6 +2533,293 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
     io.log(`error: ${(error as Error).message}`);
     return 1;
+  }
+}
+
+interface LifecycleTarget {
+  project: string;
+  existing: Record<string, string>;
+  checkoutRoot: string;
+  ports: SetupPorts;
+  /** The child environment compose needs: the project, the ports, the docs mount. */
+  environment: Record<string, string>;
+  /** This project's containers, running or not. */
+  containers: string[];
+}
+
+/**
+ * The installation a lifecycle verb acts on: the project `.env.local` names,
+ * refused by the same rules the setup applies before it writes anything.
+ *
+ * Args:
+ *   io: The setup environment.
+ *   options: The command line.
+ *   verb: The verb, for the messages.
+ *
+ * Returns:
+ *   The target, or the refusal.
+ *
+ * Raises:
+ *   Error: If the project is protected or read-only.
+ */
+function lifecycleTarget(io: SetupIo, options: SetupOptions, verb: SetupCommand): LifecycleTarget | string {
+  if (!existsSync(join(io.cwd, 'package.json')) || !existsSync(join(io.cwd, 'docker-compose.yml'))) {
+    return `run this from the repository root; ${io.cwd} is not a Day0 checkout.`;
+  }
+  const envPath = join(io.cwd, ENV_FILE);
+  if (!existsSync(envPath)) {
+    return `there is no ${ENV_FILE} here, so there is no installation to ${verb}. The setup writes it: \`pnpm setup:local\`.`;
+  }
+  const existing = readEnvValues(envPath);
+  const project = (existing.COMPOSE_PROJECT_NAME ?? '').trim();
+  if (project === '') {
+    return `${ENV_FILE} names no Compose project (COMPOSE_PROJECT_NAME), so there is nothing to ${verb}. Run the setup first.`;
+  }
+  if (options.project !== undefined && options.project !== project) {
+    return `${ENV_FILE} names ${project}, not ${options.project}. \`${verb}\` acts on the project this checkout set up, so --project is not needed.`;
+  }
+  assertLocalProject(project, { mainWorktree: isMainWorktree(io.cwd), fileProject: project });
+  const checkoutRoot = realpathSync(io.cwd);
+  if (existing.DAY0_SETUP_ROOT && existing.DAY0_SETUP_ROOT !== checkoutRoot) {
+    return `this env file belongs to another checkout (${existing.DAY0_SETUP_ROOT}); nothing here is that checkout's to ${verb}.`;
+  }
+  const containers = projectContainers(io, project, checkoutRoot);
+  if (containers.refusal !== undefined) return containers.refusal;
+  const ports = resolvePorts({}, existing);
+  return {
+    project,
+    existing,
+    checkoutRoot,
+    ports,
+    environment: {
+      ...childEnvironment(project, ports, checkoutRoot),
+      DAY0_DOCS_HOST_DIR: existing.DAY0_DOCS_HOST_DIR?.trim() || DEFAULT_DOCS_HOST_DIR,
+    },
+    containers: containers.ids,
+  };
+}
+
+/**
+ * Stop for the day: the project's containers come down and every volume stays.
+ *
+ * The app server is not this helper's to stop: the setup prints `pnpm dev`
+ * and never starts it, so a listener on the app port is reported and left
+ * to the terminal it runs in.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   0 when the project is down, 1 otherwise.
+ */
+export async function runStop(options: SetupOptions, io: SetupIo): Promise<number> {
+  try {
+    const target = lifecycleTarget(io, options, 'stop');
+    if (typeof target === 'string') {
+      io.log(`error: ${target}`);
+      return 1;
+    }
+    const { project, environment, ports } = target;
+    io.log(`Stopping ${project}: containers down, every volume kept.`);
+    if ((runningServices(io, project) ?? []).length === 0) {
+      io.log('  nothing of it is running; stopped containers and the network are removed all the same.');
+    }
+    if (!(await io.portFree(ports.app))) {
+      io.log(
+        `  note: something is still serving on ${ports.app}, most likely \`pnpm dev\`. This helper ` +
+          'never started it, so it does not stop it: Ctrl-C in its own terminal.',
+      );
+    }
+    if (options.dryRun) {
+      io.log('');
+      io.log('Would run:');
+      io.log(`  docker ${stopArguments().join(' ')}`);
+      io.log('');
+      io.log('Nothing was stopped.');
+      return 0;
+    }
+    const down = io.run('docker', stopArguments(), { env: environment, inherit: true, timeoutMs: 600_000 });
+    if (down.status !== 0) {
+      io.log('');
+      io.log(`error: docker compose down failed (status ${down.status}); its output is above. Nothing was removed.`);
+      return 1;
+    }
+    const kept = labelledVolumes(io, project);
+    io.log('');
+    io.log(
+      `Stopped ${project}. Kept: ${kept.length > 0 ? kept.join(', ') : 'no volumes (it had none)'}; ` +
+        `${ENV_FILE} with its admin key.`,
+    );
+    io.log(
+      `Resume with \`${verbCommand('resume', options.mode)}\`: the same project and ports, the admin key ` +
+        'kept, nothing pulled again. Or run the setup again; it does the same.',
+    );
+    io.log(`Throw it all away with \`${verbCommand('clear', options.mode)}\`.`);
+    return 0;
+  } catch (error) {
+    io.log(`error: ${(error as Error).message}`);
+    return 1;
+  }
+}
+
+/**
+ * Come back: the setup again, with the route, the mode and the model read
+ * from `.env.local` rather than asked for.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   What the setup returns, or 1 when the file describes no installation.
+ */
+export async function runResume(options: SetupOptions, io: SetupIo): Promise<number> {
+  try {
+    if (options.reset) {
+      io.log('error: `resume` keeps the volumes; `--reset` belongs to the setup itself, and `clear` removes them.');
+      return 1;
+    }
+    const target = lifecycleTarget(io, options, 'resume');
+    if (typeof target === 'string') {
+      io.log(`error: ${target}`);
+      return 1;
+    }
+    const { project, existing } = target;
+    const report = setupRoute(existing);
+    if (report.route === 'none') {
+      io.log(`error: ${ENV_FILE} names no model route (${report.detail}); run the setup with --route first.`);
+      return 1;
+    }
+    if (options.route !== undefined && options.route !== report.route) {
+      io.log(
+        `error: ${ENV_FILE} is on the ${report.route} route, and \`resume\` brings that back. To change ` +
+          `the route, run the setup itself with --route ${options.route}.`,
+      );
+      return 1;
+    }
+    const mode: SetupMode = existing.DAY0_SURFACE_MODE?.trim() === 'real' ? 'real' : 'mock';
+    io.log(`Resuming ${project} from ${ENV_FILE}: ${mode} mode on the ${report.route} route (${report.detail}).`);
+    io.log('');
+    return await runSetup(
+      {
+        ...options,
+        command: undefined,
+        mode,
+        route: report.route,
+        project: undefined,
+        model:
+          options.model ?? (report.route === 'local' ? existing.OPENAI_MODEL?.trim() || undefined : undefined),
+        endpoint:
+          options.endpoint ?? (report.route === 'endpoint' ? existing.OPENAI_BASE_URL?.trim() : undefined),
+      },
+      io,
+    );
+  } catch (error) {
+    io.log(`error: ${(error as Error).message}`);
+    return 1;
+  }
+}
+
+/**
+ * Throw it away: the project's containers, volumes and network, and with
+ * `--purge-env` the env file too. The documentation folder is the reader's
+ * and is not touched.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   0 when everything named was removed, 130 when the reader declined, 1
+ *   otherwise.
+ */
+export async function runClear(options: SetupOptions, io: SetupIo): Promise<number> {
+  try {
+    const target = lifecycleTarget(io, options, 'clear');
+    if (typeof target === 'string') {
+      io.log(`error: ${target}`);
+      return 1;
+    }
+    const { project, environment, containers } = target;
+    const volumesBefore = labelledVolumes(io, project);
+    io.log(
+      `Clearing ${project}: ${containers.length} container(s), ${volumesBefore.length} volume(s) and the ` +
+        'network, removed for good.',
+    );
+    for (const volume of volumesBefore) io.log(`  ${volume}`);
+    if (options.dryRun) {
+      io.log('');
+      io.log('Would run:');
+      io.log(`  docker ${resetArguments().join(' ')}`);
+      io.log(`  docker volume rm <whatever above is still labelled ${project}'s afterwards>`);
+      if (options.purgeEnv) io.log(`  remove ${ENV_FILE}`);
+      io.log('');
+      io.log('Nothing was removed.');
+      return 0;
+    }
+    if (!options.assumeYes) {
+      const answer = (await io.ask('Remove them? [y/N] ')).trim().toLowerCase();
+      if (answer !== 'y' && answer !== 'yes') throw new SetupCancelled('clear was declined');
+    }
+    const cleared = clearProject(io, project, environment);
+    if (cleared.failure) {
+      io.log('');
+      io.log(`error: ${cleared.failure.what} failed (status ${cleared.failure.result.status}).`);
+      const detail = `${cleared.failure.result.stdout}${cleared.failure.result.stderr}`.trim();
+      for (const line of detail.split('\n').slice(-12)) if (line.trim() !== '') io.log(`  ${line}`);
+      io.log(`  Whatever compose removed before that is gone; run \`${verbCommand('clear', options.mode)}\` again for the rest.`);
+      return 1;
+    }
+    const volumesAfter = labelledVolumes(io, project);
+    const removedVolumes = volumesBefore.filter((name: string): boolean => !volumesAfter.includes(name));
+    io.log('');
+    io.log(`Removed: ${containers.length} container(s), ${removedVolumes.length > 0 ? removedVolumes.join(', ') : 'no volumes'}, the network.`);
+    if (volumesAfter.length > 0) {
+      io.log(`  still present, so not this helper's to remove: ${volumesAfter.join(', ')}`);
+    }
+    if (options.purgeEnv) {
+      unlinkSync(join(io.cwd, ENV_FILE));
+      io.log(`Removed ${ENV_FILE} as well (--purge-env): the keys and the model settings go with it.`);
+    } else {
+      io.log(`${ENV_FILE} is kept, keys and settings included; \`--purge-env\` removes it too.`);
+    }
+    io.log(
+      `Set it up again with \`${options.mode === 'real' ? './setup-real.sh --route <featherless|local>' : 'pnpm setup:local'}\`; ` +
+        'the admin key is minted afresh for the new volume.',
+    );
+    return 0;
+  } catch (error) {
+    if (error instanceof SetupCancelled) {
+      io.log('');
+      io.log('Cancelled. Nothing was removed.');
+      return 130;
+    }
+    io.log(`error: ${(error as Error).message}`);
+    return 1;
+  }
+}
+
+/**
+ * Run the verb the command line named, or the setup itself.
+ *
+ * Args:
+ *   options: The command line.
+ *   io: The setup environment.
+ *
+ * Returns:
+ *   The exit status.
+ */
+export async function runCommand(options: SetupOptions, io: SetupIo): Promise<number> {
+  switch (options.command) {
+    case 'stop':
+      return runStop(options, io);
+    case 'resume':
+      return runResume(options, io);
+    case 'clear':
+      return runClear(options, io);
+    default:
+      return runSetup(options, io);
   }
 }
 
@@ -2390,6 +3061,7 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
     log: (line: string): void => {
       console.log(line);
     },
+    interactive: process.stdin.isTTY === true,
     portFree: async (port: number): Promise<boolean> =>
       await new Promise<boolean>((resolvePromise) => {
         const socket = connect({ host: '127.0.0.1', port });
@@ -2436,7 +3108,7 @@ async function main(): Promise<number> {
     return 0;
   }
   try {
-    return await runSetup(options, consoleIo());
+    return await runCommand(options, consoleIo());
   } finally {
     consoleReader?.close();
   }
