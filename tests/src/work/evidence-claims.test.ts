@@ -344,6 +344,23 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
     expect(unsupportedClaimIssues([comment(listed)], evidenceRun3)).toEqual([]);
   });
 
+  it('accepts a closing line that names the unmet checks by an identifier from their evidence or by the words of their head', (): void => {
+    const note = [
+      '1. Pipeline coverage confirmed. The tile shows 74%.',
+      '2. Friday standup deals reconciled. Not confirmed — no tracker connected.',
+      '3. Close tickets at Done. REVOPS-6 — Backlog; REVOPS-7 — Backlog.',
+      'Not confirmed: deal reconciliation (no tracker) and ticket closure (REVOPS-6 and REVOPS-7 still at Backlog).',
+    ].join('\n');
+    expect(unsupportedClaimIssues([comment(note)], evidenceRun3)).toEqual([]);
+    const byIdentifierOnly = note.replace(/Not confirmed: .*$/, 'Not confirmed: the tracker reconciliation, and REVOPS-6 with REVOPS-7.');
+    expect(unsupportedClaimIssues([comment(byIdentifierOnly)], evidenceRun3)).toEqual([]);
+    // An identifier another check's evidence also carries names nothing: 74% is check 1's, not check 3's.
+    const wrongIdentifier = note.replace(/Not confirmed: .*$/, 'Not confirmed: deal reconciliation; the tile shows 74%.');
+    const issues = unsupportedClaimIssues([comment(wrongIdentifier)], evidenceRun3);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('check 3');
+  });
+
   it('reads an absent read and a not-confirmed phrase as unmet, whichever check carries it', (): void => {
     const absentRead = [
       '1. Pipeline coverage confirmed. The tile could not be read: the sign-in page redirected.',

@@ -346,14 +346,44 @@ function unmetReason(check: EnumeratedCheck): string | undefined {
   return `reports ${[...new Set(open)].join(' and ')} where the check asks for a close`;
 }
 
-/** Whether the closing line names a check: by its number, or by the first words of its head. */
-function namedInClosing(check: EnumeratedCheck, closing: string): boolean {
+/** Words that name nothing in particular in a closing line or a check. */
+const COMMON_WORDS = new Set([
+  'check', 'checks', 'confirmed', 'confirm', 'done', 'with', 'from', 'this', 'that', 'were', 'have', 'been', 'each',
+  'their', 'there', 'into', 'only', 'also', 'than', 'then', 'when', 'what', 'which', 'still', 'reports', 'reported',
+  'shows', 'showed', 'linear', 'because', 'since', 'after', 'before', 'about',
+]);
+
+/** A word's stem, wide enough to match its plural, past and noun forms: "deals" / "deal", "reconciled" / "reconciliation". */
+function stem(word: string): string {
+  return word.replace(/(?:ation|tion|ment|ure|ing|ed|es|ly|s)$/, '').slice(0, 4);
+}
+
+function stemsOf(text: string): Set<string> {
+  return new Set(words(text).filter((word) => word.length >= 4 && !COMMON_WORDS.has(word)).map(stem));
+}
+
+/**
+ * Whether the closing line names a check: by its number, by the first
+ * words of its head, by an identifier its evidence alone carries
+ * ("REVOPS-6 ... still at Backlog"), or by two of the words its head or
+ * evidence alone use, in any form ("deal reconciliation", "ticket
+ * closure"). What another check also carries names nothing.
+ */
+function namedInClosing(check: EnumeratedCheck, closing: string, others: readonly EnumeratedCheck[]): boolean {
   const numbers = new Set(
     [...closing.matchAll(CHECKS_NAMED)].flatMap((match) => (match[0].match(/\d+/g) ?? []).map(Number)),
   );
   if (numbers.has(check.number)) return true;
   const headWords = words(check.head).slice(0, 2);
-  return headWords.length > 0 && normalised(closing).includes(headWords.join(' '));
+  if (headWords.length > 0 && normalised(closing).includes(headWords.join(' '))) return true;
+  const elsewhere = others.filter((other) => other.number !== check.number).map((other) => `${other.head} ${other.evidence}`).join('\n');
+  const closingTokens = new Set(distinctiveTokens(closing));
+  const tokensElsewhere = new Set(distinctiveTokens(elsewhere));
+  if (distinctiveTokens(check.evidence).some((token) => closingTokens.has(token) && !tokensElsewhere.has(token))) return true;
+  const closingStems = stemsOf(closing);
+  const stemsElsewhere = stemsOf(elsewhere);
+  const own = [...stemsOf(`${check.head} ${check.evidence}`)].filter((word) => !stemsElsewhere.has(word));
+  return own.filter((word) => closingStems.has(word)).length >= 2;
 }
 
 /**
@@ -377,11 +407,11 @@ export function inconsistentNotConfirmedLine(text: string): string | undefined {
   if (!listed) return undefined;
   const omitted = listed.checks.flatMap((check): string[] => {
     const reason = unmetReason(check);
-    if (!reason || namedInClosing(check, listed.closing)) return [];
+    if (!reason || namedInClosing(check, listed.closing, listed.checks)) return [];
     return [`check ${check.number} ("${check.head}") ${reason} in its own evidence`];
   });
   if (omitted.length === 0) return undefined;
-  const named = listed.checks.filter((check) => namedInClosing(check, listed.closing)).map((check) => `check ${check.number}`);
+  const named = listed.checks.filter((check) => namedInClosing(check, listed.closing, listed.checks)).map((check) => `check ${check.number}`);
   return `the not-confirmed line names ${named.length > 0 ? named.join(' and ') : 'no check'} but ${omitted.join('; ')}; name every check whose evidence is unmet in that line, and record the manager's acceptance beside the evidence, never in place of it`;
 }
 
