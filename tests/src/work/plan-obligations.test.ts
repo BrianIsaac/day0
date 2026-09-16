@@ -115,6 +115,7 @@ const refreshJudgement = {
     { step: 1, kind: 'write', reads: ['looker-pipeline-tile'], writes: ['looker-pipeline-tile'], reason: 'the documented sequence saves the figure and reads the audit line back' },
     { step: 2, kind: 'write', reads: [], writes: ['Linear'], reason: 'the comment quotes what step 1 read; Linear is only written' },
     { step: 3, kind: 'conditional-write', reads: [], writes: ['linear'], reason: 'the Done follows only when the audit line was read back' },
+    { step: 4, kind: 'conditional-write', reads: [], writes: ['linear'], reason: 'the failure branch comments the partial result; nothing is read' },
   ],
   transition: 'conditional-on-evidence',
   transitionStep: 3,
@@ -160,6 +161,7 @@ describe('settling the obligations', (): void => {
         { kind: 'write', reads: ['looker-pipeline-tile'], writes: ['looker-pipeline-tile'], reason: refreshJudgement.steps[0]!.reason },
         { kind: 'write', reads: [], writes: ['linear'], reason: refreshJudgement.steps[1]!.reason },
         { kind: 'conditional-write', reads: [], writes: ['linear'], reason: refreshJudgement.steps[2]!.reason },
+        { kind: 'conditional-write', reads: [], writes: ['linear'], reason: refreshJudgement.steps[3]!.reason },
       ],
       transition: 'conditional-on-evidence',
       transitionStep: 3,
@@ -176,12 +178,14 @@ describe('settling the obligations', (): void => {
         { step: 1, kind: 'read', reads: ['northstar-crm', 'Northstar CRM', 'looker-pipeline-tile'], writes: [], reason: 'r' },
         { step: 2, kind: 'write', reads: ['no-such-surface'], writes: ['linear', 'northstar-crm'], reason: 'w' },
         { step: 3, kind: 'report', reads: [], writes: [], reason: 'n' },
+        { step: 4, kind: 'report', reads: [], writes: [], reason: 'n' },
       ],
     };
     const settled = await settlePlanObligations(args, {
       steps: [
         { kind: 'read', reads: ['northstar-crm', 'looker-pipeline-tile'], writes: [] },
         { kind: 'write', reads: [], writes: ['linear', 'Northstar CRM'] },
+        { kind: 'report', reads: [], writes: [] },
         { kind: 'report', reads: [], writes: [] },
       ],
       transition: 'conditional-on-evidence',
@@ -190,6 +194,7 @@ describe('settling the obligations', (): void => {
     expect(settled.obligations?.steps.map((row) => [row.reads, row.writes])).toEqual([
       [['looker-pipeline-tile'], []],
       [[], ['linear']],
+      [[], []],
       [[], []],
     ]);
     // The planner's own absent-surface read is dropped before the comparison, so the two sides agree on the reads.
@@ -201,6 +206,7 @@ describe('settling the obligations', (): void => {
       steps: [
         { kind: 'write' as const, reads: ['looker-pipeline-tile'], writes: ['looker-pipeline-tile'] },
         { kind: 'write' as const, reads: ['linear'], writes: ['linear'] },
+        { kind: 'conditional-write' as const, reads: [], writes: ['linear'] },
         { kind: 'conditional-write' as const, reads: [], writes: ['linear'] },
       ],
       transition: 'withheld' as const,
@@ -226,6 +232,7 @@ describe('settling the obligations', (): void => {
         { kind: 'write' as const, reads: ['looker-pipeline-tile'], writes: ['looker-pipeline-tile'] },
         { kind: 'write' as const, reads: [], writes: ['linear'] },
         { kind: 'conditional-write' as const, reads: [], writes: ['linear'] },
+        { kind: 'conditional-write' as const, reads: [], writes: ['linear'] },
       ],
       transition: 'promised' as const,
       transitionStep: 3,
@@ -241,10 +248,10 @@ describe('settling the obligations', (): void => {
   });
 
   it('fails open on a judgement that does not account for every step once, or has another shape', async (): Promise<void> => {
-    model.judgement = { ...refreshJudgement, steps: refreshJudgement.steps.slice(0, 2) };
+    model.judgement = { ...refreshJudgement, steps: refreshJudgement.steps.slice(0, 3) };
     const short = await settlePlanObligations(args, undefined);
     expect(short.obligations).toBeUndefined();
-    expect(short.events[0]).toMatchObject({ type: 'plan.obligations-failed-open', payload: { reason: 'the judgement accounted for 2 step(s) of 3, not every step once' } });
+    expect(short.events[0]).toMatchObject({ type: 'plan.obligations-failed-open', payload: { reason: 'the judgement accounted for 3 step(s) of 4, not every step once' } });
     model.judgement = { summary: 'not a judgement' };
     const shapeless = await settlePlanObligations(args, undefined);
     expect(shapeless.obligations).toBeUndefined();
@@ -332,6 +339,7 @@ describe('the judgement inside plan drafting', (): void => {
       steps: [
         { step: 1, kind: 'write', reads: ['looker-pipeline-tile'], writes: ['looker-pipeline-tile'], reason: 'the refresh sequence and its snapshot' },
         { step: 2, kind: 'write', reads: [], writes: ['slack'], reason: 'the reply quotes the read-back; Northstar CRM has no connection and is only named in the text' },
+        { step: 3, kind: 'write', reads: [], writes: ['slack'], reason: 'the escalation DM; Northstar CRM is named, not read' },
       ],
       transition: 'none', transitionStep: null, reason: 'a chat ask has no ticket state',
     };
@@ -339,7 +347,7 @@ describe('the judgement inside plan drafting', (): void => {
       candidate: { ...candidate, sourceCategory: 'event-stream', sourceSystem: 'slack' },
       charter, autonomousActions: true, surfaceMode: 'real', surfaces, documents, now: NOW,
     });
-    expect(plan.obligations?.steps.map((row) => row.reads)).toEqual([['looker-pipeline-tile'], []]);
+    expect(plan.obligations?.steps.map((row) => row.reads)).toEqual([['looker-pipeline-tile'], [], []]);
     expect(declaredReads(plan, [linear, slack, tile, northstar]).map((read) => read.surface.slug)).toEqual(['looker-pipeline-tile']);
   });
 });
@@ -398,6 +406,7 @@ describe('each gate against a judgement that failed open and one that contradict
       { kind: 'write' as const, reads: [], writes: ['looker-pipeline-tile'] },
       { kind: 'write' as const, reads: [], writes: ['linear'] },
       { kind: 'report' as const, reads: [], writes: [] },
+      { kind: 'report' as const, reads: [], writes: [] },
     ],
     transition: 'withheld' as const,
     transitionStep: 3,
@@ -419,17 +428,17 @@ describe('each gate against a judgement that failed open and one that contradict
     const open = await drafted();
     expect(open.obligations?.basis).toBe('planner');
     expect(() =>
-      validatePlanStepOutcomes({ plan: open, outcomes: outcomes(3), initialActions: [], initialLedger: [], surfaces: [linear, tile] }),
+      validatePlanStepOutcomes({ plan: open, outcomes: outcomes(4), initialActions: [], initialLedger: [], surfaces: [linear, tile] }),
     ).not.toThrow();
     model.judgement = refreshJudgement;
     const judged = await drafted();
     expect(judged.obligations?.basis).toBe('judgement');
     expect(() =>
-      validatePlanStepOutcomes({ plan: judged, outcomes: outcomes(3), initialActions: [], initialLedger: [], surfaces: [linear, tile] }),
+      validatePlanStepOutcomes({ plan: judged, outcomes: outcomes(4), initialActions: [], initialLedger: [], surfaces: [linear, tile] }),
     ).toThrow('approved plan step 1 declares a read of Looker pipeline tile');
     expect(() =>
       validatePlanStepOutcomes({
-        plan: judged, outcomes: outcomes(3), initialActions: run4RefreshPrerequisites, initialLedger: run4RefreshPrerequisiteLedger, surfaces: [linear, tile],
+        plan: judged, outcomes: outcomes(4), initialActions: run4RefreshPrerequisites, initialLedger: run4RefreshPrerequisiteLedger, surfaces: [linear, tile],
       }),
     ).not.toThrow();
   });
@@ -438,12 +447,12 @@ describe('each gate against a judgement that failed open and one that contradict
     model.judgement = new Error('provider unavailable');
     const open = await drafted();
     // The planner's unchecked "withheld" stands: a set without the Done is not refused.
-    expect(dependentTransitionRefusal({ plan: open, actions: [comment], planStepOutcomes: outcomes(3) })).toBeUndefined();
-    expect(dependentTransitionRefusal({ plan: { ...open, obligations: undefined }, actions: [comment], planStepOutcomes: outcomes(3) })).toBeUndefined();
+    expect(dependentTransitionRefusal({ plan: open, actions: [comment], planStepOutcomes: outcomes(4) })).toBeUndefined();
+    expect(dependentTransitionRefusal({ plan: { ...open, obligations: undefined }, actions: [comment], planStepOutcomes: outcomes(4) })).toBeUndefined();
     model.judgement = refreshJudgement;
     const judged = await drafted();
-    expect(dependentTransitionRefusal({ plan: judged, actions: [comment], planStepOutcomes: outcomes(3) })).toContain('omitted the approved ticket state transition');
-    expect(dependentTransitionRefusal({ plan: judged, actions: [comment, done], planStepOutcomes: outcomes(3) })).toBeUndefined();
+    expect(dependentTransitionRefusal({ plan: judged, actions: [comment], planStepOutcomes: outcomes(4) })).toContain('omitted the approved ticket state transition');
+    expect(dependentTransitionRefusal({ plan: judged, actions: [comment, done], planStepOutcomes: outcomes(4) })).toBeUndefined();
     expect(blockedPlanReason(outcomes(3, 'blocked'), { plan: judged, actions: [comment], applied: [{ tool: 'mcp.call', ok: true, idempotencyKey: 'k' }] })).toContain('remained blocked');
   });
 

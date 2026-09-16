@@ -47,8 +47,10 @@ import {
   RUN_4_REVOPS_5_COMMENT,
   RUN_4_REVOPS_5_PREWRITTEN_COMMENT,
   RUN_4_REVOPS_7_COMMENT,
+  RUN_4_SLACK_CHANNEL,
   RUN_4_SLACK_ESCALATION,
   RUN_4_SLACK_REPLY,
+  RUN_4_SLACK_THREAD_TS,
   RUN_4_TILE_READ_BACK,
 } from './fixtures/plan-obligations-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -285,9 +287,9 @@ const REVOPS_7_RUN_4: Run = {
   prerequisites: run4RefreshPrerequisites, ledger: run4RefreshPrerequisiteLedger,
 };
 const SLACK_RUN_4: Run = {
-  externalId: 'C0REVOPSASKS:1789000000.000200', title: 'Mention in #revops-asks', plan: run4SlackPlan,
+  externalId: `${RUN_4_SLACK_CHANNEL}:${RUN_4_SLACK_THREAD_TS}`, title: 'Mention in #revops-asks', plan: run4SlackPlan,
   prerequisites: run4SlackPrerequisites, ledger: run4SlackPrerequisiteLedger,
-  chat: { sourceSystem: 'slack', contentRefs: ['slack://C0REVOPSASKS/1789000000.000200'] },
+  chat: { sourceSystem: 'slack', contentRefs: [`slack://${RUN_4_SLACK_CHANNEL}/${RUN_4_SLACK_THREAD_TS}`] },
 };
 const run4AuditNotePrerequisites: MockAction[] = [...run4TileSequence, call('linear', 'list_issues', { team: 'REVOPS', project: 'Q3 close' })];
 const REVOPS_5_RUN_4: Run = {
@@ -608,7 +610,7 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     expect(done.state).toBe('completed');
     expect(done.skipReason).toBeUndefined();
     expect(recorded.mcp).toEqual([]);
-    expect(recorded.http.map((call) => (call.body as { channel: string; text: string }).channel)).toEqual(['C0REVOPSASKS', 'D0MANAGER']);
+    expect(recorded.http.map((call) => (call.body as { channel: string; text: string }).channel)).toEqual([RUN_4_SLACK_CHANNEL, 'D0MANAGER']);
     expect((recorded.http[0]!.body as { text: string }).text).toContain(RUN_4_SLACK_REPLY);
     expect((recorded.http[1]!.body as { text: string }).text).toContain(RUN_4_SLACK_ESCALATION);
   });
