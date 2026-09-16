@@ -1,0 +1,54 @@
+name: Feature request
+description: Something Day0 should do, or should do differently.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Day0 is a demonstration with a narrow measured claim, and the README's
+        "What this is, and what it is not" section says where it stops. A request that
+        moves one of those boundaries is welcome; say which one it moves.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do with Day0 that you cannot, or can only do awkwardly. Describe the situation before the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: The change as you would describe it to someone about to build it. Name the surface it lands on (dashboard, a Convex function, a skill, a component, the harness) if you know it.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Day-1 one-to-one and charter
+        - Work loop, evaluation criteria, plans
+        - Skills and the verification sandbox
+        - Surfaces, connection cards, real mode
+        - Permissions, revocation, autonomy switch
+        - Redaction, credentials, ledger
+        - Dashboard
+        - Local setup, compose, scripts
+        - Evaluation harness and graders
+        - Documentation
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Which boundary it touches
+      description: |
+        Does this change what a person approves, what leaves the machine, what is stored,
+        or which third-party service is needed? If so, say how the approval gate, the
+        disclosures or the environment contract should change with it.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including doing nothing, and including doing it outside Day0.
