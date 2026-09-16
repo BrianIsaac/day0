@@ -296,6 +296,29 @@ function surfaceMentions(text: string, surfaces: readonly NamedSurface[]): Menti
     .sort((a, b) => a.start - b.start);
 }
 
+/** A word that opens a noun phrase: a determiner, or a possessive ("the manager's"). */
+const NOUN_PHRASE_OPENER = /^(?:the|a|an|our|its|their|this|that|these|those|each|every|any|all|no|your|my)$|['\u2019]s$/i;
+/**
+ * A word that ends a noun phrase before the term: the term after it is an
+ * instruction of its own ("the ticket and comment", "the figure you read").
+ */
+const PHRASE_BREAK = /^(?:and|or|then|but|to|in|on|at|of|for|from|via|with|by|into|onto|after|before|once|until|not|you|we|i|they|it|which|who)$/i;
+
+/**
+ * Whether the term after this prefix is the head of a noun phrase rather
+ * than an instruction: a determiner or possessive opens the phrase within
+ * two words of it, with no conjunction, preposition or pronoun between
+ * ("the manager's comment", "the latest message", "the standup summary
+ * post"), back to the last punctuation. Read only for write words: a read
+ * word after a noun phrase is a relative clause ("the figure you read").
+ */
+function headsNounPhrase(prefix: string): boolean {
+  const segment = prefix.split(/[,;:.()\n]/).pop() ?? '';
+  const words = segment.trim().split(/\s+/).filter(Boolean).slice(-3);
+  return words.some((word, index) =>
+    NOUN_PHRASE_OPENER.test(word) && words.slice(index + 1).every((later) => !PHRASE_BREAK.test(later)));
+}
+
 /** Every instruction verb in the text with whether it reads (a result or capture verb) or writes. */
 function instructionVerbs(text: string): Verb[] {
   const verbs: Verb[] = [];
@@ -303,7 +326,8 @@ function instructionVerbs(text: string): Verb[] {
     terms.lastIndex = 0;
     for (let match = terms.exec(text); match; match = terms.exec(text)) {
       if (text[match.index - 1] === '-' || text[match.index + match[0].length] === '-') continue;
-      if (NOUN_MARKER.test(text.slice(0, match.index))) continue;
+      const prefix = text.slice(0, match.index);
+      if (NOUN_MARKER.test(prefix) || (!reads && headsNounPhrase(prefix))) continue;
       verbs.push({ start: match.index, end: match.index + match[0].length, reads });
     }
   };

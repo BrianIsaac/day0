@@ -201,6 +201,22 @@ describe('which surface a promised read binds to', (): void => {
     expect(names('Read the thread in #revops.')).toEqual(['revops']);
   });
 
+  it('does not let a write word used as a noun govern the surface a read names', (): void => {
+    // "the manager's comment", "the latest message": a noun phrase, not an instruction to write; the read of Linear or Slack after it stands.
+    expect(bound(["Read the manager's comment on REVOPS-7 in Linear."])).toEqual(['1:linear']);
+    expect(bound(['Read the latest comment on REVOPS-7 in Linear and note the owner.'])).toEqual(['1:linear']);
+    expect(bound(['Read the audit comment on REVOPS-7 in Linear.'])).toEqual(['1:linear']);
+    expect(bound(['Read any update on REVOPS-7 in Linear.'])).toEqual(['1:linear']);
+    expect(bound(['Read the pinned message in Slack.'])).toEqual(['1:slack']);
+    expect(bound(['Read the standup summary post in Slack.'])).toEqual(['1:slack']);
+    expect(bound(['Read the Slack message in #revops and reply in the thread.'])).toEqual(['1:slack']);
+    // An instruction to write still governs its target, after a conjunction, a comma or at the head of the clause.
+    expect(bound(['Read the ticket and comment on it in Linear.'])).toEqual([]);
+    expect(bound(['Read the ticket, message the manager in Slack.'])).toEqual([]);
+    expect(bound(['Read the ticket in Linear and record each state.'])).toEqual(['1:linear']);
+    expect(bound(['Post the figure to Linear.'])).toEqual([]);
+  });
+
   it('binds a read in a condition to the surface it names only when no other step reads that surface', (): void => {
     const conditional = 'Move REVOPS-7 to Done only if Linear reports the ticket in Backlog.';
     expect(promisedReads([conditional], surfaces)).toEqual([
