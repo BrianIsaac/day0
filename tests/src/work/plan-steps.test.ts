@@ -95,6 +95,25 @@ describe('a plan that withholds the transition in its own words', (): void => {
     expect(withholdsClose('Leave REVOPS-5 open for the manager to close, otherwise the audit fails.')).toBe(true);
   });
 
+  it('keeps an alternative branch that is the only word on the state: nothing before it promises the close', (): void => {
+    // Commit c51e87a read every "otherwise ..." out; a plan whose primary branch is a comment, not a close, then let a Done through under the switch.
+    for (const wording of [
+      'Post the comment if the figure matches; otherwise leave REVOPS-7 in progress and flag the manager.',
+      'Post the audit comment on REVOPS-7. Otherwise leave it in progress.',
+      'Comment on REVOPS-7 only if the figure matches; otherwise leave the ticket open for the manager.',
+      'Reply in the thread when the figure matches, or else do not move REVOPS-7 to Done.',
+    ]) {
+      expect(withholdsClose(wording), wording).toBe(true);
+    }
+    expect(planWithholdsClose({
+      summary: 'Comment on REVOPS-7.',
+      steps: ['Read the Looker pipeline tile.', 'Post the comment if the figure matches; otherwise leave REVOPS-7 in progress and flag the manager.'],
+    })).toBe(true);
+    // The alternative to a promised close is still conditional, whichever punctuation joins them.
+    expect(withholdsClose('Move REVOPS-7 to Done when the checks pass. Otherwise leave it in progress.')).toBe(false);
+    expect(withholdsClose("Set REVOPS-7 state to 'Done' if the figure matches, otherwise leave it open.")).toBe(false);
+  });
+
   it('never promised the close, even when another step reads as completing something', (): void => {
     expect(planPromisesClose(refreshPlan)).toBe(true);
     expect(planPromisesClose(auditNotePlan)).toBe(false);

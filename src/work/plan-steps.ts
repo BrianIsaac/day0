@@ -47,6 +47,22 @@ const QUOTED_SPAN = /"[^"\n]*"|“[^”\n]*”/g;
  */
 const ALTERNATIVE_BRANCH = /\b(?:otherwise|or else|else|failing that|if not)\b[^.;\n]*/gi;
 
+/**
+ * The text with every alternative branch to a promised close read out. An
+ * alternative that follows no promised close, back to the previous full
+ * stop or line break ("Post the comment if the figure matches; otherwise
+ * leave it in progress"), is the sentence's only word on the state and
+ * stays. A branch that opens a sentence ("... to Done. Otherwise leave it
+ * in progress") answers the sentence before it.
+ */
+function withoutAlternativeToClose(text: string): string {
+  return text.replace(ALTERNATIVE_BRANCH, (branch: string, offset: number): string => {
+    const before = text.slice(0, offset).trimEnd().replace(/\.$/, '');
+    const sentenceStart = Math.max(before.lastIndexOf('.'), before.lastIndexOf('\n')) + 1;
+    return promisesClose(before.slice(sentenceStart)) ? ' ' : branch;
+  });
+}
+
 /** Titles are references; quoted surface names and target states still impose obligations. */
 export function instructionText(step: string): string {
   return step.replace(QUOTED_SPAN, (span: string, offset: number): string => {
@@ -173,11 +189,12 @@ export function promisesClose(step: string): boolean {
  * Whether a step, or the plan's summary, says in its own words that the
  * ticket state is left where it is: a close term under a negation ("do not
  * move REVOPS-5 to Done"), or a phrase such as "no status change". The
- * alternative branch of a condition ("otherwise leave it in progress") is
- * read out first: it withholds only when the condition fails.
+ * alternative branch of a promised close ("set ... to Done only if ...;
+ * otherwise leave it in progress") is read out first: it withholds only
+ * when the condition fails.
  */
 export function withholdsClose(text: string): boolean {
-  const stated = instructionText(text).replace(ALTERNATIVE_BRANCH, ' ');
+  const stated = withoutAlternativeToClose(instructionText(text));
   if (NO_TRANSITION.test(stated)) return true;
   return occurrences(stated, CLOSE_STEP, { nounHead: CLOSE_NOUN_HEAD, determinerIsVocabulary: false }).some(
     (occurrence) => !affirmed(occurrence),
