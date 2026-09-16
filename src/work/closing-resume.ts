@@ -118,8 +118,9 @@ export function closingResume(output: unknown, plan: ExecutionPlan, failure: str
 
 /**
  * The rows a resumed closing set reuses from the previous attempt: a row of
- * identical payload, or a comment or message on a target the attempt
- * already landed on; see `reusedLedger`.
+ * identical payload (the set is re-authored over the same landed
+ * prerequisites), or a comment or message on a target the attempt already
+ * landed on; see `reusedLedger`.
  */
 export function resumedClosingLedger(
   actions: ExecutionOutput['actions'],
@@ -131,5 +132,5 @@ export function resumedClosingLedger(
     const entry = previous?.applied[index];
     return entry ? [{ action, applied: entry }] : [];
   });
-  return reusedLedger(actions, sources, run, options);
+  return reusedLedger(actions, sources, run, { ...options, identicalPayloads: true });
 }

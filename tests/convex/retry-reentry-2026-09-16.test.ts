@@ -280,6 +280,12 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     expect(rows[rows.length - 1]).toMatchObject({ ok: true, authority: 'autonomous' });
     expect((done.output as { planStepOutcomes: Array<{ status: string }> }).planStepOutcomes.map((row) => row.status)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied', 'satisfied']);
 
+    // The retry's phase one signed in and read again: an earlier run's browser
+    // writes are not "already landed" for a new session, whatever their payload.
+    const retryCalls = recorded.mcp.slice(recorded.mcp.findIndex((call) => call.tool === 'save_comment') + 1).map((call) => call.tool);
+    expect(retryCalls).toEqual(['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_snapshot', 'browser_click', 'browser_snapshot', 'list_issues', 'save_issue']);
+    expect(rows.slice(0, 5).map((row) => row.reason ?? '')).toEqual(['', '', '', '', '']);
+
     // The retry went back through phase one, then authored the closing set: both prompts name the landed comment.
     for (const call of recorded.model) {
       expect(call.user).toContain('Writes earlier runs of this item already landed');

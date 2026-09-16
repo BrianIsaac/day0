@@ -150,18 +150,28 @@ function payload(action: MockAction): string | undefined {
 
 /**
  * The ledger rows a phase's actions reuse from what already landed, by
- * index: a row of identical payload, or a comment or message on a target
- * an earlier landed row already carries. A rewrite by id goes through when
- * the manager's note asked for a correction; a status change and a read
- * are never reused by target.
+ * index: a comment or message on a target an earlier landed row already
+ * carries, and, only when the caller says the sources are a resumed
+ * closing set's previous attempt, a row of identical payload. A rewrite
+ * by id goes through when the manager's note asked for a correction; a
+ * status change and a read are never reused by target.
+ *
+ * Identical payloads are reused for a resumed closing set alone: the set
+ * is re-authored over the same landed prerequisites, so the same closing
+ * write again is the same write. Across runs the same payload is not the
+ * same effect: a retry's phase one signs in and saves again in a new
+ * browser session, and a status change is idempotent at the provider, so
+ * every such write is sent again and only a comment or message that would
+ * land twice in the same place is reused.
  *
  * Args:
  *   actions: The phase's actions.
  *   sources: Landed rows to reuse from: earlier runs' writes, and this
  *     run's earlier phases when the caller passes them.
  *   run: The run the reused rows take their identity from.
- *   options: The agent's surfaces (to tell the manager DM from a message)
- *     and the manager's note on the retry.
+ *   options: The agent's surfaces (to tell the manager DM from a message),
+ *     the manager's note on the retry, and whether identical payloads are
+ *     reused (a resumed closing set's previous attempt only).
  *
  * Returns:
  *   A reused row for each action that has one, undefined elsewhere.
@@ -170,7 +180,7 @@ export function reusedLedger(
   actions: readonly MockAction[],
   sources: readonly LandedWrite[],
   run: { workItemId: string; runId: string; actionIndexOffset: number },
-  options: { surfaces?: readonly SurfaceRecord[]; managerFeedback?: string } = {},
+  options: { surfaces?: readonly SurfaceRecord[]; managerFeedback?: string; identicalPayloads?: boolean } = {},
 ): Array<AppliedAction | undefined> {
   if (sources.length === 0) return actions.map(() => undefined);
   const surfaces = options.surfaces ?? [];
@@ -179,7 +189,7 @@ export function reusedLedger(
   const byTarget = new Map<string, { applied: AppliedAction; kind: 'comment' | 'message' }>();
   for (const source of sources) {
     if (!landed(source.applied)) continue;
-    const key = payload(source.action);
+    const key = options.identicalPayloads ? payload(source.action) : undefined;
     if (key && !byPayload.has(key)) byPayload.set(key, source.applied);
     const parsed = parsedWrite(source.action);
     const target = parsed ? writeTarget(parsed, source.action, surfaces) : undefined;
@@ -189,7 +199,7 @@ export function reusedLedger(
     const identity = actionIdempotencyKey({
       workItemId: run.workItemId, runId: run.runId, actionIndex: run.actionIndexOffset + index,
     });
-    const key = payload(action);
+    const key = options.identicalPayloads ? payload(action) : undefined;
     const identical = key ? byPayload.get(key) : undefined;
     if (identical) return { ...identical, reason: REUSED_IDENTICAL_NOTE, idempotencyKey: identity };
     const parsed = parsedWrite(action);

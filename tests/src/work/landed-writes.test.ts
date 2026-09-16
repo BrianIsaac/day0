@@ -68,24 +68,31 @@ describe('the writes earlier runs landed', () => {
     expect(correctionRequested(undefined)).toBe(false);
   });
 
-  it('reuses a same-target comment and thread reply from earlier runs, a state change only by identical payload, and lets a rewrite by id through on a correction', () => {
+  it('reuses a same-target comment and thread reply from earlier runs, never a state change or a browser write, and lets a rewrite by id through on a correction', () => {
+    const click = call('looker-pipeline-tile', 'browser_click', { element: 'Sign in' });
     const sources: LandedWrite[] = [
       { action: comment, applied: row({ providerId: 'comment-1', effect: 'comment-1', idempotencyKey: 'a' }) },
       { action: reply, applied: row({ providerId: '1789.2', idempotencyKey: 'b' }) },
       { action: done, applied: row({ idempotencyKey: 'c' }) },
+      { action: click, applied: row({ idempotencyKey: 'd' }) },
     ];
     const rewritten = call('linear', 'save_comment', { issueId: 'REVOPS-5', body: 'Audit note, second form.' });
     const byId = call('linear', 'save_comment', { issueId: 'REVOPS-5', id: 'comment-1', body: 'Audit note, second form.' });
     const otherThread = post({ channel: 'C0REVOPS', thread_ts: '1789.9', text: 'Tile at 74%.' });
     const again = post({ channel: 'C0REVOPS', thread_ts: '1789.1', text: 'Tile at 74%, audit line read back.' });
-    const ledger = reusedLedger([rewritten, again, otherThread, done, dm], sources, run, { surfaces });
+    const ledger = reusedLedger([rewritten, again, otherThread, done, dm, click], sources, run, { surfaces });
     expect(ledger[0]).toMatchObject({ ok: true, providerId: 'comment-1', idempotencyKey: 'work:retry:6' });
     expect(ledger[0]?.reason).toBe('reused landed comment comment-1: this target already carries the comment an earlier run of this item landed; not sent again');
     expect(ledger[1]).toMatchObject({ ok: true, providerId: '1789.2', idempotencyKey: 'work:retry:7' });
     expect(ledger[1]?.reason).toContain('reused landed message 1789.2');
     expect(ledger[2]).toBeUndefined();
-    expect(ledger[3]).toMatchObject({ ok: true, reason: 'This closing action already landed in the previous attempt; reused its recorded result.' });
+    // The same Done and the same sign-in click as an earlier run are sent again: the
+    // provider's Done is idempotent and the click belongs to this run's session.
+    expect(ledger[3]).toBeUndefined();
     expect(ledger[4]).toBeUndefined();
+    expect(ledger[5]).toBeUndefined();
+    // Identical payloads are reused only for a resumed closing set's previous attempt.
+    expect(reusedLedger([done, click], sources, run, { surfaces, identicalPayloads: true })[0]).toMatchObject({ ok: true, reason: 'This closing action already landed in the previous attempt; reused its recorded result.' });
     expect(reusedLedger([call('linear', 'save_issue', { id: 'REVOPS-5', state: 'Cancelled' })], sources, run, { surfaces })).toEqual([undefined]);
     expect(reusedLedger([byId], sources, run, { surfaces, managerFeedback: 'Fix the audit comment: name check 3 too.' })).toEqual([undefined]);
     expect(reusedLedger([byId], sources, run, { surfaces })[0]?.reason).toContain('reused landed comment comment-1');
