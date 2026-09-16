@@ -231,9 +231,14 @@ function harness(options: HarnessOptions = {}): Harness {
  */
 function keyRoute(overrides: Partial<SetupOptions> = {}): SetupOptions {
   return {
+    mode: 'mock',
     route: 'key',
     project: 'day0-setup-test',
     ports: {},
+    gpu: 'auto',
+    sandbox: 'local',
+    dryRun: false,
+    reset: false,
     assumeYes: true,
     help: false,
     ...overrides,
@@ -250,11 +255,16 @@ afterEach((): void => {
 describe('reading the command line', (): void => {
   it('defaults to an interactive run that picks nothing for you', (): void => {
     expect(parseSetupArguments([])).toEqual({
+      mode: 'mock',
       route: undefined,
       project: undefined,
       ports: {},
       model: undefined,
       endpoint: undefined,
+      gpu: 'auto',
+      sandbox: 'local',
+      dryRun: false,
+      reset: false,
       assumeYes: false,
       help: false,
     });
@@ -289,7 +299,7 @@ describe('reading the command line', (): void => {
 
   it('refuses a route it does not have, rather than silently taking the default', (): void => {
     expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow('--route');
-    expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow('key, local, endpoint');
+    expect(() => parseSetupArguments(['--route', 'cloud'])).toThrow('key, local, featherless, endpoint');
     expect(() => parseSetupArguments(['--port', 'three'])).toThrow('--port');
   });
 
@@ -523,7 +533,7 @@ describe('the values written into .env.local', (): void => {
     const updates = setupEnvUpdates({
       route: 'key',
       project: 'day0-setup-abc',
-      ports: { backend: 46210, site: 46211, dashboard: 46791, model: 48191 },
+      ports: { backend: 46210, site: 46211, dashboard: 46791, model: 48191, app: 3000 },
       existing: {},
       apiKey: 'sk-test',
     });
