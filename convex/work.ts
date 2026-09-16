@@ -21,9 +21,10 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { planWithholdsClose } from '../src/work/plan-steps';
+import { transitionWithheld } from '../src/work/obligations';
 import { replyTargetFor } from '../src/work/reply-target';
 import {
   AUTONOMOUS_WIP_LIMIT,
@@ -1489,8 +1490,10 @@ export const retryFailed = mutation({
         ? 'scope'
         : undefined;
     const resume = SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
-      ? closingResume(row.output, row.plan as ExecutionPlan, row.skipReason, await ctx.db
+      ? closingResume(row.output, row.plan as ExecutionPlan, row.skipReason && stopDetail(row.skipReason), (await ctx.db
           .query('surfaces').withIndex('by_agent', q => q.eq('agentId', row.agentId)).take(100))
+          .map(toSurfaceRecord)
+          .filter((surface) => verdictFor(surface, Date.now()) === 'connected'))
       : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
@@ -2215,7 +2218,7 @@ async function reviewHeldActions(
       {
         autonomousActions,
         replyTarget: replyTargetFor(row),
-        transitionWithheld: row.plan ? planWithholdsClose(row.plan as ExecutionPlan) : false,
+        transitionWithheld: row.plan ? transitionWithheld(row.plan as ExecutionPlan) : false,
       },
     ),
     autonomousActions,

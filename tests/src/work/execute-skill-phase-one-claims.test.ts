@@ -128,10 +128,14 @@ describe('phase-one messages under the evidence check', (): void => {
     expect(output.actions).toEqual(honest.actions);
   });
 
-  it('fails the run when the repair still asserts what nothing carries', async (): Promise<void> => {
+  it('withholds the DM that still asserts what nothing carries after the one repair, and keeps the reads', async (): Promise<void> => {
     recorded.outputs.push(phaseOne, phaseOne);
-    await expect(run()).rejects.toThrow(/remained invalid after one repair: .*audit comment posted/);
+    const output = await run();
     expect(recorded.users).toHaveLength(2);
+    expect(output.actions).toEqual(auditNotePrerequisites.slice(0, 6));
+    expect(output.withheldActions).toEqual([
+      { action: auditNotePrerequisites[6], reason: expect.stringContaining(REVOPS_5_DM_2_CLAIM) },
+    ]);
   });
 
   it('lets a phase-one DM describe what the response does, and cite the manager', async (): Promise<void> => {

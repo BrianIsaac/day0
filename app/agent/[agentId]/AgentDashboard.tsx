@@ -1686,12 +1686,19 @@ interface RunOutput {
   notes: string;
   actions?: MockAction[];
   applied?: LedgerRow[];
-  initial?: { applied?: LedgerRow[] };
+  initial?: { applied?: LedgerRow[]; withheldActions?: WithheldActionRow[] };
   planStepOutcomes?: PlanStepOutcomeRow[];
   /** The one repair each held write earned before the hold, by action index. */
   argumentRepairs?: ArgumentRepairAttempt[];
   /** The closing set a gate refused before anything in it reached a surface, with the reason. */
   refusedClosing?: RefusedClosingRow;
+  /** Actions an audit withheld after its one repair, never sent, with the reason. */
+  withheldActions?: WithheldActionRow[];
+}
+
+interface WithheldActionRow {
+  action: MockAction;
+  reason: string;
 }
 
 interface RefusedClosingRow {
@@ -1854,6 +1861,38 @@ export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow 
   );
 }
 
+/**
+ * The actions an audit withheld after its one repair, behind a disclosure
+ * under the run. Read-only: none of them reached a surface, the rest of the
+ * response went on, and the row keeps each with the reason it was turned
+ * away so the manager can read what the agent wrote against why.
+ */
+export function WithheldActionsDetails({ withheld }: { withheld: WithheldActionRow[] | undefined }) {
+  if (!withheld || withheld.length === 0) return null;
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+        Withheld by the evidence check · {withheld.length}{' '}
+        {withheld.length === 1 ? 'action' : 'actions'} · never sent
+      </summary>
+      <ul className="mt-1 space-y-1">
+        {withheld.map((row, index) => (
+          <li key={index}>
+            <span className="font-mono text-[10px] text-[var(--color-muted)]">
+              {describeAction(row.action)}
+            </span>
+            <p className="text-[10px] text-[var(--color-warn)] break-words">{row.reason}</p>
+            <ActionPayload action={row.action} />
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-[10px] text-[var(--color-muted)]">
+        The rest of the response went on without these; a retry authors them again from the ledger.
+      </p>
+    </details>
+  );
+}
+
 export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
   if (outcomes.length === 0) return null;
   return (
@@ -1952,12 +1991,17 @@ export function retryRequest(
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
+  output?: { refusedClosing?: unknown } | null;
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
   }
   if (item.skipReason && isStopped(item.skipReason)) {
-    return `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
+    // A stop at the closing gate keeps the landed prerequisites and the
+    // refused set on the row; Retry resumes at the closing phase.
+    return item.output?.refusedClosing
+      ? `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`
+      : `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;
 }
@@ -2742,6 +2786,8 @@ export function WorkItemCard({
       <PlanExecutionLedger outcomes={output?.planStepOutcomes ?? []} />
 
       <RefusedClosingDetails refused={output?.refusedClosing} />
+
+      <WithheldActionsDetails withheld={[...(output?.initial?.withheldActions ?? []), ...(output?.withheldActions ?? [])]} />
 
       {output ? <DraftDetails output={output} /> : null}
 

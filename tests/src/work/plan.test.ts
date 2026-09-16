@@ -51,14 +51,24 @@ const planRecorded = vi.hoisted(() => ({
   users: [] as string[],
   instructions: [] as string[],
   outputs: [] as unknown[],
+  /** The obligations judgement's prompts and scripted replies; unscripted, it fails open. */
+  judgementUsers: [] as string[],
+  judgements: [] as unknown[],
 }));
 
 vi.mock('../../../src/lib/mastra', () => ({
-  makeAgent: (_name: string, instructions: string) => {
+  makeAgent: (name: string, instructions: string) => {
     planRecorded.instructions.push(instructions);
-    return { name: 'day0-plan' };
+    return { name };
   },
-  agentJson: async <T>(args: { user: string }): Promise<T> => {
+  agentJson: async <T>(args: { agent: { name: string }; user: string }): Promise<T> => {
+    if (args.agent.name === 'day0-plan-obligations') {
+      planRecorded.judgementUsers.push(args.user);
+      const judgement = planRecorded.judgements.shift();
+      if (judgement === undefined) throw new Error('obligations judgement unscripted');
+      if (judgement instanceof Error) throw judgement;
+      return judgement as T;
+    }
     planRecorded.users.push(args.user);
     const queued = planRecorded.outputs.shift();
     if (queued instanceof Error) throw queued;

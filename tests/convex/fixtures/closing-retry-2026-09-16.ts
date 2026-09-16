@@ -13,6 +13,14 @@ export const auditRetryPlan: ExecutionPlan = {
     'Add the audit comment to REVOPS-5 in Linear, then move it to Done.',
   ],
   expectedOutputType: 'ticket-update', riskNotes: '', reversibility: 'Reopen the issue.', estimatedMinutes: 2,
+  obligations: {
+    steps: [
+      { kind: 'read', reads: ['looker-pipeline-tile'], writes: [] },
+      { kind: 'read', reads: ['linear'], writes: [] },
+      { kind: 'write', reads: [], writes: ['linear'] },
+    ],
+    transition: 'promised', transitionStep: 3, basis: 'judgement',
+  },
 };
 export const auditPrerequisites = [
   call('looker-pipeline-tile', 'browser_navigate', { url: 'http://looker-tile:8080/' }),

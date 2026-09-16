@@ -82,6 +82,53 @@ export interface AgentContext {
   bossLabel: string;
 }
 
+/** What a plan step does to the surfaces it names: the character of the step, not its wording. */
+export type PlanStepKind = 'read' | 'write' | 'report' | 'conditional-write';
+
+/**
+ * What a plan says about the originating ticket's state: an unconditional
+ * close, a close under a condition the evidence settles, a close the manager
+ * decides, a state the plan leaves alone in its own words, or nothing.
+ */
+export type PlanTransition =
+  | 'promised'
+  | 'conditional-on-evidence'
+  | 'conditional-on-manager'
+  | 'withheld'
+  | 'none';
+
+/** What one approved plan step obliges the run to do, as declared structure beside the prose. */
+export interface PlanStepObligation {
+  /** Connected surface slugs the step reads; an absent surface never appears here. */
+  reads: string[];
+  /** Connected surface slugs the step writes. */
+  writes: string[];
+  kind: PlanStepKind;
+  /** One line from the judgement, for the card and the record. */
+  reason?: string;
+}
+
+/**
+ * The declared obligations of an approved plan: one row per step and the
+ * plan's word on the ticket state. The gates read these, never the prose.
+ * Absent on a plan drafted in mock mode, before this field existed, or when
+ * neither the planner nor the judgement supplied them; a gate then skips the
+ * obligations it cannot see.
+ */
+export interface PlanObligations {
+  /** One row per plan step, in step order. */
+  steps: PlanStepObligation[];
+  transition: PlanTransition;
+  /** The one-based step that carries the transition, or null when none does. */
+  transitionStep: number | null;
+  /** Who settled the fields: the judgement, or the planner when the judgement could not be reached. */
+  basis: 'judgement' | 'planner';
+  /** Why the judgement was not reached, when the planner's fields stand unchecked. */
+  failedOpen?: string;
+  /** The judgement's one-line reason for the transition. */
+  reason?: string;
+}
+
 export interface ExecutionPlan {
   summary: string;
   steps: string[];
@@ -95,6 +142,8 @@ export interface ExecutionPlan {
    * executor reports them, never gates on them.
    */
   advisorySteps?: number[];
+  /** The declared obligations the gates verify against the ledger; see `PlanObligations`. */
+  obligations?: PlanObligations;
 }
 
 /** The four verbs that write to the per-agent mock environment. */
@@ -216,9 +265,21 @@ export interface LandedWrite {
   applied: AppliedAction;
 }
 
+/**
+ * An action an audit withheld after its one repair: never sent, kept on the
+ * row with the reason so the manager can read what was written against why
+ * it was turned away, while the rest of the response went on.
+ */
+export interface WithheldAction {
+  action: MockAction;
+  reason: string;
+}
+
 export interface ExecutionOutput {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;
+  /** Actions the evidence invariant withheld after its one repair; see `WithheldAction`. */
+  withheldActions?: WithheldAction[];
   /** Writes earlier runs of this item landed; server-derived on a retry, absent on a first run. */
   landedWrites?: LandedWrite[];
   draft: string;
@@ -295,6 +356,8 @@ export interface DependentExecutionOutput {
   draft: string;
   notes: string;
   actions: MockAction[];
+  /** Actions the evidence invariant withheld after its one repair; see `WithheldAction`. */
+  withheldActions?: WithheldAction[];
   /** The one repair each held write earned before the hold; absent when none was needed. */
   argumentRepairs?: ArgumentRepairAttempt[];
   /** Required by the current provider schema; optional only for persisted pre-contract rows. */

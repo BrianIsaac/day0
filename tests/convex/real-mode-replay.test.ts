@@ -77,6 +77,18 @@ const cleanPlan = {
   riskNotes: 'REVOPS-7 carries no assignee; the manager may want to assign it before or after.',
 };
 
+/** The obligations judgement for the clean plan: the tile is written then read back, Linear and Slack are only written, the Done is promised. */
+const cleanPlanObligations = {
+  steps: [
+    { step: 1, kind: 'write', reads: [], writes: ['looker-pipeline-tile'], reason: 'the sign-in, the fill and the save' },
+    { step: 2, kind: 'read', reads: ['looker-pipeline-tile'], writes: [], reason: 'the snapshot reads the figure and the audit line back' },
+    { step: 3, kind: 'write', reads: [], writes: ['linear', 'slack'], reason: 'the comment, the Done and the DM report the read-back' },
+  ],
+  transition: 'promised',
+  transitionStep: 3,
+  reason: 'step 3 moves REVOPS-7 to Done',
+};
+
 const browser = (tool: string, toolArgsJson: string) => ({
   tool: 'mcp.call' as const,
   args: { surface: 'looker-pipeline-tile', tool, toolArgsJson },
@@ -180,8 +192,12 @@ vi.mock('../../src/lib/mastra', () => ({
     const reply = (): unknown => {
       if (name === 'day0-plan') {
         recorded.planCalls += 1;
-        return (recorded.planCalls === 1 ? gatedPlan : cleanPlan) as T;
+        return {
+          ...(recorded.planCalls === 1 ? gatedPlan : cleanPlan),
+          stepObligations: null, transition: null, transitionStep: null,
+        } as T;
       }
+      if (name === 'day0-plan-obligations') return cleanPlanObligations as T;
       if (recorded.repairClosing && name.endsWith('-argument-repair'))
         return { toolArgsJson: '{"issueId":"REVOPS-7","body":"Checked and finished."}' } as T;
       if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
@@ -588,8 +604,15 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     await new Promise((resolve) => setTimeout(resolve, 0));
     await t.finishInProgressScheduledFunctions();
-    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
-    expect((await readItem(t, workItemId)).skipReason).toContain('prewrote a closing action');
+    // The comment the key repair revealed never reaches Linear: the audit
+    // removes it as prewritten and the run goes on to its closing phase.
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => (call.args as { body?: string }).body)).not.toContain('Checked and finished.');
+    const row = await readItem(t, workItemId);
+    expect(row.skipReason ?? '').not.toContain('repaired action set failed the audit');
+    const events = await t.run(ctx => ctx.db.query('events').collect());
+    expect(events.filter(event => event.type === 'audit.corrected')).toMatchObject([
+      { payload: { workItemId, removedIndices: [1], reason: 'prewritten closing actions' } },
+    ]);
   }, 30_000);
 
   it('plans without the ownership gate, holds the tile batch in phase one, repairs the read once, and closes from the read-back', async (): Promise<void> => {
@@ -774,6 +797,6 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       recorded.model.map((call) =>
         call.agent.replace(/^day0-skill-.*-(initial|dependent|argument-repair)$/, '$1'),
       ),
-    ).toEqual(['day0-plan', 'day0-plan', 'initial', 'argument-repair', 'dependent']);
+    ).toEqual(['day0-plan', 'day0-plan', 'day0-plan-obligations', 'initial', 'argument-repair', 'dependent']);
   }, 30_000);
 });
