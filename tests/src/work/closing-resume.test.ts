@@ -81,6 +81,36 @@ describe('resuming after a closing gate refusal', () => {
     });
   });
 
+  it('resumes when a promised-result step names no surface, as the 16 September REVOPS-7 plan does', () => {
+    // The run's own words: step 2 promises the read-back without naming the tile surface.
+    const runPlan: ExecutionPlan = {
+      ...plan,
+      steps: [
+        'On the looker-pipeline-tile surface, run the documented browser sequence: navigate to http://looker-tile:8080/, fill Username (revops) and Password ({{secret}}), click Sign in, fill Pipeline coverage with 74% exactly (per the runbook, do not compute a figure), click Save.',
+        "In the same browser session, take a browser_snapshot and read back the audit line 'Last updated by <user> at <time> UTC' plus the visible figure; if the page redirects, login fails, or the audit line is absent, record the observed failure and stop.",
+        'Add an audit comment on REVOPS-7 via linear save_comment quoting the visible figure and the exact audit line as evidence (comment precedes any status change).',
+        'Move REVOPS-7 to Done via linear save_issue only if the audit line confirmed the change landed.',
+      ],
+    };
+    const tileSurfaces = [...surfaces, { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' }];
+    const tile = (tool: string) => ({ tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool, toolArgsJson: '{}' } });
+    const prerequisites = [tile('browser_navigate'), tile('browser_fill_form'), tile('browser_click'), tile('browser_snapshot')];
+    expect(closingResume({
+      ...gateRefusal, actions: prerequisites, applied: prerequisites.map(() => landed),
+    }, runPlan, refused.reason, tileSurfaces)).toMatchObject({ resumedClosing: true, phase: 'dependent-authoring' });
+    // The flattened-ledger path reads the same rule.
+    expect(closingResume({
+      draft: '', notes: '', prerequisiteCount: 4,
+      actions: [...prerequisites, action('linear', 'save_comment')],
+      applied: [...prerequisites.map(() => landed), { tool: 'mcp.call', ok: false, reason: 'Failed to connect to MCP server linear' }],
+      planStepOutcomes: [1, 2].map(step => ({ step, status: 'satisfied', evidence: 'ledger row 4: visible figure 74%' })),
+    }, runPlan, 'Failed to connect to MCP server linear', tileSurfaces)).toMatchObject({ resumedClosing: true });
+    // A named surface that was not read still sends the retry back through phase one.
+    expect(closingResume({
+      ...gateRefusal, actions: prerequisites.slice(0, 3), applied: prerequisites.slice(0, 3).map(() => landed),
+    }, { ...runPlan, steps: [runPlan.steps[0]!, 'Read back the figure from the Looker pipeline tile.', ...runPlan.steps.slice(2)] }, refused.reason, tileSurfaces)).toBeUndefined();
+  });
+
   it('goes back through phase one when a prerequisite did not land or a promised surface was not read', () => {
     expect(closingResume({ ...gateRefusal, applied: [landed, { tool: 'mcp.call', ok: false }] }, plan, refused.reason, surfaces)).toBeUndefined();
     expect(closingResume({ ...gateRefusal, applied: [landed, { ...landed, held: true }] }, plan, refused.reason, surfaces)).toBeUndefined();

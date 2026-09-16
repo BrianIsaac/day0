@@ -25,7 +25,13 @@ function isRead(action: ExecutionOutput['actions'][number]): boolean {
   return parsed.ok && actionIntent(parsed.action) === 'read';
 }
 
-/** Whether every surface a promised-result step names was read in the prerequisites. */
+/**
+ * Whether every surface a promised-result step names was read in the
+ * prerequisites. A step that names no surface ("take a browser_snapshot and
+ * read back the audit line", in the same session as the step before it)
+ * has nothing here to check; the landed-read rule beside this one is what
+ * covers it.
+ */
 function promisedSurfacesRead(actions: readonly ExecutionOutput['actions'][number][], plan: ExecutionPlan, surfaces: readonly Surface[]): boolean {
   const reads = new Set(actions.flatMap(action => {
     const parsed = parseSurfaceAction(action);
@@ -35,7 +41,7 @@ function promisedSurfacesRead(actions: readonly ExecutionOutput['actions'][numbe
     const named = surfaces.filter(surface => [surface.slug, surface.displayName].some(name =>
       step.toLowerCase().includes(name.toLowerCase()),
     ));
-    if (named.length === 0 || named.some(surface => !reads.has(surface.slug))) return false;
+    if (named.some(surface => !reads.has(surface.slug))) return false;
   }
   return true;
 }
