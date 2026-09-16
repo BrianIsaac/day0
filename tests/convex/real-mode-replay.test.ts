@@ -77,6 +77,18 @@ const cleanPlan = {
   riskNotes: 'REVOPS-7 carries no assignee; the manager may want to assign it before or after.',
 };
 
+/** The obligations judgement for the clean plan: the tile is written then read back, Linear and Slack are only written, the Done is promised. */
+const cleanPlanObligations = {
+  steps: [
+    { step: 1, kind: 'write', reads: [], writes: ['looker-pipeline-tile'], reason: 'the sign-in, the fill and the save' },
+    { step: 2, kind: 'read', reads: ['looker-pipeline-tile'], writes: [], reason: 'the snapshot reads the figure and the audit line back' },
+    { step: 3, kind: 'write', reads: [], writes: ['linear', 'slack'], reason: 'the comment, the Done and the DM report the read-back' },
+  ],
+  transition: 'promised',
+  transitionStep: 3,
+  reason: 'step 3 moves REVOPS-7 to Done',
+};
+
 const browser = (tool: string, toolArgsJson: string) => ({
   tool: 'mcp.call' as const,
   args: { surface: 'looker-pipeline-tile', tool, toolArgsJson },
@@ -180,8 +192,12 @@ vi.mock('../../src/lib/mastra', () => ({
     const reply = (): unknown => {
       if (name === 'day0-plan') {
         recorded.planCalls += 1;
-        return (recorded.planCalls === 1 ? gatedPlan : cleanPlan) as T;
+        return {
+          ...(recorded.planCalls === 1 ? gatedPlan : cleanPlan),
+          stepObligations: null, transition: null, transitionStep: null,
+        } as T;
       }
+      if (name === 'day0-plan-obligations') return cleanPlanObligations as T;
       if (recorded.repairClosing && name.endsWith('-argument-repair'))
         return { toolArgsJson: '{"issueId":"REVOPS-7","body":"Checked and finished."}' } as T;
       if (name.endsWith('-argument-repair')) return { toolArgsJson: '{"id":"REVOPS-7"}' } as T;
@@ -774,6 +790,6 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       recorded.model.map((call) =>
         call.agent.replace(/^day0-skill-.*-(initial|dependent|argument-repair)$/, '$1'),
       ),
-    ).toEqual(['day0-plan', 'day0-plan', 'initial', 'argument-repair', 'dependent']);
+    ).toEqual(['day0-plan', 'day0-plan', 'day0-plan-obligations', 'initial', 'argument-repair', 'dependent']);
   }, 30_000);
 });

@@ -420,6 +420,13 @@ export const draftPlan = action({
       surfaceMode: SURFACE_MODE,
       ...grounding,
       ...(record ? { record } : {}),
+      onObligationEvent: async (event) => {
+        await ctx.runMutation(internal.events.log, {
+          agentId,
+          type: event.type,
+          payload: { workItemId: args.workItemId, ...event.payload },
+        });
+      },
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
