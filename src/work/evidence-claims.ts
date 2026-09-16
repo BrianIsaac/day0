@@ -45,6 +45,15 @@ const TRAILER = /\s*--\s[^\n]*\(Day0\)[^\n]*$/gm;
 const SETTLED_STATE =
   /\b(?:(?:is|are|was|were|has been|have been|now|all|both|now stands?)\s+(?:now\s+|fully\s+|all\s+)?(?:complete|completed|done|finished|verified|confirmed|reconciled|resolved|closed|approved|correct|accurate|up to date|in place|current|signed off|checked|refreshed|updated|posted|sent|applied|landed|moved|marked)|(?:^|\b(?:i|we|it|they|this|that|which|and|so|then)\s+)(?:completed|finished|verified|confirmed|reconciled|resolved|closed|refreshed|updated|posted|sent|applied|landed|moved|marked|passed|succeeded|returned|matches|match|ties out|tied out|agrees?)\b|\b(?:comments?|notes?|replies|reply|messages?|dms?|updates?|tickets?|issues?|tiles?|figures?|checks?)\s+(?:posted|sent|saved|added|recorded|refreshed|updated|moved|closed|completed|verified|confirmed|done|landed|applied)\b|\b(?:read back|returned|shows?|showed)\b)/i;
 
+/**
+ * A clause that sets a condition ("only when all three checks are
+ * confirmed", "if the figure is confirmed") states what must hold, not
+ * what does, so a settled form inside it asserts nothing. A past form
+ * ("once the tile was refreshed") presupposes the event and is left in.
+ */
+const CONDITIONAL_CLAUSE =
+  /\b(?:if|unless|when|whenever|once|until|as soon as|provided(?: that)?|(?:so|as) long as)\b(?:(?!\b(?:was|were|had been)\b)[^,;.?!])*/gi;
+
 const HEDGED =
   /\b(?:not|no|never|cannot|can't|could not|couldn't|unable|unconfirmed|unverified|pending|awaiting|outstanding|still open|to be confirmed|please confirm|needs? (?:your )?confirmation|did not|didn't|has not|hasn't|have not|haven't|was not|wasn't|were not|weren't|is not|isn't|are not|aren't)\b/i;
 
@@ -158,8 +167,13 @@ function supported(sentence: string, prepared: PreparedEvidence): boolean {
 export function unsupportedClaims(text: string, evidence: ClaimEvidence): string[] {
   const prepared = prepare(evidence);
   return sentencesOf(text).filter(
-    (sentence: string): boolean => SETTLED_STATE.test(sentence) && !supported(sentence, prepared),
+    (sentence: string): boolean => claims(sentence) && !supported(sentence, prepared),
   );
+}
+
+/** Whether a sentence asserts a settled state outside any condition it sets. */
+function claims(sentence: string): boolean {
+  return SETTLED_STATE.test(sentence.replace(CONDITIONAL_CLAUSE, ' '));
 }
 
 function messageFields(record: Record<string, unknown>): string[] {
