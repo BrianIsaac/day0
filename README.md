@@ -22,9 +22,28 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
 - Watch the work queue advance and the Skills panel show the capabilities it proposes, verifies and registers.
 
+## Disclosures
+
+Three things to know before the rest of this file. Each is repeated where it applies; this is the one place they are stated together.
+
+**What is simulated and what is real.** Every route in this README except real mode runs against a seeded mock office: the documents, spreadsheet, channels, tickets and social feed are fixtures shipped in this repository, seeded per agent, and nothing the agent does leaves your machine. In that setting the model calls, the sandbox, the state machine and the approval gates are still real. Real mode, which is local-only by construction, reads the documentation you link and acts on your own systems. The run this README documents, and the run the demo video shows, both ran in real mode against the operator's own demonstration Linear and Slack workspaces, an operator-owned Notion workspace and the synthetic Looker-style tile this repository ships, all holding synthetic content; no production, customer, employee or personal data was involved, and none is needed to reproduce anything here. The [controlled comparison](evaluation/README.md) ran in mock mode, on the seeded office. Day0 has no users and no production deployment, and the supervision figures in this file are counts from single runs, not rates. The full statement, including credential handling and retention, is [`docs/submission/compliance.md`](docs/submission/compliance.md).
+
+**Third-party dependencies.** Day0's own code is the onboarding pipeline, the charter and the work loop, the skill lifecycle and its static gate, the surface layer and the exact-action gate, the redaction layer, the evaluation harness and the dashboard. It depends on:
+
+- **A model**, reached through any OpenAI-compatible endpoint. The recorded run and two of the three frozen beds used OpenAI's hosted, closed `gpt-5.6-terra` and `gpt-5.6-sol`; the local bed used `qwen3:8b` through the bundled Ollama service, with no account; a further bed used `GLM 5.3 Flash` through Featherless. The hosted demo runs whichever model its deployment's `OPENAI_MODEL` names.
+- **Convex** for the backend: the open-source self-hosted binary on the local routes, the cloud service on the hosted route.
+- **Clerk** for sign-in on the hosted route. The local routes replace it with the no-auth mode and one fixed local user.
+- **A span model for redaction**, `urchade/gliner_multi_pii-v1` (Apache-2.0), run locally in the `redactor` component in real mode. Its weights are downloaded on first start and pinned by digest; inference makes no external call.
+- **Optional services, absent without their keys:** ElevenLabs for the voice mode, Exa for good-habits research, Daytona as the hosted alternative to the bundled verification sandbox. Without them voice is greyed out, the research step is skipped and the local sandbox verifies skills.
+- **Your own systems, in real mode.** The recorded run used Linear over its MCP endpoint, Slack over its documented API and Notion through its MCP server, each as the operator's own test workspace.
+
+The container images for the backend, the model service, the sandbox, the redactor and the components are pinned by digest in `docker-compose.yml`; the package versions are in `package.json` and the [Stack](#stack) table. Provider-side processing and retention of anything sent to a hosted model or workspace follow your own account terms with that provider.
+
+**AI-assisted development.** The code, tests and documentation in this repository were written with AI coding agents, under human direction and review, and the commit history is the record of that work. The design, the evaluation method and every claim in this file were decided and checked by the maintainers.
+
 ## Contents
 
-**Start here** · [Live demo](#live-demo) · [Quick start](#quick-start) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
+**Start here** · [Live demo](#live-demo) · [Disclosures](#disclosures) · [Quick start](#quick-start) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev — three ways to run it](#local-dev)
 
 **Run it** · [No accounts](#run-it-with-no-accounts) · [With an OpenAI key](#run-it-with-an-openai-key) · [On your own systems](#run-it-in-real-mode) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
 
@@ -32,7 +51,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 **How it works** · [Runtime flow](#runtime-flow) · [Stack](#stack) · [Routes](#routes) · [Convex backend](#convex-backend-convex) · [Schema](#schema-convexschemats) · [Domain logic](#domain-logic-src)
 
-**Project** · [Controlled evaluation](evaluation/README.md) · [Evaluation quick start](#evaluation-quick-start) · [Data and compliance](docs/submission/compliance.md) · [Credits](#credits) · [Licence](#licence)
+**Project** · [Controlled evaluation](evaluation/README.md) · [Reproduce the evidence](#reproduce-the-evidence) · [Evaluation quick start](#evaluation-quick-start) · [API and interface documentation](#api-and-interface-documentation) · [Data and compliance](docs/submission/compliance.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Credits](#credits) · [Licence](#licence)
 
 ## Quick start
 
@@ -893,6 +912,32 @@ The schema contains 26 tables: 21 carry per-agent or agent-owned runtime state, 
 | `src/work/autonomy.ts`, `src/work/idempotency.ts` | Supervised/autonomous policy labels and stable provider-action idempotency keys |
 | `src/work/manager-channel.ts`, `src/work/reconciliation.ts`, `src/work/reply-target.ts` | Manager decision parsing/requests, interrupted-provider reconciliation and exact chat-thread targeting |
 
+## API and interface documentation
+
+The contracts a third party calls, reuses or extends are documented in [`docs/running/interfaces.md`](docs/running/interfaces.md), each with the file that defines it:
+
+- **The Convex function surface.** Every backend operation is a Convex function under `convex/`; `npx convex function-spec` prints the argument and return schema of the deployed set, and the page lists the entry points a reader wants first and how to call them from the CLI in no-auth mode.
+- **The skill contract.** The `SKILL.md` shape an authored skill must have: its name by surface class and operation, its sections, the `## Inputs` placeholder grammar the executor binds, the static gate that refuses a body carrying the first item's values, and the smoke-test rule the sandbox enforces.
+- **The surface record and the action shapes.** The `surfaces` row (verdict, path ladder, approvals, credential reference, tool allowlist), the mock verbs, the real verbs `mcp.call` and `http.request`, the allowlisted `browser_*` operations, and the idempotency key.
+- **The exact-action policy, the adapter interface and the ledger row.** Dispositions, scopes and authorities; what an adapter implements; what an applied action records and what the export returns.
+
+The optional components, what each is for and what it never sees, are in [`docs/running/components.md`](docs/running/components.md). The environment contract is `.env.example`, and [Environment](#environment) explains each variable.
+
+## Reproduce the evidence
+
+Every number the submission quotes comes from a file in this repository or from a run of the product, and each has a command that regenerates it. The method and its limits are in [`evaluation/README.md`](evaluation/README.md); the commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below, and are not repeated here.
+
+| Quoted | Where it comes from | Regenerate with |
+|---|---|---|
+| The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` | `pnpm eval:semifinal` with the bed's model in `.env.local`; `pnpm eval:semifinal -- --regrade <path>` re-scores a directory with no model call |
+| The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
+| The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
+| The recorded run's supervision figures: charter approved 4 min 26 s after deployment, 7 approved and 1 rejected, 29 s median decision latency, 1 action blocked after revocation, audit trail 32 of 32 | The Supervision card of the 3 September 2026 real-mode run the demo video is cut from, as `metrics:forAgent` computes it from that run's event ledger. That run's ledger export is part of the submission materials rather than this repository | Run [the real-mode route](#run-it-in-real-mode); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#run-it-in-real-mode) |
+| This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), a second run of the same route on the same commit and model, paced for screenshots | The same |
+| The fourth local bed, `qwen3:14b`, where the ordinary arm led task pass | `evaluation/results/2026-09-02T09-40-48Z-v2-qwen14b/` | `pnpm eval:semifinal` with `OPENAI_MODEL=qwen3:14b` |
+
+The two real-mode runs are single observations with the same code and model and different human pacing; neither is a distribution, and the submission names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
+
 ## Evaluation quick start
 
 The controlled comparison runs the same model, the same non-zero temperature, the same 15 fixed tasks and the same seeded mock office through two arms - `day0`, which has been onboarded, and `baseline`, an ordinary agent - three times each, for 90 task outcomes. Every metric is graded by reading persisted state programmatically; there is no LLM judge. The method, the frozen evidence and the limits are in [`evaluation/README.md`](evaluation/README.md).
@@ -974,9 +1019,28 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
 - 查看工作队列推进，并在 Skills 面板中看到 Agent 提出、验证和注册能力。
 
+### 披露
+
+以下三点请在阅读其余内容之前了解。它们在相关章节各自出现，这里是集中说明的唯一位置。
+
+**哪些是模拟的，哪些是真实的。** 除 real mode 之外，本文件中的每条路径都运行在预置的 mock office 上：文档、表格、频道、工单和社交信息流都是随本仓库提供、按 Agent 单独写入的 fixture，Agent 的任何操作都不会离开你的机器。在这一设定下，模型调用、沙箱、状态机和审批门仍然是真实运行的。real mode 从构造上就只限本机，它读取你链接的文档并操作你自己的系统。本文件记录的那次运行，以及演示视频展示的那次运行，都在 real mode 下进行，连接的是操作者本人的 Linear 与 Slack 演示 workspace、操作者拥有的 Notion workspace，以及本仓库自带的合成 Looker 式 tile，其中全部为合成内容；过程中不涉及任何生产、客户、员工或个人数据，复现本文件的任何部分也不需要这些数据。[受控比较](evaluation/README.md)在 mock mode 下、于预置 office 上运行。Day0 目前没有用户，也没有生产部署；本文件中的监督数字是单次运行的计数，不是比率。完整声明（含凭据处理与保留）见 [`docs/submission/compliance.md`](docs/submission/compliance.md)。
+
+**第三方依赖。** Day0 自己的代码包括入职流程、章程与工作循环、技能生命周期及其静态门、surface 层与 exact-action gate、脱敏层、评测 harness 和 dashboard。它依赖：
+
+- **一个模型**，通过任意 OpenAI-compatible endpoint 接入。记录的运行和三个冻结评测环境中的两个使用 OpenAI 托管的闭源模型 `gpt-5.6-terra` 与 `gpt-5.6-sol`；本地评测环境使用随附 Ollama 服务运行的 `qwen3:8b`，不需要任何账户；另一个评测环境通过 Featherless 使用 `GLM 5.3 Flash`。托管演示运行其 deployment 的 `OPENAI_MODEL` 所指定的模型。
+- **Convex** 作为后端：本地路径使用开源的自托管二进制，托管路径使用云服务。
+- **Clerk** 用于托管路径的登录。本地路径以无认证模式和一个固定的本地用户替代它。
+- **用于脱敏的 span 模型** `urchade/gliner_multi_pii-v1`（Apache-2.0），在 real mode 下于 `redactor` 组件中本地运行。权重在首次启动时下载并按 digest 固定；推理不发出任何外部调用。
+- **可选服务，缺少 key 时即不启用：** ElevenLabs（语音模式）、Exa（good-habits 检索）、Daytona（随附验证沙箱的托管替代）。缺少它们时，语音选项置灰、检索步骤跳过、技能由本地沙箱验证。
+- **real mode 下你自己的系统。** 记录的运行通过 MCP endpoint 使用 Linear，通过文档化 API 使用 Slack，通过其 MCP server 使用 Notion，均为操作者本人的测试 workspace。
+
+后端、模型服务、沙箱、redactor 与各组件的容器镜像在 `docker-compose.yml` 中按 digest 固定；软件包版本见 `package.json` 与[技术栈](#stack)表。发送给托管模型或 workspace 的内容，其服务商侧处理与保留遵循你与该服务商的账户条款。
+
+**AI 辅助开发。** 本仓库中的代码、测试和文档是在人工指导与审查下、借助 AI 编码代理编写的，提交历史即为这项工作的记录。设计、评测方法以及本文件中的每一项主张均由维护者决定并核对。
+
 ### 目录
 
-**从这里开始** · [在线演示](#在线演示) · [快速开始](#快速开始) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
+**从这里开始** · [在线演示](#在线演示) · [披露](#披露) · [快速开始](#快速开始) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发——三种运行方式](#local-dev)
 
 **运行** · [无需任何账户](#无需任何账户运行) · [使用 OpenAI key](#使用-openai-key-运行) · [在真实系统上运行](#在真实模式下运行) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
 
@@ -984,7 +1048,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **工作原理** · [运行流程](#runtime-flow) · [技术栈](#stack) · [路由](#routes) · [Convex 后端](#convex-backend-convex) · [数据结构](#schema-convexschemats) · [领域逻辑](#domain-logic-src)
 
-**项目** · [受控评测](evaluation/README.md) · [评测快速开始](#评测快速开始) · [数据来源与合规](docs/submission/compliance.md) · [致谢](#credits) · [许可证](#licence)
+**项目** · [受控评测](evaluation/README.md) · [复现证据](#复现证据) · [评测快速开始](#评测快速开始) · [接口与 API 文档](#接口与-api-文档) · [数据来源与合规](docs/submission/compliance.md) · [贡献指南](CONTRIBUTING.md) · [安全](SECURITY.md) · [变更记录](CHANGELOG.md) · [致谢](#credits) · [许可证](#licence)
 
 ### 快速开始
 
@@ -1465,6 +1529,32 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 ```
 
 `pnpm convex:down` 退出时会删除 compose network，仍有容器连接时无法完成，因此要写上启动时使用的相同 profile。数据卷在这两条命令后仍然保留，因此可以随时停止并回到同一个 Agent；`pnpm convex:down -- -v` 才会删除数据卷。
+
+### 接口与 API 文档
+
+第三方会调用、复用或扩展的契约记录在 [`docs/running/interfaces.md`](docs/running/interfaces.md)，每一项都注明定义它的文件：
+
+- **Convex 函数接口。** 每个后端操作都是 `convex/` 下的一个 Convex 函数；`npx convex function-spec` 输出已部署函数的参数与返回值 schema，该页列出读者最先需要的入口，以及在无认证模式下如何从 CLI 调用它们。
+- **技能契约。** Agent 编写的技能必须具备的 `SKILL.md` 形状：按 surface class 与 operation 命名、各个章节、执行器绑定的 `## Inputs` 占位符语法、拒绝携带首个事项具体值的静态门，以及沙箱执行的冒烟测试规则。
+- **surface 记录与 action 形状。** `surfaces` 行（verdict、path ladder、审批、凭据引用、工具 allowlist）、mock 动词、真实动词 `mcp.call` 与 `http.request`、allowlist 中的 `browser_*` 操作，以及幂等键。
+- **exact-action policy、adapter 接口与 ledger 行。** disposition、scope 与 authority；adapter 需要实现什么；一次已应用的 action 记录什么，导出返回什么。
+
+各可选组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。环境变量契约是 `.env.example`，[环境变量](#environment)一节解释每个变量。
+
+### 复现证据
+
+提交材料引用的每个数字都来自本仓库中的某个文件或产品的一次运行，并且都有对应的再生成命令。方法与其限制见 [`evaluation/README.md`](evaluation/README.md)；命令及其准备步骤见下文[评测快速开始](#评测快速开始)，此处不再重复。
+
+| 引用的数字 | 来源 | 再生成方式 |
+|---|---|---|
+| 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS` | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:semifinal`；`pnpm eval:semifinal -- --regrade <path>` 在不调用模型的情况下重新评分 |
+| 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
+| exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
+| 录制运行的监督数字：部署后 4 分 26 秒章程获批、批准 7 次与拒绝 1 次、决策中位 29 秒、撤权后阻断 1 次、审计轨迹 32/32 | 演示视频所剪辑的 2026 年 9 月 3 日 real-mode 运行的 Supervision 卡片，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的 ledger 导出属于提交材料，不在本仓库中 | 运行[真实模式路径](#在真实模式下运行)；读取卡片，或按[读取 ledger](#在真实模式下运行)中的 `exportActions:exportForAgent` 命令导出 ledger |
+| 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一 commit、同一模型下同一路径的第二次运行，节奏为截图而放慢 | 同上 |
+| 第四个本地评测环境 `qwen3:14b`，其中普通 arm 在 task pass 上领先 | `evaluation/results/2026-09-02T09-40-48Z-v2-qwen14b/` | 设置 `OPENAI_MODEL=qwen3:14b` 后运行 `pnpm eval:semifinal` |
+
+两次 real-mode 运行是同一代码与模型、不同人工节奏下的单次观察；两者都不是分布，提交材料会说明每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
 
 ### 评测快速开始
 
