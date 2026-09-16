@@ -262,6 +262,160 @@ function payloadWithoutMessages(action: MockAction): string {
 }
 
 /**
+ * A numbered check in an audit note: its number, its head (the check as the
+ * checklist names it) and the evidence written after it.
+ */
+interface EnumeratedCheck {
+  number: number;
+  head: string;
+  evidence: string;
+}
+
+const CHECK_ITEM = /^\s*(\d+)[.)]\s+(\S.*)$/;
+const NOT_CONFIRMED_LINE = /^\s*(?:not confirmed|unconfirmed)\b\s*(?:[:\-\u2013\u2014]|$)/i;
+/** The head of a check ends at its first full stop or colon; what follows is its evidence. */
+const HEAD_END = /[.:]\s+|[.:]$/;
+
+/** Evidence that says the check could not be read, is not confirmed, or is still to come. */
+const UNMET_PHRASE =
+  /\b(?:not confirmed|unconfirmed|unverified|unresolved|(?:could not|cannot|can't|couldn't|unable to)(?: be)? (?:read|confirm(?:ed)?|verif(?:y|ied)|reach(?:ed)?)|not (?:read|readable|reachable|available)|no evidence|unreadable|unavailable|did not (?:load|respond|return)|pending|outstanding|awaiting|to be confirmed|tbc|tbd|not yet)\b/i;
+/** Evidence that is no evidence: a dash, a question mark, an ellipsis, nothing else. */
+const NO_EVIDENCE = /^[\s\u2014\u2013\-?\u2026.]*$/;
+
+const STATE_WORDS =
+  'done|closed|completed|complete|resolved|cancelled|canceled|backlog|todo|to do|triage|open|in progress|in review|blocked|duplicate';
+/** The state a check requires, named in its head: "Close tickets at Done". */
+const REQUIRED_STATE = new RegExp(`\\b(?:at|to|in|is|are|as|reach(?:es|ed)?|=)\\s+[\`"']?(${STATE_WORDS})\\b`, 'i');
+/**
+ * A head that asks for a close without naming the state: "Close tickets",
+ * "Resolve the sibling issues", "Tickets closed". The checklist may name
+ * the state ("at Done") where the note's head does not.
+ */
+const CLOSE_HEAD =
+  /^(?:close|complete|resolve)\s+[^.:]{0,30}?\b(?:tickets?|issues?|items?|[a-z]+-\d+)\b|\b(?:tickets?|issues?|items?)\s+(?:closed|done|completed|resolved)\b/i;
+/** The states a close ends in; anything else the evidence reports is an open state. */
+const CLOSED_STATES = new Set(['done', 'closed', 'completed', 'complete', 'resolved', 'cancelled', 'canceled', 'duplicate']);
+/** A state the evidence reports for something: "REVOPS-6 (...) \u2014 Backlog", "(Todo)", "is at Backlog". */
+const REPORTED_STATE = new RegExp(`(?:[\\u2014\\u2013\\-:(]|\\b(?:at|in|is|are|state))\\s*[\`"']?(${STATE_WORDS})\\b`, 'gi');
+
+const CHECKS_NAMED = /\bchecks?\s+#?\d+(?:\s*(?:,|and|&|\/|or)\s*(?:checks?\s+)?#?\d+)*/gi;
+
+/**
+ * The numbered checks a message lists and the not-confirmed line that
+ * closes them, when the message has that shape: at least two numbered
+ * lines, each with a head and evidence, and after the last of them a line
+ * opening "Not confirmed". Anything else is free prose and is not judged.
+ */
+function enumeratedChecks(text: string): { checks: EnumeratedCheck[]; closing: string } | undefined {
+  const lines = text.replace(TRAILER, '').split('\n');
+  const checks: EnumeratedCheck[] = [];
+  let lastItem = -1;
+  lines.forEach((line, index): void => {
+    const match = line.match(CHECK_ITEM);
+    if (!match) return;
+    const number = Number(match[1]);
+    if (number !== checks.length + 1) return;
+    const rest = match[2]!.trim();
+    const headEnd = rest.search(HEAD_END);
+    const head = headEnd >= 0 ? rest.slice(0, headEnd) : rest;
+    const evidence = headEnd >= 0 ? rest.slice(headEnd).replace(/^[.:]\s*/, '') : '';
+    if (!evidence.trim()) return;
+    checks.push({ number, head, evidence });
+    lastItem = index;
+  });
+  if (checks.length < 2 || lastItem < 0) return undefined;
+  const closing = lines.slice(lastItem + 1).find((line) => NOT_CONFIRMED_LINE.test(line));
+  return closing ? { checks, closing } : undefined;
+}
+
+/** Why a check's own evidence reads as unmet, or undefined when it reads as met. */
+function unmetReason(check: EnumeratedCheck): string | undefined {
+  if (NO_EVIDENCE.test(check.evidence)) return 'gives no evidence';
+  const phrase = check.evidence.match(UNMET_PHRASE);
+  if (phrase) return `says "${phrase[0]}"`;
+  const required = check.head.match(REQUIRED_STATE)?.[1];
+  const reportedStates = [...check.evidence.matchAll(REPORTED_STATE)].map((match) => match[1]!);
+  if (required) {
+    const reported = reportedStates.filter((state) => state.toLowerCase() !== required.toLowerCase());
+    if (reported.length === 0) return undefined;
+    return `reports ${[...new Set(reported)].join(' and ')} where the check requires ${required}`;
+  }
+  if (!CLOSE_HEAD.test(check.head)) return undefined;
+  const open = reportedStates.filter((state) => !CLOSED_STATES.has(state.toLowerCase()));
+  if (open.length === 0) return undefined;
+  return `reports ${[...new Set(open)].join(' and ')} where the check asks for a close`;
+}
+
+/** Words that name nothing in particular in a closing line or a check. */
+const COMMON_WORDS = new Set([
+  'check', 'checks', 'confirmed', 'confirm', 'done', 'with', 'from', 'this', 'that', 'were', 'have', 'been', 'each',
+  'their', 'there', 'into', 'only', 'also', 'than', 'then', 'when', 'what', 'which', 'still', 'reports', 'reported',
+  'shows', 'showed', 'linear', 'because', 'since', 'after', 'before', 'about',
+]);
+
+/** A word's stem, wide enough to match its plural, past and noun forms: "deals" / "deal", "reconciled" / "reconciliation". */
+function stem(word: string): string {
+  return word.replace(/(?:ation|tion|ment|ure|ing|ed|es|ly|s)$/, '').slice(0, 4);
+}
+
+function stemsOf(text: string): Set<string> {
+  return new Set(words(text).filter((word) => word.length >= 4 && !COMMON_WORDS.has(word)).map(stem));
+}
+
+/**
+ * Whether the closing line names a check: by its number, by the first
+ * words of its head, by an identifier its evidence alone carries
+ * ("REVOPS-6 ... still at Backlog"), or by two of the words its head or
+ * evidence alone use, in any form ("deal reconciliation", "ticket
+ * closure"). What another check also carries names nothing.
+ */
+function namedInClosing(check: EnumeratedCheck, closing: string, others: readonly EnumeratedCheck[]): boolean {
+  const numbers = new Set(
+    [...closing.matchAll(CHECKS_NAMED)].flatMap((match) => (match[0].match(/\d+/g) ?? []).map(Number)),
+  );
+  if (numbers.has(check.number)) return true;
+  const headWords = words(check.head).slice(0, 2);
+  if (headWords.length > 0 && normalised(closing).includes(headWords.join(' '))) return true;
+  const elsewhere = others.filter((other) => other.number !== check.number).map((other) => `${other.head} ${other.evidence}`).join('\n');
+  const closingTokens = new Set(distinctiveTokens(closing));
+  const tokensElsewhere = new Set(distinctiveTokens(elsewhere));
+  if (distinctiveTokens(check.evidence).some((token) => closingTokens.has(token) && !tokensElsewhere.has(token))) return true;
+  const closingStems = stemsOf(closing);
+  const stemsElsewhere = stemsOf(elsewhere);
+  const own = [...stemsOf(`${check.head} ${check.evidence}`)].filter((word) => !stemsElsewhere.has(word));
+  return own.filter((word) => closingStems.has(word)).length >= 2;
+}
+
+/**
+ * The consistency the checklist asks of an audit note: every check whose
+ * own evidence reads as unmet (a not-confirmed phrase, a state other than
+ * the one the check requires, a read that could not be made) is named in
+ * the line that closes the list. On 16 September the retry's note showed
+ * both sibling tickets at Backlog under "Close tickets at Done" and its
+ * closing line named check 2 alone, because the manager's note had accepted
+ * check 2; the manager's acceptance is recorded beside the evidence, never
+ * in place of it. Only the enumerated shape is judged; free prose is not.
+ *
+ * Args:
+ *   text: A comment, reply or DM body as the executor wrote it.
+ *
+ * Returns:
+ *   One reason naming every omitted check; empty when the note is consistent or has another shape.
+ */
+export function inconsistentNotConfirmedLine(text: string): string | undefined {
+  const listed = enumeratedChecks(text);
+  if (!listed) return undefined;
+  const omitted = listed.checks.flatMap((check): string[] => {
+    const reason = unmetReason(check);
+    if (!reason || namedInClosing(check, listed.closing, listed.checks)) return [];
+    return [`check ${check.number} ("${check.head}") ${reason} in its own evidence`];
+  });
+  if (omitted.length === 0) return undefined;
+  const named = listed.checks.filter((check) => namedInClosing(check, listed.closing, listed.checks)).map((check) => `check ${check.number}`);
+  return `the not-confirmed line names ${named.length > 0 ? named.join(' and ') : 'no check'} but ${omitted.join('; ')}; name every check whose evidence is unmet in that line, and record the manager's acceptance beside the evidence, never in place of it`;
+}
+
+/**
  * Refuse every message that asserts a fact the sources do not carry.
  *
  * The other actions in the same response count beside the ledger: a
@@ -294,6 +448,10 @@ export function unsupportedClaimIssues(
         issues.push(
           `asserted a fact the ledger, the documentation and the manager's feedback do not carry: action ${index} (${describeAction(action)}) says "${claim}"; quote the ledger row, the page or the manager's words that show it, or write that you could not confirm it and ask`,
         );
+      }
+      const inconsistent = inconsistentNotConfirmedLine(text);
+      if (inconsistent) {
+        issues.push(`action ${index} (${describeAction(action)}): ${inconsistent}`);
       }
     }
   });

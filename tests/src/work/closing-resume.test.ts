@@ -49,8 +49,28 @@ describe('landed closing payloads on resume', () => {
     ]);
   });
 
-  it('does not skip a changed body, a different target, a held row or an uncertain result', () => {
-    expect(resumedClosingLedger([comment('Revised'), comment('Audit', 'REVOPS-6')], previous, run)).toEqual([undefined, undefined]);
+  it('reuses a changed body on the same target: the 16 September run 3 retry rewrote the audit comment and posted it again', () => {
+    const landed = { ...previous, applied: [{ ...previous.applied[0]!, providerId: 'comment-6098cba6' }] };
+    expect(resumedClosingLedger([comment('Revised')], landed, run)).toEqual([
+      expect.objectContaining({
+        ok: true, effect: 'comment-91', providerId: 'comment-6098cba6', idempotencyKey: 'work:retry:5',
+        reason: expect.stringContaining('reused landed comment comment-6098cba6'),
+      }),
+    ]);
+  });
+
+  it('lets a rewrite by id through only when the manager\'s note asks for a correction', () => {
+    const rewrite = { ...comment('Revised'), args: { ...comment('Revised').args, toolArgsJson: JSON.stringify({ body: 'Revised', issueId: 'REVOPS-5', id: 'comment-6098cba6' }) } };
+    expect(resumedClosingLedger([rewrite], previous, run, { managerFeedback: 'Fix the audit comment: name check 3 as well.' })).toEqual([undefined]);
+    // A correction the manager asked for is sent, not dropped, even when the model forgot the id: a visible second comment beats a silent no-op.
+    expect(resumedClosingLedger([comment('Revised')], previous, run, { managerFeedback: 'Fix the audit comment: name check 3 as well.' })).toEqual([undefined]);
+    expect(resumedClosingLedger([rewrite], previous, run, { managerFeedback: 'Yes, move REVOPS-5 to Done, I accept check 2 unconfirmed.' })).toEqual([
+      expect.objectContaining({ reason: expect.stringContaining('reused landed comment') }),
+    ]);
+  });
+
+  it('does not skip a different target, a held row or an uncertain result', () => {
+    expect(resumedClosingLedger([comment('Audit', 'REVOPS-6')], previous, run)).toEqual([undefined]);
     for (const entry of [{ ok: false }, { ok: true, held: true }, { ok: true, awaitingApproval: true }]) {
       expect(resumedClosingLedger([comment('Audit')], { ...previous, applied: [{ tool: 'mcp.call', idempotencyKey: 'old', ...entry }] }, run)).toEqual([undefined]);
     }
@@ -80,6 +100,22 @@ describe('resuming after a closing gate refusal', () => {
     expect(closingResume({ ...gateRefusal, refusedClosing: undefined }, plan, 'cap exceeded', surfaces)).toMatchObject({
       resumedClosing: true, previousClosing: { actions: [], applied: [] },
     });
+  });
+
+  it('carries the writes earlier runs landed through the resume on both paths, so a later retry still knows the comment is on the ticket', () => {
+    const landedWrites = [{
+      action: { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit"}' } },
+      applied: { tool: 'mcp.call', ok: true, providerId: 'comment-6098cba6', idempotencyKey: 'earlier' },
+    }];
+    expect(closingResume({ ...gateRefusal, landedWrites }, plan, refused.reason, surfaces)).toMatchObject({ resumedClosing: true, landedWrites });
+    const prerequisites = [action('looker', 'browser_snapshot'), action('linear', 'list_issues')];
+    expect(closingResume({
+      draft: '', notes: '', prerequisiteCount: 2, landedWrites,
+      actions: [...prerequisites, action('linear', 'save_comment')],
+      applied: [landed, landed, { tool: 'mcp.call', ok: false, reason: 'Failed to connect to MCP server linear' }],
+      planStepOutcomes: [1, 2].map(step => ({ step, status: 'satisfied', evidence: 'ledger row 1: the issues' })),
+    }, plan, 'Failed to connect to MCP server linear', surfaces)).toMatchObject({ resumedClosing: true, landedWrites });
+    expect(closingResume(gateRefusal, plan, refused.reason, surfaces)).not.toHaveProperty('landedWrites');
   });
 
   it('resumes when a promised-result step names no surface, as the 16 September REVOPS-7 plan does', () => {

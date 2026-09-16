@@ -55,7 +55,7 @@ import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponent } from '../src/surfaces/browser';
-import type { ExecutionOutput, SkillShape } from '../src/work/types';
+import type { ExecutionOutput, LandedWrite, SkillShape } from '../src/work/types';
 import {
   sameSkillShape,
   skillOperationLabel,
@@ -67,6 +67,7 @@ import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
 import { landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
+import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   grantRefusal,
@@ -489,9 +490,13 @@ async function executeApprovedPlanHandler(
   });
   if (!claim.claimed) return { ok: false, reason: claim.reason };
   const resume = item.output as DependentAuthoringOutput | undefined;
+  // What earlier runs of this item put on a provider, read from the row's
+  // output before this run replaces it: the retry's prompts list these and
+  // a comment on a target one of them carries is reused, never sent again.
+  const landedWrites = SURFACE_MODE === 'real' ? landedWritesOf(item.output) : [];
   if (SURFACE_MODE === 'real' && resume?.resumedClosing && resume.phase === 'dependent-authoring') {
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
-      workItemId: args.workItemId, runId: claim.runId, output: resume,
+      workItemId: args.workItemId, runId: claim.runId, output: withLandedWrites(resume, landedWrites),
     });
     return { ok: prepared.prepared, reason: 'resuming closing actions from the previous ledger' };
   }
@@ -506,7 +511,13 @@ async function executeApprovedPlanHandler(
     internalCaller,
     managerFeedback: liveManagerFeedback(item.managerFeedback),
     managerAnswers: managerAnswersOf(item),
+    landedWrites,
   });
+}
+
+/** An output with the writes earlier runs landed on it, when there are any. */
+function withLandedWrites<T extends object>(output: T, landedWrites: readonly LandedWrite[]): T & { landedWrites?: LandedWrite[] } {
+  return landedWrites.length > 0 ? { ...output, landedWrites: [...landedWrites] } : output;
 }
 
 /** The manager's answers at approval, as the executor reads them. */
@@ -558,6 +569,8 @@ async function holdDay0Actions(
     managerFeedback?: string;
     /** What the manager answered when approving the plan. */
     managerAnswers?: readonly ManagerAnswer[];
+    /** Writes earlier runs of this item landed, for the prompts and the reuse at apply. */
+    landedWrites?: readonly LandedWrite[];
   },
 ): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
   let additionalModelCalls = 0;
@@ -587,6 +600,7 @@ async function holdDay0Actions(
       autonomousActions: autonomousActionsOn(agent),
       managerFeedback: args.managerFeedback,
       managerAnswers: args.managerAnswers,
+      landedWrites: args.landedWrites,
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
@@ -597,10 +611,12 @@ async function holdDay0Actions(
         });
       },
     });
-    const staged =
+    const staged = withLandedWrites(
       SURFACE_MODE === 'real'
         ? prerequisiteOutput(output, args.plan)
-        : { ...output, needsDependentPhase: false };
+        : { ...output, needsDependentPhase: false },
+      args.landedWrites ?? [],
+    );
     // A write whose argument names the probed schema refuses is re-authored
     // once here, so the payload the manager approves is one the provider
     // can accept; nothing reaches a surface in the repair.
@@ -901,6 +917,7 @@ function flattenedDependentOutput(
     applied: [...output.initial.applied, ...applied],
     planStepOutcomes: output.planStepOutcomes,
     prerequisiteCount: output.initial.actions.length,
+    ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
   };
 }
 
@@ -1079,6 +1096,7 @@ export const authorDependentActions = internalAction({
         initialFailure: initial.initialFailure,
         resumedClosing: initial.resumedClosing,
         refusedClosing: initial.refusedClosing,
+        landedWrites: initial.landedWrites,
       });
       authored = output;
       const cap = dependentActionCap(initial);
@@ -1227,6 +1245,58 @@ function withRefusedClosing(
 }
 
 /**
+ * The ledger the registry's earlier-rows rules read for this phase: the
+ * writes earlier runs of this item landed, then this run's prerequisite
+ * phase when there is one. A status change is never the only trace of who
+ * acted, and the audit comment an earlier run landed on the ticket is that
+ * trace: a retry that obeys the landed-writes rule and emits the Done alone
+ * is right to, and the rule must see the comment it did not repeat.
+ */
+function priorPhasesLedger(
+  output: LedgerOutput | DependentPendingOutput,
+): { actions: readonly MockAction[]; applied: readonly AppliedAction[] } | undefined {
+  const dependent = isDependentPendingOutput(output);
+  const carried = (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
+  if (carried.length === 0) return dependent ? output.initial : undefined;
+  return {
+    actions: [...carried.map((write) => write.action), ...(dependent ? output.initial.actions : [])],
+    applied: [...carried.map((write) => write.applied), ...(dependent ? output.initial.applied : [])],
+  };
+}
+
+/**
+ * The rows this phase reuses instead of sending: on a resumed closing set,
+ * the previous attempt's landed rows by payload or target; in any phase,
+ * the writes earlier runs of this item landed, by target. This run's own
+ * phase one is not a source: the closing phase authors from that ledger
+ * and a second comment it puts on the same ticket is the plan's, as when
+ * phase one landed a fixed-payload comment and the audit comment follows
+ * the reads. The manager's note on the retry decides whether a change to
+ * a landed comment goes through.
+ */
+async function reusedRows(
+  ctx: ActionCtx,
+  output: LedgerOutput | DependentPendingOutput,
+  surfaces: readonly SurfaceRecord[],
+  run: { workItemId: Id<'workItems'>; runId: Id<'events'>; actionIndexOffset: number },
+): Promise<Array<AppliedAction | undefined>> {
+  const dependent = isDependentPendingOutput(output);
+  const earlier: LandedWrite[] = (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
+  const resumed = dependent && output.initial.resumedClosing;
+  if (earlier.length === 0 && !resumed) return output.actions.map(() => undefined);
+  const item = await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId });
+  const options = { surfaces, managerFeedback: liveManagerFeedback(item?.managerFeedback) };
+  const fromResume = resumed
+    ? resumedClosingLedger(output.actions, {
+        actions: [...output.initial.actions, ...(output.initial.previousClosing?.actions ?? [])],
+        applied: [...output.initial.applied, ...(output.initial.previousClosing?.applied ?? [])],
+      }, run, options)
+    : output.actions.map(() => undefined);
+  const fromEarlier = reusedLedger(output.actions, earlier, run, options);
+  return output.actions.map((_, index) => fromResume[index] ?? fromEarlier[index]);
+}
+
+/**
  * Apply the approved actions of the current phase, with the run id the skill ran under.
  *
  * Scheduled by `work.setActionsPending` for the gate's auto rows and by
@@ -1268,14 +1338,9 @@ export const applyApprovedActions = internalAction({
           ? ((claim.output as { actionIndexOffset: number }).actionIndexOffset ?? 0)
           : 0;
       const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
-      const resumedLedger = isDependentPendingOutput(output) && output.initial.resumedClosing
-        ? resumedClosingLedger(output.actions, {
-            actions: [...output.initial.actions, ...(output.initial.previousClosing?.actions ?? [])],
-            applied: [...output.initial.applied, ...(output.initial.previousClosing?.applied ?? [])],
-          }, {
-            workItemId: args.workItemId, runId: claim.runId, actionIndexOffset,
-          })
-        : [];
+      const resumedLedger = await reusedRows(ctx, output, surfaces, {
+        workItemId: args.workItemId, runId: claim.runId, actionIndexOffset,
+      });
       const priorLedger = output.actions.map((_, index) => {
         const entry = claim.phase === 'approved' ? output.applied?.[index] : undefined;
         return entry && !entry.awaitingApproval ? entry : resumedLedger[index];
@@ -1300,7 +1365,7 @@ export const applyApprovedActions = internalAction({
           heldReasons: new Map(claim.heldReasons),
           deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
           priorLedger,
-          ...(isDependentPendingOutput(output) ? { prerequisiteLedger: output.initial } : {}),
+          ...(priorPhasesLedger(output) ? { prerequisiteLedger: priorPhasesLedger(output) } : {}),
           idempotencyIndexOffset: actionIndexOffset,
           autoPhase: claim.phase === 'auto',
           autonomousActions: claim.autonomousActions,

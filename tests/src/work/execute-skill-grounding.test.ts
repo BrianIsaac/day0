@@ -65,6 +65,12 @@ import {
   UNSUPPORTED_ACTION_2026_09_15,
   UNSUPPORTED_CLAIM_2026_09_15,
 } from '../../fixtures/work/closing-comments-2026-09-15';
+import {
+  LEDGER_2026_09_16_RUN_3,
+  RUN_3_RETRY_ACTION,
+  RUN_3_RETRY_ACTION_CORRECTED,
+  RUN_3_RETRY_NOTE,
+} from '../../fixtures/work/audit-note-2026-09-16-run-3';
 
 const charter: Charter = {
   version: '0.0',
@@ -1329,5 +1335,81 @@ describe('the evidence invariant in the closing phase', (): void => {
     });
     expect(recorded.users).toHaveLength(1);
     expect(output.actions).toEqual([SUPPORTED_ACTION_2026_09_16]);
+  });
+
+  /** The run 3 retry as the closing phase sees it: the note on the run, the retry's own ledger. */
+  const run3Args = {
+    skill: { name: 'linear-audit-note', description: 'Audit note.', body: '# Skill' },
+    plan: auditPlan,
+    candidate: auditCandidate,
+    charter,
+    mockEnv: withChecklist,
+    mode: 'real' as const,
+    surfaces: [],
+    managerFeedback: RUN_3_RETRY_NOTE,
+    initialOutput: {
+      draft: '',
+      notes: '',
+      needsDependentPhase: true,
+      actions: LEDGER_2026_09_16_RUN_3.actions,
+      procedureTrails: [],
+    },
+    initialLedger: LEDGER_2026_09_16_RUN_3.applied,
+  };
+  const run3Reply = (action: MockAction): unknown => ({
+    draft: 'Audit note posted; Done as the manager said.',
+    notes: '',
+    actions: [action],
+    procedureTrails: [],
+    planStepOutcomes: outcomes,
+  });
+
+  it('refuses the run 3 retry comment once, naming check 3 as omitted from the not-confirmed line, and accepts the corrected form', async (): Promise<void> => {
+    recorded.outputs.push(run3Reply(RUN_3_RETRY_ACTION), run3Reply(RUN_3_RETRY_ACTION_CORRECTED));
+    let additionalCalls = 0;
+    const output = await runDependentSkill({
+      ...run3Args,
+      onAdditionalModelCall: () => {
+        additionalCalls += 1;
+      },
+    });
+    expect(additionalCalls).toBe(1);
+    expect(recorded.users).toHaveLength(2);
+    expect(recorded.users[1]).toContain('the not-confirmed line names check 2 but check 3 ("Close tickets at Done") reports Backlog where the check requires Done');
+    expect(recorded.users[1]).toContain("record the manager's acceptance beside the evidence, never in place of it");
+    expect(output.actions).toEqual([RUN_3_RETRY_ACTION_CORRECTED]);
+  });
+
+  it('lets a closing message cite the comment an earlier run landed, listed under the writes already landed, without a repair', async (): Promise<void> => {
+    const landedComment: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-5', body: 'Q3 close summary — three checks.\n1. Pipeline coverage confirmed. 68%.\nNot confirmed: checks 1, 2 and 3.' }) },
+    };
+    const dm: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: JSON.stringify({ channel: 'D0MANAGER', text: 'The audit comment landed in the earlier run as comment-6098cba6. Moving the ticket to Done as you said.' }) },
+    };
+    const doneAction: MockAction = { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'REVOPS-5', state: 'Done' }) } };
+    recorded.outputs.push({ ...run3Reply(doneAction) as object, actions: [dm, doneAction] });
+    let additionalCalls = 0;
+    const output = await runDependentSkill({
+      ...run3Args,
+      landedWrites: [{ action: landedComment, applied: { tool: 'mcp.call', ok: true, providerId: 'comment-6098cba6', idempotencyKey: 'wi_95/run_1/5' } }],
+      onAdditionalModelCall: () => {
+        additionalCalls += 1;
+      },
+    });
+    expect(additionalCalls).toBe(0);
+    expect(recorded.users).toHaveLength(1);
+    expect(recorded.users[0]).toContain('linear · save_comment · REVOPS-5 · provider id comment-6098cba6');
+    expect(output.actions).toEqual([dm, doneAction]);
+  });
+
+  it('fails the run when the repair still names only the check the manager accepted', async (): Promise<void> => {
+    recorded.outputs.push(run3Reply(RUN_3_RETRY_ACTION), run3Reply(RUN_3_RETRY_ACTION));
+    await expect(runDependentSkill(run3Args)).rejects.toThrow(
+      /remained invalid after one repair: .*check 3 \("Close tickets at Done"\) reports Backlog/,
+    );
+    expect(recorded.users).toHaveLength(2);
   });
 });

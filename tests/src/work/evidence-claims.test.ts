@@ -19,6 +19,13 @@ import {
   UNSUPPORTED_CLAIM_2026_09_15,
   UNSUPPORTED_COMMENT_2026_09_15,
 } from '../../fixtures/work/closing-comments-2026-09-15';
+import {
+  LEDGER_2026_09_16_RUN_3,
+  RUN_3_RETRY_ACTION,
+  RUN_3_RETRY_ACTION_CORRECTED,
+  RUN_3_RETRY_COMMENT,
+  RUN_3_RETRY_NOTE,
+} from '../../fixtures/work/audit-note-2026-09-16-run-3';
 
 const documentation = [`${CHECKLIST_PAGE.title}\n${CHECKLIST_PAGE.body}`];
 
@@ -269,5 +276,101 @@ describe('the telegraphic form a status message takes', (): void => {
     expect(unsupportedClaims('Tile refreshed to 74%; figure verified against the standup deck.', nothing)).toHaveLength(2);
     expect(unsupportedClaims('Starting the REVOPS-5 audit note: check 1 read from the tile, check 3 from the Linear issue list.', nothing)).toEqual([]);
     expect(unsupportedClaims('Posting the audit comment next; the Done move waits for you.', nothing)).toEqual([]);
+  });
+});
+
+describe('the 16 September run 3 retry comment: numbered checks and a not-confirmed line', (): void => {
+  const evidenceRun3: ClaimEvidence = {
+    ledger: appliedLedgerPrompt(LEDGER_2026_09_16_RUN_3.actions, LEDGER_2026_09_16_RUN_3.applied),
+    documentation,
+    managerFeedback: [RUN_3_RETRY_NOTE],
+  };
+  const comment = (body: string): MockAction => ({
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-5', body }) },
+  });
+
+  it('quotes the ledger in every claim, so the sentence check alone lets it stand', (): void => {
+    expect(unsupportedClaims(RUN_3_RETRY_COMMENT, evidenceRun3)).toEqual([]);
+  });
+
+  it('is refused: check 3 reads as unmet (Backlog, not Done) and the closing line names only check 2', (): void => {
+    const issues = unsupportedClaimIssues([RUN_3_RETRY_ACTION], evidenceRun3);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('check 3');
+    expect(issues[0]).toContain('names check 2');
+    expect(issues[0]).toContain('Backlog');
+    expect(issues[0]).toContain("manager's acceptance");
+  });
+
+  it('passes once the closing line names checks 2 and 3, with the acceptance beside the evidence', (): void => {
+    expect(unsupportedClaimIssues([RUN_3_RETRY_ACTION_CORRECTED], evidenceRun3)).toEqual([]);
+  });
+
+  it('does not judge free prose, a list with no closing line, or a check whose evidence is met', (): void => {
+    const prose = 'REVOPS-6 is at Backlog and REVOPS-7 is at Backlog; check 3 is not confirmed. Not confirmed: check 2.';
+    expect(unsupportedClaimIssues([comment(prose)], evidenceRun3)).toEqual([]);
+    expect(unsupportedClaimIssues([SUPPORTED_ACTION_2026_09_16], evidence16)).toEqual([]);
+    const allMet = [
+      '1. Pipeline coverage confirmed. The tile shows 74%; audit line: Last updated by revops at 2026-09-16 07:42:48 UTC.',
+      '2. Close tickets at Done. As Linear reports them: REVOPS-6 — Done; REVOPS-7 — Done.',
+      'Not confirmed: none.',
+    ].join('\n');
+    expect(unsupportedClaimIssues([comment(allMet)], evidenceRun3)).toEqual([]);
+  });
+
+  it('reads evidence that is only a dash, "pending", "to be confirmed" or "awaiting" as unmet', (): void => {
+    for (const evidenceLine of ['—', '-', 'pending', 'To be confirmed with the team.', 'Awaiting REVOPS-7.', 'outstanding', 'TBC', 'not yet']) {
+      const note = ['1. Pipeline coverage confirmed. The tile shows 74%.', `2. Close tickets at Done. ${evidenceLine}`, 'Not confirmed: none.'].join('\n');
+      const issues = unsupportedClaimIssues([comment(note)], evidenceRun3);
+      expect(issues, evidenceLine).toHaveLength(1);
+      expect(issues[0], evidenceLine).toContain('check 2');
+    }
+    // "Not applicable" is a disposition, not an absence of evidence.
+    const notApplicable = ['1. Pipeline coverage confirmed. The tile shows 74%.', '2. Close tickets at Done. Not applicable: no sibling tickets this quarter.', 'Not confirmed: none.'].join('\n');
+    expect(unsupportedClaimIssues([comment(notApplicable)], evidenceRun3)).toEqual([]);
+  });
+
+  it('reads a close the head asks for without naming the state ("Close tickets") against an open state in the evidence', (): void => {
+    const openState = ['1. Pipeline coverage confirmed. The tile shows 74%.', '2. Close tickets. As Linear reports them: REVOPS-6 — Backlog; REVOPS-7 — In Progress.', 'Not confirmed: none.'].join('\n');
+    const issues = unsupportedClaimIssues([comment(openState)], evidenceRun3);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('check 2');
+    expect(issues[0]).toContain('Backlog');
+    const closed = openState.replace('REVOPS-6 — Backlog; REVOPS-7 — In Progress', 'REVOPS-6 — Done; REVOPS-7 — Cancelled');
+    expect(unsupportedClaimIssues([comment(closed)], evidenceRun3)).toEqual([]);
+    // A head with no closing word and no state names no required state.
+    const listed = openState.replace('2. Close tickets.', '2. Sibling tickets listed.');
+    expect(unsupportedClaimIssues([comment(listed)], evidenceRun3)).toEqual([]);
+  });
+
+  it('accepts a closing line that names the unmet checks by an identifier from their evidence or by the words of their head', (): void => {
+    const note = [
+      '1. Pipeline coverage confirmed. The tile shows 74%.',
+      '2. Friday standup deals reconciled. Not confirmed — no tracker connected.',
+      '3. Close tickets at Done. REVOPS-6 — Backlog; REVOPS-7 — Backlog.',
+      'Not confirmed: deal reconciliation (no tracker) and ticket closure (REVOPS-6 and REVOPS-7 still at Backlog).',
+    ].join('\n');
+    expect(unsupportedClaimIssues([comment(note)], evidenceRun3)).toEqual([]);
+    const byIdentifierOnly = note.replace(/Not confirmed: .*$/, 'Not confirmed: the tracker reconciliation, and REVOPS-6 with REVOPS-7.');
+    expect(unsupportedClaimIssues([comment(byIdentifierOnly)], evidenceRun3)).toEqual([]);
+    // An identifier another check's evidence also carries names nothing: 74% is check 1's, not check 3's.
+    const wrongIdentifier = note.replace(/Not confirmed: .*$/, 'Not confirmed: deal reconciliation; the tile shows 74%.');
+    const issues = unsupportedClaimIssues([comment(wrongIdentifier)], evidenceRun3);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('check 3');
+  });
+
+  it('reads an absent read and a not-confirmed phrase as unmet, whichever check carries it', (): void => {
+    const absentRead = [
+      '1. Pipeline coverage confirmed. The tile could not be read: the sign-in page redirected.',
+      '2. Close tickets at Done. As Linear reports them: REVOPS-6 — Done; REVOPS-7 — Done.',
+      'Not confirmed: none.',
+    ].join('\n');
+    const issues = unsupportedClaimIssues([comment(absentRead)], evidenceRun3);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('check 1');
+    const namedByHead = absentRead.replace('Not confirmed: none.', 'Not confirmed: pipeline coverage — the tile could not be read.');
+    expect(unsupportedClaimIssues([comment(namedByHead)], evidenceRun3)).toEqual([]);
   });
 });
