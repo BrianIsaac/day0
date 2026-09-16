@@ -31,6 +31,7 @@ import { STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
 import { actionIdempotencyKey } from '../../src/work/idempotency';
 import {
   CLOSING_SET_CAP,
+  type PlanObligations,
   type DependentExecutionOutput,
   type ExecutionOutput,
   type PlanStepOutcome,
@@ -40,6 +41,7 @@ import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
   auditNoteClosing,
+  auditNoteObligations,
   auditNoteOutcomes,
   auditNotePlan,
   auditNotePrerequisiteLedger,
@@ -50,13 +52,30 @@ import {
   refreshPrerequisiteLedger,
   refreshPrerequisites,
   REVOPS_5_STEP_5,
-  RUN_3_REVOPS_7_STEP_1,
   run3RefreshClosing,
   run3RefreshOutcomes,
   run3RefreshPlan,
   run3RefreshPrerequisiteLedger,
   run3RefreshPrerequisites,
 } from './fixtures/closing-gates-2026-09-16';
+import {
+  run4AuditNoteClosing,
+  run4AuditNoteOutcomes,
+  run4AuditNotePlan,
+  run4RefreshClosing,
+  run4RefreshOutcomes,
+  run4RefreshPlan,
+  run4RefreshPrerequisiteLedger,
+  run4RefreshPrerequisites,
+  run4SlackClosing,
+  run4SlackOutcomes,
+  run4SlackPlan,
+  run4SlackPrerequisiteLedger,
+  run4SlackPrerequisites,
+  run4TileSequence,
+  RUN_4_LIST_ISSUES_EFFECT,
+  RUN_4_TILE_READ_BACK,
+} from './fixtures/plan-obligations-2026-09-16';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -140,6 +159,20 @@ const skillOutput: ExecutionOutput = {
     },
   ],
 };
+
+/** Declared obligations for a seeded plan, the way the judgement would have filled them. */
+function obligations(
+  steps: Array<{ kind: PlanObligations['steps'][number]['kind']; reads?: string[]; writes?: string[] }>,
+  transition: PlanObligations['transition'] = 'none',
+  transitionStep: number | null = null,
+): PlanObligations {
+  return {
+    steps: steps.map((step) => ({ kind: step.kind, reads: step.reads ?? [], writes: step.writes ?? [] })),
+    transition,
+    transitionStep,
+    basis: 'judgement',
+  };
+}
 
 describe('skill selection surface boundary', (): void => {
   const spreadsheetSkill = {
@@ -809,6 +842,7 @@ describe('work action completion evidence', (): void => {
       riskNotes: '',
       reversibility: '',
       estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'write', writes: ['looker'] }, { kind: 'read', reads: ['looker'] }, { kind: 'write', writes: ['linear'] }], 'promised', 3),
     };
     const staged = prerequisiteOutput(
       { draft: 'd', notes: '', needsDependentPhase: true, actions: batch },
@@ -825,16 +859,35 @@ describe('work action completion evidence', (): void => {
         plan,
       ),
     ).toEqual({ draft: 'd', notes: '', needsDependentPhase: true, actions: snapshotFirst });
-    // A plan that promises no result and an output that asked for no closing phase stay single-phase.
+    // A plan that declares no read and an output that asked for no closing phase stay single-phase.
+    expect(
+      prerequisiteOutput(
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: [read] },
+        { ...plan, steps: ['Comment on REVOPS-7'], obligations: obligations([{ kind: 'write', writes: ['linear'] }]) },
+      ).needsDependentPhase,
+    ).toBe(false);
+    expect(
+      prerequisiteOutput(
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: [read] },
+        { ...plan, obligations: undefined },
+      ).needsDependentPhase,
+    ).toBe(false);
+    // Obligations asked for and not settled are read as reading: the closing phase stays, and the gates owe nothing they cannot see.
+    expect(
+      prerequisiteOutput(
+        { draft: 'd', notes: '', needsDependentPhase: false, actions: [read] },
+        { ...plan, obligations: undefined, obligationsFailedOpen: 'timeout' },
+      ).needsDependentPhase,
+    ).toBe(true);
     expect(
       prerequisiteOutput(
         { draft: 'd', notes: '', needsDependentPhase: false, actions: [read] },
         { ...plan, steps: ['Comment on REVOPS-7'] },
       ).needsDependentPhase,
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it('refuses to call a promised Linear read satisfied when no such ledger row landed', (): void => {
+  it('refuses to call a declared Linear read satisfied when no such ledger row landed', (): void => {
     expect(() =>
       validatePlanStepOutcomes({
         plan: {
@@ -844,6 +897,7 @@ describe('work action completion evidence', (): void => {
           riskNotes: '',
           reversibility: '',
           estimatedMinutes: 1,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }]),
         },
         outcomes: [{ step: 1, status: 'satisfied', evidence: 'Assumed from docs.' }],
         initialActions: [],
@@ -853,11 +907,11 @@ describe('work action completion evidence', (): void => {
           { slug: 'slack', displayName: 'Slack' },
         ],
       }),
-    ).toThrow('promised a Linear read');
+    ).toThrow('approved plan step 1 declares a read of Linear, but no landed Linear read or blocking ledger reason was recorded');
   });
 
-  it('recognises a promised read by the surface display name, not only its slug', (): void => {
-    expect(() =>
+  it('owes a declared read only of a surface the gate holds, by slug whatever the case, and never reads the step', (): void => {
+    const check = (reads: string[]): void =>
       validatePlanStepOutcomes({
         plan: {
           summary: 'Read the tile back.',
@@ -866,13 +920,16 @@ describe('work action completion evidence', (): void => {
           riskNotes: '',
           reversibility: '',
           estimatedMinutes: 1,
+          obligations: obligations([{ kind: 'read', reads }]),
         },
         outcomes: [{ step: 1, status: 'satisfied', evidence: 'The tile shows 74%.' }],
         initialActions: [],
         initialLedger: [],
         surfaces: [{ slug: 'looker', displayName: 'Looker pipeline tile' }],
-      }),
-    ).toThrow('promised a Looker pipeline tile read');
+      });
+    expect(() => check(['Looker'])).toThrow('declares a read of Looker pipeline tile');
+    expect(() => check(['northstar-crm'])).not.toThrow();
+    expect(() => check([])).not.toThrow();
   });
 
   it('accepts a step satisfied on the manager\'s word only when the run carries their feedback', (): void => {
@@ -883,6 +940,7 @@ describe('work action completion evidence', (): void => {
       riskNotes: '',
       reversibility: '',
       estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'read' }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
     };
     const surfaces = [{ slug: 'linear', displayName: 'Linear' }];
     const outcomes: PlanStepOutcome[] = [
@@ -907,20 +965,20 @@ describe('work action completion evidence', (): void => {
     expect(() =>
       validatePlanStepOutcomes({ plan, outcomes, initialActions: [], initialLedger: [], surfaces }),
     ).toThrow('step 1 cites manager feedback the run does not carry');
-    // The manager's word settles a fact; it never stands in for a read the plan promised.
+    // The manager's word settles a fact; it never stands in for a read the plan declares.
     expect(() =>
       validatePlanStepOutcomes({
-        plan: { ...plan, steps: ['Read REVOPS-7 in Linear to confirm it has an owner.', plan.steps[1]] },
+        plan: { ...plan, obligations: obligations([{ kind: 'read', reads: ['linear'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2) },
         outcomes,
         initialActions: [],
         initialLedger: [],
         surfaces,
         managerFeedback: 'REVOPS-7 is owned by Priya.',
       }),
-    ).toThrow('promised a Linear read');
+    ).toThrow('declares a read of Linear');
   });
 
-  it('accepts a not-verifiable outcome with evidence for a promised read, and never lets it withhold the close or fail the run', (): void => {
+  it('accepts a not-verifiable outcome with evidence for a declared read, and never lets it withhold the close or fail the run', (): void => {
     const plan = {
       summary: 'Confirm, then comment and close.',
       steps: [
@@ -931,6 +989,7 @@ describe('work action completion evidence', (): void => {
       riskNotes: '',
       reversibility: '',
       estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'read', reads: ['linear'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
     };
     const surfaces = [{ slug: 'linear', displayName: 'Linear' }];
     const outcomes = [
@@ -948,7 +1007,7 @@ describe('work action completion evidence', (): void => {
         initialLedger: [],
         surfaces,
       }),
-    ).toThrow('promised a Linear read');
+    ).toThrow('declares a read of Linear');
     const comment = skillOutput.actions[0];
     const done = skillOutput.actions[1];
     expect(
@@ -960,7 +1019,7 @@ describe('work action completion evidence', (): void => {
     expect(blockedPlanReason(outcomes)).toBeUndefined();
   });
 
-  it('does not read a compound noun such as close-week as a promise to close the ticket', (): void => {
+  it('reads the transition from the declared fields, never from the wording of a step', (): void => {
     const comment = skillOutput.actions[0];
     const satisfied = [
       { step: 1, status: 'satisfied' as const, evidence: 'ledger row 0' },
@@ -968,8 +1027,8 @@ describe('work action completion evidence', (): void => {
     ];
     for (const wording of [
       'Draft a manager DM summarising any Sales-Finance or close-week impact; hold it for approval.',
-      'Draft a manager DM flagging close week risks; hold it for approval.',
-      'Note the month-end close status in the DM.',
+      'Close the ticket once the comment lands.',
+      'Move REVOPS-7 to Done.',
     ]) {
       const plan = {
         summary: 'Comment, then brief the manager.',
@@ -978,6 +1037,7 @@ describe('work action completion evidence', (): void => {
         riskNotes: '',
         reversibility: '',
         estimatedMinutes: 1,
+        obligations: obligations([{ kind: 'write', writes: ['linear'] }, { kind: 'report' }], 'none'),
       };
       expect(
         dependentTransitionRefusal({ plan, actions: [comment], planStepOutcomes: satisfied }),
@@ -990,14 +1050,20 @@ describe('work action completion evidence', (): void => {
         ),
         wording,
       ).toBeUndefined();
+      // A plan with no declared obligations owes no transition either.
+      expect(
+        dependentTransitionRefusal({ plan: { ...plan, obligations: undefined }, actions: [comment], planStepOutcomes: satisfied }),
+        wording,
+      ).toBeUndefined();
     }
     const closing = {
       summary: 'Comment, then close.',
-      steps: ['Comment on the ticket.', 'Close the ticket once the comment lands.'],
+      steps: ['Comment on the ticket.', 'Note the month-end close status in the DM.'],
       expectedOutputType: 'ticket-update' as const,
       riskNotes: '',
       reversibility: '',
       estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'write', writes: ['linear'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
     };
     expect(
       dependentTransitionRefusal({ plan: closing, actions: [comment], planStepOutcomes: satisfied }),
@@ -1012,6 +1078,7 @@ describe('work action completion evidence', (): void => {
       riskNotes: '',
       reversibility: '',
       estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'read' }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
     };
     const comment = skillOutput.actions[0];
     const done = skillOutput.actions[1];
@@ -1208,6 +1275,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'Re-run with an approved replacement figure.',
           estimatedMinutes: 45,
+          obligations: obligations([{ kind: 'write', writes: ['looker'] }, { kind: 'read', reads: ['looker'] }, { kind: 'write', writes: ['linear'] }], 'promised', 3),
         },
       });
       await ctx.db.insert('surfaces', {
@@ -1399,6 +1467,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'Re-run with an approved replacement figure.',
           estimatedMinutes: 45,
+          obligations: obligations([{ kind: 'read', reads: ['looker'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
         },
       });
       const slack = await ctx.db
@@ -1526,6 +1595,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'Re-run with an approved replacement figure.',
           estimatedMinutes: 45,
+          obligations: obligations([{ kind: 'write', reads: ['looker'], writes: ['looker'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
         },
       });
       await ctx.db.insert('surfaces', {
@@ -1645,6 +1715,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'Re-run with an approved replacement figure.',
           estimatedMinutes: 45,
+          obligations: obligations([{ kind: 'read', reads: ['looker'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
         },
       });
       await ctx.db.insert('surfaces', {
@@ -1747,6 +1818,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'Do not post until the evidence exists.',
           estimatedMinutes: 20,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }, { kind: 'read', reads: ['linear'] }, { kind: 'write', writes: ['slack'] }]),
         },
       });
     });
@@ -1801,6 +1873,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'reversible',
           estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read' }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
         },
       });
     });
@@ -1941,6 +2014,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'reversible',
           estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
         },
       });
     });
@@ -2017,6 +2091,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'reversible',
           estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
         },
       });
     });
@@ -2069,6 +2144,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'reversible',
           estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read' }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
         },
         managerFeedback: { reason: 'REVOPS-7 is owned by Priya.', at: 2, kind: 'retry-note' },
       });
@@ -2127,6 +2203,7 @@ describe('executing an approved plan through the gate', (): void => {
           riskNotes: '',
           reversibility: 'reversible',
           estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read' }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
         },
       });
     });
@@ -4299,121 +4376,51 @@ describe('work action surface enablement', (): void => {
 });
 
 describe('plan-step accounting after the loop ran live', (): void => {
-  it.each([
-    'Read "Looker pipeline tile" and report the figure.',
-    'Read “Looker pipeline tile” and report the figure.',
-  ])('enforces a quoted surface name: %s', (step): void => {
+  const surfaces = [
+    { slug: 'linear', displayName: 'Linear' },
+    { slug: 'slack', displayName: 'Slack' },
+    { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' },
+  ];
+  const getIssue = { tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } };
+  const landedRead: AppliedAction = { tool: 'mcp.call', ok: true, effect: 'read issue', idempotencyKey: 'read' };
+
+  it('enforces a declared read whatever the step says, and never reads the step', (): void => {
+    const step =
+      'Hold all non-read writes, including any #revops-asks reply or Linear audit/status update, until the manager gives literal approval because autonomous actions are OFF.';
+    const plan = (declared?: PlanObligations) => ({
+      summary: 'Hold writes.', steps: [step], expectedOutputType: 'message' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1,
+      ...(declared ? { obligations: declared } : {}),
+    });
+    const outcomes = [{ step: 1, status: 'satisfied' as const, evidence: 'Every write was held.' }];
+    expect(() => validatePlanStepOutcomes({ plan: plan(), outcomes, initialActions: [], initialLedger: [], surfaces })).not.toThrow();
+    expect(() => validatePlanStepOutcomes({ plan: plan(obligations([{ kind: 'report' }])), outcomes, initialActions: [], initialLedger: [], surfaces })).not.toThrow();
+    expect(() =>
+      validatePlanStepOutcomes({ plan: plan(obligations([{ kind: 'read', reads: ['linear'] }])), outcomes, initialActions: [], initialLedger: [], surfaces }),
+    ).toThrow('approved plan step 1 declares a read of Linear, but no landed Linear read or blocking ledger reason was recorded');
+    // The landed read satisfies the declaration; a blocked step with a reason accounts for its absence.
+    expect(() =>
+      validatePlanStepOutcomes({ plan: plan(obligations([{ kind: 'read', reads: ['linear'] }])), outcomes, initialActions: [getIssue], initialLedger: [landedRead], surfaces }),
+    ).not.toThrow();
     expect(() =>
       validatePlanStepOutcomes({
-        plan: {
-          summary: 'Read the tile.',
-          steps: [step],
-          expectedOutputType: 'message',
-          riskNotes: '',
-          reversibility: '',
-          estimatedMinutes: 1,
-        },
-        outcomes: [{ step: 1, status: 'satisfied', evidence: 'No read landed.' }],
-        initialActions: [],
-        initialLedger: [],
-        surfaces: [{ slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' }],
-      }),
-    ).toThrow('promised a Looker pipeline tile read');
-  });
-
-  it.each(['Move the ticket to "Done".', 'Move the ticket to “Done”.'])(
-    'enforces a quoted target state: %s',
-    (step): void => {
-      expect(
-        dependentTransitionRefusal({
-          plan: {
-            summary: 'Complete the ticket.',
-            steps: [step],
-            expectedOutputType: 'ticket-update',
-            riskNotes: '',
-            reversibility: '',
-            estimatedMinutes: 1,
-          },
-          actions: [],
-          planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'No transition landed.' }],
-        }),
-      ).toContain('omitted the approved ticket state transition');
-    },
-  );
-
-  it('does not read a hold instruction as a promised surface read', (): void => {
-    expect(() =>
-      validatePlanStepOutcomes({
-        plan: {
-          summary: 'Hold writes.',
-          steps: [
-            'Hold all non-read writes, including any #revops-asks reply or Linear audit/status update, until the manager gives literal approval because autonomous actions are OFF.',
-          ],
-          expectedOutputType: 'message',
-          riskNotes: '',
-          reversibility: '',
-          estimatedMinutes: 1,
-        },
-        outcomes: [{ step: 1, status: 'satisfied', evidence: 'Every write was held.' }],
-        initialActions: [],
-        initialLedger: [],
-        surfaces: [
-          { slug: 'linear', displayName: 'Linear' },
-          { slug: 'slack', displayName: 'Slack' },
-        ],
+        plan: plan(obligations([{ kind: 'read', reads: ['linear'] }])),
+        outcomes: [{ step: 1, status: 'blocked', evidence: 'Linear refused the read.' }], initialActions: [], initialLedger: [], surfaces,
       }),
     ).not.toThrow();
   });
 
-  it('does not read a surface named inside a quoted title as a promised read', (): void => {
-    expect(() =>
-      validatePlanStepOutcomes({
-        plan: {
-          summary: 'Confirm the originating issue.',
-          steps: [
-            'Read the connected Linear queue to locate the “Refresh the Looker pipeline tile” request and confirm its issue id; flag the "Looker pipeline tile" mismatch if unresolved.',
-          ],
-          expectedOutputType: 'ticket-update',
-          riskNotes: '',
-          reversibility: '',
-          estimatedMinutes: 1,
-        },
-        outcomes: [{ step: 1, status: 'satisfied', evidence: 'The Linear read confirmed the id.' }],
-        initialActions: [
-          {
-            tool: 'mcp.call',
-            args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
-          },
-        ],
-        initialLedger: [{ tool: 'mcp.call', ok: true, effect: 'read issue', idempotencyKey: 'read' }],
-        surfaces: [
-          { slug: 'linear', displayName: 'Linear' },
-          { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' },
-        ],
-      }),
-    ).not.toThrow();
-  });
-
-  it.each([
-    'Read Linear, then hold every write for literal approval.',
-    'Hold the public reply until you read Linear for the exact issue state.',
-  ])('still enforces a promised read in a mixed instruction: %s', (step): void => {
-    expect(() =>
-      validatePlanStepOutcomes({
-        plan: {
-          summary: 'Read before holding writes.',
-          steps: [step],
-          expectedOutputType: 'message',
-          riskNotes: '',
-          reversibility: '',
-          estimatedMinutes: 1,
-        },
-        outcomes: [{ step: 1, status: 'satisfied', evidence: 'No provider read was recorded.' }],
-        initialActions: [],
-        initialLedger: [],
-        surfaces: [{ slug: 'linear', displayName: 'Linear' }],
-      }),
-    ).toThrow('promised a Linear read');
+  it('enforces a declared transition whatever the step says', (): void => {
+    const plan = (step: string, transition: PlanObligations['transition']) => ({
+      summary: 'Complete the ticket.', steps: [step], expectedOutputType: 'ticket-update' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'write', writes: ['linear'] }], transition, transition === 'none' ? null : 1),
+    });
+    const outcomes: PlanStepOutcome[] = [{ step: 1, status: 'satisfied', evidence: 'No transition landed.' }];
+    for (const step of ['Move the ticket to "Done".', 'Do not close or update the ticket; post only the audit comment.']) {
+      expect(dependentTransitionRefusal({ plan: plan(step, 'promised'), actions: [], planStepOutcomes: outcomes }), step).toContain('omitted the approved ticket state transition');
+      expect(dependentTransitionRefusal({ plan: plan(step, 'conditional-on-manager'), actions: [], planStepOutcomes: outcomes }), step).toContain('omitted the approved ticket state transition');
+      expect(dependentTransitionRefusal({ plan: plan(step, 'withheld'), actions: [], planStepOutcomes: outcomes }), step).toBeUndefined();
+      expect(dependentTransitionRefusal({ plan: plan(step, 'none'), actions: [], planStepOutcomes: outcomes }), step).toBeUndefined();
+    }
   });
 
   it('completes a run whose every action landed even though the closing phase marked steps blocked', (): void => {
@@ -4450,6 +4457,7 @@ describe('plan-step accounting after the loop ran live', (): void => {
       riskNotes: '',
       reversibility: '',
       estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'read', reads: ['linear'] }, { kind: 'write', writes: ['linear'] }]),
     };
     expect(blockedPlanReason(outcomes, { plan, actions: [comment], applied: [landed] })).toBeUndefined();
     expect(blockedPlanReason(outcomes)).toContain('1 approved plan step(s) remained blocked');
@@ -4459,7 +4467,11 @@ describe('plan-step accounting after the loop ran live', (): void => {
     expect(
       blockedPlanReason(outcomes, { plan, actions: [comment], applied: [{ ...landed, held: true }] }),
     ).toContain('remained blocked');
-    const closing = { ...plan, steps: ['Post the audit comment', 'Move the ticket to Done'] };
+    const closing = {
+      ...plan,
+      steps: ['Post the audit comment', 'Move the ticket to Done'],
+      obligations: obligations([{ kind: 'write', writes: ['linear'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
+    };
     expect(
       blockedPlanReason(outcomes, { plan: closing, actions: [comment], applied: [landed] }),
     ).toContain('remained blocked');
@@ -4505,6 +4517,7 @@ describe('plan-step accounting after the loop ran live', (): void => {
       riskNotes: '',
       reversibility: '',
       estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'write', writes: ['linear'] }, { kind: 'write', writes: ['linear'] }], 'promised', 2),
     };
     const outcomes: PlanStepOutcome[] = [
       { step: 1, status: 'satisfied', evidence: 'The comment landed.' },
@@ -4532,52 +4545,36 @@ describe('plan-step accounting after the loop ran live', (): void => {
     ).toContain('remained blocked');
   });
 
-  it('does not read a quoted title as a close instruction', (): void => {
-    const plan = {
-      summary: 'Add context to the ticket.',
-      steps: ['Comment on the “Close the books review” ticket with the figures read from the tracker.'],
-      expectedOutputType: 'ticket-update' as const,
-      riskNotes: '',
-      reversibility: '',
-      estimatedMinutes: 1,
-    };
+  it('never fails a landed comment for a transition the plan withholds or does not declare, whatever the step says', (): void => {
     const landed: AppliedAction = {
       tool: 'mcp.call',
       ok: true,
       effect: 'comment landed',
       idempotencyKey: 'item:run:0',
     };
-
-    expect(
-      blockedPlanReason(
-        [{ step: 1, status: 'blocked', evidence: 'No transition was planned or emitted.' }],
-        { plan, actions: [skillOutput.actions[0]], applied: [landed] },
-      ),
-    ).toBeUndefined();
-  });
-
-  it('does not turn a negative state-change instruction into a promised close', (): void => {
-    const plan = {
-      summary: 'Leave the ticket open and add context.',
-      steps: ['Do not close or update the ticket; post only the audit comment.'],
-      expectedOutputType: 'ticket-update' as const,
-      riskNotes: '',
-      reversibility: '',
-      estimatedMinutes: 1,
-    };
-    const landed: AppliedAction = {
-      tool: 'mcp.call',
-      ok: true,
-      effect: 'comment landed',
-      idempotencyKey: 'item:run:0',
-    };
-
-    expect(
-      blockedPlanReason(
-        [{ step: 1, status: 'blocked', evidence: 'The state change was deliberately not emitted.' }],
-        { plan, actions: [skillOutput.actions[0]], applied: [landed] },
-      ),
-    ).toBeUndefined();
+    const cases: Array<[string, PlanObligations | undefined]> = [
+      ['Comment on the “Close the books review” ticket with the figures read from the tracker.', obligations([{ kind: 'write', writes: ['linear'] }])],
+      ['Do not close or update the ticket; post only the audit comment.', obligations([{ kind: 'write', writes: ['linear'] }], 'withheld', 1)],
+      ['Close the ticket after the comment.', undefined],
+    ];
+    for (const [step, declared] of cases) {
+      const plan = {
+        summary: 'Add context to the ticket.',
+        steps: [step],
+        expectedOutputType: 'ticket-update' as const,
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+        ...(declared ? { obligations: declared } : {}),
+      };
+      expect(
+        blockedPlanReason(
+          [{ step: 1, status: 'blocked', evidence: 'No transition was planned or emitted.' }],
+          { plan, actions: [skillOutput.actions[0]], applied: [landed] },
+        ),
+        step,
+      ).toBeUndefined();
+    }
   });
 });
 
@@ -4588,7 +4585,7 @@ describe('the closing gates against the 16 September plans', (): void => {
     { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' },
   ];
 
-  it('honours a plan that withholds Done in its own words, whatever another step completes', (): void => {
+  it('honours a plan whose declared transition is withheld, whatever another step says', (): void => {
     const plan = {
       summary: 'Run the checks and record the note.',
       steps: [
@@ -4600,6 +4597,7 @@ describe('the closing gates against the 16 September plans', (): void => {
       riskNotes: '',
       reversibility: '',
       estimatedMinutes: 1,
+      obligations: obligations([{ kind: 'report' }, { kind: 'write', writes: ['linear'] }, { kind: 'report' }], 'withheld', 3),
     };
     const satisfied: PlanStepOutcome[] = [
       { step: 1, status: 'satisfied', evidence: 'the three checks in the comment' },
@@ -4617,43 +4615,17 @@ describe('the closing gates against the 16 September plans', (): void => {
         applied: [{ tool: 'mcp.call', ok: true, effect: 'comment-16', idempotencyKey: 'run:0' }],
       }),
     ).toBeUndefined();
-    // Without the withholding step the same wording still promises the close.
+    // With the transition declared as promised the same closing set is refused.
     expect(
       dependentTransitionRefusal({
-        plan: { ...plan, steps: plan.steps.slice(0, 2) },
+        plan: { ...plan, obligations: obligations([{ kind: 'report' }, { kind: 'write', writes: ['linear'] }, { kind: 'write', writes: ['linear'] }], 'promised', 3) },
         actions: auditNoteClosing.actions,
-        planStepOutcomes: satisfied.slice(0, 2),
+        planStepOutcomes: satisfied,
       }),
     ).toContain('omitted the approved ticket state transition');
   });
 
-  it('names a write step by what it promised, never as a promised read', (): void => {
-    const reason = (step: string): string => {
-      try {
-        validatePlanStepOutcomes({
-          plan: { summary: 'Comment after a check.', steps: [step], expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 1 },
-          outcomes: [{ step: 1, status: 'satisfied', evidence: 'the comment in this response' }],
-          initialActions: [],
-          initialLedger: [],
-          surfaces,
-        });
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-      return '';
-    };
-    const write = reason('Add an audit comment on REVOPS-7 via linear save_comment once you verify the visible figure in Linear.');
-    expect(write).toBe('approved plan step 1 is a write step that also promised to verify on Linear in "you verify the visible figure in Linear", but no landed Linear read or blocking ledger reason was recorded');
-    expect(write).not.toContain('promised a Linear read');
-    expect(reason('Capture evidence from Linear; then add an audit comment on REVOPS-7.')).toBe(
-      'approved plan step 1 is a write step that also promised Linear evidence in "Capture evidence from Linear", but no landed Linear read or blocking ledger reason was recorded',
-    );
-    expect(reason('Verify the visible figure in Linear.')).toBe(
-      'approved plan step 1 promised a Linear read in "Verify the visible figure in Linear", but no landed Linear read or blocking ledger reason was recorded',
-    );
-  });
-
-  it('accepts the run 3 REVOPS-7 closing set: the read-back in step 3 is of the tile, and Linear is only the write target', (): void => {
+  it('accepts the run 3 REVOPS-7 closing set: step 3 declares Linear as a write target and the tile read landed', (): void => {
     expect(() =>
       validatePlanStepOutcomes({
         plan: run3RefreshPlan,
@@ -4670,7 +4642,7 @@ describe('the closing gates against the 16 September plans', (): void => {
         planStepOutcomes: run3RefreshOutcomes,
       }),
     ).toBeUndefined();
-    // With no tile action landed, the tile read step 1 promised is what is missing, named by its clause and its surface.
+    // With no tile action landed, the tile read step 1 declares is what is missing, named by its step and its surface.
     expect(() =>
       validatePlanStepOutcomes({
         plan: run3RefreshPlan,
@@ -4680,11 +4652,11 @@ describe('the closing gates against the 16 September plans', (): void => {
         surfaces,
       }),
     ).toThrow(
-      'approved plan step 1 is a write step that also promised to read on Looker pipeline tile in "browser_snapshot to read back the visible figure and the audit line \'Last updated by <user> at <time> UTC\'", but no landed Looker pipeline tile read or blocking ledger reason was recorded',
+      'approved plan step 1 declares a read of Looker pipeline tile, but no landed Looker pipeline tile read or blocking ledger reason was recorded',
     );
   });
 
-  it('still refuses the run 2 REVOPS-5 closing set when the Linear read step 2 promised did not land', (): void => {
+  it('still refuses the run 2 REVOPS-5 closing set when the Linear read step 2 declares did not land', (): void => {
     const withoutLinear = auditNotePrerequisites.flatMap((action, index) =>
       action.args.surface === 'linear' ? [] : [{ action, entry: auditNotePrerequisiteLedger[index]! }],
     );
@@ -4696,59 +4668,30 @@ describe('the closing gates against the 16 September plans', (): void => {
         initialLedger: withoutLinear.map((row) => row.entry),
         surfaces,
       }),
-    ).toThrow(/approved plan step 2 is a write step that also promised to read on Linear in "Read the Q3 close project tickets in Linear team REVOPS via get_issue\/list_issues and record each ticket identifier and its state as Linear reports it, as evidence for check 3", but no landed Linear read/);
+    ).toThrow('approved plan step 2 declares a read of Linear, but no landed Linear read or blocking ledger reason was recorded');
   });
 
-  it('reads a condition that names a surface as a promised read only when no other step reads that surface', (): void => {
-    const conditional = 'Move REVOPS-7 to Done via linear save_issue only if Linear reports the ticket in Backlog.';
-    const outcomes = (count: number): PlanStepOutcome[] =>
-      Array.from({ length: count }, (_, index) => ({ step: index + 1, status: 'satisfied' as const, evidence: 'in this response' }));
-    const plan = (steps: string[]) => ({
-      summary: 'Close the ticket.', steps, expectedOutputType: 'ticket-update' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1,
+  it('owes no read of an absent surface, and nothing from a plan with no declared obligations', (): void => {
+    const outcomes: PlanStepOutcome[] = [{ step: 1, status: 'satisfied', evidence: 'in this response' }];
+    const plan = (declared?: PlanObligations) => ({
+      summary: 'Reconcile the deals.', steps: ['Read the three deals in Northstar CRM and comment on REVOPS-6.'],
+      expectedOutputType: 'ticket-update' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1,
+      ...(declared ? { obligations: declared } : {}),
     });
+    // The judgement never lists an absent surface; a persisted declaration that does is ignored by the gate, which holds connected surfaces only.
     expect(() =>
-      validatePlanStepOutcomes({ plan: plan([conditional]), outcomes: outcomes(1), initialActions: [], initialLedger: [], surfaces }),
-    ).toThrow(
-      'approved plan step 1 promised a Linear read in the condition "only if Linear reports the ticket in Backlog" and no other step reads Linear, but no landed Linear read or blocking ledger reason was recorded',
-    );
-    // Another step reads Linear: the condition refers to that read, and that step carries the obligation.
-    expect(() =>
-      validatePlanStepOutcomes({
-        plan: plan(['Read REVOPS-7 in Linear via get_issue.', conditional]), outcomes: outcomes(2), initialActions: [], initialLedger: [], surfaces,
-      }),
-    ).toThrow('approved plan step 1 promised a Linear read in "Read REVOPS-7 in Linear via get_issue"');
-    expect(() =>
-      validatePlanStepOutcomes({
-        plan: plan(['Read REVOPS-7 in Linear via get_issue.', conditional]),
-        outcomes: outcomes(2),
-        initialActions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } }],
-        initialLedger: [{ tool: 'mcp.call', ok: true, effect: 'REVOPS-7 Backlog', idempotencyKey: 'read' }],
-        surfaces,
-      }),
+      validatePlanStepOutcomes({ plan: plan(obligations([{ kind: 'read', reads: ['northstar-crm'], writes: ['linear'] }])), outcomes, initialActions: [], initialLedger: [], surfaces }),
     ).not.toThrow();
-    // A conditional-only plan whose phase one read Linear anyway: the landed read satisfies the condition's binding.
     expect(() =>
-      validatePlanStepOutcomes({
-        plan: plan([conditional]),
-        outcomes: outcomes(1),
-        initialActions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } }],
-        initialLedger: [{ tool: 'mcp.call', ok: true, effect: 'REVOPS-7 Backlog', idempotencyKey: 'read' }],
-        surfaces,
-      }),
+      validatePlanStepOutcomes({ plan: plan(), outcomes, initialActions: [], initialLedger: [], surfaces }),
     ).not.toThrow();
-    // The run 3 shape: the condition names no surface, so the step promises no read at all.
-    expect(() =>
-      validatePlanStepOutcomes({
-        plan: plan([RUN_3_REVOPS_7_STEP_1, "On linear, set REVOPS-7 state to 'Done' only if the refresh landed and the audit line was read back."]),
-        outcomes: outcomes(2),
-        initialActions: run3RefreshPrerequisites,
-        initialLedger: run3RefreshPrerequisiteLedger,
-        surfaces,
-      }),
-    ).not.toThrow();
+    expect(dependentTransitionRefusal({ plan: plan(), actions: [], planStepOutcomes: outcomes })).toBeUndefined();
+    expect(blockedPlanReason([{ step: 1, status: 'blocked', evidence: 'nothing landed' }], {
+      plan: plan(), actions: [skillOutput.actions[0]], applied: [{ tool: 'mcp.call', ok: true, effect: 'comment', idempotencyKey: 'run:0' }],
+    })).toBeUndefined();
   });
 
-  it('accepts the REVOPS-7 closing set: step 3 is a write quoting the read-back as evidence, not a Linear read', (): void => {
+  it('accepts the run 2 REVOPS-7 closing set: step 3 declares Linear as a write, the snapshot read the tile', (): void => {
     expect(() =>
       validatePlanStepOutcomes({
         plan: refreshPlan,
@@ -4767,7 +4710,8 @@ describe('the closing gates against the 16 September plans', (): void => {
     ).toBeUndefined();
   });
 
-  it('accepts the REVOPS-5 closing set: "Q3 close project" names a project, and the plan withholds Done', (): void => {
+  it('accepts the run 2 REVOPS-5 closing set: both declared reads landed and the plan withholds Done', (): void => {
+    expect(auditNoteObligations.transition).toBe('withheld');
     expect(() =>
       validatePlanStepOutcomes({
         plan: auditNotePlan,
@@ -4801,6 +4745,65 @@ describe('the closing gates against the 16 September plans', (): void => {
           endpoint: 'https://example.test/',
           toolAllowlist: [],
         })),
+      }),
+    ).toBeUndefined();
+  });
+
+  it('accepts the run 4 REVOPS-7 closing set: "Emit a save_comment on linear" declares no Linear read', (): void => {
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: run4RefreshPlan,
+        outcomes: run4RefreshOutcomes,
+        initialActions: run4RefreshPrerequisites,
+        initialLedger: run4RefreshPrerequisiteLedger,
+        surfaces,
+      }),
+    ).not.toThrow();
+    expect(
+      dependentTransitionRefusal({ plan: run4RefreshPlan, actions: run4RefreshClosing.actions, planStepOutcomes: run4RefreshOutcomes }),
+    ).toBeUndefined();
+    // The transition is conditional on the evidence: a set that leaves the Done out with every step satisfied is still refused.
+    expect(
+      dependentTransitionRefusal({ plan: run4RefreshPlan, actions: run4RefreshClosing.actions.slice(0, 1), planStepOutcomes: run4RefreshOutcomes }),
+    ).toContain('omitted the approved ticket state transition');
+  });
+
+  it('accepts the run 4 Slack closing set: Northstar CRM in the text of the message is no obligation', (): void => {
+    const withNorthstar = [...surfaces, { slug: 'northstar-crm', displayName: 'Northstar CRM' }];
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: run4SlackPlan,
+        outcomes: run4SlackOutcomes,
+        initialActions: run4SlackPrerequisites,
+        initialLedger: run4SlackPrerequisiteLedger,
+        surfaces: withNorthstar,
+      }),
+    ).not.toThrow();
+    expect(
+      dependentTransitionRefusal({ plan: run4SlackPlan, actions: run4SlackClosing.actions, planStepOutcomes: run4SlackOutcomes }),
+    ).toBeUndefined();
+  });
+
+  it('accepts the run 4 REVOPS-5 closing set and demands the Done the plan conditions on the manager', (): void => {
+    const prerequisites = [...run4TileSequence, { tool: 'mcp.call' as const, args: { surface: 'linear', tool: 'list_issues', toolArgsJson: '{"team":"REVOPS","project":"Q3 close"}' } }];
+    const ledger: AppliedAction[] = prerequisites.map((action, index) => ({
+      tool: action.tool, ok: true, idempotencyKey: `run-5d:${index}`,
+      effect: index === 5 ? RUN_4_TILE_READ_BACK : index === 6 ? RUN_4_LIST_ISSUES_EFFECT : 'ok',
+    }));
+    expect(() =>
+      validatePlanStepOutcomes({ plan: run4AuditNotePlan, outcomes: run4AuditNoteOutcomes, initialActions: prerequisites, initialLedger: ledger, surfaces }),
+    ).not.toThrow();
+    expect(
+      dependentTransitionRefusal({ plan: run4AuditNotePlan, actions: run4AuditNoteClosing.actions, planStepOutcomes: run4AuditNoteOutcomes }),
+    ).toBeUndefined();
+    // Conditional on the manager: the Done must be in the set (the gate holds it) or the step blocked.
+    expect(
+      dependentTransitionRefusal({ plan: run4AuditNotePlan, actions: run4AuditNoteClosing.actions.slice(0, 1), planStepOutcomes: run4AuditNoteOutcomes }),
+    ).toContain('omitted the approved ticket state transition');
+    expect(
+      dependentTransitionRefusal({
+        plan: run4AuditNotePlan, actions: run4AuditNoteClosing.actions.slice(0, 1),
+        planStepOutcomes: [...run4AuditNoteOutcomes.slice(0, 4), { step: 5, status: 'blocked', evidence: 'the manager has not decided' }],
       }),
     ).toBeUndefined();
   });

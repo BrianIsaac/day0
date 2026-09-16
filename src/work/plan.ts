@@ -11,6 +11,13 @@ import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
+import {
+  PLAN_STEP_KINDS,
+  PLAN_TRANSITIONS,
+  plannerObligationsOf,
+  settlePlanObligations,
+  type ObligationEvent,
+} from './plan-obligations';
 
 /**
  * Layer-3 plan drafter. Lifted from Protean's `src/work/plan.ts` and
@@ -44,6 +51,16 @@ export const SCOPE_NOT_GATE_PLANNER = [
   '  - A question the data may not answer belongs in `riskNotes` for the manager to settle at approval, not in a step that stops the run.',
 ];
 
+/**
+ * The declared obligations, real mode only: the planner fills the fields the
+ * gates verify against the ledger, beside the prose the card shows. The mock
+ * planner text stays byte-identical.
+ */
+export const DECLARED_OBLIGATIONS_PLANNER = [
+  '  - Beside the prose, declare what each step obliges: `stepObligations` has one row per step in order, with `kind` (read: gathers evidence from a surface or document; write: changes a surface; report: records something in the response and touches no surface; conditional-write: writes only if a stated condition holds), `reads` (the slugs of the connected surfaces the step itself reads; a surface it only writes to or only mentions is not read) and `writes` (the slugs of the connected surfaces it writes). Only a surface listed as connected may appear, by its slug exactly as listed.',
+  '  - Declare `transition`, your word on the originating ticket state: promised (you will move it), conditional-on-evidence (only if what you read shows a stated condition holds), conditional-on-manager (only if or after the manager approves), withheld (you leave the state alone), none (the plan says nothing about it); and `transitionStep`, the one-based step that carries it, or null.',
+];
+
 /** The run-context instruction shared by the planner and executor. */
 export function actionModeInstruction(
   autonomousActions: boolean,
@@ -64,7 +81,7 @@ export function planSystemPrompt(
 ): string {
   return [
     ...SYSTEM_PROMPT_HEAD,
-    ...(surfaceMode === 'real' ? SCOPE_NOT_GATE_PLANNER : []),
+    ...(surfaceMode === 'real' ? [...SCOPE_NOT_GATE_PLANNER, ...DECLARED_OBLIGATIONS_PLANNER] : []),
     '',
     actionModeInstruction(autonomousActions, surfaceMode),
   ].join('\n');
@@ -245,6 +262,27 @@ export const planSchema = z.object({
   reversibility: z.string(),
   estimatedMinutes: z.number(),
 });
+
+/**
+ * The real planner's reply: the mock schema plus the declared obligations,
+ * each nullable on the wire so a reply that omits them still parses and the
+ * judgement fills them. The mock schema is untouched.
+ */
+export const realPlanSchema = planSchema.extend({
+  stepObligations: z
+    .array(
+      z.object({
+        kind: z.enum(PLAN_STEP_KINDS),
+        reads: z.array(z.string()),
+        writes: z.array(z.string()),
+      }),
+    )
+    .nullable(),
+  transition: z.enum(PLAN_TRANSITIONS).nullable(),
+  transitionStep: z.number().int().nullable(),
+});
+
+type RealPlanReply = z.infer<typeof realPlanSchema>;
 
 /** The documentation the planner may plan from: the same pages the executor cites. */
 export type PlanDocuments = Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>;
@@ -481,6 +519,8 @@ export interface DraftPlanArgs {
   record?: CandidateRecord;
   /** The clock the surface verdicts are resolved against; defaults to now. */
   now?: number;
+  /** Record hook for what the obligations judgement decided or why it could not; real mode only. */
+  onObligationEvent?: (event: ObligationEvent) => void | Promise<void>;
 }
 
 /**
@@ -577,49 +617,84 @@ function materialisePlan(raw: z.infer<typeof planSchema>): ExecutionPlan {
 }
 
 export async function draftExecutionPlan(args: DraftPlanArgs): Promise<ExecutionPlan> {
-  const { autonomousActions, ...prompt } = args;
+  const { autonomousActions, onObligationEvent, ...prompt } = args;
   const planAgent = makeAgent('day0-plan', planSystemPrompt(autonomousActions, args.surfaceMode));
   const userPrompt = planUserPrompt(prompt);
 
-  const raw = await agentJson<z.infer<typeof planSchema>>({
+  if (args.surfaceMode !== 'real') {
+    const raw = await agentJson<z.infer<typeof planSchema>>({
+      agent: planAgent,
+      user: userPrompt,
+      schema: planSchema,
+    });
+    return materialisePlan(raw);
+  }
+
+  const raw = await agentJson<RealPlanReply>({
     agent: planAgent,
     user: userPrompt,
-    schema: planSchema,
+    schema: realPlanSchema,
   });
   const plan = materialisePlan(raw);
-  if (args.surfaceMode !== 'real') return plan;
+  let reply: RealPlanReply = raw;
+  let drafted: ExecutionPlan = plan;
 
   // Real mode only: one repair for a step that gates on a candidate property,
   // then the step is kept as advisory so the executor reports it and moves on.
   const audit = planPreconditionAudit(plan, args.candidate, args.documents, args.charter);
-  if (audit.flagged.length === 0) return plan;
-  const repairPrompt = [
-    userPrompt,
-    '',
-    '--- Required plan correction ---',
-    'Your previous plan was not stored. Return one full replacement plan that fixes every issue below and keeps every other step as it was.',
-    ...audit.issues.map((issue) => `- ${issue}`),
-    '',
-    'Previous plan:',
-    JSON.stringify(raw),
-    '',
-    'Draft the corrected execution plan now.',
-  ].join('\n');
-  let repairedRaw: z.infer<typeof planSchema>;
-  try {
-    repairedRaw = await agentJson<z.infer<typeof planSchema>>({
-      agent: planAgent,
-      user: repairPrompt,
-      schema: planSchema,
-    });
-  } catch {
-    return { ...plan, advisorySteps: audit.flagged };
+  if (audit.flagged.length > 0) {
+    const repairPrompt = [
+      userPrompt,
+      '',
+      '--- Required plan correction ---',
+      'Your previous plan was not stored. Return one full replacement plan that fixes every issue below and keeps every other step as it was.',
+      ...audit.issues.map((issue) => `- ${issue}`),
+      '',
+      'Previous plan:',
+      JSON.stringify(raw),
+      '',
+      'Draft the corrected execution plan now.',
+    ].join('\n');
+    try {
+      const repairedRaw = await agentJson<RealPlanReply>({
+        agent: planAgent,
+        user: repairPrompt,
+        schema: realPlanSchema,
+      });
+      const repaired = materialisePlan(repairedRaw);
+      const remaining = planPreconditionAudit(repaired, args.candidate, args.documents, args.charter);
+      reply = repairedRaw;
+      drafted = remaining.flagged.length === 0 ? repaired : { ...repaired, advisorySteps: remaining.flagged };
+    } catch {
+      drafted = { ...plan, advisorySteps: audit.flagged };
+    }
   }
-  const repaired = materialisePlan(repairedRaw);
-  const remaining = planPreconditionAudit(repaired, args.candidate, args.documents, args.charter);
-  return remaining.flagged.length === 0
-    ? repaired
-    : { ...repaired, advisorySteps: remaining.flagged };
+  return await withObligations(drafted, reply, args, onObligationEvent);
+}
+
+/**
+ * The plan with its declared obligations settled: the judgement fills or
+ * checks the planner's fields against the connected surfaces, the loaded
+ * documentation and the charter, and every event it raises is recorded
+ * through the caller's hook.
+ */
+async function withObligations(
+  plan: ExecutionPlan,
+  reply: RealPlanReply,
+  args: DraftPlanArgs,
+  onObligationEvent: DraftPlanArgs['onObligationEvent'],
+): Promise<ExecutionPlan> {
+  const now = args.now ?? Date.now();
+  const surfaces = args.surfaces ?? [];
+  const planner = plannerObligationsOf(reply, plan.steps.length, surfaces, now);
+  const settled = await settlePlanObligations(
+    { plan, charter: args.charter, surfaces, documents: args.documents, now },
+    planner,
+  );
+  for (const event of settled.events) await onObligationEvent?.(event);
+  if (settled.obligations) return { ...plan, obligations: settled.obligations };
+  const failedOpen = settled.events.find((event) => event.type === 'plan.obligations-failed-open');
+  return failedOpen ? { ...plan, obligationsFailedOpen: failedOpen.payload.reason } : plan;
 }
 
 export function renderPlanSummary(plan: ExecutionPlan): string {

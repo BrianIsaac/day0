@@ -29,6 +29,7 @@ import {
 import { landedWritesOf } from '../../src/work/landed-writes';
 import { providerReconciliationEntries } from '../../src/work/reconciliation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 import { randomBytes } from 'node:crypto';
 
 /**
@@ -226,6 +227,36 @@ async function settle(harness: Harness, workItemId: Id<'workItems'>, states: rea
 }
 
 const ledger = (row: Doc<'workItems'>): AppliedAction[] => (row.output as { applied: AppliedAction[] }).applied;
+
+/**
+ * The plan conditions the Done on the manager's approval, so the closing
+ * phase's Done is held for the manager whatever the switch says: the run
+ * parks with the comment landed, the manager approves the Done, and the
+ * item completes.
+ */
+/** The Done lands on the manager's note alone: no held row, the item completes, and the hold event records why. */
+async function landedOnNote(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
+  const done = await settle(harness, workItemId, ['actions-pending', 'failed', 'completed']);
+  expect(done.state).toBe('completed');
+  expect((done.actionVerdicts ?? []).map((verdict) => verdict.disposition)).not.toContain('held');
+  const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+  const applying = events.filter((event) => event.type === 'work.actions-auto-applying' && (event.payload as { dependentPhase?: boolean }).dependentPhase);
+  expect(applying.map((event) => (event.payload as { transitionDirectedByNote?: boolean }).transitionDirectedByNote)).toEqual([true]);
+  return done;
+}
+
+async function approveHeldDone(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
+  const held = await settle(harness, workItemId, ['actions-pending', 'failed', 'completed']);
+  expect(held.state).toBe('actions-pending');
+  const verdicts = held.actionVerdicts ?? [];
+  const doneIndex = verdicts.findIndex((verdict) => verdict.disposition === 'held');
+  expect(verdicts[doneIndex]?.reason).toBe(HELD_WITHHELD_TRANSITION);
+  await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+    workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [doneIndex],
+  });
+  await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+  return await settle(harness, workItemId, ['failed', 'completed']);
+}
 const savedComments = (): Array<{ issueId: string; body: string; id?: string }> =>
   recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => call.args as { issueId: string; body: string; id?: string });
 
@@ -271,11 +302,11 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3RetryClosing;
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
-    const done = await settle(t, workItemId, ['failed', 'completed']);
+    // The note directs the Done in so many words, so the hold the plan puts on it is the manager's word already given.
+    const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
-    expect(done.state).toBe('completed');
 
-    // Exactly one comment ever reached Linear; the Done landed after it.
+    // Exactly one comment ever reached Linear; the Done landed after it, on the manager's note.
     expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['initial', 'dependent']);
     expect(savedComments().map((comment) => comment.body.split('\n')[0])).toEqual([RUN_3_FIRST_COMMENT.split('\n')[0]]);
     expect(recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args)).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
@@ -284,7 +315,10 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     expect(reused).toMatchObject({ ok: true, providerId: FIRST_COMMENT_ID });
     expect(reused.reason).toContain(`reused landed comment ${FIRST_COMMENT_ID}`);
     expect(rows[rows.length - 1]).toMatchObject({ ok: true, authority: 'autonomous' });
-    expect((done.output as { planStepOutcomes: Array<{ status: string }> }).planStepOutcomes.map((row) => row.status)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied', 'satisfied']);
+    // The transition step rests on the note, recorded on the row; the ledger steps carry no basis once persisted.
+    expect((done.output as { planStepOutcomes: Array<{ status: string; basis?: string }> }).planStepOutcomes.map((row) => [row.status, row.basis])).toEqual([
+      ['satisfied', undefined], ['satisfied', undefined], ['satisfied', undefined], ['satisfied', undefined], ['satisfied', 'manager-feedback'],
+    ]);
     // Provider reconciliation for this row lists the real comment once, under the reused row, and the Done once.
     const reconciled = providerReconciliationEntries(done.output);
     expect(reconciled.filter((entry) => entry.providerId === FIRST_COMMENT_ID)).toHaveLength(1);
@@ -318,9 +352,8 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3ObedientClosing(FIRST_COMMENT_ID);
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
-    const done = await settle(t, workItemId, ['failed', 'completed']);
+    const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
-    expect(done.state).toBe('completed');
 
     expect(savedComments()).toHaveLength(1);
     expect(recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args)).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
@@ -334,7 +367,7 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     recorded.commentIds.push('comment-start', 'comment-audit');
     recorded.closingReply = run3TwoCommentClosing;
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
-    const done = await settle(t, workItemId, ['failed', 'completed']);
+    const done = await approveHeldDone(t, workItemId);
     expect(done.skipReason).toBeUndefined();
     expect(done.state).toBe('completed');
 
@@ -356,7 +389,8 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3CorrectionClosing(FIRST_COMMENT_ID);
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
-    const done = await settle(t, workItemId, ['failed', 'completed']);
+    // The note asks for the correction and then directs the Done in so many words, so both land on the note.
+    const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
     expect(done.state).toBe('completed');
 

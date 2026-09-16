@@ -1,7 +1,7 @@
 import { reusedLedger } from './landed-writes';
 import { actionIntent, isAuditComment, isStatusChange, parseSurfaceAction } from '../surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
-import { promisedReads, promisesResult } from './plan-steps';
+import { declaredReads, readingSteps } from './obligations';
 import type { ExecutionOutput, ExecutionPlan, LandedWrite, PlanStepOutcome, RefusedClosing } from './types';
 
 export interface ClosingResume extends ExecutionOutput {
@@ -28,19 +28,18 @@ function isRead(action: ExecutionOutput['actions'][number]): boolean {
 }
 
 /**
- * Whether every surface the plan promises to read was read in the
- * prerequisites, bound by `promisedReads`, the same binding the closing
- * gate reads. A step that names no surface ("take a browser_snapshot and
- * read back the audit line", in the same session as the step before it) or
- * names one only as a write target has nothing here to check; the
- * landed-read rule beside this one is what covers it.
+ * Whether every surface the plan declares a read of was read in the
+ * prerequisites, by `declaredReads`, the same reading the closing gate
+ * makes. A plan with no declared obligations, or a step that declares no
+ * surface, has nothing here to check; the landed-read rule beside this one
+ * is what covers it.
  */
-function promisedSurfacesRead(actions: readonly ExecutionOutput['actions'][number][], plan: ExecutionPlan, surfaces: readonly Surface[]): boolean {
+function declaredSurfacesRead(actions: readonly ExecutionOutput['actions'][number][], plan: ExecutionPlan, surfaces: readonly Surface[]): boolean {
   const reads = new Set(actions.flatMap(action => {
     const parsed = parseSurfaceAction(action);
     return parsed.ok && actionIntent(parsed.action) === 'read' ? [parsed.action.surface.toLowerCase()] : [];
   }));
-  return promisedReads(plan.steps, surfaces).every(read => reads.has(read.surface.slug.toLowerCase()));
+  return declaredReads(plan, surfaces).every(read => reads.has(read.surface.slug.toLowerCase()));
 }
 
 /**
@@ -60,7 +59,7 @@ function gateRefusalResume(row: ExecutionOutput & { phase?: unknown; applied?: A
   if (row.actions.length === 0 || row.applied.length !== row.actions.length) return undefined;
   if (row.applied.some(entry => !landedEntry(entry))) return undefined;
   if (!row.actions.some(isRead)) return undefined;
-  if (!promisedSurfacesRead(row.actions, plan, surfaces)) return undefined;
+  if (!declaredSurfacesRead(row.actions, plan, surfaces)) return undefined;
   const refused = row.refusedClosing;
   return {
     draft: row.draft, notes: row.notes,
@@ -97,11 +96,11 @@ export function closingResume(output: unknown, plan: ExecutionPlan, failure: str
     return !entry?.ok || entry.held || entry.awaitingApproval;
   })) return undefined;
   if (!actions.some(isRead)) return undefined;
-  const prerequisites = plan.steps.flatMap((step, index) => promisesResult(step) ? [index + 1] : []);
+  const prerequisites = readingSteps(plan);
   if (prerequisites.length === 0 || prerequisites.some(step => !row.planStepOutcomes?.some(
     outcome => outcome.step === step && outcome.status === 'satisfied' && outcome.basis !== 'manager-feedback' && outcome.evidence.trim(),
   ))) return undefined;
-  if (!promisedSurfacesRead(actions, plan, surfaces)) return undefined;
+  if (!declaredSurfacesRead(actions, plan, surfaces)) return undefined;
   const closingActions = row.actions.slice(boundary);
   const closingApplied = row.applied.slice(boundary);
   if (row.prerequisiteCount === undefined && closingActions.some(action => {

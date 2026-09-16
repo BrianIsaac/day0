@@ -35,9 +35,9 @@ export const HELD_WHILE_SUPERVISED_NOTE = 'held for your approval - autonomous a
 export const HELD_BEFORE_AUTONOMY_NOTE =
   'held for your approval - this run was held before autonomous actions were turned on';
 
-/** The card when the only held rows are a ticket state change the approved plan withholds. */
+/** The card when the only held rows are a ticket state change the approved plan leaves to the manager. */
 export const HELD_WITHHELD_TRANSITION_NOTE =
-  'held for your approval - the approved plan leaves the ticket state where it is, so moving it is your call';
+  'held for your approval - the approved plan leaves the ticket state change to you, so moving it is your call';
 
 /**
  * Whether an agent row has autonomous actions on.

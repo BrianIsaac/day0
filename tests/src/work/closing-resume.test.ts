@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { closingResume, resumedClosingLedger } from '../../../src/work/closing-resume';
 import type { ExecutionPlan } from '../../../src/work/types';
-import { run3RefreshPlan, RUN_3_REVOPS_7_STEP_1 } from '../../convex/fixtures/closing-gates-2026-09-16';
+import { refreshPlan, run3RefreshObligations, run3RefreshPlan } from '../../convex/fixtures/closing-gates-2026-09-16';
 
+/** A plan that declares a read of the tile, a read of Linear and a promised close: what the gate and the resume selector read. */
 const plan: ExecutionPlan = {
   summary: 'Audit the tile', steps: ['Read the Looker tile.', 'Read the Linear issues.', 'Comment then close.'],
   expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 1,
+  obligations: {
+    steps: [
+      { kind: 'read', reads: ['looker'], writes: [] },
+      { kind: 'read', reads: ['linear'], writes: [] },
+      { kind: 'write', reads: [], writes: ['linear'] },
+    ],
+    transition: 'promised', transitionStep: 3, basis: 'judgement',
+  },
 };
 const action = (surface: string, tool: string) => ({ tool: 'mcp.call', args: { surface, tool, toolArgsJson: tool === 'save_comment' ? '{"body":"Audit"}' : '{}' } });
 const output = {
@@ -21,12 +30,15 @@ describe('closing resume prerequisites', () => {
       ...output,
       actions: [...output.actions, action('linear', 'get_issue')],
       applied: [output.applied[0], { tool: 'mcp.call', ok: true }, { tool: 'mcp.call', ok: false }],
-    }, { ...plan, steps: ['Read Linear issues.', 'Read Linear details.', 'Close.'] }, 'read failed', [
+    }, {
+      ...plan, steps: ['Read Linear issues.', 'Read Linear details.', 'Close.'],
+      obligations: { ...plan.obligations!, steps: [{ kind: 'read', reads: ['linear'], writes: [] }, { kind: 'read', reads: ['linear'], writes: [] }, { kind: 'write', reads: [], writes: ['linear'] }] },
+    }, 'read failed', [
       { slug: 'linear', displayName: 'Linear' },
     ])).toBeUndefined();
   });
 
-  it('does not trust a satisfied outcome when the promised surface read is missing', () => {
+  it('does not trust a satisfied outcome when a declared surface read is missing', () => {
     expect(closingResume(output, plan, 'connection failed', [
       { slug: 'linear', displayName: 'Linear' }, { slug: 'looker', displayName: 'Looker' },
     ])).toBeUndefined();
@@ -118,17 +130,9 @@ describe('resuming after a closing gate refusal', () => {
     expect(closingResume(gateRefusal, plan, refused.reason, surfaces)).not.toHaveProperty('landedWrites');
   });
 
-  it('resumes when a promised-result step names no surface, as the 16 September REVOPS-7 plan does', () => {
-    // The run's own words: step 2 promises the read-back without naming the tile surface.
-    const runPlan: ExecutionPlan = {
-      ...plan,
-      steps: [
-        'On the looker-pipeline-tile surface, run the documented browser sequence: navigate to http://looker-tile:8080/, fill Username (revops) and Password ({{secret}}), click Sign in, fill Pipeline coverage with 74% exactly (per the runbook, do not compute a figure), click Save.',
-        "In the same browser session, take a browser_snapshot and read back the audit line 'Last updated by <user> at <time> UTC' plus the visible figure; if the page redirects, login fails, or the audit line is absent, record the observed failure and stop.",
-        'Add an audit comment on REVOPS-7 via linear save_comment quoting the visible figure and the exact audit line as evidence (comment precedes any status change).',
-        'Move REVOPS-7 to Done via linear save_issue only if the audit line confirmed the change landed.',
-      ],
-    };
+  it('resumes on the run 2 REVOPS-7 plan from its declared tile read, whatever the steps say', () => {
+    // The run's own words: step 2 names no surface, and the declared obligations say the read-back is of the tile.
+    const runPlan: ExecutionPlan = refreshPlan;
     const tileSurfaces = [...surfaces, { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' }];
     const tile = (tool: string) => ({ tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool, toolArgsJson: '{}' } });
     const prerequisites = [tile('browser_navigate'), tile('browser_fill_form'), tile('browser_click'), tile('browser_snapshot')];
@@ -142,10 +146,14 @@ describe('resuming after a closing gate refusal', () => {
       applied: [...prerequisites.map(() => landed), { tool: 'mcp.call', ok: false, reason: 'Failed to connect to MCP server linear' }],
       planStepOutcomes: [1, 2].map(step => ({ step, status: 'satisfied', evidence: 'ledger row 4: visible figure 74%' })),
     }, runPlan, 'Failed to connect to MCP server linear', tileSurfaces)).toMatchObject({ resumedClosing: true });
-    // A named surface that was never touched (the ledger holds a Linear read only) still sends the retry back through phase one.
+    // A declared surface that was never touched (the ledger holds a Linear read only) still sends the retry back through phase one.
     expect(closingResume({
       ...gateRefusal, actions: [action('linear', 'list_issues')], applied: [landed],
-    }, { ...runPlan, steps: [runPlan.steps[0]!, 'Read back the figure from the Looker pipeline tile.', ...runPlan.steps.slice(2)] }, refused.reason, tileSurfaces)).toBeUndefined();
+    }, runPlan, refused.reason, tileSurfaces)).toBeUndefined();
+    // A plan with no declared obligations owes no surface here: the landed-read rule alone decides.
+    expect(closingResume({
+      ...gateRefusal, actions: [action('linear', 'list_issues')], applied: [landed],
+    }, { ...runPlan, obligations: undefined }, refused.reason, tileSurfaces)).toMatchObject({ resumedClosing: true });
   });
 
   it('goes back through phase one when a prerequisite did not land or a promised surface was not read', () => {
@@ -155,16 +163,28 @@ describe('resuming after a closing gate refusal', () => {
     expect(closingResume({ ...gateRefusal, actions: [], applied: [] }, plan, refused.reason, surfaces)).toBeUndefined();
   });
 
-  it('reads the binding the gate reads: a write target is no promised read, a bare condition is one only when nothing else reads the surface', () => {
+  it('reads the declared reads the gate reads: the run 3 plan owes the tile alone, and a declared Linear read no step landed sends the retry back', () => {
     const tileSurfaces = [...surfaces, { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile' }];
     const tile = (tool: string) => ({ tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool, toolArgsJson: '{}' } });
     const prerequisites = [tile('browser_navigate'), tile('browser_fill_form'), tile('browser_click'), tile('browser_fill_form'), tile('browser_click'), tile('browser_snapshot')];
     const landedRow = { ...gateRefusal, actions: prerequisites, applied: prerequisites.map(() => landed) };
-    // The run 3 plan: step 3 names Linear as the write target under a condition on the tile read-back; no Linear read is owed.
+    // The run 3 plan declares Linear as a write target only; no Linear read is owed.
     expect(closingResume(landedRow, run3RefreshPlan, refused.reason, tileSurfaces)).toMatchObject({ resumedClosing: true, phase: 'dependent-authoring' });
-    // A Linear read owed only by a condition no other step covers still sends the retry back through phase one.
+    // The same plan with a Linear read declared on step 3 and none landed goes back through phase one.
     expect(closingResume(landedRow, {
-      ...run3RefreshPlan, steps: [RUN_3_REVOPS_7_STEP_1, 'Move REVOPS-7 to Done only if Linear reports the ticket in Backlog.'],
+      ...run3RefreshPlan,
+      obligations: {
+        ...run3RefreshObligations,
+        steps: [run3RefreshObligations.steps[0]!, run3RefreshObligations.steps[1]!, { ...run3RefreshObligations.steps[2]!, reads: ['linear'] }],
+      },
     }, refused.reason, tileSurfaces)).toBeUndefined();
+    // A declared read of a surface the list does not hold (absent, ungranted) is no obligation.
+    expect(closingResume(landedRow, {
+      ...run3RefreshPlan,
+      obligations: {
+        ...run3RefreshObligations,
+        steps: [run3RefreshObligations.steps[0]!, run3RefreshObligations.steps[1]!, { ...run3RefreshObligations.steps[2]!, reads: ['northstar-crm'] }],
+      },
+    }, refused.reason, tileSurfaces)).toMatchObject({ resumedClosing: true });
   });
 });

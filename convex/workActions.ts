@@ -17,8 +17,11 @@ import {
   type DraftPlanArgs,
 } from '../src/work/plan';
 import {
+  ClosingGateRefusal,
+  DEFERRALS_KEPT,
   deferralAudit,
   dependentActionCap,
+  removePrewrittenClosingActions,
   repairableReadFailures,
   repairFailedReads,
   repairHeldWriteArguments,
@@ -39,7 +42,12 @@ import {
   type WorkCandidate,
   type WorkSourceCategory,
 } from '../src/work/types';
-import { planPromisesClose, promisedReads, promisesResult, promisesWrite, type PromisedRead } from '../src/work/plan-steps';
+import {
+  closingPhaseOwed,
+  declaredReads,
+  transitionPromised,
+  type DeclaredRead,
+} from '../src/work/obligations';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
 import { asAgentId } from '../src/lib/ids';
@@ -53,6 +61,7 @@ import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { verdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponent } from '../src/surfaces/browser';
 import type { ExecutionOutput, LandedWrite, SkillShape } from '../src/work/types';
@@ -420,6 +429,13 @@ export const draftPlan = action({
       surfaceMode: SURFACE_MODE,
       ...grounding,
       ...(record ? { record } : {}),
+      onObligationEvent: async (event) => {
+        await ctx.runMutation(internal.events.log, {
+          agentId,
+          type: event.type,
+          payload: { workItemId: args.workItemId, ...event.payload },
+        });
+      },
     });
     const stored = await ctx.runMutation(internal.work.setPlan, {
       workItemId: args.workItemId,
@@ -604,10 +620,10 @@ async function holdDay0Actions(
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
-      onAuditCorrection: async removedIndices => {
+      onAuditCorrection: async (removedIndices, reason) => {
         await ctx.runMutation(internal.events.log, {
           agentId: args.agentId, type: 'audit.corrected',
-          payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason: 'prewritten closing actions' },
+          payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
         });
       },
     });
@@ -620,7 +636,7 @@ async function holdDay0Actions(
     // A write whose argument names the probed schema refuses is re-authored
     // once here, so the payload the manager approves is one the provider
     // can accept; nothing reaches a surface in the repair.
-    const stagedOutput =
+    const repairedStaged =
       SURFACE_MODE === 'real'
         ? await repairedForHold(staged, {
             surfaces,
@@ -631,12 +647,9 @@ async function holdDay0Actions(
             },
           })
         : staged;
-    if (stagedOutput.argumentRepairs?.some((attempt) => attempt.repaired)) {
-      const issues = deferralAudit(stagedOutput, args.candidate, {
-        mode: SURFACE_MODE, plan: args.plan, surfaces, skillBody: args.skill.body, now: Date.now(),
-      });
-      if (issues.length > 0) throw new Error(`repaired action set failed the audit: ${issues.join('; ')}`);
-    }
+    const stagedOutput = repairedStaged.argumentRepairs?.some((attempt) => attempt.repaired)
+      ? await auditRepairedPayloads(ctx, repairedStaged, args, surfaces)
+      : repairedStaged;
     if (stagedOutput.needsDependentPhase && stagedOutput.actions.length === 0) {
       // Nothing to wait for is not a failed prerequisite: the closing phase
       // authors the whole set and accounts for every plan step, and a step
@@ -688,6 +701,57 @@ async function holdDay0Actions(
     });
     return result({ ok: false, reason });
   }
+}
+
+/**
+ * The deferral audit on a phase-one output whose payloads the argument
+ * repair changed: a closing action the repair revealed (a comment whose body
+ * only the corrected key carries) is removed as prewritten, a deferral the
+ * audit cannot tie to a result is left to the closing phase, and each
+ * correction is recorded. Nothing here stops the run.
+ */
+async function auditRepairedPayloads<T extends ExecutionOutput>(
+  ctx: ActionCtx,
+  output: T,
+  args: {
+    workItemId: Id<'workItems'>;
+    agentId: Id<'agents'>;
+    runId: Id<'events'>;
+    skill: { body: string };
+    plan: ExecutionPlan;
+    candidate: WorkCandidate;
+  },
+  surfaces: readonly SurfaceRecord[],
+): Promise<T> {
+  const prewrittenIndices: number[] = [];
+  const issues = deferralAudit(output, args.candidate, {
+    mode: SURFACE_MODE, plan: args.plan, surfaces, skillBody: args.skill.body, now: Date.now(),
+  }, prewrittenIndices);
+  const record = async (removedIndices: number[], reason: string): Promise<void> => {
+    await ctx.runMutation(internal.events.log, {
+      agentId: args.agentId, type: 'audit.corrected',
+      payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
+    });
+  };
+  let corrected: T = output;
+  if (prewrittenIndices.length > 0) {
+    const removed = new Set(prewrittenIndices);
+    const reindex = (index: number): number => index - prewrittenIndices.filter((removedIndex) => removedIndex < index).length;
+    corrected = {
+      ...removePrewrittenClosingActions(output, prewrittenIndices),
+      ...(output.argumentRepairs
+        ? {
+            argumentRepairs: output.argumentRepairs
+              .filter((attempt) => !removed.has(attempt.index))
+              .map((attempt) => ({ ...attempt, index: reindex(attempt.index) })),
+          }
+        : {}),
+    } as T;
+    await record(prewrittenIndices, 'prewritten closing actions');
+  }
+  const kept = issues.filter((issue) => !issue.startsWith('prewrote a closing action'));
+  if (kept.length > 0) await record([], `${DEFERRALS_KEPT}: ${kept.join('; ')}`);
+  return corrected;
 }
 
 /** A ledger as the row carries it between the two phases. */
@@ -748,9 +812,13 @@ function isDependentPendingOutput(
   return (output as { phase?: unknown }).phase === 'dependent';
 }
 
-/** Whether the approved plan or emitted prerequisites require one result-aware turn. */
+/**
+ * Whether the approved plan or emitted prerequisites require one result-aware
+ * turn: the output asked for one, the plan declares a read, or the plan
+ * declares nothing usable and is read as reading (`closingPhaseOwed`).
+ */
 export function needsDependentPhase(output: ExecutionOutput, plan: ExecutionPlan): boolean {
-  return output.needsDependentPhase === true || plan.steps.some(promisesResult);
+  return output.needsDependentPhase === true || closingPhaseOwed(plan);
 }
 
 /**
@@ -782,14 +850,13 @@ function successfulReadSurfaces(
 }
 
 /**
- * Refuse a silent omission when an approved step explicitly promised a surface read.
+ * Refuse a silent omission when an approved step declares a surface read.
  *
- * A step promises a read of the surface the read acts on, bound by
- * `promisedReads` (the same binding the closing resume reads): a surface
- * the step names only as a write target owes nothing, and a read under a
- * condition refers to a read another step makes. A step names a surface by
- * its slug or by its display name: a plan says "the Looker pipeline tile",
- * not "looker-pipeline-tile".
+ * A step owes a read of exactly the surfaces its declared obligations list
+ * (`declaredReads`, the same reading the closing resume makes), and only of
+ * surfaces the gate holds: an absent or ungranted surface is never owed. A
+ * plan with no declared obligations owes no read here; the prose is never
+ * consulted.
  */
 export function validatePlanStepOutcomes(args: {
   plan: ExecutionPlan;
@@ -816,48 +883,34 @@ export function validatePlanStepOutcomes(args: {
     }
   }
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
-  for (const read of promisedReads(args.plan.steps, args.surfaces)) {
+  for (const read of declaredReads(args.plan, args.surfaces)) {
     if (reads.has(read.surface.slug.toLowerCase())) continue;
     const outcome = ordered[read.step - 1]!;
     if (outcome.status === 'satisfied' || outcome.evidence.trim() === '') {
-      throw new Error(missingReadReason(read, args.plan.steps[read.step - 1]!));
+      throw new Error(missingReadReason(read));
     }
   }
 }
 
-/**
- * Why a promised read has no landed read behind it, in the step's own
- * terms: the clause that promised it and the surface it bound to. A step
- * that writes is named as a write that also promised a check, never as a
- * promised read, and a read owed only by a condition is named as such: the
- * message says what the step promised, so a misread step is visible as one.
- */
-function missingReadReason(read: PromisedRead, rawStep: string): string {
+/** Why a declared read has no landed read behind it: the step and the surface it declared. */
+export function missingReadReason(read: DeclaredRead): string {
   const surface = read.surface.displayName;
-  const missing = `no landed ${surface} read or blocking ledger reason was recorded`;
-  const where = `in "${read.clause}"`;
-  if (read.conditional) {
-    return `approved plan step ${read.step} promised a ${surface} read in the condition "${read.clause}" and no other step reads ${surface}, but ${missing}`;
-  }
-  if (!promisesWrite(rawStep)) {
-    return `approved plan step ${read.step} promised a ${surface} read ${where}, but ${missing}`;
-  }
-  const promised = read.term === 'evidence' || read.term === 'result'
-    ? `promised ${surface} ${read.term}`
-    : `promised to ${read.term} on ${surface}`;
-  return `approved plan step ${read.step} is a write step that also ${promised} ${where}, but ${missing}`;
+  return `approved plan step ${read.step} declares a read of ${surface}, but no landed ${surface} read or blocking ledger reason was recorded`;
 }
 
 /**
  * Why a closing action set may not stand, judged against the plan it closes.
  *
  * After a failed prerequisite no ticket state may change. Otherwise a
- * ticket-update plan that promised a close must either carry the transition
- * or account for its absence: a phase that withholds Done because a
+ * ticket-update plan whose declared transition commits the run to the close
+ * (promised, conditional on the evidence, or conditional on the manager,
+ * whose Done is emitted and held) must either carry the transition or
+ * account for its absence: a phase that withholds Done because a
  * prerequisite was held, or the evidence was wrong, records the step as
- * blocked, and that record is honoured rather than refused. A plan that
- * withholds the transition in its own words promised none, and a closing
- * set that leaves the state alone satisfies it.
+ * blocked, and that record is honoured rather than refused. A plan whose
+ * transition is withheld or none owes no transition, and a closing set that
+ * leaves the state alone satisfies it; so does a plan with no declared
+ * obligations.
  */
 export function dependentTransitionRefusal(args: {
   plan: ExecutionPlan;
@@ -876,7 +929,7 @@ export function dependentTransitionRefusal(args: {
   }
   if (
     args.plan.expectedOutputType !== 'ticket-update' ||
-    !planPromisesClose(args.plan) ||
+    !transitionPromised(args.plan) ||
     statusChange ||
     args.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
   ) {
@@ -889,6 +942,7 @@ function flattenedDependentOutput(
   output: DependentPendingOutput,
   applied: AppliedAction[],
 ): ExecutionOutput & { applied: AppliedAction[]; planStepOutcomes: PlanStepOutcome[]; prerequisiteCount: number } {
+  const withheldActions = [...(output.initial.withheldActions ?? []), ...(output.withheldActions ?? [])];
   return {
     draft: output.draft,
     notes: output.notes,
@@ -918,6 +972,7 @@ function flattenedDependentOutput(
     planStepOutcomes: output.planStepOutcomes,
     prerequisiteCount: output.initial.actions.length,
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
+    ...(withheldActions.length > 0 ? { withheldActions } : {}),
   };
 }
 
@@ -956,7 +1011,7 @@ export function blockedPlanReason(
     };
     const everyActionLanded = run.actions.every((_action, index) => landed(index));
     const closePromised =
-      run.plan.expectedOutputType === 'ticket-update' && planPromisesClose(run.plan);
+      run.plan.expectedOutputType === 'ticket-update' && transitionPromised(run.plan);
     const transitionLanded = run.actions.some((action, index): boolean => {
       const parsed = parseSurfaceAction(action);
       return parsed.ok && isStatusChange(parsed.action) && landed(index);
@@ -1080,6 +1135,37 @@ export const authorDependentActions = internalAction({
       if (!skill) throw new Error('dependent phase skill is no longer registered');
       knownValues = await knownValuesForAgent(ctx, agent);
       const plan = item.plan as ExecutionPlan;
+      const feedback = liveManagerFeedback(item.managerFeedback);
+      const prerequisites = initial;
+      const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
+      // Only a connected surface can be owed: an absent or ungranted one is
+      // dropped from the list the gate holds, whatever the plan declares.
+      const gateSurfaces = surfaces
+        .filter((surface) => verdictFor(surface, Date.now()) === 'connected')
+        .map((surface) => ({ slug: surface.slug, displayName: surface.displayName }));
+      const closingGate = (candidateOutput: DependentExecutionOutput): string[] => {
+        const issues: string[] = [];
+        try {
+          validatePlanStepOutcomes({
+            plan,
+            outcomes: candidateOutput.planStepOutcomes,
+            initialActions: prerequisites.actions,
+            initialLedger: prerequisites.applied,
+            surfaces: gateSurfaces,
+            managerFeedback: feedback,
+          });
+        } catch (error) {
+          issues.push(error instanceof Error ? error.message : String(error));
+        }
+        const transitionRefusal = dependentTransitionRefusal({
+          plan,
+          actions: candidateOutput.actions,
+          planStepOutcomes: candidateOutput.planStepOutcomes,
+          initialFailure,
+        });
+        if (transitionRefusal) issues.push(transitionRefusal);
+        return issues;
+      };
       const output = await runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
@@ -1089,7 +1175,7 @@ export const authorDependentActions = internalAction({
         surfaces,
         mode: 'real',
         autonomousActions: autonomousActionsOn(agent),
-        managerFeedback: liveManagerFeedback(item.managerFeedback),
+        managerFeedback: feedback,
         managerAnswers: managerAnswersOf(item),
         initialOutput: initial,
         initialLedger: initial.applied,
@@ -1097,6 +1183,13 @@ export const authorDependentActions = internalAction({
         resumedClosing: initial.resumedClosing,
         refusedClosing: initial.refusedClosing,
         landedWrites: initial.landedWrites,
+        closingGate,
+        onAuditCorrection: async (removedIndices, reason) => {
+          await ctx.runMutation(internal.events.log, {
+            agentId: item.agentId, type: 'audit.corrected',
+            payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
+          });
+        },
       });
       authored = output;
       const cap = dependentActionCap(initial);
@@ -1105,24 +1198,10 @@ export const authorDependentActions = internalAction({
           `dependent phase emitted ${output.actions.length} actions; cap is ${cap}`,
         );
       }
-      validatePlanStepOutcomes({
-        plan,
-        outcomes: output.planStepOutcomes,
-        initialActions: initial.actions,
-        initialLedger: initial.applied,
-        surfaces: surfaces.map((surface) => ({
-          slug: surface.slug,
-          displayName: surface.displayName,
-        })),
-        managerFeedback: liveManagerFeedback(item.managerFeedback),
-      });
-      const transitionRefusal = dependentTransitionRefusal({
-        plan,
-        actions: output.actions,
-        planStepOutcomes: output.planStepOutcomes,
-        initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
-      });
-      if (transitionRefusal) throw new Error(transitionRefusal);
+      // The gate the executor's one repair answered to, checked once more on
+      // the set that came back.
+      const gate = closingGate(output);
+      if (gate.length > 0) throw new ClosingGateRefusal(gate, output);
       const held = await repairedForHold(output, {
         surfaces,
         skill: { name: skill.name },
@@ -1131,10 +1210,9 @@ export const authorDependentActions = internalAction({
       });
       authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
-        plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes,
-        initialFailure: initial.resumedClosing ? undefined : initial.initialFailure,
+        plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes, initialFailure,
       });
-      if (repairedTransitionRefusal) throw new Error(repairedTransitionRefusal);
+      if (repairedTransitionRefusal) throw new ClosingGateRefusal([repairedTransitionRefusal], held);
       const dependent: DependentPendingOutput = {
         ...held,
         phase: 'dependent',
@@ -1209,11 +1287,17 @@ export const authorDependentActions = internalAction({
       };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      // A set the obligation gate refused after its one repair stops the run:
+      // the prerequisites landed and stay on the row, the refused set beside
+      // its reason, and Retry resumes at the closing phase from that ledger.
+      const gateRefusal = error instanceof ClosingGateRefusal;
+      const refused = gateRefusal ? error.output : authored;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
-        ...(initial ? { output: scrubKnownValues(withRefusedClosing(initial, authored, reason), knownValues) } : {}),
+        ...(initial ? { output: scrubKnownValues(withRefusedClosing(initial, refused, reason), knownValues) } : {}),
+        ...(gateRefusal ? { stopped: true } : {}),
       });
       return { ok: false, reason };
     }
@@ -1240,6 +1324,9 @@ function withRefusedClosing(
       notes: authored.notes,
       reason,
       at: Date.now(),
+      ...(authored.withheldActions && authored.withheldActions.length > 0
+        ? { withheldActions: authored.withheldActions }
+        : {}),
     },
   };
 }

@@ -20,6 +20,8 @@ import {
   PlanExecutionLedger,
   RefusedClosingDetails,
   RefusedDraftDetails,
+  WithheldActionsDetails,
+  failedItemReason,
   RepairNote,
   WorkItemCard,
   eventLabel,
@@ -240,6 +242,41 @@ describe('refused closing set', (): void => {
   });
 });
 
+describe('actions an audit withheld', (): void => {
+  it('shows each withheld action with its reason and payload, and nothing when there is none', (): void => {
+    const markup = renderToStaticMarkup(
+      <WithheldActionsDetails
+        withheld={[
+          {
+            action: {
+              tool: 'http.request',
+              args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: '{"channel":"D0MANAGER","text":"REVOPS-5 audit comment posted with the three checks."}' },
+            },
+            reason: 'asserted a fact the ledger, the documentation and the manager\'s feedback do not carry: action 6 (http.request slack · POST /chat.postMessage) says "REVOPS-5 audit comment posted with the three checks"',
+          },
+        ]}
+      />,
+    );
+    expect(markup).toContain('Withheld by the evidence check · 1 action · never sent');
+    expect(markup).toContain('asserted a fact the ledger');
+    expect(markup).toContain('REVOPS-5 audit comment posted with the three checks.');
+    expect(renderToStaticMarkup(<WithheldActionsDetails withheld={[]} />)).toBe('');
+    expect(renderToStaticMarkup(<WithheldActionsDetails withheld={undefined} />)).toBe('');
+  });
+
+  it('names a stop at the closing gate as one the prerequisites survived', (): void => {
+    expect(failedItemReason({ skipReason: 'stopped: the read did not land' })).toBe(
+      'stopped, nothing landed and nothing to decide: the read did not land',
+    );
+    expect(failedItemReason({
+      skipReason: 'stopped: dependent phase omitted the approved ticket state transition without a blocked plan step',
+      output: { refusedClosing: { actions: [], planStepOutcomes: [], draft: '', notes: '', reason: 'r', at: 1 } },
+    })).toBe(
+      'stopped at the closing gate, the prerequisites landed and Retry resumes there: dependent phase omitted the approved ticket state transition without a blocked plan step',
+    );
+  });
+});
+
 describe('plan execution ledger', (): void => {
   it('shows the explicit reason a promised read did not run', (): void => {
     const markup = renderToStaticMarkup(
@@ -338,6 +375,53 @@ describe('sending a finished item back', (): void => {
         onResendDecision={resolved}
       />,
     );
+
+  it('shows what the plan declares it owes, who declared it, and when the judgement could not be reached', (): void => {
+    const plan = { summary: 'Audit note.', steps: ['Check 1', 'Check 3', 'Check 2', 'Comment', 'Done'], riskNotes: '', reversibility: 'r', estimatedMinutes: 1, expectedOutputType: 'ticket-update' };
+    const judged = render({
+      ...item('completed'),
+      plan: {
+        ...plan,
+        obligations: {
+          steps: [
+            { kind: 'write', reads: ['looker-pipeline-tile'], writes: ['looker-pipeline-tile'] },
+            { kind: 'read', reads: ['linear'], writes: [] },
+            { kind: 'report', reads: [], writes: [] },
+            { kind: 'write', reads: [], writes: ['linear'] },
+            { kind: 'conditional-write', reads: [], writes: ['linear'] },
+          ],
+          transition: 'conditional-on-manager', transitionStep: 5, basis: 'judgement',
+        },
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(judged).toContain('Declared obligations');
+    expect(judged).toContain('judged');
+    expect(judged).toContain('ticket state moved only on your approval, held for you (step 5)');
+    expect(judged).toContain('step 1 reads looker-pipeline-tile; step 2 reads linear');
+    expect(judged).not.toContain('could not be reached');
+
+    const disagreed = render({
+      ...item('completed'),
+      plan: { ...plan, obligations: { steps: [], transition: 'conditional-on-evidence', transitionStep: 5, basis: 'judgement', plannerTransition: 'withheld' } },
+    } as unknown as Doc<'workItems'>);
+    expect(disagreed).toContain('The planner declared the ticket state left where it is');
+    expect(disagreed).toContain('held for you');
+
+    const unchecked = render({
+      ...item('completed'),
+      plan: { ...plan, obligations: { steps: [], transition: 'withheld', transitionStep: 5, basis: 'planner', failedOpen: 'provider unavailable' } },
+    } as unknown as Doc<'workItems'>);
+    expect(unchecked).toContain('unchecked');
+    expect(unchecked).toContain('could not be reached (provider unavailable)');
+
+    const open = render({ ...item('completed'), plan: { ...plan, obligationsFailedOpen: 'the judgement reply did not satisfy the schema' } } as unknown as Doc<'workItems'>);
+    expect(open).toContain('Obligations not settled: the judgement reply did not satisfy the schema');
+    expect(open).toContain('verify no read or ticket state change for this plan');
+
+    const mock = render({ ...item('completed'), plan } as unknown as Doc<'workItems'>);
+    expect(mock).not.toContain('Declared obligations');
+    expect(mock).not.toContain('Obligations not settled');
+  });
 
   it('shows what the manager answered at approval once the plan is running', (): void => {
     const row = {

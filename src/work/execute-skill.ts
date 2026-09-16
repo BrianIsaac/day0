@@ -27,6 +27,7 @@ import {
   isSurfaceTool,
   parseSurfaceAction,
   targetChannel,
+  targetIssue,
   targetIssueReferences,
   type ParsedMcpCall,
   type ParsedSurfaceAction,
@@ -35,11 +36,11 @@ import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
-import { promisesResult } from './plan-steps';
+import { closingPhaseOwed } from './obligations';
 import { replyTargetLine } from './reply-target';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
-import { isChatMessage, unsupportedClaimIssues, type ClaimEvidence } from './evidence-claims';
-import type { LandedWrite, RefusedClosing } from './types';
+import { isChatMessage, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding } from './evidence-claims';
+import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
 
 export { replyTargetLine };
@@ -886,7 +887,12 @@ export interface RunSkillArgs {
   now?: number;
   /** Evidence hook for deliberate model calls after the initial executor turn. */
   onAdditionalModelCall?: () => void;
-  onAuditCorrection?: (removedIndices: number[]) => void | Promise<void>;
+  /**
+   * Record hook for an audit that failed soft after its one repair: the
+   * actions it removed or withheld, by index in the response it corrected,
+   * and why. Nothing removed is a deferral left to the closing phase.
+   */
+  onAuditCorrection?: (removedIndices: number[], reason: string) => void | Promise<void>;
   /**
    * The manager's written reason for rejecting the previous attempt at this
    * work item. A retry that ignored it would repeat the rejected draft.
@@ -970,6 +976,211 @@ export interface RunDependentSkillArgs extends RunSkillArgs {
   resumedClosing?: boolean;
   /** The closing set the previous attempt's gate refused, shown so this attempt corrects it. */
   refusedClosing?: RefusedClosing;
+  /**
+   * The obligation gate, run on the authored set inside the one repair
+   * loop: the issues it returns are put to the model once, and a set it
+   * still refuses stops the run as a `ClosingGateRefusal`.
+   */
+  closingGate?: (output: DependentExecutionOutput) => string[];
+}
+
+/** The event reason when unjustified deferrals are left to the closing phase under the hold policy. */
+export const DEFERRALS_KEPT = 'deferrals left to the closing phase under the hold policy';
+/** The event reason when the evidence check withheld the actions it still refused after the one repair. */
+export const WITHHELD_BY_EVIDENCE = 'actions withheld by the evidence check';
+
+/**
+ * A closing set the obligation gate still refused after the one repair.
+ * The run stops with the set kept on the row beside the reason, and the
+ * retry resumes at the closing phase from the same ledger.
+ */
+export class ClosingGateRefusal extends Error {
+  constructor(
+    readonly issues: readonly string[],
+    readonly output: DependentExecutionOutput,
+  ) {
+    super(issues.join('; '));
+    this.name = 'ClosingGateRefusal';
+  }
+}
+
+/** One action an audit withheld, by its index in the response, with the reason. */
+export interface AuditRefusal {
+  index: number;
+  reason: string;
+}
+
+type CorrectableOutput = Pick<
+  ExecutionOutput,
+  'actions' | 'procedureTrails' | 'procedureTrailLimitations' | 'deferredActions' | 'withheldActions'
+>;
+
+/**
+ * The output without the actions at the given indices, the rest kept
+ * whole: a trail that mapped to a removed action is rewritten by
+ * `trailFor`, every index after a removed one shifts down, and a deferral
+ * that depended on a removed action loses its dependency.
+ */
+function dropActions<T extends CorrectableOutput>(
+  output: T,
+  indices: readonly number[],
+  trailFor: (trailId: string, actionIndex: number) => ProcedureTrailAttestation,
+): T {
+  const removed = new Set(indices);
+  const reindex = (index: number): number => index - indices.filter(removedIndex => removedIndex < index).length;
+  return {
+    ...output,
+    actions: output.actions.filter((_, index) => !removed.has(index)),
+    ...(output.procedureTrailLimitations
+      ? {
+          procedureTrailLimitations: output.procedureTrailLimitations
+            .filter(row => !removed.has(row.actionIndex))
+            .map(row => ({ ...row, actionIndex: reindex(row.actionIndex) })),
+        }
+      : {}),
+    procedureTrails: output.procedureTrails?.map(row => {
+      const state = procedureTrailState(row);
+      if (state.state === 'mapped') {
+        return removed.has(state.actionIndex)
+          ? trailFor(row.trailId, state.actionIndex)
+          : { trailId: row.trailId, state: 'mapped' as const, actionIndex: reindex(state.actionIndex) };
+      }
+      if ('dependsOnActionIndex' in row && typeof row.dependsOnActionIndex === 'number') {
+        return { ...row, dependsOnActionIndex: removed.has(row.dependsOnActionIndex) ? null : reindex(row.dependsOnActionIndex) };
+      }
+      return row;
+    }),
+    ...(output.deferredActions !== undefined
+      ? {
+          deferredActions: output.deferredActions?.map(row => ({
+            ...row,
+            dependsOnActionIndex: row.dependsOnActionIndex === null || removed.has(row.dependsOnActionIndex)
+              ? null : reindex(row.dependsOnActionIndex),
+          })) ?? null,
+        }
+      : {}),
+  };
+}
+
+/**
+ * The output with the refused actions withheld: removed from the set that
+ * reaches the gate and kept on the output with their reasons, so the rest
+ * of the response goes on and the manager can read what was turned away.
+ *
+ * Args:
+ *   output: The response as the audit last saw it.
+ *   refusals: The actions to withhold, by index, with the reasons.
+ *
+ * Returns:
+ *   The output without those actions and with `withheldActions` extended.
+ */
+export function withholdActions<T extends CorrectableOutput>(output: T, refusals: readonly AuditRefusal[]): T {
+  if (refusals.length === 0) return output;
+  const reasons = new Map(refusals.map(({ index, reason }) => [index, reason]));
+  const withheld: WithheldAction[] = refusals.map(({ index, reason }) => ({ action: output.actions[index]!, reason }));
+  const dropped = dropActions(output, refusals.map(({ index }) => index), (trailId, actionIndex) => ({
+    trailId,
+    state: 'inapplicable' as const,
+    reason: `the action this trail mapped to was withheld by the evidence check: ${reasons.get(actionIndex) ?? ''}`,
+  }));
+  return { ...dropped, withheldActions: [...(output.withheldActions ?? []), ...withheld] };
+}
+
+function refusalsOf(findings: readonly ClaimFinding[]): AuditRefusal[] {
+  return findings.map(({ index, issue }) => ({ index, reason: issue }));
+}
+
+/**
+ * Withhold every message the evidence check refuses, then read the messages
+ * that stand again until none is refused. A message the check accepted on
+ * the strength of one beside it (the escalation DM that says the thread
+ * reply was sent, supported by the reply's own thread) loses that support
+ * when the one beside it is withheld, and goes with it. Each round records
+ * the indices in the set it corrected; the rounds are bounded by the
+ * number of actions, since every round withholds at least one.
+ */
+async function withholdUnsupported<T extends CorrectableOutput>(
+  output: T,
+  findingsOf: (actions: readonly MockAction[]) => ClaimFinding[],
+  record: RunSkillArgs['onAuditCorrection'],
+): Promise<T> {
+  let corrected = output;
+  for (let round = 0; round <= output.actions.length; round += 1) {
+    const findings = findingsOf(corrected.actions);
+    if (findings.length === 0) break;
+    corrected = withholdActions(corrected, refusalsOf(findings));
+    await record?.(
+      findings.map((finding) => finding.index),
+      `${WITHHELD_BY_EVIDENCE}: ${findings.map((finding) => finding.issue).join('; ')}`,
+    );
+  }
+  return corrected;
+}
+
+/** A ticket as the comment-before-status rule keys it: the surface and the issue an action addresses. */
+function commentTargetKey(action: MockAction): string | undefined {
+  if (!isSurfaceTool(action.tool)) return undefined;
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok) return undefined;
+  const issue = targetIssue(parsed.action);
+  return issue === undefined ? undefined : `${parsed.action.surface}:${issue}`;
+}
+
+/** The tickets that already carry a landed audit comment: phase one's, and earlier runs' of this item. */
+function landedCommentTargets(args: Pick<RunDependentSkillArgs, 'initialOutput' | 'initialLedger' | 'landedWrites'>): Set<string> {
+  const landed = new Set<string>();
+  const consider = (action: MockAction, row: AppliedAction | undefined): void => {
+    if (!row?.ok || row.held) return;
+    if (!isSurfaceTool(action.tool)) return;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || !isAuditComment(parsed.action)) return;
+    const key = commentTargetKey(action);
+    if (key) landed.add(key);
+  };
+  args.initialOutput.actions.forEach((action, index) => consider(action, args.initialLedger[index]));
+  for (const write of args.landedWrites ?? []) consider(write.action, write.applied);
+  return landed;
+}
+
+/**
+ * The ticket state changes left standing after their audit comment was
+ * withheld. The registry lands a state change only after a landed audit
+ * comment on the same ticket, so a Done written to follow a withheld comment
+ * would be refused at the provider and read as a provider failure sent to
+ * reconciliation; withheld here, the gate sees the transition omitted and
+ * stops the run at the closing gate, where Retry resumes. A state change
+ * whose ticket already carries a landed comment, from phase one or an
+ * earlier run, or a comment still standing before it, is not touched.
+ */
+function orphanedStatusChanges(output: CorrectableOutput, landed: ReadonlySet<string>): AuditRefusal[] {
+  const withheldComments = new Map<string, MockAction>();
+  for (const row of output.withheldActions ?? []) {
+    if (!isSurfaceTool(row.action.tool)) continue;
+    const parsed = parseSurfaceAction(row.action);
+    const key = commentTargetKey(row.action);
+    if (parsed.ok && isAuditComment(parsed.action) && key && !withheldComments.has(key)) withheldComments.set(key, row.action);
+  }
+  if (withheldComments.size === 0) return [];
+  const refusals: AuditRefusal[] = [];
+  output.actions.forEach((action, index): void => {
+    if (!isSurfaceTool(action.tool)) return;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok || !isStatusChange(parsed.action)) return;
+    const key = commentTargetKey(action);
+    if (!key || !withheldComments.has(key) || landed.has(key)) return;
+    const standing = output.actions.slice(0, index).some((earlier) => {
+      if (!isSurfaceTool(earlier.tool)) return false;
+      const other = parseSurfaceAction(earlier);
+      return other.ok && isAuditComment(other.action) && commentTargetKey(earlier) === key;
+    });
+    if (standing) return;
+    const issue = targetIssue(parsed.action) ?? key;
+    refusals.push({
+      index,
+      reason: `a ticket state change lands only after a landed audit comment on the ticket, and the audit comment on ${issue} it was to follow was withheld by the evidence check`,
+    });
+  });
+  return refusals;
 }
 
 /** The most of a refused closing set the retry prompt carries, shared across its actions; the row keeps the whole of it. */
@@ -989,6 +1200,14 @@ const REFUSED_ACTION_PROMPT_FLOOR = 400;
  * Returns:
  *   The prompt lines for the section.
  */
+function describeWithheldAction(action: MockAction): string {
+  if (isSurfaceTool(action.tool)) {
+    const parsed = parseSurfaceAction(action);
+    if (parsed.ok) return describeSurfaceAction(parsed.action);
+  }
+  return action.tool;
+}
+
 export function refusedClosingLines(refused: RefusedClosing): string[] {
   const share = Math.max(
     REFUSED_ACTION_PROMPT_FLOOR,
@@ -1006,6 +1225,12 @@ export function refusedClosingLines(refused: RefusedClosing): string[] {
     `Its actions, one per line (${refused.actions.length}):`,
     ...actions,
     `Its plan-step outcomes: ${refused.planStepOutcomes.map((outcome) => `${outcome.step} ${outcome.status} (${outcome.evidence})`).join('; ')}`,
+    ...(refused.withheldActions && refused.withheldActions.length > 0
+      ? [
+          `Actions the evidence check withheld from that set before the gate read it (${refused.withheldActions.length}), each with why:`,
+          ...refused.withheldActions.map((row, index) => `  ${index}. ${describeWithheldAction(row.action)}: ${row.reason}`),
+        ]
+      : []),
     'Correct what the refusal names and keep what it does not; the prerequisite ledger above is the same evidence.',
   ];
 }
@@ -1821,7 +2046,7 @@ export function deferralAudit(
     if (fixedBody) return;
     prewrittenIndices.push(index);
     issues.push(
-      `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan promises a result), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
+      `prewrote a closing action: action ${index} (${describeSurfaceAction(parsed.action)}) reports what this phase does and consumes its results, so it cannot be written before they exist; this run has a closing phase (needsDependentPhase is true, or the approved plan declares a read), so set needsDependentPhase to true, leave this action out, and let the closing phase author it from the applied ledger`,
     );
   });
   // The same rule on every other transport, in the code-decidable form: a
@@ -2070,32 +2295,14 @@ export function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   return lines.join('\n');
 }
 
-function removePrewrittenClosingActions(output: ExecutionOutput, indices: readonly number[]): ExecutionOutput {
-  const removed = new Set(indices);
-  const reindex = (index: number): number => index - indices.filter(removedIndex => removedIndex < index).length;
+export function removePrewrittenClosingActions(output: ExecutionOutput, indices: readonly number[]): ExecutionOutput {
   return {
-    ...output,
+    ...dropActions(output, indices, (trailId) => ({
+      trailId,
+      state: 'deferred' as const,
+      reason: 'Audit removed the prewritten closing action; author it from the applied prerequisite ledger.',
+    })),
     needsDependentPhase: true,
-    actions: output.actions.filter((_, index) => !removed.has(index)),
-    procedureTrailLimitations: output.procedureTrailLimitations?.filter(row => !removed.has(row.actionIndex))
-      .map(row => ({ ...row, actionIndex: reindex(row.actionIndex) })),
-    procedureTrails: output.procedureTrails?.map(row => {
-      const state = procedureTrailState(row);
-      if (state.state === 'mapped') {
-        return removed.has(state.actionIndex)
-          ? { trailId: row.trailId, state: 'deferred' as const, reason: 'Audit removed the prewritten closing action; author it from the applied prerequisite ledger.' }
-          : { trailId: row.trailId, state: 'mapped' as const, actionIndex: reindex(state.actionIndex) };
-      }
-      if ('dependsOnActionIndex' in row && typeof row.dependsOnActionIndex === 'number') {
-        return { ...row, dependsOnActionIndex: removed.has(row.dependsOnActionIndex) ? null : reindex(row.dependsOnActionIndex) };
-      }
-      return row;
-    }),
-    deferredActions: output.deferredActions?.map(row => ({
-      ...row,
-      dependsOnActionIndex: row.dependsOnActionIndex === null || removed.has(row.dependsOnActionIndex)
-        ? null : reindex(row.dependsOnActionIndex),
-    })) ?? null,
   };
 }
 
@@ -2204,11 +2411,11 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     user: userPrompt,
     schema: runtimeSchema,
   });
-  // In real mode a plan that promises a read, a check or a result gives the
-  // run its closing phase whatever the model said, so the audit below sees
-  // the phase as the gate will stage it.
+  // In real mode a plan that declares a read, or declares nothing usable,
+  // gives the run its closing phase whatever the model said, so the audit
+  // below sees the phase as the gate will stage it.
   const closingPhase = (flag: boolean): boolean =>
-    mode === 'real' ? flag || plan.steps.some(promisesResult) : flag;
+    mode === 'real' ? flag || closingPhaseOwed(plan) : flag;
   const output: ExecutionOutput = {
     draft: raw.draft,
     notes: raw.notes,
@@ -2291,31 +2498,34 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
       surfaces: args.surfaces ?? [],
       phase: 'initial',
     });
-    const prewrittenIndices: number[] = [];
-    const remainingIssues = [
-      ...remaining.issues,
-      ...deferralAudit(repaired, candidate, deferralContext, prewrittenIndices),
-    ];
-    if (prewrittenIndices.length > 0 && remainingIssues.length === prewrittenIndices.length) {
-      const corrected = removePrewrittenClosingActions({ ...repaired, procedureTrailLimitations: remaining.limitations }, prewrittenIndices);
-      const correctedClaims = claimIssues(corrected.actions);
-      if (correctedClaims.length > 0) {
-        throw new Error(
-          `executor procedure contract remained invalid after one repair: ${correctedClaims.join('; ')}`,
-        );
-      }
-      await args.onAuditCorrection?.(prewrittenIndices);
-      return corrected;
-    }
-    remainingIssues.push(...claimIssues(repaired.actions));
-    if (remainingIssues.length > 0) {
+    if (remaining.issues.length > 0) {
       throw new Error(
-        `executor procedure contract remained invalid after one repair: ${remainingIssues.join('; ')}`,
+        `executor procedure contract remained invalid after one repair: ${remaining.issues.join('; ')}`,
       );
     }
-    return remaining.limitations.length > 0
-      ? { ...repaired, procedureTrailLimitations: remaining.limitations }
-      : repaired;
+    // Every other audit fails soft after its one repair, keeping the rest of
+    // the response: a prewritten closing action is removed and the closing
+    // phase authors it; a deferral the audit cannot tie to a result is left
+    // to the closing phase, where the hold policy decides what lands; a
+    // message that still asserts what nothing carries is withheld with the
+    // reason on the row. Each correction is recorded.
+    let corrected: ExecutionOutput =
+      remaining.limitations.length > 0 ? { ...repaired, procedureTrailLimitations: remaining.limitations } : repaired;
+    const prewrittenIndices: number[] = [];
+    const deferralIssues = deferralAudit(repaired, candidate, deferralContext, prewrittenIndices);
+    if (prewrittenIndices.length > 0) {
+      corrected = removePrewrittenClosingActions(corrected, prewrittenIndices);
+      await args.onAuditCorrection?.(prewrittenIndices, 'prewritten closing actions');
+    }
+    const kept = deferralIssues.filter((issue) => !issue.startsWith('prewrote a closing action'));
+    if (kept.length > 0) {
+      await args.onAuditCorrection?.([], `${DEFERRALS_KEPT}: ${kept.join('; ')}`);
+    }
+    return await withholdUnsupported(
+      corrected,
+      (actions) => unsupportedClaimFindings(actions, claimEvidence, (action) => isChatMessage(action, chatSurfaces)),
+      args.onAuditCorrection,
+    );
   }
 
   const issues = mockActionContractIssues(output, candidate, plan, procedureContract);
@@ -2873,8 +3083,9 @@ export async function runDependentSkill(
       ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
     ],
   };
-  const claimIssues = (actions: readonly MockAction[]): string[] =>
-    mode === 'real' ? unsupportedClaimIssues(actions, claimEvidence) : [];
+  const claimFindings = (actions: readonly MockAction[]): ClaimFinding[] =>
+    mode === 'real' ? unsupportedClaimFindings(actions, claimEvidence) : [];
+  const gateIssues = (candidate: DependentExecutionOutput): string[] => args.closingGate?.(candidate) ?? [];
 
   let output = materialiseDependent(raw);
   let trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
@@ -2882,7 +3093,11 @@ export async function runDependentSkill(
     surfaces: args.surfaces ?? [],
     phase: 'dependent',
   });
-  let issues = [...trailAttention.issues, ...claimIssues(output.actions)];
+  const issues = [
+    ...trailAttention.issues,
+    ...claimFindings(output.actions).map((finding) => finding.issue),
+    ...gateIssues(output),
+  ];
   if (issues.length > 0) {
     const repairPrompt = [
       userPrompt,
@@ -2909,10 +3124,27 @@ export async function runDependentSkill(
       surfaces: args.surfaces ?? [],
       phase: 'dependent',
     });
-    issues = [...trailAttention.issues, ...claimIssues(output.actions)];
-    if (issues.length > 0) {
+    if (trailAttention.issues.length > 0) {
       throw new Error(
-        `dependent executor procedure contract remained invalid after one repair: ${issues.join('; ')}`,
+        `dependent executor procedure contract remained invalid after one repair: ${trailAttention.issues.join('; ')}`,
+      );
+    }
+    // After the one repair: a set the obligation gate still refuses stops
+    // the run with the set on the row; a message the evidence check still
+    // refuses is withheld with the reason and the rest of the set goes on.
+    const withLimitations = (candidateOutput: DependentExecutionOutput): DependentExecutionOutput =>
+      trailAttention.limitations.length > 0
+        ? { ...candidateOutput, procedureTrailLimitations: trailAttention.limitations }
+        : candidateOutput;
+    const gate = gateIssues(output);
+    if (gate.length > 0) throw new ClosingGateRefusal(gate, withLimitations(output));
+    output = await withholdUnsupported(output, claimFindings, args.onAuditCorrection);
+    const orphaned = orphanedStatusChanges(output, landedCommentTargets(args));
+    if (orphaned.length > 0) {
+      output = withholdActions(output, orphaned);
+      await args.onAuditCorrection?.(
+        orphaned.map((refusal) => refusal.index),
+        `${WITHHELD_BY_EVIDENCE}: ${orphaned.map((refusal) => refusal.reason).join('; ')}`,
       );
     }
   }

@@ -1,5 +1,5 @@
 import { closingResume } from '../src/work/closing-resume';
-import type { ExecutionPlan } from '../src/work/types';
+import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
 import { v } from 'convex/values';
 import {
   internalMutation,
@@ -21,9 +21,11 @@ import {
   type ActionVerdict,
 } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { verdictFor } from '../src/surfaces/verdict';
 import type { AppliedAction } from '../src/surfaces/types';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { planWithholdsClose } from '../src/work/plan-steps';
+import { transitionWithheld } from '../src/work/obligations';
+import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
 import {
   AUTONOMOUS_WIP_LIMIT,
@@ -1489,8 +1491,10 @@ export const retryFailed = mutation({
         ? 'scope'
         : undefined;
     const resume = SURFACE_MODE === 'real' && row.state === 'failed' && row.plan
-      ? closingResume(row.output, row.plan as ExecutionPlan, row.skipReason, await ctx.db
+      ? closingResume(row.output, row.plan as ExecutionPlan, row.skipReason && stopDetail(row.skipReason), (await ctx.db
           .query('surfaces').withIndex('by_agent', q => q.eq('agentId', row.agentId)).take(100))
+          .map(toSurfaceRecord)
+          .filter((surface) => verdictFor(surface, Date.now()) === 'connected'))
       : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
@@ -2182,7 +2186,8 @@ async function reviewHeldActions(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   actions: MockAction[],
-): Promise<{ verdicts: ActionVerdict[]; autonomousActions: boolean }> {
+  planStepOutcomes: readonly PlanStepOutcome[] | undefined,
+): Promise<{ verdicts: ActionVerdict[]; autonomousActions: boolean; transitionDirectedByNote: boolean }> {
   const [agent, surfaceRows, grantRows] = await Promise.all([
     ctx.db.get(row.agentId),
     ctx.db
@@ -2199,11 +2204,18 @@ async function reviewHeldActions(
     return {
       verdicts: actions.map(() => ({ disposition: 'held', reason: HELD_WRITE })),
       autonomousActions: false,
+      transitionDirectedByNote: false,
     };
   }
   const grants = new Set(grantRows.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
   const autonomousActions = autonomousActionsOn(agent);
   const browserRefusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
+  const plan = row.plan as ExecutionPlan | undefined;
+  // A retry note that directs the state change in so many words is the
+  // manager's decision already given; the hold then reads as any other write.
+  const directed = plan
+    ? transitionDirectedByNote({ plan, planStepOutcomes, feedback: row.managerFeedback, actions })
+    : false;
   return {
     verdicts: reviewActions(
       actions,
@@ -2215,10 +2227,11 @@ async function reviewHeldActions(
       {
         autonomousActions,
         replyTarget: replyTargetFor(row),
-        transitionWithheld: row.plan ? planWithholdsClose(row.plan as ExecutionPlan) : false,
+        transitionWithheld: plan ? transitionWithheld(plan) && !directed : false,
       },
     ),
     autonomousActions,
+    transitionDirectedByNote: directed,
   };
 }
 
@@ -2357,10 +2370,11 @@ export const setActionsPending = internalMutation({
     }
     const actions = (args.output as { actions?: unknown[] }).actions;
     if (!Array.isArray(actions)) throw new Error('output.actions must be a list');
-    const { verdicts: actionVerdicts, autonomousActions } = await reviewHeldActions(
+    const { verdicts: actionVerdicts, autonomousActions, transitionDirectedByNote } = await reviewHeldActions(
       ctx,
       row,
       actions as MockAction[],
+      (args.output as { planStepOutcomes?: PlanStepOutcome[] }).planStepOutcomes,
     );
     const autoIndexes = indexesWith(actionVerdicts, 'auto');
     const heldIndexes = indexesWith(actionVerdicts, 'held');
@@ -2378,6 +2392,7 @@ export const setActionsPending = internalMutation({
       ...(refusals.length > 0 ? { refusals } : {}),
       autonomousActions,
       ...(dependent ? { dependentPhase: true } : {}),
+      ...(transitionDirectedByNote ? { transitionDirectedByNote: true } : {}),
     };
     if (autoIndexes.length > 0) {
       await ctx.db.patch(args.workItemId, {

@@ -1686,12 +1686,19 @@ interface RunOutput {
   notes: string;
   actions?: MockAction[];
   applied?: LedgerRow[];
-  initial?: { applied?: LedgerRow[] };
+  initial?: { applied?: LedgerRow[]; withheldActions?: WithheldActionRow[] };
   planStepOutcomes?: PlanStepOutcomeRow[];
   /** The one repair each held write earned before the hold, by action index. */
   argumentRepairs?: ArgumentRepairAttempt[];
   /** The closing set a gate refused before anything in it reached a surface, with the reason. */
   refusedClosing?: RefusedClosingRow;
+  /** Actions an audit withheld after its one repair, never sent, with the reason. */
+  withheldActions?: WithheldActionRow[];
+}
+
+interface WithheldActionRow {
+  action: MockAction;
+  reason: string;
 }
 
 interface RefusedClosingRow {
@@ -1701,6 +1708,8 @@ interface RefusedClosingRow {
   notes: string;
   reason: string;
   at: number;
+  /** Actions the evidence check withheld from the set before the gate refused it. */
+  withheldActions?: WithheldActionRow[];
 }
 
 /**
@@ -1854,6 +1863,110 @@ export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow 
   );
 }
 
+/**
+ * The actions an audit withheld after its one repair, behind a disclosure
+ * under the run. Read-only: none of them reached a surface, the rest of the
+ * response went on, and the row keeps each with the reason it was turned
+ * away so the manager can read what the agent wrote against why.
+ */
+export function WithheldActionsDetails({ withheld }: { withheld: WithheldActionRow[] | undefined }) {
+  if (!withheld || withheld.length === 0) return null;
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+        Withheld by the evidence check · {withheld.length}{' '}
+        {withheld.length === 1 ? 'action' : 'actions'} · never sent
+      </summary>
+      <ul className="mt-1 space-y-1">
+        {withheld.map((row, index) => (
+          <li key={index}>
+            <span className="font-mono text-[10px] text-[var(--color-muted)]">
+              {describeAction(row.action)}
+            </span>
+            <p className="text-[10px] text-[var(--color-warn)] break-words">{row.reason}</p>
+            <ActionPayload action={row.action} />
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-[10px] text-[var(--color-muted)]">
+        The rest of the response went on without these; a retry authors them again from the ledger.
+      </p>
+    </details>
+  );
+}
+
+/** The plan's declared obligations as the card reads them; see `PlanObligations` in `src/work/types.ts`. */
+interface PlanObligationsRow {
+  steps: Array<{ kind: string; reads: string[]; writes: string[]; reason?: string }>;
+  transition: string;
+  transitionStep: number | null;
+  basis: 'judgement' | 'planner';
+  failedOpen?: string;
+  reason?: string;
+  plannerTransition?: string;
+}
+
+const TRANSITION_LABELS: Record<string, string> = {
+  promised: 'moved by the plan',
+  'conditional-on-evidence': 'moved when what the run reads shows the condition holds',
+  'conditional-on-manager': 'moved only on your approval, held for you',
+  withheld: 'left where it is',
+  none: 'not mentioned',
+};
+
+/**
+ * What the approved plan declares it owes, beside its steps: the reads the
+ * closing gate will verify against the ledger and the plan's word on the
+ * ticket state. Read-only, real mode only (a mock plan declares nothing).
+ * When the judgement could not be reached the line says so, because the
+ * gates then verify nothing about reads or the ticket state for this plan.
+ */
+export function PlanObligationsLine({
+  obligations,
+  failedOpen,
+}: {
+  obligations: PlanObligationsRow | undefined;
+  failedOpen: string | undefined;
+}) {
+  if (!obligations) {
+    if (!failedOpen) return null;
+    return (
+      <p className="mt-2 text-[10px] text-[var(--color-warn)]">
+        Obligations not settled: {failedOpen}. The closing gates verify no read or ticket state change for
+        this plan; the closing phase still authors from the ledger.
+      </p>
+    );
+  }
+  const reads = obligations.steps.flatMap((step, index) =>
+    step.reads.length > 0 ? [`step ${index + 1} reads ${step.reads.join(', ')}`] : [],
+  );
+  const transition = TRANSITION_LABELS[obligations.transition] ?? obligations.transition;
+  const step = obligations.transitionStep !== null ? ` (step ${obligations.transitionStep})` : '';
+  return (
+    <div className="mt-2 text-[10px] text-[var(--color-muted)]">
+      <p>
+        <span className="uppercase tracking-wider">Declared obligations</span>
+        {obligations.basis === 'judgement' ? ' · judged' : ' · the planner\'s own, unchecked'}
+        {' · '}
+        ticket state {transition}
+        {step}
+        {reads.length > 0 ? ` · ${reads.join('; ')}` : ' · no reads declared'}
+      </p>
+      {obligations.plannerTransition ? (
+        <p className="text-[var(--color-warn)]">
+          The planner declared the ticket state {TRANSITION_LABELS[obligations.plannerTransition] ?? obligations.plannerTransition};
+          the judgement read it differently, so the state change is held for you.
+        </p>
+      ) : null}
+      {obligations.failedOpen ? (
+        <p className="text-[var(--color-warn)]">
+          The obligations judgement could not be reached ({obligations.failedOpen}); the planner&apos;s declaration stands unchecked.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
   if (outcomes.length === 0) return null;
   return (
@@ -1952,12 +2065,17 @@ export function retryRequest(
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
+  output?: { refusedClosing?: unknown } | null;
 }): string | undefined {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
   }
   if (item.skipReason && isStopped(item.skipReason)) {
-    return `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
+    // A stop at the closing gate keeps the landed prerequisites and the
+    // refused set on the row; Retry resumes at the closing phase.
+    return item.output?.refusedClosing
+      ? `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`
+      : `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
   return item.skipReason;
 }
@@ -2508,6 +2626,8 @@ export function WorkItemCard({
         reversibility: string;
         estimatedMinutes: number;
         expectedOutputType: string;
+        obligations?: PlanObligationsRow;
+        obligationsFailedOpen?: string;
       }
     | undefined;
   const output = item.output as RunOutput | undefined;
@@ -2628,6 +2748,7 @@ export function WorkItemCard({
               <li key={i}>{s}</li>
             ))}
           </ol>
+          <PlanObligationsLine obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
           {item.state === 'plan-pending' ? (
             <PlanApprovalForm
               key={item._id}
@@ -2742,6 +2863,14 @@ export function WorkItemCard({
       <PlanExecutionLedger outcomes={output?.planStepOutcomes ?? []} />
 
       <RefusedClosingDetails refused={output?.refusedClosing} />
+
+      <WithheldActionsDetails
+        withheld={[
+          ...(output?.initial?.withheldActions ?? []),
+          ...(output?.withheldActions ?? []),
+          ...(output?.refusedClosing?.withheldActions ?? []),
+        ]}
+      />
 
       {output ? <DraftDetails output={output} /> : null}
 

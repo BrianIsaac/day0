@@ -27,7 +27,7 @@ export const HELD_BROWSER_SEQUENCE =
 export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 /** Why a ticket state change waits under the switch: the approved plan said the state stays where it is. */
 export const HELD_WITHHELD_TRANSITION =
-  'ticket state transition the approved plan withholds; held for the manager';
+  'ticket state transition the approved plan leaves to the manager; held for the manager';
 export const HELD_WRITE = 'write held for the manager';
 export const HELD_NOT_APPROVED = 'not approved by the manager';
 export const AWAITING_APPROVAL = "awaiting the manager's approval";
@@ -1095,6 +1095,21 @@ export function isStatusChange(parsed: ParsedSurfaceAction): boolean {
   if (isAuditComment(parsed)) return false;
   if (!STATUS_TOOL.test(parsed.tool)) return false;
   return STATUS_KEYS.some((key) => parsed.toolArgs[key] !== undefined);
+}
+
+/**
+ * The state a status change sets, as its arguments carry it ("Done", a
+ * workflow state id), or undefined when the call is not a status change.
+ *
+ * Args:
+ *   parsed: A parsed surface action.
+ *
+ * Returns:
+ *   The target state string, or undefined.
+ */
+export function statusChangeTarget(parsed: ParsedSurfaceAction): string | undefined {
+  if (!isStatusChange(parsed) || parsed.kind !== 'mcp.call') return undefined;
+  return firstString(parsed.toolArgs, STATUS_KEYS);
 }
 
 /**
