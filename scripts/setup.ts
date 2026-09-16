@@ -1614,10 +1614,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
     const services = runningServices(io, resolvedProject);
     // A running stack of this project's own holds its ports itself, whether it
-    // is being kept or about to be taken down by --reset; only the latter is
-    // read as a fresh installation from the volume onwards.
+    // is being kept or about to be taken down by --reset.
     const ownStackRunning = decision === 'rerun' && services?.includes('backend') === true;
-    const alreadyOurs = !options.reset && ownStackRunning;
 
     io.log(`Day0 local setup, ${options.mode} mode, Compose project ${resolvedProject}.`);
     io.log('');
