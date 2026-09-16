@@ -7,10 +7,13 @@ import {
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
   MEASURED_TIMINGS,
+  MOCK_OFFICE_NOTE,
   MODEL_ROUTES,
   PREREQUISITES,
   PUBLISHED_PORTS,
   QUICKSTART_COMMANDS,
+  REAL_MODE_NOTE,
+  REAL_MODE_VERBS,
   REPOSITORY_URL,
   RUN_WAYS,
   RUN_WAY_VERBS_NOTE,
@@ -22,7 +25,7 @@ import {
 export const metadata: Metadata = {
   title: 'Set up Day0',
   description:
-    'Run Day0 on your own machine: what you need, the four ways to run it, the five commands, what a first success looks like, and what to do when it stops.',
+    'Run Day0 on your own machine: what you need, the three ways to run it, the five commands, what a first success looks like, and what to do when it stops.',
 };
 
 /**
@@ -30,10 +33,11 @@ export const metadata: Metadata = {
  *
  * A visitor arrives here from the landing page having never run the product,
  * and this page may be the only instruction they read, so it carries the whole
- * path rather than a pointer to one: prerequisites, the four ways to run it
- * with a complete command list each, the choice the command will ask them to
- * make, the commands, what success looks like, what was measured, the two
- * traps a rehearsal found, and how to stop.
+ * path rather than a pointer to one: prerequisites, the three ways to run it
+ * (the hosted demo, and the two local ways, which are real mode and differ
+ * only in where the model runs) with a complete command list each, the choice
+ * the command will ask them to make, the commands, what success looks like,
+ * what was measured, the two traps a rehearsal found, and how to stop.
  *
  * It collects nothing. There is no form, no field and no control anywhere on
  * it: the one secret this setup needs is asked for by the command, in a hidden
@@ -47,7 +51,7 @@ const REVISION = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.NEXT_PUBLIC_SO
 
 const SECTIONS = [
   { id: 'before', title: 'Before you start' },
-  { id: 'ways', title: 'Four ways to run it' },
+  { id: 'ways', title: 'Three ways to run it' },
   { id: 'model', title: 'How it reaches a model' },
   { id: 'commands', title: 'The commands' },
   { id: 'success', title: 'What first success looks like' },
@@ -121,11 +125,12 @@ export default function SetupPage() {
             Run Day0 on your own machine.
           </h1>
           <p className="text-base text-[var(--color-muted)] leading-relaxed mb-4">
-            The same product this demo records, running locally: a self-hosted backend, a seeded
-            mock office to work in, and a sandbox that verifies the skills the agent writes. The
-            backend and sandbox run locally. A hosted model receives your chat and relevant
-            synthetic office content; the account-free route runs the model locally too. Real
-            mode swaps the mock office for your own documentation and systems, on the same stack.
+            The same product this demo records, running locally in real mode: a self-hosted
+            backend, your own documentation and the systems it names, and a sandbox that verifies
+            the skills the agent writes. The backend and sandbox run locally. A cloud model
+            receives your chat and relevant content from your documentation; the local-model way
+            runs the model here too. The seeded mock office the hosted demo works in is mock mode,
+            which the evaluation harness uses and which no local way runs.
           </p>
           <div
             role="note"
@@ -166,7 +171,7 @@ export default function SetupPage() {
             id="before"
             index={1}
             title="Before you start"
-            lede="Three tools and the ports listed below. Setup checks the backend ports, reports app port 3000 as a note, and checks the model port when you choose the account-free route."
+            lede="Three tools and the ports listed below. Setup checks the backend ports, reports app port 3000 as a note, and checks the model port when you choose the local-model way."
           >
             <Panel>
               <ul className="space-y-3">
@@ -202,7 +207,7 @@ export default function SetupPage() {
             <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
               Move the backend ports and choose an installation name:{' '}
               <code className="font-mono text-[var(--color-fg)]">
-                pnpm setup:local --project day0-new --port 4210 --site-port 4211 --dashboard-port
+                ./setup.sh --project day0-new --port 4210 --site-port 4211 --dashboard-port
                 4791
               </code>
               . Two installations on one machine need different ports and different Compose project
@@ -215,8 +220,8 @@ export default function SetupPage() {
           <Section
             id="ways"
             index={2}
-            title="Four ways to run it"
-            lede="In the order they cost you: nothing installed, nothing signed up for, one key, then your own systems. Each block is complete on its own, and every command in it is one this repository ships."
+            title="Three ways to run it"
+            lede="The hosted demo needs nothing installed. The two local ways are real mode, on your own documentation and systems, and differ in one thing only: where the model runs. Each block is complete on its own, and every command in it is one this repository ships."
           >
             <div className="space-y-3">
               {RUN_WAYS.map((way, index) => (
@@ -260,33 +265,40 @@ export default function SetupPage() {
                       {way.after}
                     </p>
                   ) : null}
-                  {way.verbs ? (
-                    <ul className="space-y-2 mt-3">
-                      {way.verbs.map((verb) => (
-                        <li key={verb.command} className="flex flex-col sm:flex-row sm:gap-4">
-                          <code className="font-mono text-xs text-[var(--color-accent)] leading-relaxed sm:w-52 sm:shrink-0">
-                            {verb.command}
-                          </code>
-                          <span className="text-sm text-[var(--color-muted)] leading-relaxed">
-                            {verb.what}
-                          </span>
-                        </li>
-                      ))}
-                      <li className="text-sm text-[var(--color-muted)] leading-relaxed">
-                        {RUN_WAY_VERBS_NOTE}
-                      </li>
-                    </ul>
-                  ) : null}
                 </Panel>
               ))}
             </div>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
+              {REAL_MODE_NOTE}
+            </p>
+            <ul className="space-y-2 mt-3">
+              {REAL_MODE_VERBS.map((verb) => (
+                <li key={verb.command} className="flex flex-col sm:flex-row sm:gap-4">
+                  <code className="font-mono text-xs text-[var(--color-accent)] leading-relaxed sm:w-52 sm:shrink-0">
+                    {verb.command}
+                  </code>
+                  <span className="text-sm text-[var(--color-muted)] leading-relaxed">
+                    {verb.what}
+                  </span>
+                </li>
+              ))}
+              <li className="text-sm text-[var(--color-muted)] leading-relaxed">
+                {RUN_WAY_VERBS_NOTE}
+              </li>
+            </ul>
+            <h3 id="mock-office" className="text-sm font-semibold tracking-tight mt-6 mb-2">
+              {MOCK_OFFICE_NOTE.title}
+            </h3>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed">
+              {MOCK_OFFICE_NOTE.body}
+            </p>
           </Section>
 
           <Section
             id="model"
             index={3}
             title="How it reaches a model"
-            lede="The setup command asks how to reach a model, then asks for the key or confirms a local download. Both routes support the loop; they differ over who runs the model. Naming the route on the command line, as the blocks above do, skips the question."
+            lede="The setup command asks where the model runs, then asks for the key or lists the local models to pick from. Both support the loop; they are the one thing the two local ways disagree about. Naming the route on the command line, as the blocks above do, skips the question."
           >
             <div className="space-y-3">
               {MODEL_ROUTES.map((route) => (
@@ -306,17 +318,17 @@ export default function SetupPage() {
               A third answer exists for a reader who already runs a compatible endpoint of their
               own:{' '}
               <code className="font-mono text-[var(--color-fg)]">
-                pnpm setup:local --route endpoint --endpoint https://your-server/v1
+                ./setup.sh --route endpoint --endpoint https://your-server/v1
               </code>
               . It performs the same local setup and writes paired host/backend model addresses. Set
               OPENAI_MODEL and, if required, OPENAI_API_KEY in .env.local for that endpoint, then
               run pnpm sync:env before starting the app. A host-loopback endpoint must also be
               reachable from the backend container via host.docker.internal. The fourth answer,{' '}
-              <code className="font-mono text-[var(--color-fg)]">
-                pnpm setup:local --route featherless
-              </code>
-              , reaches a hosted model through Featherless with a Featherless key, and is the route
-              real mode offers by name.
+              <code className="font-mono text-[var(--color-fg)]">./setup.sh --route key</code>, is
+              an OpenAI key, or any key an OpenAI-compatible provider issues, asked for in the same
+              hidden prompt. All three are the cloud-model way; only{' '}
+              <code className="font-mono text-[var(--color-fg)]">--route local</code> runs the model
+              here.
             </p>
           </Section>
 
@@ -324,7 +336,7 @@ export default function SetupPage() {
             id="commands"
             index={4}
             title="The commands"
-            lede="Five, from an empty directory. The fourth is the one that does the work; run it again whenever you want, because it keeps what is already there rather than starting over."
+            lede="Five, from an empty directory. The fourth is the one that does the work, in real mode; run it again whenever you want, because it keeps what is already there rather than starting over."
           >
             <pre className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-4 overflow-x-auto">
               <code className="font-mono text-sm leading-relaxed">
@@ -336,9 +348,11 @@ export default function SetupPage() {
               </code>
             </pre>
             <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
-              The fourth command asks how it should reach a model and, if the answer is a key you
-              have, for that key in a hidden prompt. Then it starts the backend, the sandbox and, on
-              the account-free route, the model server; writes the values it generates into{' '}
+              The fourth command asks where the model runs when --route does not say and, where a
+              key is needed, for that key in a hidden prompt; it also asks for the email address
+              your Slack DM is resolved from. Then it starts the backend, the sandbox, the redactor,
+              the components and, on the local-model way, the model server; creates the
+              documentation folder with a placeholder page; writes the values it generates into{' '}
               <code className="font-mono text-[var(--color-fg)]">.env.local</code> instead of asking
               you to paste them; pushes the backend functions; and finishes by running{' '}
               <code className="font-mono text-[var(--color-fg)]">pnpm check:setup</code> and

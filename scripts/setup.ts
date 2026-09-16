@@ -66,7 +66,7 @@ import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_DOCS_HOST_DIR } from '../src/docs/host-dir';
-import { FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../src/setup/quickstart';
+import { FIRST_SUCCESS, MOCK_FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../src/setup/quickstart';
 import { composeArguments, PROFILES } from './compose';
 import { writePrivateEnv } from './private-env';
 import { PROTECTED_PROJECTS, PROTECTED_VOLUMES, upsertEnvText } from './demo-bed';
@@ -1172,41 +1172,14 @@ export function wrapIndented(text: string, indent: string, width = 92): string[]
 }
 
 /**
- * What a first success looks like in real mode: the README's "The
- * documentation is yours" steps, in order, because the mock steps' second line
- * ("the office it works in is seeded and synthetic") is untrue here.
- */
-export const REAL_FIRST_SUCCESS: readonly { action: string; detail: string }[] = [
-  {
-    action: 'Open the unlock URL that pnpm dev prints.',
-    detail:
-      'It carries the key once; after that it is a cookie. Opening http://localhost:3000 directly answers 403, and that is the boundary working rather than a fault.',
-  },
-  {
-    action: 'Link your documentation first, on the documentation page.',
-    detail:
-      'A folder source takes a path relative to the mount, and `.` is the whole of DAY0_DOCS_HOST_DIR. A Notion source takes http://docs-notion-mcp:3000/mcp and your own integration token. Each source shows synced and a page count once read.',
-  },
-  {
-    action: 'Deploy an agent with those sources ticked, hold the Day-1 1:1 in chat, and approve the charter.',
-    detail:
-      'Use the tickets\' own words in the 1:1; the charter records what you said, and the systems the documentation names are the systems that exist.',
-  },
-  {
-    action: 'Approve the connection cards on the Surfaces tab.',
-    detail:
-      'Each card needs both the manager and the IT approval; a Slack card with no DAY0_PUBLIC_URL takes a shared bot token before approval. A system with no approved path stays absent, and work that needs it defers.',
-  },
-];
-
-/**
  * What a first success looks like, printed after the checker's own report.
  *
- * The mock steps are `src/setup/quickstart.ts`'s, which is also what the
+ * Both lists are `src/setup/quickstart.ts`'s. The real-mode four are what the
  * `/setup` page renders: a reader who follows the page and a reader who
- * follows this terminal are told the same four things. Real mode has its own
- * four. The app's origin in a detail follows the unlock URL, so a stack on
- * another port is not told about 3000.
+ * follows this terminal are told the same four things. Mock mode has its own
+ * four, because its second line (the office is seeded and synthetic) is untrue
+ * of real mode. The app's origin in a detail follows the unlock URL, so a
+ * stack on another port is not told about 3000.
  *
  * Args:
  *   unlockUrl: The URL the run resolved, or undefined when it could not.
@@ -1218,7 +1191,7 @@ export const REAL_FIRST_SUCCESS: readonly { action: string; detail: string }[] =
 export function firstSuccessLines(unlockUrl: string | undefined, mode: SetupMode = 'mock'): string[] {
   const lines = ['What a first success looks like:'];
   const origin = unlockUrl === undefined ? undefined : new URL(unlockUrl).origin;
-  const steps = mode === 'real' ? REAL_FIRST_SUCCESS : FIRST_SUCCESS;
+  const steps = mode === 'real' ? FIRST_SUCCESS : MOCK_FIRST_SUCCESS;
   steps.forEach((step, index): void => {
     const action = index === 0 && unlockUrl !== undefined ? `Open ${unlockUrl}.` : step.action;
     const detail =

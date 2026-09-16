@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../../src/setup/quickstart';
+import { MOCK_FIRST_SUCCESS, SETUP_SCRIPT, WAY_NAMES } from '../../src/setup/quickstart';
 import {
   attachmentDecision,
   backendIdentityRefusal,
@@ -657,11 +657,11 @@ describe('what the run prints at the end', (): void => {
       .join(' ')
       .replace(/\s+/g, ' ');
     expect(printed).toContain('1 Open http://localhost:3000/?day0_key=x.');
-    expect(printed).toContain(FIRST_SUCCESS[3].detail);
+    expect(printed).toContain(MOCK_FIRST_SUCCESS[3].detail);
   });
 
   it('falls back to naming the command when no URL could be read', (): void => {
-    expect(firstSuccessLines(undefined).join(' ')).toContain(FIRST_SUCCESS[0].action);
+    expect(firstSuccessLines(undefined).join(' ')).toContain(MOCK_FIRST_SUCCESS[0].action);
   });
 });
 

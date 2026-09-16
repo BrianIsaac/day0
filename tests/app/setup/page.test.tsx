@@ -7,12 +7,16 @@ import {
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
   MEASURED_TIMINGS,
+  MOCK_OFFICE_NOTE,
   MODEL_ROUTES,
   PREREQUISITES,
   QUICKSTART_COMMANDS,
+  REAL_MODE_NOTE,
+  REAL_MODE_VERBS,
   RUN_WAYS,
   RUN_WAY_VERBS_NOTE,
   TRAPS,
+  WAY_NAMES,
 } from '../../../src/setup/quickstart';
 
 /**
@@ -54,31 +58,27 @@ describe('the /setup guide', (): void => {
     for (const port of ['3210', '3211', '6791', '3000', '11434']) expect(text).toContain(port);
   });
 
-  it('names the four ways to run it, in order, each with its commands', (): void => {
+  it('names the three ways to run it, in order, each with its commands', (): void => {
     const titles = RUN_WAYS.map((way) => way.title);
-    expect(titles).toEqual([
-      'Hosted demo',
-      'Local, no account, and the model runs here',
-      'Local, with a key you already have',
-      'Real mode, on your own documentation and systems',
-    ]);
+    expect(titles).toEqual([WAY_NAMES.hosted, WAY_NAMES.cloud, WAY_NAMES.local]);
+    expect(titles).toEqual(['Hosted demo', 'Local, cloud model', 'Local, local model']);
     const offsets = titles.map((title) => text.indexOf(title));
     expect(offsets.every((offset) => offset > 0)).toBe(true);
     expect([...offsets].sort((a, b) => a - b)).toEqual(offsets);
     // The section comes before the routes and the commands it names the flags of.
     expect(offsets[0]).toBeLessThan(text.indexOf(MODEL_ROUTES[0].title));
 
-    const [hosted, local, key, real] = RUN_WAYS;
+    const [hosted, cloud, local] = RUN_WAYS;
     for (const link of hosted.links ?? []) {
       expect(html).toContain(`href="${link.href}"`);
       expect(text).toContain(link.label);
     }
     expect(hosted.links?.map((link) => link.href)).toEqual(['/sign-in', '/demo']);
-    expect(local.commands).toContain('pnpm setup:local --route local');
-    expect(key.commands).toContain('pnpm setup:local --route key');
-    expect(real.commands).toContain('./setup.sh --route featherless');
-    expect(real.body).toContain('--route local');
-    for (const way of [local, key, real]) {
+    expect(cloud.commands).toContain('./setup.sh --route featherless');
+    expect(cloud.body).toContain('--route key');
+    expect(cloud.body).toContain('--route endpoint');
+    expect(local.commands).toContain('./setup.sh --route local');
+    for (const way of [cloud, local]) {
       // Every command line, in its own block and in the order the file gives.
       const block = /<span[^>]*>(.*?)<\/span>/gs;
       const rendered = [...html.matchAll(block)].map((match) => match[1]);
@@ -86,11 +86,22 @@ describe('the /setup guide', (): void => {
       expect(text).toContain(way.body);
       if (way.after) expect(text).toContain(way.after);
     }
-    for (const verb of real.verbs ?? []) {
+    // Neither local way is sent to the mock entry.
+    for (const way of [cloud, local]) {
+      expect(`${way.body} ${way.after ?? ''} ${way.commands?.join(' ')}`).not.toContain('pnpm setup:local');
+    }
+  });
+
+  it('says once, under the two local ways, that both are real mode, with the three verbs', (): void => {
+    expect(text).toContain(REAL_MODE_NOTE);
+    expect(REAL_MODE_NOTE).toContain('Both local ways are real mode');
+    expect(REAL_MODE_NOTE).toContain('local only');
+    expect(text.indexOf(REAL_MODE_NOTE)).toBeGreaterThan(text.indexOf(WAY_NAMES.local));
+    for (const verb of REAL_MODE_VERBS) {
       expect(text).toContain(verb.command);
       expect(text).toContain(verb.what);
     }
-    expect(real.verbs?.map((verb) => verb.command)).toEqual([
+    expect(REAL_MODE_VERBS.map((verb) => verb.command)).toEqual([
       './setup.sh stop',
       './setup.sh resume',
       './setup.sh clear',
@@ -100,7 +111,22 @@ describe('the /setup guide', (): void => {
     expect(text.indexOf('./setup.sh resume')).toBeLessThan(text.indexOf('./setup.sh clear'));
   });
 
-  it('offers the key route and the account-free route, with their flags', (): void => {
+  it('keeps the mock office as a note under an evaluation heading, not a card', (): void => {
+    expect(text).toContain(MOCK_OFFICE_NOTE.title);
+    expect(text).toContain(MOCK_OFFICE_NOTE.body);
+    expect(MOCK_OFFICE_NOTE.title).toBe('Evaluation and the mock office');
+    expect(MOCK_OFFICE_NOTE.body).toContain('pnpm setup:local');
+    expect(MOCK_OFFICE_NOTE.body).toContain('not as a way to run Day0');
+    // A heading and a paragraph, after the verbs and before the model section.
+    expect(html).toMatch(/<h3[^>]*id="mock-office"[^>]*>Evaluation and the mock office<\/h3>/);
+    expect(text.indexOf(MOCK_OFFICE_NOTE.title)).toBeGreaterThan(text.indexOf(RUN_WAY_VERBS_NOTE));
+    expect(text.indexOf(MOCK_OFFICE_NOTE.title)).toBeLessThan(text.indexOf(MODEL_ROUTES[0].title));
+    // Nothing on the page names the old fourth way or the mock entry as a way to run it.
+    expect(text).not.toContain('Four ways');
+    expect(text).not.toMatch(/no account, and the model runs here/i);
+  });
+
+  it('offers the cloud model and the local model, with their flags', (): void => {
     for (const route of MODEL_ROUTES) {
       expect(text).toContain(route.title);
       expect(text).toContain(route.flag);
@@ -141,8 +167,9 @@ describe('the /setup guide', (): void => {
   });
 
   it('says how to stop it, and where the data stays', (): void => {
-    expect(text).toContain('pnpm sandbox:down && pnpm convex:down');
+    expect(text).toContain('./setup.sh stop');
     expect(text).toContain('./setup.sh clear');
+    expect(text).toContain('pnpm sandbox:down && pnpm convex:down');
     expect(text).toContain('_convex_data');
     expect(text).toContain('_redactor_models');
   });
