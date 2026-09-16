@@ -233,6 +233,32 @@ describe('a hedge in one clause and a claim in the next', (): void => {
   });
 });
 
+describe('the perfect form and a passed check', (): void => {
+  const nothing: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+
+  it('reads "I have posted", "we\'ve verified" and "the checks passed" as the claims they are', (): void => {
+    for (const text of [
+      'I have posted the audit comment on REVOPS-5.',
+      "We've verified the figure against the deck.",
+      "I've moved REVOPS-7 to Done.",
+      'The three checks passed and the audit note is on REVOPS-5.',
+    ]) {
+      expect(unsupportedClaims(text, nothing), text).toEqual([text]);
+    }
+  });
+
+  it('leaves possession, a hedge and a plan alone', (): void => {
+    for (const text of [
+      'I have the figure from the tile.',
+      'We have three checks to record.',
+      'I have not posted the comment yet.',
+      'I will have posted the comment by then.',
+    ]) {
+      expect(unsupportedClaims(text, nothing), text).toEqual([]);
+    }
+  });
+});
+
 describe('the telegraphic form a status message takes', (): void => {
   const nothing: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
 

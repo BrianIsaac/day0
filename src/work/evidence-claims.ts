@@ -40,10 +40,12 @@ const TRAILER = /\s*--\s[^\n]*\(Day0\)[^\n]*$/gm;
  * A sentence claiming a settled state or a landed effect. Progressive and
  * future forms ("moving", "will post") are intentions, not claims. The
  * telegraphic form a status message takes ("audit comment posted", "tile
- * refreshed") claims the same thing without a verb of being.
+ * refreshed") claims the same thing without a verb of being, and the
+ * perfect form ("I have posted", "we've verified", "the checks passed")
+ * claims it with one; "will have posted" is still a plan.
  */
 const SETTLED_STATE =
-  /\b(?:(?:is|are|was|were|has been|have been|now|all|both|now stands?)\s+(?:now\s+|fully\s+|all\s+)?(?:complete|completed|done|finished|verified|confirmed|reconciled|resolved|closed|approved|correct|accurate|up to date|in place|current|signed off|checked|refreshed|updated|posted|sent|applied|landed|moved|marked)|(?:^|\b(?:i|we|it|they|this|that|which|and|so|then)\s+)(?:completed|finished|verified|confirmed|reconciled|resolved|closed|refreshed|updated|posted|sent|applied|landed|moved|marked|passed|succeeded|returned|matches|match|ties out|tied out|agrees?)\b|\b(?:comments?|notes?|replies|reply|messages?|dms?|updates?|tickets?|issues?|tiles?|figures?|checks?)\s+(?:posted|sent|saved|added|recorded|refreshed|updated|moved|closed|completed|verified|confirmed|done|landed|applied)\b|\b(?:read back|returned|shows?|showed)\b)/i;
+  /\b(?:(?:is|are|was|were|has been|have been|it's|that's|now|all|both|now stands?)\s+(?:now\s+|fully\s+|all\s+)?(?:complete|completed|done|finished|verified|confirmed|reconciled|resolved|closed|approved|correct|accurate|up to date|in place|current|signed off|checked|refreshed|updated|posted|sent|applied|landed|moved|marked)|(?:^|\b(?:i|we|it|they|this|that|which|and|so|then)\s+)(?:completed|finished|verified|confirmed|reconciled|resolved|closed|refreshed|updated|posted|sent|applied|landed|moved|marked|passed|succeeded|returned|matches|match|ties out|tied out|agrees?)\b|(?<!\b(?:will|would|shall|should|could|may|might|must)\s)\b(?:has|have|had|(?:i|we|they|you)'ve)\s+(?:now\s+|already\s+|just\s+|also\s+)?(?:completed|finished|verified|confirmed|reconciled|resolved|closed|refreshed|updated|posted|sent|applied|landed|moved|marked|passed|succeeded)\b|\b(?:comments?|notes?|replies|reply|messages?|dms?|updates?|tickets?|issues?|tiles?|figures?|checks?)\s+(?:posted|sent|saved|added|recorded|refreshed|updated|moved|closed|completed|verified|confirmed|done|landed|applied|passed|succeeded)\b|\b(?:read back|returned|shows?|showed)\b)/i;
 
 /**
  * A clause that sets a condition ("only when all three checks are
