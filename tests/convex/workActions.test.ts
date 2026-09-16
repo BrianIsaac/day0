@@ -4726,6 +4726,16 @@ describe('the closing gates against the 16 September plans', (): void => {
         surfaces,
       }),
     ).not.toThrow();
+    // A conditional-only plan whose phase one read Linear anyway: the landed read satisfies the condition's binding.
+    expect(() =>
+      validatePlanStepOutcomes({
+        plan: plan([conditional]),
+        outcomes: outcomes(1),
+        initialActions: [{ tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' } }],
+        initialLedger: [{ tool: 'mcp.call', ok: true, effect: 'REVOPS-7 Backlog', idempotencyKey: 'read' }],
+        surfaces,
+      }),
+    ).not.toThrow();
     // The run 3 shape: the condition names no surface, so the step promises no read at all.
     expect(() =>
       validatePlanStepOutcomes({

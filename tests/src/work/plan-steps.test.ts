@@ -269,6 +269,15 @@ describe('which surface a promised read binds to', (): void => {
     expect(bound(['Post the figure to Linear.'])).toEqual([]);
   });
 
+  it('leaves a read-back of a closing write unbound: the gate checks phase-one reads, and a comment or a Done has not landed when it runs', (): void => {
+    // Review decision: a reasonable manager reads "read it back" as a Linear read, but binding it would refuse every right closing set for the plan.
+    expect(bound(['Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.'])).toEqual([]);
+    expect(bound(['Set REVOPS-7 to Done in Linear and read it back.'])).toEqual([]);
+    expect(promisesResult('Add the comment to REVOPS-9 in Linear, then read it back.')).toBe(true);
+    // Recorded, not changed: the explicit forms still bind, so phase one must read Linear for such a plan.
+    expect(bound(['Set REVOPS-7 to Done in Linear, then read the ticket back from Linear.'])).toEqual(['1:linear']);
+  });
+
   it('binds a read in a condition to the surface it names only when no other step reads that surface', (): void => {
     const conditional = 'Move REVOPS-7 to Done only if Linear reports the ticket in Backlog.';
     expect(promisedReads([conditional], surfaces)).toEqual([
