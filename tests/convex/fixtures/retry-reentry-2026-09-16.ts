@@ -16,12 +16,10 @@ import {
  * reads, and its closing phase posted a second audit comment with a new
  * body before the Done.
  *
- * The run handover describes the plan and quotes the retry's comment; the
- * plan's steps here are the second run's verbatim REVOPS-5 steps for the
- * same checklist, with step 5 and the summary carrying the checklist's own
- * rule for the Done ("only when all three checks are confirmed or the
- * manager says so"), which is what the third run's closing phase blocked
- * on. The run 3 plan text itself is not recorded verbatim anywhere.
+ * The plan is the bed's own text, as the review brief records it
+ * (`docs/research/briefs/retry-reentry-review-2026-09-16-brief.md`): the
+ * summary, the reversibility note and every step verbatim, em dashes and
+ * angle-bracket placeholders included.
  */
 
 const call = (surface: string, tool: string, args: Record<string, unknown>): MockAction => ({
@@ -31,22 +29,22 @@ const tile = (tool: string, args: Record<string, unknown>): MockAction => call('
 
 export { RUN_3_AUDIT_LINE, RUN_3_RETRY_COMMENT_CORRECTED, RUN_3_RETRY_NOTE };
 
-/** Step 5 in the checklist's words: a conditional close, not a withheld one. */
+/** Step 5 as the bed authored it: a close after the comment lands, held for the manager, the alternative branch read out as one branch of that close. */
 export const RUN_3_REVOPS_5_STEP_5 =
-  'Move REVOPS-5 to Done only when all three checks are confirmed or the manager says so; otherwise leave it where it is and record the Done decision as blocked in the completion note.';
+  'After the comment lands and all confirmable checks are resolved, emit save_issue {id: REVOPS-5, state: Done} \u2014 held for manager approval; if the manager does not confirm, the issue stays in progress with the comment as trace.';
 
 export const run3AuditNotePlan: ExecutionPlan = {
-  summary: 'Compose the close-summary audit note on REVOPS-5 per the Q3 close checklist: gather evidence for the three checks from the connected surfaces (Looker tile audit line, Linear ticket states), post the audit comment, and move the ticket to Done only when all three checks are confirmed or the manager says so.',
+  summary: 'REVOPS-5 (Q3 close, REVOPS team): compose the close-summary audit note per the Q3 close checklist, post it as a Linear comment, then move the issue to Done only after manager approval. All writes are held (autonomous actions off); reads and the manager DM land now.',
   steps: [
-    "Read the Looker pipeline tile via the connected looker-pipeline-tile surface (browser sign-in, snapshot) and quote the visible figure and the audit line 'Last updated by <user> at <time> UTC' as evidence for check 1.",
-    'Read the Q3 close project tickets in Linear team REVOPS via get_issue/list_issues and record each ticket identifier and its state as Linear reports it, as evidence for check 3.',
-    "Check 2 (Friday standup deals reconciled in the Q4 pipeline tracker): no Q4 pipeline tracker surface is connected, so record this check as not confirmed in the note with the reason 'no tracker connected'; do not fabricate evidence.",
-    'Post one save_comment on REVOPS-5 with the three checks in checklist order, quoting evidence, ending with the not-confirmed line.',
+    "Read evidence for check 1 via the looker-pipeline-tile surface: sign in at http://looker-tile:8080/ and read back the visible figure and the audit line 'Last updated by <user> at <time> UTC' (read-only snapshot; no save needed for this note).",
+    "Read evidence for check 3 via linear: list_issues on team REVOPS, project Q3 close, and record each ticket's state as Linear reports it.",
+    "Check 2 (Friday standup deals in the Q4 pipeline tracker): no connected surface exists for the tracker, so the note will report 'deal reconciliation not confirmed \u2014 no tracker connected' rather than stopping the run.",
+    "Draft the single audit comment (three checks in order, quoted evidence, then the not-confirmed line) and emit it as a save_comment on REVOPS-5 \u2014 held for the manager's literal approval.",
     RUN_3_REVOPS_5_STEP_5,
   ],
   expectedOutputType: 'ticket-update', riskNotes: '',
-  reversibility: 'The audit comment is additive and can be rewritten via save_comment id or superseded by a follow-up comment; the Done move is reversible in Linear.',
-  estimatedMinutes: 4,
+  reversibility: 'The comment can be rewritten via save_comment with its id; the status change to Done is reversible by setting the prior state. Both are held for exact-action approval before landing.',
+  estimatedMinutes: 20,
 };
 
 /** The reads both runs' phase one made: tile sign-in and snapshot, then the issue list. */
