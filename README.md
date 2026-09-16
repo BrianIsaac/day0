@@ -22,6 +22,8 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
 - Watch the work queue advance and the Skills panel show the capabilities it proposes, verifies and registers.
 
+Two recordings: the [mock-office walkthrough](https://youtu.be/UqPnFyQ9Fuo) shows this loop on the hosted mock office, and the [one-minute demo video](https://youtu.be/YgbSmy1shnM) is cut from a real-mode run against the author's own Linear and Slack workspaces, the route [One full run](#one-full-run-from-the-first-page) documents below.
+
 ## Disclosures
 
 Three things to know before the rest of this file. Each is repeated where it applies; this is the one place they are stated together.
@@ -1031,6 +1033,8 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 - 使用 Clerk 登录并部署一个 Agent。
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的章程。
 - 查看工作队列推进，并在 Skills 面板中看到 Agent 提出、验证和注册能力。
+
+两段录像：[mock office 演示视频](https://youtu.be/UqPnFyQ9Fuo)在托管的 mock office 上展示上述流程；[一分钟演示视频](https://youtu.be/YgbSmy1shnM)剪辑自连接作者本人 Linear 与 Slack workspace 的一次 real-mode 运行，即下文[一次完整运行](#一次完整运行从第一个页面开始)记录的路径。
 
 ### 披露
 
