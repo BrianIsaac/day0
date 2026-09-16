@@ -6,9 +6,9 @@ An autonomous teammate that joins with no role, no skills and no scope.
 
 [**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
 
-![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
+![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, one built-in and three it authored, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
-<p align="center"><i>One agent after a clean real-mode run: the charter it wrote and had approved, three skills it authored and registered, the work it discovered, and the supervision trail for actions that landed or were refused. Captured locally on 2 September 2026.</i></p>
+<p align="center"><i>One agent after a clean real-mode run: the charter it wrote and had approved, four registered skills, one built-in and three it authored, the work it discovered, and the supervision trail for actions that landed or were refused. Captured locally on 3 September 2026.</i></p>
 
 Putting an agent into a real team is an engineering project. Someone defines the role, wires the tools, writes the prompts and encodes what counts as good work, and that work is done again for every team and every organisation that wants one. It is the main reason agents stall at the pilot.
 
@@ -83,7 +83,7 @@ A Day-1 one-to-one, held over voice or chat, walks its new boss through seven to
 
 ### It writes its own charter, and waits for a human
 
-From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. Before approving, the manager sees each rule the draft derived from what they said, beside the sentence it came from, and can strike any of them; nothing struck survives as a gate. A rule found by checking the clauses strikes whole any will-not-do or escalation clause that carries it and only its word from a will-do, the card says which, and a strike the charter cannot honour, such as one that would drop the only clause keeping the agent out of a system, is refused on the card with the reason rather than at approval. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes, and a set of scoped, revocable capability grants. After approval the charter is amended, never rewritten: each change is a new version that supersedes the last, with the actor, the reason and the per-field diff on one event, and an amendment schedules re-evaluation of eligible parked skips. Only out-of-scope and quality-fit skips return on a charter change; low-value skips and running approved plans remain as they are. A question the charter left open is asked once, at the first plan that touches it, and the answer is written into the charter with the plan's approval.
+From that conversation the agent drafts a charter - its scope, its boundaries, the people it works with, and an explicit list of what it will not do. It holds nothing until a person approves it. Before approving, the manager sees each rule the draft derived from what they said, beside the sentence it came from, and can strike any of them; nothing struck survives as a gate. A rule found by checking the clauses strikes whole any will-not-do or escalation clause that carries it and only its word from a will-do, the card says which, and a strike the charter cannot honour, such as one that would drop the only clause keeping the agent out of a system, is refused on the card with the reason rather than at approval. On approval the charter becomes its operating scope: an eight-file workspace, five read-scopes (in real mode deploy seeds only `boss:message` and `docs:read`, and a surface's read scope arrives when that surface connects), and a set of scoped, revocable capability grants. After approval the charter is amended, never rewritten: each change is a new version that supersedes the last, with the actor, the reason and the per-field diff on one event, and an amendment schedules re-evaluation of eligible parked skips. Only out-of-scope and quality-fit skips return on a charter change; low-value skips and running approved plans remain as they are. A question the charter left open is asked once, at the first plan that touches it, and the answer is written into the charter with the plan's approval.
 
 ![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
@@ -770,7 +770,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Runtime flow
 
-1. **Sign in** (Clerk modal, or nothing at all in no-auth dev mode) and **deploy** on `/`. `api.agents.deploy` inserts the agent and seeds five read-only permission grants. `POST /api/seed` (non-blocking) installs the builtin `see-internal-docs` skill and, in mock mode only, the mock environment. Work items are not seeded here - mock work is generated from the approved charter, while real work arrives from connected surfaces.
+1. **Sign in** (Clerk modal, or nothing at all in no-auth dev mode) and **deploy** on `/`. `api.agents.deploy` inserts the agent and seeds five read-only permission grants; in real mode it seeds only `boss:message` and `docs:read`, and a surface's read scope is granted when that surface connects. `POST /api/seed` (non-blocking) installs the builtin `see-internal-docs` skill and, in mock mode only, the mock environment. Work items are not seeded here - mock work is generated from the approved charter, while real work arrives from connected surfaces.
 2. **Mode picker** on `/agent/[agentId]` — voice or chat.
    - Voice: `GET /api/voice/elevenlabs/start` returns a signed URL; ElevenLabs's post-call webhook hits `POST /api/voice/elevenlabs/webhook`.
    - Chat: `POST /api/voice/chat` streams the configured model until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
@@ -1024,7 +1024,7 @@ Day0 是一名自主工作的团队成员；刚加入时，它没有预设角色
 
 Day0 从更早的一步开始。它在空白状态下部署，之后形成的一切都来自与雇用它的人的一次对话。
 
-![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
+![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, one built-in and three it authored, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
 ### 在线演示
 
@@ -1095,7 +1095,7 @@ Day-1 一对一通过语音或文字依次讨论七个主题：为什么招聘�
 
 #### 它起草自己的章程，并等待人工确认
 
-Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准前，manager 会看到草稿从你的话里推导出的每条规则，旁边附有它来自的那句话，可以划掉其中任何一条；被划掉的规则不会再作为门槛存在。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围和一组范围受限且可撤销的能力授权。批准之后章程只能修订，不会被重写：每次修改都是一个取代上一版的新版本，操作者、理由和逐字段 diff 记录在同一条事件里，而每次修订都会把在旧版本下被搁置的工作送回重新评估。章程中悬而未决的问题会在第一个涉及它的计划上被问一次，答案随该计划的批准一起写入章程。
+Agent 根据这次对话起草章程，明确工作范围、边界、协作对象，以及一份不会执行的事项清单。在人工批准之前，章程不会生效。批准前，manager 会看到草稿从你的话里推导出的每条规则，旁边附有它来自的那句话，可以划掉其中任何一条；被划掉的规则不会再作为门槛存在。批准后，章程成为它的运行范围，并生成八个工作区文件、五项读取范围（real mode 下部署时只生成 `boss:message` 与 `docs:read`，各系统的读取范围在该系统连接时才到达）和一组范围受限且可撤销的能力授权。批准之后章程只能修订，不会被重写：每次修改都是一个取代上一版的新版本，操作者、理由和逐字段 diff 记录在同一条事件里，而每次修订都会把在旧版本下被搁置的工作送回重新评估。章程中悬而未决的问题会在第一个涉及它的计划上被问一次，答案随该计划的批准一起写入章程。
 
 ![The upper charter approval card for moving routine Q3 close bookkeeping onto a controlled, auditable execution path, showing its proposed function and 30/60/90-day goals](.github/images/charter-card.webp)
 
