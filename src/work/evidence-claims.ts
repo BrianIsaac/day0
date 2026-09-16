@@ -276,14 +276,25 @@ const NOT_CONFIRMED_LINE = /^\s*(?:not confirmed|unconfirmed)\b\s*(?:[:\-\u2013\
 /** The head of a check ends at its first full stop or colon; what follows is its evidence. */
 const HEAD_END = /[.:]\s+|[.:]$/;
 
-/** Evidence that says the check could not be read or is not confirmed. */
+/** Evidence that says the check could not be read, is not confirmed, or is still to come. */
 const UNMET_PHRASE =
-  /\b(?:not confirmed|unconfirmed|(?:could not|cannot|can't|couldn't|unable to)(?: be)? (?:read|confirm(?:ed)?|verif(?:y|ied)|reach(?:ed)?)|not (?:read|readable|reachable|available)|no evidence|unreadable|unavailable|did not (?:load|respond|return))\b/i;
+  /\b(?:not confirmed|unconfirmed|unverified|unresolved|(?:could not|cannot|can't|couldn't|unable to)(?: be)? (?:read|confirm(?:ed)?|verif(?:y|ied)|reach(?:ed)?)|not (?:read|readable|reachable|available)|no evidence|unreadable|unavailable|did not (?:load|respond|return)|pending|outstanding|awaiting|to be confirmed|tbc|tbd|not yet)\b/i;
+/** Evidence that is no evidence: a dash, a question mark, an ellipsis, nothing else. */
+const NO_EVIDENCE = /^[\s\u2014\u2013\-?\u2026.]*$/;
 
 const STATE_WORDS =
   'done|closed|completed|complete|resolved|cancelled|canceled|backlog|todo|to do|triage|open|in progress|in review|blocked|duplicate';
 /** The state a check requires, named in its head: "Close tickets at Done". */
 const REQUIRED_STATE = new RegExp(`\\b(?:at|to|in|is|are|as|reach(?:es|ed)?|=)\\s+[\`"']?(${STATE_WORDS})\\b`, 'i');
+/**
+ * A head that asks for a close without naming the state: "Close tickets",
+ * "Resolve the sibling issues", "Tickets closed". The checklist may name
+ * the state ("at Done") where the note's head does not.
+ */
+const CLOSE_HEAD =
+  /^(?:close|complete|resolve)\s+[^.:]{0,30}?\b(?:tickets?|issues?|items?|[a-z]+-\d+)\b|\b(?:tickets?|issues?|items?)\s+(?:closed|done|completed|resolved)\b/i;
+/** The states a close ends in; anything else the evidence reports is an open state. */
+const CLOSED_STATES = new Set(['done', 'closed', 'completed', 'complete', 'resolved', 'cancelled', 'canceled', 'duplicate']);
 /** A state the evidence reports for something: "REVOPS-6 (...) \u2014 Backlog", "(Todo)", "is at Backlog". */
 const REPORTED_STATE = new RegExp(`(?:[\\u2014\\u2013\\-:(]|\\b(?:at|in|is|are|state))\\s*[\`"']?(${STATE_WORDS})\\b`, 'gi');
 
@@ -319,15 +330,20 @@ function enumeratedChecks(text: string): { checks: EnumeratedCheck[]; closing: s
 
 /** Why a check's own evidence reads as unmet, or undefined when it reads as met. */
 function unmetReason(check: EnumeratedCheck): string | undefined {
+  if (NO_EVIDENCE.test(check.evidence)) return 'gives no evidence';
   const phrase = check.evidence.match(UNMET_PHRASE);
   if (phrase) return `says "${phrase[0]}"`;
   const required = check.head.match(REQUIRED_STATE)?.[1];
-  if (!required) return undefined;
-  const reported = [...check.evidence.matchAll(REPORTED_STATE)]
-    .map((match) => match[1]!)
-    .filter((state) => state.toLowerCase() !== required.toLowerCase());
-  if (reported.length === 0) return undefined;
-  return `reports ${[...new Set(reported)].join(' and ')} where the check requires ${required}`;
+  const reportedStates = [...check.evidence.matchAll(REPORTED_STATE)].map((match) => match[1]!);
+  if (required) {
+    const reported = reportedStates.filter((state) => state.toLowerCase() !== required.toLowerCase());
+    if (reported.length === 0) return undefined;
+    return `reports ${[...new Set(reported)].join(' and ')} where the check requires ${required}`;
+  }
+  if (!CLOSE_HEAD.test(check.head)) return undefined;
+  const open = reportedStates.filter((state) => !CLOSED_STATES.has(state.toLowerCase()));
+  if (open.length === 0) return undefined;
+  return `reports ${[...new Set(open)].join(' and ')} where the check asks for a close`;
 }
 
 /** Whether the closing line names a check: by its number, or by the first words of its head. */

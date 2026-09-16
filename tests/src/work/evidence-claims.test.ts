@@ -319,6 +319,31 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
     expect(unsupportedClaimIssues([comment(allMet)], evidenceRun3)).toEqual([]);
   });
 
+  it('reads evidence that is only a dash, "pending", "to be confirmed" or "awaiting" as unmet', (): void => {
+    for (const evidenceLine of ['—', '-', 'pending', 'To be confirmed with the team.', 'Awaiting REVOPS-7.', 'outstanding', 'TBC', 'not yet']) {
+      const note = ['1. Pipeline coverage confirmed. The tile shows 74%.', `2. Close tickets at Done. ${evidenceLine}`, 'Not confirmed: none.'].join('\n');
+      const issues = unsupportedClaimIssues([comment(note)], evidenceRun3);
+      expect(issues, evidenceLine).toHaveLength(1);
+      expect(issues[0], evidenceLine).toContain('check 2');
+    }
+    // "Not applicable" is a disposition, not an absence of evidence.
+    const notApplicable = ['1. Pipeline coverage confirmed. The tile shows 74%.', '2. Close tickets at Done. Not applicable: no sibling tickets this quarter.', 'Not confirmed: none.'].join('\n');
+    expect(unsupportedClaimIssues([comment(notApplicable)], evidenceRun3)).toEqual([]);
+  });
+
+  it('reads a close the head asks for without naming the state ("Close tickets") against an open state in the evidence', (): void => {
+    const openState = ['1. Pipeline coverage confirmed. The tile shows 74%.', '2. Close tickets. As Linear reports them: REVOPS-6 — Backlog; REVOPS-7 — In Progress.', 'Not confirmed: none.'].join('\n');
+    const issues = unsupportedClaimIssues([comment(openState)], evidenceRun3);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('check 2');
+    expect(issues[0]).toContain('Backlog');
+    const closed = openState.replace('REVOPS-6 — Backlog; REVOPS-7 — In Progress', 'REVOPS-6 — Done; REVOPS-7 — Cancelled');
+    expect(unsupportedClaimIssues([comment(closed)], evidenceRun3)).toEqual([]);
+    // A head with no closing word and no state names no required state.
+    const listed = openState.replace('2. Close tickets.', '2. Sibling tickets listed.');
+    expect(unsupportedClaimIssues([comment(listed)], evidenceRun3)).toEqual([]);
+  });
+
   it('reads an absent read and a not-confirmed phrase as unmet, whichever check carries it', (): void => {
     const absentRead = [
       '1. Pipeline coverage confirmed. The tile could not be read: the sign-in page redirected.',
