@@ -1,0 +1,82 @@
+name: Bug report
+description: Something Day0 does that it should not, or does not do that the README says it does.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, run `pnpm check:setup` and read its component notes: most first-run
+        problems are a setup state it names, not a defect. If it names one, the README section
+        it points at is the fix. If it does not, this form is the right place.
+  - type: dropdown
+    id: route
+    attributes:
+      label: Route
+      description: Which of the README's ways of running it were you on?
+      options:
+        - Hosted demo (day0-olive.vercel.app)
+        - Local, no accounts (bundled model)
+        - Local, OpenAI key
+        - Local, another OpenAI-compatible endpoint
+        - Convex cloud + Clerk
+        - Real mode (local only)
+        - Evaluation harness (pnpm eval:*)
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or tag
+      description: Output of `git rev-parse --short HEAD`, or the tag you checked out.
+      placeholder: "5fac642"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and what you expected instead. Quote the exact error text.
+      placeholder: |
+        1. ...
+        2. ...
+        Saw: ...
+        Expected: ...
+    validations:
+      required: true
+  - type: textarea
+    id: check-setup
+    attributes:
+      label: Output of pnpm check:setup
+      description: Paste the whole output, including the component notes under the summary lines. It contains no secrets.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        For a charter, plan or skill that never arrived: `npx convex logs` around the time it failed.
+        For a browser-side problem: the browser console. Remove anything you would not paste in public;
+        the ledger export and the check output are already credential-free, `.env.local` is not.
+      render: text
+  - type: input
+    id: model
+    attributes:
+      label: Model and endpoint
+      description: The `OPENAI_MODEL` in use, and whether `OPENAI_BASE_URL` was set (not its value if it is private).
+      placeholder: "qwen3:8b via the bundled model service"
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node, pnpm and Docker versions; GPU if the bundled model was involved.
+      placeholder: "Ubuntu 24.04, Node 22.12, pnpm 9.15, Docker 27.3, RTX 3060 12 GB"
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: This report contains no credential, token or `.env.local` content.
+          required: true
