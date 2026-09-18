@@ -66,6 +66,14 @@ DEFINITIONS = (
     ast.Assign,
     ast.AnnAssign,
 ) + ((ast.TypeAlias,) if hasattr(ast, "TypeAlias") else ())
+VERBS = (
+    "mcp.call",
+    "http.request",
+    "slack.postMessage",
+    "ticket.update",
+    "spreadsheet.appendRow",
+    "twitter.reply",
+)
 SECRET_WORDS = ("secret", "token", "password", "authorization", "credential", "key")
 MAX_CARRIED = 3
 MAX_CARRIED_CHARS = 40
@@ -215,22 +223,24 @@ def canonical(value):
 
 
 def action_label(action):
-    """A short name for one emitted action: its verb and the tool or path it names."""
+    """A short name for one emitted action: its verb, then the tool or path it names."""
     if not isinstance(action, dict):
         return type(action).__name__
     args = action.get("args") if isinstance(action.get("args"), dict) else {}
     names = []
     for value in (
         action.get("action"),
-        action.get("tool"),
         action.get("type"),
+        action.get("tool"),
         args.get("tool"),
         action.get("path"),
         args.get("path"),
     ):
         if isinstance(value, str) and value and value not in names:
             names.append(value)
-    return " ".join(names[:2]) or "action"
+    verbs = [name for name in names if name in VERBS]
+    others = [name for name in names if name not in VERBS]
+    return " ".join(verbs[:1] + others[:1] if verbs else others[:2]) or "action"
 
 
 def carried(inputs, output):

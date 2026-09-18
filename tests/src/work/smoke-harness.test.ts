@@ -116,6 +116,24 @@ describe('the real-mode smoke harness', (): void => {
     expect(run.exitCode).toBe(0);
   });
 
+  it('names each action by its verb first, whichever key the author put the verb under', (): void => {
+    const run = runHarnessed(
+      [
+        'def run(inputs: dict) -> dict:',
+        '    return {"actions": [',
+        '        {"type": "mcp.call", "tool": "save_comment", "id": inputs["record-id"]},',
+        '        {"tool": "http.request", "args": {"path": "chat.postMessage"}},',
+        '        {"action": "notes", "text": "no verb here"},',
+        '    ]}',
+        '',
+        'CASES = [{"record-id": "OPS-1"}, {"record-id": "OPS-2"}]',
+      ].join('\n'),
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain('case 1: run() emitted 3 actions (mcp.call save_comment, http.request chat.postMessage, notes)');
+  });
+
   it('awaits a run() written as a coroutine function', (): void => {
     const run = runHarnessed(
       [
