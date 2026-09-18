@@ -6,10 +6,10 @@ import { containsTokenShape } from './redact';
  * With one documentation set carrying a handbook per role, every page names
  * some team's project and channels. The candidates are read per page, each
  * with the line that states it; orientation picks the ones that belong to
- * the employee's role; a pick survives only when its cited page states the
- * value; and the manager and IT approve the result with the card. Intake
- * then reads the approved values and nothing else, so a later page edit
- * never widens what an employee reads.
+ * the employee's role by their numbers, so every kept value, page and line
+ * is the candidate's own; and the manager and IT approve the result with
+ * the card. Intake then reads the approved values and nothing else, so a
+ * later page edit never widens what an employee reads.
  */
 
 export type ScopeField = 'team' | 'project' | 'channel';
@@ -32,6 +32,12 @@ export interface ScopeCandidate extends ScopeValue {
   field: ScopeField;
 }
 
+/** What a page says about the channels it offers, beyond the line that lists them. */
+export interface ScopeDescription {
+  ref: string;
+  text: string;
+}
+
 /** The stored shape of `surfaces.intakeScope`. */
 export interface IntakeScope {
   team?: ScopeValue;
@@ -41,11 +47,9 @@ export interface IntakeScope {
   notes?: string[];
 }
 
-/** A value orientation chose, with the page it says the value is on. */
+/** A candidate orientation chose, by its number in the list it was offered, from 1. */
 export interface ScopePick {
-  field: ScopeField;
-  value: string;
-  ref: string;
+  candidate: number;
 }
 
 export interface IntakeScopePresentation {
@@ -68,7 +72,12 @@ const CHANNELS_LABEL = /^\s*(?:[-*+]\s+)?Channels?\s*:/i;
 const CHANNEL_NAME = /#([a-z0-9][a-z0-9_-]*)/gi;
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const FORBIDDEN_QUEUE_LINE = /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
+const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+/;
+const HEADING = /^\s{0,3}#{1,6}\s/;
 const MAX_NOTE_VALUE = 80;
+const MAX_DROP_NOTES = 8;
+const MAX_DESCRIPTIONS = 6;
+const MAX_DESCRIPTION_LENGTH = 400;
 
 /**
  * The scope fields a surface of one class is bounded by.
@@ -85,30 +94,65 @@ export function scopeFieldsFor(surfaceClass: string): ScopeField[] {
   return [];
 }
 
+/** Order two strings by code unit, the same on every machine. */
+function byCodeUnit(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** A page's lines outside fenced code blocks, in order. */
+function unfencedLines(markdown: string): string[] {
+  const lines: string[] = [];
+  let fence: { marker: string; length: number } | undefined;
+  for (const line of markdown.split(/\r?\n/)) {
+    const fenceMatch = CODE_FENCE.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      if (!fence) fence = { marker, length: fenceMatch[1].length };
+      else if (fence.marker === marker && fenceMatch[1].length >= fence.length) fence = undefined;
+      // A fence boundary separates the prose on either side of it.
+      lines.push('');
+      continue;
+    }
+    if (!fence) lines.push(line);
+  }
+  return lines;
+}
+
 /**
  * Read the documented intake values of each page, with the line stating each.
  *
  * A line that carries anything shaped like a secret is never quoted, so no
- * candidate can carry one onto a card.
+ * candidate can carry one onto a card. The page stating the most values comes
+ * first, then pages by ref, so a value stated on several pages is offered
+ * first from its fullest statement and the order never depends on the order
+ * the pages were synced in.
  *
  * Args:
  *   pages: Pages that name the system, in any order.
  *   fields: The fields to read.
  *
  * Returns:
- *   One candidate per field, value and page, from the first line stating it.
+ *   One candidate per field, value and page, from the first line stating it,
+ *   page by page.
  */
 export function scopeCandidates(
   pages: readonly ScopePage[],
   fields: readonly ScopeField[],
 ): ScopeCandidate[] {
-  const candidates: ScopeCandidate[] = [];
-  const seen = new Set<string>();
-  const add = (field: ScopeField, raw: string, page: ScopePage, quote: string): void => {
+  const byPage: Array<{ page: ScopePage; candidates: ScopeCandidate[] }> = [];
+  const add = (
+    candidates: ScopeCandidate[],
+    field: ScopeField,
+    raw: string,
+    page: ScopePage,
+    quote: string,
+  ): void => {
     const value = field === 'channel' ? raw.toLowerCase() : raw.trim();
-    const key = `${field}\0${value}\0${page.ref}`;
-    if (!value || seen.has(key)) return;
-    seen.add(key);
+    // Once per page: two sources may hold the same ref, and each is its own page.
+    const stated = candidates.some(
+      (candidate): boolean => candidate.field === field && candidate.value === value,
+    );
+    if (!value || stated) return;
     candidates.push({
       field,
       value,
@@ -118,36 +162,98 @@ export function scopeCandidates(
     });
   };
   for (const page of pages) {
-    let fence: { marker: string; length: number } | undefined;
-    for (const line of page.markdown.split(/\r?\n/)) {
-      const fenceMatch = CODE_FENCE.exec(line);
-      if (fenceMatch) {
-        const marker = fenceMatch[1][0];
-        if (!fence) fence = { marker, length: fenceMatch[1].length };
-        else if (fence.marker === marker && fenceMatch[1].length >= fence.length) fence = undefined;
-        continue;
-      }
-      if (fence) continue;
+    const candidates: ScopeCandidate[] = [];
+    byPage.push({ page, candidates });
+    for (const line of unfencedLines(page.markdown)) {
       const quote = line.trim();
       if (!quote || containsTokenShape(quote) || FORBIDDEN_QUEUE_LINE.test(quote)) continue;
       for (const field of fields) {
         if (field === 'channel') {
           if (!CHANNELS_LABEL.test(line)) continue;
-          for (const match of line.matchAll(CHANNEL_NAME)) add(field, match[1], page, quote);
+          for (const match of line.matchAll(CHANNEL_NAME)) add(candidates, field, match[1], page, quote);
           continue;
         }
         for (const grammar of FIELD_GRAMMARS[field]) {
-          for (const match of line.matchAll(grammar)) add(field, match[1], page, quote);
+          for (const match of line.matchAll(grammar)) add(candidates, field, match[1], page, quote);
         }
       }
     }
   }
-  return candidates;
+  return byPage
+    .sort(
+      (left, right): number =>
+        right.candidates.length - left.candidates.length ||
+        byCodeUnit(left.page.ref, right.page.ref) ||
+        byCodeUnit(left.page.sourceId ?? '', right.page.sourceId ?? ''),
+    )
+    .flatMap((item): ScopeCandidate[] => item.candidates);
 }
 
-/** A channel pick without its hash, in Slack's lower case. */
-function channelName(value: string): string {
-  return value.trim().replace(/^#/, '').toLowerCase();
+/**
+ * What each offered channel's own page says about it, beyond its label line.
+ *
+ * A `Channels:` line states several channels at once and says nothing about
+ * any of them, so whoever picks among them needs the page's prose: which one
+ * receives requests, which one the whole company shares, which one is only
+ * where the team talks. A team or project line states its value alone, so
+ * those get none. Only pages an offered channel is on are read, so another
+ * role's handbook is never quoted; a passage carrying anything shaped like a
+ * secret is never quoted; and the passages are few and short.
+ *
+ * Args:
+ *   pages: The pages the candidates were read from.
+ *   candidates: The candidates offered for one surface.
+ *
+ * Returns:
+ *   Each paragraph or list item naming an offered channel, whole, in the
+ *   order the candidates' pages are offered and then the page's own order.
+ */
+export function channelDescriptions(
+  pages: readonly ScopePage[],
+  candidates: readonly ScopeCandidate[],
+): ScopeDescription[] {
+  const described: ScopeDescription[] = [];
+  const channels = candidates.filter((candidate): boolean => candidate.field === 'channel');
+  const read = new Set<ScopePage>();
+  for (const offered of channels) {
+    const page = pages.find(
+      (item): boolean => item.ref === offered.ref && item.sourceId === offered.sourceId,
+    );
+    if (!page || read.has(page)) continue;
+    read.add(page);
+    const mentions = channels
+      .filter((item): boolean => item.ref === page.ref && item.sourceId === page.sourceId)
+      .map((item): RegExp => new RegExp(`(?<![a-z0-9_-])#${escaped(item.value)}(?![a-z0-9_-])`, 'i'));
+    for (const passage of passages(page.markdown)) {
+      if (CHANNELS_LABEL.test(passage) || containsTokenShape(passage)) continue;
+      if (!mentions.some((mention): boolean => mention.test(passage))) continue;
+      described.push({ ref: page.ref, text: passage.slice(0, MAX_DESCRIPTION_LENGTH) });
+      if (described.length === MAX_DESCRIPTIONS) return described;
+    }
+  }
+  return described;
+}
+
+/** A page's paragraphs, list items and headings outside code, each joined onto one line. */
+function passages(markdown: string): string[] {
+  const found: string[] = [];
+  let current: string[] = [];
+  const close = (): void => {
+    if (current.length > 0) found.push(current.join(' '));
+    current = [];
+  };
+  for (const line of unfencedLines(markdown)) {
+    const text = line.trim();
+    if (!text) {
+      close();
+      continue;
+    }
+    if (LIST_ITEM.test(line) || HEADING.test(line)) close();
+    current.push(text);
+    if (HEADING.test(line)) close();
+  }
+  close();
+  return found;
 }
 
 /** How a note names one value, bounded so a model's output cannot flood the card. */
@@ -157,19 +263,24 @@ function valueLabel(field: ScopeField, value: string): string {
 }
 
 /**
- * Keep the picks their cited pages state, and say why each other one went.
+ * Resolve each numbered pick to its candidate, and say why each other one went.
  *
- * A pick is kept only when a candidate of the same field on the cited page
- * carries exactly that value: a value on no page, on another page, or
- * differing in case is dropped. Intake reads one team and one project, so a
- * second is dropped too; every grounded channel is kept once.
+ * A pick names a candidate by its number in the list it was offered, so the
+ * value, page and line kept are the candidate's own and nothing a model
+ * restated is compared. A number the list does not have, or one given twice,
+ * is dropped. Intake reads one team, and projects from one page, so any other
+ * is dropped too; every picked channel is kept once. Every drop leaves a note
+ * that names the pick's number and the reason, the first few in full and the
+ * rest counted, so an answer of any length cannot flood the card. A queue
+ * already kept that a second page states too is kept once and needs no note:
+ * nothing asked for was lost.
  *
  * Args:
- *   picks: Values orientation chose, each with the page it cites.
- *   candidates: Every documented candidate for the surface.
+ *   picks: Numbered picks into `candidates`.
+ *   candidates: The candidates the picks were offered, in the order numbered.
  *
  * Returns:
- *   The scope to put on the card, with a note for every dropped pick.
+ *   The scope to put on the card, with its notes for the dropped picks.
  */
 export function groundScopePicks(
   picks: readonly ScopePick[],
@@ -179,32 +290,33 @@ export function groundScopePicks(
   const channels: ScopeValue[] = [];
   const projects: ScopeValue[] = [];
   const notes: string[] = [];
+  const picked = new Set<number>();
   for (const pick of picks) {
-    const value = pick.field === 'channel' ? channelName(pick.value) : pick.value.trim();
-    const grounded = candidates.find(
-      (candidate): boolean =>
-        candidate.field === pick.field && candidate.ref === pick.ref && candidate.value === value,
-    );
+    const number = pick.candidate;
+    const grounded = Number.isInteger(number) ? candidates[number - 1] : undefined;
     if (!grounded) {
-      notes.push(
-        `Dropped ${valueLabel(pick.field, value)}: ${pick.ref.slice(0, MAX_NOTE_VALUE)} does not state it.`,
-      );
+      notes.push(`Dropped pick ${number}: no documented value was offered under that number.`);
       continue;
     }
-    const { field: _field, ...kept } = grounded;
-    void _field;
-    if (pick.field === 'channel') {
+    const { field, ...kept } = grounded;
+    const value = kept.value;
+    if (picked.has(number)) {
+      notes.push(`Dropped pick ${number}: ${valueLabel(field, value)} was already picked.`);
+      continue;
+    }
+    picked.add(number);
+    if (field === 'channel') {
       if (!channels.some((channel): boolean => channel.value === value)) channels.push(kept);
       continue;
     }
-    if (pick.field === 'project') {
+    if (field === 'project') {
       const first = scope.project;
       if (!first) scope.project = kept;
       else if (first.value !== value && first.ref === kept.ref && first.sourceId === kept.sourceId) {
         if (!projects.some((project): boolean => project.value === value)) projects.push(kept);
       } else if (first.value !== value) {
         notes.push(
-          `Dropped ${valueLabel(pick.field, value)}: intake reads projects from ${first.ref}, not another role's page.`,
+          `Dropped pick ${number}: ${valueLabel(field, value)} was not kept; intake reads projects from one page, and ${first.ref} was picked first.`,
         );
       }
       continue;
@@ -214,12 +326,20 @@ export function groundScopePicks(
       scope.team = kept;
     } else if (current.value !== value) {
       notes.push(
-        `Dropped ${valueLabel(pick.field, value)}: intake reads one ${pick.field}, and \`${current.value}\` was picked first.`,
+        `Dropped pick ${number}: ${valueLabel(field, value)} was not kept; intake reads one ${field}, and \`${current.value}\` was picked first.`,
       );
     }
   }
   if (projects.length > 0) scope.projects = projects;
   if (channels.length > 0) scope.channels = channels;
+  if (notes.length > MAX_DROP_NOTES) {
+    const more = notes.length - MAX_DROP_NOTES;
+    notes.splice(
+      MAX_DROP_NOTES,
+      more,
+      `${more} more pick${more === 1 ? ' was' : 's were'} dropped the same way.`,
+    );
+  }
   if (notes.length > 0) scope.notes = notes;
   return scope;
 }
@@ -235,16 +355,16 @@ function escaped(value: string): string {
  * The fallback when orientation's model does not pick: a team or project
  * counts when the sentence carries it exactly, as a whole word; a channel
  * when the sentence carries it with its hash. The picks follow the sentence,
- * and a value stated on several pages cites the page stating most of what
- * the sentence names, so the result does not depend on the order pages were
- * synced in.
+ * and a value stated on several pages comes first from the page stating most
+ * of what the sentence names, so the result does not depend on the order
+ * pages were synced in.
  *
  * Args:
  *   sentences: The manager's sentences about the system.
  *   candidates: Every documented candidate for the surface.
  *
  * Returns:
- *   One pick per named candidate, citing that candidate's page.
+ *   One numbered pick into `candidates` per named candidate.
  */
 export function sentenceScopePicks(
   sentences: readonly string[],
@@ -253,13 +373,13 @@ export function sentenceScopePicks(
   const text = sentences.join('\n');
   if (!text.trim()) return [];
   const named = candidates.flatMap(
-    (candidate): Array<{ candidate: ScopeCandidate; at: number }> => {
+    (candidate, index): Array<{ candidate: ScopeCandidate; number: number; at: number }> => {
       const pattern =
         candidate.field === 'channel'
           ? new RegExp(`(?<![a-z0-9_-])#${escaped(candidate.value)}(?![a-z0-9_-])`, 'i')
           : new RegExp(`(?<![A-Za-z0-9_#-])${escaped(candidate.value)}(?![A-Za-z0-9_-])`);
       const at = pattern.exec(text)?.index;
-      return at === undefined ? [] : [{ candidate, at }];
+      return at === undefined ? [] : [{ candidate, number: index + 1, at }];
     },
   );
   const pageScore = new Map<string, number>();
@@ -272,13 +392,7 @@ export function sentenceScopePicks(
         left.at - right.at ||
         (pageScore.get(right.candidate.ref) ?? 0) - (pageScore.get(left.candidate.ref) ?? 0),
     )
-    .map(
-      ({ candidate }): ScopePick => ({
-        field: candidate.field,
-        value: candidate.value,
-        ref: candidate.ref,
-      }),
-    );
+    .map(({ number }): ScopePick => ({ candidate: number }));
 }
 
 /** Keep candidate lines under the handbook identified by the charter's role and queue words. */
@@ -290,12 +404,12 @@ export function roleScopeCandidates(
 ): ScopeCandidate[] {
   const refs = [...new Set(candidates.map((candidate): string => candidate.ref))];
   if (refs.length <= 1) return [...candidates];
-  const named = sentenceScopePicks(sentences, candidates);
   const namedByRef = new Map<string, Set<string>>();
-  for (const pick of named) {
-    const values = namedByRef.get(pick.ref) ?? new Set<string>();
-    values.add(`${pick.field}\0${pick.value}`);
-    namedByRef.set(pick.ref, values);
+  for (const pick of sentenceScopePicks(sentences, candidates)) {
+    const named = candidates[pick.candidate - 1];
+    const values = namedByRef.get(named.ref) ?? new Set<string>();
+    values.add(`${named.field}\0${named.value}`);
+    namedByRef.set(named.ref, values);
   }
   const roleWords = [...new Set((role ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
     .filter((word): boolean => word.length >= 5 && !['about', 'after', 'before', 'their', 'these', 'those', 'would', 'could', 'should', 'coordinator', 'manager', 'employee'].includes(word));

@@ -515,6 +515,66 @@ describe('SurfacesTab and what each employee reads', (): void => {
     expect(slack).toContain('<li>#finance-close</li><li>#ops-requests</li>');
     expect(slack.match(/- Channels: #finance-close, #ops-requests/g)).toHaveLength(1);
   });
+  it('does not repeat a single queue under the reads line that already names it', (): void => {
+    const linear = renderToStaticMarkup(
+      <IntakeScopeRow
+        drift={[]}
+        scope={{
+          team: scopeValue('REVOPS', '- Team: `REVOPS`'),
+          project: scopeValue('Q3 close', '- Project: `Q3 close`'),
+        }}
+        sourceLabels={new Map()}
+        surfaceClass="kanban"
+        system="Linear"
+      />,
+    );
+    expect(linear).toContain('Reads: Linear team REVOPS, project Q3 close');
+    expect(linear).not.toContain('<li>');
+    const teamOnly = renderToStaticMarkup(
+      <IntakeScopeRow
+        drift={[]}
+        scope={{ team: scopeValue('REVOPS', '- Team: `REVOPS`') }}
+        sourceLabels={new Map()}
+        surfaceClass="kanban"
+        system="Linear"
+      />,
+    );
+    expect(teamOnly).not.toContain('<li>');
+    const oneChannel = renderToStaticMarkup(
+      <IntakeScopeRow
+        drift={[]}
+        scope={{ channels: [scopeValue('finance-close', '- Channels: #finance-close')] }}
+        sourceLabels={new Map()}
+        surfaceClass="chat"
+        system="Slack"
+      />,
+    );
+    expect(oneChannel).not.toContain('<li>');
+  });
+
+  it('renders the code spans of a handbook line and of a note as code, never as raw backticks', (): void => {
+    const markup = renderToStaticMarkup(
+      <IntakeScopeRow
+        drift={[]}
+        scope={{
+          team: scopeValue('REVOPS', '- Team: `REVOPS`'),
+          project: scopeValue('Q3 close', 'Linear, team `REVOPS`, project `Q3 close`: an odd ` tick'),
+          notes: ['Dropped pick 4: team `FIN` was not kept; intake reads one team, and `REVOPS` was picked first.'],
+        }}
+        sourceLabels={new Map()}
+        surfaceClass="kanban"
+        system="Linear"
+      />,
+    );
+    expect(markup).toMatch(/- Team: <code[^>]*>REVOPS<\/code>/);
+    expect(markup).toMatch(
+      /Linear, team <code[^>]*>REVOPS<\/code>, project <code[^>]*>Q3 close<\/code>: an odd ` tick/,
+    );
+    expect(markup).toMatch(/Dropped pick 4: team <code[^>]*>FIN<\/code> was not kept/);
+    expect(markup).not.toContain('`REVOPS`');
+    expect(markup).not.toContain('`FIN`');
+  });
+
   const card = (patch: Record<string, unknown>): Record<string, unknown> => ({
     _id: `surface-${String(patch.slug)}`,
     agentId,
@@ -580,8 +640,8 @@ describe('SurfacesTab and what each employee reads', (): void => {
     const markup = render();
     expect(markup).toContain('Reads: Linear team FIN, project September close');
     expect(markup).toContain('Reads: Slack #finance-close, #ops-requests');
-    expect(markup).toContain('- Team: `FIN`');
-    expect(markup).toContain('- Project: `September close`');
+    expect(markup).toMatch(/- Team: <code[^>]*>FIN<\/code>/);
+    expect(markup).toMatch(/- Project: <code[^>]*>September close<\/code>/);
     expect(markup).toContain('- Channels: #finance-close, #ops-requests');
     expect(markup).toContain('Kestrel Supply folder / finance/handbook.md');
     expect(markup).not.toContain('Changed since this card was proposed');
