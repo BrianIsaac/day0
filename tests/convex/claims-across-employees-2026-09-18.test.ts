@@ -603,13 +603,18 @@ describe('releasing a claim', (): void => {
     await owner.mutation(api.work.cancelPlan, { workItemId: held, reason: 'not yet' });
 
     const retried = await owner.mutation(api.work.retryFailed, { workItemId: held });
-    expect(retried.resumeState).not.toBe('discovered');
+    expect(retried.resumeState).toBe('claimed');
+    expect(await readItem(harness, held)).toMatchObject({ state: 'claimed', planRejectedAt: expect.any(Number) });
+    expect((await readItem(harness, held)).plan).toBeUndefined();
 
     const claims = await claimsOf(harness);
     expect(claims).toHaveLength(2);
     expect(claims.filter((claim) => claim.releasedAt === undefined)).toEqual([
       expect.objectContaining({ workItemId: held }),
     ]);
+    await drain(harness);
+    expect((await readItem(harness, held)).state).toBe('plan-pending');
+    expect(recorded.planCalls).toHaveLength(2);
   });
 
   it('refuses a cancelled item retry after its surface changes while a colleague holds the original provider item', async (): Promise<void> => {

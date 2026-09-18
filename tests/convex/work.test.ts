@@ -432,6 +432,14 @@ describe('batched decisions', (): void => {
         decision: { outcome: 'rejected', decidedVia: 'channel' },
       });
     }
+    // The reason is kept once per item for each item's employee's later work.
+    const kept = await harness.run(async (ctx) => await ctx.db.query('corrections').collect());
+    expect(kept.map((row) => [row.workItemId, row.kind, row.text]).sort()).toEqual(
+      [
+        [first.workItemId, 'rejection', 'not this week'],
+        [second.workItemId, 'rejection', 'not this week'],
+      ].sort(),
+    );
   });
 
   it('answers a batch code the poller hands to the resolver only from the manager on its own channel', async (): Promise<void> => {
@@ -962,6 +970,35 @@ describe('single-use manager decisions', (): void => {
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId }),
     ).rejects.toThrow('expected plan-pending');
+  });
+
+  it('keeps the reason of a plan rejected from the manager channel on the item and as a correction', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending', undefined, { withSlack: true });
+    const surfaceId = await chatSurfaceId(harness, agentId);
+    await harness.mutation(internal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'jk7mnr',
+    });
+
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '3.100',
+        reply: { verb: 'reject', id: 'jk7mnr', reason: 'Use the revised runbook' },
+      }),
+    ).resolves.toMatchObject({ status: 'decided' });
+
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'cancelled',
+      managerFeedback: { reason: 'Use the revised runbook', kind: 'plan-rejection' },
+      decision: { outcome: 'rejected', decidedVia: 'channel' },
+    });
+    const kept = await harness.run(async (ctx) => await ctx.db.query('corrections').collect());
+    expect(kept).toMatchObject([{ agentId, workItemId, kind: 'plan-rejection', text: 'Use the revised runbook' }]);
   });
 
   it('lets a dashboard plan decision win and acknowledges duplicate channel replies once', async (): Promise<void> => {
