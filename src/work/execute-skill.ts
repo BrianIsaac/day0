@@ -40,7 +40,7 @@ import { closingPhaseOwed } from './obligations';
 import { replyTargetLine } from './reply-target';
 import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
-import { isChatMessage, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding } from './evidence-claims';
+import { isChatMessage, itemEvidence, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding, type GroundingRead } from './evidence-claims';
 import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
 
@@ -930,6 +930,13 @@ export interface RunSkillArgs {
    * never evidence of anything on this item.
    */
   appliedCorrections?: readonly PlannerCorrection[];
+  /**
+   * The reads made for this work item before its plan was drafted, redacted
+   * as their events stored them; real mode only. Evidence for what the
+   * employee says about the item and nothing else: never in a prompt, and
+   * no authority for a write.
+   */
+  groundingReads?: readonly GroundingRead[];
 }
 
 /**
@@ -2471,7 +2478,8 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     // prompt lists. On 16 September a phase-one DM said the audit comment
     // was posted before any comment existed. Only chat messages are read
     // here; a ticket comment in phase one is prewritten, and the deferral
-    // audit names it as such.
+    // audit names it as such. What the item itself says may be repeated:
+    // on 19 September a draft DM was withheld for the ticket's own sentence.
     const claimEvidence: ClaimEvidence = {
       ledger: landedWriteLines(args.landedWrites, args.surfaces ?? []).join('\n'),
       documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
@@ -2479,6 +2487,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
         ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
         ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
       ],
+      item: itemEvidence(candidate, args.groundingReads),
     };
     const chatSurfaces = args.surfaces ?? [];
     const claimIssues = (actions: readonly MockAction[]): string[] =>
@@ -3152,6 +3161,7 @@ export async function runDependentSkill(
       ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
       ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
     ],
+    item: itemEvidence(candidate, args.groundingReads),
   };
   const claimFindings = (actions: readonly MockAction[]): ClaimFinding[] =>
     mode === 'real' ? unsupportedClaimFindings(actions, claimEvidence) : [];
