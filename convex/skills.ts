@@ -107,23 +107,110 @@ async function claimHolder(
 const RELEASED = { authoringRunId: undefined, authoringClaimedAt: undefined } as const;
 
 /**
- * Put the work item that asked for this skill back where the boss can see what
- * it is waiting for. Always inside the same transaction as the skill write that
- * caused it: a callable skill whose work item is still parked, or a parked work
- * item whose skill never landed, is a state nothing in the product knows how to
- * leave.
+ * Which of the employee's rows a skill's transition reaches.
+ *
+ * `queued` also takes the rows registration already sent back to `discovered`;
+ * `sameName` also takes rows parked behind another proposal of this name, or
+ * behind none yet. The row the skill was proposed for is always read in both
+ * states, as it was when it was the only row this looked at.
  */
-async function requeueSourceWork(
+interface WaitingScope {
+  queued?: boolean;
+  sameName?: boolean;
+}
+
+/**
+ * Every row of the employee that is waiting for this skill, in discovery order.
+ *
+ * The first evaluation to need a skill proposes it and becomes `proposedFor`;
+ * every later item of the same shape is linked to that proposal through
+ * `proposedSkillId` and waits beside it. A transition that reached only
+ * `proposedFor` left the others parked at `needs-skill` behind a skill that
+ * had registered, with nothing on the card to move them.
+ *
+ * A row linked to a different proposal is not waiting for this one, whoever
+ * it was first proposed for. The exception is registration: a callable skill
+ * of this name serves a row parked behind an earlier, failed proposal of the
+ * same name, and a row whose verdict names the skill but whose link has not
+ * landed yet.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   skill: The skill whose transition is being applied.
+ *   scope: How far the transition reaches.
+ *
+ * Returns:
+ *   The waiting rows, oldest first.
+ */
+async function waitingRows(
+  ctx: MutationCtx,
+  skill: Doc<'skills'>,
+  scope: WaitingScope = {},
+): Promise<Doc<'workItems'>[]> {
+  const sameNameSkill = new Map<Id<'skills'>, boolean>();
+  const namesThisSkill = async (skillId: Id<'skills'>): Promise<boolean> => {
+    const known = sameNameSkill.get(skillId);
+    if (known !== undefined) return known;
+    const other = await ctx.db.get(skillId);
+    const same = other?.agentId === skill.agentId && other.name === skill.name;
+    sameNameSkill.set(skillId, same);
+    return same;
+  };
+  const waitsForThis = async (row: Doc<'workItems'>): Promise<boolean> => {
+    if (row.proposedSkillId === skill._id) return true;
+    if (row.proposedSkillId) {
+      return scope.sameName === true && (await namesThisSkill(row.proposedSkillId));
+    }
+    if (row._id === skill.proposedFor) return true;
+    return (
+      scope.sameName === true &&
+      (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName ===
+        skill.name
+    );
+  };
+
+  const source = skill.proposedFor ? await ctx.db.get(skill.proposedFor) : null;
+  if (source && source.agentId !== skill.agentId) {
+    throw new Error('skill and work item belong to different agents');
+  }
+
+  const rows: Doc<'workItems'>[] = [];
+  const states = scope.queued
+    ? (['discovered', 'needs-skill'] as const)
+    : (['needs-skill'] as const);
+  for (const state of states) {
+    for await (const row of ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', skill.agentId).eq('state', state))) {
+      if (await waitsForThis(row)) rows.push(row);
+    }
+  }
+  if (!scope.queued && source?.state === 'discovered' && (await waitsForThis(source))) {
+    rows.push(source);
+  }
+  return rows.sort((a, b) => a._creationTime - b._creationTime);
+}
+
+/**
+ * Put every work item waiting for this skill back where the boss can see what
+ * it is waiting for. Always inside the same transaction as the skill write that
+ * caused it: a callable skill with a work item still parked behind it, or a
+ * parked work item whose skill never landed, is a state nothing in the product
+ * knows how to leave.
+ *
+ * Each row takes the verdict path the first one takes, oldest first. The
+ * work-in-progress cap is `applyVerdict`'s: re-queued rows are evaluated in
+ * turn, one claims the free slot and the rest queue behind it.
+ */
+async function requeueWaitingWork(
   ctx: MutationCtx,
   skill: Doc<'skills'>,
   verdict: { decision: string; reason: string },
+  scope: WaitingScope = {},
 ): Promise<void> {
-  if (!skill.proposedFor) return;
-  const item = await ctx.db.get(skill.proposedFor);
-  if (item && item.agentId !== skill.agentId) {
-    throw new Error('skill and work item belong to different agents');
+  for (const row of await waitingRows(ctx, skill, scope)) {
+    await applyVerdict(ctx, row._id, verdict);
   }
-  await applyVerdict(ctx, skill.proposedFor, verdict);
 }
 
 /**
@@ -526,10 +613,15 @@ export const requestRevision = mutation({
       registeredAt: undefined,
       ...RELEASED,
     });
-    await requeueSourceWork(ctx, row, {
-      decision: 'needs-skill',
-      reason: 'registered skill sent back for revision before first execution',
-    });
+    await requeueWaitingWork(
+      ctx,
+      row,
+      {
+        decision: 'needs-skill',
+        reason: 'registered skill sent back for revision before first execution',
+      },
+      { queued: true },
+    );
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'skill.revision-requested',
@@ -764,10 +856,12 @@ export const completeRegistration = internalMutation({
       payload: { skillId: args.skillId, name: row.name },
       createdAt: Date.now(),
     });
-    await requeueSourceWork(ctx, row, {
-      decision: 'pending-reevaluation',
-      reason: 'skill registered, ready to retry',
-    });
+    await requeueWaitingWork(
+      ctx,
+      row,
+      { decision: 'pending-reevaluation', reason: 'skill registered, ready to retry' },
+      { sameName: true },
+    );
     return { registered: true };
   },
 });
@@ -824,7 +918,7 @@ export const failAuthoringRun = internalMutation({
         createdAt: Date.now(),
       });
     }
-    await requeueSourceWork(ctx, row, { decision: 'needs-skill', reason });
+    await requeueWaitingWork(ctx, row, { decision: 'needs-skill', reason });
     return { recorded: true };
   },
 });
@@ -867,7 +961,7 @@ export const parkUnverified = internalMutation({
       payload: { skillId: args.skillId, name: row.name, reason },
       createdAt: Date.now(),
     });
-    await requeueSourceWork(ctx, row, {
+    await requeueWaitingWork(ctx, row, {
       decision: 'needs-skill',
       reason: `skill authored but not verified - ${reason}`,
     });
