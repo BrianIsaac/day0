@@ -593,11 +593,14 @@ export function composeImages(composeText: string): ComposeImage[] {
 export function upsertEnvText(text: string, updates: Readonly<Record<string, string>>): string {
   const lines = text.length === 0 ? [] : text.replace(/\n$/, '').split('\n');
   for (const [key, value] of Object.entries(updates)) {
-    const index = lines.findIndex((line: string): boolean =>
-      new RegExp(`^\\s*${key}\\s*=`).test(line),
-    );
-    if (index >= 0) lines[index] = `${key}=${value}`;
-    else lines.push(`${key}=${value}`);
+    const pattern = new RegExp(`^\\s*${key}\\s*=`);
+    let found = false;
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!pattern.test(lines[index])) continue;
+      lines[index] = `${key}=${value}`;
+      found = true;
+    }
+    if (!found) lines.push(`${key}=${value}`);
   }
   return `${lines.join('\n')}\n`;
 }

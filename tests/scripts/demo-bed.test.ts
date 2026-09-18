@@ -403,6 +403,21 @@ describe('the env file', (): void => {
     expect(upsertEnvText('A=1', { B: '2' })).toBe('A=1\nB=2\n');
   });
 
+  it('corrects every copy of a duplicated public URL without touching other lines', (): void => {
+    const before = [
+      'NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211',
+      '# NEXT_PUBLIC_CONVEX_SITE_URL=example',
+      'KEEP=this-value',
+      'NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211',
+      '',
+    ].join('\n');
+    const updates = { NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:47311' };
+    const after = upsertEnvText(before, updates);
+    expect(after).toBe(before.replaceAll('NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211',
+      'NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:47311'));
+    expect(upsertEnvText(after, updates)).toBe(after);
+  });
+
   it('derives the host ports from the file with the compose defaults', (): void => {
     expect(bedPorts({})).toEqual({
       backend: 3210,
