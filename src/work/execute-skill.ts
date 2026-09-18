@@ -1110,8 +1110,14 @@ export function withholdActions<T extends CorrectableOutput>(output: T, refusals
   return { ...dropped, withheldActions: [...(output.withheldActions ?? []), ...withheld] };
 }
 
+/**
+ * One refusal per action, its reasons joined: a message with two refused
+ * sentences is one withheld action, not two.
+ */
 function refusalsOf(findings: readonly ClaimFinding[]): AuditRefusal[] {
-  return findings.map(({ index, issue }) => ({ index, reason: issue }));
+  const reasons = new Map<number, string[]>();
+  for (const { index, issue } of findings) reasons.set(index, [...(reasons.get(index) ?? []), issue]);
+  return [...reasons].map(([index, issues]) => ({ index, reason: [...new Set(issues)].join('; ') }));
 }
 
 /**
@@ -1132,10 +1138,11 @@ async function withholdUnsupported<T extends CorrectableOutput>(
   for (let round = 0; round <= output.actions.length; round += 1) {
     const findings = findingsOf(corrected.actions);
     if (findings.length === 0) break;
-    corrected = withholdActions(corrected, refusalsOf(findings));
+    const refusals = refusalsOf(findings);
+    corrected = withholdActions(corrected, refusals);
     await record?.(
-      findings.map((finding) => finding.index),
-      `${WITHHELD_BY_EVIDENCE}: ${findings.map((finding) => finding.issue).join('; ')}`,
+      refusals.map((refusal) => refusal.index),
+      `${WITHHELD_BY_EVIDENCE}: ${refusals.map((refusal) => refusal.reason).join('; ')}`,
     );
   }
   return corrected;

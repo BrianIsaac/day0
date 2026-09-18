@@ -138,6 +138,28 @@ describe('phase-one messages under the evidence check', (): void => {
     ]);
   });
 
+  it('withholds an action once, with one index on the record, however many of its sentences were refused', async (): Promise<void> => {
+    // 19 September: one LOG-2 DM carried the refused sentence twice and was recorded as two withheld actions.
+    const twice = {
+      tool: 'http.request' as const,
+      args: {
+        ...auditNotePrerequisites[6]!.args,
+        body: JSON.stringify({ channel: 'D0MANAGER', text: `${REVOPS_5_DM_2_CLAIM}\n\nAgain: ${REVOPS_5_DM_2_CLAIM}` }),
+      },
+    };
+    const doubled = { ...phaseOne, actions: [...auditNotePrerequisites.slice(0, 6), twice] };
+    recorded.outputs.push(doubled, doubled);
+    const audits: Array<{ indices: number[]; reason: string }> = [];
+    const output = await runSkill({
+      skill: { name: 'kanban-comment-and-close', description: 'Audit note.', body: '# Skill' },
+      plan: auditNotePlan, candidate, charter, mockEnv, mode: 'real', surfaces,
+      onAuditCorrection: (indices, reason) => void audits.push({ indices, reason }),
+    });
+    expect(output.withheldActions).toHaveLength(1);
+    expect(output.withheldActions![0]!.reason).toContain('Again:');
+    expect(audits.map((audit) => audit.indices)).toEqual([[6]]);
+  });
+
   it('lets a phase-one DM describe what the response does, and cite the manager', async (): Promise<void> => {
     recorded.outputs.push(honest);
     const output = await run();
