@@ -102,7 +102,7 @@ vi.mock('../../app/CursorToggle', () => ({
 import LandingPage from '../../app/page';
 
 describe('the landing page with a company', (): void => {
-  it.fails('shows the company supervision card below the office and above reset', (): void => {
+  it('shows the company supervision card below the office and above reset', (): void => {
     const html = renderToStaticMarkup(<LandingPage />);
     const card = html.indexOf('Company supervision');
 

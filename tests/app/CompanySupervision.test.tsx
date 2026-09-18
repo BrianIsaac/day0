@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CompanySupervision, CompanySupervisionCard } from '../../app/CompanySupervision';
 import type { AgentMetrics, OwnerMetrics } from '../../convex/metrics';
 import type { Id } from '../../convex/_generated/dataModel';
 
@@ -9,16 +9,6 @@ const query = vi.hoisted(() => ({ result: undefined as unknown }));
 vi.mock('convex/react', () => ({
   useQuery: (): unknown => query.result,
 }));
-
-/** The card's module as the tests use it; imported by path until it exists. */
-interface CardModule {
-  CompanySupervision(): ReactElement | null;
-  CompanySupervisionCard(props: { figures: OwnerMetrics }): ReactElement;
-}
-
-const CARD = '../../app/CompanySupervision';
-const loadCard = async (): Promise<CardModule> =>
-  (await import(/* @vite-ignore */ CARD)) as CardModule;
 
 afterEach(() => {
   query.result = undefined;
@@ -128,79 +118,70 @@ const FIGURES: OwnerMetrics = {
   omittedEmployees: 0,
 };
 
+/** The text a row reads, from its label to its last cell. */
 function rowOf(html: string, label: string): string {
   const start = html.indexOf(`>${label}</th>`);
   expect(start).toBeGreaterThan(-1);
-  return html.slice(start, html.indexOf('</tr>', start));
+  return html
+    .slice(start, html.indexOf('</tr>', start))
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
 }
 
 describe('the company supervision card', (): void => {
-  it.fails(
-    'lists one row per employee and a company row of pooled figures',
-    async (): Promise<void> => {
-      const { CompanySupervisionCard } = await loadCard();
-      const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
+  it('lists one row per employee and a company row of pooled figures', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
 
-      expect(html).toContain('Company supervision');
-      expect(rowOf(html, 'Priya')).toContain('1 min 7 s');
-      expect(rowOf(html, 'Priya')).toContain('2 / 0');
-      expect(rowOf(html, 'Priya')).toContain('48 s / 49 s');
-      expect(rowOf(html, 'Priya')).toContain('100% (26/26)');
-      expect(rowOf(html, 'Mateo')).toContain('83% (10/12)');
-      expect(rowOf(html, 'Aiko')).toContain('3 min');
-      expect(rowOf(html, 'Aiko')).toContain('not yet');
+    expect(html).toContain('Company supervision');
+    expect(rowOf(html, 'Priya')).toContain('1 min 7 s');
+    expect(rowOf(html, 'Priya')).toContain('2 / 0');
+    expect(rowOf(html, 'Priya')).toContain('48 s / 49 s');
+    expect(rowOf(html, 'Priya')).toContain('100% (26/26)');
+    expect(rowOf(html, 'Mateo')).toContain('83% (10/12)');
+    expect(rowOf(html, 'Aiko')).toContain('3 min');
+    expect(rowOf(html, 'Aiko')).toContain('not yet');
 
-      const company = rowOf(html, 'Company');
-      expect(company).toContain('4 / 1');
-      expect(company).toContain('30 s / 1 min 10 s');
-      expect(company).toContain('33 · 3 · 1');
-      expect(company).toContain('95% (36/38)');
-      expect(html.indexOf('>Company</th>')).toBeGreaterThan(html.indexOf('>Aiko</th>'));
-    },
-  );
+    const company = rowOf(html, 'Company');
+    expect(company).toContain('4 / 1');
+    expect(company).toContain('30 s / 1 min 10 s');
+    expect(company).toContain('33 · 3 · 1');
+    expect(company).toContain('95% (36/38)');
+    expect(html.indexOf('>Company</th>')).toBeGreaterThan(html.indexOf('>Aiko</th>'));
+  });
 
-  it.fails(
-    'quotes each employee’s time to an approved charter and their median, never a sum',
-    async (): Promise<void> => {
-      const { CompanySupervisionCard } = await loadCard();
-      const company = rowOf(
-        renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />),
-        'Company',
-      );
+  it('quotes each employee’s time to an approved charter and their median, never a sum', (): void => {
+    const company = rowOf(
+      renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />),
+      'Company',
+    );
 
-      expect(company).toContain('1 min 7 s · 2 min 10 s · 3 min');
-      expect(company).toContain('median of three: 2 min 10 s');
-      expect(company).not.toContain('6 min 17 s');
-    },
-  );
+    expect(company).toContain('1 min 7 s · 2 min 10 s · 3 min');
+    expect(company).toContain('median of three: 2 min 10 s');
+    expect(company).not.toContain('6 min 17 s');
+  });
 
-  it.fails(
-    'names a pending charter and takes the median over the approved ones only',
-    async (): Promise<void> => {
-      const { CompanySupervisionCard } = await loadCard();
-      const figures: OwnerMetrics = {
-        ...FIGURES,
-        company: {
-          ...FIGURES.company,
-          charter: {
-            timesToFirstApprovedMs: [67_000, null, 180_000],
-            medianTimeToFirstApprovedMs: 123_500,
-            approvedEmployees: 2,
-          },
+  it('names a pending charter and takes the median over the approved ones only', (): void => {
+    const figures: OwnerMetrics = {
+      ...FIGURES,
+      company: {
+        ...FIGURES.company,
+        charter: {
+          timesToFirstApprovedMs: [67_000, null, 180_000],
+          medianTimeToFirstApprovedMs: 123_500,
+          approvedEmployees: 2,
         },
-      };
-      const company = rowOf(
-        renderToStaticMarkup(<CompanySupervisionCard figures={figures} />),
-        'Company',
-      );
+      },
+    };
+    const company = rowOf(
+      renderToStaticMarkup(<CompanySupervisionCard figures={figures} />),
+      'Company',
+    );
 
-      expect(company).toContain('1 min 7 s · pending · 3 min');
-      expect(company).toContain('median of two: 2 min 4 s');
-    },
-  );
+    expect(company).toContain('1 min 7 s · pending · 3 min');
+    expect(company).toContain('median of two: 2 min 4 s');
+  });
 
-  it.fails('carries each definition as the label’s tooltip', async (): Promise<void> => {
-    const { CompanySupervisionCard } = await loadCard();
+  it('carries each definition as the label’s tooltip', (): void => {
     const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
     const titles = [...html.matchAll(/title="([^"]*)"/g)].map((match) => match[1]).join('\n');
 
@@ -212,25 +193,20 @@ describe('the company supervision card', (): void => {
     expect(titles).toContain('Evaluation agents and baseline arms are left out');
   });
 
-  it.fails(
-    'says what the company row leaves out and what it counts beside the actions',
-    async (): Promise<void> => {
-      const { CompanySupervisionCard } = await loadCard();
-      const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
-      expect(html).toContain('2 evaluation agents left out');
-      expect(html).toContain('3 browser calls replayed to sign in again');
-      expect(html).not.toContain('most recent');
+  it('says what the company row leaves out and what it counts beside the actions', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
+    expect(html).toContain('2 evaluation agents left out');
+    expect(html).toContain('3 browser calls replayed to sign in again');
+    expect(html).not.toContain('most recent');
 
-      const crowded = renderToStaticMarkup(
-        <CompanySupervisionCard figures={{ ...FIGURES, excludedAgents: 0, omittedEmployees: 4 }} />,
-      );
-      expect(crowded).toContain('the 3 most recent employees; 4 earlier ones are not counted');
-      expect(crowded).not.toContain('evaluation agents left out');
-    },
-  );
+    const crowded = renderToStaticMarkup(
+      <CompanySupervisionCard figures={{ ...FIGURES, excludedAgents: 0, omittedEmployees: 4 }} />,
+    );
+    expect(crowded).toContain('the 3 most recent employees; 4 earlier ones are not counted');
+    expect(crowded).not.toContain('evaluation agents left out');
+  });
 
-  it.fails('renders nothing until the owner has an employee', async (): Promise<void> => {
-    const { CompanySupervision } = await loadCard();
+  it('renders nothing until the owner has an employee', (): void => {
     for (const result of [undefined, null, 0, { ...FIGURES, employees: [] }]) {
       query.result = result;
       expect(renderToStaticMarkup(<CompanySupervision />)).toBe('');
