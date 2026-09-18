@@ -16,15 +16,6 @@ export { SlackClient };
 const API = 'https://slack.com/api/';
 const MAX_PAGES = 20;
 
-/** The five channels the bed's handbooks and Slack policy name. */
-export const BED_CHANNELS: readonly string[] = [
-  'revops-asks',
-  'revops',
-  'finance-close',
-  'logistics-desk',
-  'ops-requests',
-];
-
 /**
  * What the shared bot needs: the product's reads and posts, and
  * `chat:write.customize` so each employee's messages carry its own name.

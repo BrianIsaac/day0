@@ -24,7 +24,6 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { z } from 'zod';
 import { DEFAULT_DOCS_HOST_DIR, ensureDocsHostDir } from '../../src/docs/host-dir';
 import { replaceSpans, structuralSpans } from '../../src/redaction/structural';
 import { containsProvenanceTrailer } from '../../src/surfaces/policy';
@@ -54,12 +53,10 @@ import {
   comparePage,
   NOTION_PARENT_TITLE,
   NOTION_READER_SCRIPT,
-  NOTION_TOKEN_ENV,
   parseNotionRead,
   type NotionPage,
 } from './notion';
 import {
-  BED_CHANNELS,
   bedMessages,
   conversationMessages,
   listConversations,
@@ -70,10 +67,17 @@ import {
   strayAsks,
   type BedChannel,
 } from './slack';
+import {
+  BED_CHANNELS,
+  BED_DIR,
+  LINEAR_KEY_ENV,
+  loadBedSpec,
+  NOTION_TOKEN_ENV,
+  SLACK_TOKEN_ENV,
+  type BedSpec,
+  type BedTicket,
+} from './spec';
 
-export const BED_DIR = 'bed/company';
-export const LINEAR_KEY_ENV = 'DAY0_BED_LINEAR_API_KEY';
-export const SLACK_TOKEN_ENV = 'DAY0_BED_SLACK_BOT_TOKEN';
 /** Where seed records when this clone's bed began, for the Slack deletes. */
 export const STATE_FILE = '.demo-bed/company.json';
 const ENV_FILE = '.env.local';
@@ -111,25 +115,6 @@ export interface CompanyIo {
   log(line: string): void;
   now(): number;
 }
-
-const ticketSchema = z.object({
-  key: z.string().regex(/^[a-z0-9-]+$/),
-  team: z.string().min(1),
-  title: z.string().min(1),
-  description: z.string().min(1),
-  state: z.string().min(1),
-  late: z.boolean().optional(),
-});
-
-const specSchema = z.object({
-  label: z.string().min(1),
-  states: z.array(z.string().min(1)).min(1),
-  teams: z.array(z.object({ key: z.string().min(1), name: z.string().min(1), project: z.string().min(1) })).min(1),
-  tickets: z.array(ticketSchema).min(1),
-});
-
-export type BedSpec = z.infer<typeof specSchema>;
-export type BedTicket = z.infer<typeof ticketSchema>;
 
 const USAGE = `Usage: pnpm bed:company <verb>
 
@@ -181,34 +166,6 @@ export function parseCompanyArguments(argv: readonly string[]): CompanyOptions {
   if (options.replace && options.verb !== 'docs') throw new Error('--replace belongs to docs.');
   if (options.verb === 'post' && options.key === undefined) throw new Error('post needs a ticket key.');
   return options;
-}
-
-/**
- * Read and check `bed/company/linear.json`.
- *
- * Args:
- *   cwd: Repository root.
- *
- * Returns:
- *   The bed's teams and tickets.
- *
- * Raises:
- *   Error: If the file is malformed or names a team or state it does not declare.
- */
-export function loadBedSpec(cwd: string): BedSpec {
-  const spec = specSchema.parse(JSON.parse(readFileSync(join(cwd, BED_DIR, 'linear.json'), 'utf8')));
-  const keys = new Set<string>();
-  for (const ticket of spec.tickets) {
-    if (keys.has(ticket.key)) throw new Error(`linear.json names ticket ${ticket.key} twice.`);
-    keys.add(ticket.key);
-    if (!spec.teams.some((team) => team.key === ticket.team)) {
-      throw new Error(`linear.json puts ${ticket.key} in team ${ticket.team}, which it does not declare.`);
-    }
-    if (!spec.states.includes(ticket.state)) {
-      throw new Error(`linear.json puts ${ticket.key} in state ${ticket.state}, which it does not declare.`);
-    }
-  }
-  return spec;
 }
 
 /**

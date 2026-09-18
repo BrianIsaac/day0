@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  loadBedSpec,
   parseCompanyArguments,
   runCompany,
   STATE_FILE,
@@ -17,6 +16,7 @@ import {
 import { MANIFEST_FILE } from '../../scripts/bed/docs';
 import { LABEL_DESCRIPTION, markedDescription } from '../../scripts/bed/linear';
 import { comparePage, NOTION_READER_SCRIPT, parseNotionRead } from '../../scripts/bed/notion';
+import { loadBedSpec } from '../../scripts/bed/spec';
 import { DOCS_STUB } from '../../scripts/setup';
 
 const LINEAR_KEY = `${['lin', 'api'].join('_')}_bedTestKey0123456789`;

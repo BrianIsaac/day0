@@ -11,11 +11,10 @@
  */
 
 import { unwrapWholePageFence } from '../../src/docs/readers/mcp';
+import { NOTION_TOKEN_ENV } from './spec';
 
 /** The parent page the Notion README asks for; its body is the list of its pages. */
 export const NOTION_PARENT_TITLE = 'Kestrel Supply handbook';
-/** The environment variable the container read takes the Notion token from. */
-export const NOTION_TOKEN_ENV = 'DAY0_BED_NOTION_TOKEN';
 /** The one line the operator changes before pasting, as a pattern over the tracked text. */
 export const TOKEN_LINE = /^- Service token \(company automation\): `([^`]*)`$/;
 export const TOKEN_PLACEHOLDER = 'PASTE_LINEAR_API_KEY_HERE';
