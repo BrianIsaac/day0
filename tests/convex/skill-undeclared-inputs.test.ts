@@ -124,7 +124,7 @@ describe('an authored body that uses a placeholder it never declared (live run 1
     expect(recorded.sandboxRuns).toBe(0);
   });
 
-  it.fails('registers first time in real mode, each missing input declared and the repair named in the log', async (): Promise<void> => {
+  it('registers first time in real mode, each missing input declared and the repair named in the log', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const skillId = await seedApprovedSkill(harness);

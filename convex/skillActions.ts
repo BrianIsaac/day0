@@ -15,7 +15,7 @@ import {
 import { surfaceInstructions } from '../src/work/execute-skill';
 import { skillNameFor, skillOperationLabel, skillSurfacePhrase } from '../src/work/skill-shape';
 import { authoredSkillIssues, clipRefusedDraft, REFUSED_DRAFT_PROMPT_CHARS } from '../src/work/authored-skill';
-import { EXECUTION_INPUT_LINES } from '../src/work/skill-inputs';
+import { declaredInputsNote, declareUndeclaredInputs, EXECUTION_INPUT_LINES } from '../src/work/skill-inputs';
 import {
   FENCE_REMOVED_NOTE,
   smokeTestPreflightReason,
@@ -585,13 +585,22 @@ export const authorAndRegisterSkill = action({
       }
     }
 
-    const body = authored.body.trim();
+    // In real mode a placeholder the author used without declaring it is
+    // declared for it, in the words the executor binds such an input by,
+    // rather than refusing a procedure the executor can run. Mock mode refuses
+    // it as the recorded runs did.
+    const inputs =
+      SURFACE_MODE === 'real'
+        ? declareUndeclaredInputs(authored.body.trim())
+        : { body: authored.body.trim(), declared: [] };
+    const body = inputs.body;
     // A fenced smoke test is a program with a wrapper, not a refusal: the
     // wrapper comes off here, before the gate reads it, and every log written
     // after this point says so.
     const fence = unwrapMarkdownFence(authored.smokeTest.trim());
     const smokeTest = fence.source.trim();
     const notes: string[] = fence.unwrapped ? [FENCE_REMOVED_NOTE] : [];
+    if (inputs.declared.length > 0) notes.push(declaredInputsNote(inputs.declared));
     const noted = (log: string): string => (notes.length > 0 ? `${notes.join('\n')}\n\n${log}` : log);
     if (!body || !smokeTest) {
       const reason = 'the model returned an empty SKILL.md body or smoke test';

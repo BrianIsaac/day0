@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  declaredInputsNote,
+  declareUndeclaredInputs,
   bindSkillInputs,
   declaredSkillInputs,
   renderSkillInputs,
@@ -190,3 +192,69 @@ describe('binding skill inputs from the candidate', (): void => {
     ]);
   });
 });
+
+describe('declaring the inputs an author used but did not declare', (): void => {
+  const body = [
+    '# Close a ticket',
+    '',
+    '## Inputs',
+    '',
+    '- `<record-id>`: the candidate id.',
+    '',
+    '## Procedure',
+    '',
+    'Set `<record-id>` to `<closing-state>` and reply `<reply-text>`.',
+  ].join('\n');
+
+  it('adds one line per missing name after the last declaration, moving nothing else', (): void => {
+    const repaired = declareUndeclaredInputs(body);
+
+    expect(repaired.declared).toEqual(['closing-state', 'reply-text']);
+    expect(repaired.body).toBe(
+      [
+        '# Close a ticket',
+        '',
+        '## Inputs',
+        '',
+        '- `<record-id>`: the candidate id.',
+        '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run.',
+        '- `<reply-text>`: read it from the candidate body, its Refs line or the runbook for this run.',
+        '',
+        '## Procedure',
+        '',
+        'Set `<record-id>` to `<closing-state>` and reply `<reply-text>`.',
+      ].join('\n'),
+    );
+    expect(undeclaredSkillInputs(repaired.body)).toEqual([]);
+    expect(declareUndeclaredInputs(repaired.body)).toEqual({ body: repaired.body, declared: [] });
+  });
+
+  it('declares in a section that ends the body, and gives a body without one its own', (): void => {
+    const last = '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n';
+    expect(declareUndeclaredInputs(last).body).toBe(
+      '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n' +
+        '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run.\n',
+    );
+    const none = '# Close\n\nUse `<record-id>`.';
+    const repaired = declareUndeclaredInputs(none);
+    expect(repaired.body).toBe(
+      '# Close\n\nUse `<record-id>`.\n\n## Inputs\n\n- `<record-id>`: read it from the candidate body, its Refs line or the runbook for this run.\n',
+    );
+    expect(declaredSkillInputs(repaired.body)).toEqual(['record-id']);
+  });
+
+  it('leaves a body with nothing missing exactly as it was', (): void => {
+    const complete = body.replace('- `<record-id>`: the candidate id.', '- `<record-id>`, `<closing-state>`, `<reply-text>`: from the candidate.');
+    expect(declareUndeclaredInputs(complete)).toEqual({ body: complete, declared: [] });
+  });
+
+  it('names what was declared in the log', (): void => {
+    expect(declaredInputsNote(['reply-text'])).toBe(
+      'SKILL.md used `<reply-text>` without declaring it; it was declared under `## Inputs` as read from the candidate or its runbook at execution',
+    );
+    expect(declaredInputsNote(['a-b', 'c-d', 'e-f'])).toBe(
+      'SKILL.md used `<a-b>`, `<c-d>` and `<e-f>` without declaring them; each was declared under `## Inputs` as read from the candidate or its runbook at execution',
+    );
+  });
+});
+
