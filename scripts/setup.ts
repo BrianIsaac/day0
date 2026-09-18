@@ -1361,7 +1361,11 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
     case 'bed:company docs':
       return [{ command: 'pnpm', args: ['run', 'bed:company', 'docs'] }];
     case 'bed:company check':
-      return [{ command: 'pnpm', args: ['run', 'bed:company', 'check'] }];
+      // A check that only lists the hand steps still owed exits non-zero by
+      // design, and the setup says so in the line under it. Silencing pnpm's
+      // own reporter keeps `ELIFECYCLE  Command failed with exit code 1` out
+      // of a setup that worked; the checker's own output is unchanged.
+      return [{ command: 'pnpm', args: ['--reporter=silent', 'run', 'bed:company', 'check'] }];
     default:
       throw new Error(`no command for step "${step}"`);
   }
