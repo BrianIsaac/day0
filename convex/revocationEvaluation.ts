@@ -229,7 +229,23 @@ function actionFor(kind: RevocationTrialKind): {
   };
 }
 
-/** Seed one deterministic work row without invoking a model. */
+/**
+ * Seed one deterministic work row without invoking a model.
+ *
+ * A `queued-read` row is the one kind the driver sends through the ordinary
+ * evaluation, because the permission gate it measures lives there. The scope
+ * stage runs before that gate and, in real mode, asks a model to read the row
+ * against a charter the model itself synthesised on that deployment; a skip
+ * there ends the trial before the revoked scope is ever consulted. So the row
+ * is seeded past the scope stage with both of the stage's waivers, the scope
+ * rule's and the quality-fit filter's, since either alone still leaves a model
+ * call that can skip it. The evaluation, the gate and the verdict are the
+ * product's own.
+ *
+ * The waivers are written here and only here outside the manager's Retry: this
+ * mutation needs the caller to own the agent, the deployment to be in real
+ * mode and the agent to be the trial's isolated one. Intake never sets them.
+ */
 export const seedTrial = mutation({
   args: {
     agentId: v.id('agents'),
@@ -261,13 +277,19 @@ export const seedTrial = mutation({
       contentRefs: ['slack-day0-app.md'],
       priority: 'High',
       state: args.kind === 'queued-read' ? 'discovered' : 'executing',
+      ...(args.kind === 'queued-read' ? { scopeWaivedAt: now, qualityFitWaivedAt: now } : {}),
       observedAt: now,
       createdAt: now,
     });
     await ctx.db.insert('events', {
       agentId: args.agentId,
       type: 'work.discovered',
-      payload: { workItemId, title: 'Revocation evaluation item', trialId: args.trialId },
+      payload: {
+        workItemId,
+        title: 'Revocation evaluation item',
+        trialId: args.trialId,
+        ...(args.kind === 'queued-read' ? { seededPastScopeStage: true } : {}),
+      },
       createdAt: now,
     });
     if (args.kind === 'queued-read') return { workItemId };
