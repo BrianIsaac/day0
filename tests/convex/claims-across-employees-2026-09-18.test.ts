@@ -268,7 +268,7 @@ async function holderAndColleague(
 }
 
 describe('two employees of one owner reach one item', (): void => {
-  it.fails('lets exactly one claim the #ops-requests ask when both verdicts land at once', async (): Promise<void> => {
+  it('lets exactly one claim the #ops-requests ask when both verdicts land at once', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -321,7 +321,7 @@ describe('two employees of one owner reach one item', (): void => {
     expect(claims[0]).not.toHaveProperty('releasedAt');
   });
 
-  it.fails('claims one Linear ticket once when two cards name Linear by different slugs', async (): Promise<void> => {
+  it('claims one Linear ticket once when two cards name Linear by different slugs', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -345,7 +345,7 @@ describe('two employees of one owner reach one item', (): void => {
     ]);
   });
 
-  it.fails('keeps the claim of a completed item: a colleague reaching it later is refused', async (): Promise<void> => {
+  it('keeps the claim of a completed item: a colleague reaching it later is refused', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -368,7 +368,7 @@ describe('two employees of one owner reach one item', (): void => {
     ]);
   });
 
-  it.fails('refuses a row re-admitted after its skill registers while a colleague holds the item', async (): Promise<void> => {
+  it('refuses a row re-admitted after its skill registers while a colleague holds the item', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -392,7 +392,7 @@ describe('two employees of one owner reach one item', (): void => {
     expect((await claimsOf(harness)).map((claim) => claim.workItemId)).toEqual([first]);
   });
 
-  it.fails('refuses a second row of the same employee reaching the item through another card', async (): Promise<void> => {
+  it('refuses a second row of the same employee reaching the item through another card', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -420,7 +420,7 @@ describe('two employees of one owner reach one item', (): void => {
 });
 
 describe('the claim is the owner\'s', (): void => {
-  it.fails('lets two owners each claim the same item', async (): Promise<void> => {
+  it('lets two owners each claim the same item', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -527,7 +527,7 @@ describe('releasing a claim', (): void => {
     ]);
   });
 
-  it.fails('treats a claim whose holder was cancelled without a release as released', async (): Promise<void> => {
+  it('treats a claim whose holder was cancelled without a release as released', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());

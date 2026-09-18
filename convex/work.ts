@@ -39,12 +39,15 @@ import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
 import {
   AUTONOMOUS_WIP_LIMIT,
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
   COLD_START_WIP_LIMIT,
   type MockAction,
   type ReplyTarget,
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
+import { providerItemKey } from '../src/work/claim-key';
+import { isRevocationTrialRow } from './revocationEvaluation';
 import {
   batchDecisionNoticeText,
   DECISION_REQUEST_RECOVERY_MS,
@@ -515,6 +518,127 @@ export const reevaluatePending = internalMutation({
     await reevaluatePendingInTransaction(ctx, args),
 });
 
+/** The employee and work item holding a provider item, as a refused row records it. */
+export interface ClaimHolder {
+  claimId: Id<'externalClaims'>;
+  agentId: Id<'agents'>;
+  workItemId: Id<'workItems'>;
+  name: string;
+  title: string;
+}
+
+/** A holder in one of these states no longer holds its item. */
+const RELEASED_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['cancelled', 'skipped']);
+
+/**
+ * The owner and key a row's provider item is claimed under, if it is claimed at all.
+ *
+ * Real mode only; a revocation trial row and an agent with no owner claim
+ * nothing. The key is read from the surface the row came from, by slug,
+ * while that surface is listed.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item.
+ *
+ * Returns:
+ *   The owner and key, or undefined when the row takes no claim.
+ */
+async function externalClaimScope(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+): Promise<{ userId: string; key: string } | undefined> {
+  if (SURFACE_MODE !== 'real' || isRevocationTrialRow(row)) return undefined;
+  const agent = await ctx.db.get(row.agentId);
+  if (!agent?.userId) return undefined;
+  const surface = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', row.sourceSystem))
+    .first();
+  const key = providerItemKey(surface ?? undefined, row, SURFACE_MODE);
+  return key === undefined ? undefined : { userId: agent.userId, key };
+}
+
+/**
+ * Take the owner-wide claim on a row's provider item, or name who holds it.
+ *
+ * The read of the live claims and the insert share the claiming
+ * transaction, and Convex serialises transactions that touch the same index
+ * range, so of two verdicts on one item exactly one inserts. A live claim
+ * whose holder is gone, cancelled or skipped is stamped released here, so a
+ * release some path missed cannot keep the item from the company for good.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item about to be claimed.
+ *   now: The claim time.
+ *
+ * Returns:
+ *   Undefined when the row takes no claim; otherwise the key, and the holder
+ *   and its state when another work item holds it.
+ */
+async function takeExternalClaim(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<{ key: string; heldBy?: { holder: ClaimHolder; state: string } } | undefined> {
+  const scope = await externalClaimScope(ctx, row);
+  if (!scope) return undefined;
+  const live = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_user_key', (q) => q.eq('userId', scope.userId).eq('key', scope.key))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of live) {
+    if (claim.workItemId === row._id) return { key: scope.key };
+    const holding = await ctx.db.get(claim.workItemId);
+    if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) {
+      await ctx.db.patch(claim._id, { releasedAt: now });
+      continue;
+    }
+    const agent = await ctx.db.get(claim.agentId);
+    const holder: ClaimHolder = {
+      claimId: claim._id,
+      agentId: claim.agentId,
+      workItemId: claim.workItemId,
+      name: agent?.name ?? 'another employee',
+      title: holding.title,
+    };
+    return { key: scope.key, heldBy: { holder, state: holding.state } };
+  }
+  await ctx.db.insert('externalClaims', {
+    userId: scope.userId,
+    key: scope.key,
+    agentId: row.agentId,
+    workItemId: row._id,
+    claimedAt: now,
+  });
+  return { key: scope.key };
+}
+
+/**
+ * The skip a claim verdict becomes when another work item holds the item.
+ *
+ * Args:
+ *   row: The refused work item.
+ *   holder: Who holds the item.
+ *   holderState: The holding work item's state.
+ *
+ * Returns:
+ *   The skip verdict, naming the holder for the card.
+ */
+function claimRefusedVerdict(
+  row: Doc<'workItems'>,
+  holder: ClaimHolder,
+  holderState: string,
+): { decision: string; reason: string; claimedBy: ClaimHolder } {
+  const reason =
+    holder.agentId === row.agentId
+      ? `already-claimed: state=${holderState}`
+      : `${CLAIMED_BY_COLLEAGUE_SKIP_PREFIX}${holder.name} holds it (${holder.title})`;
+  return { decision: 'skip', reason, claimedBy: holder };
+}
+
 /**
  * Record an evaluation verdict and move the row to where it puts it.
  *
@@ -560,6 +684,18 @@ export async function applyVerdict(
     }
   }
 
+  // One work item holds each provider item across the owner's employees: the
+  // claim is taken here, in the claiming transaction, or the verdict becomes
+  // a skip naming who holds it.
+  let refused: { key: string; holder: ClaimHolder } | undefined;
+  if (effective.decision === 'claim') {
+    const taken = await takeExternalClaim(ctx, row, Date.now());
+    if (taken?.heldBy) {
+      effective = claimRefusedVerdict(row, taken.heldBy.holder, taken.heldBy.state);
+      refused = { key: taken.key, holder: taken.heldBy.holder };
+    }
+  }
+
   const decision = effective.decision;
   let nextState: Doc<'workItems'>['state'] = 'discovered';
   let skipReason: string | undefined;
@@ -584,6 +720,14 @@ export async function applyVerdict(
     payload: { workItemId, decision, verdict: effective },
     createdAt: Date.now(),
   });
+  if (refused) {
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.claim-refused',
+      payload: { workItemId, key: refused.key, holder: refused.holder },
+      createdAt: Date.now(),
+    });
+  }
   await scheduleNextStep(ctx, { ...row, state: nextState, verdict: effective });
   return effective;
 }
