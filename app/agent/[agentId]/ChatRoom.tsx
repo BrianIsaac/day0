@@ -1,14 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport, type UIMessage } from 'ai';
+import { useChat, type UseChatHelpers } from '@ai-sdk/react';
+import { DefaultChatTransport, type ChatStatus, type UIMessage } from 'ai';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-
-/** Prompts the agent's opening turn. Not the boss speaking, and never rendered. */
-const INIT_PROMPT = '__init__';
+import { INIT_PROMPT } from '@/agent/day-one-turn';
 
 function textOf(message: UIMessage): string {
   return message.parts
@@ -26,6 +24,99 @@ function textOf(message: UIMessage): string {
  */
 function withoutPrimingTurn(messages: UIMessage[]): UIMessage[] {
   return messages.filter((m) => !(m.role === 'user' && textOf(m).trim() === INIT_PROMPT));
+}
+
+/**
+ * Name what went wrong with a turn that ended without an error, if anything did.
+ *
+ * A provider stall reaches the room as a stream that finished having said
+ * nothing and called nothing; the route's 60-second deadline reaches it as a
+ * stream that stopped without its `finish` chunk, and a spent output budget as
+ * a finish of `length`. The SDK reports both as an
+ * ordinary `ready`, so on 19 Sep the first left the composer waiting for good
+ * and the second left half a sentence standing as the answer.
+ *
+ * Args:
+ *   turn: What `useChat` hands `onFinish`.
+ *
+ * Returns:
+ *   The line to show above Ask again, or null for a turn that needs none. A
+ *   stream error is `onError`'s, and an aborted send was discarded on purpose.
+ */
+export function turnFailure(turn: {
+  message: UIMessage;
+  isAbort: boolean;
+  isError: boolean;
+  finishReason?: string;
+}): string | null {
+  if (turn.isError || turn.isAbort) return null;
+  const closed = turn.message.parts.some((p) => p.type === 'tool-dayOneComplete');
+  if (!closed && !textOf(turn.message).trim()) return 'Day0 returned nothing';
+  if (turn.finishReason === undefined || turn.finishReason === 'length') {
+    return 'Day0 was cut off mid-reply';
+  }
+  return null;
+}
+
+/**
+ * The line for a stream error. The route answers a failure it can name with
+ * JSON, which the transport hands over as the error's message, braces and all.
+ */
+export function errorLine(err: Error): string {
+  try {
+    const body = JSON.parse(err.message) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error) return body.error;
+  } catch {
+    // Not JSON: the message is the sentence.
+  }
+  return err.message || 'agent unavailable';
+}
+
+/**
+ * Whether the composer refuses input. `error` is a status of its own in the
+ * SDK, not a return to `ready`, and a failed turn is exactly when the manager
+ * needs the composer back.
+ */
+export function composerLocked(state: {
+  status: ChatStatus;
+  done: boolean;
+  opened: boolean;
+}): boolean {
+  const answering = state.status === 'submitted' || state.status === 'streaming';
+  return answering || state.done || !state.opened;
+}
+
+/**
+ * Put the failed turn to Day0 again: the last thing the manager said, or the
+ * opening prompt when the manager has said nothing yet. `regenerate` drops a
+ * half-said answer first, so it is neither sent back as history nor left on
+ * the page.
+ */
+export async function askAgain(
+  chat: Pick<UseChatHelpers<UIMessage>, 'messages' | 'regenerate' | 'sendMessage'>,
+): Promise<void> {
+  if (chat.messages.length === 0) await chat.sendMessage({ text: INIT_PROMPT });
+  else await chat.regenerate();
+}
+
+export function TurnFailureNotice({
+  failure,
+  onAskAgain,
+}: {
+  failure: string;
+  onAskAgain: () => void;
+}) {
+  return (
+    <div role="alert" className="flex items-center gap-3 text-[var(--color-warn)] text-xs">
+      <span className="italic">{failure.replace(/\.$/, '')}.</span>
+      <button
+        onClick={onAskAgain}
+        className="px-2 py-1 rounded-md border border-[var(--color-warn)]/60 hover:bg-[var(--color-warn)]/10 font-medium"
+      >
+        Ask again
+      </button>
+    </div>
+  );
 }
 
 export function ChatRoom({
@@ -54,13 +145,16 @@ export function ChatRoom({
   });
 
   const [streamError, setStreamError] = useState<string | null>(null);
-  const { messages, sendMessage, status } = useChat({
+  const { messages, sendMessage, regenerate, status } = useChat({
     transport,
     onError: (err) => {
-      // OpenAI 503s and similar transient failures land here. The hook
-      // sets status back to 'ready' so the input unlocks; surface the
-      // error to the boss so they know to retry their last turn.
-      setStreamError(err.message ?? 'agent unavailable — please retry');
+      // Provider 503s and similar transient failures land here, and the hook
+      // parks at status 'error'. Surface it so the boss can ask again.
+      setStreamError(errorLine(err));
+    },
+    onFinish: (turn) => {
+      const failure = turnFailure(turn);
+      if (failure) setStreamError(failure);
     },
   });
 
@@ -128,13 +222,19 @@ export function ChatRoom({
   // ahead of the agent's own first turn and answers a question it has not put —
   // an error surfaces instead, because then there is nothing else to wait for.
   const opened = messages.some((m) => m.role === 'assistant') || !!streamError;
-  const composerDisabled = status !== 'ready' || done || !opened;
+  const composerDisabled = composerLocked({ status, done, opened });
 
   function send() {
     const trimmed = draft.trim();
     if (!trimmed || composerDisabled) return;
+    setStreamError(null);
     sendMessage({ text: trimmed });
     setDraft('');
+  }
+
+  function retryTurn() {
+    setStreamError(null);
+    void askAgain({ messages, regenerate, sendMessage });
   }
 
   return (
@@ -181,10 +281,8 @@ export function ChatRoom({
             conversation complete · drafting your charter…
           </div>
         ) : null}
-        {streamError ? (
-          <div className="text-[var(--color-warn)] text-xs italic">
-            {streamError} — re-send your last message to retry.
-          </div>
+        {streamError && !done ? (
+          <TurnFailureNotice failure={streamError} onAskAgain={retryTurn} />
         ) : null}
       </div>
       <div className="border-t border-[var(--color-border)] p-2 flex gap-2">
