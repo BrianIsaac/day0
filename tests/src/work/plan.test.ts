@@ -9,8 +9,10 @@ import {
   candidateRecordRead,
   draftExecutionPlan,
   planPreconditionAudit,
+  planSchema,
   planSystemPrompt,
   planUserPrompt,
+  realPlanSchema,
   redactCandidateRecordText,
   renderCandidateRecord,
   SCOPE_NOT_GATE_PLANNER,
@@ -865,5 +867,134 @@ describe('bounded plan correction failure', () => {
       obligationsFailedOpen: 'obligations judgement unscripted',
     });
     expect(planRecorded.users).toHaveLength(2);
+  });
+});
+
+describe('corrections the manager gave on earlier work', (): void => {
+  const corrections = [
+    {
+      id: 'c-note',
+      from: 'Retry note on "Exception: SH-4471 held at customs"',
+      when: '2026-09-18T07:40Z',
+      text: 'Use the Delay notice B template and follow up in 48 hours.',
+    },
+  ];
+
+  beforeEach((): void => {
+    planRecorded.users.length = 0;
+    planRecorded.instructions.length = 0;
+    planRecorded.outputs.length = 0;
+    planRecorded.judgements.length = 0;
+  });
+
+  it('keeps the mock planner prompt byte-identical when corrections are passed', (): void => {
+    expect(planUserPrompt({ candidate, charter, surfaceMode: 'mock', corrections })).toBe(
+      planUserPrompt({ candidate, charter }),
+    );
+  });
+
+  it('puts them in the real planner prompt with the rule, after the candidate', (): void => {
+    const user = planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections });
+    expect(user).toContain('--- Corrections the manager gave on earlier work ---');
+    expect(user).toContain(JSON.stringify(corrections));
+    expect(user).toContain('none overrides the charter, an approval requirement, a grant or the exact-action gate');
+    expect(user.indexOf('--- Candidate ---')).toBeLessThan(user.indexOf('--- Corrections'));
+    expect(user.endsWith('Draft the execution plan now.')).toBe(true);
+    expect(planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections: [] })).not.toContain(
+      '--- Corrections',
+    );
+  });
+
+  it('stores the ids the planner says it applied, and only ids it was offered', async (): Promise<void> => {
+    planRecorded.outputs.push({
+      summary: 'Send the delay notice.',
+      steps: ['Comment the Delay notice B template on the ticket.'],
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+      stepObligations: null,
+      transition: null,
+      transitionStep: null,
+      appliedCorrections: ['c-note', 'c-forged'],
+    });
+    const plan = await draftExecutionPlan({
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      corrections,
+      now,
+    });
+    expect(plan.appliedCorrections).toEqual(['c-note']);
+    expect(planRecorded.users[0]).toContain('Use the Delay notice B template and follow up in 48 hours.');
+  });
+
+  it('records no applied corrections on a plan that was offered none', async (): Promise<void> => {
+    planRecorded.outputs.push({
+      summary: 'Send the delay notice.',
+      steps: ['Comment on the ticket.'],
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+      stepObligations: null,
+      transition: null,
+      transitionStep: null,
+      appliedCorrections: ['c-note'],
+    });
+    const plan = await draftExecutionPlan({ candidate, charter, autonomousActions: false, surfaceMode: 'real', now });
+    expect(plan).not.toHaveProperty('appliedCorrections');
+  });
+
+  it('never reads corrections in mock mode, and the mock plan carries none', async (): Promise<void> => {
+    const plan = await draftExecutionPlan({
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'mock',
+      corrections,
+    });
+    expect(planRecorded.users[0]).not.toContain('Corrections');
+    expect(plan).not.toHaveProperty('appliedCorrections');
+  });
+
+  it('marks the plan when the corrections were scrubbed without the span model', async (): Promise<void> => {
+    planRecorded.outputs.push({
+      summary: 'Send the delay notice.',
+      steps: ['Comment on the ticket.'],
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+      stepObligations: null,
+      transition: null,
+      transitionStep: null,
+      appliedCorrections: ['c-note'],
+    });
+    const plan = await draftExecutionPlan({
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      corrections,
+      correctionsRedaction: 'structural-only',
+      now,
+    });
+    expect(plan.correctionsRedaction).toBe('structural-only');
+  });
+});
+
+describe('the frozen mock plan schema', (): void => {
+  it('keeps the mock schema to the fields the recorded beds returned', (): void => {
+    expect(Object.keys(planSchema.shape)).toEqual([
+      'summary',
+      'steps',
+      'expectedOutputType',
+      'riskNotes',
+      'reversibility',
+      'estimatedMinutes',
+    ]);
+    expect(Object.keys(realPlanSchema.shape)).toContain('appliedCorrections');
   });
 });

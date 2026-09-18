@@ -8,6 +8,12 @@ import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { ChatRoom } from './ChatRoom';
 import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
+import {
+  AppliedCorrectionsLine,
+  KeptCorrectionsPanel,
+  keptCorrectionsTitle,
+  type KeptCorrection,
+} from './corrections-panel';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
 import {
   type ActionVerdict,
@@ -99,6 +105,17 @@ export function AgentDashboard({ agentId }: Props) {
   const surfaces = useMemo(
     (): SurfaceRecord[] => (surfaceRows ?? []).map((row) => toSurfaceRecord(row)),
     [surfaceRows],
+  );
+  // Real mode only, as the corrections are: the mock keeps none.
+  const correctionRows = useQuery(
+    api.corrections.listForAgent,
+    surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
+  );
+  const corrections: KeptCorrection[] = correctionRows ?? [];
+  const retireCorrection = useMutation(api.corrections.retire);
+  const itemTitles = useMemo(
+    (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
+    [workItems],
   );
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
@@ -218,6 +235,7 @@ export function AgentDashboard({ agentId }: Props) {
             charterApproved={!!charter?.approved}
             autonomousActions={agent ? autonomousActionsOn(agent) : false}
             surfaceMode={surfaceConfig?.mode}
+            corrections={corrections}
           />
         </div>
 
@@ -229,6 +247,15 @@ export function AgentDashboard({ agentId }: Props) {
             authoringFailure={authoringFailure}
             onAuthoringAttempt={setLastAttempt}
           />
+          {surfaceConfig?.mode === 'real' ? (
+            <Card title={keptCorrectionsTitle(corrections)}>
+              <KeptCorrectionsPanel
+                corrections={corrections}
+                titles={itemTitles}
+                onRetire={(correctionId) => retireCorrection({ correctionId })}
+              />
+            </Card>
+          ) : null}
           {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
           <MetricsCard metrics={metrics} />
           <EventTicker events={events ?? []} />
@@ -1576,6 +1603,7 @@ export function WorkQueue({
   charterApproved,
   autonomousActions,
   surfaceMode,
+  corrections = [],
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
@@ -1588,6 +1616,8 @@ export function WorkQueue({
   autonomousActions: boolean;
   /** The deployment's surface mode, undefined while it loads. Only mock mode drives the loop from here. */
   surfaceMode: 'mock' | 'real' | undefined;
+  /** The employee's kept corrections, for the plan cards that applied one. */
+  corrections?: KeptCorrection[];
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -1682,8 +1712,9 @@ export function WorkQueue({
               surfaces={surfaces}
               autonomousActions={autonomousActions}
               questions={openQuestions.filter((question) => question.workItemId === item._id)}
+              corrections={corrections}
               onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
-              onCancelPlan={() => cancelPlan({ workItemId: item._id })}
+              onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}
               onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
               onReconcileFailed={(confirmed) =>
                 reconcileFailed({ workItemId: item._id, confirmed })
@@ -2216,6 +2247,23 @@ export function retryRequest(
   return { workItemId, ...(feedback?.trim() ? { feedback } : {}) };
 }
 
+/**
+ * What the plan card's Cancel sends: the item and, when the manager wrote one, the reason.
+ *
+ * Args:
+ *   workItemId: The item whose plan is cancelled.
+ *   reason: The reason as typed; a blank reason is not sent.
+ *
+ * Returns:
+ *   The arguments for `work.cancelPlan`.
+ */
+export function cancelPlanRequest(
+  workItemId: Id<'workItems'>,
+  reason?: string,
+): { workItemId: Id<'workItems'>; reason?: string } {
+  return { workItemId, ...(reason?.trim() ? { reason } : {}) };
+}
+
 export function failedItemReason(item: {
   skipReason?: string;
   managerFeedback?: { reason: string };
@@ -2537,10 +2585,12 @@ export function PlanApprovalForm({
   riskNotes: string;
   questions: Doc<'managerQuestions'>[];
   onApprove: (decision: PlanApproval) => void;
-  onCancel: () => void;
+  /** Cancels the plan with the manager's reason, empty when none was written. */
+  onCancel: (reason: string) => void;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
+  const [cancelReason, setCancelReason] = useState('');
   const open = questions.filter((question) => !question.answer);
   const planNote = riskNotes.trim();
   function decision(): PlanApproval {
@@ -2596,6 +2646,14 @@ export function PlanApprovalForm({
           />
         </div>
       ) : null}
+      <input
+        type="text"
+        value={cancelReason}
+        onChange={(event) => setCancelReason(event.target.value)}
+        placeholder="reason, if you cancel (optional)"
+        aria-label="reason for cancelling the plan"
+        className="w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+      />
       <div className="flex gap-2">
         <button
           onClick={() => onApprove(decision())}
@@ -2604,7 +2662,7 @@ export function PlanApprovalForm({
           {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
         </button>
         <button
-          onClick={onCancel}
+          onClick={() => onCancel(cancelReason.trim())}
           className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs"
         >
           Cancel
@@ -2747,6 +2805,7 @@ export function WorkItemCard({
   surfaces,
   autonomousActions,
   questions = [],
+  corrections = [],
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -2760,8 +2819,10 @@ export function WorkItemCard({
   autonomousActions: boolean;
   /** The charter's open questions asked at this item's plan and still waiting. */
   questions?: Doc<'managerQuestions'>[];
+  /** The employee's kept corrections, for the line saying this plan applied one. */
+  corrections?: readonly KeptCorrection[];
   onApprovePlan: (decision: PlanApproval) => void;
-  onCancelPlan: () => void;
+  onCancelPlan: (reason: string) => void;
   onRetryFailed: (feedback?: string) => void;
   onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
@@ -2782,6 +2843,8 @@ export function WorkItemCard({
         expectedOutputType: string;
         obligations?: PlanObligationsRow;
         obligationsFailedOpen?: string;
+        appliedCorrections?: string[];
+        correctionsRedaction?: 'structural-only';
       }
     | undefined;
   const output = item.output as RunOutput | undefined;
@@ -2810,6 +2873,8 @@ export function WorkItemCard({
   const skipWaivable = qualityFitSkipped || outOfScopeSkipped;
   const [retryNote, setRetryNote] = useState('');
   const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
+  // A plan the manager cancelled: Retry drafts a new one, never runs this one.
+  const cancelledPlan = item.state === 'cancelled' && plan !== undefined;
   const awaitingSurface =
     verdict?.decision === 'defer' && verdict.reason === 'awaiting-connection'
       ? surfaces.find((surface) => surface.slug === verdict.missingSurface)
@@ -2902,6 +2967,12 @@ export function WorkItemCard({
               <li key={i}>{s}</li>
             ))}
           </ol>
+          <AppliedCorrectionsLine
+            ids={plan.appliedCorrections ?? []}
+            corrections={corrections}
+            workItemId={item._id}
+            redaction={plan.correctionsRedaction}
+          />
           <PlanObligationsLine obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
           {item.state === 'plan-pending' ? (
             <PlanApprovalForm
@@ -3052,7 +3123,7 @@ export function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' || item.state === 'completed' || skipWaivable ? (
+      {item.state === 'failed' || item.state === 'completed' || skipWaivable || cancelledPlan ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
@@ -3075,7 +3146,7 @@ export function WorkItemCard({
               onConfirm={onReconcileFailed}
             />
           ) : null}
-          {item.state === 'failed' || item.state === 'completed' ? (
+          {item.state === 'failed' || item.state === 'completed' || cancelledPlan ? (
             <input
               type="text"
               value={retryNote}
@@ -3083,7 +3154,9 @@ export function WorkItemCard({
               placeholder={
                 item.state === 'completed'
                   ? 'note for the retry: say what to change or answer what the agent asked'
-                  : 'note for the retry (optional): answer what the agent asked, or say what to change'
+                  : cancelledPlan
+                    ? 'note for the new plan (optional)'
+                    : 'note for the retry (optional): answer what the agent asked, or say what to change'
               }
               aria-label="note for the retry"
               className="w-full mb-1.5 px-2 py-1 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
@@ -3105,6 +3178,13 @@ export function WorkItemCard({
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
               Retry with a note sends this finished work back; the note reaches the agent as your
               direction, and its writes are held again unless autonomous actions are on.
+            </p>
+          ) : null}
+          {cancelledPlan ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">
+              {autonomousActions
+                ? 'Retry drafts a new plan and your reason goes with it; autonomous actions are on, so the new plan runs once it is drafted.'
+                : 'Retry drafts a new plan and your reason goes with it; the plan comes back to you before anything runs.'}
             </p>
           ) : null}
           {qualityFitSkipped ? (

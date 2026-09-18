@@ -159,6 +159,14 @@ export interface ExecutionPlan {
    * drafted in mock mode or before the field existed.
    */
   obligationsFailedOpen?: string;
+  /**
+   * The kept corrections (`corrections` ids) the planner applied, real mode
+   * only. `setPlan` keeps only the employee's own active ones; the executor
+   * carries these and no other.
+   */
+  appliedCorrections?: string[];
+  /** Set when the corrections the planner saw were scrubbed without the span model. */
+  correctionsRedaction?: 'structural-only';
 }
 
 /** The four verbs that write to the per-agent mock environment. */
