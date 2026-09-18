@@ -559,10 +559,16 @@ export function linearCandidate(
           : undefined;
   const requester = personOf(issue, ['creator', 'createdBy']);
   const owner = personOf(issue, ['assignee']);
+  // Linear's MCP server prints the identifier as `id` and the UUID as `uuid`;
+  // a GraphQL-shaped read prints the UUID as `id` beside `identifier`.
+  const alias = [issue.uuid, issue.identifier].find(
+    (name): name is string => typeof name === 'string' && name.trim() !== '' && name !== id,
+  );
   return {
     sourceCategory: 'ticket-queue',
     sourceSystem: surface.slug,
     externalId: id,
+    ...(alias === undefined ? {} : { externalAlias: alias.trim() }),
     title: title.slice(0, 240),
     contentSummary: description.slice(0, 4_000),
     contentRefs: [url],
@@ -1300,6 +1306,7 @@ async function seedCandidate(
     sourceCategory: candidate.sourceCategory,
     sourceSystem: candidate.sourceSystem,
     externalId: candidate.externalId,
+    externalAlias: candidate.externalAlias,
     title: candidate.title,
     contentSummary: candidate.contentSummary,
     contentRefs: candidate.contentRefs,

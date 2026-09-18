@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseSurfaceAction, type ParsedSurfaceAction } from '../../../src/surfaces/policy';
 import {
   providerItemKey,
+  withheldByClaim,
   withheldByClaimReason,
   writeTargetIds,
   type ClaimKeySurface,
@@ -147,7 +148,7 @@ const parsedPost = (body: Record<string, unknown>): ParsedSurfaceAction => {
 
 describe('writeTargetIds', (): void => {
   it('names the ticket a comment or a state change addresses, as intake stores it', (): void => {
-    expect(writeTargetIds(parsedCall('save_comment', { issueId: 'FIN-1', body: 'note' }), linear)).toEqual(['FIN-1']);
+    expect(writeTargetIds(parsedCall('save_comment', { issueId: 'FIN-1', body: 'note' }), linear)).toEqual(['FIN-1', 'fin-1']);
     expect(writeTargetIds(parsedCall('save_issue', { id: 'fin-1', state: 'Done' }), linear)).toEqual(['fin-1', 'FIN-1']);
   });
 
@@ -171,6 +172,12 @@ describe('writeTargetIds', (): void => {
     expect(writeTargetIds(graphql, jira)).toContain(ISSUE);
   });
 
+  it('offers a ticket reference in both cases, since a model may print a UUID in capitals', (): void => {
+    const id = ['3f2a9c1e', '7b4d', '4e8a', '9c1f', '0a1b2c3d4e5f'].join('-');
+    expect(writeTargetIds(parsedCall('save_comment', { issueId: id.toUpperCase(), body: 'note' }), linear)).toContain(id);
+    expect(writeTargetIds(parsedCall('save_comment', { issueId: 'fin-1', body: 'note' }), linear)).toContain('FIN-1');
+  });
+
   it('names nothing for a read or a write that addresses no item', (): void => {
     expect(writeTargetIds(parsedCall('get_issue', { id: 'FIN-1' }), linear)).toEqual([]);
     expect(writeTargetIds(parsedCall('list_issues', { team: 'FIN' }), linear)).toEqual([]);
@@ -191,5 +198,14 @@ describe('withheldByClaimReason', (): void => {
     expect(withheldByClaimReason({ ...holder, sameEmployee: false, state: 'executing' })).toContain(
       'held by Mateo\'s work item "Post the note" (executing);',
     );
+  });
+
+  it('says where the write will be made when the holder has not claimed the item yet', (): void => {
+    const waiting = { ...holder, state: 'discovered', unclaimed: true };
+    expect(withheldByClaimReason(waiting)).toBe(
+      'withheld for another work item\'s claim: FIN-1 has its own work item with this employee, "Post the note" (discovered); it will be written there, and one work item writes an external item, so this write is not sent',
+    );
+    expect(withheldByClaimReason({ ...waiting, sameEmployee: false })).toContain('has its own work item with Mateo, "Post the note"');
+    expect(withheldByClaim({ held: true, reason: withheldByClaimReason(waiting) })).toBe(true);
   });
 });

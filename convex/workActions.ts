@@ -57,7 +57,7 @@ import {
   type ClaimHold,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import { withheldByClaim, withheldByClaimReason, writeTargetIds } from '../src/work/claim-key';
+import { withheldByClaim, withheldByClaimReason, writeTargetIds, type HeldExternalItem } from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
@@ -869,6 +869,7 @@ async function holdDay0Actions(
       plan: args.plan,
       runId: args.runId,
     });
+    const heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId);
     const output = await runSkill({
       skill: {
         name: args.skill.name,
@@ -885,6 +886,7 @@ async function holdDay0Actions(
       managerFeedback: args.managerFeedback,
       managerAnswers: args.managerAnswers,
       landedWrites: args.landedWrites,
+      heldElsewhere,
       appliedCorrections,
       groundingReads: await itemGroundingReads(ctx, args.workItemId),
       onAdditionalModelCall: () => {
@@ -1451,6 +1453,7 @@ export const authorDependentActions = internalAction({
       };
       const step = { agentId: item.agentId, workItemId: args.workItemId, stage: 'closing' } as const;
       const groundingReads = await itemGroundingReads(ctx, args.workItemId);
+      const heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
       const output = await recordingModelCalls(ctx, step, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
@@ -1470,6 +1473,7 @@ export const authorDependentActions = internalAction({
         resumedClosing: prerequisites.resumedClosing,
         refusedClosing: prerequisites.refusedClosing,
         landedWrites: prerequisites.landedWrites,
+        heldElsewhere,
         closingGate,
         onAuditCorrection: async (removedIndices, reason) => {
           await ctx.runMutation(internal.events.log, {
@@ -1827,6 +1831,36 @@ export const applyApprovedActions = internalAction({
     }
   },
 });
+
+/**
+ * The external items other work items hold, as an executor prompt may show them.
+ *
+ * Read fresh before each authoring, so a closing phase sees a note the holder
+ * landed since phase one. Real mode only: the mock path makes no call. The
+ * titles are provider text, so the owner's exact values are scrubbed here and
+ * the prompt lines apply the structural pass; the values are resolved only
+ * when there is something to scrub.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agent: The authoring employee.
+ *   workItemId: The work item about to be authored.
+ *   knownValues: The owner's stored values, when the caller already holds them.
+ *
+ * Returns:
+ *   The held items, scrubbed; empty in mock mode.
+ */
+async function itemsHeldElsewhere(
+  ctx: ActionCtx,
+  agent: Doc<'agents'>,
+  workItemId: Id<'workItems'>,
+  knownValues?: readonly string[],
+): Promise<HeldExternalItem[]> {
+  if (SURFACE_MODE !== 'real') return [];
+  const held: HeldExternalItem[] = await ctx.runQuery(internal.work.itemsHeldElsewhere, { workItemId });
+  if (held.length === 0) return held;
+  return scrubKnownValues(held, knownValues ?? (await knownValuesForAgent(ctx, agent)));
+}
 
 /**
  * The apply path's read of the owner-wide claims, for the items a set writes.

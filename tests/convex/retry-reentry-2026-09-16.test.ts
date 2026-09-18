@@ -343,6 +343,38 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     }
   });
 
+  it('tells both executor phases which external items other work items hold, with no secret-shaped value from a title', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await firstRun(t);
+    const secret = ['xoxb', '2847561930', '5529104736', 'aBcDeFgHiJkLmNoPqRsTuVwX'].join('-');
+    await t.run(async (ctx) => {
+      const aiko = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local', name: 'Aiko', userId: 'owner', state: 'active', autonomousActions: true, createdAt: 1,
+      });
+      await ctx.db.insert('workItems', {
+        agentId: aiko, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: 'REVOPS-27',
+        externalClaimKey: 'linear:REVOPS-27', title: `Refresh the pipeline coverage tile ${secret}`,
+        contentSummary: 'Refresh the tile.', contentRefs: [], state: 'discovered', observedAt: 1, createdAt: 1,
+      });
+    });
+
+    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+    recorded.initialReply = run3RetryPhaseOne;
+    recorded.closingReply = run3RetryClosing;
+    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+    await landedOnNote(t, workItemId);
+
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['initial', 'dependent']);
+    for (const call of recorded.model) {
+      expect(call.user).toContain('--- External items other work items hold (1) ---');
+      expect(call.user).toContain('linear · REVOPS-27 · Aiko · "Refresh the pipeline coverage tile');
+      expect(call.user).toContain('(discovered, not claimed yet) · nothing landed yet');
+      expect(call.user).not.toContain(secret);
+      // The item being worked is never listed as held elsewhere.
+      expect(call.user).not.toContain('linear · REVOPS-5 · this employee');
+    }
+  });
+
   it('lands the Done when the retry obeys the prompt and emits no second comment: the landed comment is the audit trail', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await firstRun(t);

@@ -453,6 +453,13 @@ export default defineSchema({
     externalId: v.string(),
     /** Fixed at intake so a card edit cannot change which provider item a retry holds. */
     externalClaimKey: v.optional(v.string()),
+    /**
+     * The provider item's other name and the claim key it makes, when the
+     * provider prints two (Linear: `FIN-1` and a UUID). A write naming either
+     * meets this row.
+     */
+    externalAlias: v.optional(v.string()),
+    externalClaimAlias: v.optional(v.string()),
     title: v.string(),
     contentSummary: v.string(),
     contentRefs: v.array(v.string()),
@@ -535,10 +542,18 @@ export default defineSchema({
      * thing a verdict waited on landing (`verdict-write` when the verdict was
      * written, `check` on Check for new work), or the skill its verdict names
      * having registered (`skill-registered`), with its idempotency key and
-     * when. The same key never re-admits the row twice.
+     * when. The same key never re-admits the row twice, whichever kind of
+     * re-admission came between: `spent` is every key that has sent the row
+     * back, this one last, the newest `SPENT_REEVALUATION_KEYS` of them. A
+     * row stamped before the list existed has spent its one `key`.
      */
     reevaluation: v.optional(
-      v.object({ trigger: v.string(), key: v.string(), at: v.number() }),
+      v.object({
+        trigger: v.string(),
+        key: v.string(),
+        at: v.number(),
+        spent: v.optional(v.array(v.string())),
+      }),
     ),
     /**
      * Real mode: when an evaluation of this row started. A second evaluation
@@ -650,7 +665,10 @@ export default defineSchema({
       'decision.channel',
     ])
     .index('by_skill', ['skillId'])
-    .index('by_extId', ['sourceSystem', 'externalId']),
+    .index('by_extId', ['sourceSystem', 'externalId'])
+    /** Every work item discovered from one provider item, across employees, by either of its names. */
+    .index('by_claim_key', ['externalClaimKey'])
+    .index('by_claim_alias', ['externalClaimAlias']),
 
   /**
    * Which employee holds an item of the owner's own systems: one live row per
@@ -665,6 +683,12 @@ export default defineSchema({
     key: v.string(),
     agentId: v.id('agents'),
     workItemId: v.id('workItems'),
+    /**
+     * The keys of the item's other names, copied from the work item when the
+     * claim is taken. The record of everything this claim covers; the guard
+     * finds a claim by an alias through the work item's `by_claim_alias`.
+     */
+    aliases: v.optional(v.array(v.string())),
     claimedAt: v.number(),
     releasedAt: v.optional(v.number()),
   })

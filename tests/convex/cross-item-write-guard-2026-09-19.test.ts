@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -9,7 +9,7 @@ import schema from '../../convex/schema';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
-import { withheldByClaimReason } from '../../src/work/claim-key';
+import { HELD_ELSEWHERE_LIMIT, withheldByClaim, withheldByClaimReason } from '../../src/work/claim-key';
 import type { ExecutionPlan, MockAction } from '../../src/work/types';
 import { blockedPlanReason } from '../../convex/workActions';
 import { allConvexModules } from './all-modules';
@@ -413,5 +413,360 @@ describe('a write to an external item another work item holds (finding D, 19 Sep
     expect(blockedPlanReason(outcomes, { plan, actions, applied: [landed, landed, byClaim] })).toBeUndefined();
     const byManager = { ...landed, held: true, reason: 'not approved by the manager' };
     expect(blockedPlanReason(outcomes, { plan, actions, applied: [landed, landed, byManager] })).toContain('remained blocked');
+  });
+});
+
+/**
+ * The order the run actually took. The ask's item was approved at 03:03:42 and
+ * wrote FIN-1; FIN-1's own item took its claim at 03:03:59. For those
+ * seventeen seconds nobody held `linear:FIN-1`, so a guard that reads only
+ * the claims let the ask's note land, and the ticket's item then posted a
+ * second on its own key.
+ */
+const ASK_APPROVED_AT = Date.UTC(2026, 8, 19, 3, 3, 42);
+const TICKET_CLAIMED_AT = Date.UTC(2026, 8, 19, 3, 3, 59);
+
+describe('a write to an external item that has a work item of its own, claimed or not (finding D, the order of the run)', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', CREDENTIAL_KEY);
+    vi.useFakeTimers();
+    vi.setSystemTime(ASK_APPROVED_AT);
+  });
+
+  afterEach((): void => {
+    recorded.mcp.length = 0;
+    recorded.http.length = 0;
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    restoreSurfaceMode();
+  });
+
+  it('withholds the ask that writes first, then lands exactly one note when the ticket\'s own item claims and writes', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedItem(t, mateo, { source: 'ticket', state: 'discovered', claims: false });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    await atApply(t, ask, ASK_ACTIONS);
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual([]);
+    expect(threadReplies()).toHaveLength(1);
+    const answered = await readItem(t, ask);
+    expect(answered.state).toBe('completed');
+    for (const index of [2, 3]) {
+      const row = ledger(answered)[index]!;
+      expect(row).toMatchObject({ ok: true, held: true });
+      expect(row.authority).toBeUndefined();
+      expect(withheldByClaim(row)).toBe(true);
+      expect(row.reason).toContain('FIN-1 has its own work item with this employee');
+      expect(row.reason).toContain(TICKET_TITLE);
+      expect(row.reason).toContain('discovered');
+      expect(row.reason).toContain('will be written there');
+    }
+
+    vi.setSystemTime(TICKET_CLAIMED_AT);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(ticket, { verdict: undefined });
+    });
+    await t.mutation(internal.work.setVerdict, {
+      workItemId: ticket,
+      verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] },
+    });
+    expect((await readItem(t, ticket)).state).toBe('claimed');
+    await atApply(t, ticket, [LIST, NOTE_ON_TICKET, TICKET_TO_DONE]);
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ticket });
+
+    expect(ticketWrites()).toEqual(['save_comment', 'save_issue']);
+    expect((await readItem(t, ticket)).state).toBe('completed');
+  });
+
+  it('holds across two employees: a colleague\'s unclaimed item for the ticket withholds the ask, by name', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    await seedItem(t, aiko, { source: 'ticket', state: 'deferred', claims: false });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    await atApply(t, ask, ASK_ACTIONS);
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual([]);
+    expect(threadReplies()).toHaveLength(1);
+    const answered = await readItem(t, ask);
+    expect(answered.state).toBe('completed');
+    expect(ledger(answered)[2]!.reason).toContain('FIN-1 has its own work item with Aiko');
+    expect(ledger(answered)[2]!.reason).toContain('deferred');
+  });
+
+  it('never withholds the ticket\'s own item from its own key, whatever a colleague\'s row for the same ticket is doing', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    await seedItem(t, aiko, { source: 'ticket', state: 'discovered', claims: false });
+    const ticket = await seedItem(t, mateo, { source: 'ticket', state: 'plan-approved' });
+    await atApply(t, ticket, [LIST, NOTE_ON_TICKET, TICKET_TO_DONE]);
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ticket });
+
+    expect(ticketWrites()).toEqual(['save_comment', 'save_issue']);
+    expect(ledger(await readItem(t, ticket)).every((row) => row.held !== true)).toBe(true);
+  });
+
+  it.each(['skipped', 'cancelled', 'failed'] as const)('a %s item that never claimed the ticket does not block', async (state): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    await seedItem(t, mateo, { source: 'ticket', state, claims: false });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    await atApply(t, ask, ASK_ACTIONS);
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual(['save_comment', 'save_issue']);
+  });
+
+  it('leaves another owner\'s unclaimed item for the same ticket out of it', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const stranger = await seedEmployee(t, { name: 'Noor', userId: 'another-owner' });
+    await seedItem(t, stranger, { source: 'ticket', state: 'discovered', claims: false });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    await atApply(t, ask, ASK_ACTIONS);
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual(['save_comment', 'save_issue']);
+  });
+});
+
+/**
+ * One ticket, two names. Linear's MCP server prints the identifier as `id`
+ * and the UUID as `uuid`; a GraphQL-shaped read prints the UUID as `id` and
+ * the identifier beside it. `list_issues` shows both, so a write may name
+ * either, and the claim is keyed by whichever intake read as `id`.
+ */
+const TICKET_UUID = randomUUID();
+
+/** FIN-1 as intake seeds it: through the real seed mutation, keyed by one name and carrying the other. */
+async function seedTicketThroughIntake(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  keyedBy: 'identifier' | 'uuid',
+): Promise<Id<'workItems'>> {
+  return await harness.mutation(internal.work.seedItem, {
+    agentId,
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: keyedBy === 'identifier' ? 'FIN-1' : TICKET_UUID,
+    externalAlias: keyedBy === 'identifier' ? TICKET_UUID : 'FIN-1',
+    title: TICKET_TITLE,
+    contentSummary: 'Post the close status note for the September close on this ticket.',
+    contentRefs: ['https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note'],
+  });
+}
+
+const claimVerdict = { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] };
+const askNaming = (name: string): MockAction[] => [
+  LIST,
+  threadReply(ASK_CHANNEL, ASK_TS),
+  mcp('save_comment', { issueId: name, body: NOTE }),
+  mcp('save_issue', { id: name, state: 'Done' }),
+];
+
+describe('a write naming a ticket\'s other name (finding D, UUID against identifier)', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', CREDENTIAL_KEY);
+    vi.useFakeTimers();
+    vi.setSystemTime(ASK_APPROVED_AT);
+  });
+
+  afterEach((): void => {
+    recorded.mcp.length = 0;
+    recorded.http.length = 0;
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    restoreSurfaceMode();
+  });
+
+  it('stores both names at intake, and the claim carries the other as an alias', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedTicketThroughIntake(t, mateo, 'identifier');
+
+    const row = await readItem(t, ticket);
+    expect(row.externalClaimKey).toBe('linear:FIN-1');
+    expect(row.externalAlias).toBe(TICKET_UUID);
+    expect(row.externalClaimAlias).toBe(`linear:${TICKET_UUID}`);
+
+    await t.mutation(internal.work.setVerdict, { workItemId: ticket, verdict: claimVerdict });
+    const claims = await t.run(async (ctx) => await ctx.db.query('externalClaims').collect());
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({ key: 'linear:FIN-1', aliases: [`linear:${TICKET_UUID}`], workItemId: ticket });
+  });
+
+  it.each([
+    { keyedBy: 'identifier' as const, names: 'the UUID' },
+    { keyedBy: 'uuid' as const, names: 'the identifier' },
+  ])('withholds a write naming $names from a claim keyed by the other name', async ({ keyedBy }): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedTicketThroughIntake(t, mateo, keyedBy);
+    await t.mutation(internal.work.setVerdict, { workItemId: ticket, verdict: claimVerdict });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    const written = keyedBy === 'identifier' ? TICKET_UUID : 'FIN-1';
+    await atApply(t, ask, askNaming(written));
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual([]);
+    const answered = await readItem(t, ask);
+    expect(answered.state).toBe('completed');
+    for (const index of [2, 3]) {
+      expect(ledger(answered)[index]).toMatchObject({ ok: true, held: true });
+      expect(ledger(answered)[index]!.reason).toContain(`${written} is held by this employee's work item "${TICKET_TITLE}" (claimed)`);
+    }
+  });
+
+  it('withholds a write naming the UUID in another case, and one naming either name before the ticket\'s item has claimed', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    await seedTicketThroughIntake(t, mateo, 'identifier');
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    await atApply(t, ask, [
+      LIST,
+      mcp('save_comment', { issueId: TICKET_UUID.toUpperCase(), body: NOTE }),
+      mcp('save_issue', { id: 'fin-1', state: 'Done' }),
+    ]);
+
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual([]);
+    const rows = ledger(await readItem(t, ask));
+    expect(rows[1]!.reason).toContain('has its own work item with this employee');
+    expect(rows[2]!.reason).toContain('has its own work item with this employee');
+  });
+
+  it('lets the ticket\'s own item write its ticket by either name, and cites a note it landed under the other', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedTicketThroughIntake(t, mateo, 'identifier');
+    await t.mutation(internal.work.setVerdict, { workItemId: ticket, verdict: claimVerdict });
+    await atApply(t, ticket, [LIST, mcp('save_comment', { issueId: TICKET_UUID, body: NOTE }), mcp('save_issue', { id: TICKET_UUID, state: 'Done' })]);
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ticket });
+    expect(ticketWrites()).toEqual(['save_comment', 'save_issue']);
+    expect((await readItem(t, ticket)).state).toBe('completed');
+
+    recorded.mcp.length = 0;
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+    await atApply(t, ask, ASK_ACTIONS);
+    await t.action(internal.workActions.applyApprovedActions, { workItemId: ask });
+
+    expect(ticketWrites()).toEqual([]);
+    // The double answers every comment with the same id; the line cites it.
+    expect(ledger(await readItem(t, ask))[2]!.reason).toContain(`which landed comment ${SECOND_NOTE_ID} on it`);
+  });
+
+  it('gives a row seeded before the alias existed its other name on the next poll, and its live claim too', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const ticket = await seedItem(t, mateo, { source: 'ticket', state: 'claimed' });
+
+    const again = await seedTicketThroughIntake(t, mateo, 'identifier');
+
+    expect(again).toBe(ticket);
+    expect((await readItem(t, ticket)).externalClaimAlias).toBe(`linear:${TICKET_UUID}`);
+    const claims = await t.run(async (ctx) => await ctx.db.query('externalClaims').collect());
+    expect(claims).toHaveLength(1);
+    expect(claims[0]!.aliases).toEqual([`linear:${TICKET_UUID}`]);
+  });
+});
+
+/** A ticket row of the September close other than FIN-1, as intake would have keyed it. */
+async function seedOtherTicket(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  ticket: { id: string; title: string; state: Doc<'workItems'>['state']; claims: boolean; createdAt?: number },
+): Promise<Id<'workItems'>> {
+  return await harness.run(async (ctx) => {
+    const agent = await ctx.db.get(agentId);
+    const workItemId = await ctx.db.insert('workItems', {
+      agentId, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: ticket.id,
+      externalClaimKey: `linear:${ticket.id}`, title: ticket.title, contentSummary: ticket.title, contentRefs: [],
+      state: ticket.state, observedAt: 1, createdAt: ticket.createdAt ?? 1,
+    } as never);
+    if (ticket.claims) {
+      await ctx.db.insert('externalClaims', {
+        userId: agent!.userId!, key: `linear:${ticket.id}`, agentId, workItemId, claimedAt: 1,
+      });
+    }
+    return workItemId;
+  });
+}
+
+describe('what the executor is told other work items hold (finding D, the reply authored beside the note)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+    restoreSurfaceMode();
+  });
+
+  it('lists the company\'s live items discovered from an external item, with what landed, and never the asking item or a dead one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    const stranger = await seedEmployee(t, { name: 'Noor', userId: 'another-owner' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'completed', output: TICKET_COMPLETED_OUTPUT });
+    await seedOtherTicket(t, aiko, { id: 'FIN-3', title: 'Bank reconciliation for September', state: 'discovered', claims: false });
+    await seedOtherTicket(t, aiko, { id: 'FIN-4', title: 'Failed after it claimed', state: 'failed', claims: true });
+    await seedOtherTicket(t, aiko, { id: 'FIN-5', title: 'Failed before it claimed', state: 'failed', claims: false });
+    await seedOtherTicket(t, mateo, { id: 'FIN-6', title: 'Skipped', state: 'skipped', claims: false });
+    await seedOtherTicket(t, mateo, { id: 'FIN-7', title: 'Cancelled', state: 'cancelled', claims: false });
+    await seedOtherTicket(t, stranger, { id: 'FIN-8', title: 'Another company', state: 'executing', claims: true });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+
+    const held = await t.query(internal.work.itemsHeldElsewhere, { workItemId: ask });
+
+    expect(held.map((item) => item.externalId).sort()).toEqual(['FIN-1', 'FIN-3', 'FIN-4']);
+    expect(held.find((item) => item.externalId === 'FIN-1')).toEqual({
+      externalId: 'FIN-1', sourceSystem: 'linear', holderName: 'Mateo', sameEmployee: true,
+      title: TICKET_TITLE, state: 'completed', landedComment: FIRST_NOTE_ID,
+    });
+    expect(held.find((item) => item.externalId === 'FIN-3')).toEqual({
+      externalId: 'FIN-3', sourceSystem: 'linear', holderName: 'Aiko', sameEmployee: false,
+      title: 'Bank reconciliation for September', state: 'discovered', unclaimed: true,
+    });
+    // The ticket's own item is told about the ask's thread, the mirror, and never about itself.
+    const ticket = (await t.run(async (ctx) => await ctx.db.query('workItems').collect())).find((row) => row.externalId === 'FIN-1')!;
+    const fromTicket = await t.query(internal.work.itemsHeldElsewhere, { workItemId: ticket._id });
+    expect(fromTicket.map((item) => item.externalId)).not.toContain('FIN-1');
+    expect(fromTicket.map((item) => item.externalId)).toContain(ASK_EXTERNAL_ID);
+  });
+
+  it('is bounded, with work in flight ahead of finished work', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    for (let index = 0; index < HELD_ELSEWHERE_LIMIT + 8; index += 1) {
+      await seedOtherTicket(t, mateo, { id: `OLD-${index}`, title: `Finished ${index}`, state: 'completed', claims: true });
+    }
+    await seedOtherTicket(t, mateo, { id: 'FIN-3', title: 'In flight', state: 'executing', claims: true });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+
+    const held = await t.query(internal.work.itemsHeldElsewhere, { workItemId: ask });
+
+    expect(held).toHaveLength(HELD_ELSEWHERE_LIMIT);
+    expect(held[0]!.externalId).toBe('FIN-3');
+  });
+
+  it('lists nothing in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'completed', output: TICKET_COMPLETED_OUTPUT });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+
+    expect(await t.query(internal.work.itemsHeldElsewhere, { workItemId: ask })).toEqual([]);
   });
 });

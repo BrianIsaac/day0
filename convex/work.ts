@@ -49,7 +49,13 @@ import {
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
-import { providerItemKey, writeTargetIds, type WriteClaimHolder } from '../src/work/claim-key';
+import {
+  HELD_ELSEWHERE_LIMIT,
+  providerItemKey,
+  writeTargetIds,
+  type HeldExternalItem,
+  type WriteClaimHolder,
+} from '../src/work/claim-key';
 import { landedWritesOf } from '../src/work/landed-writes';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import {
@@ -265,6 +271,7 @@ export const workItemSeedFields = {
   sourceCategory: v.string(),
   sourceSystem: v.string(),
   externalId: v.string(),
+  externalAlias: v.optional(v.string()),
   title: v.string(),
   contentSummary: v.string(),
   contentRefs: v.array(v.string()),
@@ -286,6 +293,8 @@ export interface WorkItemSeedInput {
   sourceCategory: string;
   sourceSystem: string;
   externalId: string;
+  /** The item's other name, when the provider prints two. */
+  externalAlias?: string;
   title: string;
   contentSummary: string;
   contentRefs: string[];
@@ -294,6 +303,37 @@ export interface WorkItemSeedInput {
   owner?: string;
   requester?: string;
   replyTarget?: { channel: string; channelName?: string; threadTs?: string };
+}
+
+/**
+ * Give a row seeded before its item's other name was stored that name, on the
+ * poll that next reads the item, and its live claim with it.
+ *
+ * Args:
+ *   ctx: Mutation context of the seed.
+ *   existing: The row the item already has.
+ *   externalAlias: The other name this poll read, if the provider printed one.
+ *   externalClaimAlias: The claim key of that name.
+ */
+async function rememberExternalAlias(
+  ctx: MutationCtx,
+  existing: Doc<'workItems'>,
+  externalAlias: string | undefined,
+  externalClaimAlias: string | undefined,
+): Promise<void> {
+  if (externalAlias === undefined || !externalClaimAlias || existing.externalClaimAlias !== undefined) return;
+  if (existing.externalClaimKey === externalClaimAlias) return;
+  await ctx.db.patch(existing._id, { externalAlias, externalClaimAlias });
+  const held = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', existing._id))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of held) {
+    if (!claim.aliases?.includes(externalClaimAlias)) {
+      await ctx.db.patch(claim._id, { aliases: [...(claim.aliases ?? []), externalClaimAlias] });
+    }
+  }
 }
 
 /** Share intake's idempotency boundary with fixed evaluation task batches. */
@@ -308,18 +348,37 @@ export async function seedItemInTransaction(
     )
     .filter((q) => q.eq(q.field('agentId'), args.agentId))
     .first();
-  if (existing) return existing._id;
+  // An existing row is read again only while it still lacks the other name.
+  if (existing && (args.externalAlias === undefined || existing.externalClaimAlias !== undefined)) {
+    return existing._id;
+  }
   let externalClaimKey: string | undefined;
+  let externalClaimAlias: string | undefined;
   if (SURFACE_MODE === 'real') {
     const surface = await ctx.db
       .query('surfaces')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.sourceSystem))
       .first();
-    if (surface) externalClaimKey = providerItemKey(surface, args, SURFACE_MODE);
+    if (surface) {
+      externalClaimKey = providerItemKey(surface, args, SURFACE_MODE);
+      if (args.externalAlias !== undefined) {
+        externalClaimAlias = providerItemKey(
+          surface,
+          { sourceSystem: args.sourceSystem, externalId: args.externalAlias },
+          SURFACE_MODE,
+        );
+      }
+    }
   }
+  if (existing) {
+    await rememberExternalAlias(ctx, existing, args.externalAlias, externalClaimAlias);
+    return existing._id;
+  }
+  const { externalAlias, ...seed } = args;
   const id = await ctx.db.insert('workItems', {
-    ...args,
+    ...seed,
     ...(externalClaimKey ? { externalClaimKey } : {}),
+    ...(externalAlias !== undefined && externalClaimAlias ? { externalAlias, externalClaimAlias } : {}),
     state: 'discovered',
     observedAt: Date.now(),
     createdAt: Date.now(),
@@ -359,6 +418,57 @@ const reevaluationTriggerValidator = v.union(
   v.literal('surface'),
   v.literal('claim-released'),
 );
+
+/**
+ * The most re-admission keys a row remembers. Four kinds of change stamp a
+ * row (a policy change, a connecting surface, the verdict write and Check for
+ * new work, a registered skill); a row that has been sent back more often
+ * than this forgets its oldest key, and that change could buy it one more
+ * evaluation, never a loop.
+ */
+export const SPENT_REEVALUATION_KEYS = 16;
+
+/**
+ * Whether a change has already sent a row back for a fresh evaluation.
+ *
+ * Args:
+ *   row: The work item.
+ *   key: The idempotency key of the change.
+ *
+ * Returns:
+ *   True when the key is among those the row has spent.
+ */
+function reevaluationSpent(row: Pick<Doc<'workItems'>, 'reevaluation'>, key: string): boolean {
+  const stamp = row.reevaluation;
+  return stamp !== undefined && (stamp.key === key || (stamp.spent ?? []).includes(key));
+}
+
+/**
+ * The stamp of a re-admission, carrying the keys the row spent before it.
+ *
+ * Each of the four stampers has a once-per-change bound keyed on the row.
+ * One key would let a re-admission of another kind between two visits reset
+ * that bound, so the stamp keeps them all, newest last and bounded.
+ *
+ * Args:
+ *   row: The work item as it stands.
+ *   trigger: What sent it back.
+ *   key: The idempotency key of the change.
+ *   at: When.
+ *
+ * Returns:
+ *   The `reevaluation` record to store.
+ */
+function reevaluationStamp(
+  row: Pick<Doc<'workItems'>, 'reevaluation'>,
+  trigger: string,
+  key: string,
+  at: number,
+): NonNullable<Doc<'workItems'>['reevaluation']> {
+  const before = row.reevaluation ? (row.reevaluation.spent ?? [row.reevaluation.key]) : [];
+  const spent = [...before.filter((entry) => entry !== key), key].slice(-SPENT_REEVALUATION_KEYS);
+  return { trigger, key, at, spent };
+}
 
 export interface ReevaluatePendingArgs {
   agentId: Id<'agents'>;
@@ -476,14 +586,14 @@ export async function reevaluatePendingInTransaction(
       .take(REEVALUATION_BATCH);
     for (const row of rows) {
       examined += 1;
-      if (row.reevaluation?.key === args.key) continue;
+      if (reevaluationSpent(row, args.key)) continue;
       if (!verdictReturnsOn(row, args.trigger, args.key, surface)) continue;
       const previous = (row.verdict ?? {}) as ParkedVerdict;
       await ctx.db.patch(row._id, {
         state: 'discovered',
         verdict: undefined,
         skipReason: undefined,
-        reevaluation: { trigger: args.trigger, key: args.key, at: now },
+        reevaluation: reevaluationStamp(row, args.trigger, args.key, now),
       });
       await ctx.db.insert('events', {
         agentId: args.agentId,
@@ -556,6 +666,19 @@ export interface ClaimHolder {
 
 /** A holder in one of these states no longer holds its item. */
 const RELEASED_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['cancelled', 'skipped']);
+
+/**
+ * A row in one of these states that never claimed its item will not write it:
+ * a failed row that took no claim failed before there was anything to land.
+ */
+const NEVER_CLAIMED_DEAD_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'cancelled',
+  'skipped',
+  'failed',
+]);
+
+/** The most work items read for one provider item: one per employee that discovered it. */
+const DISCOVERED_FROM_LIMIT = 32;
 
 /**
  * The owner and key a row's provider item is claimed under, if it is claimed at all.
@@ -641,6 +764,7 @@ async function takeExternalClaim(
     key: scope.key,
     agentId: row.agentId,
     workItemId: row._id,
+    ...(row.externalClaimAlias ? { aliases: [row.externalClaimAlias] } : {}),
     claimedAt: now,
   });
   return { key: scope.key };
@@ -705,14 +829,18 @@ function claimRefusedVerdict(
  *   The comment's provider id, or undefined when the holder landed none.
  */
 function landedCommentOn(holding: Doc<'workItems'>): string | undefined {
-  const held = holding.externalId.toUpperCase();
+  const held = new Set(
+    [holding.externalId, holding.externalAlias]
+      .filter((name): name is string => name !== undefined)
+      .map((name) => name.toUpperCase()),
+  );
   return landedWritesOf(holding.output)
     .filter((write) => {
       const parsed = parseSurfaceAction(write.action);
       return (
         parsed.ok &&
         isAuditComment(parsed.action) &&
-        writeTargetIds(parsed.action, { class: 'kanban' }).some((target) => target.toUpperCase() === held)
+        writeTargetIds(parsed.action, { class: 'kanban' }).some((target) => held.has(target.toUpperCase()))
       );
     })
     .map((write) => write.applied.providerId)
@@ -729,7 +857,16 @@ function landedCommentOn(holding: Doc<'workItems'>): string | undefined {
  * note on it and both moved it to Done, under two different claims. The
  * apply path asks here before a write is sent, across every employee of the
  * owner. A completed or failed holder still holds; a cancelled or skipped
- * one does not, whether or not its claim was stamped released. Nothing is
+ * one does not, whether or not its claim was stamped released.
+ *
+ * A claim is not the whole of it. In that run the ask was approved at
+ * 03:03:42 and wrote FIN-1; FIN-1's own item took its claim at 03:03:59, so
+ * for seventeen seconds nobody held the key. The item a live work item was
+ * discovered from is that work item's to write from the moment it is
+ * discovered, claimed or not, so whichever of the two reaches its apply
+ * first, one of them writes. A row that never claimed and is skipped,
+ * cancelled or failed will not write it and holds nothing. The writer is
+ * never withheld from the item it was itself discovered from. Nothing is
  * released here: this is a read.
  *
  * Args:
@@ -753,31 +890,164 @@ export const writeClaimHolder = internalQuery({
       .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', args.surfaceSlug))
       .first();
     if (!surface) return null;
+    const holderOf = async (
+      target: string,
+      holding: Doc<'workItems'>,
+      unclaimed: boolean,
+    ): Promise<WriteClaimHolder> => {
+      const holder = await ctx.db.get(holding.agentId);
+      const landedComment = landedCommentOn(holding);
+      return {
+        target,
+        holderName: holder?.name ?? 'another employee',
+        sameEmployee: holding.agentId === row.agentId,
+        title: holding.title,
+        state: holding.state,
+        ...(landedComment ? { landedComment } : {}),
+        ...(unclaimed ? { unclaimed: true } : {}),
+      };
+    };
     for (const target of args.targets) {
       const key = providerItemKey(surface, { sourceSystem: surface.slug, externalId: target }, SURFACE_MODE);
-      if (key === undefined) continue;
+      if (key === undefined || row.externalClaimKey === key || row.externalClaimAlias === key) continue;
       const live = await ctx.db
         .query('externalClaims')
         .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
         .filter((q) => q.eq(q.field('releasedAt'), undefined))
         .collect();
+      if (live.some((claim) => claim.workItemId === row._id)) continue;
       for (const claim of live) {
-        if (claim.workItemId === row._id) break;
         const holding = await ctx.db.get(claim.workItemId);
         if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) continue;
-        const holder = await ctx.db.get(claim.agentId);
-        const landedComment = landedCommentOn(holding);
-        return {
-          target,
-          holderName: holder?.name ?? 'another employee',
-          sameEmployee: claim.agentId === row.agentId,
-          title: holding.title,
-          state: holding.state,
-          ...(landedComment ? { landedComment } : {}),
-        };
+        return await holderOf(target, holding, false);
       }
+      // The work items discovered from the item under either of its names:
+      // one that holds a claim keyed by the other name, then one that has
+      // not claimed yet.
+      const named = [
+        ...(await ctx.db
+          .query('workItems')
+          .withIndex('by_claim_key', (q) => q.eq('externalClaimKey', key))
+          .take(DISCOVERED_FROM_LIMIT)),
+        ...(await ctx.db
+          .query('workItems')
+          .withIndex('by_claim_alias', (q) => q.eq('externalClaimAlias', key))
+          .take(DISCOVERED_FROM_LIMIT)),
+      ];
+      let waiting: Doc<'workItems'> | undefined;
+      for (const holding of named) {
+        if (holding._id === row._id || isRevocationTrialRow(holding)) continue;
+        const employee = await ctx.db.get(holding.agentId);
+        if (employee?.userId !== userId) continue;
+        const claimed = await ctx.db
+          .query('externalClaims')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', holding._id))
+          .filter((q) => q.eq(q.field('releasedAt'), undefined))
+          .first();
+        if (claimed) {
+          if (!RELEASED_HOLDER_STATES.has(holding.state)) return await holderOf(target, holding, false);
+        } else if (!NEVER_CLAIMED_DEAD_STATES.has(holding.state)) {
+          waiting ??= holding;
+        }
+      }
+      if (waiting) return await holderOf(target, waiting, true);
     }
     return null;
+  },
+});
+
+/**
+ * The states read for the executor's list of items held elsewhere, work in
+ * flight first and finished work last, so a bounded list keeps what is about
+ * to write ahead of what already has.
+ */
+const HELD_ELSEWHERE_STATES: ReadonlyArray<Doc<'workItems'>['state']> = [
+  'executing',
+  'actions-pending',
+  'plan-approved',
+  'plan-pending',
+  'claimed',
+  'discovered',
+  'deferred',
+  'needs-skill',
+  'completed',
+  'failed',
+];
+/** States in which a row has not taken its claim yet. */
+const UNCLAIMED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['discovered', 'deferred', 'needs-skill']);
+/** The most employees of one owner read for the list, the asking one first. */
+const HELD_ELSEWHERE_EMPLOYEES = 16;
+
+/**
+ * The external items other work items of the company hold, for the executor's grounding.
+ *
+ * `writeClaimHolder` withholds a write at the apply; a reply authored in the
+ * same phase as the write is written before that and cannot know. This is
+ * the same rule read ahead of authoring: every live work item of the owner's
+ * employees that was discovered from an external item, other than the asking
+ * one, with the last comment it landed there. Live as the guard reads it: a
+ * cancelled or skipped row holds nothing, and a failed one only if it took
+ * its claim. Bounded by `HELD_ELSEWHERE_LIMIT`: each read asks for no more
+ * rows than the list still has room for, newest first, and the reads stop
+ * once it is full. Real mode only; the caller scrubs the owner's values.
+ *
+ * Args:
+ *   workItemId: The work item about to be authored.
+ *
+ * Returns:
+ *   The held items, work in flight first; empty in mock mode.
+ */
+export const itemsHeldElsewhere = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<HeldExternalItem[]> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    const asking = await ctx.db.get(row.agentId);
+    const userId = asking?.userId;
+    if (!asking || !userId) return [];
+    const colleagues = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .take(HELD_ELSEWHERE_EMPLOYEES);
+    const employees = [asking, ...colleagues.filter((employee) => employee._id !== asking._id)];
+    const own = new Set([row.externalClaimKey, row.externalClaimAlias]);
+    const held: HeldExternalItem[] = [];
+    for (const state of HELD_ELSEWHERE_STATES) {
+      for (const employee of employees) {
+        if (held.length >= HELD_ELSEWHERE_LIMIT) return held;
+        const rows = await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', employee._id).eq('state', state))
+          .order('desc')
+          .take(HELD_ELSEWHERE_LIMIT - held.length);
+        for (const holding of rows) {
+          if (held.length >= HELD_ELSEWHERE_LIMIT) break;
+          if (holding._id === row._id || holding.externalClaimKey === undefined) continue;
+          if (own.has(holding.externalClaimKey) || isRevocationTrialRow(holding)) continue;
+          if (state === 'failed') {
+            const claimed = await ctx.db
+              .query('externalClaims')
+              .withIndex('by_work_item', (q) => q.eq('workItemId', holding._id))
+              .filter((q) => q.eq(q.field('releasedAt'), undefined))
+              .first();
+            if (!claimed) continue;
+          }
+          const landedComment = landedCommentOn(holding);
+          held.push({
+            externalId: holding.externalId,
+            ...(holding.externalAlias ? { externalAlias: holding.externalAlias } : {}),
+            sourceSystem: holding.sourceSystem,
+            holderName: employee.name,
+            sameEmployee: employee._id === row.agentId,
+            title: holding.title,
+            state: holding.state,
+            ...(landedComment ? { landedComment } : {}),
+            ...(UNCLAIMED_STATES.has(holding.state) ? { unclaimed: true } : {}),
+          });
+        }
+      }
+    }
+    return held;
   },
 });
 
@@ -854,9 +1124,10 @@ type SatisfiedTrigger = 'verdict-write' | 'check' | 'skill-registered';
  *
  * A `needs-skill` verdict naming a skill that registered meanwhile is not
  * answered here. That race belongs to `requeueBehindRegisteredSkill`, which
- * the proposal step reaches in every mode: a second reader with its own key
- * on the row's one `reevaluation` record would overwrite the owner's, and the
- * two would re-admit the row in turn for ever.
+ * the proposal step reaches in every mode, so the race has one owner and one
+ * key whatever the mode. (Two readers with a key each once overwrote one
+ * another on the row's single `reevaluation` key and re-admitted the row in
+ * turn for ever; the row now keeps every key it has spent.)
  *
  * Args:
  *   ctx: Mutation context.
@@ -965,8 +1236,9 @@ function skillRegistrationKey(skill: Doc<'skills'>): string {
  * skill with nobody left to move it. The verdict write parks it as written;
  * the proposal step that follows (`skills.propose`) calls this, in every
  * mode, and Check for new work calls it for a row whose proposal step never
- * ran. The row is sent back once per registration, keyed on its
- * `reevaluation` record. A second `needs-skill` naming the same registration
+ * ran. The row is sent back once per registration, keyed among the keys its
+ * `reevaluation` record has spent, so no other kind of re-admission in
+ * between buys the registration a second turn. A second `needs-skill` naming the same registration
  * was decided with the skill on the list, so the skill does not cover the
  * row: it is skipped with that reason, which leaves it a Retry on its card,
  * rather than evaluated for ever or parked where nothing moves it.
@@ -990,7 +1262,7 @@ export async function requeueBehindRegisteredSkill(
   const item = await ctx.db.get(workItemId);
   if (!item || item.state !== 'needs-skill' || item.agentId !== skill.agentId) return 'left';
   const key = skillRegistrationKey(skill);
-  if (item.reevaluation?.key === key) {
+  if (reevaluationSpent(item, key)) {
     await applyVerdict(ctx, workItemId, {
       decision: 'skip',
       reason: `registered skill "${skill.name}" was tried and does not cover this item`,
@@ -1000,7 +1272,7 @@ export async function requeueBehindRegisteredSkill(
   const at = Date.now();
   await ctx.db.patch(workItemId, {
     proposedSkillId: skill._id,
-    reevaluation: { trigger: 'skill-registered', key, at },
+    reevaluation: reevaluationStamp(item, 'skill-registered', key, at),
   });
   await applyVerdict(ctx, workItemId, {
     decision: 'pending-reevaluation',
@@ -1095,11 +1367,11 @@ async function readmitSatisfiedInTransaction(
         continue;
       }
       const satisfied = await waitSatisfiedBy(ctx, args.agentId, waited, now);
-      if (!satisfied || row.reevaluation?.key === satisfied.key) continue;
+      if (!satisfied || reevaluationSpent(row, satisfied.key)) continue;
       await ctx.db.patch(row._id, {
         state: 'discovered',
         verdict: undefined,
-        reevaluation: { trigger: 'check', key: satisfied.key, at: now },
+        reevaluation: reevaluationStamp(row, 'check', satisfied.key, now),
       });
       await logSatisfiedRequeue(ctx, row, 'check', satisfied.key, waited, now);
       await scheduleNextStep(ctx, { ...row, state: 'discovered', verdict: undefined });
@@ -1212,7 +1484,7 @@ export async function applyVerdict(
     const at = Date.now();
     const waited = effective as WaitingVerdict;
     const satisfied = await waitSatisfiedBy(ctx, row.agentId, waited, at);
-    if (satisfied && row.reevaluation?.key !== satisfied.key) {
+    if (satisfied && !reevaluationSpent(row, satisfied.key)) {
       readmission = { key: satisfied.key, waited, at };
       effective = {
         decision: 'pending-reevaluation',
@@ -1240,7 +1512,7 @@ export async function applyVerdict(
     // evaluable again the moment a slot frees.
     ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
     ...(readmission
-      ? { reevaluation: { trigger: 'verdict-write', key: readmission.key, at: readmission.at } }
+      ? { reevaluation: reevaluationStamp(row, 'verdict-write', readmission.key, readmission.at) }
       : {}),
   });
   await ctx.db.insert('events', {

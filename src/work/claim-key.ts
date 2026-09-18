@@ -1,4 +1,5 @@
 import type { SurfaceMode } from '../lib/surface-mode';
+import { redactTokenShapes } from '../surfaces/redact';
 import {
   ISSUE_KEYS,
   actionIntent,
@@ -140,9 +141,9 @@ function httpTicketReferences(parsed: ParsedHttpRequest): string[] {
  *
  * A ticket write names its ticket in its arguments, its request body or its
  * path; a chat reply names the message it sits under as intake keys one,
- * `<channel>:<thread>`. A ticket reference is also offered in upper case,
- * since a tracker accepts `fin-1` for `FIN-1` and intake stores the
- * identifier as the provider prints it. A read, a top-level chat post and a
+ * `<channel>:<thread>`. A ticket reference is also offered in upper and in
+ * lower case, since a tracker accepts `fin-1` for `FIN-1` and a UUID in
+ * capitals, and intake stores each name as the provider prints it. A read, a top-level chat post and a
  * write that names no item address nothing another work item could hold.
  *
  * Args:
@@ -160,7 +161,7 @@ export function writeTargetIds(parsed: ParsedSurfaceAction, surface: { class: st
     return channel && thread ? [`${channel}:${thread}`] : [];
   }
   const references = parsed.kind === 'mcp.call' ? targetIssueReferences(parsed) : httpTicketReferences(parsed);
-  return [...new Set(references.flatMap((ref) => [ref, ref.toUpperCase()]))].slice(0, WRITE_TARGET_LIMIT);
+  return [...new Set(references.flatMap((ref) => [ref, ref.toUpperCase(), ref.toLowerCase()]))].slice(0, WRITE_TARGET_LIMIT);
 }
 
 /** The work item holding an external item a write addresses, as the ledger names it. */
@@ -174,6 +175,11 @@ export interface WriteClaimHolder {
   state: string;
   /** The provider id of the last comment the holder landed on the item. */
   landedComment?: string;
+  /**
+   * True when the holder was discovered from the item and has not claimed it
+   * yet: the item is its work all the same, whichever of the two writes first.
+   */
+  unclaimed?: boolean;
 }
 
 /** How the ledger line of a write withheld for another work item's claim begins. */
@@ -182,6 +188,10 @@ export const WITHHELD_BY_CLAIM_PREFIX = "withheld for another work item's claim:
 /**
  * The ledger line of a write withheld because another work item holds its target.
  *
+ * A holder that has not claimed the item yet has landed nothing to cite, so
+ * the line says where the write will be made instead: the item has a work
+ * item of its own, and with whom.
+ *
  * Args:
  *   holder: The holding work item.
  *
@@ -189,8 +199,12 @@ export const WITHHELD_BY_CLAIM_PREFIX = "withheld for another work item's claim:
  *   The reason, naming the holder, its state and the comment it landed.
  */
 export function withheldByClaimReason(holder: WriteClaimHolder): string {
-  const owner = holder.sameEmployee ? "this employee's" : `${holder.holderName}'s`;
   const landed = holder.landedComment ? `, which landed comment ${holder.landedComment} on it` : '';
+  if (holder.unclaimed) {
+    const who = holder.sameEmployee ? 'this employee' : holder.holderName;
+    return `${WITHHELD_BY_CLAIM_PREFIX}${holder.target} has its own work item with ${who}, "${holder.title}" (${holder.state})${landed}; ${landed ? 'it is written there' : 'it will be written there'}, and one work item writes an external item, so this write is not sent`;
+  }
+  const owner = holder.sameEmployee ? "this employee's" : `${holder.holderName}'s`;
   return `${WITHHELD_BY_CLAIM_PREFIX}${holder.target} is held by ${owner} work item "${holder.title}" (${holder.state})${landed}; one work item writes an external item, so this write is not sent`;
 }
 
@@ -206,4 +220,80 @@ export function withheldByClaimReason(holder: WriteClaimHolder): string {
  */
 export function withheldByClaim(row: { held?: boolean; reason?: string } | undefined): boolean {
   return row?.held === true && row.reason?.startsWith(WITHHELD_BY_CLAIM_PREFIX) === true;
+}
+
+/** An external item another work item of the company has, as the executor is told before it authors. */
+export interface HeldExternalItem {
+  externalId: string;
+  /** The item's other name, when the provider prints two. */
+  externalAlias?: string;
+  /** The holder's surface the item was discovered on. */
+  sourceSystem: string;
+  holderName: string;
+  /** Whether the holder is another item of the authoring employee. */
+  sameEmployee: boolean;
+  title: string;
+  state: string;
+  /** The provider id of the last comment the holder landed on the item. */
+  landedComment?: string;
+  /** True when the holder was discovered from the item and has not claimed it yet. */
+  unclaimed?: boolean;
+}
+
+/** The most held items one prompt lists. */
+export const HELD_ELSEWHERE_LIMIT = 12;
+const HELD_TITLE_CHARS = 120;
+
+/**
+ * One row per held item, as the prompt lists them: surface, item, whose work
+ * item has it, that work item and its state, and what it has landed.
+ *
+ * The rows alone are what a reply may cite as evidence; the rule printed
+ * beside them in the prompt is an instruction and vouches for nothing. Each
+ * row passes the structural redaction the ledger prompt applies.
+ *
+ * Args:
+ *   items: The held items, already scrubbed of the owner's exact values.
+ *
+ * Returns:
+ *   At most `HELD_ELSEWHERE_LIMIT` rows.
+ */
+export function heldElsewhereRows(items: readonly HeldExternalItem[] | undefined): string[] {
+  return (items ?? []).slice(0, HELD_ELSEWHERE_LIMIT).map((item, index): string => {
+    const title = item.title.length > HELD_TITLE_CHARS ? `${item.title.slice(0, HELD_TITLE_CHARS)} ...` : item.title;
+    const names = item.externalAlias ? `${item.externalId} (also ${item.externalAlias})` : item.externalId;
+    const who = item.sameEmployee ? 'this employee' : item.holderName;
+    const state = item.unclaimed ? `${item.state}, not claimed yet` : item.state;
+    const finished = item.state === 'completed' || item.state === 'failed';
+    const landed = item.landedComment
+      ? `landed comment ${item.landedComment}`
+      : finished ? 'no comment landed' : 'nothing landed yet';
+    return redactTokenShapes(`  ${index}. ${item.sourceSystem} · ${names} · ${who} · "${title}" (${state}) · ${landed}`);
+  });
+}
+
+/**
+ * The prompt section that tells the executor, before it authors, which
+ * external items other work items hold and what has landed on them.
+ *
+ * On 19 September an ask authored its thread reply and a note on FIN-1 in one
+ * phase; the apply withholds the note, but a reply written before the apply
+ * cannot know that. Told here, the reply says where the note is or will be.
+ *
+ * Args:
+ *   items: The held items, already scrubbed of the owner's exact values.
+ *
+ * Returns:
+ *   Prompt lines, empty when nothing is held elsewhere.
+ */
+export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefined): string[] {
+  if (!items || items.length === 0) return [];
+  const rows = heldElsewhereRows(items);
+  return [
+    '',
+    `--- External items other work items hold (${items.length}${items.length > rows.length ? `, first ${rows.length} shown` : ''}) ---`,
+    'Each line: surface · item · whose work item has it · that work item and its state · what it has landed on the item. One work item writes an external item.',
+    ...rows,
+    'Do not author a comment, a state change or a thread reply addressed to an item listed here: it is withheld and never sent. When this work asks for something that belongs on one, say in your reply that the item has its own work item, with whom, and that it will be posted there; when a comment has landed, cite it by its id instead of posting another.',
+  ];
 }
