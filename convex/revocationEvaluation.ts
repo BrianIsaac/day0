@@ -35,13 +35,14 @@ const TRIAL_EXTERNAL_ID_PREFIX = 'EVAL-';
  * the trial measures.
  *
  * Args:
- *   row: The work row's external id.
+ *   row: The work row's source system and external id.
  *
  * Returns:
  *   True for a trial row.
  */
-export function isRevocationTrialRow(row: Pick<Doc<'workItems'>, 'externalId'>): boolean {
+export function isRevocationTrialRow(row: Pick<Doc<'workItems'>, 'sourceSystem' | 'externalId'>): boolean {
   return (
+    row.sourceSystem === 'slack' &&
     row.externalId.startsWith(TRIAL_EXTERNAL_ID_PREFIX) &&
     TRIAL_ID.test(row.externalId.slice(TRIAL_EXTERNAL_ID_PREFIX.length))
   );

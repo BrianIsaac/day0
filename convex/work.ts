@@ -313,6 +313,7 @@ export async function seedItemInTransaction(
     _id: id,
     agentId: args.agentId,
     state: 'discovered',
+    sourceSystem: args.sourceSystem,
     externalId: args.externalId,
   });
   return id;

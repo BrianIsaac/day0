@@ -610,6 +610,17 @@ describe('the server drives the work loop in real mode', (): void => {
     expect(await scheduledNames(harness)).toEqual([]);
   });
 
+  it('does not exempt ordinary work that shares a trial-shaped external id', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+
+    await seedTicket(harness, agentId, 'EVAL-rev-scope-01');
+
+    expect(await scheduledNames(harness)).toContain('workActions:evaluateWorkItemInternal');
+  });
+
   it('schedules nothing in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
     vi.useFakeTimers();

@@ -117,7 +117,7 @@ export const OPEN_WORK_STATES = [
 /** What `scheduleNextStep` reads of a row, after its transition. */
 export type LoopRow = Pick<
   Doc<'workItems'>,
-  '_id' | 'agentId' | 'state' | 'externalId' | 'plan' | 'verdict'
+  '_id' | 'agentId' | 'state' | 'sourceSystem' | 'externalId' | 'plan' | 'verdict'
 >;
 
 /**

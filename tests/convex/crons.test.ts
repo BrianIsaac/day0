@@ -313,6 +313,8 @@ describe('the stalled-step sweep', (): void => {
       for (let index = 0; index < 100; index += 1) {
         await ctx.db.insert('workItems', {
           ...row(agentId, `EVAL-rev-scope-${String(index).padStart(2, '0')}`, now),
+          sourceSystem: 'slack',
+          sourceCategory: 'event-stream',
           state: 'discovered',
         });
       }
