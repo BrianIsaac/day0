@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { agentIdFromUrl, COMPLETE_LINE, REPLY_PLACEHOLDER } from '../../../scripts/rehearsal/driver';
+import { agentIdFromUrl, ASK_AGAIN, COMPLETE_LINE, REPLY_PLACEHOLDER } from '../../../scripts/rehearsal/driver';
 
 const DASHBOARD = readFileSync('app/agent/[agentId]/AgentDashboard.tsx', 'utf8');
 const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
@@ -16,6 +16,15 @@ describe('the dashboard driver', (): void => {
     );
     expect(agentIdFromUrl('http://localhost:45213/agent/abc#surfaces')).toBe('abc');
     expect(() => agentIdFromUrl('http://localhost:45213/')).toThrow('not an agent page');
+  });
+
+  it('asks a failed turn again instead of answering a question nobody put', (): void => {
+    // A failed turn opens the composer too, so waiting for the composer alone
+    // would type the next scripted answer under an empty or half-said turn.
+    expect(CHAT).toMatch(new RegExp(`>\\s*${ASK_AGAIN}\\s*</button>`));
+    const wait = DRIVER.slice(DRIVER.indexOf('async waitForAgentTurn'), DRIVER.indexOf('async sendReply'));
+    expect(wait).toContain('name: ASK_AGAIN');
+    expect(wait.indexOf('name: ASK_AGAIN')).toBeLessThan(wait.indexOf('composer.isEnabled()'));
   });
 
   it("clicks the dashboard's own control texts, so a copy change here fails before a run does", (): void => {

@@ -52,6 +52,10 @@ export interface Dashboard {
 export const REPLY_PLACEHOLDER = 'type your reply…';
 /** The line the chat shows once the seventh topic is answered. */
 export const COMPLETE_LINE = 'conversation complete';
+/** The control a failed turn (empty, cut off, or a stream error) offers in the 1:1. */
+export const ASK_AGAIN = 'Ask again';
+/** How many failed turns one wait asks again before the 1:1 is judged stuck. */
+const MAX_ASK_AGAIN = 3;
 
 /**
  * The agent id out of the agent page's URL.
@@ -135,9 +139,19 @@ export class PlaywrightDashboard implements Dashboard {
   async waitForAgentTurn(timeoutMs: number): Promise<'reply' | 'complete'> {
     const composer = this.page.getByPlaceholder(REPLY_PLACEHOLDER);
     const complete = this.page.getByText(COMPLETE_LINE, { exact: false }).first();
+    const askAgain = this.page.getByRole('button', { name: ASK_AGAIN, exact: true });
     const deadline = Date.now() + timeoutMs;
+    let asked = 0;
     while (Date.now() < deadline) {
       if (await complete.isVisible()) return 'complete';
+      // A failed turn opens the composer as well, so it is checked first: the
+      // manager asks again, and does not answer a question that was never put.
+      if (await askAgain.isVisible()) {
+        if (asked === MAX_ASK_AGAIN) throw new Error(`the 1:1 failed a turn ${MAX_ASK_AGAIN + 1} times running`);
+        asked += 1;
+        await askAgain.click();
+        continue;
+      }
       if ((await composer.count()) > 0 && (await composer.isEnabled())) return 'reply';
       await this.page.waitForTimeout(500);
     }
