@@ -255,7 +255,8 @@ Options:
   --from-volume <name>   snapshot: source volume (default: ${DEFAULT_SNAPSHOT_SOURCE})
   --snapshot <file>      snapshot: output path; restore: input path
   --replace              restore: drop an existing target volume first (never a protected one)
-  --out <dir>            offline-rung: results directory (default: ${KIT_DIR}/revocation-<stamp>)
+  --out <dir>            offline-rung: new results directory, SHA256SUMS included
+                         (default: ${KIT_DIR}/revocation-<stamp>; evidence: evaluation/results/revocation-<stamp>)
   --volumes              down: also remove this project's volumes
   --probe-timeout <s>    preflight: per-request ceiling for the probe (default 15)
 `;
@@ -921,12 +922,10 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
   return [video, rung, warm];
 }
 
-const NOT_BUILT = 'phase 11: not built yet';
-
 export function snapshotRefusal(volume: string, runningHolders: readonly string[]): string | undefined {
   void volume;
   void runningHolders;
-  throw new Error(NOT_BUILT);
+  throw new Error('phase 11: not built yet');
 }
 
 export interface VolumeClone {
@@ -1094,28 +1093,100 @@ export function redactorVenvRefusal(device: VenvDevice, venv: string): string | 
 }
 
 export interface RungReadiness {
+  /** The bed. */
   project: string;
+  /** Its containers, as `docker ps` lists them. */
   services: readonly ServiceRow[];
+  /** What `.env.local` declares. */
   values: Readonly<Record<string, string>>;
+  /** The host ports derived from the same file. */
   ports: BedPorts;
 }
 
+/**
+ * Why the offline rung cannot run on this bed, if it cannot.
+ *
+ * The doubles must be running, the redactor healthy (real-mode documentation
+ * sync fails closed without it and the driver's folder sync would stop),
+ * the file must say real mode and name the redactor, and the project's own
+ * backend must be what publishes the port the file addresses, or the driver
+ * would deploy its agent on whatever listens there.
+ *
+ * Args:
+ *   input: The bed, its containers, the file and its ports.
+ *
+ * Returns:
+ *   The refusal naming the fix, or undefined when the rung may run.
+ */
 export function offlineRungRefusal(input: RungReadiness): string | undefined {
-  void input;
-  throw new Error(NOT_BUILT);
+  const row = (name: string): ServiceRow | undefined =>
+    input.services.find((candidate: ServiceRow): boolean => candidate.service === name);
+  for (const name of ['backend', 'fake-slack', 'looker-tile']) {
+    if (row(name)?.state !== 'running') {
+      return `${name} is not running in project ${input.project}; run pnpm demo:bed up first.`;
+    }
+  }
+  const redactor = row('redactor');
+  if (redactor?.state !== 'running') {
+    return `the redactor is ${redactor ? redactor.state : 'absent'} in project ${input.project}; ${REDACTOR_UNHEALTHY_FIX}.`;
+  }
+  if (redactor.health !== 'healthy') {
+    return redactor.health === 'starting'
+      ? `the redactor is still loading its model in project ${input.project}; ${REDACTOR_UNHEALTHY_FIX}.`
+      : `the redactor is not healthy (${redactor.health}) in project ${input.project}; ${REDACTOR_UNHEALTHY_FIX}.`;
+  }
+  if ((input.values.DAY0_SURFACE_MODE || 'mock') !== 'real') {
+    return `DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`;
+  }
+  if (!input.values.DAY0_REDACTOR_URL) return `${REDACTOR_UNWIRED_FIX}.`;
+  const published = publishedHostPort(row('backend')?.ports ?? '', CONTAINER_BACKEND_PORT);
+  if (published === undefined) {
+    return `the backend of project ${input.project} does not publish port ${CONTAINER_BACKEND_PORT}, so nothing of this project serves ${ENV_FILE}'s port ${input.ports.backend}.`;
+  }
+  if (published !== input.ports.backend) {
+    return (
+      `the backend of project ${input.project} publishes ${CONTAINER_BACKEND_PORT} on host port ${published}, ` +
+      `but ${ENV_FILE} addresses ${input.ports.backend}; the rung would write to whatever listens there. ` +
+      `Set CONVEX_PORT and the two Convex URLs to ${published}, or bring the bed up from this file.`
+    );
+  }
+  return undefined;
 }
 
+/**
+ * Why the rung may not write its evidence there, if it may not.
+ *
+ * A results directory is written once: the driver would overwrite the four
+ * files in place, and `evaluation/results/` is frozen evidence.
+ *
+ * Args:
+ *   out: The resolved `--out` directory.
+ *   exists: Whether anything is at that path.
+ *
+ * Returns:
+ *   The refusal, or undefined for a path nothing is at.
+ */
 export function rungOutputRefusal(out: string, exists: boolean): string | undefined {
-  void out;
-  void exists;
-  throw new Error(NOT_BUILT);
+  if (!exists) return undefined;
+  return `${out} already exists; a results directory is written once. Pass --out <new directory>.`;
 }
 
+/**
+ * `SHA256SUMS` as `sha256sum` writes and `sha256sum -c` reads it.
+ *
+ * Args:
+ *   digests: One hex digest per file, in any order.
+ *
+ * Returns:
+ *   One `<digest>  <name>` line per file, sorted by name, newline-terminated.
+ */
 export function sha256SumsText(
   digests: ReadonlyArray<{ name: string; digest: string }>,
 ): string {
-  void digests;
-  throw new Error(NOT_BUILT);
+  return [...digests]
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map(({ name, digest }): string => `${digest}  ${name}\n`)
+    .join('');
 }
 
 /* ------------------------------------------------------------------------- */
@@ -2099,20 +2170,18 @@ async function preflight(options: DemoBedOptions): Promise<number> {
 async function offlineRung(options: DemoBedOptions): Promise<void> {
   assertBedProject(options.project);
   const values = readEnvFile();
-  assertBedTarget(options.project, values, bedPorts(values));
-  const services = projectServices(options.project) ?? [];
-  for (const name of ['backend', 'fake-slack', 'looker-tile']) {
-    if (
-      !services.some((row: ServiceRow): boolean => row.service === name && row.state === 'running')
-    ) {
-      throw new Error(
-        `${name} is not running in project ${options.project}; run pnpm demo:bed up first.`,
-      );
-    }
-  }
-  if ((values.DAY0_SURFACE_MODE || 'mock') !== 'real') {
-    throw new Error(`DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`);
-  }
+  const ports = bedPorts(values);
+  assertBedTarget(options.project, values, ports);
+  const refusal = offlineRungRefusal({
+    project: options.project,
+    services: projectServices(options.project) ?? [],
+    values,
+    ports,
+  });
+  if (refusal) throw new Error(refusal);
+  const out = resolve(options.out ?? `${KIT_DIR}/revocation-${stamp()}`);
+  const outRefusal = rungOutputRefusal(out, existsSync(out));
+  if (outRefusal) throw new Error(outRefusal);
   const boss = await bossClient(values);
   if (!('reason' in boss)) {
     const { api } = await import('../convex/_generated/api');
@@ -2132,8 +2201,6 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
       );
     }
   }
-  const ports = bedPorts(values);
-  const out = resolve(options.out ?? `${KIT_DIR}/revocation-${stamp()}`);
   const env: Values = {
     ...bedEnvironment(options, values),
     DAY0_EVAL_COMPOSE_PROJECT: options.project,
@@ -2150,11 +2217,24 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
   const took = elapsed(startedAt);
   if (result.status !== 0)
     throw new Error(`eval:revocation failed after ${took} (status ${result.status}).`);
-  const report = `${out}/trials.md`;
+  const missing = RUNG_OUTPUT_FILES.filter((name: string): boolean => !existsSync(`${out}/${name}`));
+  if (missing.length > 0) {
+    throw new Error(`eval:revocation returned without writing ${missing.join(', ')} in ${out}.`);
+  }
+  writeFileSync(
+    `${out}/SHA256SUMS`,
+    sha256SumsText(
+      RUNG_OUTPUT_FILES.map((name: string): { name: string; digest: string } => ({
+        name,
+        digest: sha256(`${out}/${name}`),
+      })),
+    ),
+    'utf8',
+  );
   log('');
   log(`Wall clock: ${took}`);
-  if (existsSync(report))
-    for (const line of revocationSummary(readFileSync(report, 'utf8'))) log(line);
+  for (const line of revocationSummary(readFileSync(`${out}/trials.md`, 'utf8'))) log(line);
+  log(`Wrote ${out}/SHA256SUMS over ${RUNG_OUTPUT_FILES.join(', ')}; check with: (cd ${out} && sha256sum -c SHA256SUMS)`);
 }
 
 /* ---------------------------------- down ----------------------------------- */
