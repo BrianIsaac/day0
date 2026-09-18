@@ -778,7 +778,7 @@ async function waitSatisfiedBy(
 ): Promise<{ key: string; landed: string } | undefined> {
   if (verdict.decision === 'defer' && verdict.reason === 'awaiting-connection') {
     const missing = verdict.missingSurface;
-    if (missing === undefined) return undefined;
+    if (typeof missing !== 'string') return undefined;
     // The surfaces as the evaluation reads them: a browser-driven surface this
     // deployment cannot drive is not connected, whatever its last probe said.
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
@@ -798,8 +798,13 @@ async function waitSatisfiedBy(
       : undefined;
   }
   if (verdict.decision === 'defer' && verdict.reason === 'awaiting-permission') {
-    const scopes = [...new Set(verdict.missingPermissions ?? [])].sort();
-    if (scopes.length === 0) return undefined;
+    // The verdict arrives as `v.any()`: a shape the evaluator never writes
+    // parks as written rather than failing the write that ends the step.
+    const named = Array.isArray(verdict.missingPermissions) ? verdict.missingPermissions : [];
+    const scopes = [...new Set(named)]
+      .filter((scope): scope is string => typeof scope === 'string')
+      .sort();
+    if (scopes.length === 0 || scopes.length !== new Set(named).size) return undefined;
     const grants: string[] = [];
     for (const scope of scopes) {
       const grant = (
@@ -813,7 +818,11 @@ async function waitSatisfiedBy(
     }
     return { key: `grants:${grants.join(',')}`, landed: `${scopes.join(', ')} granted` };
   }
-  if (verdict.decision === 'needs-skill' && typeof verdict.suggestedSkillName === 'string') {
+  if (
+    verdict.decision === 'needs-skill' &&
+    typeof verdict.suggestedSkillName === 'string' &&
+    verdict.suggestedSkillName !== ''
+  ) {
     const name = verdict.suggestedSkillName;
     const skill = (
       await ctx.db

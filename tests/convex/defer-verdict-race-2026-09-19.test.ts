@@ -544,6 +544,33 @@ describe('the other verdicts that wait on something', (): void => {
     expect((await readItem(harness, unnamed)).state).toBe('needs-skill');
   });
 
+  it('parks a malformed waiting verdict as written rather than failing the write', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId } = await seedPriya(harness);
+    const permissions = await insertRow(harness, agentId, 'REVOPS-34');
+    const surface = await insertRow(harness, agentId, 'REVOPS-35');
+    const skill = await insertRow(harness, agentId, 'REVOPS-36');
+
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: permissions,
+      verdict: { decision: 'defer', reason: 'awaiting-permission', missingPermissions: 7 },
+    });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: surface,
+      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: ['linear'] },
+    });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId: skill,
+      verdict: { decision: 'needs-skill', reason: 'none', suggestedSkillName: '' },
+    });
+
+    expect((await readItem(harness, permissions)).state).toBe('deferred');
+    expect((await readItem(harness, surface)).state).toBe('deferred');
+    expect((await readItem(harness, skill)).state).toBe('needs-skill');
+  });
+
   it('writes a satisfied defer exactly as before in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(contractSchema(), allConvexModules());
