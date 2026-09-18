@@ -42,6 +42,7 @@ export default defineConfig({
             'tests/app/**/*.test.tsx',
             'tests/evaluation/**/*.test.ts',
             'tests/scripts/**/*.test.ts',
+            'tests/bed/**/*.test.ts',
             'evaluation/gate/**/*.test.ts',
           ],
           environment: 'node',

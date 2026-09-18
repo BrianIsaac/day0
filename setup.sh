@@ -51,6 +51,8 @@ Useful with any route:
   --gpu off               keep a CPU-built redactor venv as it is
   --app-port <n>          the port `pnpm dev` serves on (default 3000)
   --docs <dir>            your documentation folder (default ./docs-local)
+  --company               then copy the synthetic company bed's pages into that
+                          folder and print its hand steps (bed/company/)
   --dry-run               print the plan of commands and write nothing
   --reset                 clear this project (containers and volumes) first
 
