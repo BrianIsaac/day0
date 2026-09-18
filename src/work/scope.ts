@@ -96,6 +96,8 @@ export interface ItemSource {
   slug: string;
   team?: string;
   projects?: readonly string[];
+  /** The item is a mention read on a chat surface. */
+  mention?: boolean;
   /** The channel a mention was read in, without the `#`. */
   channel?: string;
 }
@@ -173,10 +175,12 @@ function namesValue(text: string, value: string, prefix = ''): boolean {
 /**
  * The willDo clause that names where an item came from.
  *
- * The most specific name wins: the team, then the projects (all of them,
- * since the row does not say which one a ticket is in), then the surface. A
- * mention is named only by its channel: a charter that answers one channel
- * of a chat surface has not taken on every channel intake reads.
+ * A bounded source is named by its bounds: the team, else the projects (all
+ * of them, since the row does not say which one a ticket is in). The
+ * surface's own name counts only where intake is not bounded at all: "Slack
+ * RevOps messages" does not take on every ticket and mention a surface
+ * carries. A mention is named only by its channel, and one whose channel is
+ * not known is not named.
  *
  * Args:
  *   charter: The approved charter.
@@ -188,18 +192,20 @@ function namesValue(text: string, value: string, prefix = ''): boolean {
 export function willDoClauseNaming(charter: Charter, source: ItemSource): string | undefined {
   const clauses = charter.proposedBoundaries.willDo ?? [];
   const first = (test: (clause: string) => boolean): string | undefined => clauses.find(test);
-  if (source.channel !== undefined) {
+  if (source.mention || source.channel !== undefined) {
     const channel = source.channel;
-    return first((clause) => namesValue(clause, channel, '#'));
+    return channel === undefined ? undefined : first((clause) => namesValue(clause, channel, '#'));
   }
   const team = source.team;
   const projects = source.projects ?? [];
+  if (team === undefined && projects.length === 0) {
+    return first((clause) => namesValue(clause, source.surface) || namesValue(clause, source.slug));
+  }
   return (
     (team !== undefined ? first((clause) => namesValue(clause, team)) : undefined) ??
     (projects.length > 0
       ? first((clause) => projects.every((project) => namesValue(clause, project)))
-      : undefined) ??
-    first((clause) => namesValue(clause, source.surface) || namesValue(clause, source.slug))
+      : undefined)
   );
 }
 

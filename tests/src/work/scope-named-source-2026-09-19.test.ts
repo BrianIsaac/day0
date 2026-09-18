@@ -350,7 +350,7 @@ describe('never the reverse: an item whose source the willDo does not name', ():
 describe('which willDo clause names a source', (): void => {
   const linear = { surface: 'Linear', slug: 'linear' };
 
-  it('reads the team, the project or the surface as a whole phrase', (): void => {
+  it('reads the team or the project as a whole phrase', (): void => {
     expect(willDoClauseNaming(priyaCharter, { ...linear, team: 'REVOPS', projects: ['Q3 close'] })).toBe(
       'Work the tickets in Linear, team REVOPS, project Q3 close.',
     );
@@ -366,6 +366,19 @@ describe('which willDo clause names a source', (): void => {
       'Answer questions in #finance-close about where the close stands.',
     );
     expect(willDoClauseNaming(mateoCharter, { ...slack, channel: 'finance' })).toBeUndefined();
+  });
+
+  it('does not take the surface\'s name for the source where intake is bounded, or for any mention', (): void => {
+    const charter = {
+      ...priyaCharter,
+      proposedBoundaries: {
+        ...priyaCharter.proposedBoundaries,
+        willDo: ['Slack RevOps messages', 'Keep audit notes on the Linear tickets.'],
+      },
+    };
+    expect(willDoClauseNaming(charter, { ...linear, team: 'REVOPS', projects: ['Q3 close'] })).toBeUndefined();
+    expect(willDoClauseNaming(charter, { surface: 'Slack', slug: 'slack', mention: true })).toBeUndefined();
+    expect(willDoClauseNaming(charter, linear)).toBe('Keep audit notes on the Linear tickets.');
   });
 
   it('matches an upper-case identifier by case, so a team LOG is not the verb', (): void => {

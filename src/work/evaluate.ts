@@ -209,6 +209,7 @@ function itemSource(candidate: WorkCandidate, ctx: EvalContext): ItemSource | un
     slug: surface.slug,
     ...(scope?.team ? { team: scope.team.value } : {}),
     ...(projects.length > 0 ? { projects } : {}),
+    ...(surface.class === 'chat' ? { mention: true } : {}),
     ...(channel ? { channel } : {}),
   };
 }
