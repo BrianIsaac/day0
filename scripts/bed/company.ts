@@ -684,7 +684,7 @@ async function deleteBedMessages(io: CompanyIo, view: SlackView, epoch: string, 
   try {
     conversations.push(...(await listConversations(io.fetch, view.token, 'im', retry, (): number => io.now())));
   } catch (error) {
-    report.line('note', `the bot's direct messages were not read (${(error as Error).message}); only the channels were cleaned`);
+    report.line('gap', `the bot's direct messages were not read (${(error as Error).message}); only the channels were cleaned`);
   }
   const client = new SlackClient(view.token, io.fetch, retry, (): number => io.now());
   let deleted = 0;

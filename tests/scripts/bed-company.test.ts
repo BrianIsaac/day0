@@ -975,6 +975,39 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(log(h)).toContain('Torn down.');
   });
 
+  it('does not claim teardown succeeded when the Slack DM list fails twice', async (): Promise<void> => {
+    const h = await seeded();
+    h.slack.post('D1', { ts: later(5), text: `A question for the manager\n\n${TRAILER}`, bot_id: BOT_ID });
+    const original = h.slack.fetch;
+    let failures = 0;
+    h.slack.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      if (
+        failures < 2 &&
+        url.pathname.endsWith('/conversations.list') &&
+        url.searchParams.get('types') === 'im'
+      ) {
+        failures += 1;
+        return new Response('<html>unavailable</html>', { status: 503 });
+      }
+      return await original(input, init);
+    }) as typeof fetch;
+
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(log(h)).toContain('  note retrying Slack conversations.list after HTTP 503');
+    expect(log(h)).toContain(
+      "  GAP  the bot's direct messages were not read (Slack conversations.list failed twice: HTTP 503, then HTTP 503); only the channels were cleaned",
+    );
+    expect(h.slack.deleted).toEqual([]);
+    expect(stateKept(h)).toBe(true);
+    expect(log(h)).toContain(`1 gap(s) above. ${STATE_FILE} is kept: run teardown again to finish.`);
+
+    h.logs.length = 0;
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.slack.deleted).toEqual([{ channel: 'D1', ts: later(5) }]);
+    expect(stateKept(h)).toBe(false);
+  });
+
   it('removes the label a later seed made after a partial teardown kept the state file', async (): Promise<void> => {
     const h = await seeded();
     h.slack.failing.add('auth.test');
