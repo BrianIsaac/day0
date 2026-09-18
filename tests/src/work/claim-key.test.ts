@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { providerItemKey, type ClaimKeySurface } from '../../../src/work/claim-key';
+import { parseSurfaceAction, type ParsedSurfaceAction } from '../../../src/surfaces/policy';
+import {
+  providerItemKey,
+  withheldByClaimReason,
+  writeTargetIds,
+  type ClaimKeySurface,
+} from '../../../src/work/claim-key';
 
 const linear: ClaimKeySurface = {
   slug: 'linear',
@@ -121,5 +127,55 @@ describe('providerItemKey', (): void => {
     expect(providerItemKey(slack('T0COMPANY'), { sourceSystem: 'slack', externalId: ASK }, 'mock')).toBeUndefined();
     expect(providerItemKey(jira, { sourceSystem: 'jira', externalId: 'OPS-12' }, 'mock')).toBeUndefined();
     expect(providerItemKey(undefined, { sourceSystem: 'jira', externalId: 'OPS-12' }, 'mock')).toBeUndefined();
+  });
+});
+
+const parsedCall = (tool: string, toolArgs: Record<string, unknown>): ParsedSurfaceAction => {
+  const parsed = parseSurfaceAction({ tool: 'mcp.call', args: { surface: 'linear', tool, toolArgsJson: JSON.stringify(toolArgs) } });
+  if (!parsed.ok) throw new Error(parsed.reason);
+  return parsed.action;
+};
+
+const parsedPost = (body: Record<string, unknown>): ParsedSurfaceAction => {
+  const parsed = parseSurfaceAction({
+    tool: 'http.request',
+    args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', body: JSON.stringify(body) },
+  });
+  if (!parsed.ok) throw new Error(parsed.reason);
+  return parsed.action;
+};
+
+describe('writeTargetIds', (): void => {
+  it('names the ticket a comment or a state change addresses, as intake stores it', (): void => {
+    expect(writeTargetIds(parsedCall('save_comment', { issueId: 'FIN-1', body: 'note' }), linear)).toEqual(['FIN-1']);
+    expect(writeTargetIds(parsedCall('save_issue', { id: 'fin-1', state: 'Done' }), linear)).toEqual(['fin-1', 'FIN-1']);
+  });
+
+  it('names the message a thread reply sits under, and nothing for a top-level post', (): void => {
+    const chat = slack('T0COMPANY');
+    expect(writeTargetIds(parsedPost({ channel: 'C0OPSREQ', thread_ts: '1789000000.000100', text: 'hello' }), chat)).toEqual([ASK]);
+    expect(writeTargetIds(parsedPost({ channel: 'C0OPSREQ', text: 'hello' }), chat)).toEqual([]);
+  });
+
+  it('names nothing for a read or a write that addresses no item', (): void => {
+    expect(writeTargetIds(parsedCall('get_issue', { id: 'FIN-1' }), linear)).toEqual([]);
+    expect(writeTargetIds(parsedCall('list_issues', { team: 'FIN' }), linear)).toEqual([]);
+    expect(writeTargetIds(parsedCall('create_project', { name: 'Close' }), linear)).toEqual([]);
+  });
+});
+
+describe('withheldByClaimReason', (): void => {
+  const holder = { target: 'FIN-1', holderName: 'Mateo', sameEmployee: true, title: 'Post the note', state: 'completed' };
+
+  it('names the holder, its state and the comment it landed', (): void => {
+    expect(withheldByClaimReason({ ...holder, landedComment: 'c-1' })).toBe(
+      'withheld: FIN-1 is held by this employee\'s work item "Post the note" (completed), which landed comment c-1 on it; one work item writes an external item, so this write is not sent',
+    );
+  });
+
+  it('names a colleague by name', (): void => {
+    expect(withheldByClaimReason({ ...holder, sameEmployee: false, state: 'executing' })).toContain(
+      'held by Mateo\'s work item "Post the note" (executing);',
+    );
   });
 });

@@ -1,4 +1,10 @@
 import type { SurfaceMode } from '../lib/surface-mode';
+import {
+  actionIntent,
+  messageTarget,
+  targetIssueReferences,
+  type ParsedSurfaceAction,
+} from '../surfaces/policy';
 
 /** What a provider item's identity is read from on the surface that found it. */
 export interface ClaimKeySurface {
@@ -90,4 +96,58 @@ export function providerItemKey(
   }
   if (origin) return `${origin.origin}|${item.externalId}`;
   return `slug:${item.sourceSystem}|${item.externalId}`;
+}
+
+/**
+ * The external items a write addresses, as a work item's `externalId` names them.
+ *
+ * A ticket write names its ticket in its arguments; a chat reply names the
+ * message it sits under as intake keys one, `<channel>:<thread>`. A ticket
+ * reference is also offered in upper case, since a tracker accepts
+ * `fin-1` for `FIN-1` and intake stores the identifier as the provider
+ * prints it. A read, a top-level chat post and a write that names no item
+ * address nothing another work item could hold.
+ *
+ * Args:
+ *   parsed: The parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   The external ids, each once; empty when the action addresses none.
+ */
+export function writeTargetIds(parsed: ParsedSurfaceAction, surface: { class: string }): string[] {
+  if (actionIntent(parsed) !== 'write') return [];
+  if (surface.class === 'chat') {
+    const [channel, thread] = (messageTarget(parsed) ?? '').split('/');
+    return channel && thread ? [`${channel}:${thread}`] : [];
+  }
+  return [...new Set(targetIssueReferences(parsed).flatMap((ref) => [ref, ref.toUpperCase()]))];
+}
+
+/** The work item holding an external item a write addresses, as the ledger names it. */
+export interface WriteClaimHolder {
+  /** The external id the write addressed. */
+  target: string;
+  holderName: string;
+  /** Whether the holder is another item of the writing employee. */
+  sameEmployee: boolean;
+  title: string;
+  state: string;
+  /** The provider id of the last comment the holder landed on the item. */
+  landedComment?: string;
+}
+
+/**
+ * The ledger line of a write withheld because another work item holds its target.
+ *
+ * Args:
+ *   holder: The holding work item.
+ *
+ * Returns:
+ *   The reason, naming the holder, its state and the comment it landed.
+ */
+export function withheldByClaimReason(holder: WriteClaimHolder): string {
+  const owner = holder.sameEmployee ? "this employee's" : `${holder.holderName}'s`;
+  const landed = holder.landedComment ? `, which landed comment ${holder.landedComment} on it` : '';
+  return `withheld: ${holder.target} is held by ${owner} work item "${holder.title}" (${holder.state})${landed}; one work item writes an external item, so this write is not sent`;
 }
