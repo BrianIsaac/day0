@@ -259,7 +259,9 @@ function docsTarget(io: CompanyIo): string {
 interface CompanyState {
   epoch: string;
   issueIds: string[];
+  issueKeys: string[];
   labelId?: string;
+  ownsLabel: boolean;
 }
 
 function readState(io: CompanyIo): CompanyState | undefined {
@@ -270,7 +272,9 @@ function readState(io: CompanyIo): CompanyState | undefined {
   return {
     epoch: parsed.epoch,
     issueIds: Array.isArray(parsed.issueIds) ? parsed.issueIds.filter((id): id is string => typeof id === 'string') : [],
+    issueKeys: Array.isArray(parsed.issueKeys) ? parsed.issueKeys.filter((key): key is string => typeof key === 'string') : [],
     labelId: typeof parsed.labelId === 'string' ? parsed.labelId : undefined,
+    ownsLabel: parsed.ownsLabel === true,
   };
 }
 
@@ -937,7 +941,9 @@ class BedWrites {
     writeState(io, {
       epoch: previous?.epoch ?? slackTs(io.now()),
       issueIds: [...new Set([...(previous?.issueIds ?? []), ...this.strandedIssues.map((issue) => issue.id)])],
+      issueKeys: previous?.issueKeys ?? [],
       labelId: this.strandedLabelId ?? previous?.labelId,
+      ownsLabel: previous?.ownsLabel === true || this.strandedLabelId !== undefined,
     });
     for (const issue of this.strandedIssues) {
       report.line('note', `${issue.identifier} is recorded in ${STATE_FILE} so teardown archives it`);
@@ -948,8 +954,13 @@ class BedWrites {
   }
 }
 
-async function ensureLabel(linear: BedLinear, spec: BedSpec, writes: BedWrites, report: Report): Promise<string> {
-  const existing = await linear.label(spec.label);
+async function ensureLabel(
+  linear: BedLinear,
+  spec: BedSpec,
+  existing: BedLabel | undefined,
+  writes: BedWrites,
+  report: Report,
+): Promise<string> {
   if (existing) return existing.id;
   const id = await linear.createLabel(spec.label);
   writes.createdLabel(spec.label, id);
@@ -1024,8 +1035,26 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
     }
   }
   const writes = new BedWrites(linear);
+  let recorded = previous;
   try {
-    const labelId = await ensureLabel(linear, spec, writes, report);
+    const existingLabel = await linear.label(spec.label);
+    recorded = {
+      epoch: previous?.epoch ?? slackTs(io.now()),
+      issueIds: previous?.issueIds ?? [],
+      issueKeys: [
+        ...new Set([
+          ...(previous?.issueKeys ?? []),
+          ...toFile
+            .filter((ticket) => byKey.get(ticket.key)?.archived !== false)
+            .map((ticket) => ticket.key),
+        ]),
+      ],
+      labelId: previous?.labelId,
+      ownsLabel: previous?.ownsLabel === true || existingLabel === undefined,
+    };
+    // Persist deterministic ownership before a provider write can land without returning.
+    writeState(io, recorded);
+    const labelId = await ensureLabel(linear, spec, existingLabel, writes, report);
     for (const ticket of spec.tickets) {
       const existing = byKey.get(ticket.key);
       if (!toFile.includes(ticket)) {
@@ -1043,16 +1072,16 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
       await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, writes, report);
     }
   } catch (error) {
-    await writes.rollBack(io, 'seed', error, previous, spec.label, report);
+    await writes.rollBack(io, 'seed', error, recorded, spec.label, report);
     return 1;
   }
 
   // Recorded from seed's own writes: a read here that failed would leave filed tickets no clone owns.
   const state: CompanyState = {
-    epoch: previous?.epoch ?? slackTs(io.now()),
-    issueIds: [...new Set([...(previous?.issueIds ?? []), ...writes.activated])],
+    ...recorded!,
+    issueIds: [...new Set([...recorded!.issueIds, ...writes.activated])],
     // A label seed made supersedes the recorded one, which must already be gone for seed to make it.
-    labelId: writes.createdLabelId ?? previous?.labelId,
+    labelId: writes.createdLabelId ?? recorded!.labelId,
   };
   writeState(io, state);
   report.section('Slack');
@@ -1107,17 +1136,25 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     return 0;
   }
   const writes = new BedWrites(linear);
+  let recorded = state;
   try {
-    const labelId = await ensureLabel(linear, spec, writes, report);
+    const existingLabel = await linear.label(spec.label);
+    recorded = {
+      ...state,
+      issueKeys: [...new Set([...state.issueKeys, ...(existing?.archived !== false ? [ticket.key] : [])])],
+      ownsLabel: state.ownsLabel || existingLabel === undefined,
+    };
+    writeState(io, recorded);
+    const labelId = await ensureLabel(linear, spec, existingLabel, writes, report);
     await fileTicket(linear, ticket, existing, targets.get(ticket.team)!, labelId, writes, report);
   } catch (error) {
-    await writes.rollBack(io, 'post', error, state, spec.label, report);
+    await writes.rollBack(io, 'post', error, recorded, spec.label, report);
     return 1;
   }
   writeState(io, {
-    ...state,
-    issueIds: [...new Set([...state.issueIds, ...writes.activated])],
-    labelId: writes.createdLabelId ?? state.labelId,
+    ...recorded,
+    issueIds: [...new Set([...recorded.issueIds, ...writes.activated])],
+    labelId: writes.createdLabelId ?? recorded.labelId,
   });
   return 0;
 }
@@ -1141,7 +1178,8 @@ async function teardownLinear(linear: BedLinear, spec: BedSpec, state: CompanySt
     report.line('gap', `${failure('ticket read', error)}; no ticket was archived`);
   }
   const ownedIds = new Set(state.issueIds);
-  for (const issue of issues.filter((candidate) => ownedIds.has(candidate.id) && !candidate.archived)) {
+  const ownedKeys = new Set(state.issueKeys);
+  for (const issue of issues.filter((candidate) => (ownedIds.has(candidate.id) || ownedKeys.has(candidate.key)) && !candidate.archived)) {
     try {
       await linear.archive(issue);
       report.line('ok', `archived ${issue.key} ${issue.identifier}`);
@@ -1149,7 +1187,7 @@ async function teardownLinear(linear: BedLinear, spec: BedSpec, state: CompanySt
       report.line('gap', failure(`${issue.identifier} archive`, error));
     }
   }
-  if (!state.labelId) return;
+  if (!state.labelId && !state.ownsLabel) return;
   let label: BedLabel | undefined;
   try {
     label = await linear.label(spec.label);
@@ -1157,7 +1195,7 @@ async function teardownLinear(linear: BedLinear, spec: BedSpec, state: CompanySt
     report.line('gap', failure('label read', error));
     return;
   }
-  if (!label || label.id !== state.labelId || label.description !== LABEL_DESCRIPTION) return;
+  if (!label || label.description !== LABEL_DESCRIPTION || (!state.ownsLabel && label.id !== state.labelId)) return;
   try {
     await linear.deleteLabel(spec.label, label.id);
     report.line('ok', `deleted label ${spec.label}, which seed created`);

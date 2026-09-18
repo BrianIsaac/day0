@@ -115,7 +115,7 @@ class FakeLinear {
     this.numbers.set(issue.team, number);
     const created: FakeIssue = {
       id: `issue-${this.next++}`,
-      identifier: `${issue.team}-${number}`,
+      identifier: issue.identifier ?? `${issue.team}-${number}`,
       title: issue.title,
       description: issue.description ?? '',
       archivedAt: issue.archivedAt ?? null,
@@ -1077,6 +1077,113 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(await run(h, ['teardown'])).toBe(0);
     expect(allArchived(h)).toBe(true);
     expect(h.linear.labels).toEqual([]);
+  });
+
+  it('does not create a second label when the first label create landed before execution stopped', async (): Promise<void> => {
+    const h = harness();
+    const original = h.linear.fetch;
+    let interrupted = false;
+    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (!interrupted && String(init?.body).includes('mutation BedLabelCreate')) {
+        interrupted = true;
+        await original(input, init);
+        throw new Error('simulated crash after the label write landed');
+      }
+      return await original(input, init);
+    }) as typeof fetch;
+
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(1);
+    expect(h.linear.labels).toHaveLength(1);
+    expect(stateKept(h)).toBe(true);
+
+    h.linear.fetch = original;
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(h.linear.labels).toEqual([]);
+    expect(stateKept(h)).toBe(false);
+  });
+
+  it('does not delete a comment twice when the first delete landed before its timeout', async (): Promise<void> => {
+    const h = await seeded();
+    const issue = h.linear.byKey('fin-status')!;
+    issue.comments.push({ id: 'comment-run', body: `Close updated.\n\n${TRAILER}`, createdAt: '1' });
+    h.linear.fail('RehearsalCommentDelete', { kind: 'timeout', landed: true });
+
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(issue.comments).toEqual([]);
+    expect(h.linear.count('RehearsalCommentDelete')).toBe(1);
+    expect(log(h)).toContain('comment delete landed before the timeout; not sent again');
+  });
+
+  it('persists ownership intent before a ticket write can land without an in-memory record', async (): Promise<void> => {
+    const h = harness();
+    const original = h.linear.fetch;
+    let interrupted = false;
+    h.linear.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (!interrupted && String(init?.body).includes('mutation BedIssueCreate')) {
+        interrupted = true;
+        await original(input, init);
+        throw new Error('simulated crash after the ticket write landed');
+      }
+      return await original(input, init);
+    }) as typeof fetch;
+
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(1);
+    expect(marked(h).filter((issue) => issue.archivedAt === null)).toHaveLength(1);
+    expect(stateKept(h)).toBe(true);
+
+    h.linear.fetch = original;
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(allArchived(h)).toBe(true);
+    expect(stateKept(h)).toBe(false);
+  });
+
+  it("seeds cleanly from rehearsal one's three archived tickets, missing label, and old state format", async (): Promise<void> => {
+    const h = harness();
+    const spec = loadBedSpec(h.root);
+    const old = [
+      ['revops-tile', 'REVOPS-27'],
+      ['fin-status', 'FIN-1'],
+      ['log-sh4471', 'LOG-1'],
+    ].map(([key, identifier]) => {
+      const ticket = spec.tickets.find((candidate) => candidate.key === key)!;
+      return h.linear.addIssue({
+        team: ticket.team,
+        identifier,
+        title: `worked ${ticket.title}`,
+        description: markedDescription('worked in rehearsal one', ticket.key),
+        archivedAt: '2026-09-18T15:27:00.000Z',
+        stateId: `${ticket.team}-Done`,
+        assigneeId: 'user-1',
+      });
+    });
+    mkdirSync(join(h.root, '.demo-bed'), { recursive: true });
+    writeFileSync(
+      join(h.root, STATE_FILE),
+      `${JSON.stringify({
+        epoch: '1789693200.000000',
+        issueIds: old.map((issue) => issue.id),
+        labelId: 'label-deleted-by-rehearsal-one',
+      }, null, 2)}\n`,
+    );
+
+    expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
+    expect(h.linear.labels).toHaveLength(1);
+    for (const key of ONE_EACH) {
+      const ticket = spec.tickets.find((candidate) => candidate.key === key)!;
+      expect(h.linear.byKey(key), key).toMatchObject({
+        title: ticket.title,
+        description: markedDescription(ticket.description, ticket.key),
+        archivedAt: null,
+        stateId: `${ticket.team}-${ticket.state}`,
+        assigneeId: null,
+      });
+    }
+    expect(old.map((issue) => issue.identifier)).toEqual(['REVOPS-27', 'FIN-1', 'LOG-1']);
+
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(allArchived(h)).toBe(true);
+    expect(h.linear.labels).toEqual([]);
+    expect(stateKept(h)).toBe(false);
   });
 });
 

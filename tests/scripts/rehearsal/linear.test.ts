@@ -147,6 +147,11 @@ describe('a failed Linear call, classified', (): void => {
     expect(
       await failure(async () => json(limited, { status: 400, headers: { 'X-RateLimit-Requests-Reset': String(NOW + 5_000) } })),
     ).toMatchObject({ transient: true, reason: 'a Linear rate limit', waitMs: 5_000 });
+    expect(await failure(async () => json(limited, { status: 400 }))).toMatchObject({
+      transient: true,
+      reason: 'a Linear rate limit',
+      waitMs: undefined,
+    });
   });
 
   it('calls a timeout while the answer is still arriving a timeout too', async (): Promise<void> => {
@@ -247,6 +252,23 @@ describe('one retry', (): void => {
       }),
     ).rejects.toThrow('Linear issueCreate did not succeed.');
     expect(again).toBe(0);
+    expect(io.lines).toEqual([]);
+    expect(io.sleeps).toEqual([]);
+  });
+
+  it('does not turn a caller abort into a transient provider failure', async (): Promise<void> => {
+    const io = recorder();
+    let calls = 0;
+    const fetch = (async (): Promise<Response> => {
+      calls += 1;
+      throw new DOMException('The caller stopped the operation', 'AbortError');
+    }) as typeof globalThis.fetch;
+    const client = new LinearClient('k', fetch);
+
+    await expect(retryOnce('workspace read', io, () => readViewer(client))).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(calls).toBe(1);
     expect(io.lines).toEqual([]);
     expect(io.sleeps).toEqual([]);
   });
