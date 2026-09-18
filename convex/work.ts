@@ -39,12 +39,15 @@ import { transitionDirectedByNote } from '../src/work/transition-direction';
 import { replyTargetFor } from '../src/work/reply-target';
 import {
   AUTONOMOUS_WIP_LIMIT,
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
   COLD_START_WIP_LIMIT,
   type MockAction,
   type ReplyTarget,
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
+import { providerItemKey } from '../src/work/claim-key';
+import { isRevocationTrialRow } from './revocationEvaluation';
 import {
   batchDecisionNoticeText,
   DECISION_REQUEST_RECOVERY_MS,
@@ -325,13 +328,18 @@ export const seedItem = internalMutation({
     await seedItemInTransaction(ctx, args),
 });
 
-/** What changed, for a re-evaluation of the work parked under the old policy. */
-export type ReevaluationTrigger = 'charter' | 'documentation' | 'surface';
+/**
+ * What changed, for a re-evaluation of the work parked under the old policy.
+ * `claim-released` is a colleague letting go of an item this employee was
+ * refused; its key is the released claim's id.
+ */
+export type ReevaluationTrigger = 'charter' | 'documentation' | 'surface' | 'claim-released';
 
 const reevaluationTriggerValidator = v.union(
   v.literal('charter'),
   v.literal('documentation'),
   v.literal('surface'),
+  v.literal('claim-released'),
 );
 
 export interface ReevaluatePendingArgs {
@@ -358,6 +366,7 @@ type ParkedVerdict = {
   reason?: string;
   missingSurface?: string;
   missingPermissions?: string[];
+  claimedBy?: { claimId?: string };
 };
 
 interface SurfaceTrigger {
@@ -371,17 +380,20 @@ interface SurfaceTrigger {
  * An out-of-scope skip reads the charter, the documented systems and the
  * connected surfaces, so any of the three sends it back. A quality-fit skip
  * reads the charter's role. A deferral waits on one surface or one grant and
- * returns when that surface connects. A low-value or already-claimed skip
- * reads none of these and stays where it is.
+ * returns when that surface connects. A skip refused at the claim returns
+ * only when the claim that refused it is released, whatever else changes. A
+ * low-value or already-claimed skip reads none of these and stays where it is.
  */
 function verdictReturnsOn(
   row: Doc<'workItems'>,
   trigger: ReevaluationTrigger,
+  key: string,
   surface: SurfaceTrigger | undefined,
 ): boolean {
   const verdict = (row.verdict ?? {}) as ParkedVerdict;
   const reason = typeof verdict.reason === 'string' ? verdict.reason : (row.skipReason ?? '');
   if (row.state === 'skipped') {
+    if (trigger === 'claim-released') return verdict.claimedBy?.claimId === key;
     if (reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)) return true;
     if (reason.startsWith(QUALITY_FIT_SKIP_PREFIX)) return trigger === 'charter';
     return false;
@@ -447,7 +459,7 @@ export async function reevaluatePendingInTransaction(
     for (const row of rows) {
       examined += 1;
       if (row.reevaluation?.key === args.key) continue;
-      if (!verdictReturnsOn(row, args.trigger, surface)) continue;
+      if (!verdictReturnsOn(row, args.trigger, args.key, surface)) continue;
       const previous = (row.verdict ?? {}) as ParkedVerdict;
       await ctx.db.patch(row._id, {
         state: 'discovered',
@@ -515,6 +527,206 @@ export const reevaluatePending = internalMutation({
     await reevaluatePendingInTransaction(ctx, args),
 });
 
+/** The employee and work item holding a provider item, as a refused row records it. */
+export interface ClaimHolder {
+  claimId: Id<'externalClaims'>;
+  agentId: Id<'agents'>;
+  workItemId: Id<'workItems'>;
+  name: string;
+  title: string;
+}
+
+/** A holder in one of these states no longer holds its item. */
+const RELEASED_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['cancelled', 'skipped']);
+
+/**
+ * The owner and key a row's provider item is claimed under, if it is claimed at all.
+ *
+ * Real mode only; a revocation trial row and an agent with no owner claim
+ * nothing. The key is read from the surface the row came from, by slug,
+ * while that surface is listed.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item.
+ *
+ * Returns:
+ *   The owner and key, or undefined when the row takes no claim.
+ */
+async function externalClaimScope(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+): Promise<{ userId: string; key: string } | undefined> {
+  if (SURFACE_MODE !== 'real' || isRevocationTrialRow(row)) return undefined;
+  const agent = await ctx.db.get(row.agentId);
+  if (!agent?.userId) return undefined;
+  const surface = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', row.sourceSystem))
+    .first();
+  const key = providerItemKey(surface ?? undefined, row, SURFACE_MODE);
+  return key === undefined ? undefined : { userId: agent.userId, key };
+}
+
+/**
+ * Take the owner-wide claim on a row's provider item, or name who holds it.
+ *
+ * The read of the live claims and the insert share the claiming
+ * transaction, and Convex serialises transactions that touch the same index
+ * range, so of two verdicts on one item exactly one inserts. A live claim
+ * whose holder is gone, cancelled or skipped is released here, with what it
+ * refused, so a release some path missed cannot keep the item from the
+ * company for good.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   row: The work item about to be claimed.
+ *   now: The claim time.
+ *
+ * Returns:
+ *   Undefined when the row takes no claim; otherwise the key, and the holder
+ *   and its state when another work item holds it.
+ */
+async function takeExternalClaim(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<{ key: string; heldBy?: { holder: ClaimHolder; state: string } } | undefined> {
+  const scope = await externalClaimScope(ctx, row);
+  if (!scope) return undefined;
+  const live = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_user_key', (q) => q.eq('userId', scope.userId).eq('key', scope.key))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of live) {
+    if (claim.workItemId === row._id) return { key: scope.key };
+    const holding = await ctx.db.get(claim.workItemId);
+    if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) {
+      await releaseClaim(ctx, claim, now);
+      continue;
+    }
+    const agent = await ctx.db.get(claim.agentId);
+    const holder: ClaimHolder = {
+      claimId: claim._id,
+      agentId: claim.agentId,
+      workItemId: claim.workItemId,
+      name: agent?.name ?? 'another employee',
+      title: holding.title,
+    };
+    return { key: scope.key, heldBy: { holder, state: holding.state } };
+  }
+  await ctx.db.insert('externalClaims', {
+    userId: scope.userId,
+    key: scope.key,
+    agentId: row.agentId,
+    workItemId: row._id,
+    claimedAt: now,
+  });
+  return { key: scope.key };
+}
+
+/**
+ * Hold the item again for a row resuming past evaluation, or refuse.
+ *
+ * A retry resumes a cancelled row that has a plan past evaluation, so no
+ * verdict takes the claim on the way; a colleague may have taken the item
+ * since the cancel released it. A failed or completed row still holds its
+ * claim and takes nothing new.
+ *
+ * Args:
+ *   ctx: Mutation context of the retry.
+ *   row: The row being retried.
+ *
+ * Raises:
+ *   Error: When another work item holds the item.
+ */
+async function retakeExternalClaim(ctx: MutationCtx, row: Doc<'workItems'>): Promise<void> {
+  const taken = await takeExternalClaim(ctx, row, Date.now());
+  if (!taken?.heldBy) return;
+  const { holder } = taken.heldBy;
+  throw new Error(
+    holder.agentId === row.agentId
+      ? `this employee already holds this item on another work item (${holder.title})`
+      : `another employee holds this: ${holder.name} (${holder.title})`,
+  );
+}
+
+/**
+ * The skip a claim verdict becomes when another work item holds the item.
+ *
+ * Args:
+ *   row: The refused work item.
+ *   holder: Who holds the item.
+ *   holderState: The holding work item's state.
+ *
+ * Returns:
+ *   The skip verdict, naming the holder for the card.
+ */
+function claimRefusedVerdict(
+  row: Doc<'workItems'>,
+  holder: ClaimHolder,
+  holderState: string,
+): { decision: string; reason: string; claimedBy: ClaimHolder } {
+  const reason =
+    holder.agentId === row.agentId
+      ? `already-claimed: state=${holderState}`
+      : `${CLAIMED_BY_COLLEAGUE_SKIP_PREFIX}${holder.name} holds it (${holder.title})`;
+  return { decision: 'skip', reason, claimedBy: holder };
+}
+
+/**
+ * Stamp one claim released and send back what it refused.
+ *
+ * Every employee of the owner is re-evaluated for the rows this claim
+ * refused, keyed by the claim's id, so each returns to `discovered` once and
+ * the next verdict takes the item or names its new holder.
+ *
+ * Args:
+ *   ctx: Mutation context of the transition.
+ *   claim: The live claim.
+ *   now: The release time.
+ */
+async function releaseClaim(ctx: MutationCtx, claim: Doc<'externalClaims'>, now: number): Promise<void> {
+  await ctx.db.patch(claim._id, { releasedAt: now });
+  const employees = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', claim.userId))
+    .collect();
+  for (const employee of employees) {
+    await reevaluatePendingInTransaction(ctx, {
+      agentId: employee._id,
+      trigger: 'claim-released',
+      key: claim._id,
+      now,
+    });
+  }
+}
+
+/**
+ * Release the claim a work item holds, with what it refused.
+ *
+ * A row that holds no live claim releases nothing. Called where a holder is
+ * cancelled; completed and failed rows keep their claim.
+ *
+ * Args:
+ *   ctx: Mutation context of the transition.
+ *   workItemId: The work item letting go of its item.
+ *   now: The release time.
+ */
+export async function releaseExternalClaim(
+  ctx: MutationCtx,
+  workItemId: Id<'workItems'>,
+  now: number,
+): Promise<void> {
+  const held = await ctx.db
+    .query('externalClaims')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+    .filter((q) => q.eq(q.field('releasedAt'), undefined))
+    .collect();
+  for (const claim of held) await releaseClaim(ctx, claim, now);
+}
+
 /**
  * Record an evaluation verdict and move the row to where it puts it.
  *
@@ -560,6 +772,18 @@ export async function applyVerdict(
     }
   }
 
+  // One work item holds each provider item across the owner's employees: the
+  // claim is taken here, in the claiming transaction, or the verdict becomes
+  // a skip naming who holds it.
+  let refused: { key: string; holder: ClaimHolder } | undefined;
+  if (effective.decision === 'claim') {
+    const taken = await takeExternalClaim(ctx, row, Date.now());
+    if (taken?.heldBy) {
+      effective = claimRefusedVerdict(row, taken.heldBy.holder, taken.heldBy.state);
+      refused = { key: taken.key, holder: taken.heldBy.holder };
+    }
+  }
+
   const decision = effective.decision;
   let nextState: Doc<'workItems'>['state'] = 'discovered';
   let skipReason: string | undefined;
@@ -584,6 +808,14 @@ export async function applyVerdict(
     payload: { workItemId, decision, verdict: effective },
     createdAt: Date.now(),
   });
+  if (refused) {
+    await ctx.db.insert('events', {
+      agentId: row.agentId,
+      type: 'work.claim-refused',
+      payload: { workItemId, key: refused.key, holder: refused.holder },
+      createdAt: Date.now(),
+    });
+  }
   await scheduleNextStep(ctx, { ...row, state: nextState, verdict: effective });
   return effective;
 }
@@ -1487,6 +1719,7 @@ export const retryFailed = mutation({
       : verdict?.decision === 'claim'
         ? 'claimed'
         : 'discovered';
+    if (next !== 'discovered') await retakeExternalClaim(ctx, row);
     // Retrying a skip is the manager overruling the agent's judgement: a
     // quality-fit skip says the work is worth doing, an out-of-scope skip says
     // the work is theirs to give. The re-evaluation leaves that one rule out.
@@ -1601,6 +1834,7 @@ async function cancelPlanInTransaction(
     skipReason,
     ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
   });
+  await releaseExternalClaim(ctx, row._id, Date.now());
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.cancelled',

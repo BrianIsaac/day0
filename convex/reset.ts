@@ -15,6 +15,7 @@ export const AGENT_KEYED_TABLES = [
   'workspace',
   'voiceSessions',
   'workItems',
+  'externalClaims',
   'managerQuestions',
   'managerDecisionNotices',
   'managerNotes',

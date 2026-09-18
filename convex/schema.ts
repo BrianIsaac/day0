@@ -590,6 +590,25 @@ export default defineSchema({
     .index('by_skill', ['skillId'])
     .index('by_extId', ['sourceSystem', 'externalId']),
 
+  /**
+   * Which employee holds an item of the owner's own systems: one live row per
+   * (owner, provider item key), so of several employees reaching one ticket
+   * or one ask exactly one works it. Taken in the transaction that claims the
+   * work item, released when that item is cancelled; completed and failed
+   * items keep theirs. Real mode only. The key is `providerItemKey`'s, read
+   * from the provider's own identity, never from a surface slug.
+   */
+  externalClaims: defineTable({
+    userId: v.string(),
+    key: v.string(),
+    agentId: v.id('agents'),
+    workItemId: v.id('workItems'),
+    claimedAt: v.number(),
+    releasedAt: v.optional(v.number()),
+  })
+    .index('by_user_key', ['userId', 'key'])
+    .index('by_work_item', ['workItemId']),
+
   /** One question for the manager per (agent, question key): an open
    * question of the charter, asked once at the first plan approval whose plan
    * or candidate touched it. The answer becomes a charter amendment. The
