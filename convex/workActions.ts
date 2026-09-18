@@ -1561,7 +1561,9 @@ function priorPhasesLedger(
  * and a second comment it puts on the same ticket is the plan's, as when
  * phase one landed a fixed-payload comment and the audit comment follows
  * the reads. The manager's note on the retry decides whether a change to
- * a landed comment goes through.
+ * a landed comment goes through. A read is never reused: it is taken now,
+ * because what it reads may have changed since, not least by the writes
+ * before it in this set.
  */
 async function reusedRows(
   ctx: ActionCtx,
@@ -1582,7 +1584,13 @@ async function reusedRows(
       }, run, options)
     : output.actions.map(() => undefined);
   const fromEarlier = reusedLedger(output.actions, earlier, run, options);
-  return output.actions.map((_, index) => fromResume[index] ?? fromEarlier[index]);
+  return output.actions.map((action, index) => (isRead(action) ? undefined : (fromResume[index] ?? fromEarlier[index])));
+}
+
+/** Whether an action is a surface read. */
+function isRead(action: MockAction): boolean {
+  const parsed = parseSurfaceAction(action);
+  return parsed.ok && actionIntent(parsed.action) === 'read';
 }
 
 /**

@@ -585,7 +585,7 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
   // A resumed closing set that refreshes the tile and reads it back: the
   // read-back must reach the tile, not reuse the carried read of the same
   // page, which was taken before the Save.
-  it.fails('sends the closing read-back again rather than reusing a carried read of the same page', async (): Promise<void> => {
+  it('sends the closing read-back again rather than reusing a carried read of the same page', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const workItemId = await seed(t);
     await failAtClosingWithTheTileDown(t, workItemId);
