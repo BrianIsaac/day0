@@ -293,6 +293,45 @@ async function latestCharter(harness: Harness, agentId: Id<'agents'>): Promise<D
 }
 
 describe('amending an approved charter', (): void => {
+  it('does not let an older draft reset an employee after a newer draft exists', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedDraft(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: runThroughBody(),
+        approved: false,
+        createdAt: 3,
+      });
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.charters.requestChanges, { charterId }),
+    ).rejects.toThrow(/latest/i);
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe(
+      'charter-pending',
+    );
+  });
+
+  it('keeps an approved amendment and its roster role when changes are requested through the draft endpoint', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const amendment = await owner.mutation(api.charters.amend, {
+      agentId,
+      changes: [{ kind: 'edit-function', text: 'Own the finance close.' }],
+    });
+
+    await expect(
+      owner.mutation(api.charters.requestChanges, { charterId: amendment.charterId }),
+    ).rejects.toThrow(/approved/i);
+    expect((await latestCharter(harness, agentId))._id).toBe(amendment.charterId);
+    expect(await owner.query(api.agents.rosterForUser, {})).toMatchObject([
+      { agentId, state: 'active', roleLine: 'Own the finance close.' },
+    ]);
+  });
+
   it('creates v0.1 that supersedes v0.0, with the diff on the event, the workspace re-rendered and no orientation', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId } = await seedApproved(harness);
