@@ -761,33 +761,42 @@ describe('the browser floor across one run', (): void => {
     } as MockAction;
   }
 
-  /** One driver whose snapshot is fixed and whose calls are recorded. */
+  /** What the driver answers for a page no navigate has opened: a new context is blank. */
+  const BLANK = '### Page\n- Page URL: about:blank\n### Snapshot\n```yaml\n```';
+
+  /**
+   * One driver whose calls are recorded. Every client it builds is a new
+   * browser context that starts blank, as the driver's `--isolated` mode does:
+   * the page is only there once that client has navigated to it.
+   */
   function driver(snapshot = PAGE) {
     const calls: Array<{ args: unknown; tool: string }> = [];
     const disconnects = { count: 0 };
     const clientsBuilt = { count: 0 };
-    const make = (tool: string) => ({
-      execute: async (args: unknown): Promise<unknown> => {
-        calls.push({ tool, args });
-        return {
-          content: [
-            {
-              type: 'text',
-              text:
-                tool === 'browser_snapshot'
-                  ? snapshot
-                  : tool === 'browser_navigate'
-                    ? '- Page URL: http://looker-tile:8080/'
-                    : 'ok',
-            },
-          ],
-        };
-      },
-    });
     const adapter = new McpAdapter([tile], {
       decrypt: async (): Promise<string> => 'pipeline-tile-local',
       createClient: (): McpClientLike => {
         clientsBuilt.count += 1;
+        const context = { page: undefined as string | undefined };
+        const make = (tool: string) => ({
+          execute: async (args: unknown): Promise<unknown> => {
+            calls.push({ tool, args });
+            if (tool === 'browser_navigate') context.page = snapshot;
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text:
+                    tool === 'browser_snapshot'
+                      ? (context.page ?? BLANK)
+                      : tool === 'browser_navigate'
+                        ? '- Page URL: http://looker-tile:8080/'
+                        : 'ok',
+                },
+              ],
+            };
+          },
+        });
         return {
           listTools: async () =>
             Object.fromEntries(
@@ -803,6 +812,8 @@ describe('the browser floor across one run', (): void => {
     });
     return { adapter, calls, clientsBuilt, disconnects };
   }
+
+  const open = call('browser_navigate', { url: 'http://looker-tile:8080/' });
 
   it('refuses every browser row with one code when the component is not running', async (): Promise<void> => {
     const built = { count: 0 };
@@ -911,6 +922,7 @@ describe('the browser floor across one run', (): void => {
 
   it('resolves the element a skill named against a snapshot it takes itself', async (): Promise<void> => {
     const { adapter, calls } = driver();
+    await adapter.apply(ctx, run, open, 0, 'k-open');
     const applied = await adapter.apply(
       ctx,
       run,
@@ -919,14 +931,15 @@ describe('the browser floor across one run', (): void => {
       'k',
     );
     expect(applied.ok).toBe(true);
-    expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot', 'browser_click']);
-    expect(calls[1].args).toEqual({ element: 'Save', target: 'e23' });
+    expect(calls.map((c) => c.tool)).toEqual(['browser_navigate', 'browser_snapshot', 'browser_click']);
+    expect(calls[2].args).toEqual({ element: 'Save', target: 'e23' });
   });
 
   it('resolves one ref per form field and injects the credential into the value', async (): Promise<void> => {
     const { adapter, calls } = driver(
       ['- textbox "Username" [ref=e11]', '- textbox "Password" [ref=e14]'].join('\n'),
     );
+    await adapter.apply(ctx, run, open, 0, 'k-open');
     await adapter.apply(
       ctx,
       run,
@@ -939,7 +952,7 @@ describe('the browser floor across one run', (): void => {
       0,
       'k',
     );
-    expect(calls[1].args).toEqual({
+    expect(calls[2].args).toEqual({
       fields: [
         { name: 'Username', target: 'e11', type: 'textbox', value: 'revops' },
         { name: 'Password', target: 'e14', type: 'textbox', value: 'pipeline-tile-local' },
@@ -949,6 +962,7 @@ describe('the browser floor across one run', (): void => {
 
   it('refuses plainly when the page has no such element, naming what it did offer', async (): Promise<void> => {
     const { adapter, calls } = driver();
+    await adapter.apply(ctx, run, open, 0, 'k-open');
     const applied = await adapter.apply(
       ctx,
       run,
@@ -959,7 +973,7 @@ describe('the browser floor across one run', (): void => {
     expect(applied.ok).toBe(false);
     expect(applied.reason).toContain('no element called "Delete dashboard"');
     expect(applied.reason).toContain('Save');
-    expect(calls.map((c) => c.tool)).toEqual(['browser_snapshot']);
+    expect(calls.map((c) => c.tool)).toEqual(['browser_navigate', 'browser_snapshot']);
   });
 
   it('redacts a credential echoed by the page when element resolution fails', async (): Promise<void> => {
@@ -968,6 +982,7 @@ describe('the browser floor across one run', (): void => {
         '\n',
       ),
     );
+    await adapter.apply(ctx, run, open, 0, 'k-open');
     const applied = await adapter.apply(
       ctx,
       run,
@@ -982,14 +997,36 @@ describe('the browser floor across one run', (): void => {
 
   it('takes a fresh snapshot per element action, because the page moves', async (): Promise<void> => {
     const { adapter, calls } = driver();
-    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 0, 'k0');
-    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k1');
+    await adapter.apply(ctx, run, open, 0, 'k-open');
+    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 1, 'k0');
+    await adapter.apply(ctx, run, call('browser_click', { element: 'Save' }), 2, 'k1');
     expect(calls.map((c) => c.tool)).toEqual([
+      'browser_navigate',
       'browser_snapshot',
       'browser_click',
       'browser_snapshot',
       'browser_click',
     ]);
+  });
+
+  it('starts a new browser blank, so an element action before any navigate finds nothing', async (): Promise<void> => {
+    const first = driver();
+    await first.adapter.apply(ctx, run, open, 0, 'k-open');
+    await first.adapter.close();
+    // The next apply invocation of the same run builds a new adapter and so a
+    // new browser context: the page the first one opened is not there.
+    const second = driver();
+    const applied = await second.adapter.apply(
+      ctx,
+      run,
+      call('browser_click', { element: 'Save' }),
+      1,
+      'k1',
+    );
+    expect(applied).toMatchObject({
+      ok: false,
+      reason: 'the page has no element called "Save" (nothing named on the page)',
+    });
   });
 
   it('does not snapshot for a tool that addresses no element', async (): Promise<void> => {
