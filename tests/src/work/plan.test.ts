@@ -16,6 +16,7 @@ import {
   redactCandidateRecordText,
   renderCandidateRecord,
   SCOPE_NOT_GATE_PLANNER,
+  SIGNED_TICKET_PLANNER,
   THREAD_READ_LIMIT,
 } from '../../../src/work/plan';
 
@@ -310,6 +311,18 @@ describe('charter adjectives are scope, not gates', (): void => {
       expect(planSystemPrompt(false, 'mock')).not.toContain(line);
     }
     expect(planSystemPrompt(false, 'real')).toContain('that sequence is the plan');
+  });
+
+  it('tells the real planner what a new ticket needs and that a refused step does not stop the others (19 Sep run, finding N)', (): void => {
+    for (const line of SIGNED_TICKET_PLANNER) {
+      expect(planSystemPrompt(false, 'real')).toContain(line);
+      expect(planSystemPrompt(true, 'real')).toContain(line);
+      expect(planSystemPrompt(false, 'mock')).not.toContain(line);
+    }
+    const prompt = planSystemPrompt(true, 'real');
+    expect(prompt).toContain('Day0 signs a new ticket in its description');
+    expect(prompt).toContain('refuses a new ticket that has no description');
+    expect(prompt).toContain('the steps that do not need its result still run');
   });
 
   it('derives candidate properties from the charter wording', (): void => {

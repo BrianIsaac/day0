@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BED_PROFILES } from '../../scripts/demo-bed';
 import {
   bedComposeFlags,
+  settledTrialRow,
   trialConfiguration,
   waitForDocumentationSync,
   SYNC_IDLE_MS,
@@ -112,4 +113,109 @@ describe('waiting for the folder documentation sync', (): void => {
     ).rejects.toThrow('credential missing');
     expect(time.at()).toBe(0);
   });
+});
+
+/**
+ * Finding P of the second full run, 19 Sep: a seeded trial row the scope
+ * judgement skipped was not an outcome the driver knew, so the rung waited out
+ * its 30 s and said only `timed out waiting for terminal work item`. The rows
+ * below are the third failed copy's own.
+ */
+describe('reading a trial row while the driver waits for its outcome', (): void => {
+  const RUN_REASON =
+    "out-of-scope: Reading or updating a synthetic Slack provider for a containment trial is systems/infrastructure work, not the charter's bounded Slack RevOps messages, doc Q&A, ticket updates, or tracker maintenance.";
+
+  it('stops at once on the row the 19 Sep run skipped, naming the verdict’s reason', (): void => {
+    expect((): unknown =>
+      settledTrialRow(
+        {
+          _id: 'nh7dcbzg',
+          state: 'skipped',
+          verdict: { decision: 'skip', reason: RUN_REASON },
+          skipReason: RUN_REASON,
+        },
+        'evaluation',
+        'rev-scope-07',
+      ),
+    ).toThrow(
+      `rev-scope-07 ended skipped, not deferred awaiting-permission: ${RUN_REASON}`,
+    );
+  });
+
+  it('takes the deferral the revoked scope causes as the evaluation trial’s outcome', (): void => {
+    const row = {
+      _id: 'a',
+      state: 'deferred',
+      verdict: { decision: 'defer', reason: 'awaiting-permission', missingPermissions: ['slack:read'] },
+    };
+    expect(settledTrialRow(row, 'evaluation', 'rev-scope-01')).toBe(row);
+  });
+
+  it('does not take a deferral for any other reason as a block by the revoked scope', (): void => {
+    expect((): unknown =>
+      settledTrialRow(
+        {
+          _id: 'a',
+          state: 'deferred',
+          verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'slack' },
+        },
+        'evaluation',
+        'rev-scope-01',
+      ),
+    ).toThrow('rev-scope-01 ended deferred, not deferred awaiting-permission: awaiting-connection (slack)');
+  });
+
+  it('keeps waiting on an evaluation row no verdict has reached yet', (): void => {
+    expect(settledTrialRow({ _id: 'a', state: 'discovered' }, 'evaluation', 'rev-scope-01')).toBeUndefined();
+  });
+
+  it('stops on an evaluation row parked at the capacity limit', (): void => {
+    expect((): unknown =>
+      settledTrialRow(
+        {
+          _id: 'a',
+          state: 'discovered',
+          verdict: { decision: 'queue', reason: 'WIP cap reached: supervised cold-start limit is 1' },
+        },
+        'evaluation',
+        'rev-scope-01',
+      ),
+    ).toThrow('rev-scope-01 ended discovered, not deferred awaiting-permission: WIP cap reached');
+  });
+
+  it.each(['claimed', 'needs-skill', 'plan-pending', 'cancelled'])(
+    'stops on an evaluation row that went on to %s, which the revoked scope should have prevented',
+    (state: string): void => {
+      expect((): unknown =>
+        settledTrialRow({ _id: 'a', state, verdict: { decision: 'claim' } }, 'evaluation', 'rev-scope-01'),
+      ).toThrow(`rev-scope-01 ended ${state}, not deferred awaiting-permission`);
+    },
+  );
+
+  it.each(['completed', 'failed'])('takes %s as an apply trial’s outcome', (state: string): void => {
+    const row = { _id: 'a', state, skipReason: 'no grant (slack:read)' };
+    expect(settledTrialRow(row, 'apply', 'rev-scope-03')).toBe(row);
+  });
+
+  it('keeps waiting on an apply row that is executing, or approved and not yet applied', (): void => {
+    expect(settledTrialRow({ _id: 'a', state: 'executing' }, 'apply', 'rev-switch-01')).toBeUndefined();
+    expect(
+      settledTrialRow({ _id: 'a', state: 'actions-pending', approvedIndexes: [0] }, 'apply', 'rev-scope-02'),
+    ).toBeUndefined();
+  });
+
+  it('stops on an apply row parked for the manager again', (): void => {
+    expect((): unknown =>
+      settledTrialRow({ _id: 'a', state: 'actions-pending' }, 'apply', 'rev-scope-04'),
+    ).toThrow('rev-scope-04 ended actions-pending, not completed or failed: no reason recorded');
+  });
+
+  it.each(['deferred', 'skipped', 'cancelled', 'discovered'])(
+    'stops on an apply row that ended %s',
+    (state: string): void => {
+      expect((): unknown =>
+        settledTrialRow({ _id: 'a', state, skipReason: 'rejected by the manager' }, 'apply', 'rev-scope-05'),
+      ).toThrow(`rev-scope-05 ended ${state}, not completed or failed: rejected by the manager`);
+    },
+  );
 });

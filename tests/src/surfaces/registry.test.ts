@@ -10,6 +10,7 @@ import {
   HELD_PUBLIC_POST,
   MOCK_VERB_REFUSED,
   NOT_AUTOMATIC,
+  SHARED_WRITE_WITHOUT_ATTRIBUTION,
   STATUS_WITHOUT_COMMENT,
   TRAILER_REFUSED,
 } from '../../../src/surfaces/policy';
@@ -23,6 +24,7 @@ import {
   TileDriver,
   type TileDriverCall,
 } from '../../fixtures/browser-phase-split-2026-09-16';
+import { REFUSED_CREATE_ACTION } from '../../fixtures/refused-ticket-create-2026-09-19';
 
 const now = Date.UTC(2026, 7, 29, 9);
 const ctx = {} as ActionCtx;
@@ -524,7 +526,7 @@ describe('applying surface actions', (): void => {
 
     expect(applied[0]).toMatchObject({
       ok: false,
-      reason: 'shared credential write without attributable content',
+      reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
     });
     expect(recorded.mcp).toHaveLength(0);
 
@@ -559,7 +561,7 @@ describe('applying surface actions', (): void => {
     expect(wrongTarget[0].ok).toBe(true);
     expect(wrongTarget[1]).toMatchObject({
       ok: false,
-      reason: 'shared credential write without attributable content',
+      reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
     });
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
 
@@ -607,9 +609,45 @@ describe('applying surface actions', (): void => {
     );
     expect(genericHttp[0]).toMatchObject({
       ok: false,
-      reason: 'shared credential write without attributable content',
+      reason: SHARED_WRITE_WITHOUT_ATTRIBUTION,
     });
     expect(httpRecorded.http).toHaveLength(0);
+  });
+
+  it("signs the 19 Sep run's ticket create in its description and sends it", async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(ctx, 'real', [linear], run, [REFUSED_CREATE_ACTION], {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+
+    expect(applied[0]).toMatchObject({ ok: true });
+    expect(recorded.mcp).toHaveLength(1);
+    const sent = recorded.mcp[0].args as { team: string; title: string; description: string };
+    expect(sent.team).toBe('REVOPS');
+    expect(sent.description.startsWith('Ask from #ops-requests thread')).toBe(true);
+    expect(sent.description.endsWith('\n\n-- Priya (Day0) · run wi_1/run_1')).toBe(true);
+  });
+
+  it('still refuses a create with nothing to sign, and sends nothing', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const bare: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ team: 'REVOPS', title: 'Refresh the tile' }),
+      },
+    };
+    const applied = await applySurfaceActions(ctx, 'real', [linear], run, [bare], {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+
+    expect(applied[0]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
+    expect(recorded.mcp).toHaveLength(0);
   });
 
   it('refuses an action without its grant before any adapter runs', async (): Promise<void> => {

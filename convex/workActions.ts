@@ -57,7 +57,7 @@ import {
   type ClaimHold,
   type RealAdapterDeps,
 } from '../src/surfaces/registry';
-import { withheldByClaim, withheldByClaimReason, writeTargetIds, type HeldExternalItem } from '../src/work/claim-key';
+import { plannedWriteTargets, withheldByClaim, withheldByClaimReason, writeTargetIds, type HeldExternalItem } from '../src/work/claim-key';
 import type { AppliedAction, BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
@@ -83,7 +83,7 @@ import {
   scrubbedCorrectionEntries,
   type PlannerCorrection,
 } from '../src/work/corrections';
-import { landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
+import { gateRefusalStop, landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
 import type { GroundingRead } from '../src/work/evidence-claims';
@@ -899,6 +899,7 @@ async function holdDay0Actions(
       plan: args.plan,
       runId: args.runId,
     });
+    await claimPlannedWriteTargets(ctx, args.workItemId, args.plan, surfaces, mockEnv);
     const heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId);
     const output = await runSkill({
       skill: {
@@ -1573,7 +1574,8 @@ export const authorDependentActions = internalAction({
       }
       if (dependent.actions.length === 0) {
         const finalOutput = flattenedDependentOutput(dependent, []);
-        const reason = (initial.resumedClosing ? undefined : initial.initialFailure) ?? blockedPlanReason(output.planStepOutcomes);
+        const failure = (initial.resumedClosing ? undefined : initial.initialFailure) ?? blockedPlanReason(output.planStepOutcomes);
+        const reason = failure ? (gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? failure) : undefined;
         if (reason) {
           await ctx.runMutation(internal.work.setFailed, {
             workItemId: args.workItemId,
@@ -1903,16 +1905,55 @@ async function itemsHeldElsewhere(
  *   The check `applySurfaceActions` makes before a write is sent.
  */
 function heldByAnotherWorkItem(ctx: ActionCtx, workItemId: Id<'workItems'>): ClaimHold {
+  // A page field is written by a fill and the control that submits it. Once
+  // this apply has withheld a fill on a browser-driven surface, the writes
+  // that follow it there (the Save) are withheld with it: a Save alone would
+  // stamp the page's audit line for a value this work never entered. Reads,
+  // and the sign-in before the fill, go on, so the work still reads the page.
+  const withheldPages = new Map<string, string>();
   return async (parsed, surface): Promise<string | undefined> => {
+    const browserDriven = surface.path === 'browser-driven';
+    const earlier = browserDriven ? withheldPages.get(surface.slug) : undefined;
     const targets = writeTargetIds(parsed, surface);
-    if (targets.length === 0) return undefined;
+    if (targets.length === 0) {
+      return earlier !== undefined && actionIntent(parsed) === 'write' ? earlier : undefined;
+    }
     const holder = await ctx.runQuery(internal.work.writeClaimHolder, {
       workItemId,
       surfaceSlug: surface.slug,
       targets,
     });
-    return holder ? withheldByClaimReason(holder) : undefined;
+    if (!holder) return earlier;
+    const reason = withheldByClaimReason(
+      browserDriven ? { ...holder, target: `the page field "${holder.target}" on ${surface.slug}` } : holder,
+    );
+    if (browserDriven) withheldPages.set(surface.slug, reason);
+    return reason;
   };
+}
+
+/**
+ * Take the documented page fields this work item's approved plan writes,
+ * before it authors, so the work beside it is told and reads the page.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   workItemId: The work item about to author.
+ *   plan: Its approved plan.
+ *   surfaces: The agent's surfaces.
+ *   mockEnv: The loaded documentation.
+ */
+async function claimPlannedWriteTargets(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  plan: Pick<ExecutionPlan, 'obligations'>,
+  surfaces: readonly SurfaceRecord[],
+  mockEnv: { howToGuides: ReadonlyArray<{ body: string }>; teamDocs: ReadonlyArray<{ body: string }> },
+): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  const targets = plannedWriteTargets(plan.obligations, surfaces, [...mockEnv.howToGuides, ...mockEnv.teamDocs]);
+  if (targets.length === 0) return;
+  await ctx.runMutation(internal.work.takeWriteTargetClaims, { workItemId, targets });
 }
 
 /**
@@ -2368,13 +2409,14 @@ async function finishRun(
         applied: finalOutput.applied,
       });
     if (finalReason) {
+      const ended = gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? finalReason;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId,
-        reason: finalReason,
+        reason: ended,
         runId: claim.runId,
         output: finalOutput,
       });
-      return { ok: false, reason: finalReason };
+      return { ok: false, reason: ended };
     }
     await ctx.runMutation(internal.work.setCompleted, {
       workItemId,
@@ -2405,13 +2447,14 @@ async function finishRun(
     // A prerequisite failure with nothing landed leaves the closing phase
     // nothing to audit and the manager nothing to decide: the run stops here.
     if (reason && landedWork({ ...output, applied: settled }, surfaces).length === 0) {
+      const ended = gateRefusalStop(output.actions, settled) ?? reason;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId,
-        reason,
+        reason: ended,
         runId: claim.runId,
         output: { ...output, applied: settled },
       });
-      return { ok: false, reason };
+      return { ok: false, reason: ended };
     }
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
       workItemId,
@@ -2435,13 +2478,14 @@ async function finishRun(
     };
   }
   if (reason) {
+    const ended = gateRefusalStop(output.actions, settled) ?? reason;
     await ctx.runMutation(internal.work.setFailed, {
       workItemId,
-      reason,
+      reason: ended,
       runId: claim.runId,
       output: { ...output, applied: settled },
     });
-    return { ok: false, reason };
+    return { ok: false, reason: ended };
   }
   if (claim.phase === 'auto' && applied.some((entry) => entry.awaitingApproval)) {
     const parked = await ctx.runMutation(internal.work.setAwaitingApproval, {

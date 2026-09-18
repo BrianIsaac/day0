@@ -48,9 +48,10 @@ export interface SurfaceRecord {
   probeAttempts?: Array<{
     path: string;
     endpoint?: string;
-    outcome: 'demoted' | 'ungranted' | 'listed-dead';
+    outcome: 'demoted' | 'ungranted' | 'listed-dead' | 'retried';
     reason: string;
     attemptedAt: number;
+    retryAfterMs?: number;
   }>;
   endpoint?: string;
   toolAllowlist?: string[];

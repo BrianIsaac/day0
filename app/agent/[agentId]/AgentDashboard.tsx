@@ -25,6 +25,8 @@ import {
   type ActionVerdict,
   describeAction,
   HELD_WITHHELD_TRANSITION,
+  isGateRefusal,
+  isSurfaceTool,
   normaliseActionVerdict,
   reviewPayload,
   skillApprovalRefusal,
@@ -66,7 +68,7 @@ import { planObligations, transitionWithheld } from '../../../src/work/obligatio
 import { clockTimeWithSeconds, relativeTime, useNow } from './time';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
-import { isStopped, stopDetail } from '../../../src/work/stop';
+import { GATE_REFUSAL_STOP, isGateRefusalStop, isStopped, stopDetail } from '../../../src/work/stop';
 import {
   managerNotificationMode,
   NOTIFICATION_MODE_LABELS,
@@ -2430,6 +2432,11 @@ export function failedItemReason(item: {
   if (item.skipReason?.startsWith('rejected by the manager') && item.managerFeedback?.reason) {
     return `rejected by the manager: ${item.managerFeedback.reason}`;
   }
+  if (item.skipReason && isGateRefusalStop(item.skipReason)) {
+    // The gate refused a row before sending it and the rest of the run went
+    // ahead, so work may have landed: the reason says what stands.
+    return `stopped at a step Day0's gate refused: ${stopDetail(item.skipReason).slice(GATE_REFUSAL_STOP.length)}`;
+  }
   if (item.skipReason && isStopped(item.skipReason)) {
     // A stop at the closing gate keeps the landed prerequisites and the
     // refused set on the row; Retry resumes at the closing phase.
@@ -3009,7 +3016,11 @@ export function WorkItemCard({
   const appliedActions = phasedLedger(output);
   // A row the auto phase deferred is in the gate box above, not in the ledger's held list.
   const heldActions = appliedActions.filter((a) => a.held && !a.awaitingApproval);
-  const failedActions = appliedActions.filter((a) => !a.ok && !a.held);
+  // A row Day0's own gate refused was never sent: it is listed apart from a
+  // row the provider failed, whose outcome someone may have to check.
+  const unlandedActions = appliedActions.filter((a) => !a.ok && !a.held);
+  const refusedActions = unlandedActions.filter((a) => isSurfaceTool(a.tool) && isGateRefusal(a.reason));
+  const failedActions = unlandedActions.filter((a) => !refusedActions.includes(a));
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
   const reconciliationEntries = item.providerReconciliation?.entries ??
     providerReconciliationEntries(output);
@@ -3276,6 +3287,24 @@ export function WorkItemCard({
       />
 
       {output ? <DraftDetails output={output} /> : null}
+
+      {refusedActions.length > 0 ? (
+        <div className="mt-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
+          <p className="text-[var(--color-warn)] font-medium mb-1">
+            {refusedActions.length} {refusedActions.length === 1 ? 'action' : 'actions'} refused by
+            Day0&apos;s gate · never sent
+          </p>
+          <ul className="space-y-0.5 text-[var(--color-warn)]">
+            {refusedActions.map((a, i) => (
+              <li key={i}>
+                {a.tool} - {a.reason}
+                <PhaseLabel phase={a.phase} />
+                <RepairNote repair={a.repair} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {/* Not inside the details element above: an action that never reached the
           work environment is the headline of this card, not a footnote to the

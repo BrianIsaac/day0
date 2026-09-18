@@ -277,6 +277,30 @@ describe('SurfacesTab approved ladder', (): void => {
     expect(markup).toContain('MCP server returned HTTP 503');
     expect(markup).toContain('Fell to the next approved rung.');
   });
+
+  it('says a first probe failed and was retried, without calling it a failed attempt', (): void => {
+    const markup = renderToStaticMarkup(
+      <SurfaceLadder
+        attempts={[
+          {
+            path: 'mcp',
+            endpoint: 'https://mcp.linear.app/mcp',
+            outcome: 'retried',
+            reason:
+              'Failed to connect to MCP server surface: Error: Could not connect to server with any available HTTP transport A request without the key was answered, so the endpoint is reachable.',
+            attemptedAt: 100,
+            retryAfterMs: 5_000,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('mcp first probe failed: ');
+    expect(markup).toContain('the endpoint is reachable');
+    expect(markup).toContain('Retried after 5 s.');
+    expect(markup).not.toContain('attempt failed');
+    expect(markup).not.toContain('No approved fallback connected.');
+  });
 });
 
 /** Render one isolated provisioning row without running dashboard hooks. */

@@ -38,6 +38,8 @@ import { strikeOutcome, strikePreview } from '../../../../src/agent/charter-cons
 import type { Charter } from '../../../../src/agent/charter';
 import { strikeRefusalBody } from '../../../fixtures/charter-strike-refusal-2026-09-15';
 import { slackPhaseOne } from '../../../fixtures/browser-phase-split-2026-09-16';
+import { REFUSED_CREATE_RUN } from '../../../fixtures/refused-ticket-create-2026-09-19';
+import { gateRefusalStop } from '../../../../src/work/stop';
 import {
   OPEN_QUESTIONS_2026_09_16,
   RECORDED_QUESTIONS_2026_09_16,
@@ -717,6 +719,24 @@ describe('retrying a skipped item', (): void => {
     expect(markup).not.toContain('>failed<');
     expect(markup).toContain('stopped, nothing landed and nothing to decide: 1 of 1 actions did not change');
     expect(markup).toContain('Retry');
+  });
+
+  it("shows the 19 Sep run's refused ticket create as the gate's refusal, not as a failure", (): void => {
+    const applied = REFUSED_CREATE_RUN.applied.map((row) => ({ ...row }));
+    const reason = gateRefusalStop(REFUSED_CREATE_RUN.actions as never, applied as never);
+    const markup = render({
+      ...skipped('unused'),
+      state: 'failed',
+      verdict: undefined,
+      skipReason: reason,
+      output: { draft: '', notes: '', actions: REFUSED_CREATE_RUN.actions, applied },
+    } as unknown as Doc<'workItems'>);
+    expect(markup).toContain('>stopped<');
+    expect(markup).not.toContain('>failed<');
+    expect(markup).toContain('1 action refused by Day0&#x27;s gate · never sent');
+    expect(markup).not.toContain('did not reach');
+    expect(markup).toContain('stopped at a step Day0&#x27;s gate refused');
+    expect(markup).not.toContain('nothing landed and nothing to decide');
   });
 
   it('offers Retry on an out-of-scope skip as the manager\'s scope decision', (): void => {

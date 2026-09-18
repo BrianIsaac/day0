@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
@@ -657,12 +657,22 @@ function EmployeeList({ employees }: { employees: RosterRow[] | undefined }) {
 const PARKED_TITLE =
   'Parked: waiting on a connection, a permission, a skill or a free slot. The ones only you can release count under need you.';
 
+/** What "stopped" means on the list, for the hover. */
+const STOPPED_TITLE =
+  'Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you.';
+
 function EmployeeListRow({ employee }: { employee: RosterRow }) {
-  // Parked work holds no slot, so it is named beside the open count and only when there is some.
-  const parked = employee.parkedCount > 0 ? ` \u00b7 ${employee.parkedCount} parked` : '';
-  const queue = `${employee.openCount} open${parked} \u00b7 ${employee.needsYou} ${
-    employee.needsYou === 1 ? 'needs' : 'need'
-  } you`;
+  // Parked and stopped work hold no slot, so each is named beside the open count and only when there is some.
+  const queue = [
+    `${employee.openCount} open`,
+    ...(employee.parkedCount > 0 ? [`${employee.parkedCount} parked`] : []),
+    ...(employee.stoppedCount > 0 ? [`${employee.stoppedCount} stopped`] : []),
+    `${employee.needsYou} ${employee.needsYou === 1 ? 'needs' : 'need'} you`,
+  ];
+  const title = [
+    ...(employee.parkedCount > 0 ? [PARKED_TITLE] : []),
+    ...(employee.stoppedCount > 0 ? [STOPPED_TITLE] : []),
+  ].join(' ');
   return (
     <li>
       <Link
@@ -682,12 +692,20 @@ function EmployeeListRow({ employee }: { employee: RosterRow }) {
         </div>
         <div className="col-start-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:col-start-auto sm:flex-col sm:items-end">
           <span
-            title={employee.parkedCount > 0 ? PARKED_TITLE : undefined}
+            title={title || undefined}
             className={`text-sm tabular-nums ${
               employee.needsYou > 0 ? 'text-[var(--color-warn)]' : 'text-[var(--color-fg)]/70'
             }`}
           >
-            {queue}
+            {/* Each part stays whole, so a narrow row breaks the line between parts and never inside one. */}
+            {queue.map((part, index) => (
+              <Fragment key={part}>
+                {index > 0 ? ' ' : null}
+                <span className="whitespace-nowrap">
+                  {index < queue.length - 1 ? `${part} \u00b7` : part}
+                </span>
+              </Fragment>
+            ))}
           </span>
           <AutonomyBadge autonomous={employee.autonomous} />
         </div>
