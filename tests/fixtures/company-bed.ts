@@ -7,9 +7,9 @@ import { LINEAR_TOKEN_PLACEHOLDER, LOOKER_PASSWORD_PLACEHOLDER } from './notion-
  * per role and two Notion pages, as documentation sync stores them.
  *
  * The files under `tests/fixtures/company-bed/` are copied byte for byte from
- * `bed/company/folder/` and `bed/company/notion/` on the company-bed branch at
- * `8aeb287`. Only the pages sync reads are here; the paste instructions and the
- * manager's answers are not documentation.
+ * `bed/company/folder/` and `bed/company/notion/`, and `tests/bed/company-docs.test.ts`
+ * fails while a copy is stale. Only the pages sync reads are here; the paste
+ * instructions and the manager's answers are not documentation.
  */
 
 export interface CompanyPage {
