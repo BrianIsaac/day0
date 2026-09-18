@@ -294,6 +294,7 @@ describe('two employees of one owner reach one item', (): void => {
       harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId }),
     );
     await vi.waitFor(() => expect(recorded.scopeCalls).toHaveLength(2));
+    expect(await claimsOf(harness)).toEqual([]);
     release();
     const decisions = (await Promise.all(verdicts)).map((verdict) => verdict.decision).sort();
 
@@ -557,6 +558,7 @@ describe('releasing a claim', (): void => {
     const atScope = await seedAsk(harness, aiko);
     await drain(harness);
     expect((await readItem(harness, atScope)).skipReason).toBe('out-of-scope: the ask belongs to another desk');
+    expect((await claimsOf(harness)).some((claim) => claim.workItemId === atScope)).toBe(false);
 
     await harness
       .withIdentity({ subject: 'owner' })
