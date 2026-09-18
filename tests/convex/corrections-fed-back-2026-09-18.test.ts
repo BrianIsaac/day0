@@ -2,7 +2,7 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { ExecutionPlan } from '../../src/work/types';
@@ -26,7 +26,11 @@ import { randomBytes } from 'node:crypto';
  * the one they turned down.
  */
 
+const NOTE = 'Use the Delay notice B template for customs holds and follow up with the carrier in 48 hours.';
 const CANCEL_REASON = 'Do not email the customer directly; comment on the ticket and let the account team send it.';
+const OTHER_EMPLOYEE_NOTE = 'Post every ledger variance to #finance-close before closing the ticket.';
+const CORRECTIONS_HEADING = '--- Corrections the manager gave on earlier work ---';
+const EXECUTOR_HEADING = '--- Corrections the approved plan applies ---';
 
 const recorded = vi.hoisted(() => ({
   model: [] as Array<{ agent: string; user: string }>,
@@ -229,6 +233,48 @@ const ticketOnePlan: ExecutionPlan = {
   },
 };
 
+/** Exception ticket one, stopped on its first run: it asked which notice template to use. */
+async function seedStoppedTicketOne(harness: Harness, agentId: Id<'agents'>): Promise<Id<'workItems'>> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'LOG-1',
+        title: 'Exception: SH-4471 held at customs',
+        contentSummary: 'Shipment SH-4471 is held at customs; notify the customer.',
+        contentRefs: ['ticket://LOG-1'],
+        priority: 'High',
+        state: 'failed',
+        verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] },
+        plan: ticketOnePlan,
+        skipReason: 'stopped: the handbook leaves the notice template to the manager; which template should go out?',
+        observedAt: 1,
+        createdAt: 1,
+      }),
+  );
+}
+
+/** A later exception ticket, arriving the way the intake sweep seeds one. */
+async function seedTicket(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  externalId: string,
+  title: string,
+): Promise<Id<'workItems'>> {
+  return await harness.mutation(internal.work.seedItem, {
+    agentId,
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId,
+    title,
+    contentSummary: `Shipment ${externalId} is held; notify the customer.`,
+    contentRefs: [`ticket://${externalId}`],
+    priority: 'High',
+  });
+}
+
 /** Run every scheduled job that is due now, and every job those schedule. */
 async function drain(harness: Harness): Promise<void> {
   await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
@@ -240,6 +286,16 @@ async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<
   return row;
 }
 
+async function correctionsOf(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'corrections'>[]> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db
+        .query('corrections')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .collect(),
+  );
+}
+
 async function eventsOf(harness: Harness, type: string): Promise<Doc<'events'>[]> {
   return (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
     (event) => event.type === type,
@@ -249,6 +305,233 @@ async function eventsOf(harness: Harness, type: string): Promise<Doc<'events'>[]
 function promptsOf(agent: (name: string) => boolean): string[] {
   return recorded.model.filter((call) => agent(call.agent)).map((call) => call.user);
 }
+
+/** Ticket one stopped, retried with the note, and finished; returns the kept correction. */
+async function ticketOneRetriedWithNote(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  note = NOTE,
+): Promise<{ ticketOne: Id<'workItems'>; correction: Doc<'corrections'> }> {
+  const ticketOne = await seedStoppedTicketOne(harness, agentId);
+  await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId: ticketOne, feedback: note });
+  await drain(harness);
+  expect((await readItem(harness, ticketOne)).state).toBe('completed');
+  const [correction] = await correctionsOf(harness, agentId);
+  if (!correction) throw new Error('no correction kept');
+  return { ticketOne, correction };
+}
+
+describe('a note on item one changes the plan of item two', (): void => {
+  it('keeps the retry note as a correction the moment the manager gives it', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { ticketOne, correction } = await ticketOneRetriedWithNote(harness, agentId);
+
+    expect(correction).toMatchObject({
+      agentId,
+      workItemId: ticketOne,
+      kind: 'retry-note',
+      text: NOTE,
+      itemTitle: 'Exception: SH-4471 held at customs',
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      surfaces: ['linear', 'slack'],
+      appliedTo: [],
+    });
+    expect(correction.retiredAt).toBeUndefined();
+  });
+
+  // Red until the planner and the executor read corrections.
+  it.fails('drafts item two with the note, stores that it applied it, and carries it to the executor', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { correction } = await ticketOneRetriedWithNote(harness, agentId);
+    recorded.model.length = 0;
+
+    const ticketTwo = await seedTicket(harness, agentId, 'LOG-2', 'Exception: SH-4502 held at customs');
+    await drain(harness);
+
+    const drafted = await readItem(harness, ticketTwo);
+    expect(drafted.state).toBe('plan-pending');
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).toContain(CORRECTIONS_HEADING);
+    expect(plannerPrompt).toContain(NOTE);
+    expect(plannerPrompt).toContain('Retry note on \\"Exception: SH-4471 held at customs\\"');
+    // Only an id the planner was offered is stored; the forged one is dropped.
+    expect((drafted.plan as ExecutionPlan).appliedCorrections).toEqual([correction._id]);
+    // No span model is configured here, so the scrub ran its two floors and says so.
+    expect((drafted.plan as ExecutionPlan).correctionsRedaction).toBe('structural-only');
+    const [kept] = await correctionsOf(harness, agentId);
+    expect(kept?.appliedTo).toEqual([ticketTwo]);
+    expect((await eventsOf(harness, 'work.corrections-applied')).map((event) => event.payload)).toEqual([
+      { workItemId: ticketTwo, correctionIds: [correction._id], redaction: 'structural-only' },
+    ]);
+
+    // The scope judgement is the charter's; it never reads a correction.
+    const scopePrompts = promptsOf((name) => name === 'day0-scope-judgement');
+    expect(scopePrompts.length).toBeGreaterThan(0);
+    for (const prompt of scopePrompts) expect(prompt).not.toContain(NOTE);
+
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId: ticketTwo });
+    await drain(harness);
+    const [executorPrompt] = promptsOf((name) => name.includes('-log-2-') && name.endsWith('-initial'));
+    expect(executorPrompt).toContain(EXECUTOR_HEADING);
+    expect(executorPrompt).toContain(NOTE);
+    expect((await readItem(harness, ticketTwo)).state).toBe('completed');
+  });
+
+  it('never gives one employee another employee\'s correction', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const logistics = await seedEmployee(harness);
+    const finance = await seedEmployee(harness, { name: 'Mateo', role: 'Finance close: handle close tickets in Linear.' });
+    const financeItem = await seedStoppedTicketOne(harness, finance);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId: financeItem, feedback: OTHER_EMPLOYEE_NOTE });
+    await drain(harness);
+    expect(await correctionsOf(harness, finance)).toHaveLength(1);
+    recorded.model.length = 0;
+
+    const ticketTwo = await seedTicket(harness, logistics, 'LOG-2', 'Exception: SH-4502 held at customs');
+    await drain(harness);
+
+    const prompts = promptsOf((name) => name === 'day0-plan');
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain(OTHER_EMPLOYEE_NOTE);
+    expect(prompts[0]).not.toContain(CORRECTIONS_HEADING);
+    expect((await readItem(harness, ticketTwo)).plan).not.toHaveProperty('appliedCorrections');
+  });
+
+  it('refuses to store a correction of another employee on a plan, whatever the plan names', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const logistics = await seedEmployee(harness);
+    const finance = await seedEmployee(harness, { name: 'Mateo' });
+    const { correction } = await ticketOneRetriedWithNote(harness, finance, OTHER_EMPLOYEE_NOTE);
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId: logistics,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'LOG-3',
+          title: 'Exception: SH-4510 held at customs',
+          contentSummary: 'Notify the customer.',
+          contentRefs: [],
+          state: 'claimed',
+          verdict: { decision: 'claim' },
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+
+    await harness.mutation(internal.work.setPlan, {
+      workItemId,
+      plan: { ...ticketOnePlan, appliedCorrections: [correction._id] },
+    });
+
+    expect((await readItem(harness, workItemId)).plan).not.toHaveProperty('appliedCorrections');
+    const [kept] = await correctionsOf(harness, finance);
+    expect(kept?.appliedTo).toEqual([]);
+    expect(await eventsOf(harness, 'work.corrections-applied')).toEqual([]);
+  });
+
+  it('stops feeding a correction back once the manager retires it', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { correction } = await ticketOneRetriedWithNote(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.corrections.retire, { correctionId: correction._id });
+    recorded.model.length = 0;
+
+    const ticketTwo = await seedTicket(harness, agentId, 'LOG-2', 'Exception: SH-4502 held at customs');
+    await drain(harness);
+
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).not.toContain(NOTE);
+    expect((await readItem(harness, ticketTwo)).plan).not.toHaveProperty('appliedCorrections');
+    const [retired] = await correctionsOf(harness, agentId);
+    expect(typeof retired?.retiredAt).toBe('number');
+    expect(await eventsOf(harness, 'work.correction-retired')).toHaveLength(1);
+  });
+
+  it('lets only the owner retire a correction', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { correction } = await ticketOneRetriedWithNote(harness, agentId);
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).mutation(api.corrections.retire, { correctionId: correction._id }),
+    ).rejects.toThrow();
+    expect((await correctionsOf(harness, agentId))[0]?.retiredAt).toBeUndefined();
+  });
+
+  // Red until the planner reads corrections.
+  it.fails('keeps the note as written and scrubs a stored value out of the prompt', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const withToken = `${NOTE} The carrier portal token is xoxb-1234567890-abcdefghij.`;
+    const { correction } = await ticketOneRetriedWithNote(harness, agentId, withToken);
+    expect(correction.text).toBe(withToken);
+    recorded.model.length = 0;
+
+    await seedTicket(harness, agentId, 'LOG-2', 'Exception: SH-4502 held at customs');
+    await drain(harness);
+
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).toContain(NOTE);
+    expect(plannerPrompt).not.toContain('xoxb-1234567890-abcdefghij');
+    expect(plannerPrompt).toContain('<redacted>');
+  });
+});
+
+describe('the manager\'s other written reasons are kept too', (): void => {
+  it('keeps a rejection reason given on held actions', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const pendingRunId = await harness.run(
+      async (ctx) => await ctx.db.insert('events', { agentId, type: 'work.execution-claimed', payload: {}, createdAt: 1 }),
+    );
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'LOG-4',
+          title: 'Exception: SH-4520 damaged in transit',
+          contentSummary: 'Open a claim.',
+          contentRefs: [],
+          state: 'actions-pending',
+          verdict: { decision: 'claim' },
+          plan: ticketOnePlan,
+          pendingRunId,
+          output: { draft: '', notes: '', actions: [] },
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+      workItemId,
+      pendingRunId,
+      reason: 'Damage claims go to the carrier portal, never to the customer.',
+    });
+
+    const [kept] = await correctionsOf(harness, agentId);
+    expect(kept).toMatchObject({
+      workItemId,
+      kind: 'rejection',
+      text: 'Damage claims go to the carrier portal, never to the customer.',
+      itemTitle: 'Exception: SH-4520 damaged in transit',
+    });
+  });
+
+  it('keeps nothing when the manager gives no words', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const ticketOne = await seedStoppedTicketOne(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId: ticketOne, feedback: '   ' });
+    expect(await correctionsOf(harness, agentId)).toEqual([]);
+  });
+});
 
 describe('retrying a cancelled plan', (): void => {
   async function seedPendingPlan(harness: Harness, agentId: Id<'agents'>): Promise<Id<'workItems'>> {
@@ -271,6 +554,20 @@ describe('retrying a cancelled plan', (): void => {
     );
   }
 
+  it('keeps the cancel reason on the item and as a correction', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedPendingPlan(harness, agentId);
+
+    await harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId, reason: CANCEL_REASON });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('cancelled');
+    expect(row.managerFeedback).toMatchObject({ reason: CANCEL_REASON, kind: 'plan-rejection' });
+    const [kept] = await correctionsOf(harness, agentId);
+    expect(kept).toMatchObject({ workItemId, kind: 'plan-rejection', text: CANCEL_REASON });
+  });
+
   it('returns the row to claimed with the plan cleared, and the turned-down plan never runs', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -292,5 +589,34 @@ describe('retrying a cancelled plan', (): void => {
     expect((redrafted.plan as ExecutionPlan).summary).toBe('Send the customs-hold notice and set the follow-up.');
     expect(await eventsOf(harness, 'work.execution-claimed')).toEqual([]);
     expect(promptsOf((name) => name.startsWith('day0-skill-'))).toEqual([]);
+  });
+
+  // Red until the planner reads corrections.
+  it.fails('drafts the new plan with the manager\'s reason in front of the planner', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedPendingPlan(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.work.cancelPlan, { workItemId, reason: CANCEL_REASON });
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+
+    await drain(harness);
+
+    const [plannerPrompt] = promptsOf((name) => name === 'day0-plan');
+    expect(plannerPrompt).toContain(CORRECTIONS_HEADING);
+    expect(plannerPrompt).toContain(CANCEL_REASON);
+    const [kept] = await correctionsOf(harness, agentId);
+    expect((await readItem(harness, workItemId)).plan).toMatchObject({ appliedCorrections: [kept?._id] });
+  });
+});
+
+describe('mock mode', (): void => {
+  it('keeps no corrections: nothing in mock mode would ever read them', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const ticketOne = await seedStoppedTicketOne(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId: ticketOne, feedback: NOTE });
+    expect(await correctionsOf(harness, agentId)).toEqual([]);
+    expect((await readItem(harness, ticketOne)).managerFeedback).toMatchObject({ reason: NOTE, kind: 'retry-note' });
   });
 });

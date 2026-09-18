@@ -13,6 +13,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
+import { keepCorrectionInTransaction, markCorrectionsAppliedInTransaction } from './corrections';
 import {
   claimLoopStepInTransaction,
   EXECUTION_STALL_MS,
@@ -77,6 +78,11 @@ export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 export const REEVALUATION_BATCH = 100;
 /** The longest rejection reason kept in full for the retry to read. */
 export const MANAGER_FEEDBACK_MAX_CHARS = 1000;
+
+/** The manager's words as kept: whitespace collapsed and capped at `MANAGER_FEEDBACK_MAX_CHARS`. */
+function managerText(text: string | undefined): string {
+  return (text ?? '').replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
+}
 export { INTERRUPTED_APPLY_REASON };
 
 /**
@@ -644,8 +650,13 @@ export const setPlan = internalMutation({
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'claimed') return { stored: false };
+    // A plan may say it applied only this employee's own active corrections;
+    // any other id is dropped before the plan is stored.
+    const { appliedCorrections, ...drafted } = (args.plan ?? {}) as ExecutionPlan;
+    const applied = await markCorrectionsAppliedInTransaction(ctx, row, appliedCorrections ?? []);
+    const plan = applied.length > 0 ? { ...drafted, appliedCorrections: applied } : drafted;
     await ctx.db.patch(args.workItemId, {
-      plan: args.plan,
+      plan,
       state: 'plan-pending',
       ...(SURFACE_MODE === 'real' ? { planPendingAt: Date.now() } : {}),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
@@ -653,12 +664,24 @@ export const setPlan = internalMutation({
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.plan-drafted',
-      payload: { workItemId: args.workItemId, plan: args.plan },
+      payload: { workItemId: args.workItemId, plan },
       createdAt: Date.now(),
     });
+    if (applied.length > 0) {
+      await ctx.db.insert('events', {
+        agentId: row.agentId,
+        type: 'work.corrections-applied',
+        payload: {
+          workItemId: args.workItemId,
+          correctionIds: applied,
+          ...(drafted.correctionsRedaction ? { redaction: drafted.correctionsRedaction } : {}),
+        },
+        createdAt: Date.now(),
+      });
+    }
     // The charter's open questions this plan touches are asked here, before
     // execution, and once per question for the agent.
-    await askOpenQuestionsAtPlan(ctx, row, args.plan);
+    await askOpenQuestionsAtPlan(ctx, row, plan);
     return { stored: true };
   },
 });
@@ -1463,7 +1486,7 @@ export const retryFailed = mutation({
     // A note given with Retry is the manager's answer to what the last run
     // asked, or a direction for the next one; it reaches the retried run the
     // way a rejection reason does.
-    const feedback = args.feedback?.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
+    const feedback = managerText(args.feedback);
     const recoverable = ['failed', 'skipped', 'cancelled', 'completed'];
     if (!recoverable.includes(row.state)) {
       throw new Error(`workItem state is ${row.state}; expected one of ${recoverable.join(', ')}`);
@@ -1531,6 +1554,8 @@ export const retryFailed = mutation({
       ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
+    // The note is also kept for the employee's later work of the same kind.
+    if (feedback) await keepCorrectionInTransaction(ctx, row, 'retry-note', feedback);
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'work.retry',
@@ -1604,11 +1629,17 @@ async function cancelPlanInTransaction(
     throw new Error(`workItem state is ${row.state}; expected plan-pending`);
   }
   const skipReason = planCancelledReason(reason);
+  const feedback = managerText(reason);
   await ctx.db.patch(row._id, {
     state: 'cancelled',
     skipReason,
+    // Kept in full, as a rejection reason is, for the plan Retry drafts next.
+    ...(feedback
+      ? { managerFeedback: { reason: feedback, at: Date.now(), kind: 'plan-rejection' as const } }
+      : {}),
     ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
   });
+  if (feedback) await keepCorrectionInTransaction(ctx, row, 'plan-rejection', feedback);
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.cancelled',
@@ -2755,7 +2786,7 @@ async function rejectActionsInTransaction(
   if (row.pendingRunId !== args.pendingRunId) {
     throw new Error('pending run changed; refresh the action list');
   }
-  const feedback = args.reason.replace(/\s+/g, ' ').trim().slice(0, MANAGER_FEEDBACK_MAX_CHARS);
+  const feedback = managerText(args.reason);
   const reason = feedback.slice(0, 200);
   const skipReason = reason ? `rejected by the manager: ${reason}` : 'rejected by the manager';
   const applied = ledgerOf(row.output);
@@ -2793,6 +2824,7 @@ async function rejectActionsInTransaction(
     applyClaimedAt: undefined,
     ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
   });
+  if (feedback) await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.actions-rejected',

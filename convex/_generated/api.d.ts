@@ -12,6 +12,7 @@ import type * as agents from "../agents.js";
 import type * as baselineActions from "../baselineActions.js";
 import type * as charters from "../charters.js";
 import type * as config from "../config.js";
+import type * as corrections from "../corrections.js";
 import type * as coworker from "../coworker.js";
 import type * as credentialCryptoActions from "../credentialCryptoActions.js";
 import type * as credentials from "../credentials.js";
@@ -61,6 +62,7 @@ declare const fullApi: ApiFromModules<{
   baselineActions: typeof baselineActions;
   charters: typeof charters;
   config: typeof config;
+  corrections: typeof corrections;
   coworker: typeof coworker;
   credentialCryptoActions: typeof credentialCryptoActions;
   credentials: typeof credentials;
