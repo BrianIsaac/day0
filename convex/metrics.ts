@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
-import type { Doc } from './_generated/dataModel';
-import { query } from './_generated/server';
-import { assertOwnsAgent } from './ownership';
+import type { Doc, Id } from './_generated/dataModel';
+import { query, type QueryCtx } from './_generated/server';
+import { assertOwnsAgent, getCaller } from './ownership';
 
 type UnknownRecord = Record<string, unknown>;
 type DecisionVia = 'dashboard' | 'channel';
@@ -151,6 +151,16 @@ export function collectLedgerObservations(
   return [...observations.values()];
 }
 
+/**
+ * Events in the order they happened: by `createdAt`, and events one
+ * mutation wrote in the same millisecond in the order the backend wrote
+ * them. The figures then do not depend on the order the rows were read in,
+ * the backend's creation order or an export's id order.
+ */
+function byWriteOrder(left: Doc<'events'>, right: Doc<'events'>): number {
+  return left.createdAt - right.createdAt || left._creationTime - right._creationTime;
+}
+
 interface DecisionTotals {
   requested: number;
   approved: number;
@@ -216,10 +226,15 @@ function countDecision(
   if (cancelled) totals.cancelled += 1;
 }
 
-function decisionMetrics(
+/**
+ * Every decision one agent asked for and every latency the manager took,
+ * kept as the raw list so decisions of several employees can be pooled
+ * into the one manager's distribution before any median is taken.
+ */
+function decisionTotals(
   events: readonly Doc<'events'>[],
   workItems: readonly Doc<'workItems'>[],
-): AgentMetrics['decisions'] {
+): DecisionTotals {
   const totals: DecisionTotals = {
     requested: 0,
     approved: 0,
@@ -242,7 +257,7 @@ function decisionMetrics(
     }
     return id;
   };
-  for (const event of [...events].sort((left, right) => left.createdAt - right.createdAt)) {
+  for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
     if (event.type === 'work.decision-requesting') {
       const workItemId = asString(payload?.workItemId);
@@ -294,6 +309,10 @@ function decisionMetrics(
       totals.byVia[decision.decidedVia].push(latency);
     }
   }
+  return totals;
+}
+
+function summariseDecisions(totals: DecisionTotals): AgentMetrics['decisions'] {
   const all = latencySummary(totals.latencies);
   const dashboard = latencySummary(totals.byVia.dashboard);
   const channel = latencySummary(totals.byVia.channel);
@@ -325,7 +344,7 @@ function actionMetrics(
   const refused = new Set<string>();
   const refusalObservations = new Map<string, { reason: string; at: number }>();
   const lastPending = new Map<string, { payload: UnknownRecord; at: number }>();
-  for (const event of [...events].sort((left, right) => left.createdAt - right.createdAt)) {
+  for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
     if (!payload) continue;
     if (event.type === 'work.actions-auto-applying' || event.type === 'work.actions-pending') {
@@ -418,12 +437,15 @@ function actionMetrics(
   };
 }
 
-/** Compute the complete judge-facing summary from one agent's durable records. */
-export function computeAgentMetrics(
+/**
+ * One agent's summary together with the raw decision latencies behind it,
+ * which a company figure pools before taking its median.
+ */
+function agentFigures(
   events: readonly Doc<'events'>[],
   workItems: readonly Doc<'workItems'>[],
   charters: readonly Doc<'charters'>[],
-): AgentMetrics {
+): { metrics: AgentMetrics; decisions: DecisionTotals } {
   const deployedAt = events
     .filter((event) => event.type === 'agent.deployed')
     .map((event) => event.createdAt)
@@ -453,14 +475,15 @@ export function computeAgentMetrics(
   }).length;
   const timeFromDeploy = (at: number | undefined): number | null =>
     deployedAt === undefined || at === undefined ? null : Math.max(0, at - deployedAt);
-  return {
+  const decisions = decisionTotals(events, workItems);
+  const metrics: AgentMetrics = {
     charter: {
       timeToFirstDraftedMs: timeFromDeploy(firstDraftedAt),
       timeToFirstApprovedMs: timeFromDeploy(firstApprovedAt),
       revisions: Math.max(0, Math.max(draftedEvents.length, charters.length) - 1),
       requestChanges: events.filter((event) => event.type === 'charter.request_changes').length,
     },
-    decisions: decisionMetrics(events, workItems),
+    decisions: summariseDecisions(decisions),
     actions: actionMetrics(events, ledger),
     surfaces: {
       approved: events.filter((event) => event.type === 'surface.approved').length,
@@ -481,26 +504,272 @@ export function computeAgentMetrics(
       fraction: landed.length > 0 ? complete / landed.length : null,
     },
   };
+  return { metrics, decisions };
+}
+
+/** Compute the complete judge-facing summary from one agent's durable records. */
+export function computeAgentMetrics(
+  events: readonly Doc<'events'>[],
+  workItems: readonly Doc<'workItems'>[],
+  charters: readonly Doc<'charters'>[],
+): AgentMetrics {
+  return agentFigures(events, workItems, charters).metrics;
+}
+
+/** The most employees the company figures cover: as many as the landing page lists. */
+export const MAX_COMPANY_EMPLOYEES = 20;
+
+/** One employee's durable records, as `forAgent` reads them. */
+export interface EmployeeRecords {
+  agent: Doc<'agents'>;
+  events: readonly Doc<'events'>[];
+  workItems: readonly Doc<'workItems'>[];
+  charters: readonly Doc<'charters'>[];
+}
+
+export interface EmployeeMetrics {
+  agentId: Id<'agents'>;
+  name: string;
+  deployedAt: number;
+  metrics: AgentMetrics;
+}
+
+export interface CompanyMetrics {
+  employees: number;
+  charter: {
+    /** Each employee's time from deploy to its first approved charter, in deploy order. Never summed. */
+    timesToFirstApprovedMs: Array<number | null>;
+    /** The median of the approved times above, over `approvedEmployees` of them. */
+    medianTimeToFirstApprovedMs: number | null;
+    approvedEmployees: number;
+  };
+  /**
+   * Pooled across employees, because one manager made every decision: the
+   * latencies are that manager's one distribution, never a median of medians.
+   */
+  decisions: AgentMetrics['decisions'];
+  /** Pooled counts. A replayed browser sign-in is never an automatic action. */
+  actions: AgentMetrics['actions'];
+  surfaces: AgentMetrics['surfaces'];
+  skills: AgentMetrics['skills'];
+  autonomyChanges: number;
+  /** Pooled complete rows over pooled landed rows, replayed browser calls included. */
+  auditTrail: AgentMetrics['auditTrail'];
+}
+
+export interface OwnerMetrics {
+  /** Each employee's own figures, in deploy order. */
+  employees: EmployeeMetrics[];
+  company: CompanyMetrics;
+  /** The owner's evaluation agents and baseline arms, never part of the company. */
+  excludedAgents: number;
+  /** Employees older than the most recent `MAX_COMPANY_EMPLOYEES`, left out of every figure. */
+  omittedEmployees: number;
+}
+
+export interface CompanySelection {
+  /** The employees the figures cover, in deploy order. */
+  employees: Doc<'agents'>[];
+  excludedAgents: number;
+  omittedEmployees: number;
+}
+
+/**
+ * Whether an agent row belongs to an evaluation run rather than the company.
+ *
+ * Both harnesses deploy under the operator's own subject: the revocation
+ * trial as `eval-revocation-<stamp>@day0.local` (`scripts/eval-revocation.ts`)
+ * and the semifinal as `eval-<run>-<time>@day0.local`
+ * (`scripts/eval-semifinal.ts`), whose control arm is also `baseline`.
+ *
+ * Args:
+ *   agent: The agent row's boss address and arm.
+ *
+ * Returns:
+ *   True for an evaluation agent.
+ */
+export function isEvaluationAgent(agent: Pick<Doc<'agents'>, 'bossEmail' | 'arm'>): boolean {
+  if (agent.arm === 'baseline') return true;
+  return agent.bossEmail.startsWith('eval-') && agent.bossEmail.endsWith('@day0.local');
+}
+
+function byDeployOrder(left: Doc<'agents'>, right: Doc<'agents'>): number {
+  return left._creationTime - right._creationTime || (left._id < right._id ? -1 : 1);
+}
+
+/**
+ * The employees one owner's company figures cover.
+ *
+ * Another owner's agents, evaluation agents and baseline arms are left out;
+ * of the rest, the most recent `MAX_COMPANY_EMPLOYEES` are kept, as the
+ * landing page lists them, and the older ones are counted as omitted so a
+ * partial company figure is never silent. The query and the recompute script
+ * both select through here.
+ *
+ * Args:
+ *   agents: Agent rows, in any order; rows of other owners are ignored.
+ *   owner: The owner's subject.
+ *
+ * Returns:
+ *   The employees in deploy order and the counts left out.
+ */
+export function selectCompanyEmployees(
+  agents: readonly Doc<'agents'>[],
+  owner: string,
+): CompanySelection {
+  const owned = agents.filter((agent) => agent.userId === owner);
+  const company = owned.filter((agent) => !isEvaluationAgent(agent)).sort(byDeployOrder);
+  const kept = company.slice(Math.max(0, company.length - MAX_COMPANY_EMPLOYEES));
+  return {
+    employees: kept,
+    excludedAgents: owned.length - company.length,
+    omittedEmployees: company.length - kept.length,
+  };
+}
+
+function pooledActions(rows: readonly AgentMetrics['actions'][]): AgentMetrics['actions'] {
+  const sum = (pick: (row: AgentMetrics['actions']) => number): number =>
+    rows.reduce((total, row) => total + pick(row), 0);
+  const blocked = rows.flatMap((row) =>
+    row.blockedAfterRevocation === null ? [] : [row.blockedAfterRevocation],
+  );
+  const firstBlocks = rows.flatMap((row) =>
+    row.firstBlockAfterRevocationMs === null ? [] : [row.firstBlockAfterRevocationMs],
+  );
+  return {
+    autoApplied: sum((row) => row.autoApplied),
+    sessionRestores: sum((row) => row.sessionRestores),
+    held: sum((row) => row.held),
+    approved: sum((row) => row.approved),
+    rejected: sum((row) => row.rejected),
+    refused: sum((row) => row.refused),
+    // Null while no employee's scope was ever revoked, as for one employee.
+    blockedAfterRevocation: blocked.length > 0 ? blocked.reduce((total, n) => total + n, 0) : null,
+    firstBlockAfterRevocationMs: firstBlocks.length > 0 ? Math.min(...firstBlocks) : null,
+  };
+}
+
+/**
+ * Compute each employee's figures and the company row from their records.
+ *
+ * Args:
+ *   records: Each employee's durable records, in deploy order.
+ *   setAside: What the selection left out, carried into the result.
+ *
+ * Returns:
+ *   The employees' own figures beside the company row.
+ */
+export function computeCompanyMetrics(
+  records: readonly EmployeeRecords[],
+  setAside: Pick<OwnerMetrics, 'excludedAgents' | 'omittedEmployees'>,
+): OwnerMetrics {
+  const figures = records.map((record) => ({
+    agent: record.agent,
+    ...agentFigures(record.events, record.workItems, record.charters),
+  }));
+  const metrics = figures.map((figure) => figure.metrics);
+  const decisions: DecisionTotals = {
+    requested: 0,
+    approved: 0,
+    rejected: 0,
+    partiallyApproved: 0,
+    cancelled: 0,
+    latencies: [],
+    byVia: { dashboard: [], channel: [] },
+  };
+  for (const { decisions: own } of figures) {
+    decisions.requested += own.requested;
+    decisions.approved += own.approved;
+    decisions.rejected += own.rejected;
+    decisions.partiallyApproved += own.partiallyApproved;
+    decisions.cancelled += own.cancelled;
+    decisions.latencies.push(...own.latencies);
+    decisions.byVia.dashboard.push(...own.byVia.dashboard);
+    decisions.byVia.channel.push(...own.byVia.channel);
+  }
+  const sum = (pick: (row: AgentMetrics) => number): number =>
+    metrics.reduce((total, row) => total + pick(row), 0);
+  const charterTimes = metrics.map((row) => row.charter.timeToFirstApprovedMs);
+  const approvedTimes = charterTimes.filter((time): time is number => time !== null);
+  const complete = sum((row) => row.auditTrail.complete);
+  const total = sum((row) => row.auditTrail.total);
+  return {
+    employees: figures.map(({ agent, metrics: own }) => ({
+      agentId: agent._id,
+      name: agent.name,
+      deployedAt: agent.createdAt,
+      metrics: own,
+    })),
+    company: {
+      employees: figures.length,
+      charter: {
+        timesToFirstApprovedMs: charterTimes,
+        medianTimeToFirstApprovedMs: latencySummary(approvedTimes).medianLatencyMs,
+        approvedEmployees: approvedTimes.length,
+      },
+      decisions: summariseDecisions(decisions),
+      actions: pooledActions(metrics.map((row) => row.actions)),
+      surfaces: {
+        approved: sum((row) => row.surfaces.approved),
+        rejected: sum((row) => row.surfaces.rejected),
+        absent: sum((row) => row.surfaces.absent),
+      },
+      skills: {
+        approved: sum((row) => row.skills.approved),
+        rejected: sum((row) => row.skills.rejected),
+      },
+      autonomyChanges: sum((row) => row.autonomyChanges),
+      auditTrail: { complete, total, fraction: total > 0 ? complete / total : null },
+    },
+    excludedAgents: setAside.excludedAgents,
+    omittedEmployees: setAside.omittedEmployees,
+  };
+}
+
+async function readEmployeeRecords(ctx: QueryCtx, agent: Doc<'agents'>): Promise<EmployeeRecords> {
+  const [events, workItems, charters] = await Promise.all([
+    ctx.db
+      .query('events')
+      .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+      .collect(),
+    ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id))
+      .collect(),
+    ctx.db
+      .query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+      .collect(),
+  ]);
+  return { agent, events, workItems, charters };
 }
 
 export const forAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<AgentMetrics> => {
-    await assertOwnsAgent(ctx, args.agentId);
-    const [events, workItems, charters] = await Promise.all([
-      ctx.db
-        .query('events')
-        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-        .collect(),
-      ctx.db
-        .query('workItems')
-        .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
-        .collect(),
-      ctx.db
-        .query('charters')
-        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-        .collect(),
-    ]);
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const { events, workItems, charters } = await readEmployeeRecords(ctx, agent);
     return computeAgentMetrics(events, workItems, charters);
+  },
+});
+
+/**
+ * The supervision figures of the caller's company: each employee's own
+ * figures and the company row. An anonymous caller gets `null`.
+ */
+export const forOwner = query({
+  args: {},
+  handler: async (ctx): Promise<OwnerMetrics | null> => {
+    const identity = await getCaller(ctx);
+    if (!identity) return null;
+    const agents = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+      .collect();
+    const selection = selectCompanyEmployees(agents, identity.subject);
+    const records = await Promise.all(
+      selection.employees.map((agent) => readEmployeeRecords(ctx, agent)),
+    );
+    return computeCompanyMetrics(records, selection);
   },
 });

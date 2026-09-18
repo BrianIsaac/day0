@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { computeAgentMetrics } from '../../convex/metrics';
+import { computeAgentMetrics, type OwnerMetrics } from '../../convex/metrics';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -572,4 +572,404 @@ describe('a browser session re-established before an apply invocation', (): void
     expect(metrics.actions).toMatchObject({ autoApplied: 2, sessionRestores: 4, refused: 1 });
     expect(metrics.auditTrail).toEqual({ complete: 6, total: 6, fraction: 1 });
   });
+});
+
+describe('supervision figures for a company of employees', (): void => {
+  const COMPANY_OWNER = { subject: 'company-owner' };
+
+  interface EmployeeSpec {
+    name: string;
+    deployedAt: number;
+    bossEmail?: string;
+    userId?: string;
+    arm?: 'day0' | 'baseline';
+    charterApprovedAt?: number;
+    decisions?: Array<{
+      requestedAt: number;
+      decidedAt: number;
+      via: 'dashboard' | 'channel';
+      outcome: 'approved' | 'rejected';
+    }>;
+    ledger?: (workItemId: Id<'workItems'>) => unknown[];
+    autonomyChanges?: number;
+  }
+
+  async function deployEmployee(
+    harness: ReturnType<typeof convexTest>,
+    spec: EmployeeSpec,
+  ): Promise<Id<'agents'>> {
+    return await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: spec.bossEmail ?? 'boss@day0.local',
+        name: spec.name,
+        userId: spec.userId ?? COMPANY_OWNER.subject,
+        state: spec.charterApprovedAt === undefined ? 'charter-pending' : 'active',
+        arm: spec.arm ?? 'day0',
+        createdAt: spec.deployedAt,
+      });
+      const addEvent = async (type: string, payload: unknown, createdAt: number): Promise<void> => {
+        await ctx.db.insert('events', { agentId, type, payload, createdAt });
+      };
+      await addEvent('agent.deployed', {}, spec.deployedAt);
+      const charterId = await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: {},
+        approved: spec.charterApprovedAt !== undefined,
+        ...(spec.charterApprovedAt === undefined ? {} : { approvedAt: spec.charterApprovedAt }),
+        createdAt: spec.deployedAt + 500,
+      });
+      if (spec.charterApprovedAt !== undefined) {
+        await addEvent('charter.approved', { charterId }, spec.charterApprovedAt);
+      }
+      for (const [index, decision] of (spec.decisions ?? []).entries()) {
+        const workItemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `${spec.name.toUpperCase()}-${index + 1}`,
+          title: `${spec.name} item ${index + 1}`,
+          contentSummary: 'Synthetic company work.',
+          contentRefs: [],
+          state: decision.outcome === 'approved' ? 'completed' : 'failed',
+          observedAt: 1,
+          createdAt: 1,
+        });
+        await addEvent(
+          'work.decision-requesting',
+          { workItemId, decisionId: `${spec.name}-${index}`, kind: 'plan' },
+          decision.requestedAt,
+        );
+        await addEvent(
+          decision.outcome === 'approved' ? 'work.plan-approved' : 'work.cancelled',
+          { workItemId, decidedVia: decision.via },
+          decision.decidedAt,
+        );
+      }
+      if (spec.ledger) {
+        const workItemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `${spec.name.toUpperCase()}-LEDGER`,
+          title: `${spec.name} ledger`,
+          contentSummary: 'Synthetic landed rows.',
+          contentRefs: [],
+          state: 'completed',
+          observedAt: 1,
+          createdAt: 1,
+        });
+        await ctx.db.patch(workItemId, { output: { applied: spec.ledger(workItemId) } });
+      }
+      for (let change = 0; change < (spec.autonomyChanges ?? 0); change += 1) {
+        await addEvent('agent.autonomy-changed', { from: false, to: true }, spec.deployedAt + 900);
+      }
+      return agentId;
+    });
+  }
+
+  async function companyFigures(harness: ReturnType<typeof convexTest>): Promise<OwnerMetrics> {
+    const figures = await harness.withIdentity(COMPANY_OWNER).query(api.metrics.forOwner, {});
+    if (!figures) throw new Error('forOwner returned nothing to the owner');
+    return figures;
+  }
+
+  const landedRow = (
+    workItemId: Id<'workItems'>,
+    index: number,
+    authority: 'standing' | 'manager' | 'autonomous',
+    effect?: string,
+  ): Record<string, unknown> => ({
+    tool: 'mcp.call',
+    ok: true,
+    authority,
+    ...(effect === undefined ? {} : { effect }),
+    idempotencyKey: `${workItemId}:run-${index}:${index}`,
+  });
+
+  const THREE_EMPLOYEES: EmployeeSpec[] = [
+    {
+      name: 'Priya',
+      deployedAt: 1_000,
+      charterApprovedAt: 61_000,
+      decisions: [
+        { requestedAt: 100_000, decidedAt: 101_000, via: 'dashboard', outcome: 'approved' },
+        { requestedAt: 110_000, decidedAt: 112_000, via: 'channel', outcome: 'approved' },
+        { requestedAt: 120_000, decidedAt: 123_000, via: 'dashboard', outcome: 'rejected' },
+      ],
+      ledger: (workItemId) => [
+        landedRow(workItemId, 0, 'standing', 'Read REVOPS-1'),
+        landedRow(workItemId, 1, 'manager', 'Commented on REVOPS-1'),
+      ],
+    },
+    {
+      name: 'Mateo',
+      deployedAt: 2_000,
+      charterApprovedAt: 182_000,
+      decisions: [
+        { requestedAt: 200_000, decidedAt: 210_000, via: 'channel', outcome: 'approved' },
+      ],
+      // A browser row whose session was re-established: two replayed calls
+      // land before it, each a row of the audit trail, neither an automatic action.
+      ledger: (workItemId) => [
+        {
+          ...landedRow(workItemId, 4, 'autonomous', 'browser_fill_form on looker · ok'),
+          sessionRestore: {
+            steps: [0, 1].map((step) => ({
+              tool: 'mcp.call',
+              ok: true,
+              authority: 'autonomous',
+              effect: `replayed step ${step} · ok`,
+              idempotencyKey: `${workItemId}:run-4:4.session-${step}`,
+              replayOf: `${workItemId}:run-4:${step}`,
+            })),
+          },
+        },
+      ],
+      autonomyChanges: 1,
+    },
+    {
+      name: 'Aiko',
+      deployedAt: 3_000,
+      charterApprovedAt: 123_000,
+      decisions: [
+        { requestedAt: 300_000, decidedAt: 304_000, via: 'dashboard', outcome: 'approved' },
+        { requestedAt: 310_000, decidedAt: 315_000, via: 'channel', outcome: 'approved' },
+      ],
+      // Landed without an effect: on the trail, not complete.
+      ledger: (workItemId) => [landedRow(workItemId, 0, 'autonomous')],
+    },
+  ];
+
+  const SET_ASIDE: EmployeeSpec[] = [
+    {
+      name: 'Day0 revocation evaluation',
+      bossEmail: 'eval-revocation-20260918t080000@day0.local',
+      deployedAt: 4_000,
+      charterApprovedAt: 5_000,
+      decisions: [
+        { requestedAt: 400_000, decidedAt: 1_399_000, via: 'channel', outcome: 'approved' },
+      ],
+      ledger: (workItemId) => [landedRow(workItemId, 0, 'autonomous')],
+    },
+    {
+      name: 'Ordinary agent evaluation 1',
+      arm: 'baseline',
+      deployedAt: 5_000,
+      charterApprovedAt: 6_000,
+      decisions: [
+        { requestedAt: 500_000, decidedAt: 1_277_000, via: 'dashboard', outcome: 'rejected' },
+      ],
+    },
+    {
+      name: 'Another manager’s employee',
+      userId: 'another-owner',
+      deployedAt: 6_000,
+      charterApprovedAt: 7_000,
+      decisions: [
+        { requestedAt: 600_000, decidedAt: 1_155_000, via: 'channel', outcome: 'approved' },
+      ],
+    },
+  ];
+
+  it('pools one manager’s decisions across employees and keeps each employee’s own row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const employeeIds: Id<'agents'>[] = [];
+    for (const spec of THREE_EMPLOYEES) employeeIds.push(await deployEmployee(harness, spec));
+    for (const spec of SET_ASIDE) await deployEmployee(harness, spec);
+
+    const figures = await companyFigures(harness);
+
+    expect(figures.employees.map((row) => row.name)).toEqual(['Priya', 'Mateo', 'Aiko']);
+    for (const [index, agentId] of employeeIds.entries()) {
+      const own = await harness
+        .withIdentity(COMPANY_OWNER)
+        .query(api.metrics.forAgent, { agentId });
+      expect(figures.employees[index]).toEqual({
+        agentId,
+        name: THREE_EMPLOYEES[index].name,
+        deployedAt: THREE_EMPLOYEES[index].deployedAt,
+        metrics: own,
+      });
+    }
+    // The employees' own medians are 2 s, 10 s and 4.5 s, so a median of the
+    // medians would read 4.5 s; the manager's own distribution is the six
+    // pooled waits, 1, 2, 3, 4, 5 and 10 s, whose median is 3.5 s.
+    expect(figures.employees.map((row) => row.metrics.decisions.medianLatencyMs)).toEqual([
+      2_000, 10_000, 4_500,
+    ]);
+    expect(figures.company).toEqual({
+      employees: 3,
+      charter: {
+        timesToFirstApprovedMs: [60_000, 180_000, 120_000],
+        medianTimeToFirstApprovedMs: 120_000,
+        approvedEmployees: 3,
+      },
+      decisions: {
+        requested: 6,
+        approved: 5,
+        rejected: 1,
+        partiallyApproved: 0,
+        cancelled: 1,
+        medianLatencyMs: 3_500,
+        p90LatencyMs: 10_000,
+        byVia: {
+          dashboard: { decided: 3, medianLatencyMs: 3_000, p90LatencyMs: 4_000 },
+          channel: { decided: 3, medianLatencyMs: 5_000, p90LatencyMs: 10_000 },
+        },
+      },
+      actions: {
+        autoApplied: 3,
+        sessionRestores: 2,
+        held: 0,
+        approved: 0,
+        rejected: 0,
+        refused: 0,
+        blockedAfterRevocation: null,
+        firstBlockAfterRevocationMs: null,
+      },
+      surfaces: { approved: 0, rejected: 0, absent: 0 },
+      skills: { approved: 0, rejected: 0 },
+      autonomyChanges: 1,
+      auditTrail: { complete: 5, total: 6, fraction: 5 / 6 },
+    });
+    expect(figures.excludedAgents).toBe(2);
+    expect(figures.omittedEmployees).toBe(0);
+  });
+
+  it('quotes each employee’s time to an approved charter and a median only over the approved ones', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000, charterApprovedAt: 61_000 });
+    await deployEmployee(harness, { name: 'Mateo', deployedAt: 2_000 });
+    await deployEmployee(harness, { name: 'Aiko', deployedAt: 3_000, charterApprovedAt: 183_000 });
+    const figures = await companyFigures(harness);
+    expect(figures.company.charter).toEqual({
+      timesToFirstApprovedMs: [60_000, null, 180_000],
+      medianTimeToFirstApprovedMs: 120_000,
+      approvedEmployees: 2,
+    });
+  });
+
+  it('counts a revocation block only for the employee whose scope was revoked', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const revoked = await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000 });
+    await deployEmployee(harness, { name: 'Mateo', deployedAt: 2_000 });
+    await harness.run(async (ctx): Promise<void> => {
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: revoked,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-3',
+        title: 'After the revocation',
+        contentSummary: 'A read the manager revoked.',
+        contentRefs: [],
+        state: 'failed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: revoked,
+        type: 'permission.revoked',
+        payload: { scope: 'linear:read', by: 'manager' },
+        createdAt: 10_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: revoked,
+        type: 'work.actions-pending',
+        payload: {
+          workItemId,
+          runId: 'run-1',
+          autoIndexes: [],
+          heldIndexes: [],
+          refusedIndexes: [0],
+          refusals: [{ index: 0, reason: 'no grant (linear:read)' }],
+        },
+        createdAt: 12_000,
+      });
+    });
+    const figures = await companyFigures(harness);
+    expect(figures.employees.map((row) => row.metrics.actions.blockedAfterRevocation)).toEqual([
+      1,
+      null,
+    ]);
+    expect(figures.company.actions).toMatchObject({
+      refused: 1,
+      blockedAfterRevocation: 1,
+      firstBlockAfterRevocationMs: 2_000,
+    });
+  });
+
+  it('reports the employees it leaves out when the company is larger than the roster', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    for (let index = 0; index < 21; index += 1) {
+      await deployEmployee(harness, { name: `Employee ${index + 1}`, deployedAt: 1_000 + index });
+    }
+    const figures = await companyFigures(harness);
+    expect(figures.company.employees).toBe(20);
+    expect(figures.omittedEmployees).toBe(1);
+    expect(figures.employees[0].name).toBe('Employee 2');
+    expect(figures.employees.at(-1)?.name).toBe('Employee 21');
+  });
+
+  it('returns nothing to a caller with no identity', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000 });
+    await expect(harness.query(api.metrics.forOwner, {})).resolves.toBeNull();
+  });
+});
+
+describe('the figures do not depend on the order the rows are read in', (): void => {
+  // An export lists rows by id, the backend's index by creation time, and
+  // events written in one mutation share a createdAt millisecond.
+  const event = (
+    creationTime: number,
+    type: string,
+    payload: Record<string, unknown>,
+    createdAt: number,
+  ): Doc<'events'> =>
+    ({
+      _id: `event-${creationTime}`,
+      _creationTime: creationTime,
+      agentId: 'agent',
+      type,
+      payload,
+      createdAt,
+    }) as unknown as Doc<'events'>;
+
+  it(
+    'pairs a decision with a request written in the same millisecond however the two are listed',
+    (): void => {
+      const request = event(
+        1,
+        'work.decision-requesting',
+        { workItemId: 'wi', decisionId: 'd', kind: 'plan' },
+        5_000,
+      );
+      const approved = event(
+        2,
+        'work.plan-approved',
+        { workItemId: 'wi', decidedVia: 'channel' },
+        5_000,
+      );
+      const later = [
+        event(
+          3,
+          'work.decision-requesting',
+          { workItemId: 'wi2', decisionId: 'd2', kind: 'plan' },
+          6_000,
+        ),
+        event(4, 'work.plan-approved', { workItemId: 'wi2', decidedVia: 'channel' }, 9_000),
+      ];
+
+      const indexOrder = computeAgentMetrics([request, approved, ...later], [], []);
+      const idOrder = computeAgentMetrics([approved, request, ...later], [], []);
+
+      expect(indexOrder.decisions).toMatchObject({
+        requested: 2,
+        approved: 2,
+        medianLatencyMs: 1_500,
+      });
+      expect(idOrder).toEqual(indexOrder);
+    },
+  );
 });

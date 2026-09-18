@@ -5,11 +5,10 @@
  * Reports IDs and hashes, never row values. Keep reports private too.
  * Export README prose is excluded; all row fields and other files are compared.
  */
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { exportEntries } from './convex-export';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Fingerprints = Record<string, string>;
@@ -27,54 +26,6 @@ function canonical(value: Json): string {
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function exportEntries(path: string): Map<string, Buffer> {
-  const entries = new Map<string, Buffer>();
-  if (statSync(path).isDirectory()) {
-    for (const table of readdirSync(path, { withFileTypes: true })) {
-      if (table.isSymbolicLink()) throw new Error('Export contains a symbolic link');
-      if (table.name === 'README.md' && table.isFile()) continue;
-      if (!table.isDirectory()) {
-        throw new Error('Unsupported export layout; expected root table directories');
-      }
-      if (!readdirSync(join(path, table.name)).includes('documents.jsonl')) {
-        throw new Error('Export table is missing documents.jsonl');
-      }
-      for (const file of readdirSync(join(path, table.name), { withFileTypes: true })) {
-        if (!file.isFile()) throw new Error('Export contains a non-regular file');
-        entries.set(`${table.name}/${file.name}`, readFileSync(join(path, table.name, file.name)));
-      }
-    }
-  } else {
-    // Read members without extraction: private rows never become temporary files.
-    const archive = resolve(path);
-    const names = execFileSync('unzip', ['-Z1', archive], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-      .trim()
-      .split('\n');
-    for (const name of names) {
-      if (name.endsWith('/') || name === 'README.md') continue;
-      if (
-        !/^[a-zA-Z0-9_. /-]+$/.test(name) ||
-        name.split('/').includes('..') ||
-        name.startsWith('/')
-      ) {
-        throw new Error('Unsupported export member path');
-      }
-      if (entries.has(name)) throw new Error('Duplicate export member');
-      entries.set(
-        name,
-        execFileSync('unzip', ['-p', archive, name], {
-          maxBuffer: 256 * 1024 * 1024,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        }),
-      );
-    }
-  }
-  return entries;
 }
 
 function inventory(path: string) {
