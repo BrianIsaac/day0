@@ -387,6 +387,99 @@ describe('an empty model turn', (): void => {
   });
 });
 
+describe('closing the 1:1', (): void => {
+  const closed = (body: string): boolean =>
+    chunksOf(body).some((c) => c.type.startsWith('tool-'));
+  const said = (body: string): string =>
+    chunksOf(body)
+      .filter((c) => c.type === 'text-delta')
+      .map((c) => c.delta)
+      .join('');
+
+  it('drops a close that arrives in the turn that asks topic 7', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    const question = 'Last one: anything you are unsure about, or want me to circle back on?';
+    stubProvider([() => closingCompletion(question, 'Thanks Aiko, drafting the charter.')]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(6) }))).text();
+
+    expect(closed(body)).toBe(false);
+    expect(said(body)).toBe(question);
+    expect(chunksOf(body).at(-1)).toMatchObject({ type: 'finish', finishReason: 'stop' });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('drops a close whose own turn still asks something, however long the 1:1 has run', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    const question = 'One more: who owns the Looker tile?';
+    stubProvider([() => closingCompletion(question, 'Thanks, drafting the charter.')]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(8) }))).text();
+
+    expect(closed(body)).toBe(false);
+    expect(said(body)).toBe(question);
+  });
+
+  it('puts the next scripted question when an early close leaves the turn with none', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([() => closingCompletion('', 'All set, drafting the charter.')]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(6) }))).text();
+
+    expect(closed(body)).toBe(false);
+    expect(said(body)).toContain('7/7');
+    expect(said(body)).toContain('open questions on the charter');
+    expect(sent).toHaveLength(1);
+  });
+
+  it('adds the scripted question to words that asked nothing', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([() => closingCompletion('Understood, week one is the tracker.', 'Drafting.')]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(6) }))).text();
+
+    expect(closed(body)).toBe(false);
+    expect(said(body)).toMatch(/^Understood, week one is the tracker\.\n\n7\/7/);
+    const types = chunksOf(body).map((c) => c.type);
+    expect(types.filter((t) => t === 'text-start')).toHaveLength(1);
+    expect(types.indexOf('text-end')).toBeGreaterThan(types.lastIndexOf('text-delta'));
+  });
+
+  it('honours a close that only quotes a question back', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([
+      () => closingCompletion('Noted "who owns the Looker tile?" as open.', 'Drafting the charter.'),
+    ]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(7) }))).text();
+
+    expect(closed(body)).toBe(true);
+  });
+
+  it('does not count the priming turn or a second message in a row as a reply', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([() => closingCompletion('Thanks.', 'Drafting the charter.')]);
+    const history = [...historyOf(6), turn('user', 'And one more thing on that.', 'u6b')];
+
+    const body = await (await POST(day1Request({ messages: history }))).text();
+
+    expect(closed(body)).toBe(false);
+  });
+
+  it('honours the close once the manager has replied after topic 7', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([() => closingCompletion('Thanks, Aiko.', 'I will draft the charter now.')]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(7) }))).text();
+
+    expect(closed(body)).toBe(true);
+    expect(chunksOf(body).find((c) => c.type === 'tool-input-available')).toMatchObject({
+      toolName: 'dayOneComplete',
+      input: { closingLine: 'I will draft the charter now.' },
+    });
+  });
+});
+
 it('does not ask again once the 60-second deadline has cut a reply', async () => {
   const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
   vi.useFakeTimers();

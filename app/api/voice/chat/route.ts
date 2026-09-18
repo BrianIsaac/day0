@@ -11,7 +11,7 @@ import { establishCaller } from '@/lib/dev-auth-server';
 import { languageModel } from '@/lib/openai';
 import { streamCallOptions } from '@/lib/stream-settings';
 import { DAY_ONE_TOPIC_SPECS, DAY_ONE_WELCOME } from '@/agent/day-one-prompts';
-import { dayOneTurnStream } from '@/agent/day-one-turn';
+import { dayOneTurnStream, managerReplies } from '@/agent/day-one-turn';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -84,7 +84,8 @@ export async function POST(req: Request): Promise<Response> {
 
   const messages = await convertToModelMessages(uiMessages);
   // One model call. `dayOneTurnStream` makes it a second time when the first
-  // ends having said nothing.
+  // ends having said nothing, and holds `dayOneComplete` until the manager has
+  // answered topic 7.
   const attempt = () =>
     streamText({
       abortSignal,
@@ -110,6 +111,7 @@ export async function POST(req: Request): Promise<Response> {
     return createUIMessageStreamResponse({
       stream: dayOneTurnStream({
         attempt,
+        replies: managerReplies(uiMessages),
         signal: abortSignal,
       }),
     });
