@@ -1532,13 +1532,11 @@ export const retryFailed = mutation({
     // A cancelled plan is one the manager turned down: Retry drafts a new plan
     // that goes back to them, and never runs the rejected one.
     const redraft = row.state === 'cancelled' && row.plan !== undefined;
-    const next: Doc<'workItems'>['state'] = redraft
-      ? 'claimed'
-      : row.plan
-        ? 'plan-approved'
-        : verdict?.decision === 'claim'
-          ? 'claimed'
-          : 'discovered';
+    const next: Doc<'workItems'>['state'] = row.plan && !redraft
+      ? 'plan-approved'
+      : verdict?.decision === 'claim'
+        ? 'claimed'
+        : 'discovered';
     // Retrying a skip is the manager overruling the agent's judgement: a
     // quality-fit skip says the work is worth doing, an out-of-scope skip says
     // the work is theirs to give. The re-evaluation leaves that one rule out.
@@ -1654,6 +1652,7 @@ async function cancelPlanInTransaction(
   }
   const skipReason = planCancelledReason(reason);
   const feedback = managerText(reason);
+  if (feedback) await keepCorrectionInTransaction(ctx, row, 'plan-rejection', feedback);
   await ctx.db.patch(row._id, {
     state: 'cancelled',
     skipReason,
@@ -1663,7 +1662,6 @@ async function cancelPlanInTransaction(
       : {}),
     ...decidedPatch(row, 'plan', via, 'rejected', messageTs),
   });
-  if (feedback) await keepCorrectionInTransaction(ctx, row, 'plan-rejection', feedback);
   await ctx.db.insert('events', {
     agentId: row.agentId,
     type: 'work.cancelled',
