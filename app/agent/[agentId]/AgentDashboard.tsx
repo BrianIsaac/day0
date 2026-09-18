@@ -8,6 +8,12 @@ import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { ChatRoom } from './ChatRoom';
 import { VoiceRoom } from './VoiceRoom';
 import { MockEnvironment } from './MockEnvironment';
+import {
+  AppliedCorrectionsLine,
+  KeptCorrectionsPanel,
+  keptCorrectionsTitle,
+  type KeptCorrection,
+} from './corrections-panel';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
 import {
   type ActionVerdict,
@@ -99,6 +105,17 @@ export function AgentDashboard({ agentId }: Props) {
   const surfaces = useMemo(
     (): SurfaceRecord[] => (surfaceRows ?? []).map((row) => toSurfaceRecord(row)),
     [surfaceRows],
+  );
+  // Real mode only, as the corrections are: the mock keeps none.
+  const correctionRows = useQuery(
+    api.corrections.listForAgent,
+    surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
+  );
+  const corrections: KeptCorrection[] = correctionRows ?? [];
+  const retireCorrection = useMutation(api.corrections.retire);
+  const itemTitles = useMemo(
+    (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
+    [workItems],
   );
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
@@ -218,6 +235,7 @@ export function AgentDashboard({ agentId }: Props) {
             charterApproved={!!charter?.approved}
             autonomousActions={agent ? autonomousActionsOn(agent) : false}
             surfaceMode={surfaceConfig?.mode}
+            corrections={corrections}
           />
         </div>
 
@@ -229,6 +247,15 @@ export function AgentDashboard({ agentId }: Props) {
             authoringFailure={authoringFailure}
             onAuthoringAttempt={setLastAttempt}
           />
+          {surfaceConfig?.mode === 'real' ? (
+            <Card title={keptCorrectionsTitle(corrections)}>
+              <KeptCorrectionsPanel
+                corrections={corrections}
+                titles={itemTitles}
+                onRetire={(correctionId) => retireCorrection({ correctionId })}
+              />
+            </Card>
+          ) : null}
           {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
           <MetricsCard metrics={metrics} />
           <EventTicker events={events ?? []} />
@@ -1576,6 +1603,7 @@ export function WorkQueue({
   charterApproved,
   autonomousActions,
   surfaceMode,
+  corrections = [],
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
@@ -1588,6 +1616,8 @@ export function WorkQueue({
   autonomousActions: boolean;
   /** The deployment's surface mode, undefined while it loads. Only mock mode drives the loop from here. */
   surfaceMode: 'mock' | 'real' | undefined;
+  /** The employee's kept corrections, for the plan cards that applied one. */
+  corrections?: KeptCorrection[];
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -1682,6 +1712,7 @@ export function WorkQueue({
               surfaces={surfaces}
               autonomousActions={autonomousActions}
               questions={openQuestions.filter((question) => question.workItemId === item._id)}
+              corrections={corrections}
               onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
               onCancelPlan={() => cancelPlan({ workItemId: item._id })}
               onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
@@ -2660,6 +2691,7 @@ export function WorkItemCard({
   surfaces,
   autonomousActions,
   questions = [],
+  corrections = [],
   onApprovePlan,
   onCancelPlan,
   onRetryFailed,
@@ -2673,6 +2705,8 @@ export function WorkItemCard({
   autonomousActions: boolean;
   /** The charter's open questions asked at this item's plan and still waiting. */
   questions?: Doc<'managerQuestions'>[];
+  /** The employee's kept corrections, for the line saying this plan applied one. */
+  corrections?: readonly KeptCorrection[];
   onApprovePlan: (decision: PlanApproval) => void;
   onCancelPlan: () => void;
   onRetryFailed: (feedback?: string) => void;
@@ -2695,6 +2729,8 @@ export function WorkItemCard({
         expectedOutputType: string;
         obligations?: PlanObligationsRow;
         obligationsFailedOpen?: string;
+        appliedCorrections?: string[];
+        correctionsRedaction?: 'structural-only';
       }
     | undefined;
   const output = item.output as RunOutput | undefined;
@@ -2815,6 +2851,12 @@ export function WorkItemCard({
               <li key={i}>{s}</li>
             ))}
           </ol>
+          <AppliedCorrectionsLine
+            ids={plan.appliedCorrections ?? []}
+            corrections={corrections}
+            workItemId={item._id}
+            redaction={plan.correctionsRedaction}
+          />
           <PlanObligationsLine obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
           {item.state === 'plan-pending' ? (
             <PlanApprovalForm
