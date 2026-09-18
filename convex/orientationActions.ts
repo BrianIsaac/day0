@@ -1308,15 +1308,18 @@ export async function orientSurface(
  *
  * Each scheduled invocation owns one surface, so a slow model or provider
  * call cannot fail charter approval or prevent the other systems orienting.
- * Only surface ids cross the scheduler boundary. A run that throws leaves
+ * Only surface ids cross the scheduler boundary, with `requested` set when
+ * the manager asked for this surface's card by hand. A run that throws leaves
  * its surface `declared` with the failure as its reason, so the card says
  * what happened and the re-run control applies.
  */
 export const orientOne = internalAction({
-  args: { surfaceId: v.id('surfaces') },
+  args: { surfaceId: v.id('surfaces'), requested: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<OrientationOutcome> => {
     try {
-      return await orientSurface(ctx, args.surfaceId);
+      return await orientSurface(ctx, args.surfaceId, orientationDependencies, {
+        requested: args.requested === true,
+      });
     } catch (error) {
       await ctx.runMutation(internal.surfaces.recordOrientationFailure, {
         surfaceId: args.surfaceId,

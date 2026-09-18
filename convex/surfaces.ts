@@ -631,6 +631,49 @@ export async function scheduleOrientationFor(
 }
 
 /**
+ * Ask for the card of one documented system the charter does not name.
+ *
+ * Orientation leaves such a system declared and the card lists it under the
+ * others; this is the manager's click that orients that one surface. The
+ * card it files still needs the manager and IT to approve it. Nothing is
+ * stored on the row: a rejected or failed card goes back to waiting, one
+ * click from a card again, and a pending job for the surface is replaced
+ * so the request is not swallowed by a run that would skip it.
+ */
+export const requestProposal = mutation({
+  args: { surfaceId: v.id('surfaces') },
+  handler: async (ctx, args): Promise<null> => {
+    assertRealMode('Surface proposal');
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new Error('Surface not found.');
+    await assertOwnsAgent(ctx, surface.agentId);
+    if (surface.verdict !== 'declared') {
+      throw new Error(`Only a declared system can be proposed; this one is ${surface.verdict}.`);
+    }
+    if (surface.orientationJobId) {
+      const job = await ctx.db.system.get(surface.orientationJobId);
+      if (job?.state.kind === 'inProgress') {
+        throw new Error('Orientation is already running for this system; its card follows.');
+      }
+      if (job?.state.kind === 'pending') await ctx.scheduler.cancel(job._id);
+    }
+    const orientationJobId = await ctx.scheduler.runAfter(
+      0,
+      internal.orientationActions.orientOne,
+      { surfaceId: surface._id, requested: true },
+    );
+    await ctx.db.patch(surface._id, { orientationJobId });
+    await ctx.db.insert('events', {
+      agentId: surface.agentId,
+      type: 'surface.proposal-requested',
+      payload: { surfaceId: surface._id, slug: surface.slug },
+      createdAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
  * Record that an orientation job failed before it could decide.
  *
  * The surface stays `declared`, because nothing was decided, but the card
