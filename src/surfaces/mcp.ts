@@ -17,6 +17,7 @@ import type { SpanModel } from '../redaction/client';
 import { createSecretMcpClient } from './mcp-client';
 import {
   browserComponent,
+  browserPageUrl,
   BROWSER_DRIVER_ABSENT_REASON,
   elementDescriptions,
   isDriverUnreachable,
@@ -26,6 +27,7 @@ import {
   refFieldFor,
   resolveElementRef,
   withResolvedRefs,
+  withinDocumentedSurface,
   type SnapshotElement,
 } from './browser';
 import type {
@@ -415,6 +417,7 @@ export class McpAdapter implements SurfaceAdapter {
     toolName: string,
     toolArgs: Record<string, unknown>,
     argumentNames: readonly string[] | undefined,
+    replayEndpoint?: string,
   ): Promise<{ toolArgs: Record<string, unknown> } | { reason: string }> {
     const descriptions = elementDescriptions(toolName, toolArgs);
     if (descriptions.length === 0) {
@@ -425,6 +428,13 @@ export class McpAdapter implements SurfaceAdapter {
       return { reason: 'the browser driver does not expose browser_snapshot' };
     }
     const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
+    if (replayEndpoint) {
+      const page = browserPageUrl(snapshot.text);
+      if (!page) return { reason: 'the browser driver reported no current page URL' };
+      if (!withinDocumentedSurface(page, replayEndpoint)) {
+        return { reason: `the page is outside the approved surface (${replayEndpoint})` };
+      }
+    }
     const refs: SnapshotElement[] = [];
     for (const description of descriptions) {
       const found = resolveElementRef(snapshot.text, description);
@@ -675,6 +685,7 @@ export class McpAdapter implements SurfaceAdapter {
             surface.toolArguments?.find(
               (entry: { arguments: string[]; tool: string }): boolean => entry.tool === call.tool,
             )?.arguments,
+            replay ? surface.endpoint : undefined,
           );
           if ('reason' in resolved) {
             const redacted = await redactOutcome(resolved.reason, bearer, this.deps.spanModel, this.deps.knownValues);
@@ -714,6 +725,22 @@ export class McpAdapter implements SurfaceAdapter {
           const landedOutside = navigationResultRefusal(call.tool, result.text, surface.endpoint);
           if (landedOutside) {
             return { tool: action.tool, ok: false, reason: landedOutside, idempotencyKey };
+          }
+          if (replay && call.tool === 'browser_click') {
+            let page = browserPageUrl(result.text);
+            if (!page) {
+              const snapshotTool = (await client.listTools())[`${surface.slug}_browser_snapshot`];
+              if (!snapshotTool?.execute) {
+                return { tool: action.tool, ok: false, reason: 'the browser driver does not expose browser_snapshot', idempotencyKey };
+              }
+              page = browserPageUrl(interpretToolResult(await snapshotTool.execute({}, {})).text);
+            }
+            if (!page) {
+              return { tool: action.tool, ok: false, reason: 'the browser driver reported no final page URL', idempotencyKey };
+            }
+            if (!surface.endpoint || !withinDocumentedSurface(page, surface.endpoint)) {
+              return { tool: action.tool, ok: false, reason: `the page is outside the approved surface (${surface.endpoint ?? 'no documented address'})`, idempotencyKey };
+            }
           }
         }
         const evidence =

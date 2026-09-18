@@ -1182,6 +1182,53 @@ describe('signing a new browser in again for a run', (): void => {
     expect(restored).toMatchObject({ ok: false, steps: [{ ok: false, reason: 'a replayed call must target looker' }] });
     expect(driver.calls).toEqual([]);
   });
+
+  it('does not type a replayed credential after a login control redirects outside the surface', async (): Promise<void> => {
+    const sent: Array<{ tool: string; args: unknown }> = [];
+    let external = false;
+    const make = (tool: string) => ({
+      execute: async (args: unknown): Promise<unknown> => {
+        sent.push({ tool, args });
+        if (tool === 'browser_click' && (args as { element?: string }).element === 'Next') external = true;
+        const page = external
+          ? '### Page\n- Page URL: https://outside.example/login\n### Snapshot\n- textbox "Password" [ref=e2]\n- button "Sign in" [ref=e3]'
+          : '### Page\n- Page URL: http://looker-tile:8080/login\n### Snapshot\n- textbox "Email" [ref=e2]\n- button "Next" [ref=e3]';
+        return { content: [{ type: 'text', text: page }] };
+      },
+    });
+    const adapter = new McpAdapter([looker], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (): McpClientLike => ({
+        listTools: async () => Object.fromEntries(
+          ['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_click'].map((tool) => [
+            `looker_${tool}`, make(tool),
+          ]),
+        ),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+    });
+    const browser = (tool: string, toolArgs: Record<string, unknown>): MockAction => ({
+      tool: 'mcp.call',
+      args: { surface: 'looker', tool, toolArgsJson: JSON.stringify(toolArgs) },
+    });
+    const steps = [
+      browser('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      browser('browser_fill_form', { fields: [{ name: 'Email', value: '{{secret}}' }] }),
+      browser('browser_click', { element: 'Next' }),
+      browser('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
+      browser('browser_click', { element: 'Sign in' }),
+    ].map((action, index) => ({ action, replayOf: `wi:run:${index}`, authority: 'autonomous' as const }));
+    const restored = await adapter.restoreSession(ctx, run, looker, steps, 'wi:run:5');
+    expect(external).toBe(true);
+    expect(restored).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('outside the approved surface'),
+    });
+    expect(sent.filter((call) => call.tool === 'browser_fill_form')).toHaveLength(1);
+    expect(sent.filter((call) => call.tool === 'browser_click')).toHaveLength(1);
+  });
 });
 
 describe('provider error envelope variants', () => {
