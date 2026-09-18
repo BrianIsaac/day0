@@ -1040,7 +1040,8 @@ export async function runSeed(io: CompanyIo, set: string | undefined, report: Re
   const state: CompanyState = {
     epoch: previous?.epoch ?? slackTs(io.now()),
     issueIds: [...new Set([...(previous?.issueIds ?? []), ...writes.activated])],
-    labelId: previous?.labelId ?? writes.createdLabelId,
+    // A label seed made supersedes the recorded one, which must already be gone for seed to make it.
+    labelId: writes.createdLabelId ?? previous?.labelId,
   };
   writeState(io, state);
   report.section('Slack');
@@ -1102,7 +1103,11 @@ export async function runPost(io: CompanyIo, key: string, report: Report): Promi
     await writes.rollBack(io, 'post', error, state, spec.label, report);
     return 1;
   }
-  writeState(io, { ...state, issueIds: [...new Set([...state.issueIds, ...writes.activated])] });
+  writeState(io, {
+    ...state,
+    issueIds: [...new Set([...state.issueIds, ...writes.activated])],
+    labelId: writes.createdLabelId ?? state.labelId,
+  });
   return 0;
 }
 

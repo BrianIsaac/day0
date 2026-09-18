@@ -882,7 +882,7 @@ describe('a transient Linear failure in teardown and seed', (): void => {
     expect(h.slack.deleted).toHaveLength(3);
   });
 
-  it.fails('removes the label a later seed made after a partial teardown kept the state file', async (): Promise<void> => {
+  it('removes the label a later seed made after a partial teardown kept the state file', async (): Promise<void> => {
     const h = await seeded();
     h.slack.failing.add('auth.test');
     expect(await run(h, ['teardown'])).toBe(1);
