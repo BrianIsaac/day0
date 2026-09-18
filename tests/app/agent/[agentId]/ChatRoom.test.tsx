@@ -7,6 +7,7 @@ import {
   askAgain,
   composerLocked,
   emphasisSegments,
+  errorLine,
   turnFailure,
 } from '../../../../app/agent/[agentId]/ChatRoom';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
@@ -54,7 +55,7 @@ describe('the Day-1 transcript bubble', (): void => {
 /** What `useChat` hands `onFinish`, cut down to what the chat room reads. */
 function finished(
   parts: UIMessage['parts'],
-  finishReason?: 'stop' | 'tool-calls',
+  finishReason?: 'stop' | 'tool-calls' | 'length',
 ): Parameters<typeof turnFailure>[0] {
   return {
     message: { id: 'a1', role: 'assistant', parts },
@@ -102,6 +103,25 @@ describe('a turn that ends with nothing to answer', (): void => {
   it('leaves a stream error and a discarded send to their own paths', (): void => {
     expect(turnFailure({ ...finished([]), isError: true })).toBeNull();
     expect(turnFailure({ ...finished([]), isAbort: true })).toBeNull();
+  });
+
+  it('is a failure when the output budget ended the reply mid-sentence', (): void => {
+    expect(turnFailure(finished([{ type: 'text', text: 'Understood. Who sho' }], 'length'))).toBe(
+      'Day0 was cut off mid-reply',
+    );
+  });
+});
+
+describe('a stream error', (): void => {
+  it("shows the route's own sentence, not the JSON it arrived in", (): void => {
+    const body = JSON.stringify({ error: 'agent unavailable', detail: 'OPENAI_API_KEY not set' });
+
+    expect(errorLine(new Error(body))).toBe('agent unavailable');
+  });
+
+  it('shows any other error as it reads, and never an empty line', (): void => {
+    expect(errorLine(new Error('Failed to fetch'))).toBe('Failed to fetch');
+    expect(errorLine(new Error(''))).toBe('agent unavailable');
   });
 });
 

@@ -31,7 +31,8 @@ function withoutPrimingTurn(messages: UIMessage[]): UIMessage[] {
  *
  * A provider stall reaches the room as a stream that finished having said
  * nothing and called nothing; the route's 60-second deadline reaches it as a
- * stream that stopped without its `finish` chunk. The SDK reports both as an
+ * stream that stopped without its `finish` chunk, and a spent output budget as
+ * a finish of `length`. The SDK reports both as an
  * ordinary `ready`, so on 19 Sep the first left the composer waiting for good
  * and the second left half a sentence standing as the answer.
  *
@@ -51,8 +52,24 @@ export function turnFailure(turn: {
   if (turn.isError || turn.isAbort) return null;
   const closed = turn.message.parts.some((p) => p.type === 'tool-dayOneComplete');
   if (!closed && !textOf(turn.message).trim()) return 'Day0 returned nothing';
-  if (turn.finishReason === undefined) return 'Day0 was cut off mid-reply';
+  if (turn.finishReason === undefined || turn.finishReason === 'length') {
+    return 'Day0 was cut off mid-reply';
+  }
   return null;
+}
+
+/**
+ * The line for a stream error. The route answers a failure it can name with
+ * JSON, which the transport hands over as the error's message, braces and all.
+ */
+export function errorLine(err: Error): string {
+  try {
+    const body = JSON.parse(err.message) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error) return body.error;
+  } catch {
+    // Not JSON: the message is the sentence.
+  }
+  return err.message || 'agent unavailable';
 }
 
 /**
@@ -133,7 +150,7 @@ export function ChatRoom({
     onError: (err) => {
       // Provider 503s and similar transient failures land here, and the hook
       // parks at status 'error'. Surface it so the boss can ask again.
-      setStreamError(err.message || 'agent unavailable');
+      setStreamError(errorLine(err));
     },
     onFinish: (turn) => {
       const failure = turnFailure(turn);
