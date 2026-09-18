@@ -10,12 +10,14 @@
  * owner's credential list reads as a list of what was found and where.
  */
 import { KNOWN_VALUE_LABEL, redactText, type Finding, type RedactOptions } from '../redaction/redact';
+import { explicitlyAssignedCredential, guardReason } from '../redaction/guard';
 import type { SpanModel } from '../redaction/client';
 import { PROVIDER_LABELS } from '../redaction/structural';
 
 export interface RedactedCredential {
   label: string;
   plaintext: string;
+  explicitlyAssigned?: boolean;
 }
 
 export interface RedactedMarkdown {
@@ -188,13 +190,26 @@ export async function redactCredentials(
     secretMarker: collect(markdown),
   });
   const credentials: RedactedCredential[] = [];
-  for (const finding of [...titleResult.findings, ...bodyResult.findings]) {
-    if (finding.kind !== 'secret' || credentials.some((row) => row.plaintext === finding.value)) continue;
-    // A stored value met in its escaped or encoded form is the same
-    // credential, not a new one; met literally it is stored again so the
-    // page's own row keeps its reference through a re-sync.
-    if (finding.label === KNOWN_VALUE_LABEL && !options.known?.includes(finding.value)) continue;
-    credentials.push({ label: labels.get(finding.value) ?? finding.label, plaintext: finding.value });
+  for (const [context, findings] of [[title, titleResult.findings], [markdown, bodyResult.findings]] as const) {
+    for (const finding of findings) {
+      if (finding.kind !== 'secret') continue;
+      const assigned = explicitlyAssignedCredential(context, finding.start, finding.end) &&
+        guardReason(finding.value) !== undefined && guardReason(finding.value, { assigned: true }) === undefined;
+      const existing = credentials.find((row) => row.plaintext === finding.value);
+      if (existing) {
+        if (assigned) existing.explicitlyAssigned = true;
+        continue;
+      }
+      // A stored value met in its escaped or encoded form is the same
+      // credential, not a new one; met literally it is stored again so the
+      // page's own row keeps its reference through a re-sync.
+      if (finding.label === KNOWN_VALUE_LABEL && !options.known?.includes(finding.value)) continue;
+      credentials.push({
+        label: labels.get(finding.value) ?? finding.label,
+        plaintext: finding.value,
+        ...(assigned ? { explicitlyAssigned: true } : {}),
+      });
+    }
   }
   return { markdown: bodyResult.text, title: safeTitle, credentials };
 }

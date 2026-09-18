@@ -18,7 +18,7 @@
   "ip address"
  ],
  "threshold": 0.3,
- "recordedAt": "2026-09-15T08:04:14.404Z",
+ "recordedAt": "2026-09-18T10:08:46.690Z",
  "cases": {
   "docs-local-looker-tile": [
    {
@@ -1976,6 +1976,232 @@
     "end": 112,
     "label": "access token",
     "score": 0.6696
+   }
+  ],
+  "bed-revops-handbook-original": [
+   {
+    "start": 428,
+    "end": 440,
+    "label": "access token",
+    "score": 0.3851
+   },
+   {
+    "start": 510,
+    "end": 523,
+    "label": "access token",
+    "score": 0.4159
+   },
+   {
+    "start": 570,
+    "end": 577,
+    "label": "person",
+    "score": 0.916
+   },
+   {
+    "start": 778,
+    "end": 785,
+    "label": "person",
+    "score": 0.889
+   },
+   {
+    "start": 1091,
+    "end": 1098,
+    "label": "person",
+    "score": 0.3451
+   },
+   {
+    "start": 1210,
+    "end": 1217,
+    "label": "person",
+    "score": 0.9419
+   },
+   {
+    "start": 1091,
+    "end": 1098,
+    "label": "person",
+    "score": 0.9987
+   },
+   {
+    "start": 1210,
+    "end": 1217,
+    "label": "person",
+    "score": 0.9971
+   },
+   {
+    "start": 1317,
+    "end": 1324,
+    "label": "person",
+    "score": 0.9978
+   },
+   {
+    "start": 1342,
+    "end": 1349,
+    "label": "person",
+    "score": 0.9984
+   },
+   {
+    "start": 1409,
+    "end": 1416,
+    "label": "person",
+    "score": 0.9983
+   },
+   {
+    "start": 1719,
+    "end": 1726,
+    "label": "person",
+    "score": 0.9989
+   },
+   {
+    "start": 1855,
+    "end": 1871,
+    "label": "person",
+    "score": 0.3833
+   }
+  ],
+  "bed-slack-policy-original": [
+   {
+    "start": 188,
+    "end": 195,
+    "label": "person",
+    "score": 0.9726
+   },
+   {
+    "start": 308,
+    "end": 315,
+    "label": "person",
+    "score": 0.9421
+   },
+   {
+    "start": 369,
+    "end": 376,
+    "label": "person",
+    "score": 0.9563
+   },
+   {
+    "start": 433,
+    "end": 440,
+    "label": "person",
+    "score": 0.962
+   },
+   {
+    "start": 582,
+    "end": 604,
+    "label": "api key",
+    "score": 0.5209
+   },
+   {
+    "start": 625,
+    "end": 646,
+    "label": "authentication token",
+    "score": 0.8785
+   },
+   {
+    "start": 697,
+    "end": 716,
+    "label": "access token",
+    "score": 0.5132
+   },
+   {
+    "start": 1453,
+    "end": 1461,
+    "label": "person",
+    "score": 0.5587
+   },
+   {
+    "start": 1572,
+    "end": 1588,
+    "label": "access token",
+    "score": 0.3625
+   },
+   {
+    "start": 1607,
+    "end": 1615,
+    "label": "person",
+    "score": 0.7023
+   },
+   {
+    "start": 1754,
+    "end": 1762,
+    "label": "person",
+    "score": 0.3745
+   },
+   {
+    "start": 1949,
+    "end": 1959,
+    "label": "credential",
+    "score": 0.3286
+   },
+   {
+    "start": 1966,
+    "end": 1976,
+    "label": "credential",
+    "score": 0.3364
+   },
+   {
+    "start": 1977,
+    "end": 1982,
+    "label": "email",
+    "score": 0.6705
+   },
+   {
+    "start": 1966,
+    "end": 1982,
+    "label": "email",
+    "score": 0.6376
+   },
+   {
+    "start": 2091,
+    "end": 2099,
+    "label": "username",
+    "score": 0.9717
+   },
+   {
+    "start": 2143,
+    "end": 2150,
+    "label": "person",
+    "score": 0.8374
+   },
+   {
+    "start": 2182,
+    "end": 2189,
+    "label": "person",
+    "score": 0.8244
+   },
+   {
+    "start": 2192,
+    "end": 2197,
+    "label": "email",
+    "score": 0.8917
+   },
+   {
+    "start": 2225,
+    "end": 2235,
+    "label": "credential",
+    "score": 0.3051
+   },
+   {
+    "start": 2259,
+    "end": 2272,
+    "label": "person",
+    "score": 0.5782
+   },
+   {
+    "start": 2486,
+    "end": 2493,
+    "label": "person",
+    "score": 0.6214
+   },
+   {
+    "start": 2551,
+    "end": 2558,
+    "label": "person",
+    "score": 0.7845
+   },
+   {
+    "start": 2619,
+    "end": 2626,
+    "label": "person",
+    "score": 0.8704
    }
   ]
  }

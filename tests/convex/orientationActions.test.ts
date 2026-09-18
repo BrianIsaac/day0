@@ -1192,6 +1192,7 @@ describe('orientation run', (): void => {
       ref: 'linear-automation.md#credential=2-linear%20service%20token',
       label: 'linear service token',
       plaintext: 'linear',
+      explicitlyAssigned: true,
     });
     await orientDeclared(harness, agentId);
     expect((await surfacesBySlug(harness, agentId)).linear).toMatchObject({
