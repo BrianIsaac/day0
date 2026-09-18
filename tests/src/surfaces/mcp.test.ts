@@ -1229,6 +1229,39 @@ describe('signing a new browser in again for a run', (): void => {
     expect(sent.filter((call) => call.tool === 'browser_fill_form')).toHaveLength(1);
     expect(sent.filter((call) => call.tool === 'browser_click')).toHaveLength(1);
   });
+
+  it('does not resolve a credential field from a failed browser snapshot', async (): Promise<void> => {
+    const sent: string[] = [];
+    const page = '### Page\n- Page URL: http://looker-tile:8080/login\n### Snapshot\n- textbox "Password" [ref=e2]';
+    const adapter = new McpAdapter([looker], {
+      decrypt: async (): Promise<string> => 'pipeline-tile-local',
+      createClient: (): McpClientLike => ({
+        listTools: async () => Object.fromEntries(
+          ['browser_navigate', 'browser_snapshot', 'browser_fill_form'].map((tool) => [
+            `looker_${tool}`,
+            { execute: async () => {
+              sent.push(tool);
+              return { content: [{ type: 'text', text: page }], ...(tool === 'browser_snapshot' ? { isError: true } : {}) };
+            } },
+          ]),
+        ),
+        disconnect: async (): Promise<void> => undefined,
+      }),
+      now: (): number => now,
+      browserMcpUrl: DRIVER,
+    });
+    const action = (tool: string, toolArgs: Record<string, unknown>): MockAction => ({
+      tool: 'mcp.call',
+      args: { surface: 'looker', tool, toolArgsJson: JSON.stringify(toolArgs) },
+    });
+    const steps = [
+      action('browser_navigate', { url: 'http://looker-tile:8080/' }),
+      action('browser_fill_form', { fields: [{ name: 'Password', value: '{{secret}}' }] }),
+    ].map((entry, index) => ({ action: entry, replayOf: `wi:run:${index}`, authority: 'autonomous' as const }));
+    const restored = await adapter.restoreSession(ctx, run, looker, steps, 'wi:run:2');
+    expect(restored).toMatchObject({ ok: false, reason: expect.stringContaining('browser_snapshot') });
+    expect(sent).toEqual(['browser_navigate', 'browser_snapshot']);
+  });
 });
 
 describe('provider error envelope variants', () => {

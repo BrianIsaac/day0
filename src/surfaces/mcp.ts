@@ -428,6 +428,7 @@ export class McpAdapter implements SurfaceAdapter {
       return { reason: 'the browser driver does not expose browser_snapshot' };
     }
     const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
+    if (snapshot.isError) return { reason: 'browser_snapshot failed before element resolution' };
     if (replayEndpoint) {
       const page = browserPageUrl(snapshot.text);
       if (!page) return { reason: 'the browser driver reported no current page URL' };
@@ -733,7 +734,11 @@ export class McpAdapter implements SurfaceAdapter {
               if (!snapshotTool?.execute) {
                 return { tool: action.tool, ok: false, reason: 'the browser driver does not expose browser_snapshot', idempotencyKey };
               }
-              page = browserPageUrl(interpretToolResult(await snapshotTool.execute({}, {})).text);
+              const snapshot = interpretToolResult(await snapshotTool.execute({}, {}));
+              if (snapshot.isError) {
+                return { tool: action.tool, ok: false, reason: 'browser_snapshot failed after the replayed click', idempotencyKey };
+              }
+              page = browserPageUrl(snapshot.text);
             }
             if (!page) {
               return { tool: action.tool, ok: false, reason: 'the browser driver reported no final page URL', idempotencyKey };
