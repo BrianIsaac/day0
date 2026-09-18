@@ -794,7 +794,7 @@ async function waitSatisfiedBy(
         missingSurfaceResolvedBy(missing, surface, surfaces),
     );
     return live
-      ? { key: `surface:${live._id}:${live.lastVerifiedAt}`, landed: `${missing} connected` }
+      ? { key: `surface:${live._id}:${live.lastVerifiedAt}`, landed: `${live.slug} connected` }
       : undefined;
   }
   if (verdict.decision === 'defer' && verdict.reason === 'awaiting-permission') {

@@ -392,6 +392,38 @@ describe('a connection that lands between an evaluation\'s read and its verdict'
 
     expect((await readItem(harness, workItemId)).state).toBe('deferred');
   });
+  it('counts the connected tile for a defer that names its unconnected charter alias', async (): Promise<void> => {
+    useRealModeWithBrowser();
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId } = await seedPriya(harness, { tileConnected: true });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'analytics',
+        verdict: 'absent',
+        credentialLanded: false,
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+    const workItemId = await insertRow(harness, agentId, 'REVOPS-27');
+
+    const stored = await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'looker' },
+    });
+
+    expect(stored).toMatchObject({
+      decision: 'pending-reevaluation',
+      // The surface that is live is named, not the alias the item used.
+      reason: 'looker-pipeline-tile connected while this was being evaluated',
+    });
+    expect((await readItem(harness, workItemId)).state).toBe('discovered');
+  });
+
   it('does not count a browser-driven tile this deployment cannot drive, as the evaluation does not', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
