@@ -1482,11 +1482,16 @@ export const retryFailed = mutation({
       );
     }
     const verdict = row.verdict as { decision?: string; reason?: unknown } | undefined;
-    const next: Doc<'workItems'>['state'] = row.plan
-      ? 'plan-approved'
-      : verdict?.decision === 'claim'
-        ? 'claimed'
-        : 'discovered';
+    // A cancelled plan is one the manager turned down: Retry drafts a new plan
+    // that goes back to them, and never runs the rejected one.
+    const redraft = row.state === 'cancelled' && row.plan !== undefined;
+    const next: Doc<'workItems'>['state'] = redraft
+      ? 'claimed'
+      : row.plan
+        ? 'plan-approved'
+        : verdict?.decision === 'claim'
+          ? 'claimed'
+          : 'discovered';
     // Retrying a skip is the manager overruling the agent's judgement: a
     // quality-fit skip says the work is worth doing, an out-of-scope skip says
     // the work is theirs to give. The re-evaluation leaves that one rule out.
@@ -1508,6 +1513,9 @@ export const retryFailed = mutation({
     await ctx.db.patch(args.workItemId, {
       state: next,
       ...(resume ? { output: resume } : {}),
+      ...(redraft
+        ? { plan: undefined, decision: undefined, planPendingAt: undefined, managerAnswers: undefined }
+        : {}),
       skipReason: undefined,
       executionRunId: undefined,
       applyPhase: undefined,
@@ -1535,7 +1543,7 @@ export const retryFailed = mutation({
       },
       createdAt: Date.now(),
     });
-    await scheduleNextStep(ctx, { ...row, state: next });
+    await scheduleNextStep(ctx, { ...row, state: next, ...(redraft ? { plan: undefined } : {}) });
     return { ok: true, resumeState: next };
   },
 });

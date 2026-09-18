@@ -271,8 +271,7 @@ describe('retrying a cancelled plan', (): void => {
     );
   }
 
-  // Red today: Retry resumes at plan-approved and executes the plan the manager turned down.
-  it.fails('returns the row to claimed with the plan cleared, and the turned-down plan never runs', async (): Promise<void> => {
+  it('returns the row to claimed with the plan cleared, and the turned-down plan never runs', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
     const workItemId = await seedPendingPlan(harness, agentId);
