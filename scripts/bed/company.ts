@@ -73,11 +73,15 @@ import {
   REQUIRED_SCOPES,
   scopeRecordingFetch,
   SlackClient,
+  carriesAsk,
+  ownMentions,
   slackTs,
-  strayAsks,
+  standingAsksFromFile,
+  standingMentions,
   type BedChannel,
   type BedMessage,
   type SlackRetryIo,
+  type StandingAsk,
 } from './slack';
 import {
   BED_CHANNELS,
@@ -534,13 +538,18 @@ function issuesByKey(issues: readonly BedIssue[]): { byKey: Map<string, BedIssue
   return { byKey, duplicates };
 }
 
+/** A small count as a word, the way the report says "the nine tickets". */
+function numberWord(count: number): string {
+  return ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'][count] ?? String(count);
+}
+
 /** What a seed with this set files, said once so the operator knows what check expects. */
 function seedExpectation(spec: BedSpec, set: string | undefined, toFile: readonly BedTicket[]): string {
   if (set !== undefined) {
     return `seed --set ${set} files ${toFile.map((ticket) => ticket.key).join(', ')}; every other ticket stays unfiled`;
   }
   const late = spec.tickets.filter((ticket) => ticket.late).map((ticket) => ticket.key);
-  const count = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'][toFile.length] ?? String(toFile.length);
+  const count = numberWord(toFile.length);
   return `seed files the ${count} tickets${late.length > 0 ? `; post files ${late.join(', ')} at its protocol step` : ''}`;
 }
 
@@ -645,15 +654,94 @@ async function slackView(io: CompanyIo, token: string, report: Report, check: bo
   return { token, botId: auth.botId, botUserId: auth.userId, channels };
 }
 
-async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
+/** The start of a message, short enough for one report line. */
+function firstWords(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+
+/**
+ * Report the standing asks against the sitting the check is for.
+ *
+ * The asks are posted once, by a person, and left standing, so every new
+ * full-run deployment reads them on its first poll. For the full seed each of
+ * the file's asks must therefore be there, once, and nothing else may mention
+ * the bot. A named set is a sitting of one task per employee, where any
+ * standing mention would add an item, so there each one is a gap.
+ *
+ * Args:
+ *   asks: The asks `slack-asks.md` lists.
+ *   standing: Per bed channel, the mentions intake would read, oldest first.
+ *   own: Per bed channel, mentions the app's own token posted with no trailer.
+ *   set: The named set the check is for, or undefined for the full seed.
+ *   report: Where the lines go.
+ */
+function reportStandingAsks(
+  asks: readonly StandingAsk[],
+  standing: ReadonlyMap<string, BedMessage[]>,
+  own: ReadonlyMap<string, BedMessage[]>,
+  set: string | undefined,
+  report: Report,
+): void {
+  if (set !== undefined) {
+    for (const [name, messages] of standing) {
+      for (const message of messages) {
+        report.line(
+          'gap',
+          `#${name} holds a standing message that mentions the bot (ts ${message.ts}: "${firstWords(message.text)}"); the ${set} sitting files one task per employee and this would add an item on camera. Delete it by hand before the sitting, and post it again afterwards for the full run`,
+        );
+      }
+    }
+    return;
+  }
+  const matched = new Set<BedMessage>();
+  let present = 0;
+  for (const ask of asks) {
+    const found = (standing.get(ask.channel) ?? []).find(
+      (message) => !matched.has(message) && carriesAsk(message, ask),
+    );
+    if (found) {
+      matched.add(found);
+      present += 1;
+      report.line('ok', `#${ask.channel} holds the standing ask "${firstWords(ask.text)}"`);
+      continue;
+    }
+    const viaBot = (own.get(ask.channel) ?? []).some((message) => carriesAsk(message, ask));
+    report.line(
+      'gap',
+      `#${ask.channel} lacks the standing ask "${firstWords(ask.text)}": post it once, as yourself, mentioning the bot${
+        viaBot ? "; the copy there was posted through the bot token; intake never reads the app's own posts" : ''
+      }`,
+    );
+  }
+  for (const [name, messages] of standing) {
+    for (const message of messages) {
+      if (matched.has(message)) continue;
+      report.line(
+        'gap',
+        `#${name} holds a message that mentions the bot and is not one of the standing asks (ts ${message.ts}: "${firstWords(message.text)}"); a new deployment reads it as work. Delete it by hand`,
+      );
+    }
+  }
+  report.line(
+    present === asks.length ? 'ok' : 'note',
+    present === asks.length
+      ? `all ${numberWord(asks.length)} of slack-asks.md's asks are standing; a new deployment's first poll reads them`
+      : `${present} of slack-asks.md's ${asks.length} asks are standing`,
+  );
+}
+
+async function checkSlack(io: CompanyIo, set: string | undefined, report: Report): Promise<void> {
   report.section('Slack');
   const token = io.env[SLACK_TOKEN_ENV]?.trim();
   if (!token) {
     report.line('gap', `${SLACK_TOKEN_ENV} is not set in ${ENV_FILE}: add the shared bot's token`);
     return;
   }
+  const asks = standingAsksFromFile(readFileSync(join(io.cwd, BED_DIR, 'slack-asks.md'), 'utf8'));
   const view = await slackView(io, token, report, true);
   const retry = slackRetry(io, report);
+  const standing = new Map<string, BedMessage[]>();
+  const ownAsks = new Map<string, BedMessage[]>();
   for (const name of BED_CHANNELS) {
     const channel = view.channels.get(name);
     if (!channel) {
@@ -662,20 +750,16 @@ async function checkSlack(io: CompanyIo, report: Report): Promise<void> {
       report.line('gap', `the bot is not in #${name}: /invite it there`);
     } else {
       const messages = await conversationMessages(io.fetch, token, channel.id, undefined, retry, (): number => io.now());
-      const asks = strayAsks(messages, view.botUserId);
+      standing.set(name, standingMentions(messages, view.botUserId, view.botId));
+      ownAsks.set(name, ownMentions(messages, view.botUserId, view.botId));
       const own = messages.filter((message) => message.botId === view.botId && containsProvenanceTrailer(message.text));
       report.line('ok', `#${name}, the bot a member`);
-      for (const ask of asks) {
-        report.line(
-          'gap',
-          `#${name} holds an ask from an earlier run (ts ${ask.ts}: "${ask.text.slice(0, 60)}"); a new deployment reads it again. Delete it by hand`,
-        );
-      }
       if (own.length > 0) {
         report.line('note', `#${name} holds ${own.length} message(s) the bot posted with a provenance trailer; seed attempts to delete those posted since this clone's first seed, but Slack refuses deletion of customised posts`);
       }
     }
   }
+  reportStandingAsks(asks, standing, ownAsks, set, report);
 }
 
 async function deleteBedMessages(io: CompanyIo, view: SlackView, epoch: string, report: Report): Promise<void> {
@@ -835,7 +919,7 @@ export async function runCheck(io: CompanyIo, set: string | undefined, report: R
   checkFolder(io, report);
   for (const read of [
     (): Promise<void> => checkLinear(io, spec, set, report),
-    (): Promise<void> => checkSlack(io, report),
+    (): Promise<void> => checkSlack(io, set, report),
     (): Promise<void> => checkNotion(io, report),
   ]) {
     try {

@@ -17,6 +17,7 @@ import { MANIFEST_FILE } from '../../scripts/bed/docs';
 import { LABEL_DESCRIPTION, markedDescription } from '../../scripts/bed/linear';
 import { RETRY_PAUSE_MS } from '../../scripts/rehearsal/linear';
 import { comparePage, NOTION_READER_SCRIPT, parseNotionRead } from '../../scripts/bed/notion';
+import { standingAsksFromFile } from '../../scripts/bed/slack';
 import { loadBedSpec } from '../../scripts/bed/spec';
 import { DOCS_STUB } from '../../scripts/setup';
 
@@ -673,7 +674,11 @@ describe('a named set of tickets', (): void => {
     expect(await run(h, ['check', '--set', 'one-each'])).toBe(0);
     expect(h.logs.join('\n')).toContain('All green: the company bed is ready for seed --set one-each.');
     h.logs.length = 0;
-    expect(await run(h, ['check'])).toBe(0);
+    // The full sitting also needs the standing asks, which a one-each bed must not hold.
+    expect(await run(h, ['check'])).toBe(1);
+    const gaps = h.logs.filter((line) => line.includes('GAP '));
+    expect(gaps).toHaveLength(3);
+    for (const gap of gaps) expect(gap).toContain('lacks the standing ask');
     expect(h.logs.join('\n')).toContain('seed files the nine tickets; post files log-sh4480 at its protocol step');
     expect(h.logs.join('\n')).toContain('revops-audit is not filed yet; seed creates it');
   });
@@ -1286,14 +1291,97 @@ describe('docs', (): void => {
 });
 
 describe('check', (): void => {
+  const CHANNEL_IDS: Record<string, string> = {
+    'revops-asks': 'C1', revops: 'C2', 'finance-close': 'C3', 'logistics-desk': 'C4', 'ops-requests': 'C5',
+  };
+  const FILE_ASKS = standingAsksFromFile(readFileSync(resolve('bed/company/slack-asks.md'), 'utf8'));
+
+  /** Post the file's asks the way the operator does: once, as a person, mentioning the bot. */
+  function postStandingAsks(h: Harness, author: Partial<FakeMessage> = { user: 'UHUMAN' }, skip?: string): void {
+    FILE_ASKS.forEach((ask, index) => {
+      if (ask.channel === skip) return;
+      h.slack.post(CHANNEL_IDS[ask.channel]!, { ts: `1788000000.00010${index}`, text: `<@${BOT_USER}> ${ask.text}`, ...author });
+    });
+  }
+
   async function readyBed(): Promise<Harness> {
     const h = harness();
     await run(h, ['docs']);
     await run(h, ['seed']);
     await run(h, ['post', 'log-sh4480']);
+    postStandingAsks(h);
     h.logs.length = 0;
     return h;
   }
+
+  it('reads the three asks from the tracked file', (): void => {
+    expect(FILE_ASKS.map((ask) => ask.channel)).toEqual(['revops-asks', 'finance-close', 'ops-requests']);
+    expect(FILE_ASKS[2]!.text).toBe('please refresh the pipeline tile to the standup figure');
+  });
+
+  it('reports each standing ask for the full set: its channel, its first words, and that all three are there', async (): Promise<void> => {
+    const h = await readyBed();
+    expect(await run(h, ['check'])).toBe(0);
+    const printed = h.logs.join('\n');
+    expect(printed).toContain('ok   #revops-asks holds the standing ask "can you confirm pipeline coverage for the three Friday stand');
+    expect(printed).toContain('ok   #finance-close holds the standing ask "can you post where the September close stands?"');
+    expect(printed).toContain('ok   #ops-requests holds the standing ask "please refresh the pipeline tile to the standup figure"');
+    expect(printed).toContain("ok   all three of slack-asks.md's asks are standing; a new deployment's first poll reads them");
+  });
+
+  it('names a standing ask that is missing for the full set as a gap', async (): Promise<void> => {
+    const h = harness();
+    await run(h, ['docs']);
+    await run(h, ['seed']);
+    postStandingAsks(h, { user: 'UHUMAN' }, 'finance-close');
+    h.logs.length = 0;
+    expect(await run(h, ['check'])).toBe(1);
+    const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
+    expect(gaps).toContain('#finance-close lacks the standing ask "can you post where the September close stands?": post it once, as yourself, mentioning the bot');
+    expect(gaps).not.toContain('#revops-asks');
+    expect(h.logs.join('\n')).toContain("2 of slack-asks.md's 3 asks are standing");
+  });
+
+  it("does not count an ask the app's own token posted under a person's name, because intake never reads it", async (): Promise<void> => {
+    const h = harness();
+    await run(h, ['docs']);
+    await run(h, ['seed']);
+    postStandingAsks(h, { bot_id: BOT_ID, impersonated: true });
+    h.logs.length = 0;
+    expect(await run(h, ['check'])).toBe(1);
+    const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
+    for (const ask of FILE_ASKS) expect(gaps).toContain(`#${ask.channel} lacks the standing ask`);
+    expect(gaps).toContain('was posted through the bot token; intake never reads the app\'s own posts');
+  });
+
+  it('names a second copy of a standing ask, and a mention the file does not list, as gaps for the full set', async (): Promise<void> => {
+    const h = await readyBed();
+    h.slack.post('C5', { ts: '1788000001.000100', text: `<@${BOT_USER}> ${FILE_ASKS[2]!.text}`, user: 'UHUMAN' });
+    h.slack.post('C2', { ts: '1788000002.000100', text: `<@${BOT_USER}> one more thing`, user: 'UHUMAN' });
+    expect(await run(h, ['check'])).toBe(1);
+    const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
+    expect(gaps).toContain('#ops-requests holds a message that mentions the bot and is not one of the standing asks (ts 1788000001.000100: "');
+    expect(gaps).toContain('#revops holds a message that mentions the bot and is not one of the standing asks (ts 1788000002.000100: "');
+    expect(h.logs.join('\n')).toContain("all three of slack-asks.md's asks are standing");
+  });
+
+  it('names every standing mention as a gap for the one-each set, by channel and text', async (): Promise<void> => {
+    const h = harness();
+    await run(h, ['docs']);
+    await run(h, ['seed', '--set', 'one-each']);
+    postStandingAsks(h);
+    h.slack.post('C4', { ts: '1788000003.000100', text: `<@${BOT_USER}> where is SH-4471?`, bot_id: 'BOTHER' });
+    h.slack.post('C4', { ts: '1788000004.000100', text: `<@${BOT_USER}> refreshed.\n\n${TRAILER}`, bot_id: BOT_ID });
+    h.logs.length = 0;
+    expect(await run(h, ['check', '--set', 'one-each'])).toBe(1);
+    const gaps = h.logs.filter((line) => line.includes('GAP '));
+    const standing = gaps.filter((line) => line.includes('standing message'));
+    expect(standing).toHaveLength(4);
+    expect(standing.join('\n')).toContain('#finance-close holds a standing message that mentions the bot (ts 1788000000.000101: "<@UBOT> can you post where the September close stands?")');
+    expect(standing.join('\n')).toContain('#logistics-desk holds a standing message that mentions the bot (ts 1788000003.000100: "<@UBOT> where is SH-4471?")');
+    expect(standing[0]).toContain('the one-each sitting files one task per employee and this would add an item on camera. Delete it by hand before the sitting');
+    expect(h.logs.join('\n')).not.toContain('holds the standing ask');
+  });
 
   it('is all green on a bed whose hand steps are done, and prints no token', async (): Promise<void> => {
     const h = await readyBed();
@@ -1353,7 +1441,7 @@ describe('check', (): void => {
     expect(gaps).toContain('the app lacks chat:write.customize');
     expect(gaps).toContain('#logistics-desk is not a public channel the bot can see: create it by hand as a public channel');
     expect(gaps).toContain('the bot is not in #ops-requests');
-    expect(gaps).toContain('#revops-asks holds an ask from an earlier run');
+    expect(gaps).toContain('#revops-asks holds a message that mentions the bot and is not one of the standing asks');
     expect(gaps).toContain('"Slack automation policy" differs from slack-automation-policy.md at line 3');
     expect(gaps).toContain('"Linear automation" still carries the placeholder token');
     expect(gaps).toContain('the integration also sees "Revenue operations onboarding"');
