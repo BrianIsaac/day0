@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -303,6 +304,26 @@ describe('an authoring run and the verification sandbox lease', (): void => {
     expect(recorded.outputs).toHaveLength(0);
     expect(recorded.sandboxRuns).toBe(1);
     expect(await readSkill(harness, skillId)).toMatchObject({ state: 'registered', body: reusableBody });
+  });
+
+  it('does not persist a token-shaped value in a parked body or smoke test', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await seedApprovedSkill(harness, 'Priya');
+    const claim = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!claim.claimed) throw new Error('claim refused');
+    const token = ['sk', 'live', randomUUID().replaceAll('-', '')].join('-');
+    await harness.mutation(internal.skills.parkUnverified, {
+      skillId,
+      runId: claim.runId,
+      sandboxId: '(skipped)',
+      body: `${reusableBody}\n# Authorization: Bearer ${token}`,
+      smokeTest: `${smokeTest}\n# Authorization: Bearer ${token}`,
+      verificationLog: 'the verification sandbox was busy',
+      reason: 'the verification sandbox was busy',
+    });
+    const row = await readSkill(harness, skillId);
+    expect(row.body).not.toContain(token);
+    expect(row.pendingSmokeTest).not.toContain(token);
   });
 
   it('waits for the holder rather than queueing on the socket, and records the wait', async (): Promise<void> => {

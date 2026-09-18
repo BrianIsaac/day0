@@ -409,6 +409,18 @@ async function keepRefusedDraft(
   agentId: Id<'agents'>,
   draft: { body: string; smokeTest: string },
 ): Promise<{ body: string; smokeTest: string }> {
+  const redacted = await redactAuthoredDraft(ctx, agentId, draft);
+  return {
+    body: clipRefusedDraft(redacted.body),
+    smokeTest: clipRefusedDraft(redacted.smokeTest),
+  };
+}
+
+async function redactAuthoredDraft(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  draft: { body: string; smokeTest: string },
+): Promise<{ body: string; smokeTest: string }> {
   let known: readonly string[] = [];
   let model = undefined;
   if (SURFACE_MODE === 'real') {
@@ -420,7 +432,7 @@ async function keepRefusedDraft(
     redactOutcome(draft.body, '', model, known),
     redactOutcome(draft.smokeTest, '', model, known),
   ]);
-  return { body: clipRefusedDraft(body.text), smokeTest: clipRefusedDraft(smokeTest.text) };
+  return { body: body.text, smokeTest: smokeTest.text };
 }
 
 export const authorAndRegisterSkill = action({
@@ -546,6 +558,7 @@ export const authorAndRegisterSkill = action({
       runId,
     });
     if (!lease.held) {
+      const pendingDraft = await redactAuthoredDraft(ctx, skill.agentId, { body, smokeTest });
       const waitedFor = `${Math.round(lease.waitedMs / 60_000)} minutes`;
       const reason =
         `the verification sandbox was busy with another skill for ${waitedFor}; ` +
@@ -554,8 +567,8 @@ export const authorAndRegisterSkill = action({
         skillId: args.skillId,
         runId,
         sandboxId: '(skipped)',
-        body,
-        smokeTest,
+        body: pendingDraft.body,
+        smokeTest: pendingDraft.smokeTest,
         verificationLog: noted(reason),
         reason,
       });
@@ -621,12 +634,13 @@ export const authorAndRegisterSkill = action({
     }
 
     if (skipReason) {
+      const pendingDraft = await redactAuthoredDraft(ctx, skill.agentId, { body, smokeTest });
       const { recorded } = await ctx.runMutation(internal.skills.parkUnverified, {
         skillId: args.skillId,
         runId,
         sandboxId,
-        body,
-        smokeTest,
+        body: pendingDraft.body,
+        smokeTest: pendingDraft.smokeTest,
         verificationLog: noted(verificationLog),
         reason: skipReason,
       });

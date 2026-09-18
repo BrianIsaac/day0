@@ -18,6 +18,7 @@ import { browserComponentRefusal, withBrowserComponentState } from '../src/surfa
 import { grantScopeInTransaction } from './agents';
 import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
 import { surfaceSlug } from '../src/surfaces/slug';
+import { redactTokenShapes } from '../src/surfaces/redact';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -838,12 +839,13 @@ export const parkUnverified = internalMutation({
   handler: async (ctx, args): Promise<{ recorded: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'park-unverified');
     if (!row) return { recorded: false };
+    const reason = redactTokenShapes(args.reason);
     await ctx.db.patch(args.skillId, {
       state: 'authoring',
-      body: args.body,
-      pendingSmokeTest: args.smokeTest,
+      body: redactTokenShapes(args.body),
+      pendingSmokeTest: redactTokenShapes(args.smokeTest),
       sandboxId: args.sandboxId,
-      verificationLog: args.verificationLog,
+      verificationLog: redactTokenShapes(args.verificationLog),
       refusedBody: undefined,
       refusedSmokeTest: undefined,
       ...RELEASED,
@@ -851,12 +853,12 @@ export const parkUnverified = internalMutation({
     await ctx.db.insert('events', {
       agentId: row.agentId,
       type: 'skill.sandbox-skipped',
-      payload: { skillId: args.skillId, name: row.name, reason: args.reason },
+      payload: { skillId: args.skillId, name: row.name, reason },
       createdAt: Date.now(),
     });
     await requeueSourceWork(ctx, row, {
       decision: 'needs-skill',
-      reason: `skill authored but not verified - ${args.reason}`,
+      reason: `skill authored but not verified - ${reason}`,
     });
     return { recorded: true };
   },
