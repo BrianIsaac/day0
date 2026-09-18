@@ -447,6 +447,74 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(before.skipReason).not.toBe(stopped.skipReason);
   }, 30_000);
 
+  // Phase one opened the tile and signed in but took no snapshot, so there
+  // is no read to take again; the resumed closing set's first call on the
+  // tile is signed in from the first attempt's ledger, under the new run.
+  it('signs the resumed closing set in from the first attempt\'s sign-in', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const fixture = await import('../fixtures/browser-phase-split-2026-09-16');
+    const [navigate, signIn, clickSignIn] = fixture.slackPhaseOne;
+    const [fill, save, readBack] = fixture.slackClosing;
+    const firstRun = 'k57bfirstattempt0000000000000000';
+    const workItemId = await seed(t);
+    const key = (index: number): string => `${workItemId}:${firstRun}:${index}`;
+    const refused = (index: number): AppliedAction => ({
+      tool: 'mcp.call',
+      ok: false,
+      reason: 'browser session could not be re-established: browser_navigate net::ERR_CONNECTION_REFUSED',
+      idempotencyKey: key(index),
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason: '3 of 6 actions did not change the work environment',
+        output: {
+          draft: '',
+          notes: '',
+          needsDependentPhase: false,
+          actions: [navigate, signIn, clickSignIn, fill, save, readBack],
+          applied: [
+            ...[0, 1, 2].map((index): AppliedAction => ({
+              tool: 'mcp.call',
+              ok: true,
+              authority: 'autonomous',
+              effect: 'landed on looker',
+              idempotencyKey: key(index),
+            })),
+            refused(3),
+            refused(4),
+            refused(5),
+          ],
+          planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) =>
+            outcome.step <= 2 ? { ...outcome, evidence: 'Ledger rows 0-2: the tile opened and the sign-in landed.' } : outcome,
+          ),
+          prerequisiteCount: 3,
+          procedureTrails: [],
+        },
+      });
+    });
+    recorded.resumedClosing = {
+      ...fixture.slackClosingReply,
+      actions: [fill, save, readBack],
+      planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) =>
+        outcome.step === 3 ? { ...outcome, status: 'blocked', evidence: 'The reply waits for the read-back.' } : outcome,
+      ),
+    };
+
+    const resumed = await retryAtClosing(t, workItemId);
+    const secondRun = resumed.executionRunId!;
+    await t.action(internal.workActions.authorDependentActions, { workItemId, runId: secondRun });
+    await t.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const closing = ledger(await readItem(t, workItemId)).slice(3);
+    expect(closing.map((row) => row.ok)).toEqual([true, true, true]);
+    expect(closing[0]!.sessionRestore?.steps.map((step) => [step.idempotencyKey, step.replayOf])).toEqual(
+      [0, 1, 2].map((index) => [`${workItemId}:${secondRun}:3.session-${index}`, key(index)]),
+    );
+    expect(closing[2]!.effect).toContain('visible figure 74%');
+    expect(recorded.driver!.tile.value).toBe('74%');
+  }, 30_000);
+
   // A resumed closing set that refreshes the tile and reads it back: the
   // read-back must reach the tile, not reuse the carried read of the same
   // page, which was taken before the Save.

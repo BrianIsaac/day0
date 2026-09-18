@@ -61,6 +61,7 @@ import { decryptCredential } from '../src/surfaces/credentials';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
+import { ledgerRunIds } from '../src/surfaces/browser-session';
 import { verdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponent } from '../src/surfaces/browser';
@@ -1557,6 +1558,9 @@ export const applyApprovedActions = internalAction({
           deferredIndexes: claim.phase === 'auto' ? new Set(claim.heldIndexes) : undefined,
           priorLedger,
           ...(priorPhasesLedger(output) ? { prerequisiteLedger: priorPhasesLedger(output) } : {}),
+          ...(isDependentPendingOutput(output) && output.initial.resumedClosing
+            ? { resumedRunIds: ledgerRunIds(output.initial.applied) }
+            : {}),
           idempotencyIndexOffset: actionIndexOffset,
           autoPhase: claim.phase === 'auto',
           autonomousActions: claim.autonomousActions,

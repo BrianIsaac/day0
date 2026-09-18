@@ -1075,6 +1075,34 @@ describe('a browser session across the apply invocations of one run', (): void =
     expect(driver.tile.value).toBe('68%');
   });
 
+  it('signs a resumed closing set in from the ledger it resumed, under the new run', async (): Promise<void> => {
+    // Retry resumed at the closing phase: a new run id, carrying the first
+    // attempt's prerequisite ledger with its keys.
+    const driver = new TileDriver('pipeline-tile-local');
+    const first = await phaseOne(driver);
+    const resumed = { ...run, runId: 'run_2' as Id<'events'> };
+    const closing = await applySurfaceActions(ctx, 'real', [looker], resumed, closingTile, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1, 2]),
+      prerequisiteLedger: { actions: slackPhaseOne, applied: first },
+      resumedRunIds: ['run_1'],
+      idempotencyIndexOffset: 4,
+    });
+    expect(closing.map((row) => [row.ok, row.idempotencyKey])).toEqual([
+      [true, 'wi_1:run_2:4'],
+      [true, 'wi_1:run_2:5'],
+      [true, 'wi_1:run_2:6'],
+    ]);
+    expect(closing[0]!.sessionRestore?.steps.map((step) => [step.idempotencyKey, step.replayOf])).toEqual([
+      ['wi_1:run_2:4.session-0', 'wi_1:run_1:0'],
+      ['wi_1:run_2:4.session-1', 'wi_1:run_1:1'],
+      ['wi_1:run_2:4.session-2', 'wi_1:run_1:2'],
+    ]);
+    expect(closing[2]!.effect).toContain('visible figure 74%');
+  });
+
   it('refuses the replay and every later action on the surface when the write scope is revoked under autonomy', async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const first = await phaseOne(driver);

@@ -113,6 +113,13 @@ export interface ApplyOptions {
   autonomousActions?: boolean;
   /** Exact source channel and thread when the work item is a chat reply. */
   replyTarget?: ReplyTarget;
+  /**
+   * The runs whose prerequisite ledger this run resumed at its closing phase.
+   * Their landed browser rows re-establish this run's session as its own
+   * would; a retry that runs phase one again resumes nothing, and the landed
+   * writes it carries lend it no sign-in.
+   */
+  resumedRunIds?: readonly string[];
   /** Clock for the connection verdict. */
   now?: number;
 }
@@ -256,12 +263,13 @@ async function restoreBrowserSession(
     autonomousActions: boolean;
     authority?: ActionAuthority;
     signInOnly: boolean;
+    resumedRunIds?: readonly string[];
   },
 ): Promise<SessionRestoreResult | undefined> {
   if (!adapter.restoreSession) return undefined;
   let recipe: SessionRecipeStep[];
   try {
-    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint, run.runId).map(
+    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint, run.runId, live.resumedRunIds).map(
       (step: SessionRecipeStep): SessionRecipeStep => ({
         ...step,
         authority: step.authority ?? (step.replayOf ? undefined : (live.authority ?? 'standing')),
@@ -557,6 +565,7 @@ export async function applySurfaceActions(
                 autonomousActions,
                 authority,
                 signInOnly: navigates,
+                resumedRunIds: options.resumedRunIds,
               },
             );
             if (restored && !restored.ok) {
