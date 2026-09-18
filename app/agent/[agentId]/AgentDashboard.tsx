@@ -210,6 +210,7 @@ export function AgentDashboard({ agentId }: Props) {
           />
 
           <WorkQueue
+            agentId={agentId}
             workItems={workItems ?? []}
             openQuestions={openQuestions ?? []}
             surfaces={surfaces}
@@ -1474,6 +1475,60 @@ export function RefusedDraftDetails({
   );
 }
 
+/**
+ * What the queue says after "Check for new work".
+ *
+ * Args:
+ *   result: The check's answer: surfaces scheduled for a poll, and the wait
+ *     before the next check when one ran under a minute ago.
+ *
+ * Returns:
+ *   One line for the manager.
+ */
+export function checkForWorkMessage(result: { scheduled: number; retryInMs?: number }): string {
+  if (result.scheduled > 0) {
+    const surfaces = result.scheduled === 1 ? 'surface' : 'surfaces';
+    return `Checking ${result.scheduled} connected ${surfaces} now; anything new appears here within a minute.`;
+  }
+  if (result.retryInMs !== undefined) {
+    return `Checked under a minute ago; try again in ${Math.ceil(result.retryInMs / 1000)} s.`;
+  }
+  return 'No connected work surface to check.';
+}
+
+/** Poll the employee's connected work surfaces now rather than at the next five-minute sweep. */
+function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
+  const check = useMutation(api.workLoop.checkForNewWork);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="mb-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] text-[var(--color-muted)]">
+          Connected surfaces are polled every five minutes.
+        </p>
+        <button
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setError(null);
+            check({ agentId })
+              .then((result) => setMessage(checkForWorkMessage(result)))
+              .catch((err: unknown) => setError((err as Error).message))
+              .finally(() => setBusy(false));
+          }}
+          className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {busy ? 'Checking…' : 'Check for new work'}
+        </button>
+      </div>
+      {message ? <p className="mt-1 text-[10px] text-[var(--color-muted)]">{message}</p> : null}
+      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
 function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
   const fileOrder = [
     'AGENTS.md',
@@ -1513,6 +1568,7 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 }
 
 export function WorkQueue({
+  agentId,
   workItems,
   openQuestions,
   surfaces,
@@ -1521,6 +1577,7 @@ export function WorkQueue({
   autonomousActions,
   surfaceMode,
 }: {
+  agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
   /** The charter's open questions still waiting on the manager, asked at a plan. */
   openQuestions: Doc<'managerQuestions'>[];
@@ -1604,6 +1661,7 @@ export function WorkQueue({
         `${registeredSkillCount} ${registeredSkillCount === 1 ? 'skill' : 'skills'} available`
       }
     >
+      {surfaceMode === 'real' && charterApproved ? <CheckForNewWork agentId={agentId} /> : null}
       {items.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">
           {charterApproved

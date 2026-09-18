@@ -31,7 +31,7 @@ vi.mock('convex/react', async () => {
   return { useQuery: (): undefined => undefined, useMutation: record, useAction: record };
 });
 
-import { WorkQueue } from '../../../../app/agent/[agentId]/AgentDashboard';
+import { WorkQueue, checkForWorkMessage } from '../../../../app/agent/[agentId]/AgentDashboard';
 
 function item(id: string, state: Doc<'workItems'>['state'], plan?: unknown): Doc<'workItems'> {
   return {
@@ -66,9 +66,10 @@ const ITEMS = [
   item('w-approved', 'plan-approved', PLAN),
 ];
 
-function render(surfaceMode: 'mock' | 'real' | undefined): void {
-  renderToStaticMarkup(
+function render(surfaceMode: 'mock' | 'real' | undefined): string {
+  return renderToStaticMarkup(
     <WorkQueue
+      agentId={'agent-1' as Id<'agents'>}
       workItems={ITEMS}
       openQuestions={[]}
       surfaces={[]}
@@ -114,5 +115,36 @@ describe('the work queue as the loop driver', (): void => {
       { name: 'workActions:draftPlan', args: { workItemId: 'w-claimed' } },
       { name: 'workActions:executeApprovedPlan', args: { workItemId: 'w-approved' } },
     ]);
+  });
+});
+
+describe('checking for new work from the queue', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+  });
+
+  afterEach((): void => {
+    calls.length = 0;
+    vi.useRealTimers();
+  });
+
+  it('offers the check in real mode, where the server polls the surfaces, and nowhere else', (): void => {
+    expect(render('real')).toContain('Check for new work');
+    expect(render('mock')).not.toContain('Check for new work');
+    expect(render(undefined)).not.toContain('Check for new work');
+    expect(calls.filter((call) => call.name === 'workLoop:checkForNewWork')).toEqual([]);
+  });
+
+  it('says what the check did', (): void => {
+    expect(checkForWorkMessage({ scheduled: 2 })).toBe(
+      'Checking 2 connected surfaces now; anything new appears here within a minute.',
+    );
+    expect(checkForWorkMessage({ scheduled: 1 })).toBe(
+      'Checking 1 connected surface now; anything new appears here within a minute.',
+    );
+    expect(checkForWorkMessage({ scheduled: 0, retryInMs: 29_100 })).toBe(
+      'Checked under a minute ago; try again in 30 s.',
+    );
+    expect(checkForWorkMessage({ scheduled: 0 })).toBe('No connected work surface to check.');
   });
 });
