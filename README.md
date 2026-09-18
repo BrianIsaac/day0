@@ -366,6 +366,8 @@ pnpm sandbox:down                # stop it; skills then stop at `authoring`, vis
 
 **What it deliberately is not built on** is the Docker socket. Mounting `/var/run/docker.sock` into the backend so it could spawn a sandbox per skill is the shortest path to the same feature, and it hands every reader's machine a root-equivalent socket to model-authored code. The service on the compose network is the boundary instead.
 
+**One verification at a time.** The service serves one smoke test at a time behind a backlog of eight, so employees authoring skills together would queue on its socket: measured on 18 September 2026, nine concurrent verifications pass in about a second, but one smoke test that runs to the 60-second cap makes every request behind it wait that long, two push them past the client's 75-second wait, and past nine concurrent the socket refuses the connection. Each of those reads as a sandbox failure and parks a skill whose own smoke test never ran. So the queue is held in Convex instead: an authoring run takes the one `sandboxLeases` row before it calls the sandbox and releases it after, and a run that finds it held records `skill.sandbox-waiting` and asks again every five seconds, keeping its authored body. The wait is then visible on the skill rather than reported as a failure, and a lease held longer than 90 seconds - longer than the client waits - is taken over, so a run that died holding it costs one request rather than the queue.
+
 Two practical notes:
 
 - **`pnpm sandbox:up` does not restart the backend.** The socket lives on a volume both containers mount, and the backend mounts it from its first `up`, so a sandbox started later is seen at once. Compose reports the backend as `Running` and leaves it alone.
@@ -808,7 +810,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 28 tables: 23 carry per-agent or agent-owned runtime state, and five hold owner-level documentation and credential state.
+The schema contains 29 tables: 23 carry per-agent or agent-owned runtime state, five hold owner-level documentation and credential state, and one is the transient lease on the verification sandbox.
 
 | Table | Purpose |
 |---|---|
@@ -831,6 +833,7 @@ The schema contains 28 tables: 23 carry per-agent or agent-owned runtime state, 
 | `corrections` | The manager's retry notes, rejection reasons and plan-cancel reasons kept per employee, real mode only, with the item they came from, the surfaces its plan touched and the later items whose plans applied them |
 | `skills` | Skill registry — `builtin` or `agent-authored`, shaped by surface class and operation |
 | `permissionGrants` | Scoped capability grants (revocable) |
+| `sandboxLeases` | The one lease on the verification sandbox: which authoring run may call it now, so employees authoring at once wait visibly instead of timing out on each other |
 | `events` | Event ticker |
 | `mockDocs`, `mockSpreadsheets`, `mockSpreadsheetRows`, `mockSlackChannels`, `mockSlackMessages`, `mockTweets`, `mockTweetReplies`, `mockTickets` | Per-agent mock work environment |
 

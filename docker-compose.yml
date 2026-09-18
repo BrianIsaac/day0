@@ -147,6 +147,20 @@ services:
       - DISABLE_METRICS_ENDPOINT=true
       - DOCUMENT_RETENTION_DELAY=${DOCUMENT_RETENTION_DELAY:-172800}
       - RUST_LOG=${RUST_LOG:-info}
+      # The work loop runs on the scheduler: every evaluation, plan draft and
+      # execution of every employee is a scheduled job, and one execution can
+      # hold its slot for minutes on a model call. The image's default is 8
+      # jobs in parallel, so three employees under autonomy (up to nine runs,
+      # their skill authoring and their intake polls) would queue behind each
+      # other and an apply would start late. 32 is measured on this image:
+      # 20 scheduled 30 s actions all started within 0.5 s, against three
+      # waves at 0, 30 and 60 s without it (phase 7 handover, 18 Sep 2026).
+      - SCHEDULED_JOB_EXECUTION_PARALLELISM=32
+      # The cap on node actions running at once; the image's own default,
+      # stated so the scheduler parallelism above can be read against it:
+      # every scheduled step is a node action, and the cap must stay above
+      # the number of jobs the scheduler may start.
+      - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=64
     healthcheck:
       test: curl -f http://localhost:3210/version
       interval: 5s

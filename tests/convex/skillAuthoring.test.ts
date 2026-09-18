@@ -29,6 +29,8 @@ vi.mock('../../src/lib/mastra', () => ({
 }));
 
 vi.mock('../../src/lib/skill-sandbox', () => ({
+  // The bundled sandbox: the path that takes the verification lease.
+  configuredSkillSandboxBackend: (): string => 'local',
   authorAndVerifySkill: async (): Promise<SkillSandboxRun> => {
     recorded.sandboxRuns += 1;
     if (!recorded.sandbox) throw new Error('no sandbox result queued');

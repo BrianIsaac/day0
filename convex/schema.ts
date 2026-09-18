@@ -847,6 +847,26 @@ export default defineSchema({
     .index('by_agent_name', ['agentId', 'name'])
     .index('by_agent_state', ['agentId', 'state']),
 
+  /**
+   * The lease on the verification sandbox: at most one row, the skill whose
+   * authoring run may call the sandbox now.
+   *
+   * The sandbox serves one request at a time behind a backlog of eight and
+   * the client gives up at 75 s, so three employees authoring together used
+   * to queue on the socket and time out on each other's slow smoke tests
+   * (measured 18 September 2026). The queue lives here instead, where a wait
+   * is a visible row rather than a timeout.
+   */
+  sandboxLeases: defineTable({
+    /** Always `local-sandbox`: the single lease, by name, so it is one row. */
+    name: v.string(),
+    /** The skill whose verification holds it. */
+    skillId: v.id('skills'),
+    /** The authoring run that took it; only that run may release it. */
+    runId: v.id('events'),
+    takenAt: v.number(),
+  }).index('by_name', ['name']),
+
   permissionGrants: defineTable({
     agentId: v.id('agents'),
     scope: v.string(),

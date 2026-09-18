@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
 import { env } from '../env';
 import { log } from './logger';
+import { countProviderRequest } from './model-call-telemetry';
 import {
   classifyStructuredFailure,
   createFallbackMemo,
@@ -37,6 +38,20 @@ let provider: OpenAIProvider | null = null;
  */
 const PLACEHOLDER_API_KEY = 'day0-local';
 
+/**
+ * `fetch` for both provider clients, counting each request against the model
+ * call in progress.
+ *
+ * The AI SDK retries a 429 or a 503 twice of its own accord inside one attempt
+ * of the retry wrapper's, so without this a call that spent minutes on three
+ * requests is reported as one slow call rather than as a retried one. Only the
+ * count is recorded: nothing of the request, the reply or the key.
+ */
+const countingFetch: typeof fetch = async (input, init) => {
+  countProviderRequest();
+  return await fetch(input, init);
+};
+
 function resolveApiKey(): string {
   if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
   if (env.OPENAI_BASE_URL) return PLACEHOLDER_API_KEY;
@@ -47,14 +62,18 @@ function resolveApiKey(): string {
 
 export function openai(): OpenAI {
   if (!client) {
-    client = new OpenAI({ apiKey: resolveApiKey(), baseURL: env.OPENAI_BASE_URL });
+    client = new OpenAI({ apiKey: resolveApiKey(), baseURL: env.OPENAI_BASE_URL, fetch: countingFetch });
   }
   return client;
 }
 
 function openaiProvider(): OpenAIProvider {
   if (!provider) {
-    provider = createOpenAI({ apiKey: resolveApiKey(), baseURL: env.OPENAI_BASE_URL });
+    provider = createOpenAI({
+      apiKey: resolveApiKey(),
+      baseURL: env.OPENAI_BASE_URL,
+      fetch: countingFetch,
+    });
   }
   return provider;
 }

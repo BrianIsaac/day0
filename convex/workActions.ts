@@ -65,6 +65,7 @@ import { ledgerRunIds } from '../src/surfaces/browser-session';
 import { carriedReadIndexes, rereadStopReason, withRereads, type FailedReread } from '../src/surfaces/rereads';
 import { verdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { observeModelCalls, type ModelCallReport } from '../src/lib/model-call-telemetry';
 import { browserComponent } from '../src/surfaces/browser';
 import type { ExecutionOutput, LandedWrite, SkillShape } from '../src/work/types';
 import {
@@ -280,6 +281,42 @@ function buildLookups(args: {
   };
 }
 
+/** The loop steps whose model calls go on the item's events. */
+type ModelCallStage = 'evaluation' | 'draft' | 'execution' | 'closing';
+
+/**
+ * Run one loop step with each of its model calls recorded on the item's
+ * events as `work.model-call`, in real mode.
+ *
+ * The record is the retry wrapper's report (stage, agent, attempts, retries,
+ * duration, outcome) and nothing of the prompt or the reply, so a step that
+ * held its slot for five minutes reads afterwards as one slow call or as
+ * retries. Mock mode writes nothing: its event feed is what the frozen
+ * harness and the hosted demo read.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   step: The item, its agent and which step this is.
+ *   fn: The step's work.
+ *
+ * Returns:
+ *   Whatever the step returns.
+ */
+async function recordingModelCalls<T>(
+  ctx: ActionCtx,
+  step: { agentId: Id<'agents'>; workItemId: Id<'workItems'>; stage: ModelCallStage },
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (SURFACE_MODE !== 'real') return await fn();
+  return await observeModelCalls(async (report: ModelCallReport): Promise<void> => {
+    await ctx.runMutation(internal.events.log, {
+      agentId: step.agentId,
+      type: 'work.model-call',
+      payload: { workItemId: step.workItemId, stage: step.stage, ...report },
+    });
+  }, fn);
+}
+
 /**
  * Evaluate one discovered work item and store the verdict.
  *
@@ -373,7 +410,8 @@ async function evaluateWorkItemHandler(
   });
   const candidate = rowToCandidate(item);
   let scopeJudgementUnavailable: string | undefined;
-  const verdict = await evaluateCandidate(
+  const step = { agentId, workItemId: args.workItemId, stage: 'evaluation' } as const;
+  const verdict = await recordingModelCalls(ctx, step, () => evaluateCandidate(
     candidate,
     {
       agentId: asAgentId(agentId),
@@ -394,7 +432,7 @@ async function evaluateWorkItemHandler(
         }
       },
     },
-  );
+  ));
   if (scopeJudgementUnavailable !== undefined) {
     await ctx.runMutation(internal.events.log, {
       agentId,
@@ -520,7 +558,8 @@ async function draftPlanHandler(
         })
       : undefined;
   const corrections = SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
-  const plan = await draftExecutionPlan({
+  const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
+  const plan = await recordingModelCalls(ctx, step, () => draftExecutionPlan({
     candidate,
     charter: charterRow.body as Charter,
     autonomousActions: autonomousActionsOn(agent),
@@ -540,7 +579,7 @@ async function draftPlanHandler(
         payload: { workItemId: args.workItemId, ...event.payload },
       });
     },
-  });
+  }));
   const stored = await ctx.runMutation(internal.work.setPlan, {
     workItemId: args.workItemId,
     plan,
@@ -649,7 +688,8 @@ async function executeApprovedPlanHandler(
     });
     return { ok: prepared.prepared, reason: 'resuming closing actions from the previous ledger' };
   }
-  return await holdDay0Actions(ctx, {
+  const step = { agentId, workItemId: args.workItemId, stage: 'execution' } as const;
+  return await recordingModelCalls(ctx, step, () => holdDay0Actions(ctx, {
     workItemId: args.workItemId,
     item,
     agentId,
@@ -662,7 +702,7 @@ async function executeApprovedPlanHandler(
     managerFeedback: liveManagerFeedback(item.managerFeedback),
     managerAnswers: managerAnswersOf(item),
     landedWrites,
-  });
+  }));
 }
 
 /**
@@ -1401,7 +1441,8 @@ export const authorDependentActions = internalAction({
         if (transitionRefusal) issues.push(transitionRefusal);
         return issues;
       };
-      const output = await runDependentSkill({
+      const step = { agentId: item.agentId, workItemId: args.workItemId, stage: 'closing' } as const;
+      const output = await recordingModelCalls(ctx, step, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
         candidate: rowToCandidate(item),
@@ -1413,12 +1454,12 @@ export const authorDependentActions = internalAction({
         managerFeedback: feedback,
         managerAnswers: managerAnswersOf(item),
         appliedCorrections,
-        initialOutput: initial,
-        initialLedger: initial.applied,
-        initialFailure: initial.initialFailure,
-        resumedClosing: initial.resumedClosing,
-        refusedClosing: initial.refusedClosing,
-        landedWrites: initial.landedWrites,
+        initialOutput: prerequisites,
+        initialLedger: prerequisites.applied,
+        initialFailure: prerequisites.initialFailure,
+        resumedClosing: prerequisites.resumedClosing,
+        refusedClosing: prerequisites.refusedClosing,
+        landedWrites: prerequisites.landedWrites,
         closingGate,
         onAuditCorrection: async (removedIndices, reason) => {
           await ctx.runMutation(internal.events.log, {
@@ -1426,7 +1467,7 @@ export const authorDependentActions = internalAction({
             payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
           });
         },
-      });
+      }));
       authored = output;
       const cap = dependentActionCap(initial);
       if (output.actions.length > cap) {
@@ -1438,12 +1479,12 @@ export const authorDependentActions = internalAction({
       // the set that came back.
       const gate = closingGate(output);
       if (gate.length > 0) throw new ClosingGateRefusal(gate, output);
-      const held = await repairedForHold(output, {
+      const held = await recordingModelCalls(ctx, step, () => repairedForHold(output, {
         surfaces,
         skill: { name: skill.name },
         candidate: rowToCandidate(item),
         onAdditionalModelCall: (): void => {},
-      });
+      }));
       authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
         plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes, initialFailure,
