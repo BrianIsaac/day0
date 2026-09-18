@@ -116,6 +116,33 @@ describe('intake scope candidates', (): void => {
       },
     ]);
   });
+
+  it('ignores quoted runbook examples and another team’s channels mentioned in prose', (): void => {
+    const candidates = scopeCandidates(
+      [{
+        ref: 'finance/handbook.md',
+        markdown: [
+          '# Finance close handbook',
+          '- Team: `FIN`',
+          '- Project: `September close`',
+          '- Channels: #finance-close, #ops-requests',
+          'The RevOps team uses Channels: #revops-asks; finance does not monitor it.',
+          '```markdown',
+          '- Team: `REVOPS`',
+          '- Project: `Q3 close`',
+          '- Channels: #revops-asks',
+          '```',
+        ].join('\n'),
+      }],
+      ['team', 'project', 'channel'],
+    );
+    expect(candidates.map(({ field, value }) => [field, value])).toEqual([
+      ['team', 'FIN'],
+      ['project', 'September close'],
+      ['channel', 'finance-close'],
+      ['channel', 'ops-requests'],
+    ]);
+  });
 });
 
 describe('grounding a pick on its page line', (): void => {

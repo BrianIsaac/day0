@@ -63,8 +63,9 @@ const FIELD_GRAMMARS: Record<Exclude<ScopeField, 'channel'>, readonly RegExp[]> 
   team: [/\bidentifier\s+`([^`]+)`/gi, /^\s*-?\s*Team\s*:\s*`([^`]+)`/gi],
   project: [/^\s*-?\s*Project\s*:\s*`([^`]+)`/gi, /\bproject\s+`([^`]+)`/gi],
 };
-const CHANNELS_LABEL = /\bChannels?\s*:/i;
+const CHANNELS_LABEL = /^\s*(?:[-*+]\s+)?Channels?\s*:/i;
 const CHANNEL_NAME = /#([a-z0-9][a-z0-9_-]*)/gi;
+const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const MAX_NOTE_VALUE = 80;
 
 /**
@@ -115,7 +116,16 @@ export function scopeCandidates(
     });
   };
   for (const page of pages) {
+    let fence: { marker: string; length: number } | undefined;
     for (const line of page.markdown.split(/\r?\n/)) {
+      const fenceMatch = CODE_FENCE.exec(line);
+      if (fenceMatch) {
+        const marker = fenceMatch[1][0];
+        if (!fence) fence = { marker, length: fenceMatch[1].length };
+        else if (fence.marker === marker && fenceMatch[1].length >= fence.length) fence = undefined;
+        continue;
+      }
+      if (fence) continue;
       const quote = line.trim();
       if (!quote || containsTokenShape(quote)) continue;
       for (const field of fields) {
