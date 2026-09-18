@@ -1002,8 +1002,10 @@ describe('the employee roster', (): void => {
       ['run-gone', { state: 'authoring', claimedAt: lapsed }, 1],
     ];
     let expected = 0;
+    let proposedSkill: Id<'skills'> | undefined;
     for (const [label, skill, needsYou] of waiting) {
       const skillId = await seedSkill(harness, aiko, skill);
+      if (skill.state === 'proposed') proposedSkill = skillId;
       await seedParked(harness, aiko, `LOG-${label}`, 'needs-skill', {
         verdict: { decision: 'needs-skill', reason: 'no registered skill fits' },
         proposedSkillId: skillId,
@@ -1014,7 +1016,12 @@ describe('the employee roster', (): void => {
     await seedParked(harness, aiko, 'LOG-unproposed', 'needs-skill', {
       verdict: { decision: 'needs-skill', reason: 'no registered skill fits' },
     });
-    expect((await counts()).Aiko).toEqual([0, 1 + waiting.length + 1, expected]);
+    // Two rows behind one proposal, as SH-4471 and SH-4480 were behind Aiko's skill: both wait on the same click.
+    await seedParked(harness, aiko, 'LOG-second-asker', 'needs-skill', {
+      verdict: { decision: 'needs-skill', reason: 'no registered skill fits' },
+      proposedSkillId: proposedSkill,
+    });
+    expect((await counts()).Aiko).toEqual([0, 1 + waiting.length + 2, expected + 1]);
   });
 
   it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {

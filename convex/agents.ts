@@ -194,21 +194,21 @@ async function approvedRoleLine(ctx: QueryCtx, agentId: Id<'agents'>): Promise<s
  * the slots that wait on the manager are already counted.
  *
  * Args:
- *   ctx: Query context.
  *   row: The parked row.
+ *   skills: The skills the parked rows wait on, by id.
  *   now: The instant an authoring claim is judged against.
  *
  * Returns:
  *   True when the row counts under needs-you.
  */
-async function parkedRowNeedsManager(
-  ctx: QueryCtx,
+function parkedRowNeedsManager(
   row: Doc<'workItems'>,
+  skills: ReadonlyMap<Id<'skills'>, Doc<'skills'> | null>,
   now: number,
-): Promise<boolean> {
+): boolean {
   if (row.state === 'deferred') return true;
   if (row.state !== 'needs-skill' || !row.proposedSkillId) return false;
-  const skill = await ctx.db.get(row.proposedSkillId);
+  const skill = skills.get(row.proposedSkillId);
   if (!skill || !SKILL_WAITS_ON_MANAGER_STATES.has(skill.state)) return false;
   return !holdsLiveAuthoringClaim(skill, now);
 }
@@ -245,16 +245,22 @@ async function workCounts(
   ]);
   const openRows = open.flat();
   const parkedRows = parked.flat();
-  const now = Date.now();
-  const releasedByManager = await Promise.all(
-    parkedRows.map((row) => parkedRowNeedsManager(ctx, row, now)),
+  // Several rows can wait on one skill, so each skill is read once.
+  const skillIds = [...new Set(parkedRows.flatMap((row) => row.proposedSkillId ?? []))];
+  const skills = new Map(
+    await Promise.all(
+      skillIds.map(
+        async (id): Promise<[Id<'skills'>, Doc<'skills'> | null]> => [id, await ctx.db.get(id)],
+      ),
+    ),
   );
+  const now = Date.now();
   return {
     openCount: openRows.length,
     parkedCount: parkedRows.length + discovered.filter(queuedAtCap).length,
     needsYou:
       openRows.filter((row) => NEEDS_MANAGER_STATES.has(row.state)).length +
-      releasedByManager.filter(Boolean).length,
+      parkedRows.filter((row) => parkedRowNeedsManager(row, skills, now)).length,
   };
 }
 
