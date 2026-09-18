@@ -229,6 +229,46 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
     expect(judgements[0]).toMatchObject({ admitted: true, basis: 'source-named' });
   });
 
+  it('takes only a listed system that is not connected for an absent one, never a phrase of the item', async (): Promise<void> => {
+    model.answers.push(
+      { ...uncitedSkip, exclusion: { kind: 'absent-system', quote: 'Friday standup coverage summary' } },
+      { ...uncitedSkip, exclusion: { kind: 'absent-system', quote: 'pipeline coverage figure' } },
+    );
+
+    const { verdict, judgements } = await evaluate(revops27, runContext('priya'));
+
+    expect(verdict.decision).toBe('needs-skill');
+    expect(judgements[0]).toMatchObject({ admitted: true, basis: 'source-named' });
+    // Measured live: naming the unconnected systems to the model moved the
+    // FIN-2 control into scope 13 of 40 against 6 of 40 without; they are
+    // checked here and not shown.
+    expect(model.calls[0]!.user).not.toContain('NetLedger');
+  });
+
+  it('reads a fragment two clauses share as the exclusion, not as the authority clause before it', async (): Promise<void> => {
+    const charter = {
+      ...priyaCharter,
+      proposedBoundaries: {
+        ...priyaCharter.proposedBoundaries,
+        willNotDo: [
+          'Change the billing system of record without asking.',
+          'Change the billing system of record for another region.',
+        ],
+      },
+    };
+    model.answers.push({
+      inScope: false,
+      fit: true,
+      reason: 'The billing system of record is not the role\'s to change.',
+      exclusion: { kind: 'will-not-do', quote: 'Change the billing system of record' },
+    });
+
+    const { verdict } = await evaluate(revops27, runContext('priya', 'real', { charter }));
+
+    expect(verdict.decision).toBe('skip');
+    expect(model.calls).toHaveLength(1);
+  });
+
   it('lets the second reading skip when that one cites', async (): Promise<void> => {
     const cited = 'Configuring Linear is the admins\' lane.';
     model.answers.push(uncitedSkip, {

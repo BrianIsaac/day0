@@ -213,12 +213,21 @@ function itemSource(candidate: WorkCandidate, ctx: EvalContext): ItemSource | un
   };
 }
 
-/** The display names and slugs of the surfaces that are connected now. */
-function liveSystemNames(ctx: EvalContext): string[] {
+/**
+ * The listed systems by whether a connection reaches them now, by display
+ * name and slug. A listed surface that is the same system as a connected one
+ * is reached through it, so it is not absent.
+ */
+function systemNames(ctx: EvalContext): { live: string[]; absent: string[] } {
   const now = ctx.now ?? Date.now();
-  return ctx.surfaces
-    .filter((surface): boolean => verdictFor(surface, now) === 'connected')
-    .flatMap((surface) => [surface.displayName, surface.slug]);
+  const names = (surfaces: readonly EvaluationSurface[]): string[] =>
+    surfaces.flatMap((surface) => [surface.displayName, surface.slug]);
+  const connected = ctx.surfaces.filter((surface): boolean => verdictFor(surface, now) === 'connected');
+  const absent = ctx.surfaces.filter(
+    (surface): boolean =>
+      !connected.includes(surface) && !connected.some((live) => sameEvaluationSystem(surface, live)),
+  );
+  return { live: names(connected), absent: names(absent) };
 }
 
 /** The surface slug convention, shared with the planner. */
@@ -375,12 +384,14 @@ export async function evaluateCandidate(
   lookups: EvaluateLookups,
   opts: EvaluateOptions = {},
 ): Promise<EvaluationVerdict> {
+  const systems = ctx.surfaceMode === 'real' ? systemNames(ctx) : undefined;
   const scope = await judgeScope(candidate, ctx, {
     deferMockQualityFit: true,
     provenance: eligibleByProvenance(candidate, ctx),
     namesDocumentedSystem: namesDocumentedSystem(candidate, ctx.surfaces),
     source: itemSource(candidate, ctx),
-    liveSystems: ctx.surfaceMode === 'real' ? liveSystemNames(ctx) : undefined,
+    liveSystems: systems?.live,
+    absentSystems: systems?.absent,
   });
   if (ctx.surfaceMode !== 'mock' || !scope.admitted) opts.onScopeJudgement?.(scope);
   if (!scope.admitted) {

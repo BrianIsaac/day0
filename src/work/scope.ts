@@ -26,8 +26,8 @@ import type { SurfaceMode } from '../surfaces/types';
  * Where an item came from is a fact on the rows, not a reading: intake only
  * reads the team, project and channels the manager approved. When a willDo
  * clause names that source, a real-mode skip has to cite what excludes the
- * item (a willNotDo clause, or a system the item needs and the employee has
- * no way into), the citation is checked here, and a skip without one is asked
+ * item (a willNotDo clause, or a listed system the item needs that no
+ * connection reaches), the citation is checked here, and a skip without one is asked
  * again once and then does not stand. An item whose source the willDo does
  * not name is never argued into scope this way.
  *
@@ -81,6 +81,8 @@ export interface ScopeInputs {
   source?: ItemSource;
   /** Real mode: the names of the systems the employee is connected to. */
   liveSystems?: readonly string[];
+  /** Real mode: the names of the listed systems no connection reaches. */
+  absentSystems?: readonly string[];
 }
 
 /**
@@ -312,10 +314,12 @@ export function charterJudgementPrompt(args: CharterJudgementArgs): string {
       ? adjacentRoles.map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`).join(' | ')
       : '(none)';
   // A surface is handed in by display name and slug; one spelling of each is shown.
-  const connected = (args.liveSystems ?? []).filter(
-    (name, index, all): boolean =>
-      all.findIndex((other) => comparableSurfaceText(other) === comparableSurfaceText(name)) === index,
-  );
+  const oneSpelling = (names: readonly string[] | undefined): string[] =>
+    (names ?? []).filter(
+      (name, index, all): boolean =>
+        all.findIndex((other) => comparableSurfaceText(other) === comparableSurfaceText(name)) === index,
+    );
+  const connected = oneSpelling(args.liveSystems);
   const goodHabits = GOOD_HABITS_HEADING.test(args.agentsMd)
     ? ['', '--- AGENTS.md (good-habits memory) ---', args.agentsMd]
     : ['', 'No good-habits memory yet: judge the boundaries only and answer fit: true.'];
@@ -378,13 +382,18 @@ const MIN_QUOTED_WORDS = 4;
 function quotedWillNotDo(charter: Charter, quote: string): string | undefined {
   const wanted = comparable(quote);
   if (!wanted) return undefined;
-  return (charter.proposedBoundaries.willNotDo ?? []).find((clause): boolean => {
+  const quotes = (clause: string): boolean => {
     const written = comparable(clause);
     if (!written) return false;
     if (written === wanted) return true;
     const [shorter, longer] = written.length < wanted.length ? [written, wanted] : [wanted, written];
     return shorter.split(' ').length >= MIN_QUOTED_WORDS && ` ${longer} `.includes(` ${shorter} `);
-  });
+  };
+  // A fragment two clauses share is read as the exclusion among them.
+  const clauses = charter.proposedBoundaries.willNotDo ?? [];
+  return (
+    clauses.find((clause) => !isAuthorityClause(clause) && quotes(clause)) ?? clauses.find(quotes)
+  );
 }
 
 /** How a skip's `exclusion` reads against the rows. */
@@ -397,19 +406,20 @@ type ExclusionReading = { holds: true } | { holds: false; authority?: string };
  *   judgement: The model's reading.
  *   candidate: The item.
  *   charter: The approved charter.
- *   liveSystems: Names of the systems the employee is connected to.
+ *   systems: Names of the listed systems, connected and not.
  *
  * Returns:
  *   Holds when the quotation is a willNotDo clause that is not about
- *   authority, or a system the item names as a whole phrase that is none of
- *   the connected ones. A quoted authority clause is handed back, so the
+ *   authority, or a listed system no connection reaches that the item names
+ *   as a whole phrase; a phrase of the item that is no listed system is not
+ *   an absent one. A quoted authority clause is handed back, so the
  *   second asking can say why it did not count.
  */
 function readExclusion(
   judgement: CharterJudgement,
   candidate: WorkCandidate,
   charter: Charter,
-  liveSystems: readonly string[],
+  systems: { live: readonly string[]; absent: readonly string[] },
 ): ExclusionReading {
   // A test double or an older provider reply may lack the field altogether.
   const exclusion = judgement.exclusion as CharterJudgement['exclusion'] | undefined;
@@ -424,11 +434,12 @@ function readExclusion(
   if (!system) return { holds: false };
   const item = ` ${comparable(`${candidate.title}\n${candidate.contentSummary}`)} `;
   if (!item.includes(` ${system} `)) return { holds: false };
-  const live = liveSystems.some((name): boolean => {
-    const known = comparable(name);
-    return known !== '' && (` ${known} `.includes(` ${system} `) || ` ${system} `.includes(` ${known} `));
-  });
-  return { holds: !live };
+  const among = (names: readonly string[]): boolean =>
+    names.some((name): boolean => {
+      const known = comparable(name);
+      return known !== '' && (` ${known} `.includes(` ${system} `) || ` ${system} `.includes(` ${known} `));
+    });
+  return { holds: among(systems.absent) && !among(systems.live) };
 }
 
 /**
@@ -533,7 +544,10 @@ export async function judgeScope(
   const exclusionOf = (reading: CharterJudgement): ExclusionReading =>
     reading.inScope
       ? { holds: true }
-      : readExclusion(reading, candidate, ctx.charter, inputs.liveSystems ?? []);
+      : readExclusion(reading, candidate, ctx.charter, {
+          live: inputs.liveSystems ?? [],
+          absent: inputs.absentSystems ?? [],
+        });
   const first = exclusionOf(judgement);
   if (namedBy !== undefined && !first.holds) {
     overruled = [reason];

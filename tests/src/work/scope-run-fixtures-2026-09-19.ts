@@ -201,6 +201,8 @@ function bound(value: string, quote: string, ref: string): { value: string; quot
 }
 
 const lookerTile = surface('looker-pipeline-tile', 'Looker pipeline tile', 'analytics');
+const notConnected = { verdict: 'declared', credentialLanded: false, lastVerifiedAt: undefined } as const;
+const netledger = surface('netledger', 'NetLedger', 'other', notConnected);
 const northstar = surface('northstar-crm', 'Northstar CRM', 'crm', {
   verdict: 'declared',
   credentialLanded: false,
@@ -224,6 +226,7 @@ export const priyaSurfaces: EvaluationSurface[] = [
   }),
   lookerTile,
   northstar,
+  netledger,
 ];
 
 export const mateoSurfaces: EvaluationSurface[] = [
@@ -242,6 +245,8 @@ export const mateoSurfaces: EvaluationSurface[] = [
     },
   }),
   lookerTile,
+  northstar,
+  netledger,
 ];
 
 export function runContext(
