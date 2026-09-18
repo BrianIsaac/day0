@@ -1,0 +1,222 @@
+/** @vitest-environment node */
+
+import { convexTest, type TestConvex } from 'convex-test';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { api, internal } from '../../convex/_generated/api';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
+import schema from '../../convex/schema';
+import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
+import { allConvexModules } from './all-modules';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+
+/**
+ * An authoring run holds the sandbox lease across its verification, and a run
+ * that arrives while another holds it waits and then verifies, rather than
+ * queueing on the socket behind a smoke test that may run to the 60 s cap and
+ * timing out at the client's 75 s wait.
+ */
+
+const recorded = vi.hoisted(() => ({
+  outputs: [] as Array<{ body: string; smokeTest: string }>,
+  sandboxRuns: 0,
+  /** Held open while a verification is "running" in the sandbox. */
+  gate: undefined as Promise<void> | undefined,
+  sandbox: undefined as SkillSandboxRun | undefined,
+}));
+
+vi.mock('../../src/lib/mastra', () => ({
+  makeAgent: (name: string): { name: string } => ({ name }),
+  agentJson: async <T>(): Promise<T> => {
+    const next = recorded.outputs.shift();
+    if (!next) throw new Error('no authored output queued');
+    return next as T;
+  },
+  agentText: async (): Promise<string> => '',
+}));
+
+vi.mock('../../src/lib/skill-sandbox', () => ({
+  authorAndVerifySkill: async (): Promise<SkillSandboxRun> => {
+    recorded.sandboxRuns += 1;
+    await recorded.gate;
+    if (!recorded.sandbox) throw new Error('no sandbox result queued');
+    return recorded.sandbox;
+  },
+}));
+
+type Harness = TestConvex<typeof schema>;
+const OWNER = { subject: 'owner' };
+
+const reusableBody = [
+  '# Value refresh on an analytics surface',
+  '## When to invoke',
+  'A ticket asks for the tile figure to be set to a stated value.',
+  '## Inputs',
+  '- `<record-id>`: the ticket identifier from the candidate id.',
+  '- `<requested-value>`: the figure the candidate names.',
+  '## Procedure',
+  'Sign in with `{{secret}}`, fill `Pipeline coverage` with `<requested-value>`, click `Save`, comment on `<record-id>`.',
+  '## Verification',
+  'The snapshot shows the audit line.',
+].join('\n');
+
+const smokeTest = [
+  'def run(inputs: dict) -> dict:',
+  '    return {"actions": [{"tool": "mcp.call", "args": {"value": inputs["requested_value"]}}]}',
+  'for case in ({"record_id": "OPS-3", "requested_value": "61%"}, {"record_id": "OPS-9", "requested_value": "58%"}):',
+  '    print("ok", run(case)["actions"][0]["args"]["value"])',
+].join('\n');
+
+async function seedApprovedSkill(harness: Harness, name: string): Promise<Id<'skills'>> {
+  return await harness.run(async (ctx) => {
+    const agentId = await ctx.db.insert('agents', {
+      bossEmail: 'boss@day0.local',
+      name,
+      userId: 'owner',
+      state: 'active',
+      createdAt: 1,
+    });
+    return await ctx.db.insert('skills', {
+      agentId,
+      name: 'analytics-refresh-value',
+      description: 'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
+      body: '',
+      rationale: 'No registered skill covers value refresh on an analytics surface.',
+      sourceType: 'agent-authored',
+      state: 'approved',
+      requiredScopes: ['boss:message', 'looker-pipeline-tile:write'],
+      surfaceClass: 'analytics',
+      operation: 'refresh-value',
+      createdAt: 1,
+    });
+  });
+}
+
+async function readSkill(harness: Harness, skillId: Id<'skills'>): Promise<Doc<'skills'>> {
+  const row = await harness.run(async (ctx) => await ctx.db.get(skillId));
+  if (!row) throw new Error('skill missing');
+  return row;
+}
+
+describe('an authoring run and the verification sandbox lease', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('mock');
+    recorded.outputs.length = 0;
+    recorded.sandboxRuns = 0;
+    recorded.gate = undefined;
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-1',
+      stdout: 'ok 61%\nok 58%\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
+  });
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it.fails('holds the lease across its verification and releases it when the skill registers', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await seedApprovedSkill(harness, 'Priya');
+    recorded.outputs.push({ body: reusableBody, smokeTest });
+    let heldDuringVerification: unknown;
+    const otherSkillId = await seedApprovedSkill(harness, 'Mateo');
+    const otherRunId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('events', {
+          agentId: (await ctx.db.get(otherSkillId))!.agentId,
+          type: 'skill.authoring-claimed',
+          payload: { skillId: otherSkillId },
+          createdAt: 1,
+        }),
+    );
+    recorded.gate = (async (): Promise<void> => {
+      heldDuringVerification = await harness.mutation(internal.sandboxLease.take, {
+        skillId: otherSkillId,
+        runId: otherRunId,
+      });
+    })();
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(heldDuringVerification).toMatchObject({ taken: false, heldBy: skillId });
+    expect((await readSkill(harness, skillId)).state).toBe('registered');
+    // Released: the next run takes it without waiting for the expiry.
+    await expect(
+      harness.mutation(internal.sandboxLease.take, { skillId: otherSkillId, runId: otherRunId }),
+    ).resolves.toMatchObject({ taken: true });
+  });
+
+  it('releases the lease when the verification fails, so one bad smoke test does not hold the queue', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await seedApprovedSkill(harness, 'Priya');
+    recorded.outputs.push({ body: reusableBody, smokeTest });
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-2',
+      stdout: '',
+      stderr: 'Traceback',
+      ok: false,
+      failureReason: 'smoke test exited 1',
+      skipped: false,
+    };
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+
+    expect(result.ok).toBe(false);
+    expect((await readSkill(harness, skillId)).state).toBe('failed');
+    expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual([]);
+  });
+
+  it.fails('waits for the holder rather than queueing on the socket, and records the wait', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const waiting = await seedApprovedSkill(harness, 'Priya');
+    recorded.outputs.push({ body: reusableBody, smokeTest });
+    const holderSkillId = await seedApprovedSkill(harness, 'Mateo');
+    const holderRunId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('events', {
+          agentId: (await ctx.db.get(holderSkillId))!.agentId,
+          type: 'skill.authoring-claimed',
+          payload: { skillId: holderSkillId },
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.sandboxLease.take, {
+      skillId: holderSkillId,
+      runId: holderRunId,
+    });
+
+    let settled = false;
+    const run = harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId: waiting })
+      .finally((): void => {
+        settled = true;
+      });
+    // The run reaches the sandbox, finds the lease held, and waits.
+    for (let tick = 0; tick < 5 && !settled; tick += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(settled).toBe(false);
+    expect(recorded.sandboxRuns).toBe(0);
+    const waitingEvents = (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
+      .filter((event) => event.type === 'skill.sandbox-waiting');
+    expect(waitingEvents).toHaveLength(1);
+    expect(waitingEvents[0]!.payload).toMatchObject({ skillId: waiting });
+
+    await harness.mutation(internal.sandboxLease.release, {
+      skillId: holderSkillId,
+      runId: holderRunId,
+    });
+    await expect(run).resolves.toEqual({ ok: true });
+    expect(recorded.sandboxRuns).toBe(1);
+    expect((await readSkill(harness, waiting)).state).toBe('registered');
+  }, 30_000);
+});

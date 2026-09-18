@@ -808,7 +808,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 28 tables: 23 carry per-agent or agent-owned runtime state, and five hold owner-level documentation and credential state.
+The schema contains 29 tables: 23 carry per-agent or agent-owned runtime state, five hold owner-level documentation and credential state, and one is the transient lease on the verification sandbox.
 
 | Table | Purpose |
 |---|---|
@@ -831,6 +831,7 @@ The schema contains 28 tables: 23 carry per-agent or agent-owned runtime state, 
 | `corrections` | The manager's retry notes, rejection reasons and plan-cancel reasons kept per employee, real mode only, with the item they came from, the surfaces its plan touched and the later items whose plans applied them |
 | `skills` | Skill registry — `builtin` or `agent-authored`, shaped by surface class and operation |
 | `permissionGrants` | Scoped capability grants (revocable) |
+| `sandboxLeases` | The one lease on the verification sandbox: which authoring run may call it now, so employees authoring at once wait visibly instead of timing out on each other |
 | `events` | Event ticker |
 | `mockDocs`, `mockSpreadsheets`, `mockSpreadsheetRows`, `mockSlackChannels`, `mockSlackMessages`, `mockTweets`, `mockTweetReplies`, `mockTickets` | Per-agent mock work environment |
 
