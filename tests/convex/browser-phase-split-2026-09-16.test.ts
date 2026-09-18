@@ -336,10 +336,10 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     restoreSurfaceMode();
   });
 
-  // Red until the apply path re-establishes the session: today the closing
-  // fill and Save find "nothing named on the page" and the snapshot reads
-  // about:blank, exactly as the 16 September ledger shows.
-  it.fails('lands the closing fill and Save in a signed-in page, with REVOPS-7 in its own browser', async (): Promise<void> => {
+  // Without the session replay the closing fill and Save find "nothing named
+  // on the page" and the snapshot reads about:blank, exactly as the 16
+  // September ledger shows.
+  it('lands the closing fill and Save in a signed-in page, with REVOPS-7 in its own browser', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { slack, revops7 } = await seed(t);
 
@@ -365,9 +365,24 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     const slackRow = await readItem(t, slack);
     const slackLedger = ledger(slackRow);
     expect(slackLedger).toHaveLength(8);
-    // 1. The closing fill and Save landed.
+    // 1. The closing fill and Save landed, the fill after the run's own
+    //    navigate, credential fill and Sign in were replayed in its browser.
     expect(slackLedger[4]).toMatchObject({ ok: true });
     expect(slackLedger[5]).toMatchObject({ ok: true });
+    expect(
+      slackLedger[4]!.sessionRestore?.steps.map((step) => [
+        step.ok,
+        step.idempotencyKey,
+        step.replayOf,
+        step.authority,
+      ]),
+    ).toEqual([0, 1, 2].map((index) => [
+      true,
+      `${slack}:${runId}:4.session-${index}`,
+      `${slack}:${runId}:${index}`,
+      'autonomous',
+    ]));
+    expect(slackLedger[5]).not.toHaveProperty('sessionRestore');
     // 2. The closing snapshot reads the refreshed figure and the audit line,
     //    and nothing anywhere read a blank page.
     expect(slackLedger[6]!.effect).toContain('visible figure 74%');

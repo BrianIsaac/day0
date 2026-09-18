@@ -1004,9 +1004,9 @@ describe('a browser session across the apply invocations of one run', (): void =
   const sentIn = (driver: TileDriver, context: number): string[] =>
     driver.calls.filter((call: TileDriverCall) => call.context === context).map((call) => call.tool);
 
-  // Red until the apply path re-establishes the session: today the second
-  // invocation's fill meets a new, blank browser.
-  it.fails('signs in again from the run\'s own landed rows before a closing set that starts with a fill', async (): Promise<void> => {
+  // The second invocation's fill meets a new, blank browser unless the run's
+  // own sign-in is replayed first.
+  it('signs in again from the run\'s own landed rows before a closing set that starts with a fill', async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const first = await phaseOne(driver);
     expect(first.every((row) => row.ok)).toBe(true);
@@ -1054,7 +1054,7 @@ describe('a browser session across the apply invocations of one run', (): void =
     expect(driver.tile.value).toBe('74%');
   });
 
-  it.fails('refuses the replay and every later action on the surface when the write scope is revoked under autonomy', async (): Promise<void> => {
+  it('refuses the replay and every later action on the surface when the write scope is revoked under autonomy', async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const first = await phaseOne(driver);
     // The transport check as the backend runs it after the manager revoked
@@ -1089,7 +1089,7 @@ describe('a browser session across the apply invocations of one run', (): void =
     expect(driver.tile.value).toBe('68%');
   });
 
-  it.fails('refuses the rest of the surface\'s actions after a failed replay, and applies the other surfaces', async (): Promise<void> => {
+  it('refuses the rest of the surface\'s actions after a failed replay, and applies the other surfaces', async (): Promise<void> => {
     const refuseSecondNavigate = (call: TileDriverCall): string | undefined =>
       call.context === 2 && call.tool === 'browser_navigate' ? 'net::ERR_CONNECTION_REFUSED' : undefined;
     const driver = new TileDriver('pipeline-tile-local', refuseSecondNavigate);

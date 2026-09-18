@@ -7,6 +7,7 @@ import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type FetchLike } from './http';
 import { McpAdapter, type CreateMcpClient } from './mcp';
 import { MOCK_TOOLS, mockAdapter } from './mock';
+import { sessionRecipe } from './browser-session';
 import {
   applyProvenance,
   AWAITING_APPROVAL,
@@ -20,6 +21,7 @@ import {
   NOT_AUTOMATIC,
   parseSurfaceAction,
   pathRefusal,
+  replayAuthorityRefusal,
   replyTargetRefusal,
   serialiseSurfaceAction,
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
@@ -37,6 +39,8 @@ import type {
   AdapterRun,
   AppliedAction,
   BeforeSurfaceTransport,
+  SessionRecipeStep,
+  SessionRestoreResult,
   SurfaceAdapter,
   SurfaceRecord,
   SurfaceMode,
@@ -208,6 +212,59 @@ function refused(tool: string, reason: string, idempotencyKey: string): AppliedA
 }
 
 /**
+ * Re-establish a browser-driven surface's page before this invocation's first
+ * call on it, when that call is not itself a navigate.
+ *
+ * The recipe is read from the run's own earlier rows only: the prerequisite
+ * ledger and the rows this phase carries before the index. Every step is
+ * checked here under the authority it first landed with, and again by the
+ * adapter at transport; the endpoint navigate the recipe adds when the run
+ * never navigated runs under this invocation's authority.
+ */
+async function restoreBrowserSession(
+  ctx: ActionCtx,
+  adapter: SurfaceAdapter,
+  run: AdapterRun,
+  surface: SurfaceRecord,
+  earlier: { actions: readonly MockAction[]; applied: ReadonlyArray<AppliedAction | undefined> },
+  idempotencyKey: string,
+  live: { grants: ReadonlySet<string>; autonomousActions: boolean; authority?: ActionAuthority },
+): Promise<SessionRestoreResult | undefined> {
+  if (!adapter.restoreSession) return undefined;
+  const recipe = sessionRecipe(surface.slug, earlier, surface.endpoint).map(
+    (step: SessionRecipeStep): SessionRecipeStep => ({
+      ...step,
+      authority: step.authority ?? (step.replayOf ? undefined : (live.authority ?? 'standing')),
+    }),
+  );
+  if (recipe.length === 0) return undefined;
+  for (const [n, step] of recipe.entries()) {
+    const parsed = parseSurfaceAction(step.action);
+    const refusal = parsed.ok
+      ? (toolRefusal(parsed.action, surface) ??
+        replayAuthorityRefusal(parsed.action, surface, step.authority, live))
+      : parsed.reason;
+    if (refusal) {
+      return {
+        ok: false,
+        steps: [
+          {
+            tool: step.action.tool,
+            ok: false,
+            reason: refusal,
+            idempotencyKey: `${idempotencyKey}.session-${n}`,
+            ...(step.replayOf ? { replayOf: step.replayOf } : {}),
+            action: step.action,
+          },
+        ],
+        reason: `browser session could not be re-established: ${String(step.action.args.tool)} ${refusal}`,
+      };
+    }
+  }
+  return await adapter.restoreSession(ctx, run, surface, recipe, idempotencyKey);
+}
+
+/**
  * Apply skill actions through the adapter registry in their original order.
  *
  * Every surface action passes the same rules before its adapter runs:
@@ -267,6 +324,9 @@ export async function applySurfaceActions(
     const parsed = parseSurfaceAction(action);
     return parsed.ok ? parsed.action : undefined;
   });
+  // Browser-driven surfaces this invocation has already sent something to,
+  // with the reason the session could not be re-established when it could not.
+  const browserSessions = new Map<string, { failure?: string }>();
   try {
     for (const [index, action] of actions.entries()) {
       const durableIndex = index + (options.idempotencyIndexOffset ?? 0);
@@ -402,18 +462,59 @@ export async function applySurfaceActions(
         applied.push(refused(action.tool, provenance.reason, idempotencyKey));
         continue;
       }
+      const adapterRun = { ...run, agentName: run.agentName ?? 'Day0' };
+      let restored: SessionRestoreResult | undefined;
+      if (surface.path === 'browser-driven' && parsed.action.kind === 'mcp.call') {
+        const session = browserSessions.get(surface.slug);
+        if (session?.failure) {
+          applied.push(refused(action.tool, session.failure, idempotencyKey));
+          continue;
+        }
+        if (!session) {
+          browserSessions.set(surface.slug, {});
+          // A new invocation is a new browser, blank and signed out: the run's
+          // own sign-in is replayed before anything that needs the page.
+          if (parsed.action.tool !== 'browser_navigate') {
+            restored = await restoreBrowserSession(
+              ctx,
+              adapter,
+              adapterRun,
+              surface,
+              {
+                actions: [...(prerequisites?.actions ?? []), ...actions.slice(0, index)],
+                applied: [
+                  ...(prerequisites?.applied ?? []),
+                  ...actions.slice(0, index).map((_, earlier) => options.priorLedger?.[earlier]),
+                ],
+              },
+              idempotencyKey,
+              { grants: options.grants ?? new Set(), autonomousActions, authority },
+            );
+            if (restored && !restored.ok) {
+              browserSessions.set(surface.slug, { failure: restored.reason });
+              applied.push({
+                ...refused(action.tool, restored.reason, idempotencyKey),
+                sessionRestore: { steps: restored.steps },
+              });
+              continue;
+            }
+          }
+        }
+      }
       const outcome = await adapter.apply(
         ctx,
-        { ...run, agentName: run.agentName ?? 'Day0' },
+        adapterRun,
         serialiseSurfaceAction(provenance.action),
         durableIndex,
         idempotencyKey,
       );
-      applied.push(authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome);
+      const stamped = authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome;
+      applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);
     }
   } finally {
-    // The browser floor holds one live browser per run; nothing else holds
-    // anything. Closing happens whatever the run did, including throwing.
+    // The browser floor holds one live browser per run and surface for this
+    // invocation; nothing else holds anything. Closing happens whatever the
+    // invocation did, including throwing.
     await Promise.all(
       [...new Set(adapters.values())].map(
         async (adapter: SurfaceAdapter): Promise<void> => await adapter.close?.(),
