@@ -453,7 +453,7 @@ export async function applySurfaceActions(
         const deferred = options.deferredIndexes?.has(index) === true;
         // A write another work item's claim withholds is not left for the
         // manager to decide: approving it could not send it.
-        const claimed = deferred ? await claimHoldFor(action, surfaces, options.claimHold) : undefined;
+        const claimed = deferred && options.claimHold ? await claimHoldFor(action, surfaces, options.claimHold) : undefined;
         if (claimed) {
           applied.push(heldRow(action, claimed, idempotencyKey));
           continue;
@@ -541,7 +541,7 @@ export async function applySurfaceActions(
       }
       // Before the comment-before-status rule: a status change whose comment
       // the same claim withheld is withheld with it, not refused for lacking it.
-      const claimed = await claimHoldFor(action, surfaces, options.claimHold);
+      const claimed = options.claimHold ? await claimHoldFor(action, surfaces, options.claimHold) : undefined;
       if (claimed) {
         applied.push(heldRow(action, claimed, idempotencyKey));
         continue;
