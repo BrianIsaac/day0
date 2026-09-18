@@ -1187,6 +1187,37 @@ describe('a browser session across the apply invocations of one run', (): void =
     expect(applied[3]!.effect).toContain('visible figure 68%');
   });
 
+  it('re-opens the page before a closing set that signs in with no navigate (REVOPS-5, 16 September)', async (): Promise<void> => {
+    // Phase one navigated and read the sign-in page; the closing set signs
+    // in, refreshes and reads back, but never navigates.
+    const driver = new TileDriver('pipeline-tile-local');
+    const readOnly = [slackPhaseOne[0]!, slackPhaseOne[3]!];
+    const first = await applySurfaceActions(ctx, 'real', [looker], run, readOnly, {
+      ...auto,
+      deps: tileDeps(driver),
+      grants: tileGrants,
+      approvedIndexes: new Set([0, 1]),
+    });
+    const closing = await applySurfaceActions(
+      ctx,
+      'real',
+      [looker],
+      run,
+      [...slackPhaseOne.slice(1, 3), ...closingTile],
+      {
+        ...auto,
+        deps: tileDeps(driver),
+        grants: tileGrants,
+        approvedIndexes: new Set([0, 1, 2, 3, 4]),
+        prerequisiteLedger: { actions: readOnly, applied: first },
+        idempotencyIndexOffset: 2,
+      },
+    );
+    expect(closing.map((row) => row.ok)).toEqual([true, true, true, true, true]);
+    expect(closing[0]!.sessionRestore?.steps.map((step) => step.replayOf)).toEqual(['wi_1:run_1:0']);
+    expect(closing[4]!.effect).toContain('visible figure 74%');
+  });
+
   it('opens no second sign-in when the invocation starts with its own navigate', async (): Promise<void> => {
     const driver = new TileDriver('pipeline-tile-local');
     const first = await phaseOne(driver);
