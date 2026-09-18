@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { convexTest } from 'convex-test';
@@ -218,6 +218,31 @@ describe('recomputing the supervision figures from an export', (): void => {
       [121_100, 'Mateo', 'charter.approved'],
     ]);
     expect(timeline.some((row) => row.employee === 'Day0 revocation evaluation')).toBe(false);
+  });
+
+  it('orders same-millisecond timeline events by backend write time, not export id', async (): Promise<void> => {
+    const directory = await exportDirectory(await companyBackend());
+    const agents = readFileSync(join(directory, 'agents', 'documents.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { _id: string; name: string });
+    const priyaId = agents.find((row) => row.name === 'Priya')?._id;
+    if (!priyaId) throw new Error('synthetic employee absent');
+    const eventsPath = join(directory, 'events', 'documents.jsonl');
+    const earlier = {
+      _id: 'z-earlier', _creationTime: 500_000.1, agentId: priyaId,
+      type: 'skill.registered', payload: {}, createdAt: 500_000,
+    };
+    const later = {
+      _id: 'a-later', _creationTime: 500_000.2, agentId: priyaId,
+      type: 'skill.failed', payload: {}, createdAt: 500_000,
+    };
+    writeFileSync(eventsPath, `${readFileSync(eventsPath, 'utf8')}${JSON.stringify(later)}\n${JSON.stringify(earlier)}\n`);
+
+    const { timeline } = recomputeFromExport(directory, { owner: OWNER });
+    expect(timeline.filter((row) => row.at === 500_000).map((row) => row.type)).toEqual([
+      'skill.registered', 'skill.failed',
+    ]);
   });
 
   it('passes an --expect file that names every field and fails naming each field that differs', async (): Promise<void> => {

@@ -22,6 +22,7 @@ import { pathToFileURL } from 'node:url';
 import type { Doc } from '../convex/_generated/dataModel';
 import { DEV_NO_AUTH_SUBJECT } from '../convex/devAuth';
 import {
+  byWriteOrder,
   computeCompanyMetrics,
   selectCompanyEmployees,
   type EmployeeRecords,
@@ -138,10 +139,7 @@ export function recomputeFromExport(path: string, options: { owner?: string } = 
         .filter((event) => TIMELINE_EVENTS.has(event.type))
         .map((event) => ({ event, employee: record.agent.name })),
     )
-    .sort(
-      (left, right) =>
-        left.event.createdAt - right.event.createdAt || (left.event._id < right.event._id ? -1 : 1),
-    );
+    .sort((left, right) => byWriteOrder(left.event, right.event));
   const anchor =
     syncStarts.length > 0
       ? { at: Math.min(...syncStarts), source: 'documentation sync' as const }

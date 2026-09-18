@@ -163,7 +163,7 @@ export function collectLedgerObservations(
  * them. The figures then do not depend on the order the rows were read in,
  * the backend's creation order or an export's id order.
  */
-function byWriteOrder(left: Doc<'events'>, right: Doc<'events'>): number {
+export function byWriteOrder(left: Doc<'events'>, right: Doc<'events'>): number {
   return (
     left.createdAt - right.createdAt ||
     left._creationTime - right._creationTime ||
