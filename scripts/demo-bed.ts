@@ -1477,11 +1477,10 @@ function volumeHolders(name: string, includeStopped: boolean): string[] {
     .filter(Boolean);
 }
 
+/** Every volume on this machine; empty when the daemon cannot be asked. */
 function volumeNames(): string[] {
-  const result = must(
-    run('docker', ['volume', 'ls', '--format', '{{.Name}}'], { timeoutMs: 15_000 }),
-    'docker volume ls',
-  );
+  const result = run('docker', ['volume', 'ls', '--format', '{{.Name}}'], { timeoutMs: 15_000 });
+  if (result.status !== 0) return [];
   return result.stdout
     .split('\n')
     .map((line: string): string => line.trim())
@@ -1700,10 +1699,12 @@ async function up(options: DemoBedOptions): Promise<void> {
   let plan: WarmRedactorPlan | undefined;
   if (options.profiles.includes('redactor')) {
     const image = tarImage();
+    const volumes = volumeNames();
+    if (volumes.length === 0) throw new Error('docker volume ls did not answer; is the daemon up?');
     plan = warmRedactorPlan({
       project: options.project,
       warmFrom: options.warmFrom,
-      volumes: volumeNames(),
+      volumes,
       image,
     });
     const refusal = redactorVenvRefusal(redactorVenvDevice(plan.sourceVenv, image), plan.sourceVenv);
@@ -2157,7 +2158,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
         ? []
         : [
             `warm projects on this machine: ${
-              warmProjects(docker.status === 0 ? volumeNames() : [])
+              warmProjects(volumeNames())
                 .filter((project: string): boolean => project !== options.project)
                 .join(', ') || 'none'
             }`,
