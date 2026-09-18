@@ -44,9 +44,11 @@ async function loadChatRoute(settings: {
   return POST;
 }
 
-/** The smallest streamed chat completion the AI SDK will accept as a reply. */
-function chatCompletionStream(): Response {
-  const chunk = (delta: unknown, finish: string | null): string =>
+type Delta = Record<string, unknown>;
+
+/** One streamed chat completion, built from the deltas the provider would send. */
+function completionStream(deltas: [Delta, string | null][]): Response {
+  const chunk = (delta: Delta, finish: string | null): string =>
     `data: ${JSON.stringify({
       id: 'chatcmpl-day1',
       object: 'chat.completion.chunk',
@@ -54,12 +56,96 @@ function chatCompletionStream(): Response {
       model: GLM,
       choices: [{ index: 0, delta, finish_reason: finish }],
     })}\n\n`;
-  return new Response(
-    chunk({ role: 'assistant', content: 'Welcome aboard. First topic: why this hire?' }, null) +
-      chunk({}, 'stop') +
-      'data: [DONE]\n\n',
-    { headers: { 'content-type': 'text/event-stream' } },
+  return new Response(deltas.map(([d, f]) => chunk(d, f)).join('') + 'data: [DONE]\n\n', {
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
+/** The smallest streamed chat completion the AI SDK will accept as a reply. */
+function chatCompletionStream(): Response {
+  return textCompletion('Welcome aboard. First topic: why this hire?');
+}
+
+function textCompletion(text: string): Response {
+  return completionStream([
+    [{ role: 'assistant', content: text }, null],
+    [{}, 'stop'],
+  ]);
+}
+
+/**
+ * The turn the 19 Sep run recorded twice (`findings/priya-chat-open-1-response.txt`,
+ * 19.5 s, and `-turn-4-`, 17.6 s): a 200 whose stream carried `start`,
+ * `start-step`, `finish-step`, `finish (stop)` and nothing else. Only the
+ * headers were saved, so the body is rebuilt from the provider side: a
+ * completion that stops without content or a tool call.
+ */
+function emptyCompletion(): Response {
+  return completionStream([
+    [{ role: 'assistant', content: '' }, null],
+    [{}, 'stop'],
+  ]);
+}
+
+/** A turn that says `text` (or nothing) and calls `dayOneComplete` with it. */
+function closingCompletion(text: string, closingLine: string): Response {
+  return completionStream([
+    [{ role: 'assistant', content: text }, null],
+    [
+      {
+        tool_calls: [
+          {
+            index: 0,
+            id: 'call_close',
+            type: 'function',
+            function: { name: 'dayOneComplete', arguments: JSON.stringify({ closingLine }) },
+          },
+        ],
+      },
+      null,
+    ],
+    [{}, 'tool_calls'],
+  ]);
+}
+
+/** Answer the provider calls in order with `replies`, repeating the last one. */
+function stubProvider(replies: (() => Response)[]): void {
+  let call = 0;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_input: unknown, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      const reply = replies[Math.min(call, replies.length - 1)];
+      call += 1;
+      return reply();
+    }),
   );
+}
+
+/** The chunks of a UI message stream body, in order. */
+function chunksOf(body: string): { type: string; [key: string]: unknown }[] {
+  return body
+    .split('\n\n')
+    .map((line) => line.replace(/^data: /, ''))
+    .filter((line) => line && line !== '[DONE]')
+    .map((line) => JSON.parse(line) as { type: string });
+}
+
+function turn(role: 'user' | 'assistant', text: string, id: string): unknown {
+  return { id, role, parts: [{ type: 'text', text }] };
+}
+
+/**
+ * The chat room's history after `exchanges` question-and-answer pairs: the
+ * priming turn, then the agent's question and the manager's reply for each.
+ */
+function historyOf(exchanges: number): unknown[] {
+  const history: unknown[] = [turn('user', '__init__', 'm0')];
+  for (let i = 1; i <= exchanges; i += 1) {
+    history.push(turn('assistant', `Topic ${i}: what should I know?`, `a${i}`));
+    history.push(turn('user', `Answer ${i}.`, `u${i}`));
+  }
+  return history;
 }
 
 function day1Request(body: unknown): Request {
@@ -177,6 +263,167 @@ it('cancels a stalled provider at the 60-second route deadline', async () => {
     expect(providerSignal?.aborted).toBe(true);
     expect(timeout).toHaveBeenCalledWith(60_000);
     await body;
+  } finally {
+    deadline.abort();
+    timeout.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+describe('a turn the model answers normally', (): void => {
+  it('reaches the chat room byte for byte as the SDK streams it', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+
+    const response = await POST(day1Request({ messages: historyOf(0) }));
+
+    expect(response.headers.get('content-type')).toBe('text/event-stream');
+    expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1');
+    expect(await response.text()).toMatchInlineSnapshot(`
+      "data: {"type":"start"}
+
+      data: {"type":"start-step"}
+
+      data: {"type":"text-start","id":"0"}
+
+      data: {"type":"text-delta","id":"0","delta":"Welcome aboard. First topic: why this hire?"}
+
+      data: {"type":"text-end","id":"0"}
+
+      data: {"type":"finish-step"}
+
+      data: {"type":"finish","finishReason":"stop"}
+
+      data: [DONE]
+
+      "
+    `);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('passes the close through untouched once topic 7 has its answer', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([() => closingCompletion('Thanks, Aiko.', 'I will draft the charter now.')]);
+
+    const response = await POST(day1Request({ messages: historyOf(7) }));
+
+    expect(await response.text()).toMatchInlineSnapshot(`
+      "data: {"type":"start"}
+
+      data: {"type":"start-step"}
+
+      data: {"type":"text-start","id":"0"}
+
+      data: {"type":"text-delta","id":"0","delta":"Thanks, Aiko."}
+
+      data: {"type":"tool-input-start","toolCallId":"call_close","toolName":"dayOneComplete"}
+
+      data: {"type":"tool-input-delta","toolCallId":"call_close","inputTextDelta":"{\\"closingLine\\":\\"I will draft the charter now.\\"}"}
+
+      data: {"type":"tool-input-available","toolCallId":"call_close","toolName":"dayOneComplete","input":{"closingLine":"I will draft the charter now."}}
+
+      data: {"type":"text-end","id":"0"}
+
+      data: {"type":"finish-step"}
+
+      data: {"type":"finish","finishReason":"tool-calls"}
+
+      data: [DONE]
+
+      "
+    `);
+  });
+});
+
+describe('an empty model turn', (): void => {
+  it('is asked again once, and the manager sees only the second answer', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([emptyCompletion, () => textCompletion('Welcome aboard. Why this hire?')]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(0) }))).text();
+
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
+    const chunks = chunksOf(body);
+    expect(chunks.filter((c) => c.type === 'start')).toHaveLength(1);
+    expect(chunks.filter((c) => c.type === 'finish')).toHaveLength(1);
+    expect(chunks.filter((c) => c.type === 'text-delta').map((c) => c.delta).join('')).toBe(
+      'Welcome aboard. Why this hire?',
+    );
+  });
+
+  it('counts a turn of whitespace as empty', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([() => textCompletion('\n\n'), () => textCompletion('Noted. Who should I meet?')]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(2) }))).text();
+
+    expect(sent).toHaveLength(2);
+    expect(chunksOf(body).filter((c) => c.type === 'text-delta').map((c) => c.delta).join('')).toBe(
+      'Noted. Who should I meet?',
+    );
+  });
+
+  it('is asked again once only: a second empty turn is what the chat room gets', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([emptyCompletion]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(0) }))).text();
+
+    expect(sent).toHaveLength(2);
+    const types = chunksOf(body).map((c) => c.type);
+    expect(types.filter((t) => t === 'start')).toHaveLength(1);
+    expect(types).not.toContain('text-delta');
+    expect(types.at(-1)).toBe('finish');
+  });
+
+  it('does not ask again for a turn that only closes the 1:1', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([() => closingCompletion('', 'I will draft the charter now.')]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(7) }))).text();
+
+    expect(sent).toHaveLength(1);
+    expect(chunksOf(body).map((c) => c.type)).toContain('tool-input-available');
+  });
+});
+
+it('does not ask again once the 60-second deadline has cut a reply', async () => {
+  const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+  vi.useFakeTimers();
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+    setTimeout(() => deadline.abort(new DOMException('Deadline', 'TimeoutError')), ms);
+    return deadline.signal;
+  });
+  // The reply the run saw cut at "Under": the provider sends the first word and stalls.
+  const first = `data: ${JSON.stringify({
+    id: 'chatcmpl-day1',
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: GLM,
+    choices: [{ index: 0, delta: { role: 'assistant', content: 'Under' }, finish_reason: null }],
+  })}\n\n`;
+  let calls = 0;
+  vi.stubGlobal('fetch', vi.fn(async (_input: unknown, init?: RequestInit) => {
+    calls += 1;
+    const stalled = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(first));
+        init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), {
+          once: true,
+        });
+      },
+    });
+    return new Response(stalled, { headers: { 'content-type': 'text/event-stream' } });
+  }));
+  try {
+    const response = await POST(day1Request({ messages: historyOf(3) }));
+    const body = response.text();
+    await vi.advanceTimersByTimeAsync(60_000);
+    const types = chunksOf(await body).map((c) => c.type);
+    expect(types).toContain('text-delta');
+    expect(types).not.toContain('finish');
+    expect(calls).toBe(1);
   } finally {
     deadline.abort();
     timeout.mockRestore();

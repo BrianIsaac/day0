@@ -1,9 +1,17 @@
-import { convertToModelMessages, hasToolCall, streamText, tool, type UIMessage } from 'ai';
+import {
+  convertToModelMessages,
+  createUIMessageStreamResponse,
+  hasToolCall,
+  streamText,
+  tool,
+  type UIMessage,
+} from 'ai';
 import { z } from 'zod';
 import { establishCaller } from '@/lib/dev-auth-server';
 import { languageModel } from '@/lib/openai';
 import { streamCallOptions } from '@/lib/stream-settings';
 import { DAY_ONE_TOPIC_SPECS, DAY_ONE_WELCOME } from '@/agent/day-one-prompts';
+import { dayOneTurnStream } from '@/agent/day-one-turn';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -75,8 +83,10 @@ export async function POST(req: Request): Promise<Response> {
     : body.messages;
 
   const messages = await convertToModelMessages(uiMessages);
-  try {
-    const result = streamText({
+  // One model call. `dayOneTurnStream` makes it a second time when the first
+  // ends having said nothing.
+  const attempt = () =>
+    streamText({
       abortSignal,
       model: languageModel(),
       system: SYSTEM_PROMPT,
@@ -95,8 +105,14 @@ export async function POST(req: Request): Promise<Response> {
       },
       stopWhen: hasToolCall('dayOneComplete'),
       maxRetries: 3,
+    }).toUIMessageStream();
+  try {
+    return createUIMessageStreamResponse({
+      stream: dayOneTurnStream({
+        attempt,
+        signal: abortSignal,
+      }),
     });
-    return result.toUIMessageStreamResponse();
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return Response.json(
