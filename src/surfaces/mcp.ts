@@ -29,9 +29,13 @@ import {
   type SnapshotElement,
 } from './browser';
 import type {
+  ActionAuthority,
   AdapterRun,
   AppliedAction,
   BeforeSurfaceTransport,
+  SessionRecipeStep,
+  SessionRestoreResult,
+  SessionRestoreStep,
   SurfaceAdapter,
   SurfaceRecord,
 } from './types';
@@ -353,35 +357,27 @@ export class McpAdapter implements SurfaceAdapter {
   }
 
   /**
-   * Call one allowlisted tool on a connected surface.
-   *
-   * Args:
-   *   ctx: Convex action context.
-   *   run: Work execution identity.
-   *   action: The `mcp.call` action after the registry's rules ran.
-   *   index: Position in the run, unused beyond the key.
-   *   idempotencyKey: Ledger key for this action.
-   *
-   * Returns:
-   *   The ledger row: `ok` iff the server did not flag an error.
-   */
-  /**
-   * One live browser per run, keyed by run and surface.
+   * One live browser per run and surface for the life of this adapter.
    *
    * The driver runs `--isolated`, so every MCP session gets its own browser
    * context - which is what an audited action set should mean, and also means a
    * session per action would throw away the page after every step. A person
-   * signing in and then pressing Save does both in one tab; so does this. The
-   * session is closed when the run's actions are done.
+   * signing in and then pressing Save does both in one tab; so does this.
+   *
+   * The adapter lives for one apply invocation, and a run's phases are
+   * separate invocations, so the session is closed when this invocation's
+   * actions are done. The next invocation's first action on the surface finds
+   * a new, blank browser, which the registry signs in again first through
+   * `restoreSession`.
    */
   private readonly browserSessions = new Map<string, McpClientLike>();
 
   /**
-   * Close every browser this adapter opened for the run.
+   * Close every browser this adapter opened for the invocation.
    *
-   * Called by the registry once the run's actions have been applied, in a
-   * `finally`, so a browser is never left holding a signed-in page after the
-   * run that opened it has ended.
+   * Called by the registry once the invocation's actions have been applied, in
+   * a `finally`, so a browser is never left holding a signed-in page after the
+   * invocation that opened it has ended.
    */
   async close(): Promise<void> {
     const open = [...this.browserSessions.values()];
@@ -449,6 +445,19 @@ export class McpAdapter implements SurfaceAdapter {
     };
   }
 
+  /**
+   * Call one allowlisted tool on a connected surface.
+   *
+   * Args:
+   *   ctx: Convex action context.
+   *   run: Work execution identity.
+   *   action: The `mcp.call` action after the registry's rules ran.
+   *   index: Position in the run, unused beyond the key.
+   *   idempotencyKey: Ledger key for this action.
+   *
+   * Returns:
+   *   The ledger row: `ok` iff the server did not flag an error.
+   */
   async apply(
     ctx: ActionCtx,
     run: AdapterRun,
@@ -457,6 +466,102 @@ export class McpAdapter implements SurfaceAdapter {
     idempotencyKey: string,
   ): Promise<AppliedAction> {
     void index;
+    return await this.send(ctx, run, action, idempotencyKey);
+  }
+
+  /**
+   * Sign the run's browser for a surface in again, in this invocation's
+   * session, by replaying the run's own landed rows.
+   *
+   * Each step goes through exactly the path `apply` does - the surface and
+   * allowlist checks, the navigation bound, the credential typed from its
+   * placeholder, element resolution against a fresh snapshot, and the
+   * transport check before and after resolution - with the check run under
+   * the replayed row's own authority. The first step that does not land stops
+   * the replay: nothing further is typed into a page that is not the one the
+   * run left.
+   *
+   * Args:
+   *   ctx: Convex action context.
+   *   run: Work execution identity; its browser for the surface is the one used.
+   *   surface: The browser-driven surface.
+   *   recipe: The calls to replay, from `sessionRecipe`.
+   *   baseKey: The key of the row that needs the page; step n is `<baseKey>.session-<n>`.
+   *
+   * Returns:
+   *   Every step attempted, and why the replay stopped if it did.
+   */
+  async restoreSession(
+    ctx: ActionCtx,
+    run: AdapterRun,
+    surface: SurfaceRecord,
+    recipe: readonly SessionRecipeStep[],
+    baseKey: string,
+  ): Promise<SessionRestoreResult> {
+    const steps: SessionRestoreStep[] = [];
+    for (const [n, step] of recipe.entries()) {
+      const parsed = parseSurfaceAction(step.action);
+      const onSurface = parsed.ok && parsed.action.kind === 'mcp.call' && parsed.action.surface === surface.slug;
+      const outcome = onSurface
+        ? await this.send(ctx, run, step.action, `${baseKey}.session-${n}`, {
+            authority: step.authority,
+          })
+        : {
+            tool: step.action.tool,
+            ok: false,
+            reason: `a replayed call must target ${surface.slug}`,
+            idempotencyKey: `${baseKey}.session-${n}`,
+          };
+      const landed = outcome.ok && outcome.held !== true;
+      steps.push({
+        ...outcome,
+        ...(landed && step.authority ? { authority: step.authority } : {}),
+        ...(step.replayOf ? { replayOf: step.replayOf } : {}),
+        action: step.action,
+      });
+      if (!landed) {
+        const tool = parsed.ok && parsed.action.kind === 'mcp.call' ? parsed.action.tool : step.action.tool;
+        return {
+          ok: false,
+          steps,
+          reason: `browser session could not be re-established: ${tool} ${outcome.reason ?? 'the call did not land'}`,
+        };
+      }
+    }
+    return { ok: true, steps };
+  }
+
+  /** The transport check, told the replayed authority only when the call is a replay. */
+  private async transportRefusal(
+    action: MockAction,
+    surface: SurfaceRecord,
+    replay: { authority?: ActionAuthority } | undefined,
+  ): Promise<string | undefined> {
+    const check = this.deps.beforeTransport;
+    if (!check) return undefined;
+    return replay ? await check(action, surface, replay) : await check(action, surface);
+  }
+
+  /**
+   * Send one `mcp.call`, on the run's browser for a browser-driven surface.
+   *
+   * Args:
+   *   ctx: Convex action context.
+   *   run: Work execution identity.
+   *   action: The `mcp.call` action.
+   *   idempotencyKey: Ledger key for the row.
+   *   replay: Set for a replayed browser call: the authority its row landed under.
+   *
+   * Returns:
+   *   The ledger row.
+   */
+  private async send(
+    ctx: ActionCtx,
+    run: AdapterRun,
+    action: MockAction,
+    idempotencyKey: string,
+    replay?: { authority?: ActionAuthority },
+  ): Promise<AppliedAction> {
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok || parsed.action.kind !== 'mcp.call') {
       return {
@@ -529,7 +634,7 @@ export class McpAdapter implements SurfaceAdapter {
     let writeAttempted = false;
     try {
       if (surface.credentialId) bearer = await this.deps.decrypt(ctx, surface.credentialId);
-      const authorityRefusal = await this.deps.beforeTransport?.(action, surface);
+      const authorityRefusal = await this.transportRefusal(action, surface, replay);
       if (authorityRefusal) {
         return { tool: action.tool, ok: false, reason: authorityRefusal, idempotencyKey };
       }
@@ -583,7 +688,7 @@ export class McpAdapter implements SurfaceAdapter {
           }
           toolArgs = resolved.toolArgs;
         }
-        const finalAuthorityRefusal = await this.deps.beforeTransport?.(action, surface);
+        const finalAuthorityRefusal = await this.transportRefusal(action, surface, replay);
         if (finalAuthorityRefusal) {
           return { tool: action.tool, ok: false, reason: finalAuthorityRefusal, idempotencyKey };
         }

@@ -1,6 +1,8 @@
 import type { MockAction } from '../work/types';
 import { parseSurfaceAction } from './policy';
-import type { ActionAuthority, AppliedAction, SessionRestoreStep } from './types';
+import type { ActionAuthority, AppliedAction, SessionRecipeStep, SessionRestoreStep } from './types';
+
+export type { SessionRecipeStep } from './types';
 
 /**
  * Re-establishing a browser session in a new apply invocation.
@@ -12,16 +14,6 @@ import type { ActionAuthority, AppliedAction, SessionRestoreStep } from './types
  * else: the navigate before the sign-in, the sign-in itself, and the page the
  * run last navigated to. Nothing that changed the system is ever replayed.
  */
-
-/** One call the replay makes, with the landed row it repeats. */
-export interface SessionRecipeStep {
-  /** The browser call as the run recorded it; a credential stays a `{{secret}}` placeholder. */
-  action: MockAction;
-  /** The key of the landed row this step replays; absent for the endpoint navigate. */
-  replayOf?: string;
-  /** The authority the replayed row landed under, re-checked at transport. */
-  authority?: ActionAuthority;
-}
 
 /** Earlier rows of a run, actions and their ledger rows index-aligned. */
 export interface EarlierRows {

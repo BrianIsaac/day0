@@ -75,10 +75,16 @@ export interface AdapterRun {
   runId: Id<'events'>;
 }
 
-/** Revalidate persisted authority at the last boundary before a provider request. */
+/**
+ * Revalidate persisted authority at the last boundary before a provider request.
+ *
+ * A replayed browser call passes the authority its original row landed
+ * under, and is checked under that rather than the phase's own rule.
+ */
 export type BeforeSurfaceTransport = (
   action: MockAction,
   surface: SurfaceRecord,
+  replay?: { authority?: ActionAuthority },
 ) => Promise<string | undefined>;
 
 export interface ActionOutcome {
@@ -142,6 +148,21 @@ export interface SessionRestoreStep extends AppliedAction {
   action: MockAction;
 }
 
+/** One call a session replay makes, with the landed row it repeats. */
+export interface SessionRecipeStep {
+  /** The browser call as the run recorded it; a credential stays a `{{secret}}` placeholder. */
+  action: MockAction;
+  /** The key of the landed row this step replays; absent for the endpoint navigate. */
+  replayOf?: string;
+  /** The authority the replayed row landed under, re-checked at transport. */
+  authority?: ActionAuthority;
+}
+
+/** What a session replay did: every step it attempted, and why it stopped if it did. */
+export type SessionRestoreResult =
+  | { ok: true; steps: SessionRestoreStep[] }
+  | { ok: false; steps: SessionRestoreStep[]; reason: string };
+
 /** Who or what authorised an applied surface action. */
 export type ActionAuthority = 'manager' | 'autonomous' | 'standing';
 
@@ -161,6 +182,18 @@ export interface SurfaceAdapter {
    * signed-in page. Every other adapter is stateless between actions.
    */
   close?(): Promise<void>;
+  /**
+   * Sign the run's browser for a surface in again, in this invocation's
+   * session, by replaying the run's own landed rows before the first action
+   * that needs the page. Only the browser floor implements it.
+   */
+  restoreSession?(
+    ctx: ActionCtx,
+    run: AdapterRun,
+    surface: SurfaceRecord,
+    recipe: readonly SessionRecipeStep[],
+    baseKey: string,
+  ): Promise<SessionRestoreResult>;
   /**
    * Apply one action. The adapter receives the action after the registry has
    * parsed its arguments, checked the grant, and decided whether it is held.
