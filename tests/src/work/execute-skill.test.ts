@@ -1478,6 +1478,13 @@ describe('advisory plan steps in the closing phase', (): void => {
     expect(executorPreamble('mock')).not.toContain('advisory');
   });
 
+  it('tells the real executor that a closing browser sequence starts in a new browser Day0 signs in again', (): void => {
+    const sentence =
+      "A browser sequence left to the closing phase starts in a new browser, which Day0 signs in again from this run's own landed sign-in before the first closing action on that surface.";
+    expect(executorPreamble('real')).toContain(sentence);
+    expect(executorPreamble('mock')).not.toContain('new browser');
+  });
+
   it('accepts not-verifiable only in the real closing schema', (): void => {
     const row = {
       draft: 'd',

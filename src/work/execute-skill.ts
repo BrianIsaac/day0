@@ -113,6 +113,14 @@ const REAL_PROCEDURE_TRAIL_INDEX =
  */
 const DEPENDENT_PHASE_REAL =
   "  - When any later action needs an earlier action's result, emit only the prerequisite actions now and set `needsDependentPhase` to true. Do not prewrite the later comment, state change, reply or summary: it will be authored once from the applied ledger.";
+/**
+ * What the closing phase finds on a browser-driven surface, stated so the
+ * model's plan matches the behaviour. The apply path re-establishes the
+ * session whatever the model writes; this sentence documents it and
+ * replaces nothing.
+ */
+const BROWSER_SESSION_REAL =
+  "  - A browser sequence left to the closing phase starts in a new browser, which Day0 signs in again from this run's own landed sign-in before the first closing action on that surface.";
 const DEPENDENT_PHASE_MOCK =
   '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment treats it as one approval set and runs no second authoring phase.';
 
@@ -413,6 +421,7 @@ const REAL_PREAMBLE = [
   REAL_PROCEDURE_TRAIL_OUTPUT,
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
+  BROWSER_SESSION_REAL,
   REAL_PROCEDURE_TRAIL_INDEX,
   '',
   'Action format: each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',

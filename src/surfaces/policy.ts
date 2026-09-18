@@ -1,6 +1,6 @@
 import type { MockAction, ReplyTarget } from '../work/types';
 import { MOCK_TOOLS } from './mock';
-import type { AppliedAction, CredentialKind, SurfaceRecord } from './types';
+import type { ActionAuthority, AppliedAction, CredentialKind, SurfaceRecord } from './types';
 import { verdictFor } from './verdict';
 
 /**
@@ -631,6 +631,54 @@ export function grantRefusal(
   const scopes = grantingScopes(parsed, surface);
   if (scopes.some((scope) => grants.has(scope))) return undefined;
   return `${NO_GRANT} (${scopes[0]})`;
+}
+
+/**
+ * Why a replayed browser call may not be sent now, if it may not.
+ *
+ * A new browser is signed in again by repeating calls the run already landed,
+ * and each is authorised again, now, under the authority it first landed
+ * with - never under the authority of the phase that needs the page. A
+ * `manager` row keeps the approved-phase rule (a read needs its grant, a
+ * write rests on the approval); an `autonomous` row needs the toggle on now;
+ * a `standing` row, or one that recorded no authority, needs its grant now.
+ * A scope the manager revoked blocks all three: a replay is a new request to
+ * the system, and a revocation promises that nothing more needing the scope
+ * is sent.
+ *
+ * Args:
+ *   parsed: The replayed call, parsed.
+ *   surface: Its surface.
+ *   authority: The authority the replayed row landed under.
+ *   live: The grants, the toggle and the revoked scopes as they are now.
+ *
+ * Returns:
+ *   The refusal, or undefined when the call may be sent.
+ */
+export function replayAuthorityRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  authority: ActionAuthority | undefined,
+  live: {
+    grants: ReadonlySet<string>;
+    autonomousActions: boolean;
+    revokedScopes?: ReadonlySet<string>;
+  },
+): string | undefined {
+  const revoked = live.revokedScopes ?? new Set<string>();
+  const scope = requiredScope(parsed);
+  if (revoked.has(scope)) return `${NO_GRANT} (${scope})`;
+  switch (authority) {
+    case 'manager':
+      return needsStandingGrant(parsed, surface)
+        ? grantRefusal(parsed, surface, live.grants, false, revoked)
+        : undefined;
+    case 'autonomous':
+      if (!live.autonomousActions) return NOT_AUTOMATIC;
+      return grantRefusal(parsed, surface, live.grants, true, revoked);
+    default:
+      return grantRefusal(parsed, surface, live.grants, false, revoked);
+  }
 }
 
 /**

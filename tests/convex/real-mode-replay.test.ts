@@ -270,45 +270,59 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   });
   return {
     ...original,
-    createMastraMcpClient: (options: McpClientOptions): McpClientLike => ({
-      listTools: async () =>
-        Object.fromEntries(
-          [
-            'get_issue',
-            'save_comment',
-            'save_issue',
-            'browser_navigate',
-            'browser_fill_form',
-            'browser_click',
-            'browser_snapshot',
-          ].map((tool) => [
-            `${options.serverName}_${tool}`,
-            {
-              execute: async (args: unknown): Promise<unknown> => {
-                recorded.mcp.push({ server: options.serverName, tool, args });
-                const record = args as Record<string, unknown>;
-                if (tool === 'get_issue') {
-                  return 'issueId' in record
-                    ? {
-                        isError: false,
-                        ...text(JSON.stringify({ error: true, message: VALIDATION })),
-                      }
-                    : text(JSON.stringify(UNASSIGNED_ISSUE));
-                }
-                if (tool === 'save_comment') return text(JSON.stringify({ id: 'comment-91' }));
-                if (tool === 'save_issue') {
-                  return text(JSON.stringify({ id: 'lin-7f3a', state: { name: 'Done' } }));
-                }
-                if (tool === 'browser_navigate')
-                  return text('- Page URL: http://looker-tile:8080/');
-                if (tool === 'browser_snapshot') return text(SNAPSHOT);
-                return text('ok');
+    // Every client is a new browser context, blank until it navigates, as the
+    // driver's `--isolated` mode is: a double that hands every client the same
+    // page cannot see a sign-in lost between two apply invocations.
+    createMastraMcpClient: (options: McpClientOptions): McpClientLike => {
+      const context = { navigated: false };
+      return {
+        listTools: async () =>
+          Object.fromEntries(
+            [
+              'get_issue',
+              'save_comment',
+              'save_issue',
+              'browser_navigate',
+              'browser_fill_form',
+              'browser_click',
+              'browser_snapshot',
+            ].map((tool) => [
+              `${options.serverName}_${tool}`,
+              {
+                execute: async (args: unknown): Promise<unknown> => {
+                  recorded.mcp.push({ server: options.serverName, tool, args });
+                  const record = args as Record<string, unknown>;
+                  if (tool === 'get_issue') {
+                    return 'issueId' in record
+                      ? {
+                          isError: false,
+                          ...text(JSON.stringify({ error: true, message: VALIDATION })),
+                        }
+                      : text(JSON.stringify(UNASSIGNED_ISSUE));
+                  }
+                  if (tool === 'save_comment') return text(JSON.stringify({ id: 'comment-91' }));
+                  if (tool === 'save_issue') {
+                    return text(JSON.stringify({ id: 'lin-7f3a', state: { name: 'Done' } }));
+                  }
+                  if (tool === 'browser_navigate') {
+                    context.navigated = true;
+                    return text('- Page URL: http://looker-tile:8080/');
+                  }
+                  if (tool === 'browser_snapshot') {
+                    return text(
+                      context.navigated
+                        ? SNAPSHOT
+                        : '### Page\n- Page URL: about:blank\n### Snapshot\n```yaml\n```',
+                    );
+                  }
+                  return text('ok');
+                },
               },
-            },
-          ]),
-        ),
-      disconnect: async (): Promise<void> => {},
-    }),
+            ]),
+          ),
+        disconnect: async (): Promise<void> => {},
+      };
+    },
   };
 });
 

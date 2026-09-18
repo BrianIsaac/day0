@@ -1769,6 +1769,18 @@ interface LedgerRow {
   redaction?: 'structural-only';
   /** The first attempt at this row's arguments, when one bounded repair re-authored them. */
   repair?: { reason: string; toolArgsJson: string };
+  /** The run's sign-in, replayed in this invocation's new browser before the row was sent. */
+  sessionRestore?: SessionRestoreRow;
+}
+
+/** A re-established browser session as the card reads it: one row per replayed call. */
+interface SessionRestoreRow {
+  steps: Array<{
+    ok: boolean;
+    reason?: string;
+    replayOf?: string;
+    action?: MockAction;
+  }>;
 }
 
 interface PlanStepOutcomeRow {
@@ -1833,6 +1845,81 @@ export function RepairNote({
       <code className="block font-mono text-[10px] whitespace-pre-wrap break-words text-[var(--color-muted)]">
         first attempt: {repair.toolArgsJson}
       </code>
+    </details>
+  );
+}
+
+const REPLAYED_CALL_WORDS: Record<string, string> = {
+  browser_navigate: 'navigate',
+  browser_fill_form: 'fill',
+  browser_click: 'click',
+};
+
+/** "row 3", "rows 0 to 2" or "rows 0, 2 and 5", from ledger keys ending in their index. */
+function replayedRows(keys: readonly string[]): string | undefined {
+  const indexes = keys
+    .map((key: string): number => Number(key.split(':')[2]))
+    .filter((index: number): boolean => Number.isInteger(index));
+  if (indexes.length === 0) return undefined;
+  if (indexes.length === 1) return `row ${indexes[0]}`;
+  const contiguous = indexes.every(
+    (index: number, position: number): boolean => position === 0 || index === indexes[position - 1]! + 1,
+  );
+  if (contiguous) return `rows ${indexes[0]} to ${indexes.at(-1)}`;
+  return `rows ${indexes.slice(0, -1).join(', ')} and ${indexes.at(-1)}`;
+}
+
+/**
+ * The note beside a row whose invocation had to sign a new browser in again
+ * before sending it: which of the run's own landed calls were replayed, and
+ * where the replay stopped when it did. The replayed calls are transport
+ * calls of their own, each with its key, so the manager can see them.
+ */
+export function SessionRestoreNote({ restore }: { restore: SessionRestoreRow | undefined }) {
+  if (!restore || restore.steps.length === 0) return null;
+  const verbs = restore.steps.map((step): string => {
+    const tool = String(step.action?.args.tool ?? '');
+    return REPLAYED_CALL_WORDS[tool] ?? (tool || 'call');
+  });
+  const replayOf = restore.steps.flatMap((step): string[] => (step.replayOf ? [step.replayOf] : []));
+  const rows = replayedRows(replayOf);
+  const opened = restore.steps.some((step) => !step.replayOf);
+  const source = rows
+    ? opened
+      ? ` (the surface's own page, then replays of ${rows})`
+      : ` (replays of ${rows})`
+    : " (the surface's own page)";
+  const failed = restore.steps.find((step) => !step.ok);
+  const signsIn = verbs.includes('fill');
+  const replayed = signsIn ? 'navigate and sign-in' : 'navigate';
+  const lead = failed
+    ? signsIn
+      ? 'could not sign in again first'
+      : 'could not open the page again first'
+    : signsIn
+      ? 'signed in again first'
+      : 'opened the page again first';
+  return (
+    <details className="mt-0.5">
+      <summary
+        className={`text-[10px] cursor-pointer select-none ${
+          failed ? 'text-[var(--color-warn)]' : 'text-[var(--color-muted)]'
+        }`}
+      >
+        {lead}: {verbs.join(', ')}
+        {source}
+      </summary>
+      <p className="text-[10px] text-[var(--color-muted)] break-words">
+        {failed
+          ? `A new browser opens for every apply of a run, so Day0 tried the run's own landed ${replayed} again before this row and stopped: this row and the rest on the surface were not sent.`
+          : `A new browser opens for every apply of a run. Day0 sent the page restoration calls shown above before this row; this row's action was not replayed.`}
+      </p>
+      {failed ? (
+        <p className="text-[10px] text-[var(--color-warn)] break-words">
+          stopped at {REPLAYED_CALL_WORDS[String(failed.action?.args.tool ?? '')] ?? 'a call'}:{' '}
+          {failed.reason ?? 'the call did not land'}
+        </p>
+      ) : null}
     </details>
   );
 }
@@ -2970,6 +3057,7 @@ export function WorkItemCard({
                 ) : null}
                 <PhaseLabel phase={a.phase} />
                 <RepairNote repair={a.repair} />
+                <SessionRestoreNote restore={a.sessionRestore} />
               </li>
             ))}
           </ul>
@@ -2992,6 +3080,7 @@ export function WorkItemCard({
                   <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">{a.effect}</code>
                 ) : null}
                 <RepairNote repair={a.repair} />
+                <SessionRestoreNote restore={a.sessionRestore} />
               </li>
             ))}
           </ul>
@@ -3027,6 +3116,7 @@ export function WorkItemCard({
                 {a.tool} - {a.reason ?? 'unknown reason'}
                 <PhaseLabel phase={a.phase} />
                 <RepairNote repair={a.repair} />
+                <SessionRestoreNote restore={a.sessionRestore} />
               </li>
             ))}
           </ul>
@@ -3434,6 +3524,9 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
           {metrics.decisions.requested} decisions requested - {metrics.decisions.partiallyApproved}{' '}
           partial - {metrics.actions.autoApplied} actions automatic - {metrics.actions.held} held -{' '}
           {metrics.actions.refused} refused
+          {metrics.actions.sessionRestores > 0
+            ? ` - ${metrics.actions.sessionRestores} browser ${metrics.actions.sessionRestores === 1 ? 'call' : 'calls'} replayed to sign in again`
+            : null}
         </p>
       ) : null}
     </Card>
