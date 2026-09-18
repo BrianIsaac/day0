@@ -25,9 +25,10 @@ import {
   HELD_NOT_APPROVED,
   HELD_PUBLIC_POST,
   HELD_WRITE,
+  SHARED_WRITE_WITHOUT_ATTRIBUTION,
 } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
-import { STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
+import { isStopped, STOPPED_PREFIX, WITHHELD_ON_STOP } from '../../src/work/stop';
 import { actionIdempotencyKey } from '../../src/work/idempotency';
 import {
   CLOSING_SET_CAP,
@@ -77,6 +78,7 @@ import {
   RUN_4_TILE_READ_BACK,
 } from './fixtures/plan-obligations-2026-09-16';
 import { slackClosing, slackPhaseOne, TileDriver, type TileDriverCall } from '../fixtures/browser-phase-split-2026-09-16';
+import { REFUSED_CREATE_ACTION, REFUSED_CREATE_RUN } from '../fixtures/refused-ticket-create-2026-09-19';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -5042,5 +5044,184 @@ describe('the closing gates against the 16 September plans', (): void => {
         planStepOutcomes: [...run4AuditNoteOutcomes.slice(0, 4), { step: 5, status: 'blocked', evidence: 'the manager has not decided' }],
       }),
     ).toBeUndefined();
+  });
+});
+
+describe('a step the gate refuses does not strand the rest of the run (19 Sep run, finding N)', (): void => {
+  const tile = REFUSED_CREATE_RUN.actions.slice(1, 7).map((action) => ({
+    tool: action.tool,
+    args: { ...action.args },
+  })) as ExecutionOutput['actions'];
+  const threadReply = { tool: REFUSED_CREATE_RUN.actions[7].tool, args: { ...REFUSED_CREATE_RUN.actions[7].args } } as ExecutionOutput['actions'][number];
+
+  async function seedAsk(harness: Harness): Promise<Seeded> {
+    const seeded = await seed(
+      harness,
+      'real',
+      ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'slack:write', 'looker-pipeline-tile:read', 'looker-pipeline-tile:write'],
+      { autonomousActions: true },
+    );
+    await harness.run(async (ctx): Promise<void> => {
+      // A manager channel with notes kept for the digest, so the note a stop
+      // leaves can be read without a send being scheduled.
+      await ctx.db.patch(seeded.agentId, { managerNotifications: 'digest' });
+      const slack = (await ctx.db.query('surfaces').collect()).find((row) => row.slug === 'slack');
+      if (slack) await ctx.db.patch(slack._id, { managerUserId: 'U0MANAGER' });
+      await ctx.db.insert('skills', {
+        agentId: seeded.agentId,
+        name: 'refresh-tile-for-slack-ask',
+        description: 'File the ask, refresh the pipeline tile and answer on the thread.',
+        body: 'File the ask as a ticket, run the refresh sequence, then answer.',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        targetSurface: 'slack',
+        createdAt: 1,
+        registeredAt: 1,
+      });
+      await ctx.db.patch(seeded.workItemId, {
+        sourceCategory: 'event-stream',
+        sourceSystem: 'slack',
+        externalId: 'C0C2U2UJUTU:1789761553.312049',
+        title: REFUSED_CREATE_RUN.title,
+        contentSummary: REFUSED_CREATE_RUN.contentSummary,
+        replyTarget: { ...REFUSED_CREATE_RUN.replyTarget },
+        plan: { ...REFUSED_CREATE_RUN.plan, steps: [...REFUSED_CREATE_RUN.plan.steps] } as never,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId: seeded.agentId,
+        slug: 'looker-pipeline-tile',
+        displayName: 'Looker pipeline tile',
+        class: 'analytics',
+        verdict: 'connected',
+        endpoint: 'http://looker-tile:8080/',
+        path: 'browser-driven',
+        toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'],
+        credentialId: 'cred-looker',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+    return seeded;
+  }
+
+  async function runBothPhases(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    return await readItem(harness, workItemId);
+  }
+
+  it("files the run's ticket signed, so the comment and the close that needed it land", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    recorded.skillOutput = {
+      draft: 'Filing the ask as a ticket, then refreshing the tile.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [REFUSED_CREATE_ACTION, ...tile],
+    };
+    recorded.dependentOutput = {
+      draft: 'The tile reads 74% with its audit line; the ticket is commented and closed.',
+      notes: '',
+      actions: [
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'linear',
+            tool: 'save_comment',
+            toolArgsJson: JSON.stringify({ issueId: 'save_issue-id', body: 'Tile refreshed: visible figure 74%.' }),
+          },
+        },
+        threadReply,
+        {
+          tool: 'mcp.call',
+          args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'save_issue-id', state: 'Done' }) },
+        },
+      ],
+      planStepOutcomes: REFUSED_CREATE_RUN.planStepOutcomes.map((outcome) => ({
+        step: outcome.step,
+        status: 'satisfied' as const,
+        evidence: outcome.step === 2 ? outcome.evidence : 'Landed; see the ledger.',
+      })),
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedAsk(harness);
+
+    const done = await runBothPhases(harness, workItemId);
+
+    const create = recorded.mcp.find((call) => call.server === 'linear' && call.tool === 'save_issue');
+    expect((create?.args as { description: string }).description).toMatch(/\n\n-- Priya \(Day0\) · run /);
+    expect(ledger(done).every((row) => row.ok)).toBe(true);
+    expect(done.state).toBe('completed');
+  });
+
+  it('ends stopped with a reason a manager can act on when a create has nothing to sign', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
+    const unsigned = JSON.parse(REFUSED_CREATE_ACTION.args.toolArgsJson ?? '{}') as Record<string, unknown>;
+    delete unsigned.description;
+    recorded.skillOutput = {
+      draft: 'Filing the ask as a ticket, then refreshing the tile.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [
+        { tool: 'mcp.call', args: { ...REFUSED_CREATE_ACTION.args, toolArgsJson: JSON.stringify(unsigned) } },
+        ...tile,
+      ],
+    };
+    recorded.dependentOutput = {
+      draft: 'The tile is refreshed; the ticket could not be filed.',
+      notes: '',
+      actions: [threadReply],
+      planStepOutcomes: REFUSED_CREATE_RUN.planStepOutcomes.map((outcome) => ({ ...outcome })) as never,
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedAsk(harness);
+
+    const stopped = await runBothPhases(harness, workItemId);
+
+    // The steps that did not need the ticket went ahead: the tile and the reply.
+    const rows = ledger(stopped);
+    expect(rows[0]).toMatchObject({ ok: false, reason: SHARED_WRITE_WITHOUT_ATTRIBUTION });
+    expect(rows.slice(1).every((row) => row.ok && !row.held)).toBe(true);
+    expect(recorded.mcp.filter((call) => call.server === 'linear')).toEqual([]);
+    expect(recorded.http.some((call) => call.url.includes('chat.postMessage'))).toBe(true);
+
+    expect(stopped.state).toBe('failed');
+    expect(isStopped(stopped.skipReason)).toBe(true);
+    expect(stopped.skipReason).not.toContain('did not change the work environment');
+    expect(stopped.skipReason).toContain("Day0's gate refused 1 of 8 actions before sending it");
+    expect(stopped.skipReason).toContain('the other 7 landed and stay as they are');
+    expect(stopped.skipReason).toContain('save_issue on linear');
+
+    const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
+    expect(metrics.actions).toMatchObject({ refused: 1, held: 0, rejected: 0 });
+
+    // Work landed, so the manager is told what landed, in one sentence that says "stopped" once.
+    const notes = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
+    expect(notes.map((note) => note.kind)).toEqual(['landed']);
+    expect(notes[0].text).toContain("changes landed: Day0's gate refused 1 of 8 actions");
+    expect(notes[0].text).not.toContain('stopped: ');
+  });
+
+  it('keeps a provider failure a failure: only the gate stopping a row is a stop', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.failedMcpTool = 'save_comment';
+    recorded.skillOutput = skillOutput;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real', undefined, { autonomousActions: true });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain('actions did not change the work environment');
   });
 });

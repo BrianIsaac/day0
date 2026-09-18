@@ -3051,7 +3051,7 @@ export const setFailed = internalMutation({
       );
     } else {
       await queueManagerNote(ctx, row, 'landed', (agentName) =>
-        landedNoteText({ agentName, title: row.title, landed, outcome: 'failed', reason }),
+        landedNoteText({ agentName, title: row.title, landed, outcome: 'failed', reason: stopDetail(reason) }),
       );
     }
   },
