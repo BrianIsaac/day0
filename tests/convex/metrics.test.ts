@@ -1,9 +1,8 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
-import { anyApi } from 'convex/server';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { computeAgentMetrics, type AgentMetrics } from '../../convex/metrics';
+import { computeAgentMetrics, type OwnerMetrics } from '../../convex/metrics';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -669,6 +668,12 @@ describe('supervision figures for a company of employees', (): void => {
     });
   }
 
+  async function companyFigures(harness: ReturnType<typeof convexTest>): Promise<OwnerMetrics> {
+    const figures = await harness.withIdentity(COMPANY_OWNER).query(api.metrics.forOwner, {});
+    if (!figures) throw new Error('forOwner returned nothing to the owner');
+    return figures;
+  }
+
   const landedRow = (
     workItemId: Id<'workItems'>,
     index: number,
@@ -767,21 +772,15 @@ describe('supervision figures for a company of employees', (): void => {
     },
   ];
 
-  it.fails('pools one manager’s decisions across employees and keeps each employee’s own row', async (): Promise<void> => {
+  it('pools one manager’s decisions across employees and keeps each employee’s own row', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const employeeIds: Id<'agents'>[] = [];
     for (const spec of THREE_EMPLOYEES) employeeIds.push(await deployEmployee(harness, spec));
     for (const spec of SET_ASIDE) await deployEmployee(harness, spec);
 
-    const figures = await harness
-      .withIdentity(COMPANY_OWNER)
-      .query(anyApi.metrics.forOwner, {});
+    const figures = await companyFigures(harness);
 
-    expect(figures.employees.map((row: { name: string }) => row.name)).toEqual([
-      'Priya',
-      'Mateo',
-      'Aiko',
-    ]);
+    expect(figures.employees.map((row) => row.name)).toEqual(['Priya', 'Mateo', 'Aiko']);
     for (const [index, agentId] of employeeIds.entries()) {
       const own = await harness
         .withIdentity(COMPANY_OWNER)
@@ -796,7 +795,7 @@ describe('supervision figures for a company of employees', (): void => {
     // The employees' own medians are 2 s, 10 s and 4.5 s, so a median of the
     // medians would read 4.5 s; the manager's own distribution is the six
     // pooled waits, 1, 2, 3, 4, 5 and 10 s, whose median is 3.5 s.
-    expect(figures.employees.map((row: { metrics: AgentMetrics }) => row.metrics.decisions.medianLatencyMs)).toEqual([
+    expect(figures.employees.map((row) => row.metrics.decisions.medianLatencyMs)).toEqual([
       2_000, 10_000, 4_500,
     ]);
     expect(figures.company).toEqual({
@@ -838,14 +837,12 @@ describe('supervision figures for a company of employees', (): void => {
     expect(figures.omittedEmployees).toBe(0);
   });
 
-  it.fails('quotes each employee’s time to an approved charter and a median only over the approved ones', async (): Promise<void> => {
+  it('quotes each employee’s time to an approved charter and a median only over the approved ones', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000, charterApprovedAt: 61_000 });
     await deployEmployee(harness, { name: 'Mateo', deployedAt: 2_000 });
     await deployEmployee(harness, { name: 'Aiko', deployedAt: 3_000, charterApprovedAt: 183_000 });
-    const figures = await harness
-      .withIdentity(COMPANY_OWNER)
-      .query(anyApi.metrics.forOwner, {});
+    const figures = await companyFigures(harness);
     expect(figures.company.charter).toEqual({
       timesToFirstApprovedMs: [60_000, null, 180_000],
       medianTimeToFirstApprovedMs: 120_000,
@@ -853,7 +850,7 @@ describe('supervision figures for a company of employees', (): void => {
     });
   });
 
-  it.fails('counts a revocation block only for the employee whose scope was revoked', async (): Promise<void> => {
+  it('counts a revocation block only for the employee whose scope was revoked', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const revoked = await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000 });
     await deployEmployee(harness, { name: 'Mateo', deployedAt: 2_000 });
@@ -890,12 +887,11 @@ describe('supervision figures for a company of employees', (): void => {
         createdAt: 12_000,
       });
     });
-    const figures = await harness
-      .withIdentity(COMPANY_OWNER)
-      .query(anyApi.metrics.forOwner, {});
-    expect(
-      figures.employees.map((row: { metrics: AgentMetrics }) => row.metrics.actions.blockedAfterRevocation),
-    ).toEqual([1, null]);
+    const figures = await companyFigures(harness);
+    expect(figures.employees.map((row) => row.metrics.actions.blockedAfterRevocation)).toEqual([
+      1,
+      null,
+    ]);
     expect(figures.company.actions).toMatchObject({
       refused: 1,
       blockedAfterRevocation: 1,
@@ -903,23 +899,21 @@ describe('supervision figures for a company of employees', (): void => {
     });
   });
 
-  it.fails('reports the employees it leaves out when the company is larger than the roster', async (): Promise<void> => {
+  it('reports the employees it leaves out when the company is larger than the roster', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     for (let index = 0; index < 21; index += 1) {
       await deployEmployee(harness, { name: `Employee ${index + 1}`, deployedAt: 1_000 + index });
     }
-    const figures = await harness
-      .withIdentity(COMPANY_OWNER)
-      .query(anyApi.metrics.forOwner, {});
+    const figures = await companyFigures(harness);
     expect(figures.company.employees).toBe(20);
     expect(figures.omittedEmployees).toBe(1);
     expect(figures.employees[0].name).toBe('Employee 2');
-    expect(figures.employees.at(-1).name).toBe('Employee 21');
+    expect(figures.employees.at(-1)?.name).toBe('Employee 21');
   });
 
-  it.fails('returns nothing to a caller with no identity', async (): Promise<void> => {
+  it('returns nothing to a caller with no identity', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000 });
-    await expect(harness.query(anyApi.metrics.forOwner, {})).resolves.toBeNull();
+    await expect(harness.query(api.metrics.forOwner, {})).resolves.toBeNull();
   });
 });
