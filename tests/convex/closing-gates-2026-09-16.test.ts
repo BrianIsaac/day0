@@ -382,7 +382,12 @@ describe('the 16 September closing phases, replayed through the real gate', (): 
     const resumed = await readItem(t, workItemId);
     expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', resumedClosing: true, initialFailure: refusal.reason });
     expect(recorded.model).toEqual([]);
-    expect(recorded.mcp).toEqual([]);
+    // Only the carried tile read was taken again before the closing phase.
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([
+      ['looker-pipeline-tile', 'browser_navigate'],
+      ['looker-pipeline-tile', 'browser_snapshot'],
+    ]);
+    recorded.mcp.length = 0;
 
     recorded.closingReply = refreshClosing;
     await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! })).resolves.toEqual({
@@ -683,6 +688,12 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const resumed = await readItem(t, workItemId);
     expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', resumedClosing: true, initialFailure: refusal.reason });
+    // Only the carried tile read was taken again before the closing phase.
+    expect(recorded.mcp.map((call) => [call.server, call.tool])).toEqual([
+      ['looker-pipeline-tile', 'browser_navigate'],
+      ['looker-pipeline-tile', 'browser_snapshot'],
+    ]);
+    recorded.mcp.length = 0;
     recorded.closingReply = run4RefreshClosing;
     await expect(t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! })).resolves.toEqual({
       ok: true, reason: 'dependent actions applying',

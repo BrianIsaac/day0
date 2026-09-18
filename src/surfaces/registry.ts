@@ -10,11 +10,13 @@ import { MOCK_TOOLS, mockAdapter } from './mock';
 import { IncompleteSignInError, sessionRecipe, signsIn } from './browser-session';
 import {
   applyProvenance,
+  actionIntent,
   AWAITING_APPROVAL,
   describeAction,
   grantRefusal,
   HELD_NOT_APPROVED,
   isAutomatic,
+  isMessage,
   isSurfaceTool,
   mockVerbRefusal,
   needsStandingGrant,
@@ -32,6 +34,7 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
   UNKNOWN_TOOL,
+  WITHHELD_AFTER_FAILED_WRITE,
   type ParsedSurfaceAction,
 } from './policy';
 import type {
@@ -110,6 +113,13 @@ export interface ApplyOptions {
   autonomousActions?: boolean;
   /** Exact source channel and thread when the work item is a chat reply. */
   replyTarget?: ReplyTarget;
+  /**
+   * The runs whose prerequisite ledger this run resumed at its closing phase.
+   * Their landed browser rows re-establish this run's session as its own
+   * would; a retry that runs phase one again resumes nothing, and the landed
+   * writes it carries lend it no sign-in.
+   */
+  resumedRunIds?: readonly string[];
   /** Clock for the connection verdict. */
   now?: number;
 }
@@ -212,6 +222,24 @@ function refused(tool: string, reason: string, idempotencyKey: string): AppliedA
 }
 
 /**
+ * Whether a write earlier in the set did not land: the provider refused it,
+ * a rule refused it, or its outcome is unknown. A held row is not a failure.
+ */
+function writeDidNotLand(
+  applied: readonly AppliedAction[],
+  parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
+): boolean {
+  return applied.some((row, index) => {
+    const action = parsed[index];
+    return (
+      action !== undefined &&
+      actionIntent(action) === 'write' &&
+      (row.outcomeUnknown === true || (!row.ok && row.held !== true))
+    );
+  });
+}
+
+/**
  * Re-establish a browser-driven surface's page before this invocation's first
  * call on it.
  *
@@ -235,12 +263,13 @@ async function restoreBrowserSession(
     autonomousActions: boolean;
     authority?: ActionAuthority;
     signInOnly: boolean;
+    resumedRunIds?: readonly string[];
   },
 ): Promise<SessionRestoreResult | undefined> {
   if (!adapter.restoreSession) return undefined;
   let recipe: SessionRecipeStep[];
   try {
-    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint, run.runId).map(
+    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint, run.runId, live.resumedRunIds).map(
       (step: SessionRecipeStep): SessionRecipeStep => ({
         ...step,
         authority: step.authority ?? (step.replayOf ? undefined : (live.authority ?? 'standing')),
@@ -478,6 +507,20 @@ export async function applySurfaceActions(
         applied.push(refused(action.tool, provenance.reason, idempotencyKey));
         continue;
       }
+      // A message was written beside the writes before them, before any
+      // result existed; once one of those writes has not landed, the message
+      // may report it as done, so it is held rather than sent.
+      if (isMessage(parsed.action, surface) && writeDidNotLand(applied, parsedByIndex)) {
+        applied.push({
+          tool: action.tool,
+          ok: true,
+          held: true,
+          reason: WITHHELD_AFTER_FAILED_WRITE,
+          effect: describeAction(action),
+          idempotencyKey,
+        });
+        continue;
+      }
       const adapterRun = { ...run, agentName: run.agentName ?? 'Day0' };
       const browserDriven = surface.path === 'browser-driven' && parsed.action.kind === 'mcp.call';
       let restored: SessionRestoreResult | undefined;
@@ -522,6 +565,7 @@ export async function applySurfaceActions(
                 autonomousActions,
                 authority,
                 signInOnly: navigates,
+                resumedRunIds: options.resumedRunIds,
               },
             );
             if (restored && !restored.ok) {
