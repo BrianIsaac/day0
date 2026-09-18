@@ -1948,6 +1948,9 @@ export const setFailed = internalMutation({
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (args.runId && row.executionRunId !== args.runId) return;
+    // A pre-claim failure (such as no matching skill) cannot stop a run
+    // another scheduled caller claimed after the failing caller read the row.
+    if (!args.runId && row.executionRunId) return;
     if (args.onlyIfStalled) {
       if (row.state !== 'executing' || !args.runId || row.pendingRunId ||
           row.applyAttemptId || row.applyClaimedAt || row.applyPhase) return;

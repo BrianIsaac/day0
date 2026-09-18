@@ -271,6 +271,30 @@ async function insertDiscovered(
 }
 
 describe('the server-side steps', (): void => {
+  it('does not let a pre-claim failure stop another caller\'s execution', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-10');
+    const skillId = await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'plan-approved' });
+      const skill = await ctx.db.query('skills').first();
+      if (!skill) throw new Error('skill missing');
+      return skill._id;
+    });
+    const claim = await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+    expect(claim.claimed).toBe(true);
+
+    await harness.mutation(internal.work.setFailed, {
+      workItemId,
+      reason: 'no registered skill matches source surface linear',
+    });
+
+    expect((await readItem(harness, workItemId)).state).toBe('executing');
+    expect(await eventsOf(harness, 'work.failed')).toEqual([]);
+  });
+
   it('evaluates and drafts through internal reads, with no caller identity', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
