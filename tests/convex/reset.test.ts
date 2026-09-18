@@ -69,6 +69,31 @@ describe('reset documentation retention', (): void => {
   });
 });
 
+describe('reset transient verification state', (): void => {
+  it('deletes a lease held by a deleted employee', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedOwner(harness);
+    const agentId = await harness.run(async (ctx) => {
+      const row = await ctx.db.query('agents').withIndex('by_userId', (q) => q.eq('userId', 'owner')).unique();
+      if (!row) throw new Error('agent missing');
+      return row._id;
+    });
+    const { skillId, runId } = await harness.run(async (ctx) => {
+      const skillId = await ctx.db.insert('skills', {
+        agentId, name: 'queued skill', description: 'Queued', body: '',
+        sourceType: 'agent-authored', state: 'authoring', createdAt: 1,
+      });
+      const runId = await ctx.db.insert('events', {
+        agentId, type: 'skill.authoring-claimed', payload: { skillId }, createdAt: 1,
+      });
+      return { skillId, runId };
+    });
+    await harness.mutation(internal.sandboxLease.take, { skillId, runId });
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
+    expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual([]);
+  });
+});
+
 describe('reset completeness', (): void => {
   it('keeps the README table and reset counts aligned with the schema', (): void => {
     const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');

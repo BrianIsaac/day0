@@ -39,6 +39,7 @@ import type * as probeActions from "../probeActions.js";
 import type * as reset from "../reset.js";
 import type * as revocationEvaluation from "../revocationEvaluation.js";
 import type * as revocationEvaluationActions from "../revocationEvaluationActions.js";
+import type * as sandboxLease from "../sandboxLease.js";
 import type * as seed from "../seed.js";
 import type * as skillActions from "../skillActions.js";
 import type * as skills from "../skills.js";
@@ -89,6 +90,7 @@ declare const fullApi: ApiFromModules<{
   reset: typeof reset;
   revocationEvaluation: typeof revocationEvaluation;
   revocationEvaluationActions: typeof revocationEvaluationActions;
+  sandboxLease: typeof sandboxLease;
   seed: typeof seed;
   skillActions: typeof skillActions;
   skills: typeof skills;

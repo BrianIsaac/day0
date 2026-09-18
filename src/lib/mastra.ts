@@ -4,9 +4,11 @@ import type { MastraModelConfig } from '@mastra/core/llm';
 import { env } from '../env';
 import { languageModel, MODEL, modelProviderClient } from './openai';
 import { log } from './logger';
+import { countingProviderRequests, reportModelCall } from './model-call-telemetry';
 import {
   classifyStructuredFailure,
   createFallbackMemo,
+  providerEndpointLabel,
   StructuredContractError,
 } from './structured-fallback';
 
@@ -88,31 +90,44 @@ function isTransientApiError(err: unknown): boolean {
   return new RegExp(MODEL_RETRY_POLICY.retryableMessagePattern, 'i').test(msg);
 }
 
-async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < MODEL_RETRY_POLICY.maxAttempts; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      if (!isTransientApiError(err) || attempt === MODEL_RETRY_POLICY.maxAttempts - 1) throw err;
-      const delay = Math.min(
-        MODEL_RETRY_POLICY.baseDelayMs * 2 ** attempt,
-        MODEL_RETRY_POLICY.maxDelayMs,
-      );
-      console.warn(
-        `[mastra] ${label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`,
-        err,
-      );
-      await new Promise((r) => setTimeout(r, delay));
+async function withRetry<T>(
+  call: { label: string; agent: string },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  // The counter spans every attempt, so one report says how many requests
+  // this call put on the provider, the SDK's own retries included.
+  const counter = { count: 0 };
+  return await countingProviderRequests(counter, async (): Promise<T> => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MODEL_RETRY_POLICY.maxAttempts; attempt++) {
+      try {
+        const value = await fn();
+        await reportModelCall(call.agent, attempt + 1, startedAt, counter.count);
+        return value;
+      } catch (err) {
+        lastErr = err;
+        if (!isTransientApiError(err) || attempt === MODEL_RETRY_POLICY.maxAttempts - 1) {
+          await reportModelCall(call.agent, attempt + 1, startedAt, counter.count, err);
+          throw err;
+        }
+        const delay = Math.min(
+          MODEL_RETRY_POLICY.baseDelayMs * 2 ** attempt,
+          MODEL_RETRY_POLICY.maxDelayMs,
+        );
+        console.warn(
+          `[mastra] ${call.label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
-  }
-  throw lastErr;
+    throw lastErr;
+  });
 }
 
 /** Apply the same transient provider retry policy to any Mastra generation shape. */
 export async function withModelRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  return await withRetry(label, fn);
+  return await withRetry({ label, agent: label }, fn);
 }
 
 export function makeAgent(name: string, instructions: string): Agent {
@@ -288,7 +303,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
   }
 
   const key = structuredModeKey(args.agent.name);
-  const endpoint = env.OPENAI_BASE_URL ?? 'api.openai.com';
+  const endpoint = providerEndpointLabel(env.OPENAI_BASE_URL);
   if (structuredModeMemo.begin(key) === 'prompt') {
     const generated = await generateObject<T>(args, 'prompt');
     return {
@@ -311,7 +326,6 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
         baseUrl: endpoint,
         model: MODEL,
         evidence: failure.evidence,
-        cause: (err as Error).message,
         hint: 'set OPENAI_JSON_MODE=prompt to pin the fallback if this server never honours it',
       });
       throw err;
@@ -319,7 +333,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
     let generated: GeneratedObject<T>;
     try {
       generated = await generateObject<T>(args, 'prompt');
-    } catch (withoutParameter) {
+    } catch {
       structuredModeMemo.inconclusive(key);
       log.warn(
         'structured-output: prompt injection failed the same way, so response_format was not the cause',
@@ -328,8 +342,6 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
           baseUrl: endpoint,
           model: MODEL,
           evidence: failure.evidence,
-          cause: (err as Error).message,
-          promptModeCause: (withoutParameter as Error).message,
         },
       );
       throw err;
@@ -347,7 +359,6 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
           baseUrl: endpoint,
           model: MODEL,
           evidence: failure.evidence,
-          cause: (err as Error).message,
         },
       );
       return {
@@ -365,7 +376,6 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
         baseUrl: endpoint,
         model: MODEL,
         evidence: failure.evidence,
-        cause: (err as Error).message,
         retriesNativeInMs: structuredModeMemo.retriesNativeIn(key),
       },
     );
@@ -412,8 +422,9 @@ async function generateObject<T>(
   try {
     for (;;) {
       try {
-        const result = await withRetry(`agentJson(${args.agent.name})`, () =>
-          generateObjectOnce<T>({ ...args, user }, mode),
+        const result = await withRetry(
+          { label: `agentJson(${args.agent.name})`, agent: args.agent.name },
+          () => generateObjectOnce<T>({ ...args, user }, mode),
         );
         if (diagnostics.firstReplyValid === null) diagnostics.firstReplyValid = true;
         diagnostics.outcome = 'valid';
@@ -516,7 +527,7 @@ async function generateObjectOnce<T>(
 export async function agentText(
   args: { agent: Agent; user: string } & ModelCallSettings,
 ): Promise<string> {
-  return withRetry(`agentText(${args.agent.name})`, async () => {
+  return withRetry({ label: `agentText(${args.agent.name})`, agent: args.agent.name }, async () => {
     const response = await args.agent.generate(args.user, {
       abortSignal: modelAbortSignal(),
       ...modelCallOptions(args),

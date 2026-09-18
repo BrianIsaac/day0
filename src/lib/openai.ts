@@ -2,9 +2,11 @@ import OpenAI from 'openai';
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
 import { env } from '../env';
 import { log } from './logger';
+import { countProviderRequest } from './model-call-telemetry';
 import {
   classifyStructuredFailure,
   createFallbackMemo,
+  providerEndpointLabel,
   StructuredContractError,
 } from './structured-fallback';
 
@@ -37,6 +39,20 @@ let provider: OpenAIProvider | null = null;
  */
 const PLACEHOLDER_API_KEY = 'day0-local';
 
+/**
+ * `fetch` for both provider clients, counting each request against the model
+ * call in progress.
+ *
+ * The AI SDK retries a 429 or a 503 twice of its own accord inside one attempt
+ * of the retry wrapper's, so without this a call that spent minutes on three
+ * requests is reported as one slow call rather than as a retried one. Only the
+ * count is recorded: nothing of the request, the reply or the key.
+ */
+const countingFetch: typeof fetch = async (input, init) => {
+  countProviderRequest();
+  return await fetch(input, init);
+};
+
 function resolveApiKey(): string {
   if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
   if (env.OPENAI_BASE_URL) return PLACEHOLDER_API_KEY;
@@ -47,14 +63,18 @@ function resolveApiKey(): string {
 
 export function openai(): OpenAI {
   if (!client) {
-    client = new OpenAI({ apiKey: resolveApiKey(), baseURL: env.OPENAI_BASE_URL });
+    client = new OpenAI({ apiKey: resolveApiKey(), baseURL: env.OPENAI_BASE_URL, fetch: countingFetch });
   }
   return client;
 }
 
 function openaiProvider(): OpenAIProvider {
   if (!provider) {
-    provider = createOpenAI({ apiKey: resolveApiKey(), baseURL: env.OPENAI_BASE_URL });
+    provider = createOpenAI({
+      apiKey: resolveApiKey(),
+      baseURL: env.OPENAI_BASE_URL,
+      fetch: countingFetch,
+    });
   }
   return provider;
 }
@@ -233,7 +253,7 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
   }
   const model = args.model ?? MODEL;
   const key = jsonModeKey(model);
-  const endpoint = env.OPENAI_BASE_URL ?? 'api.openai.com';
+  const endpoint = providerEndpointLabel(env.OPENAI_BASE_URL);
   if (jsonModeMemo.begin(key) === 'prompt') {
     return { value: await runJsonCompletion('prompt', args), mode: 'prompt', fellBack: false };
   }
@@ -248,7 +268,6 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
         baseUrl: endpoint,
         model,
         evidence: failure.evidence,
-        cause: (err as Error).message,
         hint: 'set OPENAI_JSON_MODE=prompt to pin the fallback if this server never honours it',
       });
       throw err;
@@ -256,7 +275,7 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
     let value: TParsed;
     try {
       value = await runJsonCompletion('prompt', args);
-    } catch (withoutParameter) {
+    } catch {
       // Dropping the parameter changed nothing, so the parameter was not the
       // problem. The original failure is the one worth reporting; the second
       // is a symptom of the same cause.
@@ -267,8 +286,6 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
           baseUrl: endpoint,
           model,
           evidence: failure.evidence,
-          cause: (err as Error).message,
-          promptModeCause: (withoutParameter as Error).message,
         },
       );
       throw err;
@@ -285,7 +302,6 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
           baseUrl: endpoint,
           model,
           evidence: failure.evidence,
-          cause: (err as Error).message,
         },
       );
       return { value, mode: 'prompt', fellBack: true };
@@ -297,7 +313,6 @@ export async function jsonCompleteWithMode<TParsed = unknown>(
         baseUrl: endpoint,
         model,
         evidence: failure.evidence,
-        cause: (err as Error).message,
         retriesNativeInMs: jsonModeMemo.retriesNativeIn(key),
       },
     );

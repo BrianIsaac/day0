@@ -8,6 +8,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import {
   authorAndVerifySkill,
+  configuredSkillSandboxBackend,
   type AuthorSkillArgs,
   type SkillSandboxRun,
 } from '../src/lib/skill-sandbox';
@@ -24,6 +25,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { redactOutcome } from '../src/surfaces/redact';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { SANDBOX_LEASE_RETRY_MS } from './sandboxLease';
 import { spanModelFromEnv } from '../src/redaction/client';
 import { ownerKnownValues } from '../src/redaction/known-values';
 
@@ -277,6 +279,82 @@ export async function verifyAuthoredSkill(
 }
 
 /**
+ * How long a run waits for the sandbox lease before giving the skill back.
+ *
+ * Long enough to outlast a verification that runs to the sandbox's 60 s cap
+ * with a couple of others ahead of it; short enough that the manager is not
+ * left with a skill stuck in authoring when the sandbox has stopped serving.
+ */
+const SANDBOX_WAIT_LIMIT_MS = 5 * 60_000;
+
+/**
+ * Hold the verification sandbox for this run, waiting for whoever has it.
+ *
+ * Three employees authoring together used to queue on the sandbox's own
+ * socket, where a smoke test at the 60 s cap makes every request behind it
+ * wait and a second one pushes them past the client's 75 s wait - which reads
+ * as "the sandbox threw" and parks a skill whose own smoke test was never
+ * run. Waiting here instead costs the same time and says what it is waiting
+ * for: the wait is a row, an event and a reason on the skill, and each
+ * request still reaches the sandbox alone.
+ *
+ * Only the bundled sandbox is serial. Daytona runs one per verification, so
+ * a deployment configured for it takes no lease and waits for nobody.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   skill: The skill being verified, its agent and the authoring run.
+ *
+ * Returns:
+ *   Whether this run holds the lease, and how long it waited.
+ */
+export async function holdSandboxLease(
+  ctx: ActionCtx,
+  skill: { skillId: Id<'skills'>; agentId: Id<'agents'>; name: string; runId: Id<'events'> },
+): Promise<{ held: boolean; waitedMs: number }> {
+  if (configuredSkillSandboxBackend() !== 'local') return { held: true, waitedMs: 0 };
+  const startedAt = Date.now();
+  let waiting = false;
+  for (;;) {
+    if (waiting && Date.now() - startedAt >= SANDBOX_WAIT_LIMIT_MS) {
+      return { held: false, waitedMs: Date.now() - startedAt };
+    }
+    const attempt = await ctx.runMutation(internal.sandboxLease.take, {
+      skillId: skill.skillId,
+      runId: skill.runId,
+    });
+    if (attempt.taken) {
+      const waitedMs = Date.now() - startedAt;
+      if (waitedMs >= SANDBOX_WAIT_LIMIT_MS) {
+        await ctx.runMutation(internal.sandboxLease.release, {
+          skillId: skill.skillId,
+          runId: skill.runId,
+        });
+        return { held: false, waitedMs };
+      }
+      return { held: true, waitedMs };
+    }
+    if (!waiting) {
+      waiting = true;
+      await ctx.runMutation(internal.events.log, {
+        agentId: skill.agentId,
+        type: 'skill.sandbox-waiting',
+        payload: {
+          skillId: skill.skillId,
+          name: skill.name,
+          heldForMs: attempt.heldForMs ?? 0,
+          retryInMs: SANDBOX_LEASE_RETRY_MS,
+        },
+      });
+    }
+    if (Date.now() - startedAt >= SANDBOX_WAIT_LIMIT_MS) {
+      return { held: false, waitedMs: Date.now() - startedAt };
+    }
+    await new Promise((resolve) => setTimeout(resolve, SANDBOX_LEASE_RETRY_MS));
+  }
+}
+
+/**
  * What a run reports when the skill it was authoring is no longer its own. The
  * result is discarded rather than written, so the state the boss sees is
  * whichever decision replaced this run: another run's, or the boss's own
@@ -331,6 +409,18 @@ async function keepRefusedDraft(
   agentId: Id<'agents'>,
   draft: { body: string; smokeTest: string },
 ): Promise<{ body: string; smokeTest: string }> {
+  const redacted = await redactAuthoredDraft(ctx, agentId, draft);
+  return {
+    body: clipRefusedDraft(redacted.body),
+    smokeTest: clipRefusedDraft(redacted.smokeTest),
+  };
+}
+
+async function redactAuthoredDraft(
+  ctx: ActionCtx,
+  agentId: Id<'agents'>,
+  draft: { body: string; smokeTest: string },
+): Promise<{ body: string; smokeTest: string }> {
   let known: readonly string[] = [];
   let model = undefined;
   if (SURFACE_MODE === 'real') {
@@ -342,7 +432,7 @@ async function keepRefusedDraft(
     redactOutcome(draft.body, '', model, known),
     redactOutcome(draft.smokeTest, '', model, known),
   ]);
-  return { body: clipRefusedDraft(body.text), smokeTest: clipRefusedDraft(smokeTest.text) };
+  return { body: body.text, smokeTest: smokeTest.text };
 }
 
 export const authorAndRegisterSkill = action({
@@ -368,20 +458,6 @@ export const authorAndRegisterSkill = action({
       internal.orientationData.pagesForAgent,
       { agentId: skill.agentId },
     );
-    const userPrompt = buildAuthorPrompt(
-      {
-        ...skill,
-        previousAuthoringFailure: skill.verificationLog,
-        previousAuthoringDraft:
-          skill.refusedBody || skill.refusedSmokeTest
-            ? { body: skill.refusedBody ?? '', smokeTest: skill.refusedSmokeTest ?? '' }
-            : undefined,
-      },
-      surfaceRows.map(toSurfaceRecord),
-      Date.now(),
-      pageRows,
-      SURFACE_MODE,
-    );
     type AuthoredSkill = z.infer<typeof authorSchema>;
     // The model layer rethrows failures prompt injection cannot fix, which is
     // right - but the dashboard fires this action and forgets it, so an
@@ -389,19 +465,37 @@ export const authorAndRegisterSkill = action({
     // panels, with nothing to press. Record the failure instead: `failed` is
     // listed, carries the reason, and offers Retry.
     let authored: AuthoredSkill;
-    try {
-      authored = await agentJson<AuthoredSkill>({
-        agent: skillAuthorAgent,
-        user: userPrompt,
-        schema: authorSchema,
-      });
-    } catch (err) {
-      const reason = `authoring failed before any sandbox ran: ${(err as Error).message}`;
-      return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: reason,
-        reason,
-        eventType: 'skill.author-failed',
-      });
+    if (skill.state === 'authoring' && skill.pendingSmokeTest && skill.body) {
+      authored = { body: skill.body, smokeTest: skill.pendingSmokeTest };
+    } else {
+      const userPrompt = buildAuthorPrompt(
+        {
+          ...skill,
+          previousAuthoringFailure: skill.verificationLog,
+          previousAuthoringDraft:
+            skill.refusedBody || skill.refusedSmokeTest
+              ? { body: skill.refusedBody ?? '', smokeTest: skill.refusedSmokeTest ?? '' }
+              : undefined,
+        },
+        surfaceRows.map(toSurfaceRecord),
+        Date.now(),
+        pageRows,
+        SURFACE_MODE,
+      );
+      try {
+        authored = await agentJson<AuthoredSkill>({
+          agent: skillAuthorAgent,
+          user: userPrompt,
+          schema: authorSchema,
+        });
+      } catch (err) {
+        const reason = `authoring failed before any sandbox ran: ${(err as Error).message}`;
+        return await recordAuthoringFailure(ctx, args.skillId, runId, {
+          rowReason: reason,
+          reason,
+          eventType: 'skill.author-failed',
+        });
+      }
     }
 
     const body = authored.body.trim();
@@ -454,6 +548,33 @@ export const authorAndRegisterSkill = action({
     // Named in every message below, because "verification failed" means
     // different things to a boss depending on which sandbox said so.
     let backend = 'the sandbox';
+    // One verification at a time across every employee: the sandbox is serial
+    // and the client's wait is finite, so the queue is a lease here rather
+    // than a backlog on its socket.
+    const lease = await holdSandboxLease(ctx, {
+      skillId: args.skillId,
+      agentId: skill.agentId,
+      name: skill.name,
+      runId,
+    });
+    if (!lease.held) {
+      const pendingDraft = await redactAuthoredDraft(ctx, skill.agentId, { body, smokeTest });
+      const waitedFor = `${Math.round(lease.waitedMs / 60_000)} minutes`;
+      const reason =
+        `the verification sandbox was busy with another skill for ${waitedFor}; ` +
+        'the body is kept and Retry runs the smoke test when it is free';
+      const { recorded } = await ctx.runMutation(internal.skills.parkUnverified, {
+        skillId: args.skillId,
+        runId,
+        sandboxId: '(skipped)',
+        body: pendingDraft.body,
+        smokeTest: pendingDraft.smokeTest,
+        verificationLog: noted(reason),
+        reason,
+      });
+      if (!recorded) return { ok: false, reason: SUPERSEDED };
+      return { ok: false, reason: `sandbox verification unavailable: ${reason}` };
+    }
     try {
       const verification = await verifyAuthoredSkill({
         skillName: skill.name,
@@ -494,6 +615,12 @@ export const authorAndRegisterSkill = action({
     } catch (err) {
       skipReason = `${backend} threw: ${(err as Error).message}`;
       verificationLog = skipReason;
+    } finally {
+      // Released whichever way the check went, so the next employee's
+      // authoring run does not wait out the lease for a run that is over.
+      // `release` only frees a lease this run holds, so the hosted path,
+      // which took none, frees nobody else's.
+      await ctx.runMutation(internal.sandboxLease.release, { skillId: args.skillId, runId });
     }
 
     // Recorded outside the try: a failure while recording a failure must not be
@@ -507,11 +634,13 @@ export const authorAndRegisterSkill = action({
     }
 
     if (skipReason) {
+      const pendingDraft = await redactAuthoredDraft(ctx, skill.agentId, { body, smokeTest });
       const { recorded } = await ctx.runMutation(internal.skills.parkUnverified, {
         skillId: args.skillId,
         runId,
         sandboxId,
-        body,
+        body: pendingDraft.body,
+        smokeTest: pendingDraft.smokeTest,
         verificationLog: noted(verificationLog),
         reason: skipReason,
       });
