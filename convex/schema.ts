@@ -829,6 +829,8 @@ export default defineSchema({
      * `skills.migrateSandboxIdField`. */
     daytonaSandboxId: v.optional(v.string()),
     verificationLog: v.optional(v.string()),
+    /** A validated smoke test awaiting a sandbox; Retry verifies this body without authoring again. */
+    pendingSmokeTest: v.optional(v.string()),
     /** The draft a static-gate or preflight refusal turned away before any
      * sandbox ran, kept so the manager can read what was refused and the
      * retry can correct it rather than start again. Redacted through the

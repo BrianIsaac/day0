@@ -223,6 +223,34 @@ describe('an authoring run and the verification sandbox lease', (): void => {
     expect(rows[0]!.skillId).toBe(holderSkillId);
   });
 
+  it('retries a parked verification with its saved smoke test without authoring again', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await seedApprovedSkill(harness, 'Priya');
+    const claim = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!claim.claimed) throw new Error('claim refused');
+    await harness.mutation(internal.skills.parkUnverified, {
+      skillId,
+      runId: claim.runId,
+      sandboxId: '(skipped)',
+      body: reusableBody,
+      smokeTest,
+      verificationLog: 'the verification sandbox was busy; the body is kept',
+      reason: 'the verification sandbox was busy',
+    });
+
+    expect(await readSkill(harness, skillId)).toMatchObject({
+      state: 'authoring',
+      body: reusableBody,
+      pendingSmokeTest: smokeTest,
+    });
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    expect(recorded.outputs).toHaveLength(0);
+    expect(recorded.sandboxRuns).toBe(1);
+    expect(await readSkill(harness, skillId)).toMatchObject({ state: 'registered', body: reusableBody });
+  });
+
   it('waits for the holder rather than queueing on the socket, and records the wait', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const waiting = await seedApprovedSkill(harness, 'Priya');

@@ -521,6 +521,7 @@ export const requestRevision = mutation({
       verificationLog: undefined,
       refusedBody: undefined,
       refusedSmokeTest: undefined,
+      pendingSmokeTest: undefined,
       registeredAt: undefined,
       ...RELEASED,
     });
@@ -747,6 +748,7 @@ export const completeRegistration = internalMutation({
       verificationLog: args.verificationLog,
       refusedBody: undefined,
       refusedSmokeTest: undefined,
+      pendingSmokeTest: undefined,
       registeredAt: row.registeredAt ?? Date.now(),
       ...RELEASED,
     });
@@ -799,6 +801,7 @@ export const failAuthoringRun = internalMutation({
       verificationLog: args.rowReason,
       refusedBody: args.refusedBody,
       refusedSmokeTest: args.refusedSmokeTest,
+      pendingSmokeTest: undefined,
       ...RELEASED,
     });
     for (const type of ['skill.failed', args.eventType]) {
@@ -828,6 +831,7 @@ export const parkUnverified = internalMutation({
     runId: v.id('events'),
     sandboxId: v.string(),
     body: v.string(),
+    smokeTest: v.string(),
     verificationLog: v.string(),
     reason: v.string(),
   },
@@ -837,6 +841,7 @@ export const parkUnverified = internalMutation({
     await ctx.db.patch(args.skillId, {
       state: 'authoring',
       body: args.body,
+      pendingSmokeTest: args.smokeTest,
       sandboxId: args.sandboxId,
       verificationLog: args.verificationLog,
       refusedBody: undefined,

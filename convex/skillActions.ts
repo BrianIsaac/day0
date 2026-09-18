@@ -433,20 +433,6 @@ export const authorAndRegisterSkill = action({
       internal.orientationData.pagesForAgent,
       { agentId: skill.agentId },
     );
-    const userPrompt = buildAuthorPrompt(
-      {
-        ...skill,
-        previousAuthoringFailure: skill.verificationLog,
-        previousAuthoringDraft:
-          skill.refusedBody || skill.refusedSmokeTest
-            ? { body: skill.refusedBody ?? '', smokeTest: skill.refusedSmokeTest ?? '' }
-            : undefined,
-      },
-      surfaceRows.map(toSurfaceRecord),
-      Date.now(),
-      pageRows,
-      SURFACE_MODE,
-    );
     type AuthoredSkill = z.infer<typeof authorSchema>;
     // The model layer rethrows failures prompt injection cannot fix, which is
     // right - but the dashboard fires this action and forgets it, so an
@@ -454,19 +440,37 @@ export const authorAndRegisterSkill = action({
     // panels, with nothing to press. Record the failure instead: `failed` is
     // listed, carries the reason, and offers Retry.
     let authored: AuthoredSkill;
-    try {
-      authored = await agentJson<AuthoredSkill>({
-        agent: skillAuthorAgent,
-        user: userPrompt,
-        schema: authorSchema,
-      });
-    } catch (err) {
-      const reason = `authoring failed before any sandbox ran: ${(err as Error).message}`;
-      return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: reason,
-        reason,
-        eventType: 'skill.author-failed',
-      });
+    if (skill.state === 'authoring' && skill.pendingSmokeTest && skill.body) {
+      authored = { body: skill.body, smokeTest: skill.pendingSmokeTest };
+    } else {
+      const userPrompt = buildAuthorPrompt(
+        {
+          ...skill,
+          previousAuthoringFailure: skill.verificationLog,
+          previousAuthoringDraft:
+            skill.refusedBody || skill.refusedSmokeTest
+              ? { body: skill.refusedBody ?? '', smokeTest: skill.refusedSmokeTest ?? '' }
+              : undefined,
+        },
+        surfaceRows.map(toSurfaceRecord),
+        Date.now(),
+        pageRows,
+        SURFACE_MODE,
+      );
+      try {
+        authored = await agentJson<AuthoredSkill>({
+          agent: skillAuthorAgent,
+          user: userPrompt,
+          schema: authorSchema,
+        });
+      } catch (err) {
+        const reason = `authoring failed before any sandbox ran: ${(err as Error).message}`;
+        return await recordAuthoringFailure(ctx, args.skillId, runId, {
+          rowReason: reason,
+          reason,
+          eventType: 'skill.author-failed',
+        });
+      }
     }
 
     const body = authored.body.trim();
@@ -538,6 +542,7 @@ export const authorAndRegisterSkill = action({
         runId,
         sandboxId: '(skipped)',
         body,
+        smokeTest,
         verificationLog: noted(reason),
         reason,
       });
@@ -608,6 +613,7 @@ export const authorAndRegisterSkill = action({
         runId,
         sandboxId,
         body,
+        smokeTest,
         verificationLog: noted(verificationLog),
         reason: skipReason,
       });
