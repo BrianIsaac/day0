@@ -325,7 +325,8 @@ export function emptyScopeReason(system: string, surfaceClass: string): string {
  *   scope: The scope on the card.
  *
  * Returns:
- *   The reads line, whether it reads nothing, its quotes and its notes.
+ *   The reads line, whether it reads nothing, each distinct page line that
+ *   grounds it, and its notes.
  */
 export function presentIntakeScope(
   system: string,
@@ -337,8 +338,8 @@ export function presentIntakeScope(
     return { line: emptyScopeReason(system, surfaceClass), empty: true, quotes: [], notes };
   }
   if (surfaceClass === 'kanban') {
-    const quotes = [scope.team, scope.project].filter(
-      (value): value is ScopeValue => value !== undefined,
+    const quotes = distinctLines(
+      [scope.team, scope.project].filter((value): value is ScopeValue => value !== undefined),
     );
     const parts = [
       scope.team ? `team ${scope.team.value}` : undefined,
@@ -350,9 +351,20 @@ export function presentIntakeScope(
   return {
     line: `Reads: ${system} ${channels.map((channel): string => `#${channel.value}`).join(', ')}`,
     empty: false,
-    quotes: channels,
+    quotes: distinctLines(channels),
     notes,
   };
+}
+
+/** The first value from each distinct page line, so a line holding several values is quoted once. */
+function distinctLines(values: readonly ScopeValue[]): ScopeValue[] {
+  const seen = new Set<string>();
+  return values.filter((value): boolean => {
+    const key = `${value.sourceId ?? ''}\0${value.ref}\0${value.quote}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**

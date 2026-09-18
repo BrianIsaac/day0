@@ -274,7 +274,7 @@ describe('the scope an approved card reads', (): void => {
     );
   });
 
-  it.fails('quotes a handbook line once when several values come from it', (): void => {
+  it('quotes a handbook line once when several values come from it', (): void => {
     const slack = presentIntakeScope('Slack', 'chat', finance);
     expect(slack.quotes).toEqual([finance.channels![0]]);
     expect(slack.quotes[0].quote).toBe('- Channels: #finance-close, #ops-requests');
