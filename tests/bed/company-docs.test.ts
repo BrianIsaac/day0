@@ -50,6 +50,13 @@ const TILE_LOGIN = 'pipeline-tile-local';
 const TOKEN_PLACEHOLDER = 'PASTE_LINEAR_API_KEY_HERE';
 const SYSTEMS = ['Linear', 'Slack', 'Looker pipeline tile', 'Northstar CRM', 'NetLedger'];
 const EMPLOYEE_PLACEHOLDERS = ['Priya', 'Mateo', 'Aiko'];
+/**
+ * The identifiers the deployed model takes for secrets on these pages, which
+ * every page keeps: stored once, the owner-wide exact layer removes a channel
+ * name from every later page, the Channels lines included, and each employee's
+ * Slack intake is read from those lines.
+ */
+const KEPT_IDENTIFIERS = ['#revops-asks', '#revops', '#ops-requests', 'users.lookupByEmail'];
 
 const folderSource = {
   _id: 'folder-source' as Id<'docSources'>,
@@ -292,7 +299,12 @@ describe('the deployed span model over the pages', (): void => {
       if (result.credentials.length > 0) {
         stored[bedPage.ref] = result.credentials.map((credential) => credential.plaintext);
       }
-      expect(result.markdown.includes('#ops-requests') || !bedPage.markdown.includes('#ops-requests'), bedPage.ref).toBe(true);
+      for (const identifier of KEPT_IDENTIFIERS) {
+        expect(
+          result.markdown.split(identifier).length,
+          `${bedPage.ref} loses ${identifier}`,
+        ).toBe(bedPage.markdown.split(identifier).length);
+      }
     }
     expect(stored).toEqual({
       'revops/runbooks/how-to-refresh-the-tile.md': [TILE_LOGIN],
