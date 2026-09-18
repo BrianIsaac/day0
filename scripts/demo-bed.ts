@@ -29,7 +29,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -1606,14 +1606,42 @@ function deploymentEnv(env: Values): Values {
 
 /* --------------------------------- snapshot -------------------------------- */
 
+function snapshotOutput(requested: string): string {
+  const directory = resolve(KIT_DIR, 'snapshots');
+  const target = resolve(requested);
+  if (dirname(target) !== directory || !basename(target).endsWith('.tar.gz')) {
+    throw new Error(`snapshot output must be a .tar.gz file directly in ${KIT_DIR}/snapshots; ` +
+      `use --snapshot ${KIT_DIR}/snapshots/<name>.tar.gz.`);
+  }
+  for (const path of [resolve(KIT_DIR), directory]) {
+    try {
+      const entry = lstatSync(path);
+      if (!entry.isDirectory() || entry.isSymbolicLink()) {
+        throw new Error(`snapshot output directory ${path} must be a real directory, not a symlink.`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      mkdirSync(path);
+    }
+  }
+  for (const path of [target, `${target}.sha256`]) {
+    try {
+      lstatSync(path);
+      throw new Error(`snapshot output ${path} already exists; choose a new name.`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  return target;
+}
+
 function snapshot(options: DemoBedOptions): void {
   const source = options.fromVolume;
+  const target = snapshotOutput(options.snapshot ?? `${KIT_DIR}/snapshots/${source}-${stamp()}.tar.gz`);
   if (!volumeExists(source)) throw new Error(`volume ${source} does not exist on this machine.`);
   const refusal = snapshotRefusal(source, volumeHeldByRunning(source));
   if (refusal) throw new Error(refusal);
-  const target = resolve(options.snapshot ?? `${KIT_DIR}/snapshots/${source}-${stamp()}.tar.gz`);
   const directory = dirname(target);
-  mkdirSync(directory, { recursive: true });
   const startedAt = Date.now();
   log(`Snapshot of ${source} (mounted read-only) -> ${target}`);
   must(

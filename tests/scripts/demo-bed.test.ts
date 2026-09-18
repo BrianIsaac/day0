@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -211,6 +211,30 @@ describe('the protected volumes and projects', (): void => {
 });
 
 describe('snapshot and restore run through a throwaway container', (): void => {
+  it('refuses an output outside its snapshot directory before calling Docker', (): void => {
+    const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-snapshot-'));
+    const bin = join(scratch, 'bin');
+    const calls = join(scratch, 'docker-calls');
+    mkdirSync(bin);
+    const docker = join(bin, 'docker');
+    writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
+    chmodSync(docker, 0o755);
+    try {
+      const result = spawnSync('pnpm', ['exec', 'tsx', 'scripts/demo-bed.ts', 'snapshot',
+        '--from-volume', 'day0-demo-7c65e7_convex_data', '--snapshot',
+        join(scratch, 'docker', 'volumes', 'recorded', '_data', 'snapshot.tar.gz')], {
+        cwd: process.cwd(),
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('snapshot output');
+      expect(existsSync(calls)).toBe(false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it('mounts the source volume read-only and writes one tar into the output directory', (): void => {
     const args = snapshotCommand('day0-demo-7c65e7_convex_data', '/snaps', 'demo.tar.gz');
     expect(args[0]).toBe('run');
