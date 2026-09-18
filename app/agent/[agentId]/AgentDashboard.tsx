@@ -1556,7 +1556,7 @@ function SkillInputs({ body }: { body: string }) {
       {declared.map((name, index) => (
         <span key={name}>
           {index > 0 ? ', ' : ''}
-          <code className="font-mono">&lt;{name}&gt;</code>
+          <code className="font-mono whitespace-nowrap">&lt;{name}&gt;</code>
           {added.has(name) ? ' (added by Day0)' : ''}
         </span>
       ))}

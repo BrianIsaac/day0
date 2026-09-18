@@ -1217,6 +1217,8 @@ describe('what Retry does to an unregistered skill', (): void => {
       );
       expect(markup).toMatch(/>inputs<\/span>[^&]*<code[^>]*>&lt;record-id&gt;<\/code>/);
       expect(markup).toMatch(/<code[^>]*>&lt;closing-state&gt;<\/code> \(added by Day0\)/);
+      // A placeholder never wraps inside its own name.
+      expect(markup).toMatch(/<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;record-id&gt;<\/code>/);
       expect(markup).toContain('The author used the input marked &quot;added by Day0&quot; without declaring it');
       expect(markup).toContain('the executor reads it from the candidate or its runbook at run time');
     });
