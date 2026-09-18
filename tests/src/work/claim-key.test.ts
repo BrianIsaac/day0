@@ -40,7 +40,7 @@ describe('providerItemKey', (): void => {
     expect(providerItemKey(finance, { sourceSystem: 'linear-finance', externalId: ISSUE }, 'real')).toBe(key);
   });
 
-  it.fails('gives one Linear issue one key whichever Linear API the surface reads it over', (): void => {
+  it('gives one Linear issue one key whichever Linear API the surface reads it over', (): void => {
     const graphql = { slug: 'linear-api', class: 'kanban', path: 'documented-api', endpoint: 'https://api.linear.app/graphql' };
     expect(providerItemKey(graphql, { sourceSystem: 'linear-api', externalId: ISSUE }, 'real')).toBe(
       `linear:${ISSUE}`,
@@ -97,11 +97,7 @@ describe('providerItemKey', (): void => {
     const keys = [
       providerItemKey(linear, { sourceSystem: 'linear', externalId: ISSUE }, 'real'),
       providerItemKey(undefined, { sourceSystem: 'linear', externalId: ISSUE }, 'real'),
-      providerItemKey(
-        { ...jira, endpoint: 'https://mcp.linear.app/other' },
-        { sourceSystem: 'jira', externalId: ISSUE },
-        'real',
-      ),
+      providerItemKey(jira, { sourceSystem: 'jira', externalId: ISSUE }, 'real'),
       providerItemKey(slack('T0COMPANY'), { sourceSystem: 'slack', externalId: ASK }, 'real'),
       providerItemKey(undefined, { sourceSystem: 'slack', externalId: `T0COMPANY:${ASK}` }, 'real'),
     ];

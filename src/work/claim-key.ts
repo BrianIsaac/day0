@@ -15,8 +15,21 @@ export interface ClaimKeyItem {
   externalId: string;
 }
 
-/** The host of the only MCP server the kanban intake reader speaks to. */
-const LINEAR_MCP_HOST = 'mcp.linear.app';
+/** Linear's own domain; its MCP server and its GraphQL API both sit under it. */
+const LINEAR_DOMAIN = 'linear.app';
+
+/**
+ * Whether an endpoint host is Linear's.
+ *
+ * Args:
+ *   host: The endpoint's host.
+ *
+ * Returns:
+ *   True for `linear.app` and its subdomains, never a look-alike.
+ */
+function isLinearHost(host: string): boolean {
+  return host === LINEAR_DOMAIN || host.endsWith(`.${LINEAR_DOMAIN}`);
+}
 
 /**
  * The origin of an http(s) endpoint.
@@ -40,9 +53,10 @@ function httpOrigin(endpoint: string | undefined): URL | undefined {
 /**
  * The key one external item is claimed under across the owner's employees.
  *
- * The provider is recognised by how the surface reaches it, never by its
- * slug, so two employees whose cards name one system differently still
- * reach one key. A Linear issue id is a UUID, unique across workspaces. A
+ * The provider is recognised by where the surface reaches it, never by its
+ * slug or its path, so two employees whose cards name or reach one system
+ * differently still meet on one key. A Linear issue id is a UUID, unique
+ * across workspaces and the same over Linear's MCP server and its API. A
  * Slack message's channel and timestamp are unique only inside a workspace,
  * so the workspace is part of the key. Any other surface is keyed by its
  * endpoint's origin, and one with no usable endpoint by its slug, which
@@ -65,9 +79,7 @@ export function providerItemKey(
 ): string | undefined {
   if (mode !== 'real') return undefined;
   const origin = httpOrigin(surface?.endpoint);
-  if (surface?.path === 'mcp' && origin?.host === LINEAR_MCP_HOST) {
-    return `linear:${item.externalId}`;
-  }
+  if (origin && isLinearHost(origin.hostname)) return `linear:${item.externalId}`;
   if (surface?.class === 'chat' && surface.path === 'documented-api' && surface.providerWorkspaceId) {
     return `slack:${surface.providerWorkspaceId}:${item.externalId}`;
   }
