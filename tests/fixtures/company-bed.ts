@@ -82,7 +82,10 @@ export function companyPages(): CompanyPage[] {
   const redacted = (markdown: string): string =>
     markdown
       .replace(LINEAR_TOKEN_PLACEHOLDER, credentialMarker('linear service token'))
-      .replace(LOOKER_PASSWORD_PLACEHOLDER, credentialMarker('looker pipeline tile dashboard login'));
+      .replace(
+        LOOKER_PASSWORD_PLACEHOLDER,
+        credentialMarker('looker pipeline tile dashboard login'),
+      );
   const folder = FOLDER_REFS.map((ref): CompanyPage => {
     const markdown = redacted(read(`folder/${ref}`));
     return { source: 'folder', ref, title: titleOf(markdown, ref), markdown };

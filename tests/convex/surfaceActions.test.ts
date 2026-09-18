@@ -697,7 +697,7 @@ describe('surface probe action state', (): void => {
     },
   );
 
-  it('checks invites for the approved channels only, not every handbook\'s', async (): Promise<void> => {
+  it("checks invites for the approved channels only, not every handbook's", async (): Promise<void> => {
     const agentId = 'test-agent-id' as Id<'agents'>;
     const surfaceId = 'test-surface-id' as Id<'surfaces'>;
     const surface = {
@@ -737,7 +737,10 @@ describe('surface probe action state', (): void => {
     }));
     await runSurfaceProbe(
       {
-        runMutation: async (_reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
+        runMutation: async (
+          _reference: unknown,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => {
           if (Object.keys(args).length === 1) return { surface, generation: 1 };
           if ('verifiedAt' in args) return true;
           return null;

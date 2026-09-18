@@ -722,7 +722,12 @@ async function pollLinear(
         const candidate = linearCandidate(issue, surface, observedAt);
         if (candidate) candidates.push(candidate);
       }
-      if (wantedProject !== undefined && !request.projectEnforced && seen > 0 && withProject === 0) {
+      if (
+        wantedProject !== undefined &&
+        !request.projectEnforced &&
+        seen > 0 &&
+        withProject === 0
+      ) {
         throw new Error(
           `Linear list_issues has no project argument and its issues carry no project field, so intake cannot be bounded to project ${scope.project}.`,
         );

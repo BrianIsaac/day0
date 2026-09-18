@@ -1223,13 +1223,16 @@ describe('intake provider contracts', (): void => {
       ).args,
     ).toEqual({ project: 'Q3 close' });
     expect(
-      linearListArguments({ properties: { team: {}, project: {}, limit: {} } }, { team: 'FIN' }).args,
+      linearListArguments({ properties: { team: {}, project: {}, limit: {} } }, { team: 'FIN' })
+        .args,
     ).toEqual({ team: 'FIN', limit: 100 });
-    expect(issueTeamLabels({ id: 'FIN-4', team: 'Finance close' })).toEqual(['finance close', 'fin']);
-    expect(issueTeamLabels({ id: 'uuid-1', team: { key: 'LOG', name: 'Logistics desk' } })).toEqual([
-      'log',
-      'logistics desk',
+    expect(issueTeamLabels({ id: 'FIN-4', team: 'Finance close' })).toEqual([
+      'finance close',
+      'fin',
     ]);
+    expect(issueTeamLabels({ id: 'uuid-1', team: { key: 'LOG', name: 'Logistics desk' } })).toEqual(
+      ['log', 'logistics desk'],
+    );
     expect(issueTeamLabels({ id: '0d3c5b4e-8f5e-4a0e-9d37-6f1f0b7b9a11' })).toEqual([]);
     expect(issueProject({ project: { name: 'Q3 close', id: 'p1' } })).toBe('Q3 close');
     expect(issueProject({ project: 'Q3 close' })).toBe('Q3 close');
@@ -1764,13 +1767,25 @@ describe('intake provider contracts', (): void => {
  * Returns:
  *   A stored scope value.
  */
-function scoped(value: string, ref: string, quote: string): { value: string; ref: string; quote: string } {
+function scoped(
+  value: string,
+  ref: string,
+  quote: string,
+): { value: string; ref: string; quote: string } {
   return { value, ref, quote };
 }
 
 describe('each employee reads its own approved queues', (): void => {
-  const revopsAgent: Doc<'agents'> = { ...agentRow(), _id: id<'agents'>('agent-revops'), name: 'Priya' };
-  const financeAgent: Doc<'agents'> = { ...agentRow(), _id: id<'agents'>('agent-finance'), name: 'Mateo' };
+  const revopsAgent: Doc<'agents'> = {
+    ...agentRow(),
+    _id: id<'agents'>('agent-revops'),
+    name: 'Priya',
+  };
+  const financeAgent: Doc<'agents'> = {
+    ...agentRow(),
+    _id: id<'agents'>('agent-finance'),
+    name: 'Mateo',
+  };
   const REVOPS_PAGE = companyPage('revops/handbook.md');
   const FINANCE_PAGE = companyPage('finance/handbook.md');
   const LINEAR_PAGE = companyPage('notion-linear-automation');
@@ -1779,14 +1794,21 @@ describe('each employee reads its own approved queues', (): void => {
   /** The company's pages with the two handbooks in one order or the other. */
   function companyPageRows(order: 'revops-first' | 'finance-first'): Doc<'docPages'>[] {
     const handbooks = [REVOPS_PAGE, FINANCE_PAGE];
-    return [...(order === 'revops-first' ? handbooks : handbooks.reverse()), LINEAR_PAGE, SLACK_PAGE].map(
-      (page): Doc<'docPages'> => pageRow(page.ref, page.title, page.markdown),
-    );
+    return [
+      ...(order === 'revops-first' ? handbooks : handbooks.reverse()),
+      LINEAR_PAGE,
+      SLACK_PAGE,
+    ].map((page): Doc<'docPages'> => pageRow(page.ref, page.title, page.markdown));
   }
 
   /** Two employees' connected Linear and Slack cards, each with its approved scope. */
   function companySurfaces(): Doc<'surfaces'>[] {
-    const linear = (agent: Doc<'agents'>, team: string, project: string, ref: string): Doc<'surfaces'> =>
+    const linear = (
+      agent: Doc<'agents'>,
+      team: string,
+      project: string,
+      ref: string,
+    ): Doc<'surfaces'> =>
       surfaceRow('linear', 'Linear', 'kanban', {
         _id: id<'surfaces'>(`surface-${agent.name}-linear`),
         agentId: agent._id,
@@ -1798,7 +1820,12 @@ describe('each employee reads its own approved queues', (): void => {
           project: scoped(project, ref, `- Project: \`${project}\``),
         },
       });
-    const slack = (agent: Doc<'agents'>, channels: string[], ref: string, quote: string): Doc<'surfaces'> =>
+    const slack = (
+      agent: Doc<'agents'>,
+      channels: string[],
+      ref: string,
+      quote: string,
+    ): Doc<'surfaces'> =>
       surfaceRow('slack', 'Slack', 'chat', {
         _id: id<'surfaces'>(`surface-${agent.name}-slack`),
         agentId: agent._id,
@@ -1812,27 +1839,41 @@ describe('each employee reads its own approved queues', (): void => {
     return [
       linear(revopsAgent, 'REVOPS', 'Q3 close', 'revops/handbook.md'),
       linear(financeAgent, 'FIN', 'September close', 'finance/handbook.md'),
-      slack(revopsAgent, ['revops-asks', 'ops-requests'], 'revops/handbook.md', '- Channels: #revops-asks, #revops, #ops-requests'),
-      slack(financeAgent, ['finance-close', 'ops-requests'], 'finance/handbook.md', '- Channels: #finance-close, #ops-requests'),
+      slack(
+        revopsAgent,
+        ['revops-asks', 'ops-requests'],
+        'revops/handbook.md',
+        '- Channels: #revops-asks, #revops, #ops-requests',
+      ),
+      slack(
+        financeAgent,
+        ['finance-close', 'ops-requests'],
+        'finance/handbook.md',
+        '- Channels: #finance-close, #ops-requests',
+      ),
     ];
   }
 
   /** Each credential's decrypted value names its employee and system. */
   function companyCredentials(): Map<string, string> {
     return new Map(
-      ['Priya', 'Mateo'].flatMap((name): Array<[string, string]> => [
-        [`credential-${name}-linear`, `${name}-linear-value`],
-        [`credential-${name}-slack`, `${name}-slack-value`],
-      ]),
+      ['Priya', 'Mateo'].flatMap(
+        (name): Array<[string, string]> => [
+          [`credential-${name}-linear`, `${name}-linear-value`],
+          [`credential-${name}-slack`, `${name}-slack-value`],
+        ],
+      ),
     );
   }
 
   it('bounds each list_issues call to its own team and project, whichever handbook comes first', async (): Promise<void> => {
     for (const order of ['revops-first', 'finance-first'] as const) {
-      const harness = runtimeHarness(companySurfaces(), companyPageRows(order), companyCredentials(), [
-        revopsAgent,
-        financeAgent,
-      ]);
+      const harness = runtimeHarness(
+        companySurfaces(),
+        companyPageRows(order),
+        companyCredentials(),
+        [revopsAgent, financeAgent],
+      );
       const calls: Array<{ credential: string; args: Record<string, unknown> }> = [];
       await runIntakeSweep(harness.runtime, {
         mode: 'real',
@@ -1860,18 +1901,26 @@ describe('each employee reads its own approved queues', (): void => {
         }),
       });
       expect(calls).toEqual([
-        { credential: 'Priya-linear-value', args: { team: 'REVOPS', project: 'Q3 close', limit: 100 } },
-        { credential: 'Mateo-linear-value', args: { team: 'FIN', project: 'September close', limit: 100 } },
+        {
+          credential: 'Priya-linear-value',
+          args: { team: 'REVOPS', project: 'Q3 close', limit: 100 },
+        },
+        {
+          credential: 'Mateo-linear-value',
+          args: { team: 'FIN', project: 'September close', limit: 100 },
+        },
       ]);
     }
   });
 
-  it("reads only the approved channels, so finance never reads #revops-asks", async (): Promise<void> => {
+  it('reads only the approved channels, so finance never reads #revops-asks', async (): Promise<void> => {
     for (const order of ['revops-first', 'finance-first'] as const) {
-      const harness = runtimeHarness(companySurfaces(), companyPageRows(order), companyCredentials(), [
-        revopsAgent,
-        financeAgent,
-      ]);
+      const harness = runtimeHarness(
+        companySurfaces(),
+        companyPageRows(order),
+        companyCredentials(),
+        [revopsAgent, financeAgent],
+      );
       const history: Array<{ credential: string; channel: string }> = [];
       const ids: Record<string, string> = {
         'revops-asks': 'CASKS',
@@ -1892,30 +1941,45 @@ describe('each employee reads its own approved queues', (): void => {
               response_metadata: { next_cursor: '' },
             });
           }
-          const credential = String(new Headers(init?.headers).get('Authorization')).replace('Bearer ', '');
+          const credential = String(new Headers(init?.headers).get('Authorization')).replace(
+            'Bearer ',
+            '',
+          );
           history.push({ credential, channel: url.searchParams.get('channel') ?? '' });
           return slackResponse({
             ok: true,
-            messages: [{ ts: '1770000000.000100', user: 'UASKER', text: `<@UBOT> ask in ${url.searchParams.get('channel')}` }],
+            messages: [
+              {
+                ts: '1770000000.000100',
+                user: 'UASKER',
+                text: `<@UBOT> ask in ${url.searchParams.get('channel')}`,
+              },
+            ],
           });
         },
         makeMcpClient: () => ({
           listToolDefinitionsWithErrors: async () => ({
-            definitions: { surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } } },
+            definitions: {
+              surface: { list_issues: { inputSchema: { properties: { team: {}, project: {} } } } },
+            },
             errors: {},
           }),
-          toolFromDefinition: async () => ({ execute: async (): Promise<unknown> => ({ issues: [] }) }),
+          toolFromDefinition: async () => ({
+            execute: async (): Promise<unknown> => ({ issues: [] }),
+          }),
           disconnect: async (): Promise<void> => undefined,
         }),
       });
-      expect(history.filter((call) => call.credential === 'Mateo-slack-value').map((call) => call.channel)).toEqual([
-        'CFIN',
-        'COPS',
-      ]);
-      expect(history.filter((call) => call.credential === 'Priya-slack-value').map((call) => call.channel)).toEqual([
-        'CASKS',
-        'COPS',
-      ]);
+      expect(
+        history
+          .filter((call) => call.credential === 'Mateo-slack-value')
+          .map((call) => call.channel),
+      ).toEqual(['CFIN', 'COPS']);
+      expect(
+        history
+          .filter((call) => call.credential === 'Priya-slack-value')
+          .map((call) => call.channel),
+      ).toEqual(['CASKS', 'COPS']);
       expect(
         [...harness.seeds.values()]
           .filter((seed) => seed.agentId === financeAgent._id)
@@ -1925,12 +1989,16 @@ describe('each employee reads its own approved queues', (): void => {
   });
 
   it('reads nothing from an empty approved scope and says why, before any credential is used', async (): Promise<void> => {
-    const surfaces = companySurfaces().map((surface): Doc<'surfaces'> => ({ ...surface, intakeScope: {} }));
+    const surfaces = companySurfaces().map(
+      (surface): Doc<'surfaces'> => ({ ...surface, intakeScope: {} }),
+    );
     const decrypted: string[] = [];
-    const harness = runtimeHarness(surfaces, companyPageRows('revops-first'), companyCredentials(), [
-      revopsAgent,
-      financeAgent,
-    ]);
+    const harness = runtimeHarness(
+      surfaces,
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [revopsAgent, financeAgent],
+    );
     const decrypt = harness.runtime.decrypt;
     harness.runtime.decrypt = async (credentialId): Promise<string> => {
       decrypted.push(String(credentialId));
@@ -1967,7 +2035,9 @@ describe('each employee reads its own approved queues', (): void => {
     });
     const client = (rows: Record<string, unknown>[]) => () => ({
       listToolDefinitionsWithErrors: async () => ({
-        definitions: { surface: { list_issues: { inputSchema: { properties: { project: {}, limit: {} } } } } },
+        definitions: {
+          surface: { list_issues: { inputSchema: { properties: { project: {}, limit: {} } } } },
+        },
         errors: {},
       }),
       toolFromDefinition: async () => ({
@@ -1979,7 +2049,12 @@ describe('each employee reads its own approved queues', (): void => {
       disconnect: async (): Promise<void> => undefined,
     });
 
-    const bounded = runtimeHarness([finance], companyPageRows('revops-first'), companyCredentials(), [financeAgent]);
+    const bounded = runtimeHarness(
+      [finance],
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [financeAgent],
+    );
     await expect(
       runIntakeSweep(bounded.runtime, {
         mode: 'real',
@@ -1993,9 +2068,17 @@ describe('each employee reads its own approved queues', (): void => {
     ).resolves.toMatchObject({ candidates: 2, polled: 1 });
     expect([...bounded.seeds.values()].map((seed) => seed.externalId)).toEqual(['FIN-4', 'uuid-1']);
 
-    const unbounded = runtimeHarness([finance], companyPageRows('revops-first'), companyCredentials(), [financeAgent]);
+    const unbounded = runtimeHarness(
+      [finance],
+      companyPageRows('revops-first'),
+      companyCredentials(),
+      [financeAgent],
+    );
     await expect(
-      runIntakeSweep(unbounded.runtime, { mode: 'real', makeMcpClient: client([issue('uuid-3', undefined)]) }),
+      runIntakeSweep(unbounded.runtime, {
+        mode: 'real',
+        makeMcpClient: client([issue('uuid-3', undefined)]),
+      }),
     ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
     expect(unbounded.records[0].skipReason).toContain('cannot be bounded to team FIN');
   });

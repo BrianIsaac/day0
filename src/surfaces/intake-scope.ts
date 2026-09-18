@@ -226,14 +226,16 @@ export function sentenceScopePicks(
 ): ScopePick[] {
   const text = sentences.join('\n');
   if (!text.trim()) return [];
-  const named = candidates.flatMap((candidate): Array<{ candidate: ScopeCandidate; at: number }> => {
-    const pattern =
-      candidate.field === 'channel'
-        ? new RegExp(`(?<![a-z0-9_-])#${escaped(candidate.value)}(?![a-z0-9_-])`, 'i')
-        : new RegExp(`(?<![A-Za-z0-9_#-])${escaped(candidate.value)}(?![A-Za-z0-9_-])`);
-    const at = pattern.exec(text)?.index;
-    return at === undefined ? [] : [{ candidate, at }];
-  });
+  const named = candidates.flatMap(
+    (candidate): Array<{ candidate: ScopeCandidate; at: number }> => {
+      const pattern =
+        candidate.field === 'channel'
+          ? new RegExp(`(?<![a-z0-9_-])#${escaped(candidate.value)}(?![a-z0-9_-])`, 'i')
+          : new RegExp(`(?<![A-Za-z0-9_#-])${escaped(candidate.value)}(?![A-Za-z0-9_-])`);
+      const at = pattern.exec(text)?.index;
+      return at === undefined ? [] : [{ candidate, at }];
+    },
+  );
   const pageScore = new Map<string, number>();
   for (const { candidate } of named) {
     pageScore.set(candidate.ref, (pageScore.get(candidate.ref) ?? 0) + 1);
@@ -244,11 +246,13 @@ export function sentenceScopePicks(
         left.at - right.at ||
         (pageScore.get(right.candidate.ref) ?? 0) - (pageScore.get(left.candidate.ref) ?? 0),
     )
-    .map(({ candidate }): ScopePick => ({
-      field: candidate.field,
-      value: candidate.value,
-      ref: candidate.ref,
-    }));
+    .map(
+      ({ candidate }): ScopePick => ({
+        field: candidate.field,
+        value: candidate.value,
+        ref: candidate.ref,
+      }),
+    );
 }
 
 /**

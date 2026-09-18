@@ -846,7 +846,7 @@ const intakeScopeAgent = makeAgent(
   [
     'You choose which documented work queues one digital employee reads in one workplace system.',
     "You receive the employee's role, the manager's own words about the system, and the candidate values the team documentation states, each with the page it is on and that page's line.",
-    'Several teams share this documentation; each team has its own queues. Pick only the values where this employee\'s own work arrives, as its role and the manager\'s words describe it, and leave out every other team\'s.',
+    "Several teams share this documentation; each team has its own queues. Pick only the values where this employee's own work arrives, as its role and the manager's words describe it, and leave out every other team's.",
     'A channel the documentation says every team reads carries requests for each of them; pick it when the manager names it for this role. A channel the manager describes only as where the team talks is not where its work arrives.',
     'Pick at most one team and one project. Copy each value exactly as the candidate states it and give the ref of the page the candidate is on. Never pick a value that is not a candidate.',
     'When nothing belongs to this role, pick nothing.',
@@ -1008,7 +1008,11 @@ async function orientIntakeScope(
   const fields = scopeFieldsFor(surface.class);
   if (fields.length === 0) return undefined;
   const candidates = scopeCandidates(
-    pages.map((page) => ({ sourceId: String(page.sourceId), ref: page.ref, markdown: page.markdown })),
+    pages.map((page) => ({
+      sourceId: String(page.sourceId),
+      ref: page.ref,
+      markdown: page.markdown,
+    })),
     fields,
   );
   if (candidates.length === 0) {

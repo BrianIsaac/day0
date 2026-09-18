@@ -29,9 +29,9 @@ describe('which documented systems become cards', (): void => {
     const unnamed = { verdict: 'declared', discoveryEvidence: [documented] };
     expect(awaitsManagerProposal(unnamed, true)).toBe(true);
     expect(awaitsManagerProposal(unnamed, false)).toBe(false);
-    expect(awaitsManagerProposal({ ...unnamed, discoveryEvidence: [documented, named] }, true)).toBe(
-      false,
-    );
+    expect(
+      awaitsManagerProposal({ ...unnamed, discoveryEvidence: [documented, named] }, true),
+    ).toBe(false);
     expect(awaitsManagerProposal({ ...unnamed, verdict: 'proposed' }, true)).toBe(false);
     expect(awaitsManagerProposal({ ...unnamed, verdict: 'connected' }, true)).toBe(false);
   });

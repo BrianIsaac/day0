@@ -95,9 +95,24 @@ describe('intake scope candidates', (): void => {
       ['team', 'project'],
     );
     expect(candidates).toEqual([
-      { field: 'team', value: 'REVOPS', ref: 'linear.md', quote: '- Team: `RevOps`, identifier `REVOPS`.' },
-      { field: 'team', value: 'RevOps', ref: 'linear.md', quote: '- Team: `RevOps`, identifier `REVOPS`.' },
-      { field: 'project', value: 'Q3 close', ref: 'linear.md', quote: 'Work in project `Q3 close` only.' },
+      {
+        field: 'team',
+        value: 'REVOPS',
+        ref: 'linear.md',
+        quote: '- Team: `RevOps`, identifier `REVOPS`.',
+      },
+      {
+        field: 'team',
+        value: 'RevOps',
+        ref: 'linear.md',
+        quote: '- Team: `RevOps`, identifier `REVOPS`.',
+      },
+      {
+        field: 'project',
+        value: 'Q3 close',
+        ref: 'linear.md',
+        quote: 'Work in project `Q3 close` only.',
+      },
     ]);
   });
 });
@@ -175,7 +190,10 @@ describe('grounding a pick on its page line', (): void => {
     for (const order of ['revops-first', 'finance-first'] as const) {
       const candidates = scopeCandidates(pages(order), ['team', 'project']);
       const finance = groundScopePicks(
-        sentenceScopePicks(['Linear, team FIN, project September close, for the close tickets.'], candidates),
+        sentenceScopePicks(
+          ['Linear, team FIN, project September close, for the close tickets.'],
+          candidates,
+        ),
         candidates,
       );
       const revops = groundScopePicks(
@@ -241,7 +259,9 @@ describe('the scope an approved card reads', (): void => {
     expect(presentIntakeScope('Slack', 'chat', finance).line).toBe(
       'Reads: Slack #finance-close, #ops-requests',
     );
-    const empty = presentIntakeScope('Slack', 'chat', { notes: ['Dropped #revops: x does not state it.'] });
+    const empty = presentIntakeScope('Slack', 'chat', {
+      notes: ['Dropped #revops: x does not state it.'],
+    });
     expect(empty).toEqual({
       line: emptyScopeReason('Slack', 'chat'),
       empty: true,
@@ -257,11 +277,22 @@ describe('the scope an approved card reads', (): void => {
     const edited = pages('revops-first').map(
       (page): ScopePage =>
         page.ref === 'finance/handbook.md'
-          ? { ...page, markdown: page.markdown.replace('- Project: `September close`', '- Project: `October close`') }
+          ? {
+              ...page,
+              markdown: page.markdown.replace(
+                '- Project: `September close`',
+                '- Project: `October close`',
+              ),
+            }
           : page,
     );
     expect(scopeDrift(finance, pages('revops-first'))).toEqual([]);
     expect(scopeDrift(finance, edited)).toEqual([finance.project]);
-    expect(scopeDrift(finance, edited.filter((page): boolean => page.ref !== 'finance/handbook.md'))).toHaveLength(4);
+    expect(
+      scopeDrift(
+        finance,
+        edited.filter((page): boolean => page.ref !== 'finance/handbook.md'),
+      ),
+    ).toHaveLength(4);
   });
 });

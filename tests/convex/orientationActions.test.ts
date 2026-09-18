@@ -1317,7 +1317,8 @@ describe('orientation run', (): void => {
       orientSurface(ctx, surfaceId, {
         draft,
         registry: async (): Promise<undefined> => undefined,
-        pickScope: async (question): Promise<IntakeScopeDraft> => await pickIntakeScope(question, 25),
+        pickScope: async (question): Promise<IntakeScopeDraft> =>
+          await pickIntakeScope(question, 25),
       }),
     ).resolves.toEqual({ outcome: 'proposed', surfaceId });
     const linear = (await surfacesBySlug(harness, agentId)).linear;
@@ -1656,13 +1657,37 @@ function companySystems(source: 'folder' | 'notion'): DocumentedSystemSeed[] {
     onboarding.find((line): boolean => line.startsWith(`| ${system} |`)) ?? system;
   if (source === 'notion') {
     return [
-      { slug: 'linear', displayName: 'Linear', class: 'kanban', ref: 'notion-linear-automation', quote: '# Linear automation' },
-      { slug: 'slack', displayName: 'Slack', class: 'chat', ref: 'notion-slack-automation-policy', quote: '# Slack automation policy' },
+      {
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        ref: 'notion-linear-automation',
+        quote: '# Linear automation',
+      },
+      {
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        ref: 'notion-slack-automation-policy',
+        quote: '# Slack automation policy',
+      },
     ];
   }
   return [
-    { slug: 'linear', displayName: 'Linear', class: 'kanban', ref: 'onboarding.md', quote: row('Linear') },
-    { slug: 'slack', displayName: 'Slack', class: 'chat', ref: 'onboarding.md', quote: row('Slack') },
+    {
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      ref: 'onboarding.md',
+      quote: row('Linear'),
+    },
+    {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      ref: 'onboarding.md',
+      quote: row('Slack'),
+    },
     {
       slug: 'looker-pipeline-tile',
       displayName: 'Looker pipeline tile',
@@ -1670,8 +1695,20 @@ function companySystems(source: 'folder' | 'notion'): DocumentedSystemSeed[] {
       ref: 'systems/looker-pipeline-tile.md',
       quote: '# Looker pipeline tile',
     },
-    { slug: 'northstar-crm', displayName: 'Northstar CRM', class: 'crm', ref: 'systems/northstar-crm.md', quote: '# Northstar CRM' },
-    { slug: 'netledger', displayName: 'NetLedger', class: 'other', ref: 'systems/netledger.md', quote: '# NetLedger' },
+    {
+      slug: 'northstar-crm',
+      displayName: 'Northstar CRM',
+      class: 'crm',
+      ref: 'systems/northstar-crm.md',
+      quote: '# Northstar CRM',
+    },
+    {
+      slug: 'netledger',
+      displayName: 'NetLedger',
+      class: 'other',
+      ref: 'systems/netledger.md',
+      quote: '# NetLedger',
+    },
   ];
 }
 
@@ -1692,73 +1729,77 @@ function companySystems(source: 'folder' | 'notion'): DocumentedSystemSeed[] {
  */
 async function seedCompany(
   harness: TestConvex<typeof schema>,
-  charters: Partial<Record<CompanyRole, { proposedFunction: string; namedSystems: readonly CharterSystemSeed[] }>>,
+  charters: Partial<
+    Record<CompanyRole, { proposedFunction: string; namedSystems: readonly CharterSystemSeed[] }>
+  >,
 ): Promise<Partial<Record<CompanyRole, Id<'agents'>>>> {
-  const agents = await harness.run(async (ctx): Promise<Partial<Record<CompanyRole, Id<'agents'>>>> => {
-    const sources = {
-      folder: await ctx.db.insert('docSources', {
-        userId: 'owner',
-        label: 'Kestrel Supply folder',
-        kind: 'folder',
-        locator: '.',
-        status: 'synced',
-        createdAt: 1,
-        updatedAt: 1,
-      }),
-      notion: await ctx.db.insert('docSources', {
-        userId: 'owner',
-        label: 'Kestrel Supply handbook',
-        kind: 'mcp',
-        serverKind: 'notion',
-        locator: 'http://docs-notion-mcp:3000/mcp',
-        status: 'synced',
-        createdAt: 1,
-        updatedAt: 1,
-      }),
-    };
-    for (const page of companyPages()) {
-      await ctx.db.insert('docPages', {
-        sourceId: sources[page.source],
-        ref: page.ref,
-        title: page.title,
-        markdown: page.markdown,
-        updatedAt: 1,
-      });
-    }
-    const agents: Partial<Record<CompanyRole, Id<'agents'>>> = {};
-    for (const [role, charter] of Object.entries(charters) as Array<
-      [CompanyRole, { proposedFunction: string; namedSystems: readonly CharterSystemSeed[] }]
-    >) {
-      // Discovery schedules orientation only for an active employee; the
-      // charter's approval is what makes it active, so it is seeded after.
-      const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@kestrel.example',
-        name: role,
-        userId: 'owner',
-        state: 'charter-pending',
-        createdAt: 1,
-      });
-      for (const source of ['folder', 'notion'] as const) {
-        await reconcileDocumentedSystems(ctx, {
-          agentId,
-          sourceId: sources[source],
-          systems: companySystems(source),
-          now: 2,
+  const agents = await harness.run(
+    async (ctx): Promise<Partial<Record<CompanyRole, Id<'agents'>>>> => {
+      const sources = {
+        folder: await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Kestrel Supply folder',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+        notion: await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Kestrel Supply handbook',
+          kind: 'mcp',
+          serverKind: 'notion',
+          locator: 'http://docs-notion-mcp:3000/mcp',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+      };
+      for (const page of companyPages()) {
+        await ctx.db.insert('docPages', {
+          sourceId: sources[page.source],
+          ref: page.ref,
+          title: page.title,
+          markdown: page.markdown,
+          updatedAt: 1,
         });
       }
-      await ctx.db.insert('charters', {
-        agentId,
-        version: '0.0',
-        body: { version: '0.0', ...charter },
-        approved: true,
-        approvedAt: 3,
-        createdAt: 3,
-      });
-      await ctx.db.patch(agentId, { state: 'active' });
-      agents[role] = agentId;
-    }
-    return agents;
-  });
+      const agents: Partial<Record<CompanyRole, Id<'agents'>>> = {};
+      for (const [role, charter] of Object.entries(charters) as Array<
+        [CompanyRole, { proposedFunction: string; namedSystems: readonly CharterSystemSeed[] }]
+      >) {
+        // Discovery schedules orientation only for an active employee; the
+        // charter's approval is what makes it active, so it is seeded after.
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'boss@kestrel.example',
+          name: role,
+          userId: 'owner',
+          state: 'charter-pending',
+          createdAt: 1,
+        });
+        for (const source of ['folder', 'notion'] as const) {
+          await reconcileDocumentedSystems(ctx, {
+            agentId,
+            sourceId: sources[source],
+            systems: companySystems(source),
+            now: 2,
+          });
+        }
+        await ctx.db.insert('charters', {
+          agentId,
+          version: '0.0',
+          body: { version: '0.0', ...charter },
+          approved: true,
+          approvedAt: 3,
+          createdAt: 3,
+        });
+        await ctx.db.patch(agentId, { state: 'active' });
+        agents[role] = agentId;
+      }
+      return agents;
+    },
+  );
   for (const [role, agentId] of Object.entries(agents) as Array<[CompanyRole, Id<'agents'>]>) {
     await harness.mutation(internal.surfaces.seedFromCharter, {
       agentId,
@@ -1874,7 +1915,9 @@ describe('each employee reads its own role', (): void => {
       netledger: 'declared',
     });
     // No model call is spent on a system the employee's charter does not name.
-    expect(model.prompts.filter((prompt): boolean => /^System: Looker pipeline tile$/m.test(prompt))).toHaveLength(1);
+    expect(
+      model.prompts.filter((prompt): boolean => /^System: Looker pipeline tile$/m.test(prompt)),
+    ).toHaveLength(1);
     const oriented = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -1915,7 +1958,7 @@ describe('each employee reads its own role', (): void => {
     });
   });
 
-  it("orients one system the charter does not name when the manager proposes it", async (): Promise<void> => {
+  it('orients one system the charter does not name when the manager proposes it', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = companyPath;
     const harness = convexTest(schema, orientationModules());
@@ -1931,9 +1974,9 @@ describe('each employee reads its own role', (): void => {
         .withIdentity({ subject: 'other-owner' })
         .mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id }),
     ).rejects.toThrow();
-    await expect(
-      owner.mutation(requestProposal, { surfaceId: before.linear._id }),
-    ).rejects.toThrow('Only a declared system can be proposed; this one is proposed.');
+    await expect(owner.mutation(requestProposal, { surfaceId: before.linear._id })).rejects.toThrow(
+      'Only a declared system can be proposed; this one is proposed.',
+    );
     // A job already waiting on the surface would skip it; the request replaces it.
     await harness.mutation(internal.surfaces.scheduleOrientation, {
       surfaceId: before['looker-pipeline-tile']._id,
@@ -1941,9 +1984,9 @@ describe('each employee reads its own role', (): void => {
     const waiting = (await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']
       .orientationJobId!;
     await owner.mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id });
-    expect(
-      (await harness.run(async (ctx) => await ctx.db.system.get(waiting)))?.state.kind,
-    ).toBe('canceled');
+    expect((await harness.run(async (ctx) => await ctx.db.system.get(waiting)))?.state.kind).toBe(
+      'canceled',
+    );
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     const after = await surfacesBySlug(harness, agents.finance!);
@@ -2001,7 +2044,12 @@ describe('each employee reads its own role', (): void => {
     const logistics = await surfacesBySlug(harness, agents.logistics!);
 
     expect(finance.linear.intakeScope).toEqual({
-      team: { value: 'FIN', sourceId: expect.any(String), ref: 'finance/handbook.md', quote: '- Team: `FIN`' },
+      team: {
+        value: 'FIN',
+        sourceId: expect.any(String),
+        ref: 'finance/handbook.md',
+        quote: '- Team: `FIN`',
+      },
       project: {
         value: 'September close',
         sourceId: expect.any(String),
@@ -2010,16 +2058,31 @@ describe('each employee reads its own role', (): void => {
       },
       notes: ['Dropped project `Q4 plan`: finance/handbook.md does not state it.'],
     });
-    expect(approvedLinearScope(revops.linear.intakeScope!)).toEqual({ team: 'REVOPS', project: 'Q3 close' });
+    expect(approvedLinearScope(revops.linear.intakeScope!)).toEqual({
+      team: 'REVOPS',
+      project: 'Q3 close',
+    });
     expect(approvedLinearScope(logistics.linear.intakeScope!)).toEqual({
       team: 'LOG',
       project: 'Shipment exceptions',
     });
-    expect(approvedChannelNames(revops.slack.intakeScope!)).toEqual(['revops-asks', 'ops-requests']);
-    expect(approvedChannelNames(finance.slack.intakeScope!)).toEqual(['finance-close', 'ops-requests']);
-    expect(approvedChannelNames(logistics.slack.intakeScope!)).toEqual(['logistics-desk', 'ops-requests']);
+    expect(approvedChannelNames(revops.slack.intakeScope!)).toEqual([
+      'revops-asks',
+      'ops-requests',
+    ]);
+    expect(approvedChannelNames(finance.slack.intakeScope!)).toEqual([
+      'finance-close',
+      'ops-requests',
+    ]);
+    expect(approvedChannelNames(logistics.slack.intakeScope!)).toEqual([
+      'logistics-desk',
+      'ops-requests',
+    ]);
     for (const value of finance.slack.intakeScope!.channels!) {
-      expect(value).toMatchObject({ ref: 'finance/handbook.md', quote: '- Channels: #finance-close, #ops-requests' });
+      expect(value).toMatchObject({
+        ref: 'finance/handbook.md',
+        quote: '- Channels: #finance-close, #ops-requests',
+      });
     }
     await harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.reject, {
       surfaceId: finance.slack._id,
@@ -2070,9 +2133,13 @@ describe('each employee reads its own role', (): void => {
     model.pathFor = (): DraftPath => 'mcp';
     model.scopeFor = companyScopeModel;
     const harness = convexTest(schema, orientationModules());
-    const { agentId } = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK.replace(/team `REVOPS`, project `Q3 close`/, 'the team queue') }, [
-      { name: 'Linear', class: 'kanban' },
-    ]);
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'linear.md': LINEAR_RUNBOOK.replace(/team `REVOPS`, project `Q3 close`/, 'the team queue'),
+      },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
     await orientDeclared(harness, agentId);
     const linear = (await surfacesBySlug(harness, agentId)).linear;
     expect(linear.verdict).toBe('proposed');
