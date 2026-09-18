@@ -538,11 +538,12 @@ export default defineSchema({
      */
     scopeWaivedAt: v.optional(v.number()),
     /**
-     * Real mode: a scope judgement that kept this row after the model read it
-     * as out of scope, and the approved charter it was made against.
-     * `overruled` is every skip reading set aside, in order: the item's source
-     * is one the willDo names (`namedBy`) and the skip cited nothing that
-     * excludes it.
+     * Real mode: the charter judgement that placed this row in scope, and the
+     * approved charter it was made against. While that charter is the latest,
+     * a re-evaluation holds the judgement and asks no model; a skip a policy
+     * change sends back loses it. `overruled` is every skip reading set aside
+     * on the way, in order: the item's source is one the willDo names
+     * (`namedBy`) and the skip cited nothing that excludes it.
      */
     scopeAdmission: v.optional(
       v.object({

@@ -477,11 +477,15 @@ const scopeAdmissionValidator = v.object({
 });
 
 /**
- * Keep a scope judgement that set skip readings aside, on the row.
+ * Keep the charter judgement that placed a row in scope, on the row.
  *
- * Written by the evaluation step before its verdict, real mode only. The
- * readings go on the timeline as well, so a manager reading the card later
- * can see the model said otherwise and why that did not stand.
+ * Written by the evaluation step before its verdict, real mode only. A later
+ * evaluation under the same charter holds it instead of asking again, so a
+ * re-evaluation a skill registration caused cannot change the row's mind
+ * about scope; `reevaluatePendingInTransaction` clears it from a skip a
+ * policy change sends back. The skip readings the judgement set aside go on
+ * the timeline as well, so a manager reading the card later can see the
+ * model said otherwise and why that did not stand.
  */
 export const recordScopeAdmission = internalMutation({
   args: {
@@ -629,6 +633,10 @@ export async function reevaluatePendingInTransaction(
         state: 'discovered',
         verdict: undefined,
         skipReason: undefined,
+        // A skip that returns is judged afresh, whatever the row was told
+        // before it; a deferral that returns waited on a connection, which
+        // the scope judgement never read, and keeps its in-scope verdict.
+        ...(row.state === 'skipped' ? { scopeAdmission: undefined } : {}),
         reevaluation: reevaluationStamp(row, args.trigger, args.key, now),
       });
       await ctx.db.insert('events', {

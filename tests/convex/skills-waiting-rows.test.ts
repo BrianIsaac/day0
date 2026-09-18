@@ -247,10 +247,10 @@ describe('a skill that registers while several items wait for it', (): void => {
     await drain(harness);
 
     // The supervised cap is one: the first item takes the slot and drafts its
-    // plan, the second is evaluated too and queues behind it.
-    expect(recorded.scopeCalls).toHaveLength(2);
-    expect(recorded.scopeCalls[0]).toContain('LOG-2');
-    expect(recorded.scopeCalls[1]).toContain('LOG-1');
+    // plan, the second is evaluated too and queues behind it. Neither is
+    // judged for scope again: both were in scope when they parked, and a
+    // skill registering changes nothing that judgement reads (finding L, 19 Sep).
+    expect(recorded.scopeCalls).toEqual([]);
     expect((await readItem(harness, first)).state).toBe('plan-pending');
     expect(await readItem(harness, second)).toMatchObject({
       state: 'discovered',
@@ -651,9 +651,14 @@ describe('an evaluation that straddles the registration', (): void => {
     release();
     await drain(harness);
 
-    expect((await readItem(harness, first)).state).toBe('plan-pending');
-    expect(await readItem(harness, second)).toMatchObject({
-      state: 'discovered',
+    // One of the two waiting rows holds the slot and the other queues behind
+    // it. Which one is the harness's to decide here: their re-evaluations hold
+    // their in-scope verdicts and ask no model (finding L, 19 Sep), so both
+    // run while the late row's verdict and proposal are still being written,
+    // and the order their claims land in is the order of that interleaving.
+    const waiting = [await readItem(harness, first), await readItem(harness, second)];
+    expect(waiting.map((row) => row.state).sort()).toEqual(['discovered', 'plan-pending']);
+    expect(waiting.find((row) => row.state === 'discovered')).toMatchObject({
       verdict: { decision: 'queue' },
     });
     const settled = await readItem(harness, late);

@@ -2,13 +2,13 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { internal } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
-import { K_REASON, mateoCharter, priyaCharter } from '../src/work/scope-run-fixtures-2026-09-19';
+import { K_REASON, L_REASON, mateoCharter, priyaCharter } from '../src/work/scope-run-fixtures-2026-09-19';
 
 /**
  * Findings K and L of the second full run (19 Sep 2026), on the rows.
@@ -54,6 +54,15 @@ vi.mock('../../src/lib/mastra', async (importOriginal) => {
 
 type Harness = TestConvex<typeof schema>;
 
+const inScope: Answer = {
+  inScope: true,
+  fit: true,
+  reason: 'the status note is the role\'s own ticket',
+  exclusion: { kind: 'none', quote: '' },
+};
+
+const AUTHORITY = 'Post the status note without asking until the manager decides otherwise.';
+
 function skip(reason: string, exclusion: Answer['exclusion'] = { kind: 'none', quote: '' }): Answer {
   return { inScope: false, fit: true, reason, exclusion };
 }
@@ -61,8 +70,28 @@ function skip(reason: string, exclusion: Answer['exclusion'] = { kind: 'none', q
 afterEach((): void => {
   recorded.prompts.length = 0;
   recorded.answers.length = 0;
+  vi.useRealTimers();
   restoreSurfaceMode();
 });
+
+const OWNER = { subject: 'owner' };
+
+/** Approve, author and register the skill the row's needs-skill verdict proposed. */
+async function registerProposedSkill(harness: Harness, workItemId: Id<'workItems'>): Promise<void> {
+  const skillId = (await row(harness, workItemId)).proposedSkillId;
+  if (!skillId) throw new Error('the evaluation proposed no skill');
+  await harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId });
+  const claimed = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+  if (!claimed.claimed) throw new Error(`claim refused: ${claimed.reason}`);
+  await expect(
+    harness.mutation(internal.skills.completeRegistration, {
+      skillId,
+      runId: claimed.runId,
+      body: 'Post the status note as a comment, then close the ticket.',
+      verificationLog: 'smoke test passed',
+    }),
+  ).resolves.toEqual({ registered: true });
+}
 
 interface Seeded {
   agentId: Id<'agents'>;
@@ -202,6 +231,124 @@ describe('finding K on the rows: REVOPS-27', (): void => {
     await expect(evaluate(harness, workItemId)).resolves.toBe('skip');
 
     expect((await row(harness, workItemId)).scopeAdmission).toBeUndefined();
+    expect(await eventsOf(harness, 'work.scope-skip-overruled')).toEqual([]);
+  });
+});
+
+describe('finding L on the rows: FIN-1', (): void => {
+  /** FIN-1 as the run had it at 05:35: judged in scope, parked for its skill. */
+  async function parkedForItsSkill(harness: Harness): Promise<Seeded> {
+    const seeded = await seed(harness, 'mateo');
+    recorded.answers.push(inScope);
+    await expect(evaluate(harness, seeded.workItemId)).resolves.toBe('needs-skill');
+    expect((await row(harness, seeded.workItemId)).scopeAdmission).toEqual({
+      charterId: seeded.charterId,
+      at: expect.any(Number),
+      basis: 'charter-judgement',
+    });
+    return seeded;
+  }
+
+  it('keeps the in-scope verdict when its skill registers: no second judgement, the skill match decides', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await parkedForItsSkill(harness);
+
+    await registerProposedSkill(harness, workItemId);
+    expect(await row(harness, workItemId)).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'pending-reevaluation', reason: 'skill registered, ready to retry' },
+    });
+    // The reading the run got on this re-evaluation, were the model asked again.
+    recorded.answers.push(skip(L_REASON, { kind: 'will-not-do', quote: AUTHORITY }));
+
+    await expect(evaluate(harness, workItemId)).resolves.toBe('claim');
+
+    expect(recorded.prompts).toHaveLength(1);
+    expect(recorded.answers).toHaveLength(1);
+    expect((await row(harness, workItemId)).state).toBe('claimed');
+  });
+
+  it('judges the scope again once the charter is amended', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await parkedForItsSkill(harness);
+    await registerProposedSkill(harness, workItemId);
+    const amended = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('charters', {
+          agentId,
+          version: '0.1',
+          approved: true,
+          approvedAt: 2,
+          createdAt: 2,
+          body: {
+            ...mateoCharter,
+            proposedBoundaries: {
+              ...mateoCharter.proposedBoundaries,
+              willNotDo: [...mateoCharter.proposedBoundaries.willNotDo, 'Post the close status note.'],
+            },
+          },
+        }),
+    );
+    recorded.answers.push(
+      skip('The amended charter takes the status note away.', {
+        kind: 'will-not-do',
+        quote: 'Post the close status note.',
+      }),
+    );
+
+    await expect(evaluate(harness, workItemId)).resolves.toBe('skip');
+
+    expect(recorded.prompts).toHaveLength(2);
+    expect(recorded.prompts[1]).toContain('Post the close status note.');
+    expect(amended).toBeDefined();
+  });
+
+  it('judges the scope again when a policy change sends the row back', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await parkedForItsSkill(harness);
+    // Skipped since, for a reason the documented systems decide.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'skipped',
+        skipReason: 'out-of-scope: no charter or current documented-system overlap',
+        verdict: { decision: 'skip', reason: 'out-of-scope: no charter or current documented-system overlap' },
+      });
+    });
+
+    await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'documentation',
+      key: 'documentation:source:fingerprint-2',
+    });
+
+    const back = await row(harness, workItemId);
+    expect(back.state).toBe('discovered');
+    expect(back.scopeAdmission).toBeUndefined();
+    recorded.answers.push(inScope);
+    await evaluate(harness, workItemId);
+    expect(recorded.prompts).toHaveLength(2);
+  });
+
+  it('holds nothing in mock mode: no admission is written and none is read', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { charterId, workItemId } = await seed(harness, 'mateo');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { scopeAdmission: { charterId, at: 1, basis: 'charter-judgement' } });
+    });
+
+    const decision = (
+      await harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId })
+    ).decision;
+
+    expect(decision).toBe('needs-skill');
+    expect(recorded.prompts).toEqual([]);
     expect(await eventsOf(harness, 'work.scope-skip-overruled')).toEqual([]);
   });
 });

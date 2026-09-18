@@ -105,6 +105,13 @@ export interface EvalContext extends AgentContext {
    * rule is left out and the plan gate still stands.
    */
   scopeWaived?: boolean;
+  /**
+   * Real mode: the row carries an in-scope judgement made against the charter
+   * that is still approved, so this evaluation holds it and asks no model:
+   * a skill registering, a slot freeing or a connection landing changes
+   * nothing the scope judgement reads.
+   */
+  scopeHeld?: boolean;
 }
 
 export { QUALITY_FIT_SKIP_PREFIX } from './types';
