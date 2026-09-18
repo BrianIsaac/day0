@@ -341,8 +341,7 @@ describe('a note on item one changes the plan of item two', (): void => {
     expect(correction.retiredAt).toBeUndefined();
   });
 
-  // Red until the executor carries the corrections its plan applied.
-  it.fails('drafts item two with the note, stores that it applied it, and carries it to the executor', async (): Promise<void> => {
+  it('drafts item two with the note, stores that it applied it, and carries it to the executor', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
     const { correction } = await ticketOneRetriedWithNote(harness, agentId);
@@ -377,6 +376,9 @@ describe('a note on item one changes the plan of item two', (): void => {
     const [executorPrompt] = promptsOf((name) => name.includes('-log-2-') && name.endsWith('-initial'));
     expect(executorPrompt).toContain(EXECUTOR_HEADING);
     expect(executorPrompt).toContain(NOTE);
+    expect((await eventsOf(harness, 'work.corrections-redaction-limited')).map((event) => event.payload)).toEqual([
+      { workItemId: ticketTwo, runId: expect.any(String), correctionIds: [correction._id] },
+    ]);
     expect((await readItem(harness, ticketTwo)).state).toBe('completed');
   });
 
@@ -604,6 +606,15 @@ describe('retrying a cancelled plan', (): void => {
     expect(plannerPrompt).toContain(CANCEL_REASON);
     const [kept] = await correctionsOf(harness, agentId);
     expect((await readItem(harness, workItemId)).plan).toMatchObject({ appliedCorrections: [kept?._id] });
+
+    // The new plan goes back to the manager; once approved, its run reads the
+    // reason once, as the item's own feedback, not again as a correction.
+    await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
+    await drain(harness);
+    const [executorPrompt] = promptsOf((name) => name.includes('-log-5-') && name.endsWith('-initial'));
+    expect(executorPrompt).toContain('--- Manager feedback on the previous attempt ---');
+    expect(executorPrompt.split(CANCEL_REASON)).toHaveLength(2);
+    expect(executorPrompt).not.toContain(EXECUTOR_HEADING);
   });
 });
 

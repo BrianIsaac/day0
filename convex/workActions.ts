@@ -634,6 +634,7 @@ async function executeApprovedPlanHandler(
   }
   return await holdDay0Actions(ctx, {
     workItemId: args.workItemId,
+    item,
     agentId,
     runId: claim.runId,
     skill: pickedSkill,
@@ -690,6 +691,8 @@ async function holdDay0Actions(
   ctx: ActionCtx,
   args: {
     workItemId: Id<'workItems'>;
+    /** The work item as the execution claim read it. */
+    item: Doc<'workItems'>;
     agentId: Id<'agents'>;
     runId: Id<'events'>;
     skill: SimpleSkillRow;
@@ -717,6 +720,12 @@ async function holdDay0Actions(
       ? await ctx.runQuery(internal.mock.snapshotInternal, { agentId: args.agentId })
       : await readSurfaceSnapshot(ctx, args.agentId, 'mock', []);
     const surfaces = SURFACE_MODE === 'real' ? await loadSurfaces(ctx, args.agentId) : [];
+    const appliedCorrections = await executorCorrections(ctx, {
+      agent,
+      item: args.item,
+      plan: args.plan,
+      runId: args.runId,
+    });
     const output = await runSkill({
       skill: {
         name: args.skill.name,
@@ -733,6 +742,7 @@ async function holdDay0Actions(
       managerFeedback: args.managerFeedback,
       managerAnswers: args.managerAnswers,
       landedWrites: args.landedWrites,
+      appliedCorrections,
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
@@ -1252,6 +1262,13 @@ export const authorDependentActions = internalAction({
       knownValues = await knownValuesForAgent(ctx, agent);
       const plan = item.plan as ExecutionPlan;
       const feedback = liveManagerFeedback(item.managerFeedback);
+      const appliedCorrections = await executorCorrections(ctx, {
+        agent,
+        item,
+        plan,
+        runId: args.runId,
+        knownValues,
+      });
       const prerequisites = initial;
       const initialFailure = initial.resumedClosing ? undefined : initial.initialFailure;
       // Only a connected surface can be owed: an absent or ungranted one is
@@ -1293,6 +1310,7 @@ export const authorDependentActions = internalAction({
         autonomousActions: autonomousActionsOn(agent),
         managerFeedback: feedback,
         managerAnswers: managerAnswersOf(item),
+        appliedCorrections,
         initialOutput: initial,
         initialLedger: initial.applied,
         initialFailure: initial.initialFailure,
@@ -1896,6 +1914,58 @@ async function plannerCorrections(
   const selected = selectCorrections(rows, item);
   if (selected.length === 0) return { entries: [] };
   return await scrubbedCorrectionEntries(selected, { model: spanModelFromEnv(), known: knownValues });
+}
+
+/**
+ * The corrections an approved plan applied, as its executor reads them:
+ * the plan's own list, this employee's only, scrubbed at prompt assembly. A
+ * correction kept from this same item whose words are already on the run as
+ * its live manager feedback is not repeated. A scrub without the span model
+ * is recorded on the timeline.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: The agent, the work item, its approved plan, the run, and the
+ *     owner's stored values when the caller already resolved them.
+ *
+ * Returns:
+ *   The prompt entries; empty in mock mode or when the plan applied none.
+ */
+async function executorCorrections(
+  ctx: ActionCtx,
+  args: {
+    agent: Doc<'agents'>;
+    item: Doc<'workItems'>;
+    plan: ExecutionPlan;
+    runId: Id<'events'>;
+    knownValues?: readonly string[];
+  },
+): Promise<PlannerCorrection[]> {
+  const ids = SURFACE_MODE === 'real' ? (args.plan.appliedCorrections ?? []) : [];
+  if (ids.length === 0) return [];
+  const rows: Doc<'corrections'>[] = await ctx.runQuery(internal.corrections.forPlan, {
+    agentId: args.item.agentId,
+    ids,
+  });
+  const live = liveManagerFeedback(args.item.managerFeedback);
+  const carried = rows.filter((row) => !(row.workItemId === args.item._id && row.text === live));
+  if (carried.length === 0) return [];
+  const scrubbed = await scrubbedCorrectionEntries(carried, {
+    model: spanModelFromEnv(),
+    known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
+  });
+  if (scrubbed.redaction) {
+    await ctx.runMutation(internal.events.log, {
+      agentId: args.item.agentId,
+      type: 'work.corrections-redaction-limited',
+      payload: {
+        workItemId: args.item._id,
+        runId: args.runId,
+        correctionIds: carried.map((row) => row._id),
+      },
+    });
+  }
+  return scrubbed.entries;
 }
 
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {

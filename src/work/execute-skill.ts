@@ -38,6 +38,7 @@ import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
 import { closingPhaseOwed } from './obligations';
 import { replyTargetLine } from './reply-target';
+import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding } from './evidence-claims';
 import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
@@ -906,6 +907,12 @@ export interface RunSkillArgs {
   managerAnswers?: readonly ManagerAnswer[];
   /** Writes earlier runs of this item landed; the prompts list them and a same-target comment is reused, not sent. */
   landedWrites?: readonly LandedWrite[];
+  /**
+   * The manager's corrections from earlier work that the approved plan
+   * applied, scrubbed; real mode only. Directions for how the work is done,
+   * never evidence of anything on this item.
+   */
+  appliedCorrections?: readonly PlannerCorrection[];
 }
 
 /**
@@ -2376,6 +2383,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
+    ...(mode === 'real' ? executorCorrectionLines(args.appliedCorrections ?? []) : []),
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
     '',
@@ -3017,6 +3025,7 @@ export async function runDependentSkill(
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
     `Expected output type: ${plan.expectedOutputType}`,
     ...managerFeedbackLines(args.managerFeedback),
+    ...(mode === 'real' ? executorCorrectionLines(args.appliedCorrections ?? []) : []),
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
     '',
