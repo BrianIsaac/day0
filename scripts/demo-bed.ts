@@ -47,8 +47,26 @@ export const PROTECTED_VOLUMES: readonly string[] = PROTECTED_PROJECTS.flatMap(
   (project: string): string[] => [`${project}_convex_data`, `${project}_sandbox_socket`],
 );
 
+/**
+ * Projects whose volumes are only ever copied from (`--warm-from`). Not a real
+ * run, but nothing here starts, restores into, resets or removes them either;
+ * the list matches `READ_ONLY_PROJECTS` in `scripts/setup.ts`.
+ */
+export const READ_ONLY_PROJECTS: readonly string[] = ['day0-redactor-warm'];
+
 /** The completed run the demo restores by default. */
 export const DEFAULT_SNAPSHOT_SOURCE = 'day0-demo-7c65e7_convex_data';
+
+/** Where the redactor answers, as the deployment must address it. */
+export const REDACTOR_URL = 'http://redactor:8000';
+
+/** What `pnpm eval:revocation` writes into `--out`, in `sha256sum` order. */
+export const RUNG_OUTPUT_FILES: readonly string[] = [
+  'commands.txt',
+  'trace-agent.json',
+  'trials.json',
+  'trials.md',
+];
 
 /**
  * What a demo bed runs: day0 itself, the sandbox that verifies a skill, the
@@ -165,6 +183,8 @@ export interface DemoBedOptions {
   probe: boolean;
   /** `up`: skip the checklist at the end. */
   preflight: boolean;
+  /** `up`: the project whose redactor volumes are cloned, read-only, into this one's. */
+  warmFrom?: string;
   /** `preflight`: the queued video file, when `.env.local` does not name one. */
   video?: string;
   /** `snapshot`: the volume to read. */
@@ -522,6 +542,8 @@ export interface ServiceRow {
   service: string;
   state: string;
   health: 'healthy' | 'unhealthy' | 'starting' | 'none';
+  /** `docker ps`'s published ports column, empty when none are published. */
+  ports: string;
 }
 
 /**
@@ -547,7 +569,7 @@ export function parseDockerPs(stdout: string): ServiceRow[] {
           : status.includes('(health: starting)')
             ? 'starting'
             : 'none';
-      return { service, state, health };
+      return { service, state, health, ports: '' };
     });
 }
 
@@ -694,6 +716,10 @@ export interface TierInputs {
   slackDoubleWired: boolean;
   /** A rung has already run on this volume, so its trial ids are spent. */
   rungAlreadyRun: boolean;
+  /** The redactor container reports healthy; real-mode documentation sync fails closed without it. */
+  redactorHealthy: boolean;
+  /** `DAY0_REDACTOR_URL` names the redactor in the file and on the deployment. */
+  redactorWired: boolean;
   /**
    * What the *deployment* dials for a model, which is not always what the host
    * dials: the rung's onboarding runs inside the backend container.
@@ -786,6 +812,82 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
     };
   }
   return [video, rung, warm];
+}
+
+const NOT_BUILT = 'phase 11: not built yet';
+
+export function assertBedProject(name: string): void {
+  void name;
+  throw new Error(NOT_BUILT);
+}
+
+export function projectVolumeNames(project: string): string[] {
+  void project;
+  throw new Error(NOT_BUILT);
+}
+
+export function snapshotRefusal(volume: string, runningHolders: readonly string[]): string | undefined {
+  void volume;
+  void runningHolders;
+  throw new Error(NOT_BUILT);
+}
+
+export interface WarmRedactorInput {
+  project: string;
+  warmFrom?: string;
+  volumes: readonly string[];
+  image: string;
+}
+
+export interface WarmRedactorPlan {
+  clone: Array<{ volume: string; create: string[]; copy: string[] }>;
+  sourceVenv: string;
+  note: string;
+}
+
+export function warmRedactorPlan(input: WarmRedactorInput): WarmRedactorPlan {
+  void input;
+  throw new Error(NOT_BUILT);
+}
+
+export function redactorVenvRefusal(
+  device: 'cpu' | 'cuda' | 'none' | 'unknown',
+  venv: string,
+): string | undefined {
+  void device;
+  void venv;
+  throw new Error(NOT_BUILT);
+}
+
+export function publishedHostPort(ports: string, containerPort: number): number | undefined {
+  void ports;
+  void containerPort;
+  throw new Error(NOT_BUILT);
+}
+
+export interface RungReadiness {
+  project: string;
+  services: readonly ServiceRow[];
+  values: Readonly<Record<string, string>>;
+  ports: BedPorts;
+}
+
+export function offlineRungRefusal(input: RungReadiness): string | undefined {
+  void input;
+  throw new Error(NOT_BUILT);
+}
+
+export function rungOutputRefusal(out: string, exists: boolean): string | undefined {
+  void out;
+  void exists;
+  throw new Error(NOT_BUILT);
+}
+
+export function sha256SumsText(
+  digests: ReadonlyArray<{ name: string; digest: string }>,
+): string {
+  void digests;
+  throw new Error(NOT_BUILT);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1632,6 +1734,8 @@ async function preflight(options: DemoBedOptions): Promise<number> {
     offlineRungReady: rungReady,
     slackDoubleWired: !!slackDouble,
     rungAlreadyRun: spent,
+    redactorHealthy: false,
+    redactorWired: false,
     rungModelRoute: deployment.OPENAI_BASE_URL ?? '',
     deploymentModelSettings: deployment,
     backendHealthy: !!version,
