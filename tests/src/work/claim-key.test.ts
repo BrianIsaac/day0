@@ -27,26 +27,26 @@ const ISSUE = '6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f';
 const ASK = 'C0OPSREQ:1789000000.000100';
 
 describe('providerItemKey', (): void => {
-  it.fails('keys a Linear issue by its provider id', (): void => {
+  it('keys a Linear issue by its provider id', (): void => {
     expect(providerItemKey(linear, { sourceSystem: 'linear', externalId: ISSUE }, 'real')).toBe(
       `linear:${ISSUE}`,
     );
   });
 
-  it.fails('gives one Linear issue one key whatever the surface is called', (): void => {
+  it('gives one Linear issue one key whatever the surface is called', (): void => {
     const finance = { ...linear, slug: 'linear-finance' };
     const key = providerItemKey(linear, { sourceSystem: 'linear', externalId: ISSUE }, 'real');
     expect(key).toBeDefined();
     expect(providerItemKey(finance, { sourceSystem: 'linear-finance', externalId: ISSUE }, 'real')).toBe(key);
   });
 
-  it.fails('keys a Slack message by its workspace, channel and timestamp', (): void => {
+  it('keys a Slack message by its workspace, channel and timestamp', (): void => {
     expect(providerItemKey(slack('T0COMPANY'), { sourceSystem: 'slack', externalId: ASK }, 'real')).toBe(
       `slack:T0COMPANY:${ASK}`,
     );
   });
 
-  it.fails('never lets two Slack workspaces collide on one channel and timestamp', (): void => {
+  it('never lets two Slack workspaces collide on one channel and timestamp', (): void => {
     const first = providerItemKey(slack('T0COMPANY'), { sourceSystem: 'slack', externalId: ASK }, 'real');
     const second = providerItemKey(slack('T0PARTNER'), { sourceSystem: 'slack', externalId: ASK }, 'real');
     expect(first).toBeDefined();
@@ -54,7 +54,7 @@ describe('providerItemKey', (): void => {
     expect(first).not.toBe(second);
   });
 
-  it.fails('gives one Slack message one key on two surfaces of the same workspace', (): void => {
+  it('gives one Slack message one key on two surfaces of the same workspace', (): void => {
     const key = providerItemKey(slack('T0COMPANY'), { sourceSystem: 'slack', externalId: ASK }, 'real');
     expect(key).toBeDefined();
     expect(
@@ -62,7 +62,7 @@ describe('providerItemKey', (): void => {
     ).toBe(key);
   });
 
-  it.fails('keys any other surface by its endpoint origin and the external id', (): void => {
+  it('keys any other surface by its endpoint origin and the external id', (): void => {
     expect(providerItemKey(jira, { sourceSystem: 'jira', externalId: 'OPS-12' }, 'real')).toBe(
       'https://acme.atlassian.net|OPS-12',
     );
@@ -72,7 +72,7 @@ describe('providerItemKey', (): void => {
     );
   });
 
-  it.fails('falls back to the slug when the surface has no endpoint or is gone', (): void => {
+  it('falls back to the slug when the surface has no endpoint or is gone', (): void => {
     const unlisted = { slug: 'tracker', class: 'kanban' };
     expect(providerItemKey(unlisted, { sourceSystem: 'tracker', externalId: 'T-1' }, 'real')).toBe(
       'slug:tracker|T-1',
@@ -82,7 +82,7 @@ describe('providerItemKey', (): void => {
     );
   });
 
-  it.fails('keeps the kinds of key apart', (): void => {
+  it('keeps the kinds of key apart', (): void => {
     const keys = [
       providerItemKey(linear, { sourceSystem: 'linear', externalId: ISSUE }, 'real'),
       providerItemKey(undefined, { sourceSystem: 'linear', externalId: ISSUE }, 'real'),
