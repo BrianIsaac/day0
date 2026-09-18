@@ -299,7 +299,7 @@ describe('grounding a pick on its candidate', (): void => {
     );
     expect(twoProjects.project?.value).toBe('Q3 close');
     expect(twoProjects.notes).toEqual([
-      "Dropped project `September close`: intake reads projects from revops/handbook.md, not another role's page.",
+      `Dropped pick ${numberOf(linear, 'project', 'September close', 'finance/handbook.md')}: project \`September close\` was not kept; intake reads projects from one page, and revops/handbook.md was picked first.`,
     ]);
 
     const slack = scopeCandidates(pages('revops-first'), ['channel']);
@@ -482,6 +482,99 @@ describe('a pick names its candidate by number', (): void => {
     expect(groundScopePicks(answered.slice(0, 1), []).notes).toEqual([
       `Dropped pick ${fin}: no documented value was offered under that number.`,
     ]);
+  });
+
+  it('names the number and the true reason on every dropped pick, and never throws', (): void => {
+    const candidates = scopeCandidates(
+      [REVOPS, FINANCE, companyPage('revops/runbooks/how-to-update-ticket.md')].map(folderPage),
+      ['team', 'project'],
+    );
+    const revopsTeam = numberOf(candidates, 'team', 'REVOPS', 'revops/handbook.md');
+    const financeTeam = numberOf(candidates, 'team', 'FIN', 'finance/handbook.md');
+    const revopsProject = numberOf(candidates, 'project', 'Q3 close', 'revops/handbook.md');
+    const financeProject = numberOf(
+      candidates,
+      'project',
+      'September close',
+      'finance/handbook.md',
+    );
+    const scope = groundScopePicks(
+      [
+        { candidate: 0 },
+        { candidate: -1 },
+        { candidate: 1.5 },
+        { candidate: Number.NaN },
+        { candidate: Number.MAX_SAFE_INTEGER },
+        { candidate: revopsTeam },
+        { candidate: revopsTeam },
+        { candidate: financeTeam },
+        { candidate: revopsProject },
+        { candidate: financeProject },
+      ],
+      candidates,
+    );
+    expect(approvedLinearScope(scope)).toEqual({ team: 'REVOPS', project: 'Q3 close' });
+    expect(scope.notes).toEqual([
+      'Dropped pick 0: no documented value was offered under that number.',
+      'Dropped pick -1: no documented value was offered under that number.',
+      'Dropped pick 1.5: no documented value was offered under that number.',
+      'Dropped pick NaN: no documented value was offered under that number.',
+      `Dropped pick ${Number.MAX_SAFE_INTEGER}: no documented value was offered under that number.`,
+      `Dropped pick ${revopsTeam}: team \`REVOPS\` was already picked.`,
+      `Dropped pick ${financeTeam}: team \`FIN\` was not kept; intake reads one team, and \`REVOPS\` was picked first.`,
+      `Dropped pick ${financeProject}: project \`September close\` was not kept; intake reads projects from one page, and revops/handbook.md was picked first.`,
+    ]);
+    expect(groundScopePicks([], candidates)).toEqual({});
+  });
+
+  it('bounds the notes a flood of bad numbers can put on a card', (): void => {
+    const candidates = scopeCandidates(pages('revops-first'), ['channel']);
+    const flood = Array.from({ length: 500 }, (_item, index) => ({ candidate: 100 + index }));
+    const scope = groundScopePicks([{ candidate: 1 }, ...flood], candidates);
+    expect(approvedChannelNames(scope)).toEqual([candidates[0].value]);
+    expect(scope.notes).toHaveLength(9);
+    expect(scope.notes?.[0]).toBe(
+      'Dropped pick 100: no documented value was offered under that number.',
+    );
+    expect(scope.notes?.at(-1)).toBe('492 more picks were dropped the same way.');
+    expect(groundScopePicks(flood.slice(0, 9), candidates).notes?.at(-1)).toBe(
+      '1 more pick was dropped the same way.',
+    );
+  });
+
+  it("does not call a role's own runbook another role's page", (): void => {
+    const runbook = folderPage({
+      ref: 'revops/runbooks/pipeline-review.md',
+      markdown: '# Pipeline review\n\nThe review tickets live in project `Pipeline review`.',
+    });
+    const candidates = scopeCandidates([folderPage(REVOPS), runbook], ['project']);
+    const other = numberOf(candidates, 'project', 'Pipeline review', runbook.ref);
+    const scope = groundScopePicks(
+      [{ candidate: numberOf(candidates, 'project', 'Q3 close', 'revops/handbook.md') }, { candidate: other }],
+      candidates,
+    );
+    expect(approvedLinearScope(scope)).toEqual({ project: 'Q3 close' });
+    expect(scope.notes).toEqual([
+      `Dropped pick ${other}: project \`Pipeline review\` was not kept; intake reads projects from one page, and revops/handbook.md was picked first.`,
+    ]);
+  });
+
+  it('keeps a queue once when a second page states it too, without a note', (): void => {
+    const runbook = companyPage('finance/runbooks/close-status-note.md');
+    const candidates = scopeCandidates([runbook, FINANCE].map(folderPage), ['project']);
+    expect(candidates.map((candidate): string => candidate.ref)).toEqual([
+      'finance/handbook.md',
+      'finance/runbooks/close-status-note.md',
+    ]);
+    const scope = groundScopePicks([{ candidate: 1 }, { candidate: 2 }], candidates);
+    expect(scope).toEqual({
+      project: {
+        value: 'September close',
+        sourceId: 'source-folder',
+        ref: 'finance/handbook.md',
+        quote: '- Project: `September close`',
+      },
+    });
   });
 });
 

@@ -67,6 +67,7 @@ const CHANNEL_NAME = /#([a-z0-9][a-z0-9_-]*)/gi;
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const FORBIDDEN_QUEUE_LINE = /\b(?:do not|don't|must not|never)\s+(?:read|use|poll|work|monitor)\b/i;
 const MAX_NOTE_VALUE = 80;
+const MAX_DROP_NOTES = 8;
 
 /**
  * The scope fields a surface of one class is bounded by.
@@ -181,14 +182,18 @@ function valueLabel(field: ScopeField, value: string): string {
  * value, page and line kept are the candidate's own and nothing a model
  * restated is compared. A number the list does not have, or one given twice,
  * is dropped. Intake reads one team, and projects from one page, so any other
- * is dropped too; every picked channel is kept once.
+ * is dropped too; every picked channel is kept once. Every drop leaves a note
+ * that names the pick's number and the reason, the first few in full and the
+ * rest counted, so an answer of any length cannot flood the card. A queue
+ * already kept that a second page states too is kept once and needs no note:
+ * nothing asked for was lost.
  *
  * Args:
  *   picks: Numbered picks into `candidates`.
  *   candidates: The candidates the picks were offered, in the order numbered.
  *
  * Returns:
- *   The scope to put on the card, with a note for every dropped pick.
+ *   The scope to put on the card, with its notes for the dropped picks.
  */
 export function groundScopePicks(
   picks: readonly ScopePick[],
@@ -224,7 +229,7 @@ export function groundScopePicks(
         if (!projects.some((project): boolean => project.value === value)) projects.push(kept);
       } else if (first.value !== value) {
         notes.push(
-          `Dropped ${valueLabel(field, value)}: intake reads projects from ${first.ref}, not another role's page.`,
+          `Dropped pick ${number}: ${valueLabel(field, value)} was not kept; intake reads projects from one page, and ${first.ref} was picked first.`,
         );
       }
       continue;
@@ -234,12 +239,20 @@ export function groundScopePicks(
       scope.team = kept;
     } else if (current.value !== value) {
       notes.push(
-        `Dropped ${valueLabel(field, value)}: intake reads one ${field}, and \`${current.value}\` was picked first.`,
+        `Dropped pick ${number}: ${valueLabel(field, value)} was not kept; intake reads one ${field}, and \`${current.value}\` was picked first.`,
       );
     }
   }
   if (projects.length > 0) scope.projects = projects;
   if (channels.length > 0) scope.channels = channels;
+  if (notes.length > MAX_DROP_NOTES) {
+    const more = notes.length - MAX_DROP_NOTES;
+    notes.splice(
+      MAX_DROP_NOTES,
+      more,
+      `${more} more pick${more === 1 ? ' was' : 's were'} dropped the same way.`,
+    );
+  }
   if (notes.length > 0) scope.notes = notes;
   return scope;
 }
