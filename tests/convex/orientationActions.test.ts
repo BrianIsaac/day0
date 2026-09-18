@@ -43,6 +43,7 @@ import { companyPage, companyPages } from '../fixtures/company-bed';
 import {
   approvedChannelNames,
   approvedLinearScope,
+  intakeScopeValues,
   scopeCandidates,
 } from '../../src/surfaces/intake-scope';
 import {
@@ -2254,6 +2255,72 @@ describe('each employee reads its own role', (): void => {
     ]);
   });
 
+  it("never reaches another role's queue, whatever numbers the model answers", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    // Every integer near and far beyond any list, each given twice.
+    const everyNumber = Array.from({ length: 70 }, (_item, index) => ({ candidate: index - 4 }));
+    model.scopeFor = (): Record<string, unknown> => ({
+      picks: [...everyNumber, ...everyNumber],
+      reasoning: 'Answered every number it could think of.',
+    });
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, ROLE_CHARTERS);
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+
+    const roots = { revops: 'revops/', finance: 'finance/', logistics: 'logistics/' } as const;
+    for (const role of Object.keys(roots) as CompanyRole[]) {
+      const cards = await surfacesBySlug(harness, agents[role]!);
+      for (const card of [cards.linear, cards.slack]) {
+        const values = intakeScopeValues(card.intakeScope!);
+        expect(values.length).toBeGreaterThan(0);
+        expect(values.every((value): boolean => value.ref.startsWith(roots[role]))).toBe(true);
+        expect(card.intakeScope!.notes!.length).toBeLessThanOrEqual(9);
+      }
+    }
+    const revops = await surfacesBySlug(harness, agents.revops!);
+    expect(approvedLinearScope(revops.linear.intakeScope!)).toEqual({
+      team: 'REVOPS',
+      project: 'Q3 close',
+    });
+    // Every offered channel was picked, so the team channel is read too; all three are on the role's own page.
+    expect(approvedChannelNames(revops.slack.intakeScope!)).toEqual([
+      'revops-asks',
+      'revops',
+      'ops-requests',
+    ]);
+    const offeredToRevops = model.scopePrompts
+      .filter((prompt): boolean => prompt.includes(ROLE_CHARTERS.revops.proposedFunction))
+      .join('\n');
+    expect(offeredToRevops).not.toMatch(/FIN|September close|finance-close|LOG\b|logistics-desk/);
+  });
+
+  it("grounds a number on its own card's list, never on another card's", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    model.scopeFor = (): Record<string, unknown> => ({
+      picks: [{ candidate: 3 }],
+      reasoning: 'The third one.',
+    });
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, { finance: ROLE_CHARTERS.finance });
+    await orientDeclared(harness, agents.finance!);
+    const finance = await surfacesBySlug(harness, agents.finance!);
+
+    // Linear offers three candidates, Slack two: the same answer is a queue on one card and nothing on the other.
+    expect(finance.linear.intakeScope).toEqual({
+      project: {
+        value: 'September close',
+        sourceId: expect.any(String),
+        ref: 'finance/runbooks/close-status-note.md',
+        quote: expect.stringContaining('project `September close`'),
+      },
+    });
+    expect(finance.slack.intakeScope).toEqual({
+      notes: ['Dropped pick 3: no documented value was offered under that number.'],
+    });
+  });
+
   it("falls back to the values the manager's own words name when the model does not pick", async (): Promise<void> => {
     stubRegistry();
     model.pathFor = companyPath;
@@ -2342,6 +2409,20 @@ describe('each employee reads its own role', (): void => {
     expect((await pickIntakeScope(question, 1_000)).note).toContain(
       'its answer was not a list of picks',
     );
+
+    // One number that is not a whole number makes the whole answer out of shape; none throws.
+    for (const candidate of [1.5, '1', null, Number.NaN, [1], { number: 1 }]) {
+      model.scopeFor = (): Record<string, unknown> => ({
+        picks: [{ candidate: 1 }, { candidate }],
+        reasoning: 'The role is finance close.',
+      });
+      const malformed = await pickIntakeScope(question, 1_000);
+      expect(malformed.note).toContain('its answer was not a list of picks');
+      expect(malformed.picks.map((pick): string => candidates[pick.candidate - 1].value)).toEqual([
+        'FIN',
+        'September close',
+      ]);
+    }
 
     model.scopeFor = (): Record<string, unknown> => ({
       picks: [{ candidate: 2 }, { candidate: 1 }],
