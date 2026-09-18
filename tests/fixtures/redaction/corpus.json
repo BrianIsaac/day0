@@ -962,6 +962,39 @@
         { "value": "local-value-only", "kind": "secret", "label": "bearer", "known": "local-value-only" },
         { "value": "{{slack_bot_token}}", "kind": "secret", "label": "provider-token" }
       ]
+    },
+    {
+      "id": "bed-revops-handbook-original",
+      "source": "bed/company/folder/revops/handbook.md at 0138d2a^: backticked channel names in prose, the wording the deployed model stored #ops-requests from",
+      "context": "documentation",
+      "language": "en",
+      "text": "# Revenue operations handbook\n\nKestrel Supply Co. is a synthetic company built for the Day0 demonstration. Every account,\nfigure and message on this page is invented.\n\nRevenue operations sits between Sales and Finance and runs the quarter-end close for the\npipeline. The team's formal work is in Linear and its requests arrive in Slack.\n\n- Team: `REVOPS`\n- Project: `Q3 close`\n- Channels: #revops-asks, #revops, #ops-requests\n\n`#revops-asks` receives requests for the team, `#revops` is the team channel, and `#ops-requests`\nis the company's shared request channel. The manager DM is where drafts, questions and\nescalations go.\n\n## What the team uses\n\n- Linear, team `REVOPS`, project `Q3 close`: the formal work queue and audit trail.\n- Slack: the three channels above and the manager DM.\n- The Looker pipeline tile: the pipeline coverage figure the team maintains by hand. It is quoted\n  in the Friday standup and in the Q3 close summary.\n- Northstar CRM: account and opportunity ownership. No approved access path is recorded.\n\n## Cold-start posture\n\n- Draft first, send the draft to the manager, and wait for approval before anything is published.\n- Raise unclear ownership or missing-system access in the manager DM.\n- Ask questions about a public request in its thread, but hold any proposed public reply for\n  manager review until the manager changes that explicitly.\n- For Northstar CRM work, ask the manager to obtain an approved access path.\n\n## Runbooks\n\n- `How to update a Linear ticket`\n- `How to post to Slack`\n- `How to refresh the Looker pipeline tile`\n- `Q3 close checklist`\n\n## First week\n\n- Day 1: read the onboarding page, this handbook and the runbooks, and confirm the draft-first\n  rule with the manager.\n- Days 2 and 3: read the `Q3 close` queue and inspect the source records for one bounded request.\n- Days 4 and 5: complete one manager-approved Linear update and record the provider result.\n",
+      "spans": [
+        { "value": "#ops-requests", "kind": "working", "label": "channel", "note": "stored as `revenue operations token` on 18 September, then removed owner-wide from six pages" },
+        { "value": "#revops-asks", "kind": "working", "label": "channel" },
+        { "value": "#revops", "kind": "working", "label": "channel" },
+        { "value": "REVOPS", "kind": "working", "label": "identifier" },
+        { "value": "Q3 close", "kind": "working", "label": "identifier" }
+      ]
+    },
+    {
+      "id": "bed-slack-policy-original",
+      "source": "bed/company/notion/slack-automation-policy.md at 0138d2a^: a backticked Web API method list, the wording the deployed model stored users.lookupByEmail from",
+      "context": "documentation",
+      "language": "en",
+      "text": "# Slack automation policy\n\nKestrel Supply Co. is a synthetic company built for the Day0 demonstration. The channels and\nevery message in them are invented.\n\nSlack carries requests and the manager conversation. A reply to a channel ask is posted into that ask's thread as its own action; it is held until the manager approves the exact text, or sent as emitted once the manager has turned autonomous actions on for that employee. The manager DM is for questions and escalation.\n\n## Where it is\n\n- Workspace: the company's Slack workspace.\n- Integration: Slack Web API over HTTPS at `https://slack.com/api/`, bot token in the `Authorization: Bearer` header.\n- Methods automations use: `auth.test`, `users.lookupByEmail`, `conversations.open`, `conversations.list`, `conversations.history`, `conversations.replies`, `chat.postMessage`.\n\n## The channels, by team\n\n| Channel | Team | What it is for |\n|---|---|---|\n| `#revops-asks` | Revenue operations | requests for revenue operations |\n| `#revops` | Revenue operations | the team channel |\n| `#finance-close` | Finance close | the team channel, and questions about the close |\n| `#logistics-desk` | Logistics desk | shipment exceptions raised by the warehouse and the account team |\n| `#ops-requests` | all three teams | the shared request channel; a request belongs to the team whose handbook covers that work |\n\nEach team's handbook names the channels that team reads.\n\n## The shared bot\n\nEvery digital employee posts through one shared Slack app, the company automation bot, which is invited to all five channels.\n\n- The shared bot token is landed on each employee's Slack card by the messaging administrator when the connection is approved. It is never written down.\n- Each message carries the posting employee's name and icon, so it stays attributable. The app needs `chat:write.customize` for that, beside `chat:write`, `channels:read`, `channels:history`, `im:read`, `im:write`, `im:history`, `users:read` and `users:read.email`.\n- The server adds the name, the icon and a provenance trailer to every message; an automation never sets `username`, `icon_emoji` or `icon_url` itself.\n- The manager DM is opened by looking up the manager's email; automations never guess a channel id.\n\nOwner: the messaging administrator.\n\n## Working rules\n\n- A reply to a public channel or thread is emitted as its own `chat.postMessage` action into the source thread (`channel` plus `thread_ts`). While autonomous actions are off it is held for the manager, who approves the exact text before it is sent; once the manager has turned autonomous actions on it is sent as emitted. The manager DM carries questions and escalation, never a draft that belongs in the channel.\n- One logical message per action; preserve the originating Linear identifier or Slack thread timestamp in the text.\n",
+      "spans": [
+        { "value": "users.lookupByEmail", "kind": "working", "label": "identifier", "note": "stored as `slack token` on 18 September" },
+        { "value": "auth.test", "kind": "working", "label": "identifier" },
+        { "value": "conversations.open", "kind": "working", "label": "identifier" },
+        { "value": "conversations.history", "kind": "working", "label": "identifier" },
+        { "value": "chat.postMessage", "kind": "working", "label": "identifier" },
+        { "value": "#ops-requests", "kind": "working", "label": "channel" },
+        { "value": "#finance-close", "kind": "working", "label": "channel" },
+        { "value": "chat:write.customize", "kind": "working", "label": "scope" },
+        { "value": "users:read.email", "kind": "working", "label": "scope" },
+        { "value": "https://slack.com/api/", "kind": "working", "label": "url" }
+      ]
     }
   ]
 }

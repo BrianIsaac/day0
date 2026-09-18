@@ -233,9 +233,14 @@ runbook words and tool identifiers outside credential assignments; a value
 assigned under a credential label (password, passphrase, token, key, secret,
 login or their Chinese equivalents), in prose, an environment line, a JSON
 body, a labelled table cell or a credential column, still counts as a secret.
-Known stored credentials remain subject to the separate exact-value scrub.
-This does not repair pages or credentials stored before the guard changed:
-those need operator reconciliation and a fresh sync.
+Known stored credentials remain subject to the separate exact-value scrub,
+which applies the same guard to each page-derived value when it lists the
+owner's values: a value the guard now rejects (a `#channel` reference, a
+dotted method or file name, a permission scope) is never removed from other
+pages, whether it was stored before or after the guard changed. A row stored
+under an older guard stays in the owner's credential list until orientation
+inspects it and marks it suspect, or the owner revokes it; a page an earlier
+sync damaged is rewritten by the next sync.
 
 **When you need it.** Always in real mode. Without it a documentation sync
 refuses to persist a page rather than store it in the clear, and a provider

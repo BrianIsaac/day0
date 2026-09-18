@@ -13,6 +13,7 @@ import * as credentialsModule from '../../convex/credentials';
 import * as eventsModule from '../../convex/events';
 import * as exportActions from '../../convex/exportActions';
 import { redactCredentials } from '../../src/docs/redaction';
+import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
 import { ScriptedSpanModel } from '../fixtures/redaction-double';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { OWNER_KNOWN_VALUE_CAP, OWNER_KNOWN_VALUES_CAP_REASON } from '../../src/redaction/known-values';
@@ -175,4 +176,41 @@ it('lets resync repair an old scope row instead of redacting it as a known value
   // Explicitly entered material still participates in exact-value protection.
   await insertRow(harness, { userId: 'owner', label: 'Entered value', plaintext: 'users:read' });
   expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual(['users:read']);
+});
+
+it('leaves a stored channel name or method name out of exact removal while every real secret stays in', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const dotted = ['Ops', 'Desk', 'Winter'].join('.');
+  // The rows a sync at 0acb98f left behind: the two originals, and the copies the
+  // owner-wide removal itself stored under other pages' refs.
+  const stored = {
+    channel: await insertRow(harness, { userId: 'owner', label: 'revenue operations token', plaintext: '#ops-requests' }),
+    method: await insertRow(harness, { userId: 'owner', label: 'slack token', plaintext: 'users.lookupByEmail' }),
+    spread: await insertRow(harness, { userId: 'owner', label: 'slack credential', plaintext: '#ops-requests' }),
+    slack: await insertRow(harness, { userId: 'owner', label: 'slack bot token', plaintext: CORPUS_SLOTS.slack_bot_token }),
+    linear: await insertRow(harness, { userId: 'owner', label: 'linear service token', plaintext: CORPUS_SLOTS.linear_token }),
+    generic: await insertRow(harness, { userId: 'owner', label: 'warehouse api key', plaintext: CORPUS_SLOTS.client_secret }),
+    dotted: await insertRow(harness, { userId: 'owner', label: 'looker password', plaintext: dotted }),
+  };
+  await harness.run(async (ctx) => {
+    const sourceId = await ctx.db.insert('docSources', {
+      userId: 'owner', label: 'Handbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+    });
+    for (const [ref, id] of Object.entries(stored)) await ctx.db.patch(id, { source: { sourceId, ref: `${ref}.md` } });
+  });
+  const values = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  expect([...values].sort()).toEqual(
+    [CORPUS_SLOTS.slack_bot_token, CORPUS_SLOTS.linear_token, CORPUS_SLOTS.client_secret, dotted].sort(),
+  );
+  const rows = await harness.run(async (ctx) => ({
+    channel: (await ctx.db.get(stored.channel))!,
+    method: (await ctx.db.get(stored.method))!,
+    dotted: (await ctx.db.get(stored.dotted))!,
+  }));
+  expect(cryptoActions.storedCredentialGuardReason(rows.channel)).toBe('channel reference');
+  expect(cryptoActions.storedCredentialGuardReason(rows.method)).toBe('dotted identifier');
+  expect(cryptoActions.storedCredentialGuardReason(rows.dotted)).toBeUndefined();
+  // A value a person typed in is theirs to protect, whatever its shape.
+  await insertRow(harness, { userId: 'owner', label: 'Entered value', plaintext: '#ops-requests' });
+  expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toContain('#ops-requests');
 });
