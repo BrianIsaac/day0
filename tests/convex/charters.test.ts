@@ -3,6 +3,7 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
+import { clipRoleLine } from '../../convex/agents';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -293,6 +294,27 @@ async function latestCharter(harness: Harness, agentId: Id<'agents'>): Promise<D
 }
 
 describe('amending an approved charter', (): void => {
+  it('keeps an active employee active when a newer unapproved draft is sent back', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApproved(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const draftId = await harness.run(async (ctx) =>
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { ...runThroughBody(), proposedFunction: 'An unapproved new role.' },
+        approved: false,
+        createdAt: 3,
+      }),
+    );
+
+    await owner.mutation(api.charters.requestChanges, { charterId: draftId });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe('active');
+    expect(await owner.query(api.agents.rosterForUser, {})).toMatchObject([
+      { agentId, state: 'active', roleLine: clipRoleLine(runThroughBody().proposedFunction) },
+    ]);
+  });
+
   it('does not let an older draft reset an employee after a newer draft exists', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId } = await seedDraft(harness);

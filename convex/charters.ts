@@ -435,8 +435,8 @@ export const amend = mutation({
 });
 
 /**
- * Reject only the current unapproved draft before restarting Day-1. An
- * approved charter remains in force; changes to it go through `amend`.
+ * Reject only the current unapproved draft. An earlier approved charter stays
+ * in force; without one, the employee returns to Day-1 for another 1:1.
  */
 export const requestChanges = mutation({
   args: { charterId: v.id('charters'), notes: v.optional(v.string()) },
@@ -450,8 +450,18 @@ export const requestChanges = mutation({
       .order('desc')
       .first();
     if (latest?._id !== charter._id) throw new Error('Only the latest draft can be sent back.');
+    let approvedCharterRemains = false;
+    for await (const previous of ctx.db
+      .query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .order('desc')) {
+      if (previous._id !== charter._id && previous.approved) {
+        approvedCharterRemains = true;
+        break;
+      }
+    }
     await ctx.db.delete(args.charterId);
-    await ctx.db.patch(agentId, { state: 'deployed' });
+    await ctx.db.patch(agentId, { state: approvedCharterRemains ? 'active' : 'deployed' });
     await ctx.db.insert('events', {
       agentId,
       type: 'charter.request_changes',
