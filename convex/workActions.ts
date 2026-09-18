@@ -84,6 +84,7 @@ import {
 import { landedWork, WITHHELD_ON_STOP } from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import { landedWritesOf, reusedLedger } from '../src/work/landed-writes';
+import type { GroundingRead } from '../src/work/evidence-claims';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   grantRefusal,
@@ -883,6 +884,7 @@ async function holdDay0Actions(
       managerAnswers: args.managerAnswers,
       landedWrites: args.landedWrites,
       appliedCorrections,
+      groundingReads: await itemGroundingReads(ctx, args.workItemId),
       onAdditionalModelCall: () => {
         additionalModelCalls += 1;
       },
@@ -1442,6 +1444,7 @@ export const authorDependentActions = internalAction({
         return issues;
       };
       const step = { agentId: item.agentId, workItemId: args.workItemId, stage: 'closing' } as const;
+      const groundingReads = await itemGroundingReads(ctx, args.workItemId);
       const output = await recordingModelCalls(ctx, step, () => runDependentSkill({
         skill: { name: skill.name, description: skill.description, body: skill.body },
         plan,
@@ -1454,6 +1457,7 @@ export const authorDependentActions = internalAction({
         managerFeedback: feedback,
         managerAnswers: managerAnswersOf(item),
         appliedCorrections,
+        groundingReads,
         initialOutput: prerequisites,
         initialLedger: prerequisites.applied,
         initialFailure: prerequisites.initialFailure,
@@ -1993,6 +1997,26 @@ async function planGrounding(
     surfaces,
     documents: { howToGuides: snapshot.howToGuides, teamDocs: snapshot.teamDocs },
   };
+}
+
+/**
+ * The item's plan-grounding reads for the executor's evidence check: what
+ * the ticket said when it was read for the plan, so a message may repeat
+ * it. Real mode only; the mock executor runs no evidence check.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   workItemId: The work item being executed.
+ *
+ * Returns:
+ *   The reads as their events stored them, or undefined outside real mode.
+ */
+async function itemGroundingReads(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+): Promise<GroundingRead[] | undefined> {
+  if (SURFACE_MODE !== 'real') return undefined;
+  return (await ctx.runQuery(internal.work.planGroundingReads, { workItemId })) as GroundingRead[];
 }
 
 /**

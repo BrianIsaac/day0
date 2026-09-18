@@ -888,6 +888,33 @@ export const finishPlanGroundingRead = internalMutation({
 });
 
 /**
+ * The current plan-grounding read of a work item: the most recent one whose
+ * ledger row was attached, as the event stored it (already redacted). The
+ * executor's evidence check reads it as what the item says; an earlier
+ * reading is superseded, and another item's is never returned.
+ */
+export const planGroundingReads = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<Array<{ action: unknown; applied: unknown }>> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) return [];
+    const events = await ctx.db
+      .query('events')
+      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId).gt('_creationTime', row._creationTime))
+      .order('desc')
+      .collect();
+    const latest = events.find((event) => {
+      if (event.type !== 'work.plan-grounding-read') return false;
+      const payload = event.payload as { workItemId?: string; action?: unknown; applied?: unknown };
+      return payload.workItemId === args.workItemId && payload.action !== undefined && payload.applied != null;
+    });
+    if (!latest) return [];
+    const { action, applied } = latest.payload as { action: unknown; applied: unknown };
+    return [{ action, applied }];
+  },
+});
+
+/**
  * The plan as stored: a plan may say it applied only this employee's own
  * active corrections, so any other id is dropped, and each one kept lists
  * the work item it was applied to. A plan that names none is stored as
