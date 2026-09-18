@@ -76,7 +76,10 @@ print(code,end='')
   }
 }
 
-describe('arrival probe response paths', () => {
+// Each case runs the probe script under bash with its own one-second network
+// timeouts and a ten-second cap on the process, so the default five-second
+// test timeout is below what the case itself allows on a loaded machine.
+describe('arrival probe response paths', { timeout: 30_000 }, () => {
   it('bounds certificate inspection when TCP connects but TLS stalls', () => {
     const result = exercise('tls');
     expect(result.stdout).toContain('Summary');

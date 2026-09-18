@@ -27,7 +27,9 @@ import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   HELD_NOT_APPROVED,
   HELD_WRITE,
+  isAuditComment,
   normaliseActionVerdict,
+  parseSurfaceAction,
   reviewActions,
   type ActionVerdict,
 } from '../src/surfaces/policy';
@@ -47,7 +49,8 @@ import {
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
-import { providerItemKey } from '../src/work/claim-key';
+import { providerItemKey, writeTargetIds, type WriteClaimHolder } from '../src/work/claim-key';
+import { landedWritesOf } from '../src/work/landed-writes';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import {
   batchDecisionNoticeText,
@@ -691,6 +694,92 @@ function claimRefusedVerdict(
       : `${CLAIMED_BY_COLLEAGUE_SKIP_PREFIX}${holder.name} holds it (${holder.title})`;
   return { decision: 'skip', reason, claimedBy: holder };
 }
+
+/**
+ * The last comment a holder landed on the item it holds, by provider id.
+ *
+ * Args:
+ *   holding: The holding work item.
+ *
+ * Returns:
+ *   The comment's provider id, or undefined when the holder landed none.
+ */
+function landedCommentOn(holding: Doc<'workItems'>): string | undefined {
+  const held = holding.externalId.toUpperCase();
+  return landedWritesOf(holding.output)
+    .filter((write) => {
+      const parsed = parseSurfaceAction(write.action);
+      return (
+        parsed.ok &&
+        isAuditComment(parsed.action) &&
+        writeTargetIds(parsed.action, { class: 'kanban' }).some((target) => target.toUpperCase() === held)
+      );
+    })
+    .map((write) => write.applied.providerId)
+    .filter((id): id is string => typeof id === 'string')
+    .at(-1);
+}
+
+/**
+ * The other work item that holds an external item a write addresses, if one does.
+ *
+ * `takeExternalClaim` guards the item a row was discovered from; this is the
+ * same claim read from the other side, for the items a plan writes. On 19
+ * September an ask about FIN-1 and FIN-1's own item both posted the status
+ * note on it and both moved it to Done, under two different claims. The
+ * apply path asks here before a write is sent, across every employee of the
+ * owner. A completed or failed holder still holds; a cancelled or skipped
+ * one does not, whether or not its claim was stamped released. Nothing is
+ * released here: this is a read.
+ *
+ * Args:
+ *   workItemId: The work item about to write.
+ *   surfaceSlug: The writer's surface the write goes through.
+ *   targets: The external ids the write addresses (`writeTargetIds`).
+ *
+ * Returns:
+ *   The holder, or null when the writer itself or nobody holds the targets.
+ */
+export const writeClaimHolder = internalQuery({
+  args: { workItemId: v.id('workItems'), surfaceSlug: v.string(), targets: v.array(v.string()) },
+  handler: async (ctx, args): Promise<WriteClaimHolder | null> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return null;
+    const writer = await ctx.db.get(row.agentId);
+    const userId = writer?.userId;
+    if (!userId) return null;
+    const surface = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', args.surfaceSlug))
+      .first();
+    if (!surface) return null;
+    for (const target of args.targets) {
+      const key = providerItemKey(surface, { sourceSystem: surface.slug, externalId: target }, SURFACE_MODE);
+      if (key === undefined) continue;
+      const live = await ctx.db
+        .query('externalClaims')
+        .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
+        .filter((q) => q.eq(q.field('releasedAt'), undefined))
+        .collect();
+      for (const claim of live) {
+        if (claim.workItemId === row._id) break;
+        const holding = await ctx.db.get(claim.workItemId);
+        if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) continue;
+        const holder = await ctx.db.get(claim.agentId);
+        const landedComment = landedCommentOn(holding);
+        return {
+          target,
+          holderName: holder?.name ?? 'another employee',
+          sameEmployee: claim.agentId === row.agentId,
+          title: holding.title,
+          state: holding.state,
+          ...(landedComment ? { landedComment } : {}),
+        };
+      }
+    }
+    return null;
+  },
+});
 
 /**
  * Stamp one claim released and send back what it refused.

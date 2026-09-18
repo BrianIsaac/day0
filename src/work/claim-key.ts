@@ -1,4 +1,12 @@
 import type { SurfaceMode } from '../lib/surface-mode';
+import {
+  ISSUE_KEYS,
+  actionIntent,
+  messageTarget,
+  targetIssueReferences,
+  type ParsedHttpRequest,
+  type ParsedSurfaceAction,
+} from '../surfaces/policy';
 
 /** What a provider item's identity is read from on the surface that found it. */
 export interface ClaimKeySurface {
@@ -90,4 +98,112 @@ export function providerItemKey(
   }
   if (origin) return `${origin.origin}|${item.externalId}`;
   return `slug:${item.sourceSystem}|${item.externalId}`;
+}
+
+/** The most external ids one write is checked under; each is one indexed read. */
+const WRITE_TARGET_LIMIT = 16;
+/** How deep a request body is read for a ticket reference (`variables.input.issueId`). */
+const BODY_DEPTH = 3;
+
+/**
+ * The ticket references a documented-API write carries: every segment of its
+ * path (`/issue/OPS-12/comment`) and every ticket-named string in its JSON
+ * body, nested as a GraphQL request nests its variables. A segment that is
+ * no ticket matches no claim, so reading them all costs lookups, not errors.
+ */
+function httpTicketReferences(parsed: ParsedHttpRequest): string[] {
+  const segments = parsed.path
+    .split(/[?#]/, 1)[0]!
+    .split('/')
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment).trim();
+      } catch {
+        return segment.trim();
+      }
+    })
+    .filter((segment) => segment !== '');
+  const named: string[] = [];
+  const read = (value: unknown, depth: number): void => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || depth > BODY_DEPTH) return;
+    for (const [key, inner] of Object.entries(value)) {
+      if (typeof inner === 'string' && inner.trim() !== '' && ISSUE_KEYS.includes(key)) named.push(inner.trim());
+      else read(inner, depth + 1);
+    }
+  };
+  read(parsed.bodyJson, 1);
+  return [...named, ...segments];
+}
+
+/**
+ * The external items a write addresses, as a work item's `externalId` names them.
+ *
+ * A ticket write names its ticket in its arguments, its request body or its
+ * path; a chat reply names the message it sits under as intake keys one,
+ * `<channel>:<thread>`. A ticket reference is also offered in upper case,
+ * since a tracker accepts `fin-1` for `FIN-1` and intake stores the
+ * identifier as the provider prints it. A read, a top-level chat post and a
+ * write that names no item address nothing another work item could hold.
+ *
+ * Args:
+ *   parsed: The parsed surface action.
+ *   surface: The surface it targets.
+ *
+ * Returns:
+ *   The external ids, each once and at most `WRITE_TARGET_LIMIT`; empty when
+ *   the action addresses none.
+ */
+export function writeTargetIds(parsed: ParsedSurfaceAction, surface: { class: string }): string[] {
+  if (actionIntent(parsed) !== 'write') return [];
+  if (surface.class === 'chat') {
+    const [channel, thread] = (messageTarget(parsed) ?? '').split('/');
+    return channel && thread ? [`${channel}:${thread}`] : [];
+  }
+  const references = parsed.kind === 'mcp.call' ? targetIssueReferences(parsed) : httpTicketReferences(parsed);
+  return [...new Set(references.flatMap((ref) => [ref, ref.toUpperCase()]))].slice(0, WRITE_TARGET_LIMIT);
+}
+
+/** The work item holding an external item a write addresses, as the ledger names it. */
+export interface WriteClaimHolder {
+  /** The external id the write addressed. */
+  target: string;
+  holderName: string;
+  /** Whether the holder is another item of the writing employee. */
+  sameEmployee: boolean;
+  title: string;
+  state: string;
+  /** The provider id of the last comment the holder landed on the item. */
+  landedComment?: string;
+}
+
+/** How the ledger line of a write withheld for another work item's claim begins. */
+export const WITHHELD_BY_CLAIM_PREFIX = "withheld for another work item's claim: ";
+
+/**
+ * The ledger line of a write withheld because another work item holds its target.
+ *
+ * Args:
+ *   holder: The holding work item.
+ *
+ * Returns:
+ *   The reason, naming the holder, its state and the comment it landed.
+ */
+export function withheldByClaimReason(holder: WriteClaimHolder): string {
+  const owner = holder.sameEmployee ? "this employee's" : `${holder.holderName}'s`;
+  const landed = holder.landedComment ? `, which landed comment ${holder.landedComment} on it` : '';
+  return `${WITHHELD_BY_CLAIM_PREFIX}${holder.target} is held by ${owner} work item "${holder.title}" (${holder.state})${landed}; one work item writes an external item, so this write is not sent`;
+}
+
+/**
+ * Whether a ledger row is a write withheld for another work item's claim:
+ * work that is the holder's to land, not work this run failed to land.
+ *
+ * Args:
+ *   row: A ledger row, possibly absent.
+ *
+ * Returns:
+ *   True for a held row carrying the claim line.
+ */
+export function withheldByClaim(row: { held?: boolean; reason?: string } | undefined): boolean {
+  return row?.held === true && row.reason?.startsWith(WITHHELD_BY_CLAIM_PREFIX) === true;
 }
