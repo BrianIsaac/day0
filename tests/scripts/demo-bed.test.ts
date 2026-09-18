@@ -551,6 +551,15 @@ describe('the warm redactor volumes', (): void => {
     ).toThrow('only ever read');
   });
 
+  it('refuses a protected warm source even when this bed already has its own volumes', (): void => {
+    expect(() => warmRedactorPlan({
+      project: 'day0-p11r-a18',
+      warmFrom: 'day0',
+      volumes: ['day0-p11r-a18_redactor_venv', 'day0-p11r-a18_redactor_models'],
+      image: IMAGE,
+    })).toThrow('protected');
+  });
+
   it('refuses a venv the start script would empty and rebuild at the venue', (): void => {
     expect(redactorVenvRefusal('cpu', 'day0-redactor-warm_redactor_venv')).toBeUndefined();
     expect(redactorVenvRefusal('cuda', 'day0-redactor-warm_redactor_venv')).toMatch(/CUDA[\s\S]*CPU/);

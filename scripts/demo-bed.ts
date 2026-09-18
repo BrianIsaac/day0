@@ -1019,6 +1019,7 @@ export function warmRedactorPlan(input: WarmRedactorInput): WarmRedactorPlan {
   if (input.warmFrom === input.project) {
     throw new Error(`--warm-from ${input.warmFrom} names this bed's own project.`);
   }
+  if (input.warmFrom !== undefined) assertNotProtected(input.warmFrom);
   const own = REDACTOR_VOLUME_SUFFIXES.map((suffix: string): string => `${input.project}_${suffix}`);
   if (own.every((volume: string): boolean => input.volumes.includes(volume))) {
     return {
@@ -1041,7 +1042,6 @@ export function warmRedactorPlan(input: WarmRedactorInput): WarmRedactorPlan {
         }.`,
     );
   }
-  assertNotProtected(input.warmFrom);
   for (const suffix of REDACTOR_VOLUME_SUFFIXES) {
     if (!input.volumes.includes(`${input.warmFrom}_${suffix}`)) {
       throw new Error(
