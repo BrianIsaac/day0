@@ -17,12 +17,81 @@ import {
   type TrialCheckpoint,
 } from '../evaluation/revocation/report';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
+import { REDACTOR_TIMEOUT_MS } from '../src/redaction/policy';
 import { MODEL } from '../src/lib/openai';
 import { BASE_PROFILE } from './compose';
 import { BED_PROFILES } from './demo-bed';
 
 const POLL_MS = 50;
 const WAIT_MS = 30_000;
+
+/**
+ * How long the folder sync may go without reading a page before the driver
+ * gives up on it.
+ *
+ * Every other wait here is a step of the driver's own, which either happens
+ * within 30 s or has gone wrong. The documentation sync is not: it is one
+ * redactor call per page, each with its own 10 s deadline
+ * (`REDACTOR_TIMEOUT_MS`), so its length is the folder's, not the driver's -
+ * the 13 company-bed pages took 34.8 s on a CPU redactor, and a larger folder
+ * takes longer still. So this wait is idle time rather than total time: as
+ * long as the page count is still rising, the sync is working and the driver
+ * waits. Six redactor deadlines with no page read is a sync that has stopped.
+ */
+export const SYNC_IDLE_MS = REDACTOR_TIMEOUT_MS * 6;
+
+/** What the driver reads about a linked source while it syncs. */
+export interface DocSourceProgress {
+  status: string;
+  pageCount: number;
+  lastError?: string;
+}
+
+/** A clock, so the wait can be tested without spending the time. */
+export interface WaitClock {
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+/**
+ * Wait for a linked folder source to finish its first sync.
+ *
+ * Args:
+ *   read: Reads the source as the deployment currently holds it.
+ *   clock: Time and sleep, injected so tests need not spend either.
+ *
+ * Returns:
+ *   The source, once it is synced with at least one page.
+ *
+ * Raises:
+ *   Error: If the source reports an error, or reads no further page within
+ *     `SYNC_IDLE_MS`.
+ */
+export async function waitForDocumentationSync(
+  read: () => Promise<DocSourceProgress | undefined>,
+  clock: WaitClock = { now: Date.now, sleep },
+): Promise<DocSourceProgress> {
+  let pages = -1;
+  let idleFrom = clock.now();
+  for (;;) {
+    const source = await read();
+    if (source?.status === 'error' || source?.status === 'credential-not-landed') {
+      throw new Error(source.lastError ?? `folder sync failed: ${source.status}`);
+    }
+    if (source && source.status === 'synced' && source.pageCount > 0) return source;
+    if (source && source.pageCount !== pages) {
+      pages = source.pageCount;
+      idleFrom = clock.now();
+    }
+    if (clock.now() - idleFrom >= SYNC_IDLE_MS) {
+      throw new Error(
+        `timed out waiting for folder documentation sync: no page read in ${SYNC_IDLE_MS / 1000}s` +
+          ` (${Math.max(pages, 0)} so far)`,
+      );
+    }
+    await clock.sleep(POLL_MS);
+  }
+}
 
 interface EventRow {
   _id: string;
@@ -216,11 +285,9 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     kind: 'folder',
     locator: '.',
   });
-  await waitFor('folder documentation sync', async () => {
+  await waitForDocumentationSync(async () => {
     const sources = await client.query(api.docSources.listMine, {});
-    const source = sources.find((candidate) => candidate._id === docSourceId);
-    if (source?.status === 'error') throw new Error(source.lastError ?? 'folder sync failed');
-    return source?.status === 'synced' && source.pageCount > 0 ? source : undefined;
+    return sources.find((candidate) => candidate._id === docSourceId);
   });
   const synthesis = await client.action(api.onboarding.synthesiseFromTranscript, {
     agentId,

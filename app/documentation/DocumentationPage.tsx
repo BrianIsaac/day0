@@ -10,6 +10,10 @@ import { plainErrorMessage } from '@/lib/plain-error';
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
 
+export function locatorForSourceKind(kind: SourceKind): string {
+  return kind === 'folder' ? '.' : '';
+}
+
 /**
  * Say what this source kind will actually reach, and what has to be running.
  *
@@ -229,7 +233,11 @@ export function DocumentationPage(): React.ReactNode {
             <form onSubmit={onSubmit} className="grid gap-3">
               <select
                 value={kind}
-                onChange={(event) => setKind(event.target.value as SourceKind)}
+                onChange={(event) => {
+                  const nextKind = event.target.value as SourceKind;
+                  setKind(nextKind);
+                  setLocator(locatorForSourceKind(nextKind));
+                }}
                 className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
               >
                 <option value="folder">Folder of Markdown</option>

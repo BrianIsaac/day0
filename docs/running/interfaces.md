@@ -8,6 +8,8 @@ Contents: [the Convex function surface](#the-convex-function-surface) · [the sk
 
 Every backend operation is a Convex query, mutation or action under `convex/`. The public ones take the caller's identity from the auth provider (Clerk, or the local no-auth token) and check ownership of the agent they touch through `convex/ownership.ts`; the internal ones are reachable only from other functions and from the scheduler.
 
+The work loop is scheduled work rather than dashboard work: a mutation records the manager's decision and schedules the step that acts on it, so a run goes on with no page open. How many of those steps run at once is a property of the deployment, not of this interface - the compose file starts the backend with `SCHEDULED_JOB_EXECUTION_PARALLELISM=32` and the sandbox is serialised behind a lease (`convex/sandboxLease.ts`); [`components.md`](components.md) has both.
+
 The full argument and return schema of the deployed functions comes from the Convex CLI against a running deployment:
 
 ```bash
@@ -28,9 +30,10 @@ The entry points a reader is most likely to want:
 |---|---|---|
 | `agents:deploy` | mutation | Creates an agent and seeds its first grants |
 | `charters:approve`, `charters:amend` | mutation | Approves a drafted charter with the manager's strikes; amends an approved one as a new version |
-| `work:approvePlan`, `work:decideActions`, `work:retry` | mutation | The manager's decisions on a plan, on held actions and on a finished run |
+| `work:approvePlan`, `work:approveActions`, `work:approveActionsBatch`, `work:rejectActions` | mutation | The manager's decisions on a plan and on held actions, one run at a time or as one batch across runs |
+| `work:retryFailed`, `work:cancelPlan`, `work:reconcileFailed` | mutation | Send a finished or failed run back with a note, cancel a plan with a reason, reconcile what a failed run left behind |
 | `skills:approve`, `skills:reject` | mutation | The manager's decision on a proposed skill |
-| `surfaces:approveByManager`, `surfaces:approveByIt` | mutation | The two approvals a connection card needs |
+| `surfaces:approve` | mutation | One of the two approvals a connection card needs, by `role`: `manager` or `it` |
 | `agents:revokeScope`, `agents:setAutonomousActions` | mutation | Revoke a grant; turn the autonomy switch |
 | `metrics:forAgent` | query | The Supervision card's numbers, derived from the event ledger |
 | `metrics:forOwner` | query | Every employee's Supervision numbers and the company row: decisions and their waits pooled for the one manager, each employee's time to an approved charter quoted and never summed, evaluation agents and baseline arms left out |

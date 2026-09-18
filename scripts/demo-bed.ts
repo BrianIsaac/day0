@@ -106,6 +106,8 @@ export const BED_PROFILES: readonly string[] = [
   'redactor',
 ];
 
+const EXTRA_PROFILES = Object.keys(PROFILES).filter((profile) => !BED_PROFILES.includes(profile));
+
 /** The redactor's cache volumes, in the order the compose file declares them. */
 const REDACTOR_VOLUME_SUFFIXES: readonly string[] = ['redactor_venv', 'redactor_models'];
 
@@ -251,7 +253,7 @@ Commands:
 
 Options:
   --project <name>       compose project (default: COMPOSE_PROJECT_NAME in ${ENV_FILE})
-  --profile <name>       up/down: an extra component (dev, docs-notion, browser); repeatable
+  --profile <name>       up/down: a component beyond the bed's own (${EXTRA_PROFILES.join(', ')}); repeatable
   --reset                up: wipe the local boss's agents after the push
   --unlink               up --reset: also unlink documentation and purge credentials
   --no-probe             up/preflight: skip the model probe

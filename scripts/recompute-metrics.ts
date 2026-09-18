@@ -2,13 +2,14 @@
  * Recompute one owner's supervision figures from a Convex snapshot export,
  * with the product's own functions (`convex/metrics.ts`):
  *
- *   pnpm metrics:recompute <export.zip | export-directory> [--owner <subject>] [--expect <file.json>]
+ *   pnpm metrics:recompute <export.zip | export-directory> [--owner <subject>] [--expect <file.json>] [--json]
  *
  * The rows are grouped by agent and the owner's employees are chosen as
  * `metrics:forOwner` chooses them (evaluation agents and baseline arms left
  * out), so the JSON printed first is the shape the query returns, field for
  * field. The event timeline follows, anchored on the owner's first
- * documentation sync, offsets floored to the second.
+ * documentation sync, offsets floored to the second. `--json` emits only the
+ * figures so stdout can be saved as a valid JSON file.
  *
  * `--owner` defaults to the no-auth subject every local bed runs as. With
  * `--expect`, every field the file names must equal the recomputed one; a
@@ -31,7 +32,7 @@ import {
 import { exportEntries, exportRows } from './convex-export';
 
 const USAGE =
-  'Usage: pnpm metrics:recompute <export.zip|export-directory> [--owner <subject>] [--expect <file.json>]';
+  'Usage: pnpm metrics:recompute <export.zip|export-directory> [--owner <subject>] [--expect <file.json>] [--json]';
 
 const METRIC_TABLES = ['agents', 'events', 'workItems', 'charters'] as const;
 const TIMELINE_TABLES = ['docSources', 'docSyncRuns'] as const;
@@ -226,13 +227,15 @@ function timelineLines({ owner, figures, anchor, timeline }: Recomputed): string
 
 function parseArguments(
   argv: readonly string[],
-): { path: string; owner?: string; expect?: string } | undefined {
+): { path: string; owner?: string; expect?: string; json: boolean } | undefined {
   let path: string | undefined;
   let owner: string | undefined;
   let expect: string | undefined;
+  let json = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === '--owner' || argument === '--expect') {
+    if (argument === '--json') json = true;
+    else if (argument === '--owner' || argument === '--expect') {
       const value = argv[index + 1];
       if (value === undefined || value.startsWith('--')) return undefined;
       if (argument === '--owner') owner = value;
@@ -244,7 +247,7 @@ function parseArguments(
       path = argument;
     }
   }
-  return path === undefined ? undefined : { path, owner, expect };
+  return path === undefined ? undefined : { path, owner, expect, json };
 }
 
 /**
@@ -274,12 +277,12 @@ export function runRecompute(argv: readonly string[], io: Io = console): number 
     return 2;
   }
   io.log(JSON.stringify(recomputed.figures, null, 2));
-  for (const line of timelineLines(recomputed)) io.log(line);
+  if (!options.json) for (const line of timelineLines(recomputed)) io.log(line);
   if (options.expect === undefined) return 0;
   const differences = expectationDifferences(expected, recomputed.figures);
   for (const line of differences) io.error(line);
   if (differences.length > 0) return 1;
-  io.log(`every figure in ${options.expect} holds`);
+  if (!options.json) io.log(`every figure in ${options.expect} holds`);
   return 0;
 }
 

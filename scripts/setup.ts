@@ -1361,7 +1361,11 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
     case 'bed:company docs':
       return [{ command: 'pnpm', args: ['run', 'bed:company', 'docs'] }];
     case 'bed:company check':
-      return [{ command: 'pnpm', args: ['run', 'bed:company', 'check'] }];
+      // A check that only lists the hand steps still owed exits non-zero by
+      // design, and the setup says so in the line under it. Silencing pnpm's
+      // own reporter keeps `ELIFECYCLE  Command failed with exit code 1` out
+      // of a setup that worked; the checker's own output is unchanged.
+      return [{ command: 'pnpm', args: ['--reporter=silent', 'run', 'bed:company', 'check'] }];
     default:
       throw new Error(`no command for step "${step}"`);
   }
@@ -1868,6 +1872,16 @@ function step(
 ): RunResult {
   io.log(`[${steps.indexOf(name) + 1}/${steps.length}] ${label}`);
   return io.run(command, args, options);
+}
+
+function onlyOwedCompanyTokenGaps(output: string): boolean {
+  const gaps = [...output.matchAll(/^\s*GAP\s+(.+)$/gm)].map((match) => match[1]!);
+  const summary = /^(\d+) gap\(s\) above\.$/m.exec(output);
+  if (gaps.length === 0 || Number(summary?.[1]) !== gaps.length) return false;
+  const names = gaps.map((gap) =>
+    /^DAY0_BED_(LINEAR_API_KEY|SLACK_BOT_TOKEN|NOTION_TOKEN) is not set in \.env\.local:/.exec(gap)?.[1],
+  );
+  return names.every((name) => name !== undefined) && new Set(names).size === names.length;
 }
 
 /** One failed step, printed with the state it leaves behind and how to resume. */
@@ -2536,13 +2550,25 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         'pnpm bed:company check',
         bedCheckCommand.command,
         bedCheckCommand.args,
-        streamed,
+        { ...streamed, inherit: false },
       );
+      const bedCheckOutput = `${bedCheck.stdout}${bedCheck.stderr}`;
+      for (const line of bedCheckOutput.trimEnd().split('\n')) {
+        if (line) io.log(line);
+      }
       if (bedCheck.status !== 0) {
-        io.log(
-          '    The setup itself is done; the gaps above are the hand steps still owed. Run ' +
-            '`pnpm bed:company check` again after each, then `pnpm bed:company seed`.',
-        );
+        if (onlyOwedCompanyTokenGaps(bedCheckOutput)) {
+          io.log(
+            '    The setup itself is done; the gaps above are the hand steps still owed. Run ' +
+              '`pnpm bed:company check` again after each, then `pnpm bed:company seed`.',
+          );
+        } else {
+          io.log(
+            '    The company bed check found a gap beyond the token hand steps. ' +
+              'Fix the GAP lines above, then run `pnpm bed:company check` again.',
+          );
+          return 1;
+        }
       }
     }
 

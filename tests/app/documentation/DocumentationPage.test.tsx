@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   sources: [] as Array<Record<string, unknown>>,
+  mode: 'real' as 'real' | 'mock',
 }));
 
 vi.mock('convex/react', () => ({
@@ -11,7 +12,7 @@ vi.mock('convex/react', () => ({
   useMutation: (): (() => void) => (): void => undefined,
   useQuery: (reference: unknown): unknown => {
     const name = getFunctionName(reference as never);
-    if (name === 'config:surfaceMode') return { mode: 'real', label: 'real (local)' };
+    if (name === 'config:surfaceMode') return { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
     if (name === 'docSources:listMine') return state.sources;
     return [];
   },
@@ -20,10 +21,17 @@ vi.mock('convex/react', () => ({
 import {
   DocumentationPage,
   SourceKindHelp,
+  locatorForSourceKind,
 } from '../../../app/documentation/DocumentationPage';
 
 beforeEach((): void => {
   state.sources = [];
+  state.mode = 'real';
+});
+
+it('keeps the hosted mock documentation page unchanged', (): void => {
+  state.mode = 'mock';
+  expect(renderToStaticMarkup(<DocumentationPage />)).toMatchSnapshot();
 });
 
 describe('a source whose system discovery failed', (): void => {
@@ -54,6 +62,13 @@ describe('a source whose system discovery failed', (): void => {
 });
 
 describe('the link form and the components a source needs', (): void => {
+  it('clears the folder locator when another source kind is selected', (): void => {
+    expect(locatorForSourceKind('mcp')).toBe('');
+    expect(locatorForSourceKind('git')).toBe('');
+    expect(locatorForSourceKind('urls')).toBe('');
+    expect(locatorForSourceKind('folder')).toBe('.');
+  });
+
   it('says a folder source needs no component running', (): void => {
     const markup = renderToStaticMarkup(<DocumentationPage />);
     expect(markup).toContain('The backend reads this location itself.');
