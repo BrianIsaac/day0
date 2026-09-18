@@ -755,3 +755,231 @@ describe('rows a registration already left behind', (): void => {
     });
   });
 });
+
+/**
+ * "The skill registered while this item was being evaluated" has one owner:
+ * the registration side, reached through `skills.propose` and, for a row whose
+ * proposal step never ran, through Check for new work. The verdict write parks
+ * the verdict and stands down. Whichever of them sees the row first, and
+ * however often, the row gets one fresh evaluation per registration and is
+ * then skipped with the reason.
+ */
+describe('the verdict write and the registration side meeting on one late item', (): void => {
+  const NAME = 'kanban-comment-and-close';
+  const NEEDS_SKILL = {
+    decision: 'needs-skill',
+    reason: `no registered skill covers this; agent will propose "${NAME}"`,
+    suggestedSkillName: NAME,
+  };
+  const SKIP_REASON = `registered skill "${NAME}" was tried and does not cover this item`;
+
+  /** One registered skill and one ticket whose evaluation is still in the model. */
+  async function seedRegisteredAndLate(
+    harness: Harness,
+  ): Promise<{ agentId: Id<'agents'>; skillId: Id<'skills'>; late: Id<'workItems'> }> {
+    const agentId = await seedEmployee(harness);
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: NAME,
+          description: 'Comment on and close a ticket.',
+          body: 'Comment on the ticket, then close it.',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          requiredScopes: ['linear:read', 'linear:write'],
+          targetSurface: 'linear',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          createdAt: 1,
+          registeredAt: 5,
+        }),
+    );
+    const late = await seedTicket(harness, agentId, 'LOG-3');
+    return { agentId, skillId, late };
+  }
+
+  /** The verdict write alone: the evaluation's first mutation. */
+  async function writeVerdict(harness: Harness, late: Id<'workItems'>): Promise<string> {
+    const stored = await harness.mutation(internal.work.setVerdict, {
+      workItemId: late,
+      verdict: NEEDS_SKILL,
+    });
+    return stored.decision;
+  }
+
+  /** The proposal step: the two mutations the evaluation runs after a stored needs-skill. */
+  async function proposeAndLink(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    late: Id<'workItems'>,
+  ): Promise<void> {
+    const skillId = await harness.mutation(internal.skills.propose, {
+      agentId,
+      workItemId: late,
+      name: NAME,
+      description: 'Comment on and close a ticket.',
+      rationale: 'No skill covers a ticket comment yet.',
+      requiredScopes: ['linear:read', 'linear:write'],
+      surfaceClass: 'kanban',
+      operation: 'comment-and-close',
+    });
+    await harness.mutation(internal.work.setProposedSkill, { workItemId: late, skillId });
+  }
+
+  /** A whole evaluation that says needs-skill, as `evaluateWorkItemHandler` lands it. */
+  async function landNeedsSkill(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    late: Id<'workItems'>,
+  ): Promise<void> {
+    if ((await writeVerdict(harness, late)) === 'needs-skill') {
+      await proposeAndLink(harness, agentId, late);
+    }
+  }
+
+  async function check(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
+  }
+
+  /** How many times the row was sent back for a fresh evaluation. */
+  async function readmissions(harness: Harness, late: Id<'workItems'>): Promise<number> {
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .filter((q) => q.eq(q.field('type'), 'work.evaluated'))
+          .collect(),
+    );
+    return events.filter((event) => {
+      const payload = event.payload as { workItemId?: string; decision?: string };
+      return payload.workItemId === late && payload.decision === 'pending-reevaluation';
+    }).length;
+  }
+
+  it('leaves the late verdict to the registration side: the write parks it, the proposal step re-queues it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, skillId, late } = await seedRegisteredAndLate(harness);
+
+    await expect(writeVerdict(harness, late)).resolves.toBe('needs-skill');
+    expect((await readItem(harness, late)).reevaluation).toBeUndefined();
+    await proposeAndLink(harness, agentId, late);
+
+    const row = await readItem(harness, late);
+    expect(row).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'pending-reevaluation' },
+      proposedSkillId: skillId,
+    });
+    expect(row.reevaluation?.trigger).toBe('skill-registered');
+    expect(await readmissions(harness, late)).toBe(1);
+  });
+
+  it('verdict write first, then the check, then the verdict again: one re-queue, then the skip', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, skillId, late } = await seedRegisteredAndLate(harness);
+
+    await landNeedsSkill(harness, agentId, late);
+    await check(harness, agentId);
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'discovered',
+      proposedSkillId: skillId,
+    });
+    await landNeedsSkill(harness, agentId, late);
+
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'skipped',
+      skipReason: SKIP_REASON,
+      proposedSkillId: skillId,
+    });
+    expect(await readmissions(harness, late)).toBe(1);
+  });
+
+  it('the check first, on a row whose proposal step never ran, then the verdict write: one re-queue, then the skip', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, skillId, late } = await seedRegisteredAndLate(harness);
+
+    // The evaluation died between its verdict and its proposal.
+    await writeVerdict(harness, late);
+    expect((await readItem(harness, late)).state).toBe('needs-skill');
+    await check(harness, agentId);
+    const requeued = await readItem(harness, late);
+    expect(requeued).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'pending-reevaluation' },
+      proposedSkillId: skillId,
+    });
+    expect(requeued.reevaluation?.trigger).toBe('skill-registered');
+
+    await landNeedsSkill(harness, agentId, late);
+
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'skipped',
+      skipReason: SKIP_REASON,
+    });
+    expect(await readmissions(harness, late)).toBe(1);
+  });
+
+  it('the check landing between a second verdict and its proposal step skips the row, and the proposal step leaves it skipped', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, late } = await seedRegisteredAndLate(harness);
+    await landNeedsSkill(harness, agentId, late);
+
+    await writeVerdict(harness, late);
+    await check(harness, agentId);
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'skipped',
+      skipReason: SKIP_REASON,
+    });
+    await proposeAndLink(harness, agentId, late);
+
+    expect((await readItem(harness, late)).state).toBe('skipped');
+    expect(await readmissions(harness, late)).toBe(1);
+  });
+
+  it('never loops, however often the two sides take turns', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, late } = await seedRegisteredAndLate(harness);
+
+    for (let turn = 0; turn < 4; turn += 1) {
+      await check(harness, agentId);
+      await landNeedsSkill(harness, agentId, late);
+      await check(harness, agentId);
+    }
+
+    expect(await readItem(harness, late)).toMatchObject({
+      state: 'skipped',
+      skipReason: SKIP_REASON,
+    });
+    expect(await readmissions(harness, late)).toBe(1);
+    expect(await pendingEvaluations(harness)).toHaveLength(2);
+  });
+
+  it('a revision and a second registration buy the row one more evaluation, not more', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, skillId, late } = await seedRegisteredAndLate(harness);
+    await landNeedsSkill(harness, agentId, late);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(skillId, { registeredAt: 9 });
+    });
+
+    await landNeedsSkill(harness, agentId, late);
+    expect((await readItem(harness, late)).state).toBe('discovered');
+    await landNeedsSkill(harness, agentId, late);
+
+    expect((await readItem(harness, late)).state).toBe('skipped');
+    expect(await readmissions(harness, late)).toBe(2);
+  });
+});

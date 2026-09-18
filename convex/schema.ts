@@ -533,7 +533,8 @@ export default defineSchema({
     /**
      * What last sent this row back to `discovered`: a policy change, or the
      * thing a verdict waited on landing (`verdict-write` when the verdict was
-     * written, `check` on Check for new work), with its idempotency key and
+     * written, `check` on Check for new work), or the skill its verdict names
+     * having registered (`skill-registered`), with its idempotency key and
      * when. The same key never re-admits the row twice.
      */
     reevaluation: v.optional(

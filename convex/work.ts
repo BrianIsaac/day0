@@ -836,23 +836,32 @@ export async function releaseExternalClaim(
 /** What a parked verdict waits on, as the evaluator and the skill pane write it. */
 type WaitingVerdict = ParkedVerdict & { suggestedSkillName?: string };
 
+/** What the owner of the registration race did with a row. */
+type RegisteredSkillOutcome = 'requeued' | 'skipped' | 'left';
+
 /** A re-admission decided where a verdict is written or checked, not by a policy change. */
 type SatisfiedTrigger = 'verdict-write' | 'check';
 
 /**
  * Whether what a waiting verdict names is present now, and under which key.
  *
- * An evaluation reads the surfaces, the grants and the skills, judges scope
- * with a model call, and writes its verdict seconds later; the connection,
- * the grant or the registration can land in between, and the write that
- * landed it re-admits only rows already parked. The key names the state of
- * the thing waited on: a connection's is the one `recordConnected` stamps,
- * so one connection buys a row one re-evaluation whichever path gives it.
+ * An evaluation reads the surfaces and the grants, judges scope with a model
+ * call, and writes its verdict seconds later; the connection or the grant can
+ * land in between, and the write that landed it re-admits only rows already
+ * parked. The key names the state of the thing waited on: a connection's is
+ * the one `recordConnected` stamps, so one connection buys a row one
+ * re-evaluation whichever path gives it.
+ *
+ * A `needs-skill` verdict naming a skill that registered meanwhile is not
+ * answered here. That race belongs to `requeueBehindRegisteredSkill`, which
+ * the proposal step reaches in every mode: a second reader with its own key
+ * on the row's one `reevaluation` record would overwrite the owner's, and the
+ * two would re-admit the row in turn for ever.
  *
  * Args:
  *   ctx: Mutation context.
  *   agentId: The employee.
- *   verdict: The defer or needs-skill verdict.
+ *   verdict: The defer verdict.
  *   now: The instant to judge surface liveness against.
  *
  * Returns:
@@ -907,23 +916,93 @@ async function waitSatisfiedBy(
     }
     return { key: `grants:${grants.join(',')}`, landed: `${scopes.join(', ')} granted` };
   }
-  if (
-    verdict.decision === 'needs-skill' &&
-    typeof verdict.suggestedSkillName === 'string' &&
-    verdict.suggestedSkillName !== ''
-  ) {
-    const name = verdict.suggestedSkillName;
-    const skill = (
-      await ctx.db
-        .query('skills')
-        .withIndex('by_agent_name', (index) => index.eq('agentId', agentId).eq('name', name))
-        .collect()
-    ).find((row) => row.state === 'registered');
-    return skill
-      ? { key: `skill:${skill._id}:${skill.registeredAt}`, landed: `the skill ${name} registered` }
-      : undefined;
-  }
   return undefined;
+}
+
+/**
+ * The registered skill a `needs-skill` verdict names, if there is one.
+ *
+ * Only the evaluator writes `suggestedSkillName`; the verdicts `convex/skills.ts`
+ * applies after a failed or unverified authoring run name none.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   agentId: The employee.
+ *   verdict: The verdict on the row.
+ *
+ * Returns:
+ *   The registered skill of that name, or undefined.
+ */
+async function registeredSkillNamedBy(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  verdict: WaitingVerdict,
+): Promise<Doc<'skills'> | undefined> {
+  const name = verdict.suggestedSkillName;
+  if (verdict.decision !== 'needs-skill' || typeof name !== 'string' || name === '') {
+    return undefined;
+  }
+  return (
+    await ctx.db
+      .query('skills')
+      .withIndex('by_agent_name', (index) => index.eq('agentId', agentId).eq('name', name))
+      .collect()
+  ).find((row) => row.state === 'registered');
+}
+
+/** One registration of one skill: a revision clears `registeredAt`, so the next is a new key. */
+function skillRegistrationKey(skill: Doc<'skills'>): string {
+  return `skill-registered:${skill._id}:${skill.registeredAt ?? 0}`;
+}
+
+/**
+ * Re-queue a row whose `needs-skill` verdict names a skill that has registered.
+ *
+ * The one owner of "the skill registered while this item was being
+ * evaluated". An evaluation reads the skill list, spends its time in a model,
+ * and writes its verdict afterwards. A registration that lands in between has
+ * already re-queued the rows waiting then, so this row arrives at a callable
+ * skill with nobody left to move it. The verdict write parks it as written;
+ * the proposal step that follows (`skills.propose`) calls this, in every
+ * mode, and Check for new work calls it for a row whose proposal step never
+ * ran. The row is sent back once per registration, keyed on its
+ * `reevaluation` record. A second `needs-skill` naming the same registration
+ * was decided with the skill on the list, so the skill does not cover the
+ * row: it is skipped with that reason, which leaves it a Retry on its card,
+ * rather than evaluated for ever or parked where nothing moves it.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   skill: The registered skill the verdict names.
+ *   workItemId: The row the verdict was written on.
+ *
+ * Returns:
+ *   Whether the row was re-queued, skipped, or was not waiting and left alone.
+ */
+export async function requeueBehindRegisteredSkill(
+  ctx: MutationCtx,
+  skill: Doc<'skills'>,
+  workItemId: Id<'workItems'>,
+): Promise<RegisteredSkillOutcome> {
+  const item = await ctx.db.get(workItemId);
+  if (!item || item.state !== 'needs-skill' || item.agentId !== skill.agentId) return 'left';
+  const key = skillRegistrationKey(skill);
+  if (item.reevaluation?.key === key) {
+    await applyVerdict(ctx, workItemId, {
+      decision: 'skip',
+      reason: `registered skill "${skill.name}" was tried and does not cover this item`,
+    });
+    return 'skipped';
+  }
+  await ctx.db.patch(workItemId, {
+    proposedSkillId: skill._id,
+    reevaluation: { trigger: 'skill-registered', key, at: Date.now() },
+  });
+  await applyVerdict(ctx, workItemId, {
+    decision: 'pending-reevaluation',
+    reason: 'skill registered, ready to retry',
+  });
+  return 'requeued';
 }
 
 /** The employee to check and the creation-time watermarks a continuation resumes from. */
@@ -959,10 +1038,12 @@ async function logSatisfiedRequeue(
  * Re-admit the parked rows whose wait is already over.
  *
  * A row deferred on a surface that has since connected, or on grants that
- * are all live, or parked at `needs-skill` naming a skill that is registered,
- * goes back to `discovered` for a fresh evaluation. Each row returns once
- * per key of the thing it waited on, so a row the evaluator parks again for
- * the same connection stays parked until the connection changes. A batch of
+ * are all live, goes back to `discovered` for a fresh evaluation. Each row
+ * returns once per key of the thing it waited on, so a row the evaluator
+ * parks again for the same connection stays parked until the connection
+ * changes. A row parked at `needs-skill` naming a skill that is registered is
+ * handed to `requeueBehindRegisteredSkill`: back once per registration, then
+ * skipped with the reason. A batch of
  * `REEVALUATION_BATCH` rows per state is examined; when a batch fills, the
  * rest is scheduled as a continuation carrying creation-time watermarks.
  *
@@ -999,6 +1080,18 @@ async function readmitSatisfiedInTransaction(
       examined += 1;
       if (isRevocationTrialRow(row)) continue;
       const waited = (row.verdict ?? {}) as WaitingVerdict;
+      // A row behind a registered skill goes to that race's one owner, under
+      // its key and its once-then-skip rule, so the check and the proposal
+      // step cannot each give the row a turn.
+      const skill = await registeredSkillNamedBy(ctx, args.agentId, waited);
+      if (skill) {
+        const outcome = await requeueBehindRegisteredSkill(ctx, skill, row._id);
+        if (outcome === 'requeued') {
+          await logSatisfiedRequeue(ctx, row, 'check', skillRegistrationKey(skill), waited, now);
+          readmitted += 1;
+        }
+        continue;
+      }
       const satisfied = await waitSatisfiedBy(ctx, args.agentId, waited, now);
       if (!satisfied || row.reevaluation?.key === satisfied.key) continue;
       await ctx.db.patch(row._id, {
@@ -1104,12 +1197,14 @@ export async function applyVerdict(
     }
   }
 
-  // A verdict that waits on a surface, a grant or a skill was computed from
-  // reads taken before the model call. When what it names is present by now,
-  // parking the row would strand it: the write that landed it has already
-  // looked for parked rows and found this one still `discovered`. The row
-  // goes back for a fresh evaluation instead, once per key, so an evaluator
-  // that keeps disagreeing with this read parks on its second verdict.
+  // A verdict that waits on a surface or a grant was computed from reads taken
+  // before the model call. When what it names is present by now, parking the
+  // row would strand it: the write that landed it has already looked for
+  // parked rows and found this one still `discovered`. The row goes back for
+  // a fresh evaluation instead, once per key, so an evaluator that keeps
+  // disagreeing with this read parks on its second verdict. A `needs-skill`
+  // naming a skill that registered meanwhile parks as written: the proposal
+  // step that follows hands it to `requeueBehindRegisteredSkill`.
   let readmission: { key: string; waited: WaitingVerdict; at: number } | undefined;
   if (SURFACE_MODE === 'real' && !isRevocationTrialRow(row)) {
     const at = Date.now();

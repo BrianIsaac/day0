@@ -503,7 +503,12 @@ describe('the other verdicts that wait on something', (): void => {
     expect((await readItem(harness, revoked)).state).toBe('deferred');
   });
 
-  it('re-evaluates a needs-skill verdict naming a skill that registered during the evaluation', async (): Promise<void> => {
+  // This race has one owner, the registration side (`requeueBehindRegisteredSkill`,
+  // reached from `skills.propose`): the verdict write parks the verdict as
+  // written and the proposal step that follows it re-queues the row. The
+  // second verdict is skipped with the reason, not parked at `needs-skill`
+  // behind a callable skill, the state nothing on the card can leave.
+  it('leaves a needs-skill verdict naming a skill that registered during the evaluation to the proposal step', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -531,13 +536,37 @@ describe('the other verdicts that wait on something', (): void => {
     };
     const workItemId = await insertRow(harness, agentId, 'REVOPS-27');
 
+    const propose = async (): Promise<unknown> =>
+      await harness.mutation(internal.skills.propose, {
+        agentId,
+        workItemId,
+        name: 'analytics-update',
+        description: 'Update a figure on an analytics surface.',
+        rationale: verdict.suggestedSkillRationale,
+        requiredScopes: [],
+        surfaceClass: 'analytics',
+        operation: 'update',
+      });
+
     const first = await harness.mutation(internal.work.setVerdict, { workItemId, verdict });
-    expect(first.decision).toBe('pending-reevaluation');
-    expect((await readItem(harness, workItemId)).state).toBe('discovered');
+    expect(first).toEqual(verdict);
+    expect(await readItem(harness, workItemId)).toMatchObject({ state: 'needs-skill' });
+    expect((await readItem(harness, workItemId)).reevaluation).toBeUndefined();
+    await propose();
+    const requeued = await readItem(harness, workItemId);
+    expect(requeued).toMatchObject({
+      state: 'discovered',
+      verdict: { decision: 'pending-reevaluation' },
+    });
+    expect(requeued.reevaluation?.trigger).toBe('skill-registered');
 
     const second = await harness.mutation(internal.work.setVerdict, { workItemId, verdict });
     expect(second).toEqual(verdict);
-    expect((await readItem(harness, workItemId)).state).toBe('needs-skill');
+    await propose();
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'skipped',
+      skipReason: 'registered skill "analytics-update" was tried and does not cover this item',
+    });
   });
 
   it('parks a needs-skill verdict whose skill is not registered, or that names none', async (): Promise<void> => {
