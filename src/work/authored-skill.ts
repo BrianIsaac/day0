@@ -1,4 +1,4 @@
-import { EXECUTION_INPUT_LINES, undeclaredSkillInputs, declaredSkillInputs } from './skill-inputs';
+import { credentialInputIssues, EXECUTION_INPUT_LINES, undeclaredSkillInputs, declaredSkillInputs } from './skill-inputs';
 
 /**
  * The static gate on an authored skill, run before any sandbox spends a run.
@@ -108,8 +108,10 @@ function doubleBraceIssues(label: string, text: string): string[] {
  * Why an authored skill is not a reusable procedure, if it is not.
  *
  * Args:
- *   args: The authored body and smoke test, and the work item the skill was
- *     proposed for when one is known.
+ *   args: The authored body and smoke test, the work item the skill was
+ *     proposed for when one is known, and in real mode the undeclared names
+ *     left undeclared because they name a credential, which are refused as
+ *     that rather than as a declaration the author forgot.
  *
  * Returns:
  *   Every reason found, in a fixed order; empty when the skill passes.
@@ -119,6 +121,7 @@ export function authoredSkillIssues(args: {
   smokeTest: string;
   instance?: AuthoredSkillInstance | null;
   documentedProcedure?: string;
+  credentialInputs?: readonly string[];
 }): string[] {
   const issues: string[] = [];
   issues.push(...doubleBraceIssues('SKILL.md', args.body));
@@ -130,7 +133,11 @@ export function authoredSkillIssues(args: {
       'SKILL.md declares no `## Inputs` section; every value that varies per run is an angle-bracket input declared there',
     );
   }
-  const undeclared = declared === undefined ? [] : undeclaredSkillInputs(args.body);
+  const credentials = new Set(args.credentialInputs ?? []);
+  issues.push(...credentialInputIssues([...credentials]));
+  const undeclared = (declared === undefined ? [] : undeclaredSkillInputs(args.body)).filter(
+    (name: string): boolean => !credentials.has(name),
+  );
   undeclared.forEach((name: string, index: number): void => {
     const form = `SKILL.md uses \`<${name}>\` without declaring it under \`## Inputs\`; declare it there as a line starting with \`<${name}>\``;
     issues.push(index === 0 ? `${form}, as in: ${DECLARATION_EXAMPLE}` : form);

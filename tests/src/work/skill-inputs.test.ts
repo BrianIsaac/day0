@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  credentialInputIssues,
   bindSkillInputs,
   declaredInputsNote,
   declaredSkillInputs,
@@ -227,7 +228,7 @@ describe('declaring the inputs an author used but did not declare', (): void => 
       ].join('\n'),
     );
     expect(undeclaredSkillInputs(repaired.body)).toEqual([]);
-    expect(declareUndeclaredInputs(repaired.body)).toEqual({ body: repaired.body, declared: [] });
+    expect(declareUndeclaredInputs(repaired.body)).toEqual({ body: repaired.body, declared: [], credentials: [] });
   });
 
   it('marks each line it added, so whoever reads the body later can tell the system wrote it', (): void => {
@@ -255,9 +256,22 @@ describe('declaring the inputs an author used but did not declare', (): void => 
     expect(declaredSkillInputs(repaired.body)).toEqual(['record-id']);
   });
 
+  it('never declares a name that says it is a credential: the gate refuses it and says where a credential goes', (): void => {
+    const withToken = `${body}\nSend \`<slack-bot-token>\` as the bearer and sign with \`<api-key>\`; keep \`<monkey-count>\`.`;
+    const repaired = declareUndeclaredInputs(withToken);
+
+    expect(repaired.declared).toEqual(['closing-state', 'reply-text', 'monkey-count']);
+    expect(repaired.credentials).toEqual(['slack-bot-token', 'api-key']);
+    expect(undeclaredSkillInputs(repaired.body)).toEqual(['slack-bot-token', 'api-key']);
+    expect(credentialInputIssues(repaired.credentials)).toEqual([
+      'SKILL.md uses `<slack-bot-token>` as an input; a credential is never an input the executor reads from a candidate: write `{{secret}}` where it goes and the server substitutes the stored credential',
+      'SKILL.md uses `<api-key>` as an input; a credential is never an input the executor reads from a candidate: write `{{secret}}` where it goes and the server substitutes the stored credential',
+    ]);
+  });
+
   it('leaves a body with nothing missing exactly as it was', (): void => {
     const complete = body.replace('- `<record-id>`: the candidate id.', '- `<record-id>`, `<closing-state>`, `<reply-text>`: from the candidate.');
-    expect(declareUndeclaredInputs(complete)).toEqual({ body: complete, declared: [] });
+    expect(declareUndeclaredInputs(complete)).toEqual({ body: complete, declared: [], credentials: [] });
   });
 
   it('names what was declared in the log', (): void => {

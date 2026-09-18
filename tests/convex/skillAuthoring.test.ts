@@ -493,6 +493,44 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
     expect(registered.refusedSmokeTest).toBeUndefined();
   });
 
+  it('refuses any double-brace placeholder but {{secret}} before the sandbox, in the body or the cases, saying which', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({
+      body: reusableBody.replace('comment on `<record-id>`', 'comment on `<record-id>` in {{channel}}'),
+      smokeTest: casesSmokeTest.replace('"OPS-9"', '"{{ticket}}"'),
+    });
+
+    const refused = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain('SKILL.md uses `{{channel}}`; `{{secret}}` is the only double-brace placeholder');
+    expect(refused.reason).toContain('smoke.py uses `{{ticket}}`');
+    expect(refused.reason).not.toContain('`{{secret}}`; `{{secret}}`');
+    expect(recorded.sandboxRuns).toBe(0);
+    const row = await readSkill(harness, skillId);
+    expect(row.state).toBe('failed');
+    expect(row.refusedBody).toContain('{{channel}}');
+  });
+
+  it('declares an ordinary undeclared input but refuses one named as a credential, before any sandbox', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.outputs.push({
+      body: reusableBody.replace('comment on `<record-id>`', 'comment on `<record-id>` in `<closing-state>` with bearer `<tile-api-token>`'),
+      smokeTest: casesSmokeTest,
+    });
+
+    const refused = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain('SKILL.md uses `<tile-api-token>` as an input; a credential is never an input');
+    expect(refused.reason).not.toContain('`<closing-state>`');
+    expect(refused.reason).not.toContain('without declaring it under');
+    expect(recorded.sandboxRuns).toBe(0);
+    const row = await readSkill(harness, skillId);
+    expect(row.refusedBody).toContain('- `<closing-state>`: read it from the candidate body');
+    expect(row.refusedBody).not.toContain('- `<tile-api-token>`');
+  });
+
   it('still refuses, before any sandbox, a body or CASES that repeat the first work item', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);

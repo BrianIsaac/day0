@@ -144,6 +144,45 @@ const ADDED_DECLARATION = new RegExp(
   `^\\s*[-*+]\\s*\`<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>\`:.*${ADDED_DECLARATION_MARK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
 );
 
+/** Words that make a placeholder name a credential whatever surrounds them. */
+const CREDENTIAL_WORDS = new Set(['secret', 'secrets', 'password', 'passwd', 'passphrase', 'credential', 'credentials', 'bearer', 'authorization']);
+
+/** A key or token qualified as one that authenticates; `<team-key>` and `<page-token>` are neither. */
+const CREDENTIAL_KEY_OR_TOKEN = /(?:^|-)(?:api|access|secret|private|signing|bot|user|app|auth|oauth|refresh|session|service)-(?:key|token)(?:-|$)/;
+
+/**
+ * Whether a placeholder's name says its value is a credential.
+ *
+ * Args:
+ *   name: A placeholder name without its brackets.
+ *
+ * Returns:
+ *   True for a name such as `slack-bot-token`, `api-key` or `admin-password`.
+ */
+export function isCredentialInputName(name: string): boolean {
+  return name.split('-').some((word: string): boolean => CREDENTIAL_WORDS.has(word)) || CREDENTIAL_KEY_OR_TOKEN.test(name);
+}
+
+/**
+ * Why a credential-named input is refused, one reason per name.
+ *
+ * Declaring such a name for the author would tell the executor to read a
+ * credential out of a candidate or a runbook and write it into an action, the
+ * one thing `{{secret}}` exists to make unnecessary.
+ *
+ * Args:
+ *   names: Placeholder names `declareUndeclaredInputs` would not declare.
+ *
+ * Returns:
+ *   The reasons, in the order given.
+ */
+export function credentialInputIssues(names: readonly string[]): string[] {
+  return names.map(
+    (name: string): string =>
+      `SKILL.md uses \`<${name}>\` as an input; a credential is never an input the executor reads from a candidate: write \`{{secret}}\` where it goes and the server substitutes the stored credential`,
+  );
+}
+
 /**
  * Declare every placeholder a body uses but does not declare.
  *
@@ -154,26 +193,30 @@ const ADDED_DECLARATION = new RegExp(
  * executor for it. So real mode declares it in those words instead of refusing
  * the skill, and says so in the log. Each goes on its own list line after the
  * section's last non-blank line, so the author's declarations keep their
- * place; a body with no section gets one at its end.
+ * place; a body with no section gets one at its end. A name that says it is
+ * a credential is never declared: it is left for the gate to refuse.
  *
  * Args:
  *   body: SKILL.md markdown.
  *
  * Returns:
- *   The body with every used placeholder declared, and the names this added
- *   in order of first use; the body unchanged when nothing was missing.
+ *   The body with every other used placeholder declared, the names this added
+ *   in order of first use, and the credential names it left undeclared; the
+ *   body unchanged when nothing was added.
  */
-export function declareUndeclaredInputs(body: string): { body: string; declared: string[] } {
-  const missing = undeclaredSkillInputs(body);
-  if (missing.length === 0) return { body, declared: [] };
+export function declareUndeclaredInputs(body: string): { body: string; declared: string[]; credentials: string[] } {
+  const undeclared = undeclaredSkillInputs(body);
+  const credentials = undeclared.filter(isCredentialInputName);
+  const missing = undeclared.filter((name: string): boolean => !isCredentialInputName(name));
+  if (missing.length === 0) return { body, declared: [], credentials };
   const lines = missing
     .map((name: string): string => `- \`<${name}>\`: ${ADDED_DECLARATION_SOURCE}. ${ADDED_DECLARATION_MARK}`)
     .join('\n');
   const section = INPUTS_SECTION.exec(body);
-  if (!section) return { body: `${body.trimEnd()}\n\n## Inputs\n\n${lines}\n`, declared: missing };
+  if (!section) return { body: `${body.trimEnd()}\n\n## Inputs\n\n${lines}\n`, declared: missing, credentials };
   const contentStart = section.index + section[0].length - section[1]!.length;
   const at = contentStart + section[1]!.trimEnd().length;
-  return { body: `${body.slice(0, at)}\n${lines}${body.slice(at)}`, declared: missing };
+  return { body: `${body.slice(0, at)}\n${lines}${body.slice(at)}`, declared: missing, credentials };
 }
 
 /**

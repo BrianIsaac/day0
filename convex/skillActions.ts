@@ -628,12 +628,14 @@ export const authorAndRegisterSkill = action({
 
     // In real mode a placeholder the author used without declaring it is
     // declared for it, in the words the executor binds such an input by,
-    // rather than refusing a procedure the executor can run. Mock mode refuses
-    // it as the recorded runs did.
+    // rather than refusing a procedure the executor can run; the line says
+    // Day0 added it. A name that says it is a credential is never declared:
+    // the gate refuses it and points at `{{secret}}`. Mock mode refuses every
+    // undeclared placeholder as the recorded runs did.
     const inputs =
       SURFACE_MODE === 'real'
         ? declareUndeclaredInputs(authored.body.trim())
-        : { body: authored.body.trim(), declared: [] };
+        : { body: authored.body.trim(), declared: [], credentials: [] };
     const body = inputs.body;
     // A fenced smoke test is a program with a wrapper, not a refusal: the
     // wrapper comes off here, before the gate reads it, and every log written
@@ -661,6 +663,7 @@ export const authorAndRegisterSkill = action({
       : null;
     const issues = authoredSkillIssues({
       body, smokeTest, instance,
+      credentialInputs: inputs.credentials,
       documentedProcedure: SURFACE_MODE === 'real' ? linkedRunbookSection(skill, surfaceRows.map(toSurfaceRecord), pageRows) : '',
     });
     if (issues.length > 0) {
