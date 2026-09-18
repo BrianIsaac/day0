@@ -3030,10 +3030,9 @@ describe('executing an approved plan through the gate', (): void => {
     expect(ledger(row)[0].repair).toBeUndefined();
   });
 
-  // Red until the read repair passes the run's earlier rows: today the
-  // repaired snapshot is applied by a call of its own, in a new browser that
-  // never signed in, and reads about:blank.
-  it.fails('reads the signed-in page when it repairs a browser snapshot the driver refused', async (): Promise<void> => {
+  // The repaired snapshot is applied by a call of its own, in a new browser;
+  // without the run's earlier rows it never signed in and read about:blank.
+  it('reads the signed-in page when it repairs a browser snapshot the driver refused', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
     const refuseFullPage = (call: TileDriverCall): string | undefined =>
@@ -3089,6 +3088,10 @@ describe('executing an approved plan through the gate', (): void => {
       repair: { toolArgsJson: '{"fullPage":true}' },
     });
     expect(JSON.stringify(row.output)).not.toContain('about:blank');
+    // The repair's browser replayed the phase's own navigate and sign-in first.
+    expect(ledger(row)[3]!.sessionRestore?.steps.map((step) => step.replayOf)).toEqual(
+      ledger(row).slice(0, 3).map((entry) => entry.idempotencyKey),
+    );
   });
 
   describe('a replayed sign-in under the authority it first landed with', (): void => {

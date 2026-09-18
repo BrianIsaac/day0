@@ -1473,6 +1473,13 @@ export const applyApprovedActions = internalAction({
         });
         const skill = skills.find((row: Doc<'skills'>): boolean => row._id === item?.skillId);
         if (item && skill) {
+          // Each repaired read is applied in a call of its own, so in a new
+          // browser: it is given the run's earlier rows and this phase's rows
+          // before it, as they stand after any earlier repair, so a browser
+          // read is signed in again before it reads.
+          const actionsSoFar = [...(output.actions ?? [])];
+          const appliedSoFar = [...applied];
+          const earlierPhases = priorPhasesLedger(output);
           const repaired = await repairFailedReads({
             actions: output.actions ?? [],
             applied,
@@ -1485,11 +1492,17 @@ export const applyApprovedActions = internalAction({
                 deps,
                 grants,
                 approvedIndexes: new Set([0]),
+                prerequisiteLedger: {
+                  actions: [...(earlierPhases?.actions ?? []), ...actionsSoFar.slice(0, index)],
+                  applied: [...(earlierPhases?.applied ?? []), ...appliedSoFar.slice(0, index)],
+                },
                 idempotencyIndexOffset: actionIndexOffset + index,
                 autoPhase: true,
                 autonomousActions: claim.autonomousActions,
                 replyTarget: claim.replyTarget,
               });
+              actionsSoFar[index] = action;
+              appliedSoFar[index] = row!;
               return row!;
             },
           });
