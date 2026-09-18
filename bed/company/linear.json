@@ -1,0 +1,82 @@
+{
+  "label": "day0-demo",
+  "states": ["Todo", "In Progress", "Done"],
+  "teams": [
+    { "key": "REVOPS", "name": "Revenue operations", "project": "Q3 close" },
+    { "key": "FIN", "name": "Finance close", "project": "September close" },
+    { "key": "LOG", "name": "Logistics desk", "project": "Shipment exceptions" }
+  ],
+  "tickets": [
+    {
+      "key": "revops-tile",
+      "team": "REVOPS",
+      "title": "Refresh the Looker pipeline tile",
+      "description": "Update the pipeline coverage figure on the Looker pipeline tile to the figure in the Friday standup coverage summary.",
+      "state": "Todo"
+    },
+    {
+      "key": "revops-audit",
+      "team": "REVOPS",
+      "title": "Add the Q3 close-summary audit note",
+      "description": "Summarise the Q3 close checks as a comment on this ticket, then move it to Done after manager approval.",
+      "state": "Todo"
+    },
+    {
+      "key": "revops-northstar",
+      "team": "REVOPS",
+      "title": "Reconcile Northstar CRM ownership for Aster Works",
+      "description": "Find the owner of the Aster Works opportunity in Northstar CRM and add it here.",
+      "state": "Todo"
+    },
+    {
+      "key": "fin-status",
+      "team": "FIN",
+      "title": "Post the September close status note",
+      "description": "Post the close status note for the September close on this ticket.",
+      "state": "Todo"
+    },
+    {
+      "key": "fin-accruals",
+      "team": "FIN",
+      "title": "Accruals booked for September",
+      "description": "Close calendar step, business day 3: the accounting team books the September accruals in NetLedger.",
+      "state": "Done"
+    },
+    {
+      "key": "fin-bankrec",
+      "team": "FIN",
+      "title": "Bank reconciliation for September",
+      "description": "Close calendar step, business day 4: the accounting team reconciles the September bank statements in NetLedger.",
+      "state": "In Progress"
+    },
+    {
+      "key": "fin-brightwater",
+      "team": "FIN",
+      "title": "Confirm the Brightwater accrual owner in NetLedger",
+      "description": "Find who owns the Brightwater freight accrual in NetLedger and add the owner here.",
+      "state": "Todo"
+    },
+    {
+      "key": "log-sh4471",
+      "team": "LOG",
+      "title": "Exception: SH-4471 held at Port Klang, Meridian Freight, no revised ETA",
+      "description": "Shipment SH-4471 is held at Port Klang. The carrier, Meridian Freight, has not given a revised ETA.",
+      "state": "Todo"
+    },
+    {
+      "key": "log-sh4460",
+      "team": "LOG",
+      "title": "Exception: SH-4460 delivered one day late, ETA confirmed",
+      "description": "Shipment SH-4460 will be delivered one day late. The carrier, Meridian Freight, has confirmed a revised delivery date of 26 September.",
+      "state": "Todo"
+    },
+    {
+      "key": "log-sh4480",
+      "team": "LOG",
+      "title": "Exception: SH-4480 held at Port Klang, Meridian Freight, no revised ETA",
+      "description": "Shipment SH-4480 is held at Port Klang. The carrier, Meridian Freight, has not given a revised ETA.",
+      "state": "Todo",
+      "late": true
+    }
+  ]
+}
