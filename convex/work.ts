@@ -574,8 +574,9 @@ async function externalClaimScope(
  * The read of the live claims and the insert share the claiming
  * transaction, and Convex serialises transactions that touch the same index
  * range, so of two verdicts on one item exactly one inserts. A live claim
- * whose holder is gone, cancelled or skipped is stamped released here, so a
- * release some path missed cannot keep the item from the company for good.
+ * whose holder is gone, cancelled or skipped is released here, with what it
+ * refused, so a release some path missed cannot keep the item from the
+ * company for good.
  *
  * Args:
  *   ctx: Mutation context.
@@ -602,7 +603,7 @@ async function takeExternalClaim(
     if (claim.workItemId === row._id) return { key: scope.key };
     const holding = await ctx.db.get(claim.workItemId);
     if (!holding || RELEASED_HOLDER_STATES.has(holding.state)) {
-      await ctx.db.patch(claim._id, { releasedAt: now });
+      await releaseClaim(ctx, claim, now);
       continue;
     }
     const agent = await ctx.db.get(claim.agentId);
@@ -675,13 +676,38 @@ function claimRefusedVerdict(
 }
 
 /**
- * Release the claim a work item holds and send back what it refused.
+ * Stamp one claim released and send back what it refused.
  *
  * Every employee of the owner is re-evaluated for the rows this claim
  * refused, keyed by the claim's id, so each returns to `discovered` once and
- * the next verdict takes the item or names its new holder. A row that holds
- * no live claim releases nothing. Called where a holder is cancelled;
- * completed and failed rows keep their claim.
+ * the next verdict takes the item or names its new holder.
+ *
+ * Args:
+ *   ctx: Mutation context of the transition.
+ *   claim: The live claim.
+ *   now: The release time.
+ */
+async function releaseClaim(ctx: MutationCtx, claim: Doc<'externalClaims'>, now: number): Promise<void> {
+  await ctx.db.patch(claim._id, { releasedAt: now });
+  const employees = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', claim.userId))
+    .collect();
+  for (const employee of employees) {
+    await reevaluatePendingInTransaction(ctx, {
+      agentId: employee._id,
+      trigger: 'claim-released',
+      key: claim._id,
+      now,
+    });
+  }
+}
+
+/**
+ * Release the claim a work item holds, with what it refused.
+ *
+ * A row that holds no live claim releases nothing. Called where a holder is
+ * cancelled; completed and failed rows keep their claim.
  *
  * Args:
  *   ctx: Mutation context of the transition.
@@ -698,21 +724,7 @@ export async function releaseExternalClaim(
     .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
     .filter((q) => q.eq(q.field('releasedAt'), undefined))
     .collect();
-  for (const claim of held) {
-    await ctx.db.patch(claim._id, { releasedAt: now });
-    const employees = await ctx.db
-      .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', claim.userId))
-      .collect();
-    for (const employee of employees) {
-      await reevaluatePendingInTransaction(ctx, {
-        agentId: employee._id,
-        trigger: 'claim-released',
-        key: claim._id,
-        now,
-      });
-    }
-  }
+  for (const claim of held) await releaseClaim(ctx, claim, now);
 }
 
 /**

@@ -580,7 +580,7 @@ describe('releasing a claim', (): void => {
     ]);
   });
 
-  it.fails('re-admits what a stale claim refused, so the refusal names the new holder', async (): Promise<void> => {
+  it('re-admits what a stale claim refused, so the refusal names the new holder', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
