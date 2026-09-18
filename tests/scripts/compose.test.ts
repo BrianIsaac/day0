@@ -111,3 +111,43 @@ describe('the profile list and the compose file agree', (): void => {
     expect(COMPOSE_FILE).toContain('test -n "$$AUTH_TOKEN"');
   });
 });
+
+describe('the backend runs several employees at once', (): void => {
+  const backendEnvironment = (): string[] => {
+    const service = COMPOSE_FILE.match(/^ {2}backend:\n([\s\S]*?)(?=^ {2}[a-z][a-z0-9-]*:$)/m);
+    expect(service).not.toBeNull();
+    const environment = service![1]!.match(/^ {4}environment:\n((?: {6}.*\n)+)/m);
+    expect(environment).not.toBeNull();
+    return environment![1]!
+      .split('\n')
+      .map((line: string): string => line.trim())
+      .filter((line: string): boolean => line.startsWith('- '))
+      .map((line: string): string => line.slice(2));
+  };
+
+  it.fails('sets the scheduler to run more jobs in parallel than the upstream eight', (): void => {
+    const parallelism = backendEnvironment().find((entry: string): boolean =>
+      entry.startsWith('SCHEDULED_JOB_EXECUTION_PARALLELISM='),
+    );
+    expect(parallelism).toBe('SCHEDULED_JOB_EXECUTION_PARALLELISM=32');
+  });
+
+  it.fails('states the node action cap explicitly, above the scheduler parallelism', (): void => {
+    const cap = backendEnvironment().find((entry: string): boolean =>
+      entry.startsWith('APPLICATION_MAX_CONCURRENT_NODE_ACTIONS='),
+    );
+    expect(cap).toBe('APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=64');
+  });
+
+  it.fails('says why each knob is set, on the comment line above it', (): void => {
+    const service = COMPOSE_FILE.match(/^ {2}backend:\n([\s\S]*?)(?=^ {2}[a-z][a-z0-9-]*:$)/m)![1]!;
+    const commentAbove = (variable: string): string => {
+      const at = service.indexOf(`- ${variable}=`);
+      expect(at).toBeGreaterThan(-1);
+      const lines = service.slice(0, at).split('\n');
+      return lines[lines.length - 2]?.trim() ?? '';
+    };
+    expect(commentAbove('SCHEDULED_JOB_EXECUTION_PARALLELISM')).toMatch(/^#.*(employee|parallel|scheduler)/i);
+    expect(commentAbove('APPLICATION_MAX_CONCURRENT_NODE_ACTIONS')).toMatch(/^#.*(action|node)/i);
+  });
+});

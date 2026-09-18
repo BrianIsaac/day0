@@ -115,6 +115,24 @@ export async function withModelRetry<T>(label: string, fn: () => Promise<T>): Pr
   return await withRetry(label, fn);
 }
 
+/** What one model call through the retry wrapper came to; stub until the telemetry lands. */
+export interface ModelCallReport {
+  agent: string;
+  attempts: number;
+  retries: number;
+  durationMs: number;
+  outcome: 'ok' | 'failed' | 'timed-out';
+  errorName?: string;
+  statusCode?: number;
+}
+
+export type ModelCallObserver = (report: ModelCallReport) => void | Promise<void>;
+
+/** Stub: runs the step without observing it, so the failing-first tests typecheck. */
+export async function observeModelCalls<T>(_observer: ModelCallObserver, fn: () => Promise<T>): Promise<T> {
+  return await fn();
+}
+
 export function makeAgent(name: string, instructions: string): Agent {
   return new Agent({
     id: name,
