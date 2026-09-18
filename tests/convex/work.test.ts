@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -21,7 +21,15 @@ vi.mock('../../src/lib/mastra', () => ({
   agentText: async (): Promise<string> => '',
 }));
 
+// In real mode a transition schedules the server's next step. The scheduler's
+// timer is faked for every test here, so a job runs only when a test drains it
+// and none outlives the test that scheduled it; the clock stays real.
+beforeEach((): void => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+});
+
 afterEach((): void => {
+  vi.useRealTimers();
   restoreSurfaceMode();
 });
 

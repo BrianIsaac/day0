@@ -11,6 +11,7 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
+import { wakeQueuedWork } from './workLoop';
 import {
   managerNotificationMode,
   NOTIFICATIONS_CHANGE_REASON,
@@ -386,6 +387,8 @@ export const setAutonomousActions = mutation({
       payload: { from, to: args.on, reason: AUTONOMY_CHANGE_REASON },
       createdAt: Date.now(),
     });
+    // On raises the cap without moving a row; the work queued at the old cap gets the new slots.
+    if (args.on) await wakeQueuedWork(ctx, args.agentId);
     return { ok: true, autonomousActions: args.on, changed: true };
   },
 });

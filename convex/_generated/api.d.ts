@@ -47,6 +47,7 @@ import type * as surfaces from "../surfaces.js";
 import type * as voice from "../voice.js";
 import type * as work from "../work.js";
 import type * as workActions from "../workActions.js";
+import type * as workLoop from "../workLoop.js";
 import type * as workspace from "../workspace.js";
 
 import type {
@@ -95,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   voice: typeof voice;
   work: typeof work;
   workActions: typeof workActions;
+  workLoop: typeof workLoop;
   workspace: typeof workspace;
 }>;
 

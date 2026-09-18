@@ -1,5 +1,12 @@
 import { v } from 'convex/values';
-import { mutation, query, internalMutation, type MutationCtx } from './_generated/server';
+import {
+  mutation,
+  query,
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 
@@ -40,21 +47,34 @@ export const read = query({
   },
 });
 
+async function readFileImpl(
+  ctx: QueryCtx,
+  args: { agentId: Id<'agents'>; fileName: string },
+): Promise<string> {
+  if (!isKnown(args.fileName)) {
+    throw new Error(`workspace.readFile: unknown ${args.fileName}`);
+  }
+  const row = await ctx.db
+    .query('workspace')
+    .withIndex('by_agent_file', (q) =>
+      q.eq('agentId', args.agentId).eq('fileName', args.fileName),
+    )
+    .unique();
+  return row?.content ?? '';
+}
+
 export const readFile = query({
   args: { agentId: v.id('agents'), fileName: v.string() },
   handler: async (ctx, args): Promise<string> => {
     await assertOwnsAgent(ctx, args.agentId);
-    if (!isKnown(args.fileName)) {
-      throw new Error(`workspace.readFile: unknown ${args.fileName}`);
-    }
-    const row = await ctx.db
-      .query('workspace')
-      .withIndex('by_agent_file', (q) =>
-        q.eq('agentId', args.agentId).eq('fileName', args.fileName),
-      )
-      .unique();
-    return row?.content ?? '';
+    return await readFileImpl(ctx, args);
   },
+});
+
+/** The same read for a scheduled work-loop step, which has no caller to check. */
+export const readFileInternal = internalQuery({
+  args: { agentId: v.id('agents'), fileName: v.string() },
+  handler: async (ctx, args): Promise<string> => await readFileImpl(ctx, args),
 });
 
 export const writeFile = mutation({

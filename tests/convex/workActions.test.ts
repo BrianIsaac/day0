@@ -633,6 +633,7 @@ afterEach((): void => {
   recorded.repairedToolArgsJson = undefined;
   recorded.repairRequests.length = 0;
   recorded.tileDriver = undefined;
+  vi.useRealTimers();
   restoreSurfaceMode();
 });
 
@@ -3279,6 +3280,7 @@ describe('executing an approved plan through the gate', (): void => {
       ...skillOutput,
       actions: [skillOutput.actions[0], skillOutput.actions[1], skillOutput.actions[3]],
     };
+    vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
@@ -3289,8 +3291,9 @@ describe('executing an approved plan through the gate', (): void => {
       pendingRunId: first,
       reason: 'not yet',
     });
+    // The retry resumes at plan-approved, and the server runs the plan again.
     await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
-    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
     const second = (await readItem(harness, workItemId)).pendingRunId;
     expect(second).toBeDefined();
     expect(second).not.toBe(first);
@@ -3615,6 +3618,8 @@ describe('a registered skill serves every later work item of its shape', (): voi
 
   it('claims a second tile refresh with a different figure and ticket without a proposal', async (): Promise<void> => {
     useSurfaceMode('real');
+    // The claim schedules the server's draft; this test reads the verdict alone.
+    vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId: seededItem } = await seed(harness, 'real');
     await seedShapedSkills(harness, agentId, seededItem);
@@ -3635,6 +3640,8 @@ describe('a registered skill serves every later work item of its shape', (): voi
 
   it('claims a chat ask in a different thread through the chat skill', async (): Promise<void> => {
     useSurfaceMode('real');
+    // The claim schedules the server's draft; this test reads the verdict alone.
+    vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId: seededItem } = await seed(harness, 'real');
     await seedShapedSkills(harness, agentId, seededItem);
@@ -3735,6 +3742,8 @@ describe('the autonomous-actions switch through the gate', (): void => {
 
   it('admits a real-mode item on the lexical inputs and records it when the charter judgement is unavailable', async (): Promise<void> => {
     useSurfaceMode('real');
+    // The claim schedules the server's draft; this test reads the verdict alone.
+    vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { agentId, workItemId } = await seed(harness, 'real');
     await harness.run(async (ctx): Promise<void> => {
