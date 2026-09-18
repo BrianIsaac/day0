@@ -120,7 +120,8 @@ describe('skill author prompts', (): void => {
     expect(real).toContain('The harness calls run() once per case and checks those rules itself');
     expect(real).toContain('`{"tool": "mcp.call", "args": {"surface", "tool", "toolArgsJson"}}`');
     expect(real).toContain('`{"tool": "http.request", "args": {"surface", "method", "path", "headersJson", "body"}}`');
-    expect(real).toContain("with a tool from that surface's allowed tools that SKILL.md names");
+    expect(real).toContain("with a tool from that surface's allowed tools. Both cases emit actions");
+    expect(real).toContain("Name in SKILL.md's procedure, by its exact name, every tool `run()` uses");
     expect(real).toContain('the record id, and the reply channel and thread when a case gives them, reach the arguments');
     expect(real).not.toContain('Call run() once for each of two different representative input dicts');
     expect(real).not.toContain('print() one concise success line per call');
