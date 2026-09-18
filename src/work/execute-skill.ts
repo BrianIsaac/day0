@@ -43,6 +43,7 @@ import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import { isChatMessage, itemEvidence, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding, type GroundingRead } from './evidence-claims';
 import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
+import { heldElsewhereLines, type HeldExternalItem } from './claim-key';
 
 export { replyTargetLine };
 
@@ -924,6 +925,12 @@ export interface RunSkillArgs {
   managerAnswers?: readonly ManagerAnswer[];
   /** Writes earlier runs of this item landed; the prompts list them and a same-target comment is reused, not sent. */
   landedWrites?: readonly LandedWrite[];
+  /**
+   * The external items other work items of the company hold, with what has
+   * landed on them, scrubbed; real mode only. The prompts list them so a
+   * reply says where a note is or will be, and they are evidence for it.
+   */
+  heldElsewhere?: readonly HeldExternalItem[];
   /**
    * The manager's corrections from earlier work that the approved plan
    * applied, scrubbed; real mode only. Directions for how the work is done,
@@ -2417,6 +2424,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     ...(mode === 'real' ? executorCorrectionLines(args.appliedCorrections ?? []) : []),
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+    ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -2481,7 +2489,10 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     // audit names it as such. What the item itself says may be repeated:
     // on 19 September a draft DM was withheld for the ticket's own sentence.
     const claimEvidence: ClaimEvidence = {
-      ledger: landedWriteLines(args.landedWrites, args.surfaces ?? []).join('\n'),
+      ledger: [
+        ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+        ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
+      ].join('\n'),
       documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
       managerFeedback: [
         ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
@@ -3098,6 +3109,7 @@ export async function runDependentSkill(
     ...(mode === 'real' ? executorCorrectionLines(args.appliedCorrections ?? []) : []),
     ...managerAnswerLines(args.managerAnswers),
     ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+    ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -3155,6 +3167,7 @@ export async function runDependentSkill(
     ledger: [
       appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
       ...landedWriteLines(args.landedWrites, args.surfaces ?? []),
+      ...(mode === 'real' ? heldElsewhereLines(args.heldElsewhere) : []),
     ].join('\n'),
     documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
     managerFeedback: [

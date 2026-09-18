@@ -49,7 +49,13 @@ import {
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
-import { providerItemKey, writeTargetIds, type WriteClaimHolder } from '../src/work/claim-key';
+import {
+  HELD_ELSEWHERE_LIMIT,
+  providerItemKey,
+  writeTargetIds,
+  type HeldExternalItem,
+  type WriteClaimHolder,
+} from '../src/work/claim-key';
 import { landedWritesOf } from '../src/work/landed-writes';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import {
@@ -896,6 +902,101 @@ export const writeClaimHolder = internalQuery({
       if (waiting) return await holderOf(target, waiting, true);
     }
     return null;
+  },
+});
+
+/**
+ * The states read for the executor's list of items held elsewhere, work in
+ * flight first and finished work last, so a bounded list keeps what is about
+ * to write ahead of what already has.
+ */
+const HELD_ELSEWHERE_STATES: ReadonlyArray<Doc<'workItems'>['state']> = [
+  'executing',
+  'actions-pending',
+  'plan-approved',
+  'plan-pending',
+  'claimed',
+  'discovered',
+  'deferred',
+  'needs-skill',
+  'completed',
+  'failed',
+];
+/** States in which a row has not taken its claim yet. */
+const UNCLAIMED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set(['discovered', 'deferred', 'needs-skill']);
+/** The most employees of one owner read for the list, the asking one first. */
+const HELD_ELSEWHERE_EMPLOYEES = 16;
+
+/**
+ * The external items other work items of the company hold, for the executor's grounding.
+ *
+ * `writeClaimHolder` withholds a write at the apply; a reply authored in the
+ * same phase as the write is written before that and cannot know. This is
+ * the same rule read ahead of authoring: every live work item of the owner's
+ * employees that was discovered from an external item, other than the asking
+ * one, with the last comment it landed there. Live as the guard reads it: a
+ * cancelled or skipped row holds nothing, and a failed one only if it took
+ * its claim. Bounded by `HELD_ELSEWHERE_LIMIT`: each read asks for no more
+ * rows than the list still has room for, newest first, and the reads stop
+ * once it is full. Real mode only; the caller scrubs the owner's values.
+ *
+ * Args:
+ *   workItemId: The work item about to be authored.
+ *
+ * Returns:
+ *   The held items, work in flight first; empty in mock mode.
+ */
+export const itemsHeldElsewhere = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<HeldExternalItem[]> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    const asking = await ctx.db.get(row.agentId);
+    const userId = asking?.userId;
+    if (!asking || !userId) return [];
+    const colleagues = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .take(HELD_ELSEWHERE_EMPLOYEES);
+    const employees = [asking, ...colleagues.filter((employee) => employee._id !== asking._id)];
+    const own = new Set([row.externalClaimKey, row.externalClaimAlias]);
+    const held: HeldExternalItem[] = [];
+    for (const state of HELD_ELSEWHERE_STATES) {
+      for (const employee of employees) {
+        if (held.length >= HELD_ELSEWHERE_LIMIT) return held;
+        const rows = await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', employee._id).eq('state', state))
+          .order('desc')
+          .take(HELD_ELSEWHERE_LIMIT - held.length);
+        for (const holding of rows) {
+          if (held.length >= HELD_ELSEWHERE_LIMIT) break;
+          if (holding._id === row._id || holding.externalClaimKey === undefined) continue;
+          if (own.has(holding.externalClaimKey) || isRevocationTrialRow(holding)) continue;
+          if (state === 'failed') {
+            const claimed = await ctx.db
+              .query('externalClaims')
+              .withIndex('by_work_item', (q) => q.eq('workItemId', holding._id))
+              .filter((q) => q.eq(q.field('releasedAt'), undefined))
+              .first();
+            if (!claimed) continue;
+          }
+          const landedComment = landedCommentOn(holding);
+          held.push({
+            externalId: holding.externalId,
+            ...(holding.externalAlias ? { externalAlias: holding.externalAlias } : {}),
+            sourceSystem: holding.sourceSystem,
+            holderName: employee.name,
+            sameEmployee: employee._id === row.agentId,
+            title: holding.title,
+            state: holding.state,
+            ...(landedComment ? { landedComment } : {}),
+            ...(UNCLAIMED_STATES.has(holding.state) ? { unclaimed: true } : {}),
+          });
+        }
+      }
+    }
+    return held;
   },
 });
 

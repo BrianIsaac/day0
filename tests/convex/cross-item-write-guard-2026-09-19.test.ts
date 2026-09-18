@@ -9,7 +9,7 @@ import schema from '../../convex/schema';
 import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 import type { AppliedAction } from '../../src/surfaces/types';
-import { withheldByClaim, withheldByClaimReason } from '../../src/work/claim-key';
+import { HELD_ELSEWHERE_LIMIT, withheldByClaim, withheldByClaimReason } from '../../src/work/claim-key';
 import type { ExecutionPlan, MockAction } from '../../src/work/types';
 import { blockedPlanReason } from '../../convex/workActions';
 import { allConvexModules } from './all-modules';
@@ -680,5 +680,93 @@ describe('a write naming a ticket\'s other name (finding D, UUID against identif
     const claims = await t.run(async (ctx) => await ctx.db.query('externalClaims').collect());
     expect(claims).toHaveLength(1);
     expect(claims[0]!.aliases).toEqual([`linear:${TICKET_UUID}`]);
+  });
+});
+
+/** A ticket row of the September close other than FIN-1, as intake would have keyed it. */
+async function seedOtherTicket(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  ticket: { id: string; title: string; state: Doc<'workItems'>['state']; claims: boolean; createdAt?: number },
+): Promise<Id<'workItems'>> {
+  return await harness.run(async (ctx) => {
+    const agent = await ctx.db.get(agentId);
+    const workItemId = await ctx.db.insert('workItems', {
+      agentId, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: ticket.id,
+      externalClaimKey: `linear:${ticket.id}`, title: ticket.title, contentSummary: ticket.title, contentRefs: [],
+      state: ticket.state, observedAt: 1, createdAt: ticket.createdAt ?? 1,
+    } as never);
+    if (ticket.claims) {
+      await ctx.db.insert('externalClaims', {
+        userId: agent!.userId!, key: `linear:${ticket.id}`, agentId, workItemId, claimedAt: 1,
+      });
+    }
+    return workItemId;
+  });
+}
+
+describe('what the executor is told other work items hold (finding D, the reply authored beside the note)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+    restoreSurfaceMode();
+  });
+
+  it('lists the company\'s live items discovered from an external item, with what landed, and never the asking item or a dead one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    const stranger = await seedEmployee(t, { name: 'Noor', userId: 'another-owner' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'completed', output: TICKET_COMPLETED_OUTPUT });
+    await seedOtherTicket(t, aiko, { id: 'FIN-3', title: 'Bank reconciliation for September', state: 'discovered', claims: false });
+    await seedOtherTicket(t, aiko, { id: 'FIN-4', title: 'Failed after it claimed', state: 'failed', claims: true });
+    await seedOtherTicket(t, aiko, { id: 'FIN-5', title: 'Failed before it claimed', state: 'failed', claims: false });
+    await seedOtherTicket(t, mateo, { id: 'FIN-6', title: 'Skipped', state: 'skipped', claims: false });
+    await seedOtherTicket(t, mateo, { id: 'FIN-7', title: 'Cancelled', state: 'cancelled', claims: false });
+    await seedOtherTicket(t, stranger, { id: 'FIN-8', title: 'Another company', state: 'executing', claims: true });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+
+    const held = await t.query(internal.work.itemsHeldElsewhere, { workItemId: ask });
+
+    expect(held.map((item) => item.externalId).sort()).toEqual(['FIN-1', 'FIN-3', 'FIN-4']);
+    expect(held.find((item) => item.externalId === 'FIN-1')).toEqual({
+      externalId: 'FIN-1', sourceSystem: 'linear', holderName: 'Mateo', sameEmployee: true,
+      title: TICKET_TITLE, state: 'completed', landedComment: FIRST_NOTE_ID,
+    });
+    expect(held.find((item) => item.externalId === 'FIN-3')).toEqual({
+      externalId: 'FIN-3', sourceSystem: 'linear', holderName: 'Aiko', sameEmployee: false,
+      title: 'Bank reconciliation for September', state: 'discovered', unclaimed: true,
+    });
+    // The ticket's own item is told about the ask's thread, the mirror, and never about itself.
+    const ticket = (await t.run(async (ctx) => await ctx.db.query('workItems').collect())).find((row) => row.externalId === 'FIN-1')!;
+    const fromTicket = await t.query(internal.work.itemsHeldElsewhere, { workItemId: ticket._id });
+    expect(fromTicket.map((item) => item.externalId)).not.toContain('FIN-1');
+    expect(fromTicket.map((item) => item.externalId)).toContain(ASK_EXTERNAL_ID);
+  });
+
+  it('is bounded, with work in flight ahead of finished work', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    for (let index = 0; index < HELD_ELSEWHERE_LIMIT + 8; index += 1) {
+      await seedOtherTicket(t, mateo, { id: `OLD-${index}`, title: `Finished ${index}`, state: 'completed', claims: true });
+    }
+    await seedOtherTicket(t, mateo, { id: 'FIN-3', title: 'In flight', state: 'executing', claims: true });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+
+    const held = await t.query(internal.work.itemsHeldElsewhere, { workItemId: ask });
+
+    expect(held).toHaveLength(HELD_ELSEWHERE_LIMIT);
+    expect(held[0]!.externalId).toBe('FIN-3');
+  });
+
+  it('lists nothing in mock mode', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'completed', output: TICKET_COMPLETED_OUTPUT });
+    const ask = await seedItem(t, mateo, { source: 'ask', state: 'plan-approved' });
+
+    expect(await t.query(internal.work.itemsHeldElsewhere, { workItemId: ask })).toEqual([]);
   });
 });
