@@ -922,10 +922,27 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
   return [video, rung, warm];
 }
 
+/**
+ * Why a volume cannot be tarred now, if it cannot.
+ *
+ * A running container may be writing the SQLite files; a stopped one holds
+ * nothing open, so the protocol's "stop the backend for the seconds the
+ * snapshot takes" is enough.
+ *
+ * Args:
+ *   volume: The volume to read.
+ *   runningHolders: Names of running containers that have it mounted.
+ *
+ * Returns:
+ *   The refusal, or undefined when no running container holds it.
+ */
 export function snapshotRefusal(volume: string, runningHolders: readonly string[]): string | undefined {
-  void volume;
-  void runningHolders;
-  throw new Error('phase 11: not built yet');
+  if (runningHolders.length === 0) return undefined;
+  return (
+    `volume ${volume} is attached to the running ${runningHolders.join(', ')}. Stop that container first ` +
+    '(docker compose stop backend, or pnpm demo:bed down without --volumes) so the SQLite files are ' +
+    'quiescent; a tar of a live database is not a snapshot.'
+  );
 }
 
 export interface VolumeClone {
@@ -1359,11 +1376,24 @@ function volumeExists(name: string): boolean {
   return run('docker', ['volume', 'inspect', name], { timeoutMs: 15_000 }).status === 0;
 }
 
+/** Containers that have the volume mounted; stopped ones still pin it for `docker volume rm`. */
 function volumeInUse(name: string): string[] {
-  const result = run(
-    'docker',
-    ['ps', '-a', '--filter', `volume=${name}`, '--format', '{{.Names}}'],
-    { timeoutMs: 15_000 },
+  return volumeHolders(name, true);
+}
+
+/** Running containers that have the volume mounted, the ones that may be writing it. */
+function volumeHeldByRunning(name: string): string[] {
+  return volumeHolders(name, false);
+}
+
+function volumeHolders(name: string, includeStopped: boolean): string[] {
+  const result = must(
+    run(
+      'docker',
+      ['ps', ...(includeStopped ? ['-a'] : []), '--filter', `volume=${name}`, '--format', '{{.Names}}'],
+      { timeoutMs: 15_000 },
+    ),
+    'docker ps',
   );
   return result.stdout
     .split('\n')
@@ -1487,13 +1517,8 @@ function deploymentEnv(env: Values): Values {
 function snapshot(options: DemoBedOptions): void {
   const source = options.fromVolume;
   if (!volumeExists(source)) throw new Error(`volume ${source} does not exist on this machine.`);
-  const users = volumeInUse(source);
-  if (users.length > 0) {
-    throw new Error(
-      `volume ${source} is attached to ${users.join(', ')}. Stop that backend first (without -v) so ` +
-        'the SQLite files are quiescent; a tar of a live database is not a snapshot.',
-    );
-  }
+  const refusal = snapshotRefusal(source, volumeHeldByRunning(source));
+  if (refusal) throw new Error(refusal);
   const target = resolve(options.snapshot ?? `${KIT_DIR}/snapshots/${source}-${stamp()}.tar.gz`);
   const directory = dirname(target);
   mkdirSync(directory, { recursive: true });
