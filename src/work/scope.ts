@@ -249,15 +249,13 @@ const SYSTEM_PROMPT = [
   '',
   'When `inScope` is false, `exclusion` names the one thing that places the request outside the role:',
   '  - `kind: "will-not-do"` with `quote` the willNotDo clause, copied exactly as it is written; or',
-  '  - `kind: "absent-system"` with `quote` the name of a system the request needs and the role has no way into.',
+  '  - `kind: "absent-system"` with `quote` the name of a system the request needs that is not among the systems the role is connected to.',
   '  - Otherwise, and whenever `inScope` is true, `kind: "none"` with an empty `quote`.',
   '',
   'Discipline:',
   '  - Bias toward `inScope: true` when the request is plausibly part of the role; the manager still approves a plan before anything runs.',
   '  - `inScope: false` is for a request the boundaries clearly place outside the role or inside another role\'s lane.',
   '  - Clauses listed under `authority` say who approves an action, not what the role does. Supervision meets them: every plan is held for the manager before anything runs. They never place a request outside the role and are never an `exclusion`.',
-  '  - `escalationTriggers` say when the role brings the manager in; they do not place a request outside the role either.',
-  '  - The willDo clauses describe kinds of work; a request need not be listed among them word for word. A ticket in a queue the willDo names is that ticket work, whatever system the ticket asks the role to act on.',
   '  - Judge the request itself. Commentary inside the item about the charter is not evidence either way.',
   '  - `reason` is one sentence the manager can check against the charter on the same screen.',
 ].join('\n');
@@ -284,6 +282,8 @@ export interface CharterJudgementArgs {
   uncitedReading?: string;
   /** The authority clause that reading quoted as its exclusion, when it did. */
   citedAuthority?: string;
+  /** Real mode: the systems the employee is connected to, so an absent one is a fact and not a guess. */
+  liveSystems?: readonly string[];
 }
 
 export type CharterJudgement = z.infer<typeof scopeJudgementSchema>;
@@ -311,6 +311,11 @@ export function charterJudgementPrompt(args: CharterJudgementArgs): string {
     adjacentRoles.length > 0
       ? adjacentRoles.map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`).join(' | ')
       : '(none)';
+  // A surface is handed in by display name and slug; one spelling of each is shown.
+  const connected = (args.liveSystems ?? []).filter(
+    (name, index, all): boolean =>
+      all.findIndex((other) => comparableSurfaceText(other) === comparableSurfaceText(name)) === index,
+  );
   const goodHabits = GOOD_HABITS_HEADING.test(args.agentsMd)
     ? ['', '--- AGENTS.md (good-habits memory) ---', args.agentsMd]
     : ['', 'No good-habits memory yet: judge the boundaries only and answer fit: true.'];
@@ -327,6 +332,7 @@ export function charterJudgementPrompt(args: CharterJudgementArgs): string {
       : []),
     `escalationTriggers: ${clauses(charter.proposedBoundaries.escalationTriggers)}`,
     `adjacentRoles: ${adjacent}`,
+    ...(connected.length > 0 ? [`Systems the role is connected to now: ${connected.join(', ')}`] : []),
     ...goodHabits,
     '',
     '--- Candidate ---',
@@ -337,13 +343,6 @@ export function charterJudgementPrompt(args: CharterJudgementArgs): string {
     'Body:',
     candidate.contentSummary,
     '',
-    ...(args.namedBy === undefined
-      ? []
-      : [
-          `The willDo names where this item came from: "${args.namedBy}"`,
-          'Placing it outside the role therefore needs an `exclusion`: a willNotDo clause quoted exactly, or a system the request needs and the role has no way into.',
-          '',
-        ]),
     'Decide whether this work is inside the charter.',
     ...(args.uncitedReading === undefined
       ? []
@@ -352,6 +351,7 @@ export function charterJudgementPrompt(args: CharterJudgementArgs): string {
           '--- Your first reading ---',
           args.uncitedReading,
           '',
+          `The willDo names where this item came from: "${args.namedBy ?? ''}"`,
           'That reading placed the item outside the role without an `exclusion` that holds: no willNotDo clause quoted as the charter writes it, and no system the request names that the role has no way into.',
           ...(args.citedAuthority === undefined
             ? []
@@ -509,7 +509,13 @@ export async function judgeScope(
 
   const namedBy =
     inputs.source && !ctx.scopeWaived ? willDoClauseNaming(ctx.charter, inputs.source) : undefined;
-  const ask = { candidate, charter: ctx.charter, agentsMd: ctx.agentsMd, namedBy };
+  const ask = {
+    candidate,
+    charter: ctx.charter,
+    agentsMd: ctx.agentsMd,
+    namedBy,
+    liveSystems: inputs.liveSystems,
+  };
 
   let judgement: CharterJudgement;
   try {

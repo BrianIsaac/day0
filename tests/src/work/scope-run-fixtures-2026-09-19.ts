@@ -136,7 +136,7 @@ export const revops27 = ticket(
 export const revops29 = ticket(
   'REVOPS-29',
   'Reconcile Northstar CRM ownership for Aster Works',
-  'Reconcile the account owner for Aster Works in Northstar CRM.\n\nday0-demo-key: revops-northstar',
+  'Find the owner of the Aster Works opportunity in Northstar CRM and add it here.\n\nday0-demo-key: revops-northstar',
   'https://linear.app/day00/issue/REVOPS-29/reconcile-northstar-crm-ownership-for-aster-works',
 );
 
@@ -147,16 +147,24 @@ export const fin1 = ticket(
   'https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note',
 );
 
+/** A control: the accounting team's step, which Mateo's willNotDo excludes. */
+export const fin2 = ticket(
+  'FIN-2',
+  'Accruals booked for September',
+  'Close calendar step, business day 3: the accounting team books the September accruals in NetLedger.\n\nday0-demo-key: fin-accruals',
+  'https://linear.app/day00/issue/FIN-2/accruals-booked-for-september',
+);
+
 /** The `#ops-requests` mention every employee read; only Priya's willDo names the channel. */
 export const opsRequestsMention: WorkCandidate = {
   sourceCategory: 'event-stream',
   sourceSystem: 'slack',
   externalId: 'C0C2U2UJUTU:1789761553.312049',
   title: 'Slack mention in #ops-requests',
-  contentSummary: 'Can someone refresh the pipeline tile before the Friday standup?',
+  contentSummary: '<@U0BTFK6FLNL> please refresh the pipeline tile to the standup figure',
   contentRefs: [],
   observedAt: new Date(NOW - 1_000),
-  requesterLabel: 'Brian',
+  requesterLabel: 'U0BTFHN6MKJ',
   replyTarget: { channel: 'C0C2U2UJUTU', threadTs: '1789761553.312049', channelName: 'ops-requests' },
 };
 

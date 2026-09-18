@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateCandidate } from '../../../src/work/evaluate';
-import { willDoClauseNaming, type ScopeJudgement } from '../../../src/work/scope';
+import { charterJudgementPrompt, willDoClauseNaming, type ScopeJudgement } from '../../../src/work/scope';
 import {
   K_REASON,
   mateoCharter,
@@ -99,6 +99,39 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
     expect(reask).toContain('willNotDo clause');
     expect(reask).toContain('system');
     expect(reask.startsWith(model.calls[0]!.user)).toBe(true);
+  });
+
+  it('says nothing of the source on the first asking, so no item is argued into scope by it', async (): Promise<void> => {
+    // Measured live on 19 Sep: a first asking that stated the named source and
+    // what a skip would need turned FIN-2, the accounting team's own step, from
+    // skipped 10 of 10 into in scope 9 of 10. The statement belongs to the
+    // second asking only, which a legitimate, cited skip never reaches.
+    model.answers.push(uncitedSkip, uncitedSkip);
+
+    await evaluate(revops27, runContext('priya'));
+
+    expect(model.calls[0]!.user).toBe(
+      charterJudgementPrompt({
+        candidate: revops27,
+        charter: priyaCharter,
+        agentsMd: '',
+        liveSystems: ['Linear', 'Slack', 'Looker pipeline tile'],
+      }),
+    );
+    expect(model.calls[0]!.user).not.toContain('names where this item came from');
+  });
+
+  it('shows the model which systems are connected, one spelling each, so an absent one is not a guess', async (): Promise<void> => {
+    model.answers.push({ inScope: true, fit: true, reason: 'ticket work', exclusion: { kind: 'none', quote: '' } });
+
+    await evaluate(revops27, runContext('priya'));
+
+    expect(model.calls[0]!.user).toContain(
+      'Systems the role is connected to now: Linear, Slack, Looker pipeline tile\n',
+    );
+    expect(charterJudgementPrompt({ candidate: revops27, charter: priyaCharter, agentsMd: '' })).not.toContain(
+      'connected to now',
+    );
   });
 
   it('takes the second reading when it places the item in scope, and keeps the first beside it', async (): Promise<void> => {
