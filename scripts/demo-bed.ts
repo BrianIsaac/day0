@@ -12,9 +12,10 @@
  * The bed's contract is `.env.local` in this checkout, the same file every
  * other `pnpm` command reads, and the compose project is its
  * `COMPOSE_PROJECT_NAME` (or `--project`). Every subcommand refuses the two
- * projects whose volumes hold real runs (`day0`, `day0-demo-7c65e7`); the only
- * thing this file ever does to one of those volumes is mount it read-only for
- * `snapshot`.
+ * projects whose volumes hold real runs (`day0`, `day0-demo-7c65e7`) and the
+ * warm redactor project (`day0-redactor-warm`); the only thing this file ever
+ * does to one of those volumes is mount it read-only, for `snapshot` or for
+ * the redactor clone `up --warm-from` makes.
  *
  * Three things are deliberate about `up`. Images are never pulled
  * (`--pull never`): the venue network is not to be trusted with a 578 MB
@@ -359,6 +360,50 @@ export function assertNotProtected(name: string): void {
 }
 
 /**
+ * Refuse a project this kit may not run as: a protected one, or a read-only
+ * warm project. `assertNotProtected` stays the weaker check because the
+ * redactor clone reads a warm project's volumes through it.
+ *
+ * Args:
+ *   name: A compose project name.
+ *
+ * Raises:
+ *   Error: When the project is protected or read-only.
+ */
+export function assertBedProject(name: string): void {
+  assertNotProtected(name);
+  if (READ_ONLY_PROJECTS.includes(name)) {
+    throw new Error(
+      `"${name}" holds the warm redactor volumes this kit clones from (--warm-from). It is only ever read: ` +
+        'nothing here starts, restores into, resets or removes it. Pick another --project.',
+    );
+  }
+}
+
+/**
+ * Every volume `down --volumes` would remove for a project, each one checked.
+ *
+ * Args:
+ *   project: The compose project name.
+ *
+ * Returns:
+ *   The five volume names the compose file declares, prefixed with the project.
+ *
+ * Raises:
+ *   Error: When the project, or any of its volumes, is protected or read-only.
+ */
+export function projectVolumeNames(project: string): string[] {
+  assertBedProject(project);
+  return ['convex_data', 'sandbox_socket', 'model_data', 'redactor_venv', 'redactor_models'].map(
+    (suffix: string): string => {
+      const volume = `${project}_${suffix}`;
+      assertNotProtected(volume);
+      return volume;
+    },
+  );
+}
+
+/**
  * The data volume compose gives a project, which is where a restore lands.
  *
  * Args:
@@ -368,10 +413,10 @@ export function assertNotProtected(name: string): void {
  *   `<project>_convex_data`.
  *
  * Raises:
- *   Error: When the project is protected.
+ *   Error: When the project is protected or read-only.
  */
 export function restoreTargetVolume(project: string): string {
-  assertNotProtected(project);
+  assertBedProject(project);
   const volume = `${project}_convex_data`;
   assertNotProtected(volume);
   return volume;
@@ -816,16 +861,6 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
 
 const NOT_BUILT = 'phase 11: not built yet';
 
-export function assertBedProject(name: string): void {
-  void name;
-  throw new Error(NOT_BUILT);
-}
-
-export function projectVolumeNames(project: string): string[] {
-  void project;
-  throw new Error(NOT_BUILT);
-}
-
 export function snapshotRefusal(volume: string, runningHolders: readonly string[]): string | undefined {
   void volume;
   void runningHolders;
@@ -971,7 +1006,7 @@ function elapsed(startedAt: number): string {
  *   The keys to write, and nothing the file already answers.
  */
 function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPorts): void {
-  assertNotProtected(project);
+  assertBedProject(project);
   if (values.COMPOSE_PROJECT_NAME && values.COMPOSE_PROJECT_NAME !== project) {
     throw new Error(`The file names project ${values.COMPOSE_PROJECT_NAME}, not ${project}.`);
   }
@@ -1226,7 +1261,7 @@ function restore(options: DemoBedOptions): void {
 /* ----------------------------------- up ------------------------------------ */
 
 async function up(options: DemoBedOptions): Promise<void> {
-  assertNotProtected(options.project);
+  assertBedProject(options.project);
   if (!existsSync(ENV_FILE)) {
     throw new Error(
       `${ENV_FILE} not found. Copy .env.example to ${ENV_FILE} and fill in the bed's values first.`,
@@ -1750,7 +1785,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
 /* ------------------------------- offline rung ------------------------------ */
 
 async function offlineRung(options: DemoBedOptions): Promise<void> {
-  assertNotProtected(options.project);
+  assertBedProject(options.project);
   const values = readEnvFile();
   assertBedTarget(options.project, values, bedPorts(values));
   const services = projectServices(options.project) ?? [];
@@ -1813,14 +1848,12 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
 /* ---------------------------------- down ----------------------------------- */
 
 function down(options: DemoBedOptions): void {
-  assertNotProtected(options.project);
+  assertBedProject(options.project);
   const values = readEnvFile();
   const profiles = Object.keys(PROFILES);
   const args = [...composeArgs(options, profiles), 'down'];
   if (options.volumes) {
-    for (const suffix of ['convex_data', 'sandbox_socket', 'model_data']) {
-      assertNotProtected(`${options.project}_${suffix}`);
-    }
+    projectVolumeNames(options.project);
     args.push('--volumes');
   }
   must(
