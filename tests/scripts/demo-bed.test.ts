@@ -118,6 +118,7 @@ describe('command line', (): void => {
     // it reads the flag as the thing that turned it on.
     expect(named.filter((name) => BED_PROFILES.includes(name))).toEqual([]);
     expect(named.every((name) => name in PROFILES)).toBe(true);
+    expect(named).toEqual(Object.keys(PROFILES).filter((name) => !BED_PROFILES.includes(name)));
   });
 
   it('takes the project from --project and otherwise from the env file', (): void => {
