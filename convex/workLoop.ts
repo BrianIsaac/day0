@@ -101,7 +101,8 @@ export async function claimLoopStepInTransaction(
   return { claimed: true };
 }
 
-function queuedAtCap(row: Pick<Doc<'workItems'>, 'verdict'>): boolean {
+/** Whether the row's verdict queued it at the work-in-progress cap; such a row waits in `discovered` for a slot. */
+export function queuedAtCap(row: Pick<Doc<'workItems'>, 'verdict'>): boolean {
   return (row.verdict as { decision?: unknown } | undefined)?.decision === 'queue';
 }
 
@@ -113,6 +114,15 @@ export const OPEN_WORK_STATES = [
   'executing',
   'actions-pending',
 ] as const satisfies ReadonlyArray<Doc<'workItems'>['state']>;
+
+/**
+ * The states that park a row outside the slots until something it waits on
+ * arrives: a connection or a grant, or a skill. A row queued at the cap is
+ * parked too, but in `discovered` (see `queuedAtCap`).
+ */
+export const PARKED_WORK_STATES = ['deferred', 'needs-skill'] as const satisfies ReadonlyArray<
+  Doc<'workItems'>['state']
+>;
 
 /** What `scheduleNextStep` reads of a row, after its transition. */
 export type LoopRow = Pick<
