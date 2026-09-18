@@ -62,6 +62,17 @@ export const DECLARED_OBLIGATIONS_PLANNER = [
   '  - Declare `transition`, your word on the originating ticket state: promised (you will move it), conditional-on-evidence (only if what you read shows a stated condition holds), conditional-on-manager (only if or after the manager approves), withheld (you leave the state alone), none (the plan says nothing about it); and `transitionStep`, the one-based step that carries it, or null.',
 ];
 
+/**
+ * What a ticket filed under a shared credential needs, real mode only: the
+ * attribution rule signs a new ticket in its description and refuses one with
+ * nothing to sign, and a refused step leaves the rest of the run going. The
+ * mock planner text stays byte-identical.
+ */
+export const SIGNED_TICKET_PLANNER = [
+  '  - When a step files a new ticket, say in the step what the ticket records (the ask, where it came from, the agreed figure): Day0 signs a new ticket in its description with your name and the run, and refuses a new ticket that has no description. Any other change to a ticket follows a comment on that ticket.',
+  '  - If the gate refuses a step, the steps that do not need its result still run and the run stops with the refusal for the manager. So do not make the work the ask is about (the refresh, the answer on the thread) wait on bookkeeping such as filing a ticket: word each step so it stands on what it needs and no more.',
+];
+
 /** The run-context instruction shared by the planner and executor. */
 export function actionModeInstruction(
   autonomousActions: boolean,
@@ -82,7 +93,9 @@ export function planSystemPrompt(
 ): string {
   return [
     ...SYSTEM_PROMPT_HEAD,
-    ...(surfaceMode === 'real' ? [...SCOPE_NOT_GATE_PLANNER, ...DECLARED_OBLIGATIONS_PLANNER] : []),
+    ...(surfaceMode === 'real'
+      ? [...SCOPE_NOT_GATE_PLANNER, ...DECLARED_OBLIGATIONS_PLANNER, ...SIGNED_TICKET_PLANNER]
+      : []),
     '',
     actionModeInstruction(autonomousActions, surfaceMode),
   ].join('\n');
