@@ -744,6 +744,108 @@ export async function releaseExternalClaim(
   for (const claim of held) await releaseClaim(ctx, claim, now);
 }
 
+/** What a parked verdict waits on, as the evaluator and the skill pane write it. */
+type WaitingVerdict = ParkedVerdict & { suggestedSkillName?: string };
+
+/** A re-admission decided where a verdict is written or checked, not by a policy change. */
+type SatisfiedTrigger = 'verdict-write' | 'check';
+
+/**
+ * Whether what a waiting verdict names is present now, and under which key.
+ *
+ * An evaluation reads the surfaces, the grants and the skills, judges scope
+ * with a model call, and writes its verdict seconds later; the connection,
+ * the grant or the registration can land in between, and the write that
+ * landed it re-admits only rows already parked. The key names the state of
+ * the thing waited on: a connection's is the one `recordConnected` stamps,
+ * so one connection buys a row one re-evaluation whichever path gives it.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   agentId: The employee.
+ *   verdict: The defer or needs-skill verdict.
+ *   now: The instant to judge surface liveness against.
+ *
+ * Returns:
+ *   The key of what satisfies the verdict, or undefined while it still waits.
+ */
+async function waitSatisfiedBy(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  verdict: WaitingVerdict,
+  now: number,
+): Promise<string | undefined> {
+  if (verdict.decision === 'defer' && verdict.reason === 'awaiting-connection') {
+    const missing = verdict.missingSurface;
+    if (missing === undefined) return undefined;
+    // The surfaces as the evaluation reads them: a browser-driven surface this
+    // deployment cannot drive is not connected, whatever its last probe said.
+    const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .collect()
+    ).map((surface) => withBrowserComponentState(surface, refusal));
+    const live = surfaces.find(
+      (surface) =>
+        verdictFor(surface, now) === 'connected' &&
+        missingSurfaceResolvedBy(missing, surface, surfaces),
+    );
+    return live ? `surface:${live._id}:${live.lastVerifiedAt}` : undefined;
+  }
+  if (verdict.decision === 'defer' && verdict.reason === 'awaiting-permission') {
+    const scopes = [...new Set(verdict.missingPermissions ?? [])].sort();
+    if (scopes.length === 0) return undefined;
+    const grants: string[] = [];
+    for (const scope of scopes) {
+      const grant = (
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (index) => index.eq('agentId', agentId).eq('scope', scope))
+          .collect()
+      ).find((row) => row.revokedAt === undefined);
+      if (!grant) return undefined;
+      grants.push(grant._id);
+    }
+    return `grants:${grants.join(',')}`;
+  }
+  if (verdict.decision === 'needs-skill' && typeof verdict.suggestedSkillName === 'string') {
+    const name = verdict.suggestedSkillName;
+    const skill = (
+      await ctx.db
+        .query('skills')
+        .withIndex('by_agent_name', (index) => index.eq('agentId', agentId).eq('name', name))
+        .collect()
+    ).find((row) => row.state === 'registered');
+    return skill ? `skill:${skill._id}:${skill.registeredAt}` : undefined;
+  }
+  return undefined;
+}
+
+/** The `work.requeued` event of a row re-admitted because its wait is over. */
+async function logSatisfiedRequeue(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  trigger: SatisfiedTrigger,
+  key: string,
+  waited: WaitingVerdict,
+  now: number,
+): Promise<void> {
+  await ctx.db.insert('events', {
+    agentId: row.agentId,
+    type: 'work.requeued',
+    payload: {
+      workItemId: row._id,
+      trigger,
+      key,
+      previousState: row.state,
+      ...(waited.missingSurface ? { previousMissingSurface: waited.missingSurface } : {}),
+    },
+    createdAt: now,
+  });
+}
+
 /**
  * Record an evaluation verdict and move the row to where it puts it.
  *
@@ -801,6 +903,27 @@ export async function applyVerdict(
     }
   }
 
+  // A verdict that waits on a surface, a grant or a skill was computed from
+  // reads taken before the model call. When what it names is present by now,
+  // parking the row would strand it: the write that landed it has already
+  // looked for parked rows and found this one still `discovered`. The row
+  // goes back for a fresh evaluation instead, once per key, so an evaluator
+  // that keeps disagreeing with this read parks on its second verdict.
+  let readmission: { key: string; waited: WaitingVerdict; at: number } | undefined;
+  if (SURFACE_MODE === 'real' && !isRevocationTrialRow(row)) {
+    const at = Date.now();
+    const waited = effective as WaitingVerdict;
+    const key = await waitSatisfiedBy(ctx, row.agentId, waited, at);
+    if (key !== undefined && row.reevaluation?.key !== key) {
+      readmission = { key, waited, at };
+      effective = {
+        decision: 'pending-reevaluation',
+        reason: `what the evaluation waited on landed while it ran: ${key}`,
+        superseded: proposed,
+      };
+    }
+  }
+
   const decision = effective.decision;
   let nextState: Doc<'workItems'>['state'] = 'discovered';
   let skipReason: string | undefined;
@@ -818,6 +941,9 @@ export async function applyVerdict(
     // The verdict ends the evaluation step; a row queued at the cap must be
     // evaluable again the moment a slot frees.
     ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),
+    ...(readmission
+      ? { reevaluation: { trigger: 'verdict-write', key: readmission.key, at: readmission.at } }
+      : {}),
   });
   await ctx.db.insert('events', {
     agentId: row.agentId,
@@ -825,6 +951,16 @@ export async function applyVerdict(
     payload: { workItemId, decision, verdict: effective },
     createdAt: Date.now(),
   });
+  if (readmission) {
+    await logSatisfiedRequeue(
+      ctx,
+      row,
+      'verdict-write',
+      readmission.key,
+      readmission.waited,
+      readmission.at,
+    );
+  }
   if (refused) {
     await ctx.db.insert('events', {
       agentId: row.agentId,
