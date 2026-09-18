@@ -67,11 +67,14 @@ export const DEFAULT_SNAPSHOT_SOURCE = 'day0-demo-7c65e7_convex_data';
 /** Where the redactor answers, as the deployment must address it. */
 export const REDACTOR_URL = 'http://redactor:8000';
 
-/** The fix when the redactor container is not healthy; the rung's folder sync would fail closed. */
+/** Why the redactor must answer before the rung runs. */
+const REDACTOR_WHY =
+  'real-mode documentation sync fails closed without it, so the rung stops at its folder sync';
+
+/** The fix when the redactor container is not healthy; the tier verdict's one-line form. */
 const REDACTOR_UNHEALTHY_FIX =
-  'the redactor is not healthy, and real-mode documentation sync fails closed without it, so the rung ' +
-  'stops at its folder sync; run pnpm demo:bed up --warm-from <warm project> and wait for the ' +
-  'redactor to report healthy';
+  `the redactor is not healthy, and ${REDACTOR_WHY}; run pnpm demo:bed up --warm-from <warm project> ` +
+  'and wait for the redactor to report healthy';
 
 /** The fix when the backend has no redactor address to sync with. */
 const REDACTOR_UNWIRED_FIX =
@@ -1143,15 +1146,8 @@ export function offlineRungRefusal(input: RungReadiness): string | undefined {
       return `${name} is not running in project ${input.project}; run pnpm demo:bed up first.`;
     }
   }
-  const redactor = row('redactor');
-  if (redactor?.state !== 'running') {
-    return `the redactor is ${redactor ? redactor.state : 'absent'} in project ${input.project}; ${REDACTOR_UNHEALTHY_FIX}.`;
-  }
-  if (redactor.health !== 'healthy') {
-    return redactor.health === 'starting'
-      ? `the redactor is still loading its model in project ${input.project}; ${REDACTOR_UNHEALTHY_FIX}.`
-      : `the redactor is not healthy (${redactor.health}) in project ${input.project}; ${REDACTOR_UNHEALTHY_FIX}.`;
-  }
+  const redactorFix = redactorRefusal(row('redactor'), input.project);
+  if (redactorFix) return redactorFix;
   if ((input.values.DAY0_SURFACE_MODE || 'mock') !== 'real') {
     return `DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`;
   }
@@ -1168,6 +1164,42 @@ export function offlineRungRefusal(input: RungReadiness): string | undefined {
     );
   }
   return undefined;
+}
+
+/**
+ * Why the redactor cannot serve the rung, if it cannot, with the fix for its state.
+ *
+ * Args:
+ *   redactor: The redactor's `docker ps` row, or undefined when there is none.
+ *   project: The bed, for the commands named.
+ *
+ * Returns:
+ *   The refusal, or undefined when the redactor reports healthy.
+ */
+export function redactorRefusal(redactor: ServiceRow | undefined, project: string): string | undefined {
+  if (redactor?.health === 'healthy') return undefined;
+  const logs = `docker compose -p ${project} --profile redactor logs redactor`;
+  if (!redactor) {
+    return (
+      `no redactor container in project ${project}, and ${REDACTOR_WHY}; run ` +
+      `pnpm demo:bed up --project ${project} --warm-from <warm project> and wait for it to report healthy.`
+    );
+  }
+  if (redactor.state !== 'running') {
+    return (
+      `the redactor is ${redactor.state} in project ${project}, and ${REDACTOR_WHY}; run ` +
+      `pnpm demo:bed up --project ${project} again (its volumes are kept) and wait for it to report healthy.`
+    );
+  }
+  if (redactor.health === 'starting') {
+    return (
+      `the redactor is still loading its model in project ${project}, and ${REDACTOR_WHY}; wait until ` +
+      `pnpm demo:bed preflight --project ${project} reports it healthy.`
+    );
+  }
+  return (
+    `the redactor is not healthy (${redactor.health}) in project ${project}, and ${REDACTOR_WHY}; read ${logs}.`
+  );
 }
 
 /**
@@ -2107,11 +2139,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
     label: 'Redactor component',
     status: redactorHealthy && redactorWired ? 'ok' : 'gap',
     detail: [
-      redactorHealthy
-        ? 'the redactor reports healthy'
-        : redactorRow
-          ? `the redactor is ${redactorRow.state}${redactorRow.health === 'none' ? '' : ` (${redactorRow.health})`}; ${REDACTOR_UNHEALTHY_FIX}`
-          : `no redactor container in project ${options.project}; ${REDACTOR_UNHEALTHY_FIX}`,
+      redactorRefusal(redactorRow, options.project) ?? 'the redactor reports healthy',
       ...(redactorHealthy
         ? []
         : [

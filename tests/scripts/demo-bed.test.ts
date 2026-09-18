@@ -21,6 +21,7 @@ import {
   parseDemoBedArguments,
   projectVolumeNames,
   publishedHostPort,
+  redactorRefusal,
   redactorVenvRefusal,
   rungAgents,
   rungOutputRefusal,
@@ -533,16 +534,28 @@ describe('the offline rung refuses without the redactor', (): void => {
     expect(offlineRungRefusal(ready)).toBeUndefined();
   });
 
-  it('names the fix when the redactor is absent, still loading, or unhealthy', (): void => {
+  it('names the fix for the state the redactor is in: absent, stopped, loading, or unhealthy', (): void => {
     const without = RUNG_SERVICES.filter((row) => row.service !== 'redactor');
     const absent = offlineRungRefusal({ ...ready, services: without });
-    expect(absent).toContain('redactor');
+    expect(absent).toContain('no redactor container');
     expect(absent).toContain('--warm-from');
     expect(absent).toContain('fails closed');
+    const stopped = offlineRungRefusal({
+      ...ready,
+      services: [...without, { ...RUNNING('redactor', 'none'), state: 'exited' }],
+    });
+    expect(stopped).toContain('exited');
+    expect(stopped).toContain('up --project day0-p11-abc123 again');
+    expect(stopped).not.toContain('--warm-from');
     for (const health of ['starting', 'unhealthy', 'none'] as const) {
-      expect(offlineRungRefusal({ ...ready, services: [...without, RUNNING('redactor', health)] }))
-        .toContain(health === 'starting' ? 'still loading' : 'not healthy');
+      const refusal = offlineRungRefusal({
+        ...ready,
+        services: [...without, RUNNING('redactor', health)],
+      });
+      expect(refusal).toContain(health === 'starting' ? 'still loading' : 'not healthy');
+      expect(refusal).toContain('fails closed');
     }
+    expect(redactorRefusal(RUNNING('redactor'), 'day0-p11-abc123')).toBeUndefined();
   });
 
   it('names the fix when the backend has no redactor address to sync with', (): void => {
