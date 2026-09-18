@@ -208,13 +208,14 @@ async function seedTicket(
   harness: Harness,
   agentId: Id<'agents'>,
   externalId: string,
+  title = `Triage the Linear close summary ${externalId}`,
 ): Promise<Id<'workItems'>> {
   return await harness.mutation(internal.work.seedItem, {
     agentId,
     sourceCategory: 'ticket-queue',
     sourceSystem: 'linear',
     externalId,
-    title: `Triage the Linear close summary ${externalId}`,
+    title,
     contentSummary: 'Triage this Linear close summary revenue operations hand-off.',
     contentRefs: [`ticket://${externalId}`],
     priority: 'High',
@@ -429,7 +430,12 @@ describe('the server drives the work loop in real mode', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness);
 
-    const workItemId = await seedTicket(harness, agentId, 'REVOPS-21');
+    const workItemId = await seedTicket(
+      harness,
+      agentId,
+      'REVOPS-21',
+      'Add the Q3 close-summary audit note',
+    );
     await drain(harness);
 
     const row = await readItem(harness, workItemId);
@@ -437,7 +443,7 @@ describe('the server drives the work loop in real mode', (): void => {
     expect(row.plan).toMatchObject({ summary: 'Tell the manager the close summary is ready.' });
     expect(row.decision).toMatchObject({ kind: 'plan', ts: '1789000000.000100' });
     expect(recorded.scopeCalls).toHaveLength(1);
-    expect(recorded.planCalls).toEqual(['Triage the Linear close summary REVOPS-21']);
+    expect(recorded.planCalls).toEqual(['Add the Q3 close-summary audit note']);
     expect(recorded.skillRuns).toEqual([]);
     expect(
       recorded.http.filter((call) => call.url.endsWith('/chat.postMessage')).map((call) => call.body),
@@ -585,10 +591,23 @@ describe('the server drives the work loop in real mode', (): void => {
       verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['slack:read'] },
     });
 
+    for (const [index, kind] of (
+      ['held-dm', 'approved-write', 'auto-read', 'auto-write'] as const
+    ).entries()) {
+      const trial = await harness.withIdentity(OWNER).mutation(api.revocationEvaluation.seedTrial, {
+        agentId,
+        trialId: `rev-scope-0${index + 2}`,
+        kind,
+      });
+      await harness.mutation(internal.work.resumeStalledSteps, {});
+      await harness.mutation(internal.revocationEvaluation.recordOutcome, {
+        workItemId: trial.workItemId,
+        applied: [{ tool: 'http.request', ok: true }],
+      });
+    }
+
     expect((await readItem(harness, workItemId)).state).toBe('claimed');
-    expect((await scheduledNames(harness)).filter((name) => name.startsWith('workActions:'))).toEqual(
-      [],
-    );
+    expect(await scheduledNames(harness)).toEqual([]);
   });
 
   it('schedules nothing in mock mode', async (): Promise<void> => {

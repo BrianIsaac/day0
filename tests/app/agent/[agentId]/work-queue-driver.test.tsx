@@ -116,6 +116,10 @@ describe('the work queue as the loop driver', (): void => {
       { name: 'workActions:executeApprovedPlan', args: { workItemId: 'w-approved' } },
     ]);
   });
+
+  it('keeps the mock queue markup fixed to the base render', (): void => {
+    expect(render('mock')).toMatchSnapshot();
+  });
 });
 
 describe('checking for new work from the queue', (): void => {
