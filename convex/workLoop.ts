@@ -393,7 +393,9 @@ const WORK_SURFACE_CLASSES = new Set(['kanban', 'chat']);
  * The five-minute intake cron stays the steady state; this is the
  * dashboard's "Check for new work", so a ticket just filed or an ask just
  * posted is discovered within a minute instead of at the next sweep. What
- * it finds is seeded and evaluated like anything the cron finds. Each check
+ * it finds is seeded and evaluated like anything the cron finds, and a parked
+ * row whose wait is already over is re-admitted (`readmitSatisfiedDeferrals`,
+ * scheduled by name because `work.ts` imports this module). Each check
  * is an event, which is also what the interval is measured from.
  *
  * Args:
@@ -431,6 +433,11 @@ export const checkForNewWork = mutation({
     for (const surface of surfaces) {
       await ctx.scheduler.runAfter(0, internal.intakeActions.pollSurface, { surfaceId: surface._id });
     }
+    // The work already here is checked too: a row parked on a connection, a
+    // grant or a skill that has since landed goes back to be evaluated.
+    await ctx.scheduler.runAfter(0, internal.work.readmitSatisfiedDeferrals, {
+      agentId: args.agentId,
+    });
     await ctx.db.insert('events', {
       agentId: args.agentId,
       type: CHECK_REQUESTED,
