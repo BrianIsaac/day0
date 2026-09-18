@@ -464,11 +464,13 @@ def main():
     run = namespace.get("run")
     cases = declared_cases(namespace)
     if cases is not None and callable(run):
+        check(drive(run, cases))
+        # Said once the run has passed: on a failure the reason is the first
+        # line of stderr, which is the part of the log a card shows.
         note(
             f"called run() on the {len(cases)} cases the smoke test declares; "
             "nothing else in it ran and its assert statements were not compiled"
         )
-        check(drive(run, cases))
         return
     calls, ending = record_program(tree)
     for index, entry in enumerate(calls, 1):
@@ -488,11 +490,11 @@ def main():
             "representative input dicts, and the harness calls run() on each" + stopped,
             authored_traceback(ending) if ending is not None else "",
         )
+    check(made)
     note(
         "the smoke test declares no CASES, so its program ran as written with its assert statements "
         f"not compiled; {len(made)} run() calls recorded" + stopped
     )
-    check(made)
 
 
 main()

@@ -249,7 +249,10 @@ describe('the real-mode smoke harness', (): void => {
       const run = runHarnessed([...RUN, '', 'CASES = [{"record-id": "OPS-1", "requested-value": "n", "closing-state": "Done"}, {"record-id": "OPS-2"}]'].join('\n'));
 
       expect(run.exitCode).toBe(1);
-      expect(run.stderr).toContain('smoke harness: run() raised KeyError on case 2');
+      // The reason is the first thing on stderr: the card shows the top of the log, and the
+      // note about how the harness ran belongs to a run that passed.
+      expect(run.stderr.startsWith('smoke harness: run() raised KeyError on case 2\n')).toBe(true);
+      expect(run.stderr).not.toContain('called run() on the 2 cases');
       expect(run.stderr).toContain('File "authored_smoke.py", line 8, in run');
       // The line itself, as Python prints it under a frame: the author's file exists only inside the harness.
       expect(run.stderr).toContain('"toolArgsJson": json.dumps({"issueId": record, "body": inputs["requested-value"]})},');
