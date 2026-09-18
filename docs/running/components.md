@@ -10,23 +10,56 @@ leave out costs you the systems it reaches and nothing else. Day0 still reads
 the documentation, still proposes the path the documentation records, and still
 says on the card which component is missing.
 
-Components are compose profiles. `real` is day0 itself and is always on:
+Components are compose profiles. `real` is day0 itself and is always on.
+`./setup.sh --route <route>` starts what a real-mode installation needs without
+your naming any of them: `real`, `docs-notion`, `browser` and `demo` in one
+`pnpm convex:up`, then `sandbox` and `redactor` as steps of their own, because
+each of those two has a first start that has something to report. By hand, that
+is:
 
-```
-pnpm convex:up                                                    # day0 alone
-pnpm convex:up --profile docs-notion --profile browser            # an enterprise
+```bash
 pnpm convex:up --profile docs-notion --profile browser --profile demo
+pnpm sandbox:up
+pnpm redactor:up                        # MODEL_GPU=off pnpm redactor:up on the CPU
 ```
 
-| You have | Start |
+| You have | The profiles |
 |---|---|
-| Documentation in a folder, a git repository or on internal URLs; every system has an API or an MCP server | `--profile real` |
-| Documentation in Notion, and systems that are reached through a web UI | `--profile real --profile docs-notion --profile browser` |
-| The semi-final demo, which adds a synthetic web-UI system to drive | `--profile real --profile docs-notion --profile browser --profile demo` |
+| Documentation in a folder, a git repository or on internal URLs; every system has an API or an MCP server | `real`, `sandbox`, `redactor` |
+| Documentation in Notion, and systems that are reached through a web UI | those three, and `docs-notion`, `browser` |
+| The finals demo, which adds a synthetic web-UI system to drive | those five, and `demo` |
+
+The redactor's first start downloads its wheels and its model. A machine that
+already holds them in another project's volumes copies them instead:
+`./setup.sh --route <route> --warm-from <that project>` clones both volumes
+read-only before anything starts, and the start then downloads nothing.
 
 `pnpm check:setup` prints which components are running, which ones your linked
 documentation depends on, and any half-state: a component configured with
 nothing listening, or one running that day0 was never told about.
+
+## Where each component listens
+
+Every published port is on `CONVEX_BIND_ADDR` (`127.0.0.1` by default), and
+`./setup.sh` moves each with `--port`, `--site-port`, `--dashboard-port` and
+`--model-port`, so two installations can run side by side. The components with
+no host port are reached only from inside the compose network, which is why
+nothing else on your machine can dial them.
+
+| Component | Profile | Host port (default) | Inside the network |
+|---|---|---|---|
+| `backend` | `real` | `CONVEX_PORT` 3210, `CONVEX_SITE_PROXY_PORT` 3211 | `http://backend:3210` |
+| `dashboard` | `dev` | `CONVEX_DASHBOARD_PORT` 6791 | - |
+| `model` | `model` | `MODEL_PORT` 11434 | `http://model:11434/v1` |
+| `fake-slack` | `test` | `FAKE_SLACK_HOST_PORT` 8090 | `http://fake-slack:8090/api/` |
+| `docs-notion-mcp` | `docs-notion` | none | `http://docs-notion-mcp:3000/mcp` |
+| `playwright-mcp` | `browser` | none | `http://playwright-mcp:8931/mcp` |
+| `looker-tile` | `demo` | none | `http://looker-tile:8080` |
+| `redactor` | `redactor` | none | `http://redactor:8000` |
+| `sandbox` | `sandbox` | none | a unix socket on the `sandbox_socket` volume |
+
+`pnpm dev` serves the app itself on `DAY0_APP_PORT` (3000 by default,
+`--app-port`), outside Docker.
 
 ---
 
@@ -47,6 +80,18 @@ read-only, so a folder source needs no other component.
 adds to it.
 
 **When you do not.** Never.
+
+**How much it runs at once.** The work loop is scheduled work: every
+evaluation, plan draft, execution and intake poll of every employee is a
+scheduled job, and one execution holds its slot for as long as a model call
+takes. The compose file starts the backend with
+`SCHEDULED_JOB_EXECUTION_PARALLELISM=32` rather than the image's 8, so three
+employees under autonomy do not queue behind each other, and states the image's
+own `APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=64` beside it, because every
+scheduled step is a node action and that cap has to stay above the number of
+jobs the scheduler may start. The sandbox is the one thing deliberately not
+widened: authored-skill verification takes a lease
+(`convex/sandboxLease.ts`) so each verification reaches the sandbox alone.
 
 **What it never sees.** It never writes to the documentation folder: the mount
 is read-only, which is checked from inside the container by `pnpm check:setup`.
@@ -160,9 +205,10 @@ other credential.
 
 ## `fake-slack` - the provider double
 
-**What it is.** A stand-in for a chat provider's API, used only by tests and
-review panes so that a self-provisioning round trip can be proved without
-touching a real workspace.
+**What it is.** A stand-in for a chat provider's API, used only by tests,
+review panes and the demonstration bed's revocation rung
+(`pnpm demo:bed offline-rung`), so that a self-provisioning round trip, and a
+revoked write being refused, can be proved without touching a real workspace.
 
 **What day0 uses it for.** Nothing in production. Reaching it at all requires a
 development-only setting that is refused outside a local no-auth run.
@@ -256,6 +302,15 @@ credential, no database access and no host port; the backend reaches it at
 `http://redactor:8000` on the compose network and nothing else needs to. It
 keeps no log of what it was sent.
 
+**Warming it instead of downloading.** The wheels and the model live in two
+volumes of their own (`<project>_redactor_venv`, `<project>_redactor_models`),
+so a project that has them can lend them to a new one:
+`./setup.sh --route <route> --warm-from <project>` copies both read-only before
+the first start, and `pnpm demo:bed up --warm-from <project>` does the same for
+a demonstration bed. The copy is device-stamped: a venv built for the CPU and
+started with the GPU configuration is emptied and rebuilt, which is a download,
+so `--gpu off` is what keeps a CPU venv as it is.
+
 **The GPU.** `pnpm redactor:up` reserves the GPU the way `pnpm model:up` does
 and installs the CUDA build of its wheels; `pnpm convex:up --profile redactor`
 uses the CPU configuration by default. The reviewed CPU installation was Linux
@@ -276,11 +331,14 @@ it does not cover a secret day0 never stored.
 
 ## The other two
 
-`--profile model` runs a bundled model server for the account-free path, and
-`--profile sandbox` runs the local sandbox that verifies an authored skill
-before it becomes callable. Both are described where they are set up, in the
-repository README; neither is a way for day0 to reach one of your systems, which
-is what the components above are for.
+`model` runs a bundled model server for the account-free path: the local-model
+way starts it (`pnpm model:up`), and every other route leaves it out and dials
+the endpoint in `.env.local` instead. `sandbox` runs the local sandbox that
+verifies an authored skill before it becomes callable, and every real-mode
+setup starts it, because a skill that was never verified stays uncallable;
+`DAYTONA_API_KEY` replaces it with the hosted sandbox. Both are described where
+they are set up, in the repository README; neither is a way for day0 to reach
+one of your systems, which is what the components above are for.
 
 ## Rehearsing the real path
 

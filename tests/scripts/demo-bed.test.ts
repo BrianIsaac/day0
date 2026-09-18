@@ -45,6 +45,7 @@ import {
   type TierInputs,
 } from '../../scripts/demo-bed';
 import { redactorVolumeClone } from '../../scripts/rehearsal/docker';
+import { PROFILES } from '../../scripts/compose';
 import { READ_ONLY_PROJECTS as SETUP_READ_ONLY_PROJECTS } from '../../scripts/setup';
 
 const COMPOSE_FILE = readFileSync('docker-compose.yml', 'utf8');
@@ -101,6 +102,22 @@ describe('command line', (): void => {
     }
     expect(() => parseDemoBedArguments(['upp'])).toThrow('Unknown command');
     expect(() => parseDemoBedArguments([])).toThrow('Usage');
+  });
+
+  it('offers as extra profiles only the ones the bed does not already start', (): void => {
+    let usage = '';
+    try {
+      parseDemoBedArguments(['--help']);
+    } catch (error) {
+      usage = (error as Error).message;
+    }
+    const offered = /--profile <name>[^(]+\(([^)]+)\)/.exec(usage);
+    expect(offered).not.toBeNull();
+    const named = offered![1]!.split(',').map((name) => name.trim());
+    // A profile the kit always starts is not an extra, and a reader who passes
+    // it reads the flag as the thing that turned it on.
+    expect(named.filter((name) => BED_PROFILES.includes(name))).toEqual([]);
+    expect(named.every((name) => name in PROFILES)).toBe(true);
   });
 
   it('takes the project from --project and otherwise from the env file', (): void => {

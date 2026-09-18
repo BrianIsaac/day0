@@ -251,7 +251,7 @@ Commands:
 
 Options:
   --project <name>       compose project (default: COMPOSE_PROJECT_NAME in ${ENV_FILE})
-  --profile <name>       up/down: an extra component (dev, docs-notion, browser); repeatable
+  --profile <name>       up/down: a component beyond the bed's own (dev, docs-notion); repeatable
   --reset                up: wipe the local boss's agents after the push
   --unlink               up --reset: also unlink documentation and purge credentials
   --no-probe             up/preflight: skip the model probe

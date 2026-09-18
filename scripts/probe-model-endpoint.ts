@@ -22,6 +22,9 @@
  * endpoint can pass all seven checks and still lose the charter to a
  * timeout - see SLOW_MS below.
  */
+import { pathToFileURL } from 'node:url';
+import type { Agent } from '@mastra/core/agent';
+import { noopLogger } from '@mastra/core/logger';
 import { z } from 'zod';
 import { env } from '../src/env';
 import {
@@ -37,6 +40,34 @@ import {
   resetStructuredModeMemo,
   structuredModeFor,
 } from '../src/lib/mastra';
+import { WAY_NAMES } from '../src/setup/quickstart';
+
+/**
+ * What a passing probe leaves the reader with: conformance is not speed, and
+ * the README section that explains the one failure this cannot see. The
+ * heading is taken from the run ways rather than typed, so a renamed section
+ * cannot leave the probe pointing at nothing.
+ */
+export const SLOW_MODEL_HINT =
+  '\nspeed is a separate question, and these prompts are much smaller than the\n' +
+  `real ones. If the 1:1 runs and no charter arrives, see "${WAY_NAMES.local}"\n` +
+  'in README.md - a local model spilled onto the CPU is the cause.\n';
+
+/**
+ * Stop the agent from logging a declined rung on its own account.
+ *
+ * A server that refuses `response_format` makes Mastra raise inside
+ * `agent.generate()`, and its logger prints the whole provider error before
+ * this probe can report the same decline as one covered note. The probe names
+ * every failure itself, in `record`, so the agent's own log adds a stack trace
+ * to a run that passed and nothing else.
+ *
+ * Args:
+ *   agent: The probe's agent.
+ */
+export function silenceAgentLogs(agent: Agent): void {
+  agent.__setLogger(noopLogger);
+}
 
 interface Check {
   name: string;
@@ -142,6 +173,7 @@ async function main(): Promise<void> {
     'day0-probe',
     'You are a probe agent. Answer with the requested structured fields and nothing else.',
   );
+  silenceAgentLogs(agent);
   const schema = z.object({ summary: z.string(), steps: z.array(z.string()) });
   try {
     const { value, ms } = await timed(() =>
@@ -240,11 +272,7 @@ function finish(): void {
   // they are noisy on a thinking model, so the check that settles it is
   // `ollama ps` rather than anything this script can measure in one shot.
   if (checks.every((c) => c.ok || c.advisory)) {
-    process.stdout.write(
-      '\nspeed is a separate question, and these prompts are much smaller than the\n' +
-        'real ones. If the 1:1 runs and no charter arrives, see "Run it with no\n' +
-        'accounts" in README.md - a local model spilled onto the CPU is the cause.\n',
-    );
+    process.stdout.write(SLOW_MODEL_HINT);
   }
   if (failed.length > 0) {
     process.stdout.write(`failed: ${failed.map((f) => f.name).join(', ')}\n`);
@@ -252,4 +280,6 @@ function finish(): void {
   }
 }
 
-void main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}

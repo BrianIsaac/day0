@@ -735,7 +735,7 @@ describe('--company', (): void => {
     const lines = ran(h);
     const checker = lines.indexOf('run check:setup');
     const docs = lines.indexOf('pnpm run bed:company docs');
-    const check = lines.indexOf('pnpm run bed:company check');
+    const check = lines.indexOf('pnpm --reporter=silent run bed:company check');
     expect(checker).toBeGreaterThan(-1);
     expect(docs).toBeGreaterThan(checker);
     expect(check).toBeGreaterThan(docs);
@@ -767,6 +767,16 @@ describe('--company', (): void => {
     expect(h.output.join('\n')).toContain('the gaps above are the hand steps still owed');
   });
 
+  it('runs that check with pnpm silent, so its gaps do not print a failed command', async (): Promise<void> => {
+    const h = companyHarness([{ match: 'bed:company check', status: 1, stderr: '' }]);
+    expect(await runSetup(realRoute({ company: true }), h.io)).toBe(0);
+    // The gaps are the hand steps the reader still owes, and the setup says so
+    // itself; pnpm's own `ELIFECYCLE Command failed with exit code 1` above
+    // that line reads as a broken setup instead.
+    expect(ran(h)).toContain('pnpm --reporter=silent run bed:company check');
+    expect(ran(h)).not.toContain('\npnpm run bed:company check');
+  });
+
   it('is refused in mock mode before anything is written', async (): Promise<void> => {
     const h = companyHarness();
     expect(await runSetup(realRoute({ mode: 'mock', route: 'key', company: true }), h.io)).toBe(1);
@@ -780,7 +790,7 @@ describe('--company', (): void => {
     expect(await runSetup(realRoute({ company: true, dryRun: true }), h.io)).toBe(0);
     const printed = h.output.join('\n');
     expect(printed).toContain('pnpm run bed:company docs');
-    expect(printed).toContain('pnpm run bed:company check');
+    expect(printed).toContain('pnpm --reporter=silent run bed:company check');
     expect(existsSync(join(h.directory, 'docs-local'))).toBe(false);
   });
 });
