@@ -299,52 +299,55 @@ export async function resumeStalledStepsInTransaction(
   if (SURFACE_MODE !== 'real') return { rescheduled: 0 };
   let rescheduled = 0;
   for (const agent of await ctx.db.query('agents').collect()) {
-    const ready = async (state: 'discovered' | 'claimed' | 'plan-approved' | 'plan-pending' | 'executing') => {
+    const ready = async (
+      state: 'discovered' | 'claimed' | 'plan-approved' | 'plan-pending' | 'executing',
+      eligible: (row: Doc<'workItems'>) => boolean | Promise<boolean>,
+    ) => {
       const rows: Doc<'workItems'>[] = [];
       for await (const row of ctx.db
         .query('workItems')
         .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))) {
-        if (isRevocationTrialRow(row)) continue;
+        if (isRevocationTrialRow(row) || !(await eligible(row))) continue;
         rows.push(row);
         if (rows.length === SWEEP_BATCH) break;
       }
       return rows;
     };
     let evaluated = false;
-    for (const row of await ready('discovered')) {
-      if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
-      if (queuedAtCap(row)) continue;
+    for (const row of await ready('discovered', (row) =>
+      !holdsLiveStepClaim(row, 'evaluation', now) && !queuedAtCap(row))) {
       await scheduleEvaluation(ctx, row._id);
       evaluated = true;
       rescheduled += 1;
     }
-    for (const row of await ready('claimed')) {
-      if (row.plan !== undefined || holdsLiveStepClaim(row, 'draft', now)) continue;
+    for (const row of await ready('claimed', (row) =>
+      row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now))) {
       await ctx.scheduler.runAfter(0, internal.workActions.draftPlanInternal, {
         workItemId: row._id,
       });
       rescheduled += 1;
     }
-    for (const row of await ready('plan-approved')) {
+    for (const row of await ready('plan-approved', () => true)) {
       await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
         workItemId: row._id,
       });
       rescheduled += 1;
     }
-    for (const row of await ready('plan-pending')) {
-      if (row.decision ||
-          (row.planPendingAt !== undefined && now - row.planPendingAt < STEP_LEASE_MS)) continue;
+    for (const row of await ready('plan-pending', (row) =>
+      !row.decision &&
+      (row.planPendingAt === undefined || now - row.planPendingAt >= STEP_LEASE_MS))) {
       await ctx.scheduler.runAfter(0, internal.work.decidePlan, {
         workItemId: row._id,
         recovery: true,
       });
       rescheduled += 1;
     }
-    for (const row of await ready('executing')) {
-      if (!row.executionRunId || row.pendingRunId ||
-          row.applyAttemptId || row.applyClaimedAt || row.applyPhase) continue;
+    for (const row of await ready('executing', async (row) => {
+      if (!row.executionRunId || row.pendingRunId || row.applyAttemptId ||
+          row.applyClaimedAt || row.applyPhase) return false;
       const claim = await ctx.db.get(row.executionRunId);
-      if (!claim || now - claim.createdAt < EXECUTION_STALL_MS) continue;
+      return !!claim && now - claim.createdAt >= EXECUTION_STALL_MS;
+    })) {
       await ctx.scheduler.runAfter(0, internal.work.setFailed, {
         workItemId: row._id,
         runId: row.executionRunId,

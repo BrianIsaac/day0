@@ -333,6 +333,35 @@ describe('the stalled-step sweep', (): void => {
     ]);
   });
 
+  it('reaches a stale draft behind one hundred live claims', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness, true);
+    const now = Date.now();
+    const stale = await harness.run(async (ctx) => {
+      for (let index = 0; index < 100; index += 1) {
+        await ctx.db.insert('workItems', {
+          ...row(agentId, `REVOPS-LIVE-${index}`, now),
+          state: 'claimed',
+          draftClaimedAt: now - 60_000,
+        });
+      }
+      return await ctx.db.insert('workItems', {
+        ...row(agentId, 'REVOPS-STALE', now),
+        state: 'claimed',
+        draftClaimedAt: now - LEASE_MS - 1,
+      });
+    });
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledSteps(harness)).toContainEqual([
+      'workActions:draftPlanInternal',
+      stale,
+    ]);
+  });
+
   it('does nothing in mock mode', async (): Promise<void> => {
     useSurfaceMode('mock');
     vi.useFakeTimers();
