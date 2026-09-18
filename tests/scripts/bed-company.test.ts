@@ -1441,6 +1441,9 @@ describe('check', (): void => {
     expect(gaps).toContain('the app lacks chat:write.customize');
     expect(gaps).toContain('#logistics-desk is not a public channel the bot can see: create it by hand as a public channel');
     expect(gaps).toContain('the bot is not in #ops-requests');
+    // A channel that could not be read says so once; its ask is not also called missing.
+    expect(gaps).not.toContain('#ops-requests lacks the standing ask');
+    expect(gaps).toContain('#finance-close lacks the standing ask');
     expect(gaps).toContain('#revops-asks holds a message that mentions the bot and is not one of the standing asks');
     expect(gaps).toContain('"Slack automation policy" differs from slack-automation-policy.md at line 3');
     expect(gaps).toContain('"Linear automation" still carries the placeholder token');

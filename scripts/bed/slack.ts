@@ -314,7 +314,10 @@ export function standingMentions(
       (message: BedMessage): boolean =>
         message.text.includes(mention) && message.botId !== botId && message.user !== botUserId,
     )
-    .sort((left: BedMessage, right: BedMessage): number => Number(left.ts) - Number(right.ts));
+    // Slack timestamps are fixed-width strings; a float would round the last microsecond.
+    .sort((left: BedMessage, right: BedMessage): number =>
+      left.ts < right.ts ? -1 : left.ts > right.ts ? 1 : 0,
+    );
 }
 
 /**

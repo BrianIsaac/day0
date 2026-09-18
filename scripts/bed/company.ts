@@ -696,6 +696,8 @@ function reportStandingAsks(
   const matched = new Set<BedMessage>();
   let present = 0;
   for (const ask of asks) {
+    // A channel the check could not read has its own gap above; its ask is unknown, not missing.
+    if (!standing.has(ask.channel)) continue;
     const found = (standing.get(ask.channel) ?? []).find(
       (message) => !matched.has(message) && carriesAsk(message, ask),
     );
