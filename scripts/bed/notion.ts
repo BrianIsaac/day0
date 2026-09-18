@@ -214,8 +214,8 @@ export function comparePage(tracked: string, page: string): PageComparison {
         kind: 'differs',
         line: index + 1,
         expected: want ?? '(nothing)',
-        // The token line is the one line a pasted value can reach; it is never echoed.
-        found: have === undefined ? '(nothing)' : TOKEN_LINE.test(have) ? '(the token line)' : have,
+        // Live page text may contain a credential on any line, including a malformed token line.
+        found: have === undefined ? '(nothing)' : '(different text)',
       };
     }
   }

@@ -817,6 +817,17 @@ describe('the Notion comparison', (): void => {
     expect(JSON.stringify(comparePage(tracked, `${moved}\n- Service token (company automation): \`${LINEAR_KEY}\``))).not.toContain(LINEAR_KEY);
   });
 
+  it('does not echo an unexpected credential on a mismatched live page line', (): void => {
+    const unexpected = 'private-value-from-another-integration';
+    const changed = tracked.replace(
+      'Workflow states, the same in every team: `Todo`, `In Progress`, `Done`.',
+      `Workflow states: ${unexpected}`,
+    );
+    const comparison = comparePage(tracked, changed);
+    expect(comparison.kind).toBe('differs');
+    expect(JSON.stringify(comparison)).not.toContain(unexpected);
+  });
+
   it('reads the container script output, and says what the component said when it failed', (): void => {
     expect(parseNotionRead(`noise\n${JSON.stringify({ pages: [{ id: 'a', title: 'T', markdown: 'm' }] })}\n`)).toEqual([
       { id: 'a', title: 'T', markdown: 'm' },
