@@ -711,7 +711,7 @@ async function seedWork(
 }
 
 describe('the employee roster', (): void => {
-  it.fails('shows each of the owner\'s employees with its role, open work, what needs the manager and its autonomy, and nobody else', async (): Promise<void> => {
+  it('shows each of the owner\'s employees with its role, open work, what needs the manager and its autonomy, and nobody else', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
@@ -823,7 +823,7 @@ describe('the employee roster', (): void => {
     await expect(harness.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
   });
 
-  it.fails('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {
+  it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
@@ -873,7 +873,7 @@ describe('the employee roster', (): void => {
     await expect(roleLines()).resolves.toMatchObject({ Mateo: 'role not stated' });
   });
 
-  it.fails('lists at most 20 employees, newest first, and an evaluation agent never takes a place', async (): Promise<void> => {
+  it('lists at most 20 employees, newest first, and an evaluation agent never takes a place', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const employees: Id<'agents'>[] = [];
@@ -892,7 +892,7 @@ describe('the employee roster', (): void => {
     expect(roster.map((row) => row.agentId)).toEqual(employees.slice(1).reverse());
   });
 
-  it.fails('clips a long role line at a word boundary to 90 characters', (): void => {
+  it('clips a long role line at a word boundary to 90 characters', (): void => {
     const cases: Array<[string, string]> = [
       [
         'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.',
