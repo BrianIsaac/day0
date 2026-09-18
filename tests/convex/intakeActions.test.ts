@@ -280,6 +280,7 @@ describe('real surface intake', (): void => {
       endpoint: 'https://slack.com/api/',
       toolAllowlist: ['conversations.list', 'conversations.history'],
       providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
       providerWorkspaceId: 'TTEAM',
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
@@ -318,6 +319,7 @@ describe('real surface intake', (): void => {
       endpoint: 'https://slack.com/api/',
       toolAllowlist: ['conversations.list', 'conversations.history'],
       providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
       providerWorkspaceId: 'TTEAM',
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
@@ -391,6 +393,7 @@ describe('real surface intake', (): void => {
       // The probe's allowlist lost the one method the decision sweep needs.
       toolAllowlist: ['conversations.list'],
       providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
       providerWorkspaceId: 'TTEAM',
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
@@ -452,6 +455,7 @@ describe('real surface intake', (): void => {
         endpoint: 'https://slack.com/api/',
         toolAllowlist: ['conversations.list', 'conversations.history'],
         providerIdentityId: 'UBOT',
+        providerBotId: 'BBOT',
         providerWorkspaceId: 'TTEAM',
         managerDmChannelId: 'DMANAGER',
         managerUserId: 'UMANAGER',
@@ -745,6 +749,7 @@ describe('real surface intake', (): void => {
           endpoint: 'https://slack.com/api/',
           toolAllowlist: ['conversations.list', 'conversations.history', 'conversations.replies'],
           providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
           providerWorkspaceId: 'TTEAM',
           managerDmChannelId: 'DMANAGER',
           managerUserId: 'UMANAGER',
@@ -813,6 +818,7 @@ describe('real surface intake', (): void => {
       endpoint: 'https://slack.com/api/',
       toolAllowlist: ['conversations.list', 'conversations.history'],
       providerIdentityId: 'UBOT',
+      providerBotId: 'BBOT',
       providerWorkspaceId: 'TTEAM',
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
@@ -935,6 +941,7 @@ describe('real surface intake', (): void => {
         credentialId: slackCredential,
         toolAllowlist: ['conversations.list', 'conversations.history'],
         providerIdentityId: 'UBOT',
+        providerBotId: 'BBOT',
         providerWorkspaceId: 'TTEAM',
       }),
     ];
@@ -1437,6 +1444,7 @@ describe('intake provider contracts', (): void => {
             endpoint: 'https://slack.com/api/',
             toolAllowlist: ['conversations.list', 'conversations.history'],
             providerIdentityId: 'UBOT',
+            providerBotId: 'BBOT',
             providerWorkspaceId: 'TTEAM',
           }),
         ],
@@ -1511,6 +1519,7 @@ describe('intake provider contracts', (): void => {
           endpoint: 'https://slack.com/api/',
           toolAllowlist: ['conversations.list', 'conversations.history'],
           providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
           providerWorkspaceId: 'TTEAM',
         }),
       ],
@@ -1833,6 +1842,7 @@ describe('each employee reads its own approved queues', (): void => {
         endpoint: 'https://slack.com/api/',
         toolAllowlist: ['conversations.list', 'conversations.history'],
         providerIdentityId: 'UBOT',
+        providerBotId: 'BBOT',
         providerWorkspaceId: 'TKESTREL',
         intakeScope: { channels: channels.map((channel) => scoped(channel, ref, quote)) },
       });
@@ -2050,7 +2060,7 @@ describe('each employee reads its own approved queues', (): void => {
       credentialId: id<'credentials'>('credential-Aiko-slack'),
       endpoint: 'https://slack.com/api/',
       toolAllowlist: ['conversations.list', 'conversations.history'],
-      providerIdentityId: 'UBOT', providerWorkspaceId: 'TKESTREL',
+      providerIdentityId: 'UBOT', providerBotId: 'BBOT', providerWorkspaceId: 'TKESTREL',
       intakeScope: { channels: ['logistics-desk', 'ops-requests'].map((name) =>
         scoped(name, logisticsRef, '- Channels: #logistics-desk, #ops-requests')) },
     });
@@ -2220,6 +2230,191 @@ describe('each employee reads its own approved queues', (): void => {
   });
 });
 
+describe("the app's own posts are never intake", (): void => {
+  const BOT_USER = 'UDAY0BOT';
+  const BOT_ID = 'BDAY0BOT';
+  const SHARED = { id: 'C-ops-requests', name: 'ops-requests' };
+  const employees = ['Priya', 'Mateo', 'Aiko'].map(
+    (name): Doc<'agents'> => ({
+      ...agentRow(),
+      _id: id<'agents'>(`agent-${name}`),
+      name,
+    }),
+  );
+
+  /** Three employees on one shared key, each approved to read the shared channel. */
+  function sharedKeySurfaces(patch: Partial<Doc<'surfaces'>> = {}): Doc<'surfaces'>[] {
+    return employees.map(
+      (agent): Doc<'surfaces'> =>
+        surfaceRow('slack', 'Slack', 'chat', {
+          _id: id<'surfaces'>(`surface-${agent.name}-slack`),
+          agentId: agent._id,
+          credentialId: id<'credentials'>('credential-slack'),
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: BOT_USER,
+          providerBotId: BOT_ID,
+          providerWorkspaceId: 'TKESTREL',
+          intakeScope: {
+            channels: [scoped(SHARED.name, 'handbook.md', '- Channels: #ops-requests')],
+          },
+          ...patch,
+        }),
+    );
+  }
+
+  /** Sweep the three employees over one channel history and return what was seeded. */
+  async function sweep(
+    messages: Array<Record<string, unknown>>,
+    surfaces: Doc<'surfaces'>[] = sharedKeySurfaces(),
+  ): Promise<{ harness: RuntimeHarness; seeded: Array<[string, string]> }> {
+    const harness = runtimeHarness(
+      surfaces,
+      [],
+      new Map([['credential-slack', 'slack-test-value']]),
+      employees,
+    );
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      fetcher: async (input: string | URL | Request): Promise<Response> =>
+        new URL(String(input)).pathname.endsWith('/conversations.list')
+          ? slackResponse({ ok: true, channels: [SHARED] })
+          : slackResponse({ ok: true, messages }),
+    });
+    const seeded = [...harness.seeds.values()].map((seed): [string, string] => [
+      String(seed.agentId),
+      seed.externalId,
+    ]);
+    return { harness, seeded };
+  }
+
+  /** The row `conversations.history` returned for the 19 Sep run's customised ask. */
+  function customisedPost(patch: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      subtype: 'bot_message',
+      text: `<@${BOT_USER}> please refresh the pipeline tile to the standup figure`,
+      username: 'Priya (Day0)',
+      type: 'message',
+      ts: '1789757864.629339',
+      bot_id: BOT_ID,
+      app_id: 'ADAY0APP',
+      ...patch,
+    };
+  }
+
+  it('ignores a customised post by this app under an employee name, for all three employees', async (): Promise<void> => {
+    const { harness, seeded } = await sweep([customisedPost()]);
+    expect(seeded).toEqual([]);
+    expect(harness.records.map((record) => record.skipReason)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('ignores the same post under a human display name', async (): Promise<void> => {
+    const { seeded } = await sweep([customisedPost({ username: 'Dana Whitfield' })]);
+    expect(seeded).toEqual([]);
+  });
+
+  it("reads a human's ask that mentions the bot", async (): Promise<void> => {
+    const { harness, seeded } = await sweep([
+      { type: 'message', user: 'UDANA', ts: '1789757900.000100', text: `<@${BOT_USER}> refresh the tile` },
+    ]);
+    expect(seeded).toEqual(
+      employees.map((agent) => [String(agent._id), `${SHARED.id}:1789757900.000100`]),
+    );
+    expect([...harness.seeds.values()][0].requester).toBe('UDANA');
+  });
+
+  it("reads another app's post that mentions the bot", async (): Promise<void> => {
+    const { seeded } = await sweep([
+      customisedPost({ bot_id: 'BOTHERAPP', app_id: 'AOTHERAPP', username: 'Pager' }),
+    ]);
+    expect(seeded).toEqual(
+      employees.map((agent) => [String(agent._id), `${SHARED.id}:1789757864.629339`]),
+    );
+  });
+
+  it('ignores a thread reply by the app under an ask', async (): Promise<void> => {
+    const { seeded } = await sweep([
+      customisedPost({
+        subtype: 'thread_broadcast',
+        ts: '1789757990.000300',
+        thread_ts: '1789757900.000100',
+        text: `Done. <@${BOT_USER}> refreshed the tile to 74 %.`,
+      }),
+    ]);
+    expect(seeded).toEqual([]);
+  });
+
+  it("ignores a dedicated app's post by the app id its registration stored", async (): Promise<void> => {
+    const provisioning = {
+      appId: 'ADAY0APP',
+      appName: 'Priya (Day0)',
+      clientId: '1.2',
+      clientSecretCredentialId: id<'credentials'>('credential-client-secret'),
+      installUrl: 'https://slack.com/oauth/v2/authorize',
+      redirectUrl: 'https://day0.local/api/slack/oauth',
+      scopes: ['chat:write'],
+      createdAt: 1,
+    };
+    const { seeded } = await sweep(
+      [customisedPost({ bot_id: 'BROTATED' })],
+      sharedKeySurfaces({ provisioning }),
+    );
+    expect(seeded).toEqual([]);
+  });
+
+  it('refuses to read work when the probe stored no app identity, and says what heals it', async (): Promise<void> => {
+    const { harness, seeded } = await sweep(
+      [customisedPost()],
+      sharedKeySurfaces({ providerBotId: undefined }),
+    );
+    expect(seeded).toEqual([]);
+    expect(harness.records.map((record) => record.skipReason)).toEqual(
+      employees.map(() => 'intake failed: Slack probe stored no app identity; probe the surface again.'),
+    );
+  });
+});
+
+describe('the bot identity a probe stores', (): void => {
+  it('lands only for the current probe generation and clears an older id when the probe read none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Identity test agent',
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'approved',
+        whereFound: [],
+        credentialLanded: false,
+        probeGeneration: 2,
+        createdAt: 1,
+      });
+    });
+    const stored = async (): Promise<string | undefined> => {
+      const row = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+      return row?.providerBotId;
+    };
+    const record = internal.intakeIdentity.recordBotIdentity;
+
+    expect(await harness.mutation(record, { surfaceId, generation: 1, providerBotId: 'BOLD' })).toBe(false);
+    expect(await stored()).toBeUndefined();
+    expect(await harness.mutation(record, { surfaceId, generation: 2, providerBotId: 'BBOT' })).toBe(true);
+    expect(await stored()).toBe('BBOT');
+    expect(await harness.mutation(record, { surfaceId, generation: 2 })).toBe(true);
+    expect(await stored()).toBeUndefined();
+  });
+});
+
 describe('poll on connect', (): void => {
   /** Two connected surfaces; only Linear has a reader wired for this test. */
   function connectedPair(): {
@@ -2233,6 +2428,7 @@ describe('poll on connect', (): void => {
         credentialId: slackCredential,
         endpoint: 'https://slack.com/api/',
         providerIdentityId: 'UBOT',
+        providerBotId: 'BBOT',
         providerWorkspaceId: 'TTEAM',
       }),
       surfaceRow('linear', 'Linear', 'kanban', {

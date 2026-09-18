@@ -139,6 +139,9 @@ interface SlackMessage {
   text: string;
   ts: string;
   user?: string;
+  /** The posting app's bot id; the only author mark on a post sent under a customised name. */
+  botId?: string;
+  appId?: string;
   /** The parent message when the mention itself sits inside a thread. */
   threadTs?: string;
 }
@@ -901,6 +904,8 @@ async function slackHistory(
         ts: row.ts,
         text: row.text,
         user: typeof row.user === 'string' ? row.user : undefined,
+        botId: typeof row.bot_id === 'string' ? row.bot_id : undefined,
+        appId: typeof row.app_id === 'string' ? row.app_id : undefined,
         threadTs: typeof row.thread_ts === 'string' ? row.thread_ts : undefined,
       });
     }
@@ -1064,6 +1069,28 @@ export function slackCandidate(
 }
 
 /**
+ * Whether the connected app itself posted a message, under whatever name.
+ *
+ * A post sent with a customised display name carries no `user`, so the bot's
+ * user id alone never matches it. Every employee posts that way, and siblings
+ * on a shared key are one app, so without the app's own identity an employee's
+ * post in a shared channel reads as an ask to its siblings and to itself.
+ * Another app's post and a person's message match none of the three.
+ *
+ * Args:
+ *   message: One channel history row.
+ *   surface: Connected Slack surface with the identity its probe stored.
+ *
+ * Returns:
+ *   True when the message is the app's own.
+ */
+function postedByConnectedApp(message: SlackMessage, surface: Doc<'surfaces'>): boolean {
+  if (message.user !== undefined && message.user === surface.providerIdentityId) return true;
+  if (message.botId !== undefined && message.botId === surface.providerBotId) return true;
+  return message.appId !== undefined && message.appId === surface.provisioning?.appId;
+}
+
+/**
  * Poll documented Slack channels for exact mentions of the connected bot.
  *
  * Args:
@@ -1097,6 +1124,11 @@ async function pollSlack(
   if (include.work) {
     if (!surface.providerIdentityId) throw new Error('Slack probe stored no bot identity.');
     if (!surface.providerWorkspaceId) throw new Error('Slack probe stored no workspace identity.');
+    // Without it the app's own customised posts cannot be told from asks, so
+    // nothing is read until the next probe, hourly or by hand, has stored it.
+    if (!surface.providerBotId) {
+      throw new Error('Slack probe stored no app identity; probe the surface again.');
+    }
     const names = surface.intakeScope
       ? approvedChannelNames(surface.intakeScope)
       : slackChannelsFromPages(pages);
@@ -1106,7 +1138,7 @@ async function pollSlack(
     for (const channel of channels) {
       const messages = await slackHistory(fetcher, credential, channel.id, surface.lastPolledAt);
       for (const message of messages) {
-        if (!message.text.includes(mention) || message.user === surface.providerIdentityId) continue;
+        if (!message.text.includes(mention) || postedByConnectedApp(message, surface)) continue;
         candidates.push(slackCandidate(message, channel, surface, observedAt));
       }
     }
