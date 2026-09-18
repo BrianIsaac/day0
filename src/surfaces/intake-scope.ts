@@ -303,7 +303,7 @@ export function roleScopeCandidates(
     const heading = /^#\s+(.+)$/m.exec(page?.markdown ?? '')?.[1] ?? '';
     const identity = `${ref} ${heading}`.toLowerCase();
     const roleHits = roleWords.filter((word): boolean => identity.includes(word)).length;
-    return { ref, score: (namedByRef.get(ref)?.size ?? 0) * 100 + roleHits };
+    return { ref, score: roleHits * 1_000 + (namedByRef.get(ref)?.size ?? 0) };
   });
   const highest = Math.max(...scores.map((item): number => item.score));
   if (highest === 0) return [];

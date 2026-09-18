@@ -132,6 +132,11 @@ describe('intake scope candidates', (): void => {
         'logistics-desk', 'ops-requests',
       ]);
     expect(roleScopeCandidates(all, candidates, 'Assistant', [])).toEqual([]);
+    expect(roleScopeCandidates(
+      all, candidates, 'Close coordinator', ['Do not read #revops-asks; that is RevOps work.'],
+    ).map((candidate): string => candidate.ref)).toEqual([
+      'finance/handbook.md', 'finance/handbook.md',
+    ]);
   });
 
   it('ignores quoted runbook examples and another team’s channels mentioned in prose', (): void => {
