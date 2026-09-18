@@ -98,8 +98,11 @@ function actionKeyFromIdempotencyKey(key: unknown): string | undefined {
  * each counted as the row it is, just before the row that needed the page.
  */
 function ledgerEntries(output: unknown): Array<{ entry: UnknownRecord; sessionRestoreOf?: string }> {
-  const applied = asRecord(output)?.applied;
-  if (!Array.isArray(applied)) return [];
+  const record = asRecord(output);
+  const failedReread = asRecord(record?.failedReread);
+  const applied = [record?.applied, failedReread?.applied].flatMap((rows) =>
+    Array.isArray(rows) ? rows : [],
+  );
   return applied.flatMap((value) => {
     const row = asRecord(value);
     if (!row) return [];

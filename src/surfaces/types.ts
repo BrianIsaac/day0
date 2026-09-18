@@ -122,6 +122,19 @@ export interface ActionOutcome {
    * ledger's top-level rows stay index-aligned with the actions.
    */
   sessionRestore?: SessionRestore;
+  /**
+   * Set on a read taken again when a retry resumed at the closing phase, in
+   * place of the carried row it re-read: that row's key and effect, and when
+   * the read was taken again. The carried row itself stays on the earlier
+   * run's `work.failed` record.
+   */
+  refreshed?: ReadRefresh;
+}
+
+/** The carried read a re-read on resume replaced, and when it was read again. */
+export interface ReadRefresh {
+  previous: { effect?: string; idempotencyKey: string };
+  at: number;
 }
 
 /** What the provider refused before the one bounded argument repair. */
@@ -205,6 +218,7 @@ export interface SurfaceAdapter {
     action: MockAction,
     index: number,
     idempotencyKey: string,
+    transportAuthority?: ActionAuthority,
   ): Promise<AppliedAction>;
 }
 

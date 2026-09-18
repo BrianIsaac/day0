@@ -280,6 +280,7 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
           Object.fromEntries(
             [
               'get_issue',
+              'list_issues',
               'save_comment',
               'save_issue',
               'browser_navigate',
@@ -537,6 +538,9 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     const { workItemId } = await seed(t);
     recorded.closingReply = omitComment ? { ...auditClosing, actions: auditClosing.actions.slice(1) } : auditClosing;
     await t.run(async ctx => {
+      // The carried ledger read the issue list, so the surface allows it; the resume reads it again.
+      const linear = (await ctx.db.query('surfaces').collect()).find((surface) => surface.slug === 'linear')!;
+      await ctx.db.patch(linear._id, { toolAllowlist: [...(linear.toolAllowlist ?? []), 'list_issues'] });
       await ctx.db.patch(workItemId, {
         externalId: 'REVOPS-5', title: 'Audit note', contentRefs: ['ticket://REVOPS-5'],
         state: 'failed', plan: auditRetryPlan,
@@ -558,7 +562,17 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     const resumed = await readItem(t, workItemId);
     expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', initialFailure: closingTransportFailure });
-    expect(ledger(resumed).slice(0, 5)).toEqual(auditPrerequisiteLedger);
+    // The sign-in rows are carried; the tile read and the issue list are read again under the new run.
+    expect(ledger(resumed).slice(0, 3)).toEqual(auditPrerequisiteLedger.slice(0, 3));
+    for (const index of [3, 4]) {
+      expect(ledger(resumed)[index]).toMatchObject({
+        ok: true,
+        idempotencyKey: `${workItemId}:${resumed.executionRunId}:${index}`,
+        refreshed: { previous: { effect: auditPrerequisiteLedger[index]!.effect, idempotencyKey: `previous-run:${index}` } },
+      });
+    }
+    expect(recorded.mcp.map(call => call.tool)).toEqual(['browser_navigate', 'browser_snapshot', 'list_issues']);
+    recorded.mcp.length = 0;
     expect(recorded.model).toEqual([]);
     await t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! });
     await t.action(internal.workActions.applyApprovedActions, { workItemId });

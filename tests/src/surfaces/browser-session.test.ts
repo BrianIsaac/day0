@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ledgerRunIds,
   sessionRecipe as recipeForRun,
   signsIn,
   type EarlierRows,
@@ -200,6 +201,32 @@ describe('the steps that re-establish a browser session', (): void => {
     expect(sessionRecipe('looker', older, ENDPOINT, 'retry')).toEqual([{ action: navigate() }]);
   });
 
+  it('replays the sign-in of the ledger a resumed closing phase carries, under the new run', (): void => {
+    // A retry that resumes at the closing phase runs under a new run id, and
+    // the prerequisite ledger it adopts keeps the first attempt's keys.
+    const carried = run([navigate(), signIn, clickSignIn, snapshot], 'first');
+    expect(tools(recipeForRun('looker', carried, ENDPOINT, 'retry', ['first']))).toEqual([
+      ['browser_navigate', 'wi:first:0'],
+      ['browser_fill_form', 'wi:first:1'],
+      ['browser_click', 'wi:first:2'],
+    ]);
+    expect(recipeForRun('looker', carried, ENDPOINT, 'retry')).toEqual([{ action: navigate() }]);
+  });
+
+  it('lends a resumed run nothing from an earlier run its ledger does not carry', (): void => {
+    const older = run([navigate(), signIn, clickSignIn], 'older');
+    const carried = run([navigate(), snapshot], 'first');
+    const recipe = recipeForRun(
+      'looker',
+      { actions: [...older.actions, ...carried.actions], applied: [...older.applied, ...carried.applied] },
+      ENDPOINT,
+      'retry',
+      ['first'],
+    );
+    // The resumed ledger's own navigate, and no credential from the older run.
+    expect(tools(recipe)).toEqual([['browser_navigate', 'wi:first:0']]);
+  });
+
   it('orders a run by its durable index and de-duplicates a row carried twice', (): void => {
     // A resumed closing set: the previous attempt's landed writes (its
     // closing sign-in included) carried ahead of its own phase one.
@@ -279,6 +306,16 @@ describe('the steps that re-establish a browser session', (): void => {
       ['browser_fill_form', 'wi:run:1'],
       ['browser_click', 'wi:run:2'],
     ]);
+  });
+});
+
+describe('the runs a ledger was landed under', (): void => {
+  it('reads each run id once from the row keys, and skips keys of another shape', (): void => {
+    const phaseOne = run([navigate(), signIn], 'first');
+    const refreshed: AppliedAction = { ...landed('wi:retry:2'), idempotencyKey: 'wi:retry:2' };
+    expect(
+      ledgerRunIds([...phaseOne.applied, refreshed, undefined, { ...landed('x'), idempotencyKey: 'not-a-run-key' }]),
+    ).toEqual(['first', 'retry']);
   });
 });
 
