@@ -1,7 +1,8 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
+import { computeAgentMetrics } from '../../convex/metrics';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -243,6 +244,7 @@ describe('agent evaluation metrics', (): void => {
       },
       actions: {
         autoApplied: 2,
+        sessionRestores: 0,
         held: 4,
         approved: 1,
         rejected: 3,
@@ -507,5 +509,67 @@ describe('metrics under adversarial sequences', (): void => {
     const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
     expect(metrics.decisions).toMatchObject({ requested: 1, approved: 1, medianLatencyMs: 7_000 });
     expect(metrics.decisions.byVia.channel.decided).toBe(1);
+  });
+});
+
+describe('a browser session re-established before an apply invocation', (): void => {
+  const step = (key: string, replayOf: string, tool: string) => ({
+    tool: 'mcp.call',
+    ok: true,
+    authority: 'autonomous',
+    effect: `${tool} on looker · ok`,
+    idempotencyKey: key,
+    replayOf,
+  });
+  const item = (id: string, applied: unknown[]): Doc<'workItems'> =>
+    ({ _id: id, state: 'completed', output: { applied } }) as unknown as Doc<'workItems'>;
+
+  it('counts each replayed transport call toward the audit trail and not toward autoApplied', (): void => {
+    const restored = item('wi', [
+      {
+        tool: 'mcp.call',
+        ok: true,
+        authority: 'autonomous',
+        effect: 'browser_fill_form on looker · ok',
+        idempotencyKey: 'wi:run:4',
+        sessionRestore: {
+          steps: [
+            step('wi:run:4.session-0', 'wi:run:0', 'browser_navigate'),
+            step('wi:run:4.session-1', 'wi:run:1', 'browser_fill_form'),
+            step('wi:run:4.session-2', 'wi:run:2', 'browser_click'),
+          ],
+        },
+      },
+      {
+        tool: 'mcp.call',
+        ok: true,
+        authority: 'autonomous',
+        effect: 'browser_click on looker · ok',
+        idempotencyKey: 'wi:run:5',
+      },
+    ]);
+    const refused = item('wi2', [
+      {
+        tool: 'mcp.call',
+        ok: false,
+        reason: 'browser session could not be re-established: browser_fill_form no grant (looker:write)',
+        idempotencyKey: 'wi2:run2:4',
+        sessionRestore: {
+          steps: [
+            step('wi2:run2:4.session-0', 'wi2:run2:0', 'browser_navigate'),
+            {
+              tool: 'mcp.call',
+              ok: false,
+              reason: 'no grant (looker:write)',
+              idempotencyKey: 'wi2:run2:4.session-1',
+              replayOf: 'wi2:run2:1',
+            },
+          ],
+        },
+      },
+    ]);
+    const metrics = computeAgentMetrics([], [restored, refused], []);
+    expect(metrics.actions).toMatchObject({ autoApplied: 2, sessionRestores: 4, refused: 1 });
+    expect(metrics.auditTrail).toEqual({ complete: 6, total: 6, fraction: 1 });
   });
 });
