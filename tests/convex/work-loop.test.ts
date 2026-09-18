@@ -594,3 +594,61 @@ describe('the server drives the work loop in real mode', (): void => {
     expect(row).not.toHaveProperty('draftClaimedAt');
   });
 });
+
+describe('checking for new work on demand', (): void => {
+  it('polls the connected work surfaces now, at most once a minute', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const surfaceIds = await harness.run(async (ctx) =>
+      (await ctx.db.query('surfaces').collect()).map((surface) => surface._id).sort(),
+    );
+
+    const first = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workLoop.checkForNewWork, { agentId });
+    expect(first).toMatchObject({ scheduled: 2 });
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(jobs.map((job) => job.name)).toEqual([
+      'intakeActions:pollSurface',
+      'intakeActions:pollSurface',
+    ]);
+    expect(jobs.map((job) => (job.args[0] as { surfaceId: string }).surfaceId).sort()).toEqual(
+      surfaceIds,
+    );
+
+    vi.advanceTimersByTime(30_000);
+    const again = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workLoop.checkForNewWork, { agentId });
+    expect(again).toMatchObject({ scheduled: 0, retryInMs: 30_000 });
+
+    vi.advanceTimersByTime(30_000);
+    const later = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workLoop.checkForNewWork, { agentId });
+    expect(later).toMatchObject({ scheduled: 2 });
+  });
+
+  it('refuses a caller who does not own the employee, and the mock deployment', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await expect(
+      harness
+        .withIdentity({ subject: 'someone-else' })
+        .mutation(api.workLoop.checkForNewWork, { agentId }),
+    ).rejects.toThrow(/forbidden/);
+
+    restoreSurfaceMode();
+    useSurfaceMode('mock');
+    const mock = convexTest(contractSchema(), allConvexModules());
+    const mockAgent = await seedEmployee(mock);
+    await expect(
+      mock.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId: mockAgent }),
+    ).rejects.toThrow(/real-mode/);
+  });
+});

@@ -1,8 +1,10 @@
+import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import type { MutationCtx } from './_generated/server';
+import { mutation, type MutationCtx } from './_generated/server';
+import { assertOwnsAgent } from './ownership';
 import { isRevocationTrialRow } from './revocationEvaluation';
-import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { AUTONOMOUS_WIP_LIMIT, COLD_START_WIP_LIMIT } from '../src/work/types';
 
@@ -338,3 +340,66 @@ export async function resumeStalledStepsInTransaction(
   }
   return { rescheduled };
 }
+
+/** How often one employee's work surfaces may be polled on demand. */
+export const CHECK_FOR_WORK_INTERVAL_MS = 60_000;
+
+/** The event that records an on-demand poll; the interval is read from it. */
+const CHECK_REQUESTED = 'work.check-requested';
+
+/** Surface classes the intake sweep has a work reader for. */
+const WORK_SURFACE_CLASSES = new Set(['kanban', 'chat']);
+
+/**
+ * Poll the employee's connected work surfaces now, at most once a minute.
+ *
+ * The five-minute intake cron stays the steady state; this is the
+ * dashboard's "Check for new work", so a ticket just filed or an ask just
+ * posted is discovered within a minute instead of at the next sweep. What
+ * it finds is seeded and evaluated like anything the cron finds. Each check
+ * is an event, which is also what the interval is measured from.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   args: The employee.
+ *
+ * Returns:
+ *   How many surfaces were scheduled for a poll, and, when the last check
+ *   was under a minute ago, how long until the next is allowed.
+ */
+export const checkForNewWork = mutation({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<{ scheduled: number; retryInMs?: number }> => {
+    assertRealMode('Checking for new work');
+    await assertOwnsAgent(ctx, args.agentId);
+    const now = Date.now();
+    const since = now - CHECK_FOR_WORK_INTERVAL_MS;
+    const lastCheck = (
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId).gt('_creationTime', since))
+        .collect()
+    )
+      .filter((event) => event.type === CHECK_REQUESTED && event.createdAt > since)
+      .at(-1);
+    if (lastCheck) {
+      return { scheduled: 0, retryInMs: lastCheck.createdAt + CHECK_FOR_WORK_INTERVAL_MS - now };
+    }
+    const surfaces = (
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+        .collect()
+    ).filter((surface) => surface.verdict === 'connected' && WORK_SURFACE_CLASSES.has(surface.class));
+    for (const surface of surfaces) {
+      await ctx.scheduler.runAfter(0, internal.intakeActions.pollSurface, { surfaceId: surface._id });
+    }
+    await ctx.db.insert('events', {
+      agentId: args.agentId,
+      type: CHECK_REQUESTED,
+      payload: { surfaceIds: surfaces.map((surface) => surface._id) },
+      createdAt: now,
+    });
+    return { scheduled: surfaces.length };
+  },
+});
