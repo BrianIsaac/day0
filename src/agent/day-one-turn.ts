@@ -98,7 +98,6 @@ async function* withEarnedClose(
   replies: number,
 ): AsyncGenerator<UIMessageChunk> {
   let said = '';
-  let openTextId: string | null = null;
   let held: UIMessageChunk[] | null = null;
   let dropped = false;
 
@@ -116,27 +115,28 @@ async function* withEarnedClose(
       return;
     }
     const question = DAY_ONE_TOPIC_SPECS[Math.min(replies, DAY_ONE_TOPIC_SPECS.length - 1)].question;
-    if (openTextId === null) {
-      const id = 'day-one-question';
-      yield { type: 'text-start', id };
-      yield { type: 'text-delta', id, delta: question };
-      yield { type: 'text-end', id };
-      yield* kept;
+    // The model's own last text part takes the question, so it reads on from
+    // what was said; a turn with no words gets a part of its own.
+    const lastTextEnd = kept.findLastIndex((chunk) => chunk.type === 'text-end');
+    const stepEnd = kept.length - 1;
+    const ending = kept[lastTextEnd];
+    if (ending?.type === 'text-end') {
+      yield* kept.slice(0, lastTextEnd);
+      yield { type: 'text-delta', id: ending.id, delta: said.trim() ? `\n\n${question}` : question };
+      yield* kept.slice(lastTextEnd);
       return;
     }
-    const delta = said.trim() ? `\n\n${question}` : question;
-    const closes = kept.findIndex((chunk) => chunk.type === 'text-end' && chunk.id === openTextId);
-    const at = closes === -1 ? kept.length - 1 : closes;
-    yield* kept.slice(0, at);
-    yield { type: 'text-delta', id: openTextId, delta };
-    yield* kept.slice(at);
+    const id = 'day-one-question';
+    yield* kept.slice(0, stepEnd);
+    yield { type: 'text-start', id };
+    yield { type: 'text-delta', id, delta: question };
+    yield { type: 'text-end', id };
+    yield* kept.slice(stepEnd);
   }
 
   for await (const chunk of chunks) {
     if (chunk.type === 'text-delta') said += chunk.delta;
     if (held === null) {
-      if (chunk.type === 'text-start') openTextId = chunk.id;
-      if (chunk.type === 'text-end' && chunk.id === openTextId) openTextId = null;
       if (isToolChunk(chunk)) {
         held = [chunk];
       } else if (chunk.type === 'finish' && dropped) {

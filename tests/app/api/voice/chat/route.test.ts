@@ -460,6 +460,30 @@ describe('closing the 1:1', (): void => {
     expect(types.indexOf('text-end')).toBeGreaterThan(types.lastIndexOf('text-delta'));
   });
 
+  it('puts the scripted question after words that came behind the close', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    const call = {
+      index: 0,
+      id: 'call_close',
+      type: 'function',
+      function: { name: 'dayOneComplete', arguments: JSON.stringify({ closingLine: 'Drafting.' }) },
+    };
+    stubProvider([
+      () =>
+        completionStream([
+          [{ role: 'assistant', tool_calls: [call] }, null],
+          [{ content: 'Week one is the tracker, then.' }, null],
+          [{}, 'tool_calls'],
+        ]),
+    ]);
+
+    const body = await (await POST(day1Request({ messages: historyOf(6) }))).text();
+
+    expect(closed(body)).toBe(false);
+    expect(said(body)).toMatch(/^Week one is the tracker, then\.\s*7\/7/);
+    expect(chunksOf(body).map((c) => c.type).slice(-2)).toEqual(['finish-step', 'finish']);
+  });
+
   it('honours a close that only quotes a question back', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([
