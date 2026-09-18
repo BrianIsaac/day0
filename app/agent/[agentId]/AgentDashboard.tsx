@@ -1311,7 +1311,30 @@ function ProposedSkillsPanel({
   );
 }
 
-function RegisteredSkillsPanel({
+/**
+ * Whether Retry on this row verifies the draft it already has rather than
+ * authoring a new one.
+ *
+ * A skill parked because the sandbox was busy or unavailable keeps the body
+ * and smoke test that were authored and passed the static gate, so its retry
+ * runs the check on them with no second model call. The condition is the one
+ * `convex/skillActions.ts` acts on, so the button says what the backend will
+ * do; every other row - a refusal, a smoke test the sandbox turned down, a run
+ * that stopped before its draft was saved - has no draft to verify.
+ *
+ * Args:
+ *   skill: The unregistered skill row the panel is listing.
+ *
+ * Returns:
+ *   True when Retry verifies the saved draft without authoring again.
+ */
+export function retryVerifiesSavedDraft(
+  skill: Pick<Doc<'skills'>, 'state' | 'body' | 'pendingSmokeTest'>,
+): boolean {
+  return skill.state === 'authoring' && Boolean(skill.body) && Boolean(skill.pendingSmokeTest);
+}
+
+export function RegisteredSkillsPanel({
   skills,
   unregistered,
   authoringFailure,
@@ -1405,7 +1428,7 @@ function RegisteredSkillsPanel({
                 <button
                   onClick={() => onRevise(s._id, s.name)}
                   disabled={retrying === s._id}
-                  title="Re-author and verify this skill before its first execution"
+                  title="Discard this body and author the skill again, then verify it - open only before its first execution"
                   className="px-2.5 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-warn)] text-xs disabled:opacity-50 shrink-0"
                 >
                   {retrying === s._id ? 'Revising…' : 'Revise'}
@@ -1447,6 +1470,11 @@ function RegisteredSkillsPanel({
                   <button
                     onClick={() => onRetry(s._id, s.name)}
                     disabled={retrying === s._id}
+                    title={
+                      retryVerifiesSavedDraft(s)
+                        ? 'Run the body and smoke test this skill already has through the sandbox check - no new authoring call'
+                        : 'Author this skill again, with the reason it stopped, then verify it'
+                    }
                     className="px-2.5 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
                   >
                     {retrying === s._id ? 'Retrying…' : 'Retry'}
@@ -1457,13 +1485,20 @@ function RegisteredSkillsPanel({
           </ul>
           {/* Two backends can run the check, so naming one of them is advice
               half the readers cannot act on. The rule that picks between them
-              is what tells a reader which line is theirs. */}
+              is what tells a reader which line is theirs. And a retry costs an
+              authoring call for some of these rows and none for others, which
+              is the difference between waiting on a sandbox and waiting on the
+              model, so the text says which is which rather than claiming one
+              for all of them. */}
           <p className="text-[10px] text-[var(--color-muted)] mt-2">
-            Retry re-authors the skill and re-runs the sandbox check. If the sandbox was skipped,
-            start one first: run pnpm sandbox:up for the bundled local sandbox, or set
-            DAYTONA_API_KEY on the deployment to use Daytona instead. Only one authoring run holds a
-            skill at a time, so a retry while one is still running is refused until that run
-            finishes or its claim lapses.
+            Retry picks a skill up where it stopped. One parked because the check never ran - the
+            sandbox was busy, absent, or threw - keeps its body and smoke test and is checked again
+            as it stands, with no second authoring call; one the gate or the check itself turned
+            down is authored again, with the reason fed back. Either way it has to pass the check
+            before it is callable. If the sandbox was skipped, start one first: run pnpm sandbox:up
+            for the bundled local sandbox, or set DAYTONA_API_KEY on the deployment to use Daytona
+            instead. Only one authoring run holds a skill at a time, so a retry while one is still
+            running is refused until that run finishes or its claim lapses.
           </p>
         </div>
       ) : null}
