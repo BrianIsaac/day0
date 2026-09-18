@@ -701,15 +701,16 @@ async function pollLinear(
         if (project !== undefined) withProject += 1;
         if (
           wantedProject !== undefined &&
-          project !== undefined &&
-          project.toLowerCase() !== wantedProject
+          (project === undefined
+            ? surface.intakeScope !== undefined
+            : project.toLowerCase() !== wantedProject)
         ) {
           continue;
         }
         if (wantedTeam !== undefined && !request.teamEnforced) {
           const teams = issueTeamLabels(issue);
           if (teams.length > 0) withTeam += 1;
-          if (teams.length > 0 && !teams.includes(wantedTeam)) continue;
+          if (!teams.includes(wantedTeam)) continue;
         }
         const updatedAt = typeof issue.updatedAt === 'string' ? Date.parse(issue.updatedAt) : NaN;
         if (

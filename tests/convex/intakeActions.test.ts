@@ -2063,6 +2063,8 @@ describe('each employee reads its own approved queues', (): void => {
           issue('REVOPS-5', 'Revenue operations'),
           issue('uuid-1', { key: 'FIN', name: 'Finance close' }),
           issue('uuid-2', { key: 'LOG', name: 'Logistics desk' }),
+          issue('uuid-without-team', undefined),
+          { ...issue('uuid-without-project', 'Finance close'), project: undefined },
         ]),
       }),
     ).resolves.toMatchObject({ candidates: 2, polled: 1 });
