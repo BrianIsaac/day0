@@ -29,6 +29,7 @@ import {
   trialIdsSpent,
   parseDockerPs,
   probeTier,
+  publicUrlCorrections,
   renderChecklist,
   restoreCommand,
   restoreTargetVolume,
@@ -346,6 +347,26 @@ describe('the env file', (): void => {
     expect(
       bedEnvDefaults('day0-a7-abc123', BED_PROFILES, { DAY0_REDACTOR_URL: 'http://r:1' }, ports),
     ).not.toHaveProperty('DAY0_REDACTOR_URL');
+  });
+
+  it('puts back the public URLs the Convex CLI rewrites to container ports during a push', (): void => {
+    const ports = bedPorts({ CONVEX_PORT: '47210', CONVEX_SITE_PROXY_PORT: '47211' });
+    expect(
+      publicUrlCorrections(
+        { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:47210', NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:3211' },
+        ports,
+      ),
+    ).toEqual({ NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:47211' });
+    expect(publicUrlCorrections({}, ports)).toEqual({
+      NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:47210',
+      NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:47211',
+    });
+    expect(
+      publicUrlCorrections(
+        { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:47210', NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:47211' },
+        ports,
+      ),
+    ).toEqual({});
   });
 
   it('derives the project, the two Convex origins and the browser switch it already wrote', (): void => {

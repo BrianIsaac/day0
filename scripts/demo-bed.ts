@@ -1336,6 +1336,37 @@ export function bedEnvDefaults(
   return derived;
 }
 
+/**
+ * The host addresses to put back after a push.
+ *
+ * `convex dev --once` writes its own `NEXT_PUBLIC_CONVEX_URL` and
+ * `NEXT_PUBLIC_CONVEX_SITE_URL` lines, and a self-hosted backend answers with
+ * its container ports, so a bed published on 47210/47211 ends the push
+ * declaring 3211; the checklist then refuses the file the push just wrote.
+ * The same correction `scripts/setup.ts` makes.
+ *
+ * Args:
+ *   values: The env file after the push.
+ *   ports: The host ports this bed publishes.
+ *
+ * Returns:
+ *   The lines to write; empty when the CLI left them alone.
+ */
+export function publicUrlCorrections(
+  values: Readonly<Record<string, string>>,
+  ports: BedPorts,
+): Record<string, string> {
+  const wanted: Record<string, string> = {
+    NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports.backend}`,
+    NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${ports.site}`,
+  };
+  const corrections: Record<string, string> = {};
+  for (const [name, value] of Object.entries(wanted)) {
+    if ((values[name] ?? '') !== value) corrections[name] = value;
+  }
+  return corrections;
+}
+
 /** Everything the bed's child processes see: the shell, then the file, then the project. */
 function bedEnvironment(options: DemoBedOptions, values: Values): Values {
   return { ...values, COMPOSE_PROJECT_NAME: options.project };
@@ -1540,6 +1571,7 @@ function snapshot(options: DemoBedOptions): void {
 /* --------------------------------- restore --------------------------------- */
 
 function restore(options: DemoBedOptions): void {
+  const target = restoreTargetVolume(options.project);
   if (!options.snapshot) throw new Error('restore needs --snapshot <file>.');
   const source = resolve(options.snapshot);
   if (!existsSync(source)) throw new Error(`${source} does not exist.`);
@@ -1554,7 +1586,6 @@ function restore(options: DemoBedOptions): void {
   } else {
     log(`note: no ${basename(sidecar)} beside the snapshot, so its integrity is not checked.`);
   }
-  const target = restoreTargetVolume(options.project);
   if (volumeExists(target)) {
     if (!options.replace) {
       throw new Error(
@@ -1612,15 +1643,31 @@ async function up(options: DemoBedOptions): Promise<void> {
     );
   }
   const derived = bedEnvDefaults(options.project, options.profiles, values, ports);
-  if (Object.keys(derived).length > 0) {
-    writeEnvValues(derived);
-    log(`Wrote ${Object.keys(derived).join(', ')} to ${ENV_FILE}.`);
-  }
   if (values.CONVEX_DEPLOYMENT) {
     throw new Error(
       `${ENV_FILE} carries CONVEX_DEPLOYMENT=${values.CONVEX_DEPLOYMENT}. A self-hosted bed must not; ` +
         'remove that line (and any .convex/ directory an anonymous deployment left) before continuing.',
     );
+  }
+
+  // Decided before anything is written: a bed that would download, or a
+  // warm project this kit may not read, is refused with the file untouched.
+  let plan: WarmRedactorPlan | undefined;
+  if (options.profiles.includes('redactor')) {
+    const image = tarImage();
+    plan = warmRedactorPlan({
+      project: options.project,
+      warmFrom: options.warmFrom,
+      volumes: volumeNames(),
+      image,
+    });
+    const refusal = redactorVenvRefusal(redactorVenvDevice(plan.sourceVenv, image), plan.sourceVenv);
+    if (refusal) throw new Error(refusal);
+  }
+
+  if (Object.keys(derived).length > 0) {
+    writeEnvValues(derived);
+    log(`Wrote ${Object.keys(derived).join(', ')} to ${ENV_FILE}.`);
   }
   const env = bedEnvironment(options, readEnvFile());
 
@@ -1633,16 +1680,7 @@ async function up(options: DemoBedOptions): Promise<void> {
   values = readEnvFile();
 
   log('[2/10] Redactor volumes: present, or cloned read-only from --warm-from, never downloaded');
-  if (options.profiles.includes('redactor')) {
-    const image = tarImage();
-    const plan = warmRedactorPlan({
-      project: options.project,
-      warmFrom: options.warmFrom,
-      volumes: volumeNames(),
-      image,
-    });
-    const refusal = redactorVenvRefusal(redactorVenvDevice(plan.sourceVenv, image), plan.sourceVenv);
-    if (refusal) throw new Error(refusal);
+  if (plan) {
     log(`      ${plan.note}`);
     for (const step of plan.clone) {
       must(run('docker', step.create, { timeoutMs: 60_000 }), `docker volume create ${step.volume}`);
@@ -1751,6 +1789,14 @@ async function up(options: DemoBedOptions): Promise<void> {
     'convex dev --once',
   );
   log(`      pushed in ${elapsed(pushStartedAt)}`);
+  const corrections = publicUrlCorrections(readEnvFile(), ports);
+  if (Object.keys(corrections).length > 0) {
+    writeEnvValues(corrections);
+    log(
+      `      the Convex CLI rewrote ${Object.keys(corrections).join(' and ')} to the backend's own ` +
+        'container ports; put back the host addresses this bed publishes',
+    );
+  }
 
   log('[8/10] Restart the backend so the pushed env is what the modules read');
   must(
