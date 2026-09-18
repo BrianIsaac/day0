@@ -524,7 +524,7 @@ describe('seed', (): void => {
 });
 
 describe('a named set of tickets', (): void => {
-  const ONE_EACH = ['revops-tile', 'fin-status', 'log-sh4471'];
+  const ONE_EACH = ['revops-tile', 'fin-status', 'fin-accruals', 'fin-bankrec', 'log-sh4471'];
   const writes = (h: Harness): string[] =>
     h.linear.operations.filter((operation) => /Create|Update|Archive|Delete/.test(operation));
   const filed = (h: Harness): string[] =>
@@ -535,15 +535,24 @@ describe('a named set of tickets', (): void => {
       })
       .map((ticket) => ticket.key);
 
-  it('tracks the one-each set: one ticket per team, none of them late', (): void => {
+  it('tracks the one-each set: one worked ticket per team plus the two FIN steps the note reads, none late', (): void => {
     const raw = JSON.parse(readFileSync(resolve('bed/company/linear.json'), 'utf8')) as {
       sets?: Record<string, string[]>;
     };
     expect(raw.sets?.['one-each']).toEqual(ONE_EACH);
     const spec = loadBedSpec(process.cwd());
     const tickets = ONE_EACH.map((key) => spec.tickets.find((ticket) => ticket.key === key)!);
-    expect(tickets.map((ticket) => ticket.team)).toEqual(['REVOPS', 'FIN', 'LOG']);
-    expect(tickets.every((ticket) => !ticket.late && ticket.state === 'Todo')).toBe(true);
+    expect(tickets.map((ticket) => ticket.team)).toEqual(['REVOPS', 'FIN', 'FIN', 'FIN', 'LOG']);
+    expect(tickets.every((ticket) => !ticket.late)).toBe(true);
+    // The close status note reads the calendar steps as Linear reports them (rehearsal 1, finding 3):
+    // accruals booked at Done, the bank reconciliation still in progress, so the note names it as not done.
+    expect(tickets.map((ticket) => [ticket.key, ticket.state])).toEqual([
+      ['revops-tile', 'Todo'],
+      ['fin-status', 'Todo'],
+      ['fin-accruals', 'Done'],
+      ['fin-bankrec', 'In Progress'],
+      ['log-sh4471', 'Todo'],
+    ]);
   });
 
   it('refuses a set that names a ticket it does not declare, or a late one', (): void => {
@@ -568,8 +577,11 @@ describe('a named set of tickets', (): void => {
     const h = harness();
     expect(await run(h, ['seed', '--set', 'one-each'])).toBe(0);
     expect(filed(h)).toEqual(ONE_EACH);
-    for (const key of ONE_EACH) expect(h.linear.byKey(key), key).toMatchObject({ stateId: expect.stringMatching(/-Todo$/), assigneeId: null });
-    expect(h.logs.join('\n')).toContain('Seeded the set one-each: revops-tile, fin-status, log-sh4471.');
+    for (const key of ONE_EACH) {
+      const ticket = loadBedSpec(h.root).tickets.find((candidate) => candidate.key === key)!;
+      expect(h.linear.byKey(key), key).toMatchObject({ stateId: `${ticket.team}-${ticket.state}`, assigneeId: null });
+    }
+    expect(h.logs.join('\n')).toContain('Seeded the set one-each: revops-tile, fin-status, fin-accruals, fin-bankrec, log-sh4471.');
     const first = h.linear.snapshot();
     h.linear.operations = [];
     h.clock.now += 60_000;
@@ -606,7 +618,7 @@ describe('a named set of tickets', (): void => {
     h.logs.length = 0;
     expect(await run(h, ['check', '--set', 'one-each'])).toBe(0);
     const before = h.logs.join('\n');
-    expect(before).toContain('seed --set one-each files revops-tile, fin-status, log-sh4471; every other ticket stays unfiled');
+    expect(before).toContain('seed --set one-each files revops-tile, fin-status, fin-accruals, fin-bankrec, log-sh4471; every other ticket stays unfiled');
     expect(before).toContain('revops-tile is not filed yet; seed creates it');
     expect(before).toContain('revops-audit is outside the set one-each and not filed');
     expect(before).toContain('log-sh4480 is outside the set one-each and not filed');
