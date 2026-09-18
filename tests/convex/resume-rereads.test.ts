@@ -10,6 +10,7 @@ import type { AppliedAction } from '../../src/surfaces/types';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { MockAction } from '../../src/work/types';
 import { MANAGER_DM, slackPlan, TileDriver } from '../fixtures/browser-phase-split-2026-09-16';
+import { collectLedgerObservations } from '../../convex/metrics';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import {
@@ -367,7 +368,18 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(replies).toHaveLength(1);
     expect(replies[0]).toContain('the Looker pipeline tile currently shows 74%.');
     expect(replies[0]).not.toContain('68%');
-    expect((await readItem(t, workItemId)).state).toBe('completed');
+    const done = await readItem(t, workItemId);
+    expect(done.state).toBe('completed');
+    // The 68% read stays on the first attempt's failure record and counts
+    // once; the re-read is a transport call of its own and counts once.
+    const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
+    const observed = collectLedgerObservations(events, [done]);
+    const byKey = (key: string) => observed.filter((row) => row.entry.idempotencyKey === key);
+    expect(byKey(`${workItemId}:${firstRun}:3`)).toHaveLength(1);
+    expect(byKey(`${workItemId}:${firstRun}:3`)[0]!.entry.effect).toContain('visible figure 68%');
+    expect(byKey(`${workItemId}:${secondRun}:3`)).toHaveLength(1);
+    expect(byKey(`${workItemId}:${secondRun}:3`)[0]!.entry.effect).toContain('visible figure 74%');
+    expect(observed.filter((row) => row.sessionRestoreOf === `${workItemId}:${secondRun}:3`)).toHaveLength(3);
   }, 30_000);
 
   // The 17 September ledger: the first attempt's closing snapshot landed on
