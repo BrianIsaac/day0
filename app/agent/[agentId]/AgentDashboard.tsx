@@ -20,6 +20,7 @@ import {
   type KeptCorrection,
 } from './corrections-panel';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
+import { declaredSkillInputs, systemDeclaredInputs } from '../../../src/work/skill-inputs';
 import {
   type ActionVerdict,
   describeAction,
@@ -1423,6 +1424,7 @@ export function RegisteredSkillsPanel({
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-[var(--color-fg)] break-words">{s.name}</div>
                 <div className="text-[var(--color-muted)] text-xs break-words">{s.description}</div>
+                {s.sourceType === 'agent-authored' ? <SkillInputs body={s.body} /> : null}
               </div>
               {s.sourceType === 'agent-authored' ? (
                 <button
@@ -1468,6 +1470,7 @@ export function RegisteredSkillsPanel({
                           ? 'a run stopped without reporting · Retry takes the skill over'
                           : (s.verificationLog ?? s.description)}
                     </div>
+                    <SkillInputs body={s.body || s.refusedBody || ''} />
                     <RefusedDraftDetails skill={s} />
                   </div>
                   <button
@@ -1506,6 +1509,42 @@ export function RegisteredSkillsPanel({
         </div>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * The inputs an authored skill declares, with the ones the system declared
+ * for its author marked.
+ *
+ * The manager approves a skill before its body exists, so this row is the
+ * first place the inputs can be shown. An input the author used without
+ * declaring is declared for it in real mode; the body marks that line, and
+ * this says so beside the name rather than letting it pass as the author's.
+ */
+function SkillInputs({ body }: { body: string }) {
+  const declared = declaredSkillInputs(body) ?? [];
+  if (declared.length === 0) return null;
+  const added = new Set(systemDeclaredInputs(body));
+  const plural = added.size > 1;
+  return (
+    <div className="mt-1 text-[10px] text-[var(--color-muted)] break-words">
+      <span className="uppercase tracking-wider">inputs</span>{' '}
+      {declared.map((name, index) => (
+        <span key={name}>
+          {index > 0 ? ', ' : ''}
+          <code className="font-mono">&lt;{name}&gt;</code>
+          {added.has(name) ? ' (added by Day0)' : ''}
+        </span>
+      ))}
+      {added.size > 0 ? (
+        <span>
+          {' '}
+          · The author used the input{plural ? 's' : ''} marked &quot;added by Day0&quot; without declaring{' '}
+          {plural ? 'them' : 'it'}, so Day0 declared {plural ? 'them' : 'it'}: the executor reads{' '}
+          {plural ? 'them' : 'it'} from the candidate or its runbook at run time.
+        </span>
+      ) : null}
+    </div>
   );
 }
 

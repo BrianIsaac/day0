@@ -133,6 +133,18 @@ const READ_BY_THE_EXECUTOR =
 const ADDED_DECLARATION_SOURCE = 'read it from the candidate body, its Refs line or the runbook for this run';
 
 /**
+ * What every declaration the system added ends with. The manager approves a
+ * skill before its body exists, so the body itself has to say which of its
+ * inputs the author never declared: the mark travels with the body through a
+ * park, a refusal and an export, and the skills panel reads it back.
+ */
+const ADDED_DECLARATION_MARK = 'Declared by Day0: the author used it without declaring it.';
+
+const ADDED_DECLARATION = new RegExp(
+  `^\\s*[-*+]\\s*\`<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>\`:.*${ADDED_DECLARATION_MARK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+);
+
+/**
  * Declare every placeholder a body uses but does not declare.
  *
  * An author that writes `<closing-state-name>` in an example and never lists
@@ -154,12 +166,33 @@ const ADDED_DECLARATION_SOURCE = 'read it from the candidate body, its Refs line
 export function declareUndeclaredInputs(body: string): { body: string; declared: string[] } {
   const missing = undeclaredSkillInputs(body);
   if (missing.length === 0) return { body, declared: [] };
-  const lines = missing.map((name: string): string => `- \`<${name}>\`: ${ADDED_DECLARATION_SOURCE}.`).join('\n');
+  const lines = missing
+    .map((name: string): string => `- \`<${name}>\`: ${ADDED_DECLARATION_SOURCE}. ${ADDED_DECLARATION_MARK}`)
+    .join('\n');
   const section = INPUTS_SECTION.exec(body);
   if (!section) return { body: `${body.trimEnd()}\n\n## Inputs\n\n${lines}\n`, declared: missing };
   const contentStart = section.index + section[0].length - section[1]!.length;
   const at = contentStart + section[1]!.trimEnd().length;
   return { body: `${body.slice(0, at)}\n${lines}${body.slice(at)}`, declared: missing };
+}
+
+/**
+ * The inputs a body says the system declared for its author.
+ *
+ * Args:
+ *   body: SKILL.md markdown.
+ *
+ * Returns:
+ *   The names on `## Inputs` lines that carry the system's mark, in order;
+ *   empty when the author declared everything it used.
+ */
+export function systemDeclaredInputs(body: string): string[] {
+  const section = INPUTS_SECTION.exec(body);
+  if (!section) return [];
+  return section[1]!
+    .split('\n')
+    .map((line: string): string | undefined => ADDED_DECLARATION.exec(line)?.[1])
+    .filter((name): name is string => name !== undefined);
 }
 
 /**

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  declaredInputsNote,
-  declareUndeclaredInputs,
   bindSkillInputs,
+  declaredInputsNote,
   declaredSkillInputs,
+  declareUndeclaredInputs,
   renderSkillInputs,
   skillInputPlaceholders,
+  systemDeclaredInputs,
   undeclaredSkillInputs,
 } from '../../../src/work/skill-inputs';
 import type { WorkCandidate } from '../../../src/work/types';
@@ -217,8 +218,8 @@ describe('declaring the inputs an author used but did not declare', (): void => 
         '## Inputs',
         '',
         '- `<record-id>`: the candidate id.',
-        '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run.',
-        '- `<reply-text>`: read it from the candidate body, its Refs line or the runbook for this run.',
+        '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.',
+        '- `<reply-text>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.',
         '',
         '## Procedure',
         '',
@@ -229,16 +230,27 @@ describe('declaring the inputs an author used but did not declare', (): void => 
     expect(declareUndeclaredInputs(repaired.body)).toEqual({ body: repaired.body, declared: [] });
   });
 
+  it('marks each line it added, so whoever reads the body later can tell the system wrote it', (): void => {
+    const repaired = declareUndeclaredInputs(body);
+
+    expect(systemDeclaredInputs(body)).toEqual([]);
+    expect(systemDeclaredInputs(repaired.body)).toEqual(['closing-state', 'reply-text']);
+    // The marker survives a park, a refusal and a retry that keeps the line, because it is in the body.
+    expect(systemDeclaredInputs(declareUndeclaredInputs(repaired.body).body)).toEqual(['closing-state', 'reply-text']);
+    // An author that writes the binding words itself has declared the input itself.
+    expect(systemDeclaredInputs(body.replace('the candidate id.', 'read it from the candidate body, its Refs line or the runbook for this run.'))).toEqual([]);
+  });
+
   it('declares in a section that ends the body, and gives a body without one its own', (): void => {
     const last = '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n';
     expect(declareUndeclaredInputs(last).body).toBe(
       '# Close\n\nUse `<record-id>` and `<closing-state>`.\n\n## Inputs\n- `<record-id>`: the id.\n' +
-        '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run.\n',
+        '- `<closing-state>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.\n',
     );
     const none = '# Close\n\nUse `<record-id>`.';
     const repaired = declareUndeclaredInputs(none);
     expect(repaired.body).toBe(
-      '# Close\n\nUse `<record-id>`.\n\n## Inputs\n\n- `<record-id>`: read it from the candidate body, its Refs line or the runbook for this run.\n',
+      '# Close\n\nUse `<record-id>`.\n\n## Inputs\n\n- `<record-id>`: read it from the candidate body, its Refs line or the runbook for this run. Declared by Day0: the author used it without declaring it.\n',
     );
     expect(declaredSkillInputs(repaired.body)).toEqual(['record-id']);
   });
