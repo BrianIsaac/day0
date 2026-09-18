@@ -1460,6 +1460,8 @@ function composeArgs(
     'compose',
     '-p',
     options.project,
+    '-f',
+    COMPOSE_FILE,
     '--env-file',
     ENV_FILE,
     ...profiles.flatMap((profile: string): string[] => ['--profile', profile]),

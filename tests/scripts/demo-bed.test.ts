@@ -162,6 +162,33 @@ describe('command line', (): void => {
 });
 
 describe('the protected volumes and projects', (): void => {
+  it('pins the checked-in compose file when the environment selects another', (): void => {
+    const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-compose-'));
+    const bin = join(scratch, 'bin');
+    const calls = join(scratch, 'docker-calls');
+    mkdirSync(bin);
+    const docker = join(bin, 'docker');
+    writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\n');
+    chmodSync(docker, 0o755);
+    writeFileSync(join(scratch, '.env.local'),
+      'COMPOSE_PROJECT_NAME=day0-p11r-test\nCOMPOSE_FILE=alternate.yml\n');
+    writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    try {
+      const result = spawnSync(join(process.cwd(), 'node_modules/.bin/tsx'), [
+        join(process.cwd(), 'scripts/demo-bed.ts'), 'down', '--project', 'day0-p11r-test',
+      ], {
+        cwd: scratch,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls,
+          COMPOSE_FILE: 'alternate.yml' },
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(readFileSync(calls, 'utf8')).toContain('-f docker-compose.yml');
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it('refuses every protected CLI project and file contract before Docker', (): void => {
     const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-guard-'));
     const bin = join(scratch, 'bin');
