@@ -831,13 +831,7 @@ function fallbackDraft(surface: Doc<'surfaces'>, relevantText: string): Orientat
 export const MODEL_BUDGET_MS = 120_000;
 
 export const intakeScopePickSchema = z.object({
-  picks: z.array(
-    z.object({
-      field: z.enum(['team', 'project', 'channel']),
-      value: z.string(),
-      ref: z.string(),
-    }),
-  ),
+  picks: z.array(z.object({ candidate: z.number().int() })),
   reasoning: z.string(),
 });
 
@@ -847,10 +841,10 @@ const intakeScopeAgent = makeAgent(
   'intake-scope',
   [
     'You choose which documented work queues one digital employee reads in one workplace system.',
-    "You receive the employee's role, the manager's own words about the system, and the candidate values the team documentation states, each with the page it is on and that page's line.",
+    "You receive the employee's role, the manager's own words about the system, and the candidate values the team documentation states, each numbered, with the page it is on and that page's line.",
     "Several teams share this documentation; each team has its own queues. Pick only the values where this employee's own work arrives, as its role and the manager's words describe it, and leave out every other team's.",
     'A channel the documentation says every team reads carries requests for each of them; pick it when the manager names it for this role. A channel the manager describes only as where the team talks is not where its work arrives.',
-    'Pick at most one team and one project. Copy each value exactly as the candidate states it and give the ref of the page the candidate is on. Never pick a value that is not a candidate.',
+    'Pick at most one team and one project. Answer each pick with the number in square brackets before its candidate. Never answer a number that is not on the list.',
     'When nothing belongs to this role, pick nothing.',
   ].join('\n'),
 );
@@ -864,17 +858,19 @@ export interface IntakeScopeQuestion {
   role?: string;
   /** The manager's own sentences about this system, from the charter. */
   sentences: readonly string[];
+  /** The values offered, numbered from 1 in this order. */
   candidates: readonly ScopeCandidate[];
 }
 
 /** The picks for one surface, and a note when the model did not make them. */
 export interface IntakeScopeDraft {
+  /** Numbered picks into the question's candidates. */
   picks: ScopePick[];
   note?: string;
 }
 
 /**
- * Render the pick's question: the role, the manager's words and the candidates.
+ * Render the pick's question: the role, the manager's words and the numbered candidates.
  *
  * Args:
  *   question: The surface, its role and its documented candidates.
@@ -893,10 +889,10 @@ export function intakeScopePrompt(question: IntakeScopeQuestion): string {
     ...(question.sentences.length > 0
       ? question.sentences.map((sentence): string => `- ${sentence}`)
       : ['- none; the manager asked for this card without naming the system in the charter']),
-    'Candidates (field, value, page ref: the page line):',
+    'Candidates ([number] field, value, page ref: the page line):',
     ...question.candidates.map(
-      (candidate): string =>
-        `- ${candidate.field} ${label(candidate)} on ${candidate.ref}: ${candidate.quote}`,
+      (candidate, index): string =>
+        `[${index + 1}] ${candidate.field} ${label(candidate)} on ${candidate.ref}: ${candidate.quote}`,
     ),
   ]
     .join('\n')
@@ -906,10 +902,11 @@ export function intakeScopePrompt(question: IntakeScopeQuestion): string {
 /**
  * Ask which documented queues belong to this employee's role.
  *
- * The model only chooses among the candidates; the caller keeps a pick only
- * when its cited page states it. When the model fails, times out or answers
- * out of shape, the values the manager's own words name decide instead, and
- * the note says so.
+ * The model only chooses among the candidates, by number; the caller
+ * resolves each number to its candidate, so nothing the model writes is
+ * compared with a page. When the model fails, times out or answers out of
+ * shape, the values the manager's own words name decide instead, and the
+ * note says so.
  *
  * Args:
  *   question: The surface, its role and its documented candidates.
@@ -949,9 +946,7 @@ export async function pickIntakeScope(
     }
     const parsed = intakeScopePickSchema.safeParse(outcome);
     if (!parsed.success) return fallback('its answer was not a list of picks');
-    return {
-      picks: parsed.data.picks.filter((pick): boolean => question.fields.includes(pick.field)),
-    };
+    return { picks: parsed.data.picks };
   } catch (error) {
     return fallback(safeFailureMessage(error, '', 'no detail'));
   } finally {
@@ -1036,26 +1031,12 @@ async function orientIntakeScope(
     sentences,
     candidates: roleCandidates,
   });
-  const allowedRefs = new Set(roleCandidates.map((candidate): string => candidate.ref));
-  const foreign = drafted.picks.filter((item): boolean =>
-    !allowedRefs.has(item.ref) && candidates.some((candidate): boolean => candidate.ref === item.ref),
-  );
-  const grounded = groundScopePicks(
-    drafted.picks.filter((item): boolean => !foreign.includes(item)),
-    roleCandidates,
-  );
+  // The pick is offered only this role's candidates, so a number can never
+  // reach another role's handbook.
+  const grounded = groundScopePicks(drafted.picks, roleCandidates);
   return storedScope({
     ...grounded,
-    notes: [
-      ...(drafted.note ? [drafted.note] : []),
-      ...(grounded.notes ?? []),
-      ...foreign.map((item): string => {
-        const label = item.field === 'channel'
-          ? `#${item.value.replace(/^#/, '')}`
-          : `${item.field} \`${item.value}\``;
-        return `Dropped ${label}: ${item.ref} is outside this role’s handbook.`;
-      }),
-    ],
+    notes: [...(drafted.note ? [drafted.note] : []), ...(grounded.notes ?? [])],
   });
 }
 
