@@ -105,15 +105,36 @@ function landedBrowserRows(slug: string, earlier: EarlierRows): BrowserRow[] {
 }
 
 /**
- * The current run's rows, once each, in the order they were sent. A retry's
+ * The run's own rows, once each, in the order they were sent. A retry's
  * prerequisite ledger carries earlier runs' landed writes; those must not
- * lend a new run their sign-in authority. A resumed closing set can carry the
- * current run's rows twice, so duplicate keys are ignored.
+ * lend a new run their sign-in authority. A retry that resumes at the closing
+ * phase adopts the prerequisite ledger it carries as its own, so the runs
+ * that ledger was landed under count as this run's. A resumed closing set
+ * carries those rows twice (as landed writes and as its ledger), so
+ * duplicate keys are ignored.
  */
-function currentRunRows(rows: readonly BrowserRow[], runId: string): BrowserRow[] {
+function ownRunRows(rows: readonly BrowserRow[], runIds: ReadonlySet<string>): BrowserRow[] {
   const byKey = new Map<string, BrowserRow>();
-  for (const row of rows) if (row.runId === runId && !byKey.has(row.key)) byKey.set(row.key, row);
+  for (const row of rows) if (runIds.has(row.runId) && !byKey.has(row.key)) byKey.set(row.key, row);
   return [...byKey.values()].sort((a, b) => a.index - b.index || a.sub - b.sub);
+}
+
+/**
+ * The runs a ledger's rows were landed under, read from their keys.
+ *
+ * Args:
+ *   applied: A ledger's rows.
+ *
+ * Returns:
+ *   Each run id once, in the order first seen.
+ */
+export function ledgerRunIds(applied: readonly (AppliedAction | undefined)[]): string[] {
+  const runIds = new Set<string>();
+  for (const row of applied) {
+    const position = row ? keyPosition(row.idempotencyKey) : undefined;
+    if (position) runIds.add(position.runId);
+  }
+  return [...runIds];
 }
 
 const isNavigate = (row: BrowserRow): boolean => row.tool === 'browser_navigate';
@@ -217,6 +238,8 @@ function lastSignIn(rows: readonly BrowserRow[]): number[] {
  *     rows this phase carries before the action that needs the page.
  *   endpoint: The surface's documented page.
  *   runId: The run being applied; rows from earlier attempts are excluded.
+ *   resumedRunIds: The runs whose prerequisite ledger this run resumed at
+ *     its closing phase; their rows count as this run's.
  *
  * Returns:
  *   The calls to replay, in order, each with the row it repeats.
@@ -226,8 +249,9 @@ export function sessionRecipe(
   earlier: EarlierRows,
   endpoint: string | undefined,
   runId: string,
+  resumedRunIds: readonly string[] = [],
 ): SessionRecipeStep[] {
-  const rows = currentRunRows(landedBrowserRows(slug, earlier), runId);
+  const rows = ownRunRows(landedBrowserRows(slug, earlier), new Set([runId, ...resumedRunIds]));
   const signIn = lastSignIn(rows);
   if (signIn.length === 0 && rows.some(isCredentialFill)) {
     throw new IncompleteSignInError();

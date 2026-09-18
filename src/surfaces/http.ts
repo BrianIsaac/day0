@@ -16,6 +16,7 @@ import { redactOutcome } from './redact';
 import type { SpanModel } from '../redaction/client';
 import { isSlackApiEndpoint, slackApiBaseUrl } from './slack-endpoint';
 import type {
+  ActionAuthority,
   AdapterRun,
   AppliedAction,
   BeforeSurfaceTransport,
@@ -173,6 +174,7 @@ export class HttpAdapter implements SurfaceAdapter {
     action: MockAction,
     index: number,
     idempotencyKey: string,
+    transportAuthority?: ActionAuthority,
   ): Promise<AppliedAction> {
     void index;
     void run;
@@ -234,7 +236,9 @@ export class HttpAdapter implements SurfaceAdapter {
         request.body === undefined || request.method === 'GET' || request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
-      const authorityRefusal = await this.deps.beforeTransport?.(action, surface);
+      const authorityRefusal = transportAuthority
+        ? await this.deps.beforeTransport?.(action, surface, { authority: transportAuthority })
+        : await this.deps.beforeTransport?.(action, surface);
       if (authorityRefusal) {
         return { tool: action.tool, ok: false, reason: authorityRefusal, idempotencyKey };
       }

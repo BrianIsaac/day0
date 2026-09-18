@@ -10,11 +10,13 @@ import { MOCK_TOOLS, mockAdapter } from './mock';
 import { IncompleteSignInError, sessionRecipe, signsIn } from './browser-session';
 import {
   applyProvenance,
+  actionIntent,
   AWAITING_APPROVAL,
   describeAction,
   grantRefusal,
   HELD_NOT_APPROVED,
   isAutomatic,
+  isMessage,
   isSurfaceTool,
   mockVerbRefusal,
   needsStandingGrant,
@@ -32,6 +34,7 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
   UNKNOWN_TOOL,
+  WITHHELD_AFTER_FAILED_WRITE,
   type ParsedSurfaceAction,
 } from './policy';
 import type {
@@ -110,6 +113,15 @@ export interface ApplyOptions {
   autonomousActions?: boolean;
   /** Exact source channel and thread when the work item is a chat reply. */
   replyTarget?: ReplyTarget;
+  /**
+   * The runs whose prerequisite ledger this run resumed at its closing phase.
+   * Their landed browser rows re-establish this run's session as its own
+   * would; a retry that runs phase one again resumes nothing, and the landed
+   * writes it carries lend it no sign-in.
+   */
+  resumedRunIds?: readonly string[];
+  /** Original authority of reads taken again on a resumed closing run. */
+  authorityByIndex?: ReadonlyMap<number, ActionAuthority>;
   /** Clock for the connection verdict. */
   now?: number;
 }
@@ -212,6 +224,56 @@ function refused(tool: string, reason: string, idempotencyKey: string): AppliedA
 }
 
 /**
+ * Whether a write earlier in the set did not land: the provider refused it,
+ * a rule refused it, or its outcome is unknown. A held row is not a failure.
+ */
+function writeDidNotLand(
+  applied: readonly AppliedAction[],
+  parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
+  actions: readonly MockAction[],
+): boolean {
+  return applied.some((row, index) => {
+    const action = parsed[index];
+    return (
+      (action ? actionIntent(action) === 'write' : isSurfaceTool(actions[index]?.tool ?? '')) &&
+      (row.outcomeUnknown === true || (!row.ok && row.held !== true))
+    );
+  });
+}
+
+const RESULT_WORDS = /\b(?:done|ready|landed|applied|saved|sent|posted|recorded|updated|entered|clicked|refreshed|complete|completed|finished|closed|moved|verified|confirmed|changed|created|deleted|succeeded|successful|correct|current|processed|shows?|reads?|readback|figure|percent(?:age)?)\b/i;
+const AMBIGUOUS_REFERENCE = /\b(?:it|this|that|these|those|they|all|everything)\b/i;
+const ACTION_WORDS = new Set(['surface', 'tool', 'args', 'json', 'body', 'text', 'value', 'fields', 'name', 'method', 'path', 'request', 'http', 'call', 'secret']);
+
+function substantiveWords(value: string): Set<string> {
+  return new Set((value.toLowerCase().match(/[a-z][a-z0-9]{3,}/g) ?? []).filter((word) => !ACTION_WORDS.has(word)));
+}
+
+/** A narrow exception for messages with no shared subject or result language. */
+function independentMessage(
+  message: ParsedSurfaceAction,
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+  parsed: ReadonlyArray<ParsedSurfaceAction | undefined>,
+): boolean {
+  const record = message.kind === 'mcp.call' ? message.toolArgs : message.bodyJson;
+  const text = ['text', 'body', 'message', 'content']
+    .map((key) => record?.[key])
+    .find((value): value is string => typeof value === 'string');
+  if (!text || RESULT_WORDS.test(text) || AMBIGUOUS_REFERENCE.test(text) || /\d/.test(text)) return false;
+  const words = substantiveWords(text);
+  if (words.size === 0) return false;
+  for (const [index, row] of applied.entries()) {
+    const action = parsed[index];
+    const possibleWrite = action ? actionIntent(action) === 'write' : isSurfaceTool(actions[index]?.tool ?? '');
+    if (!possibleWrite || (row.ok && !row.outcomeUnknown) || row.held) continue;
+    const failedWords = substantiveWords(JSON.stringify(actions[index]?.args ?? {}));
+    if ([...words].some((word) => failedWords.has(word))) return false;
+  }
+  return true;
+}
+
+/**
  * Re-establish a browser-driven surface's page before this invocation's first
  * call on it.
  *
@@ -235,12 +297,13 @@ async function restoreBrowserSession(
     autonomousActions: boolean;
     authority?: ActionAuthority;
     signInOnly: boolean;
+    resumedRunIds?: readonly string[];
   },
 ): Promise<SessionRestoreResult | undefined> {
   if (!adapter.restoreSession) return undefined;
   let recipe: SessionRecipeStep[];
   try {
-    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint, run.runId).map(
+    recipe = sessionRecipe(surface.slug, earlier, surface.endpoint, run.runId, live.resumedRunIds).map(
       (step: SessionRecipeStep): SessionRecipeStep => ({
         ...step,
         authority: step.authority ?? (step.replayOf ? undefined : (live.authority ?? 'standing')),
@@ -478,7 +541,26 @@ export async function applySurfaceActions(
         applied.push(refused(action.tool, provenance.reason, idempotencyKey));
         continue;
       }
+      // A message was written beside the writes before them, before any
+      // result existed; once one of those writes has not landed, the message
+      // may report it as done, so it is held rather than sent.
+      if (
+        isMessage(parsed.action, surface) &&
+        writeDidNotLand(applied, parsedByIndex, actions) &&
+        !independentMessage(parsed.action, actions, applied, parsedByIndex)
+      ) {
+        applied.push({
+          tool: action.tool,
+          ok: true,
+          held: true,
+          reason: WITHHELD_AFTER_FAILED_WRITE,
+          effect: describeAction(action),
+          idempotencyKey,
+        });
+        continue;
+      }
       const adapterRun = { ...run, agentName: run.agentName ?? 'Day0' };
+      const rowAuthority = options.authorityByIndex?.get(index) ?? authority;
       const browserDriven = surface.path === 'browser-driven' && parsed.action.kind === 'mcp.call';
       let restored: SessionRestoreResult | undefined;
       if (browserDriven) {
@@ -520,8 +602,9 @@ export async function applySurfaceActions(
               {
                 grants: options.grants ?? new Set(),
                 autonomousActions,
-                authority,
+                authority: rowAuthority,
                 signInOnly: navigates,
+                resumedRunIds: options.resumedRunIds,
               },
             );
             if (restored && !restored.ok) {
@@ -541,8 +624,9 @@ export async function applySurfaceActions(
         serialiseSurfaceAction(provenance.action),
         durableIndex,
         idempotencyKey,
+        options.authorityByIndex?.get(index),
       );
-      const stamped = authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome;
+      const stamped = rowAuthority && outcome.ok && !outcome.held ? { ...outcome, authority: rowAuthority } : outcome;
       applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);
       // The page is open once a replay or a call has landed on it; until then
       // the next call on the surface is checked for a replay again.
