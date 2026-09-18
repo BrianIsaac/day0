@@ -151,7 +151,14 @@ export function clipRoleLine(text: string): string {
   // One character past the kept length, so a space right after it counts as a boundary.
   const window = line.slice(0, ROLE_LINE_MAX);
   const boundary = window.lastIndexOf(' ');
-  const kept = boundary > 0 ? window.slice(0, boundary) : line.slice(0, ROLE_LINE_MAX - 1);
+  let kept = window.slice(0, boundary);
+  if (boundary <= 0) {
+    kept = '';
+    for (const character of line) {
+      if (kept.length + character.length >= ROLE_LINE_MAX) break;
+      kept += character;
+    }
+  }
   return `${kept.replace(/[\s,;:.\u2013\u2014-]+$/, '')}\u2026`;
 }
 

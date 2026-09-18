@@ -946,4 +946,9 @@ describe('the employee roster', (): void => {
       expect(clipRoleLine(text).length).toBeLessThanOrEqual(90);
     }
   });
+
+  it('does not split a surrogate pair when one long role word must be clipped', (): void => {
+    const glyph = '\u{1F600}';
+    expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
+  });
 });
