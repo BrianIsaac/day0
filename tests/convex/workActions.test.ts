@@ -106,6 +106,8 @@ const recorded = vi.hoisted(() => ({
   skillFeedback: [] as Array<string | undefined>,
   dependentFeedback: [] as Array<string | undefined>,
   dependentSwitches: [] as Array<boolean | undefined>,
+  skillGroundingReads: [] as unknown[],
+  dependentGroundingReads: [] as unknown[],
   planSwitches: [] as boolean[],
   planContexts: [] as Array<{ surfaces?: string[]; documents?: string[] }>,
   planRecords: [] as unknown[],
@@ -413,9 +415,11 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
       autonomousActions?: boolean;
       managerAnswers?: unknown;
       managerFeedback?: string;
+      groundingReads?: unknown;
       onAdditionalModelCall?: () => void;
     }): Promise<ExecutionOutput> => {
       recorded.skillRuns += 1;
+      recorded.skillGroundingReads.push(args.groundingReads);
       recorded.skillModes.push(args.mode);
       recorded.skillAnswers.push(args.managerAnswers);
       recorded.skillSwitches.push(args.autonomousActions);
@@ -444,9 +448,11 @@ vi.mock('../../src/work/execute-skill', async (importOriginal) => {
     runDependentSkill: async (args: {
       autonomousActions?: boolean;
       managerFeedback?: string;
+      groundingReads?: unknown;
       plan: { steps: string[] };
     }): Promise<DependentExecutionOutput> => {
       recorded.dependentRuns += 1;
+      recorded.dependentGroundingReads.push(args.groundingReads);
       recorded.dependentSwitches.push(args.autonomousActions);
       recorded.dependentFeedback.push(args.managerFeedback);
       return (
@@ -617,6 +623,8 @@ afterEach((): void => {
   recorded.afterCredentialRead = undefined;
   recorded.afterToolList = undefined;
   recorded.skillSwitches.length = 0;
+  recorded.skillGroundingReads.length = 0;
+  recorded.dependentGroundingReads.length = 0;
   recorded.dependentSwitches.length = 0;
   recorded.planSwitches.length = 0;
   recorded.planContexts.length = 0;
@@ -1307,8 +1315,27 @@ describe('executing an approved plan through the gate', (): void => {
         createdAt: 1,
       } as never);
     });
+    // The item's plan-grounding reads, as their events stored them: a stale
+    // reading, the current one, and a sibling item's, which is not this item's.
+    const read = (id: string) => ({
+      tool: 'mcp.call', args: { surface: 'linear', tool: 'get_issue', toolArgsJson: JSON.stringify({ id }) },
+    });
+    const landed = (effect: string) => ({ tool: 'mcp.call', ok: true, authority: 'standing', idempotencyKey: 'k', effect });
+    await harness.run(async (ctx): Promise<void> => {
+      const copy: Record<string, unknown> = { ...(await ctx.db.get(workItemId))!, externalId: 'REVOPS-8' };
+      delete copy._id;
+      delete copy._creationTime;
+      const sibling = await ctx.db.insert('workItems', copy as never);
+      const event = (payload: Record<string, unknown>) =>
+        ctx.db.insert('events', { agentId, type: 'work.plan-grounding-read', payload, createdAt: Date.now() });
+      await event({ workItemId, action: read('REVOPS-7'), applied: landed('get_issue on linear · stale') });
+      await event({ workItemId: sibling, action: read('REVOPS-8'), applied: landed('get_issue on linear · sibling') });
+      await event({ workItemId, action: read('REVOPS-7'), applied: landed('get_issue on linear · current') });
+    });
+    const groundingReads = [{ action: read('REVOPS-7'), applied: landed('get_issue on linear · current') }];
 
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    expect(recorded.skillGroundingReads).toEqual([groundingReads]);
     await harness.action(internal.workActions.applyApprovedActions, { workItemId });
     const prepared = await readItem(harness, workItemId);
     expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
@@ -1334,6 +1361,7 @@ describe('executing an approved plan through the gate', (): void => {
       Array.from({ length: 8 }, (_, index) => `${workItemId}:${runId}:${index}`),
     );
     expect(recorded.dependentRuns).toBe(1);
+    expect(recorded.dependentGroundingReads).toEqual([groundingReads]);
   });
 
   it('lets the closing phase carry the whole closing set, and a deferred sequence only when phase one declared one', async (): Promise<void> => {

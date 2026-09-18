@@ -40,7 +40,7 @@ import { closingPhaseOwed } from './obligations';
 import { replyTargetLine } from './reply-target';
 import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
-import { isChatMessage, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding } from './evidence-claims';
+import { isChatMessage, itemEvidence, unsupportedClaimFindings, unsupportedClaimIssues, type ClaimEvidence, type ClaimFinding, type GroundingRead } from './evidence-claims';
 import type { LandedWrite, RefusedClosing, WithheldAction } from './types';
 import { landedWriteLines } from './landed-writes';
 
@@ -930,6 +930,13 @@ export interface RunSkillArgs {
    * never evidence of anything on this item.
    */
   appliedCorrections?: readonly PlannerCorrection[];
+  /**
+   * The reads made for this work item before its plan was drafted, redacted
+   * as their events stored them; real mode only. Evidence for what the
+   * employee says about the item and nothing else: never in a prompt, and
+   * no authority for a write.
+   */
+  groundingReads?: readonly GroundingRead[];
 }
 
 /**
@@ -1110,8 +1117,14 @@ export function withholdActions<T extends CorrectableOutput>(output: T, refusals
   return { ...dropped, withheldActions: [...(output.withheldActions ?? []), ...withheld] };
 }
 
+/**
+ * One refusal per action, its reasons joined: a message with two refused
+ * sentences is one withheld action, not two.
+ */
 function refusalsOf(findings: readonly ClaimFinding[]): AuditRefusal[] {
-  return findings.map(({ index, issue }) => ({ index, reason: issue }));
+  const reasons = new Map<number, string[]>();
+  for (const { index, issue } of findings) reasons.set(index, [...(reasons.get(index) ?? []), issue]);
+  return [...reasons].map(([index, issues]) => ({ index, reason: [...new Set(issues)].join('; ') }));
 }
 
 /**
@@ -1132,10 +1145,11 @@ async function withholdUnsupported<T extends CorrectableOutput>(
   for (let round = 0; round <= output.actions.length; round += 1) {
     const findings = findingsOf(corrected.actions);
     if (findings.length === 0) break;
-    corrected = withholdActions(corrected, refusalsOf(findings));
+    const refusals = refusalsOf(findings);
+    corrected = withholdActions(corrected, refusals);
     await record?.(
-      findings.map((finding) => finding.index),
-      `${WITHHELD_BY_EVIDENCE}: ${findings.map((finding) => finding.issue).join('; ')}`,
+      refusals.map((refusal) => refusal.index),
+      `${WITHHELD_BY_EVIDENCE}: ${refusals.map((refusal) => refusal.reason).join('; ')}`,
     );
   }
   return corrected;
@@ -2464,7 +2478,8 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
     // prompt lists. On 16 September a phase-one DM said the audit comment
     // was posted before any comment existed. Only chat messages are read
     // here; a ticket comment in phase one is prewritten, and the deferral
-    // audit names it as such.
+    // audit names it as such. What the item itself says may be repeated:
+    // on 19 September a draft DM was withheld for the ticket's own sentence.
     const claimEvidence: ClaimEvidence = {
       ledger: landedWriteLines(args.landedWrites, args.surfaces ?? []).join('\n'),
       documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map((page) => `${page.title}\n${page.body}`),
@@ -2472,6 +2487,7 @@ export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
         ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
         ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
       ],
+      item: itemEvidence(candidate, args.groundingReads),
     };
     const chatSurfaces = args.surfaces ?? [];
     const claimIssues = (actions: readonly MockAction[]): string[] =>
@@ -3145,6 +3161,7 @@ export async function runDependentSkill(
       ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
       ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
     ],
+    item: itemEvidence(candidate, args.groundingReads),
   };
   const claimFindings = (actions: readonly MockAction[]): ClaimFinding[] =>
     mode === 'real' ? unsupportedClaimFindings(actions, claimEvidence) : [];

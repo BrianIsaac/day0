@@ -1319,6 +1319,39 @@ export const finishPlanGroundingRead = internalMutation({
   },
 });
 
+/** The most events `planGroundingReads` walks back through before it gives up. */
+const GROUNDING_READ_SCAN_LIMIT = 2_000;
+
+/**
+ * The current plan-grounding read of a work item: the most recent one whose
+ * ledger row was attached, as the event stored it (already redacted). The
+ * executor's evidence check reads it as what the item says; an earlier
+ * reading is superseded, and another item's is never returned.
+ */
+export const planGroundingReads = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<Array<{ action: unknown; applied: unknown }>> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row) return [];
+    // Newest first and stopped at the first match, within a bound: the
+    // events table is indexed by agent alone, and an item with no read in
+    // reach simply has none to cite.
+    const newestFirst = ctx.db
+      .query('events')
+      .withIndex('by_agent', (q) => q.eq('agentId', row.agentId).gt('_creationTime', row._creationTime))
+      .order('desc');
+    let scanned = 0;
+    for await (const event of newestFirst) {
+      scanned += 1;
+      if (scanned > GROUNDING_READ_SCAN_LIMIT) break;
+      if (event.type !== 'work.plan-grounding-read') continue;
+      const { workItemId, action, applied } = event.payload as { workItemId?: string; action?: unknown; applied?: unknown };
+      if (workItemId === args.workItemId && action !== undefined && applied != null) return [{ action, applied }];
+    }
+    return [];
+  },
+});
+
 /**
  * The plan as stored: a plan may say it applied only this employee's own
  * active corrections, so any other id is dropped, and each one kept lists

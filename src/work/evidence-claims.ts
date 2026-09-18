@@ -1,5 +1,7 @@
 import { actionIntent, isSurfaceTool, parseSurfaceAction, type ParsedSurfaceAction } from '../surfaces/policy';
-import type { MockAction } from './types';
+import { redactTokenShapes } from '../surfaces/redact';
+import type { AppliedAction } from '../surfaces/types';
+import type { MockAction, WorkCandidate } from './types';
 
 /**
  * The evidence invariant for what the executor says to people.
@@ -22,13 +24,34 @@ import type { MockAction } from './types';
  * say what happened on this run. Sentences that assert nothing settled are
  * not read at all, so the check refuses a false report and never a plain
  * description.
+ *
+ * The work item's own words are a fourth source, and a narrower one than
+ * the ledger. On 19 September a draft DM was withheld for "Meridian Freight
+ * has confirmed a revised delivery date of 26 September.", which was the
+ * ticket's description word for word. A ticket says what was asked and what
+ * the requester reported; it cannot say what this run did. So the item
+ * supports only a sentence that repeats one of its own reports: a run of
+ * words shared with an item sentence that itself asserts a settled state,
+ * with every value the message gives carried by the item or the ledger.
+ * What the item asks for ("confirm the tile is refreshed to 74%") or sets
+ * as a condition is no report, a short quotation of it proves nothing, and
+ * an identifier it merely mentions vouches for nothing: "LOG-2 is now
+ * closed" finds no support in LOG-2's own record.
  */
 
-/** What the executor may cite: the ledger rendered for the closing prompt, page texts, the manager's words. */
+/** What the executor may cite: the ledger rendered for the closing prompt, page texts, the manager's words, the item's own. */
 export interface ClaimEvidence {
   ledger: string;
   documentation: string[];
   managerFeedback: string[];
+  /** The work item's title, body and grounding reads, from `itemEvidence`; absent, the item supports nothing. */
+  item?: string[];
+}
+
+/** A read made for a work item before its plan was drafted, as its event stored it: the action and its redacted row. */
+export interface GroundingRead {
+  action: MockAction;
+  applied: AppliedAction;
 }
 
 const MESSAGE_KEYS = /^(?:body|comment|text|message|content|note|description)$/i;
@@ -135,17 +158,83 @@ interface PreparedEvidence {
   ledgerText: string;
   ledgerRuns: Set<string>;
   ledgerTokens: Set<string>;
+  itemRuns: Set<string>;
+  itemTokens: Set<string>;
   quotable: string[];
 }
 
 function prepare(evidence: ClaimEvidence): PreparedEvidence {
   const own = [evidence.ledger, ...evidence.managerFeedback].join('\n');
+  const item = evidence.item ?? [];
   return {
     ledgerText: own,
     ledgerRuns: new Set(runsOf(own)),
     ledgerTokens: new Set(distinctiveTokens(own)),
+    itemRuns: new Set(item.flatMap(sentencesOf).filter(reports).flatMap(runsOf)),
+    itemTokens: new Set(item.flatMap(distinctiveTokens)),
     quotable: [own, ...evidence.documentation].map(normalised),
   };
+}
+
+/** A sentence that asks for something: "Please confirm ...", "Make sure the tile is updated". */
+const REQUEST_OPENING =
+  /^(?:please|kindly|confirm|check|verify|ensure|make sure|see that|can you|could you|would you|we need|i need|need to|needs to|must|should)\b/i;
+
+/**
+ * Whether an item sentence reports a settled state, as against asking for
+ * one, doubting it or setting it as a condition. Only a report can be
+ * repeated as a fact.
+ */
+function reports(sentence: string): boolean {
+  return claims(sentence) && !HEDGED.test(sentence) && !asks(sentence) && !REQUEST_OPENING.test(sentence.trim());
+}
+
+/** The string values an action's arguments carry, at any depth: where a record read names its ticket. */
+function argumentStrings(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(argumentStrings);
+  if (value && typeof value === 'object') return Object.values(value).flatMap(argumentStrings);
+  return [];
+}
+
+/** Whether a read addresses this work item: one of its arguments is the item's id, whole. */
+function readsTheItem(action: MockAction, externalId: string): boolean {
+  const id = externalId.trim().toLowerCase();
+  if (!id || !isSurfaceTool(action.tool)) return false;
+  const parsed = parseSurfaceAction(action);
+  if (!parsed.ok || actionIntent(parsed.action) !== 'read') return false;
+  const args = parsed.action.kind === 'mcp.call' ? parsed.action.toolArgs : { path: parsed.action.path, body: parsed.action.bodyJson };
+  return argumentStrings(args).some((value) => value.trim().toLowerCase() === id);
+}
+
+/**
+ * The work item's own words, as evidence for what the executor says about it.
+ *
+ * The id, the title, the body and the references are the row's; a
+ * grounding read counts when it landed and its action names this item's
+ * id, so a record read for another ticket, whoever it belongs to, is never
+ * this item's evidence. Each text
+ * passes the structural redaction the ledger passes before it is rendered,
+ * and none of it is put in a prompt or a reason: it is only matched against.
+ *
+ * Args:
+ *   candidate: The work item being executed.
+ *   reads: The item's plan-grounding reads as their events stored them.
+ *
+ * Returns:
+ *   The redacted texts, one per source; empty when the item carries none.
+ */
+export function itemEvidence(
+  candidate: Pick<WorkCandidate, 'externalId' | 'title' | 'contentSummary'> & Partial<Pick<WorkCandidate, 'contentRefs'>>,
+  reads: readonly GroundingRead[] = [],
+): string[] {
+  const landed = reads
+    .filter(({ action, applied }) => applied.ok && !applied.held && readsTheItem(action, candidate.externalId))
+    .map(({ applied }) => (applied.effect ?? '').replace(/\\[nr]/g, '\n'));
+  const names = [candidate.externalId, ...(candidate.contentRefs ?? [])].join(' ');
+  return [candidate.title, candidate.contentSummary, names, ...landed]
+    .map((text) => redactTokenShapes(text).trim())
+    .filter(Boolean);
 }
 
 function asks(sentence: string): boolean {
@@ -158,7 +247,21 @@ function supported(sentence: string, prepared: PreparedEvidence): boolean {
     return true;
   }
   if (runsOf(sentence).some((run) => prepared.ledgerRuns.has(run))) return true;
-  return distinctiveTokens(sentence).some((token) => prepared.ledgerTokens.has(token));
+  const tokens = distinctiveTokens(sentence);
+  if (tokens.some((token) => prepared.ledgerTokens.has(token))) return true;
+  return repeatsTheItem(sentence, tokens, prepared);
+}
+
+/**
+ * Whether a sentence repeats a report the work item makes: it shares a run
+ * of words with one, and every value it gives is one the item or the ledger
+ * carries. A run alone would let "a revised delivery date of 27 September"
+ * ride on the ticket's 26; a value alone would let the ticket's id vouch
+ * for a result, which only the ledger can show.
+ */
+function repeatsTheItem(sentence: string, tokens: readonly string[], prepared: PreparedEvidence): boolean {
+  if (!runsOf(sentence).some((run) => prepared.itemRuns.has(run))) return false;
+  return tokens.every((token) => prepared.itemTokens.has(token) || prepared.ledgerTokens.has(token));
 }
 
 /**

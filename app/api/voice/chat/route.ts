@@ -1,9 +1,17 @@
-import { convertToModelMessages, hasToolCall, streamText, tool, type UIMessage } from 'ai';
+import {
+  convertToModelMessages,
+  createUIMessageStreamResponse,
+  hasToolCall,
+  streamText,
+  tool,
+  type UIMessage,
+} from 'ai';
 import { z } from 'zod';
 import { establishCaller } from '@/lib/dev-auth-server';
 import { languageModel } from '@/lib/openai';
 import { streamCallOptions } from '@/lib/stream-settings';
 import { DAY_ONE_TOPIC_SPECS, DAY_ONE_WELCOME } from '@/agent/day-one-prompts';
+import { dayOneTurnStream, managerReplies } from '@/agent/day-one-turn';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -76,31 +84,44 @@ export async function POST(req: Request): Promise<Response> {
 
   const messages = await convertToModelMessages(uiMessages);
   try {
-    const result = streamText({
-      abortSignal,
-      model: languageModel(),
-      system: SYSTEM_PROMPT,
-      messages,
-      ...streamCallOptions({
-        maxOutputTokens: DAY_ONE_MAX_OUTPUT_TOKENS,
-        openai: { promptCacheKey: 'day0-day1-system-v1' },
-      }),
-      tools: {
-        dayOneComplete: tool({
-          description: 'Call this when all seven topics have been covered and the 1:1 is finished.',
-          inputSchema: z.object({
-            closingLine: z.string().describe('A friendly closing sentence the agent says.'),
-          }),
+    // Resolved here, not inside the stream: a missing key is a 503 the room
+    // can read, where a throw inside the stream is a dropped connection.
+    const model = languageModel();
+    // One model call. `dayOneTurnStream` makes it a second time when the first
+    // ends having said nothing, and holds `dayOneComplete` until the manager has
+    // answered topic 7.
+    const attempt = () =>
+      streamText({
+        abortSignal,
+        model,
+        system: SYSTEM_PROMPT,
+        messages,
+        ...streamCallOptions({
+          maxOutputTokens: DAY_ONE_MAX_OUTPUT_TOKENS,
+          openai: { promptCacheKey: 'day0-day1-system-v1' },
         }),
-      },
-      stopWhen: hasToolCall('dayOneComplete'),
-      maxRetries: 3,
+        tools: {
+          dayOneComplete: tool({
+            description: 'Call this when all seven topics have been covered and the 1:1 is finished.',
+            inputSchema: z.object({
+              closingLine: z.string().describe('A friendly closing sentence the agent says.'),
+            }),
+          }),
+        },
+        stopWhen: hasToolCall('dayOneComplete'),
+        maxRetries: 3,
+      }).toUIMessageStream();
+    return createUIMessageStreamResponse({
+      stream: dayOneTurnStream({
+        attempt,
+        replies: managerReplies(uiMessages),
+        signal: abortSignal,
+      }),
     });
-    return result.toUIMessageStreamResponse();
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return Response.json(
-      { error: 'agent unavailable — please retry', detail: msg },
+      { error: 'agent unavailable', detail: msg },
       { status: 503 },
     );
   }
