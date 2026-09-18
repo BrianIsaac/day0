@@ -4,7 +4,7 @@ import { getFunctionName, type FunctionReference } from 'convex/server';
 
 /**
  * The signed-in landing page with one employee whose company figures exist:
- * the company supervision card must sit on the page, below the office.
+ * the company supervision card must sit directly beneath the employee list.
  */
 vi.mock('@clerk/nextjs', () => ({
   Show: (): null => null,
@@ -104,13 +104,13 @@ vi.mock('../../app/CursorToggle', () => ({
 import LandingPage from '../../app/page';
 
 describe('the landing page with a company', (): void => {
-  it('shows the company supervision card below the office and above reset', (): void => {
+  it('shows the company supervision card beneath the employees and above the office', (): void => {
     const html = renderToStaticMarkup(<LandingPage />);
     const card = html.indexOf('Company supervision');
 
     expect(card).toBeGreaterThan(-1);
-    expect(card).toBeGreaterThan(html.indexOf('Deploy a new Day0 agent'));
-    expect(card).toBeLessThan(html.indexOf('Reset demo'));
+    expect(card).toBeGreaterThan(html.indexOf('Your employees'));
+    expect(card).toBeLessThan(html.indexOf('Mini office world'));
     expect(html).toContain('1 min 7 s');
   });
 });

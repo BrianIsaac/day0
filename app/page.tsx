@@ -511,9 +511,9 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
 
       <EmployeeList employees={roster} />
 
-      <OfficeWorld agents={roster} />
-
       <CompanySupervision />
+
+      <OfficeWorld agents={roster} />
 
       <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5">
         <div className="flex items-center justify-between gap-4">
