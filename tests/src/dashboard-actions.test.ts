@@ -373,6 +373,18 @@ describe('judge-facing dashboard evidence', (): void => {
     expect(formatMetricDuration(208_000)).toBe('3 min 28 s');
   });
 
+  it('counts the browser calls replayed to sign in again apart from the automatic actions', (): void => {
+    const none = renderToStaticMarkup(createElement(MetricsCard, { metrics: completeMetrics }));
+    expect(none).not.toContain('replayed');
+    const replayed = renderToStaticMarkup(
+      createElement(MetricsCard, {
+        metrics: { ...completeMetrics, actions: { ...completeMetrics.actions, sessionRestores: 3 } },
+      }),
+    );
+    expect(replayed).toContain('4 actions automatic');
+    expect(replayed).toContain('3 browser calls replayed to sign in again');
+  });
+
   it('uses not yet instead of zero seconds when evidence is absent', (): void => {
     const metrics: AgentMetrics = {
       ...completeMetrics,

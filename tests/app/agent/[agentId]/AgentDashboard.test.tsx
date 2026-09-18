@@ -23,6 +23,7 @@ import {
   WithheldActionsDetails,
   failedItemReason,
   RepairNote,
+  SessionRestoreNote,
   WorkItemCard,
   eventLabel,
   phasedLedger,
@@ -33,6 +34,7 @@ import { HELD_WITHHELD_TRANSITION } from '../../../../src/surfaces/policy';
 import { strikeOutcome, strikePreview } from '../../../../src/agent/charter-constraints';
 import type { Charter } from '../../../../src/agent/charter';
 import { strikeRefusalBody } from '../../../fixtures/charter-strike-refusal-2026-09-15';
+import { slackPhaseOne } from '../../../fixtures/browser-phase-split-2026-09-16';
 import {
   OPEN_QUESTIONS_2026_09_16,
   RECORDED_QUESTIONS_2026_09_16,
@@ -326,6 +328,106 @@ describe('a run with two phases', (): void => {
       <DraftDetails output={{ draft: 'd', notes: '', applied: twoPhase.applied }} />,
     );
     expect(single).toContain('written before anything was applied');
+  });
+});
+
+describe('a browser signed in again before a row', (): void => {
+  const [navigate, signIn, clickSignIn] = slackPhaseOne;
+  const step = (action: typeof navigate, replayOf?: string, reason?: string) => ({
+    ok: reason === undefined,
+    ...(reason ? { reason } : {}),
+    ...(replayOf ? { replayOf } : {}),
+    action,
+  });
+
+  it('names the replayed calls and the rows they repeat', (): void => {
+    const markup = renderToStaticMarkup(
+      <SessionRestoreNote
+        restore={{
+          steps: [
+            step(navigate, 'wi:run:0'),
+            step(signIn, 'wi:run:1'),
+            step(clickSignIn, 'wi:run:2'),
+          ],
+        }}
+      />,
+    );
+    expect(markup).toContain('signed in again first: navigate, fill, click (replays of rows 0 to 2)');
+    expect(markup).toContain('nothing that changed the system was repeated');
+  });
+
+  it('says when the page was opened from the surface itself because the run never navigated', (): void => {
+    const markup = renderToStaticMarkup(
+      <SessionRestoreNote
+        restore={{ steps: [step(navigate), step(signIn, 'wi:run:0'), step(clickSignIn, 'wi:run:1')] }}
+      />,
+    );
+    expect(markup).toContain(
+      "signed in again first: navigate, fill, click (the surface&#x27;s own page, then replays of rows 0 to 1)",
+    );
+  });
+
+  it('says where a replay stopped and why', (): void => {
+    const markup = renderToStaticMarkup(
+      <SessionRestoreNote
+        restore={{ steps: [step(navigate, 'wi:run:0'), step(signIn, 'wi:run:1', 'no grant (looker:write)')] }}
+      />,
+    );
+    expect(markup).toContain('could not sign in again first: navigate, fill (replays of rows 0 to 1)');
+    expect(markup).toContain('stopped at fill: no grant (looker:write)');
+  });
+
+  it('stays silent on a row sent without a replay', (): void => {
+    expect(renderToStaticMarkup(<SessionRestoreNote restore={undefined} />)).toBe('');
+  });
+
+  it('shows the note under the closing row that needed the page, on the item card', (): void => {
+    const landed = (effect: string, key: string) => ({ tool: 'mcp.call', ok: true, effect, idempotencyKey: key });
+    const row = {
+      _id: 'w1',
+      _creationTime: 1,
+      agentId: 'a1',
+      state: 'completed',
+      title: 'Slack mention in #revops-asks',
+      contentSummary: 'Confirm pipeline coverage.',
+      sourceSystem: 'slack',
+      sourceCategory: 'event-stream',
+      externalId: 'x',
+      observedAt: 1,
+      contentRefs: [],
+      output: {
+        draft: 'Refreshed the tile to 74%.',
+        notes: '',
+        initial: { applied: [landed('browser_snapshot on looker · visible figure 68%', 'wi:run:3')] },
+        applied: [
+          {
+            ...landed('browser_fill_form on looker · ok', 'wi:run:4'),
+            sessionRestore: {
+              steps: [step(navigate, 'wi:run:0'), step(signIn, 'wi:run:1'), step(clickSignIn, 'wi:run:2')],
+            },
+          },
+          landed('browser_click on looker · ok', 'wi:run:5'),
+        ],
+        planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: '74%' }],
+      },
+    } as unknown as Doc<'workItems'>;
+    const markup = renderToStaticMarkup(
+      <WorkItemCard
+        item={row}
+        surfaces={[]}
+        autonomousActions={true}
+        onApprovePlan={(): void => undefined}
+        onCancelPlan={(): void => undefined}
+        onRetryFailed={(): void => undefined}
+        onReconcileFailed={async (): Promise<void> => undefined}
+        onApproveActions={async (): Promise<void> => undefined}
+        onRejectActions={async (): Promise<void> => undefined}
+        onResendDecision={async (): Promise<void> => undefined}
+      />,
+    );
+    expect(markup.match(/signed in again first/g)).toHaveLength(1);
+    expect(markup.indexOf('browser_fill_form on looker')).toBeLessThan(markup.indexOf('signed in again first'));
+    expect(markup.indexOf('signed in again first')).toBeLessThan(markup.indexOf('browser_click on looker'));
   });
 });
 
