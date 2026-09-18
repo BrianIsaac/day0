@@ -216,6 +216,7 @@ export function AgentDashboard({ agentId }: Props) {
             registeredSkillCount={(registeredSkills ?? []).length}
             charterApproved={!!charter?.approved}
             autonomousActions={agent ? autonomousActionsOn(agent) : false}
+            surfaceMode={surfaceConfig?.mode}
           />
         </div>
 
@@ -1511,13 +1512,14 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
   );
 }
 
-function WorkQueue({
+export function WorkQueue({
   workItems,
   openQuestions,
   surfaces,
   registeredSkillCount,
   charterApproved,
   autonomousActions,
+  surfaceMode,
 }: {
   workItems: Doc<'workItems'>[];
   /** The charter's open questions still waiting on the manager, asked at a plan. */
@@ -1527,6 +1529,8 @@ function WorkQueue({
   charterApproved: boolean;
   /** Whether the agent's autonomous-actions switch is on, for the cards' wording. */
   autonomousActions: boolean;
+  /** The deployment's surface mode, undefined while it loads. Only mock mode drives the loop from here. */
+  surfaceMode: 'mock' | 'real' | undefined;
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -1569,15 +1573,20 @@ function WorkQueue({
     [],
   );
 
-  // Auto-progression: once charter is approved, evaluate every discovered
-  // item; once a verdict comes back, draft a plan if claim, etc.
+  // Auto-progression, mock mode only: once charter is approved, evaluate every
+  // discovered item; once a verdict comes back, draft a plan if claim, etc.
+  // The hosted demo and the frozen harness rely on it. In real mode the server
+  // schedules every step (`convex/workLoop.ts`), so the work moves with no
+  // page open, and this page only renders and sends the manager's decisions.
+  const drivesLoop = surfaceMode === 'mock';
   useEffect(() => {
-    if (!charterApproved) return;
+    if (!drivesLoop || !charterApproved) return;
     const next = nextItemToEvaluate(workItems);
     if (next) once('evaluate', next._id, () => evaluate({ workItemId: next._id }));
-  }, [charterApproved, workItems, evaluate, once]);
+  }, [drivesLoop, charterApproved, workItems, evaluate, once]);
 
   useEffect(() => {
+    if (!drivesLoop) return;
     for (const it of workItems) {
       if (it.state === 'claimed' && !it.plan) {
         once('draft', it._id, () => draftPlan({ workItemId: it._id }));
@@ -1586,7 +1595,7 @@ function WorkQueue({
         once('execute', it._id, () => executePlan({ workItemId: it._id }));
       }
     }
-  }, [workItems, draftPlan, executePlan, once]);
+  }, [drivesLoop, workItems, draftPlan, executePlan, once]);
 
   return (
     <Card
