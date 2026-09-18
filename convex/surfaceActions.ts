@@ -200,6 +200,14 @@ function probeFailureVerdict(
   return 'listed-dead';
 }
 
+/** The verdicts `beginProbe` admits; a row that left them is no longer this probe's to call. */
+const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+];
+
 /** How long a probe waits before its one retry. */
 export const PROBE_RETRY_WAIT_MS = 5_000;
 
@@ -244,8 +252,28 @@ function isTransientProbeFailure(error: unknown, safeReason: string): boolean {
   return TRANSIENT_FAILURE.test(safeReason);
 }
 
-/** A newer probe took the surface over while this one waited to retry. */
+/** A newer probe, or a withdrawn approval, took the surface away while this probe waited to retry. */
 class ProbeSuperseded extends Error {}
+
+/**
+ * Name the transport failure behind a fetch that never got a response.
+ *
+ * `fetch` rejects with "fetch failed" and keeps what happened on its cause.
+ *
+ * Args:
+ *   error: What the fetch rejected with.
+ *
+ * Returns:
+ *   The cause's code, else the error's own name, else a plain phrase.
+ */
+function transportErrorDetail(error: unknown): string {
+  const cause = (error as { cause?: { code?: unknown } } | undefined)?.cause;
+  if (typeof cause?.code === 'string') return cause.code;
+  if (error instanceof Error && error.name !== 'Error' && error.name !== 'TypeError') {
+    return error.name;
+  }
+  return 'no connection';
+}
 
 /** Real-time pause between a probe's first call and its retry. */
 async function waitRealTime(milliseconds: number): Promise<void> {
@@ -679,14 +707,7 @@ export async function inspectMcpEndpoint(endpoint: URL, fetcher: Fetcher = fetch
     }
     return 'A request without the key was answered, so the endpoint is reachable.';
   } catch (error) {
-    const cause = (error as { cause?: { code?: unknown } }).cause;
-    const detail =
-      typeof cause?.code === 'string'
-        ? cause.code
-        : error instanceof Error && error.name !== 'Error' && error.name !== 'TypeError'
-          ? error.name
-          : 'no connection';
-    return `A request without the key failed too: ${detail}.`;
+    return `A request without the key failed too: ${transportErrorDetail(error)}.`;
   }
 }
 
@@ -803,6 +824,8 @@ async function callSlack(
     },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(30_000),
+  }).catch((error: unknown): never => {
+    throw new Error(`Slack ${method} could not be reached: ${transportErrorDetail(error)}.`);
   });
   // A gateway answering for Slack sends HTML. Parsing it would replace the
   // status with a syntax error, and the status is what the reason needs.
@@ -1071,10 +1094,17 @@ export async function runSurfaceProbe(
       });
       if (!recorded) throw new ProbeSuperseded();
       await (dependencies.wait ?? waitRealTime)(PROBE_RETRY_WAIT_MS);
+      // The second call carries the key, so it is made only for a row that is
+      // still this probe's and still approved.
       const current = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
         surfaceId,
       });
-      if (current?.surface.probeGeneration !== generation) throw new ProbeSuperseded();
+      if (
+        current?.surface.probeGeneration !== generation ||
+        !PROBEABLE_VERDICTS.includes(current.surface.verdict)
+      ) {
+        throw new ProbeSuperseded();
+      }
       return await call();
     }
   };

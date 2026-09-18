@@ -1021,7 +1021,8 @@ export const recordProbeFailure = internalMutation({
  * alone: one failed call establishes nothing about the enterprise's system.
  *
  * Returns:
- *   False when a newer probe has taken over and the retry must not run.
+ *   False when a newer probe has taken over, or the row is no longer approved,
+ *   and the retry must not run.
  */
 export const recordProbeRetry = internalMutation({
   args: {
@@ -1035,6 +1036,9 @@ export const recordProbeRetry = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
+    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+      return false;
+    }
     await ctx.db.patch(surface._id, {
       probeAttempts: withProbeAttempt(surface, {
         path: surface.path ?? 'unknown',

@@ -2181,6 +2181,53 @@ describe('one failed probe does not write listed-dead', (): void => {
     expect(clients.made()).toBe(1);
   });
 
+  it('makes no second call with the key when the approval was withdrawn during the wait', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE), answers]);
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: (endpoint, credential) =>
+        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+      probeBrowser: vi.fn(),
+      probeSlack: vi.fn(),
+      now: (): number => 1_000,
+      wait: async (): Promise<void> => {
+        await harness.run(async (ctx): Promise<void> => {
+          await ctx.db.patch(surfaceId, { verdict: 'proposed' });
+        });
+      },
+    });
+
+    expect(outcome.verdict).toBe('skipped');
+    expect(clients.made()).toBe(1);
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.verdict).toBe('proposed');
+  });
+
+  it('names the transport error behind a Slack call that never connected', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'documented-api' });
+    const wait = vi.fn(async (): Promise<void> => undefined);
+    const fetcher = vi.fn(async (): Promise<Response> => {
+      throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
+    });
+
+    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, false, {
+      probeMcp: vi.fn(),
+      probeBrowser: vi.fn(),
+      probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
+        probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
+      now: (): number => 1_000,
+      wait,
+    });
+
+    expect(outcome.verdict).toBe('listed-dead');
+    expect(outcome.reason).toBe('Slack auth.test could not be reached: ECONNRESET.');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledOnce();
+  });
+
   it('carries the HTTP status of a Slack gateway error and retries it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness, { path: 'documented-api' });
