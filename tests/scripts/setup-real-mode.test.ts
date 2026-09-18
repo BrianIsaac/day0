@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BROWSER_MCP_URL,
@@ -707,5 +707,80 @@ describe('the three ways to run it, in what the setup prints', (): void => {
     });
     expect(await runSetup(realRoute(), h.io)).toBe(1);
     expect(h.output.join('\n')).toContain(`run the same command again: \`${SETUP_SCRIPT}\``);
+  });
+});
+
+describe('--company', (): void => {
+  function companyHarness(failing: { match: string; status: number; stderr: string }[] = []) {
+    const h = harness({
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      services: ['backend', 'sandbox', 'redactor', 'playwright-mcp', 'looker-tile', 'docs-notion-mcp'],
+      failing,
+    });
+    cpSync(resolve('bed', 'company'), join(h.directory, 'bed', 'company'), { recursive: true });
+    return h;
+  }
+
+  it('is a flag, and adds the bed copy and its check after the checker in real mode only', (): void => {
+    expect(parseSetupArguments(['--company']).company).toBe(true);
+    expect(parseSetupArguments([]).company).toBeUndefined();
+    const real = sequenceSteps('featherless', { mode: 'real', sandbox: 'local', company: true });
+    expect(real.slice(-3)).toEqual(['check:setup', 'bed:company docs', 'bed:company check']);
+    expect(sequenceSteps('key', { mode: 'mock', company: true })).toEqual(sequenceSteps('key'));
+  });
+
+  it('copies the pages in after the setup, prints the hand steps, and runs the bed check', async (): Promise<void> => {
+    const h = companyHarness();
+    expect(await runSetup(realRoute({ company: true }), h.io)).toBe(0);
+    const lines = ran(h);
+    const checker = lines.indexOf('run check:setup');
+    const docs = lines.indexOf('pnpm run bed:company docs');
+    const check = lines.indexOf('pnpm run bed:company check');
+    expect(checker).toBeGreaterThan(-1);
+    expect(docs).toBeGreaterThan(checker);
+    expect(check).toBeGreaterThan(docs);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('[10/11] pnpm bed:company docs');
+    expect(printed).toContain("The company bed's hand steps, once per workspace:");
+    expect(printed).toContain('\n  1. Linear, as a workspace admin: the teams REVOPS');
+    const flat = printed.replace(/\s+/g, ' ');
+    expect(flat).toContain(
+      'the teams REVOPS (Revenue operations, project "Q3 close"), FIN (Finance close, project "September close"), LOG (Logistics desk, project "Shipment exceptions")',
+    );
+    expect(flat).toContain('the public channels #revops-asks, #revops, #finance-close, #logistics-desk, #ops-requests');
+    expect(flat).toContain('DAY0_BED_LINEAR_API_KEY, DAY0_BED_SLACK_BOT_TOKEN and DAY0_BED_NOTION_TOKEN');
+    expect(printed.indexOf('hand steps')).toBeLessThan(printed.indexOf('[11/11] pnpm bed:company check'));
+  });
+
+  it('stops when the pages cannot be copied, and runs no check', async (): Promise<void> => {
+    const h = companyHarness([
+      { match: 'bed:company docs', status: 1, stderr: 'GAP onboarding.md is already there and was not written by bed:company' },
+    ]);
+    expect(await runSetup(realRoute({ company: true }), h.io)).toBe(1);
+    expect(ran(h)).not.toContain('bed:company check');
+    expect(h.output.join('\n')).toContain('error: pnpm bed:company docs failed (status 1).');
+  });
+
+  it('says the gaps are the hand steps still owed without failing the setup', async (): Promise<void> => {
+    const h = companyHarness([{ match: 'bed:company check', status: 1, stderr: '' }]);
+    expect(await runSetup(realRoute({ company: true }), h.io)).toBe(0);
+    expect(h.output.join('\n')).toContain('the gaps above are the hand steps still owed');
+  });
+
+  it('is refused in mock mode before anything is written', async (): Promise<void> => {
+    const h = companyHarness();
+    expect(await runSetup(realRoute({ mode: 'mock', route: 'key', company: true }), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('error: --company sets up the company bed, which runs in real mode: `./setup.sh --company`.');
+    expect(existsSync(join(h.directory, '.env.local'))).toBe(false);
+    expect(h.commands).toEqual([]);
+  });
+
+  it('lists both commands in a dry run', async (): Promise<void> => {
+    const h = companyHarness();
+    expect(await runSetup(realRoute({ company: true, dryRun: true }), h.io)).toBe(0);
+    const printed = h.output.join('\n');
+    expect(printed).toContain('pnpm run bed:company docs');
+    expect(printed).toContain('pnpm run bed:company check');
+    expect(existsSync(join(h.directory, 'docs-local'))).toBe(false);
   });
 });

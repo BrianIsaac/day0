@@ -480,6 +480,46 @@ The secrets file (mode 0600) holds `LINEAR_API_KEY` and `SLACK_BOT_TOKEN`; neith
 
 Closing actions carry a different approval identity from phase one, so a delayed approval cannot authorise new payloads at old indexes; provider idempotency retains the execution identity. Pre-hold repair preserves payload values and valid argument bindings, then reruns the closing-action checks. A blocked run can still send a manager DM under its standing grant when that message asks the manager something; a note that only reports is withheld with the stop. A Slack plan approval carries no question answers; use the charter or plan card to answer, and refresh a stale plan card if the charter answer changed.
 
+### The company bed
+
+The finals demo runs three digital employees in one synthetic company, Kestrel Supply Co.: revenue operations, finance close and a logistics desk. Everything about the company that can live in a repository is in `bed/company/`; nothing there is a secret, and every page says the company is synthetic.
+
+| Path | What it is |
+|---|---|
+| `bed/company/folder/` | the thirteen pages the folder source reads: the onboarding page with the shared systems table, a handbook per role naming that role's Linear team, project and Slack channels, the runbooks, and the pages for the Looker pipeline tile, Northstar CRM and NetLedger (the last two have no approved connection, on purpose) |
+| `bed/company/notion/` | the two Notion pages, `Linear automation` and `Slack automation policy`, and how to paste them |
+| `bed/company/linear.json` | the ten demo tickets in their own words, and the state each is put back to |
+| `bed/company/slack-asks.md` | the three Slack asks you post by hand during the run |
+| `bed/company/answers.md` | the manager's Day-1 answers per role, and the note for the logistics retry |
+
+From a fresh clone:
+
+```bash
+./setup.sh --route featherless --company
+```
+
+That is the ordinary real-mode setup followed by `pnpm bed:company docs`, which copies the thirteen pages into `docs-local/` and removes the setup's placeholder page (it never overwrites a page it did not write unless you pass `--replace`), then the hand steps, then `pnpm bed:company check`.
+
+The hand steps are done once per workspace, by you, because they are admin acts in accounts only you hold:
+
+1. **Linear**, as a workspace admin: teams `REVOPS` (project `Q3 close`), `FIN` "Finance close" (project `September close`) and `LOG` "Logistics desk" (project `Shipment exceptions`), each with the workflow states `Todo`, `In Progress` and `Done`. Archive or move out any older ticket in those three projects: intake reads every ticket in a documented project, and `check` lists each one that is not the bed's.
+2. **Slack**: the public channels `#revops-asks`, `#revops`, `#finance-close`, `#logistics-desk` and `#ops-requests` (intake reads public channels only), and one app, the shared bot, with `chat:write.customize` beside its usual scopes so each employee posts under its own name, invited to all five. Delete any ask left over from an earlier run: a new deployment's first poll reads a channel's whole history.
+3. **Notion**: the two pages in `bed/company/notion/`, pasted under one parent page shared with your integration, with the Linear key in place of the placeholder ([`bed/company/notion/README.md`](bed/company/notion/README.md)).
+4. **`.env.local`**: `DAY0_BED_LINEAR_API_KEY`, `DAY0_BED_SLACK_BOT_TOKEN` and `DAY0_BED_NOTION_TOKEN`. Only `pnpm bed:company` reads them, and it prints none of them.
+
+Then:
+
+```bash
+pnpm bed:company check    # every hand step read back; each gap says how to close it
+pnpm bed:company seed     # tickets created or put back, the bed's bot messages deleted, the tile back at 68%
+```
+
+`check` reads the Linear teams, projects and states, the channels and the app's scopes, the Notion pages through the bundled Notion component (compared line by line with `bed/company/notion/`, the token line apart) and the tile. `seed` owns only what carries its marker: a ticket is the bed's when its description ends in `day0-demo-key: <key>`, and it deletes only comments and bot messages carrying the server's provenance trailer, the messages only since this clone's first seed. Run it before every take. During the run, `pnpm bed:company post log-sh4480` files the one late ticket at its step; afterwards, `pnpm bed:company teardown` archives the demo tickets and deletes the bed's bot messages, leaving Linear and Slack as `seed` found them.
+
+On `/documentation`, link the folder (`.`) and the Notion source. Thirteen folder pages and three Notion pages (the parent and its two) sync, and the tile's login and the Linear token are the only credentials stored.
+
+The redaction model reads a page as a whole, and a wording change can make it take a channel or a method name for a token, which the owner-wide layer then removes from every page. So a page you edit is checked against the model again: `tests/bed/company-docs.test.ts` replays the model's recorded answers and fails on a page it has no answer for until you run `DAY0_REDACTOR_URL=<a component you can reach> pnpm bed:record-spans` and read what it stores.
+
 ### Teardown
 
 `./setup.sh stop` does what these three commands do, over every profile, and keeps every volume; `./setup.sh clear` does the same and removes the volumes:
@@ -1420,6 +1460,46 @@ pnpm rehearse:real --secrets <file> --warm-from day0  # 完整运行，结束后
 ```
 
 secrets 文件（权限 0600）保存 `LINEAR_API_KEY` 和 `SLACK_BOT_TOKEN`；两者都不会写进 bed 的 `.env.local`。它们由浏览器像你一样敲进连接卡片，脚本自己的读取和清理调用只在内存中使用它们。其余值来自你的 `.env.local`，以只读方式打开。演练会在 `HEAD` clone 本仓库、为 clone 写一份私有 `.env.local`、用空闲端口启动自己的 Compose 项目（`day0-rehearsal-<6 hex>`；名称受保护、是你自己的项目或已存在时会拒绝）、链接你的 `docs-local` 文件夹、部署、用七条按工单原话写好的回答完成 1:1、批准章程、等待 orientation，并把凭据填到卡片上。这里就是 dry-run 边界：在此之前没有任何一步会向 provider 写入，所以 `--dry-run` 能证明整个搭建过程，并打印出真实运行将要做的写入。真实运行随后把演示工单分配给你、轮询 intake、批准技能、计划、浏览器批次和收尾集合，检查 9 月 14 日 replay 断言的五种 ledger 形状，导出 ledger，然后按相反顺序撤销：恢复可归属的工单状态、删除带有该工作项服务端来源标记的评论和 bot 私信、移除该项目的容器和卷、移除 clone。`--keep` 会保留 bed 供检查，但仍会尝试清理 workspace。运行期间请独占演示工单：恢复操作与其他人的修改并非原子操作，无法归属的效果需要人工核对。每次运行都会在 `docs/plans/progress/real-mode-rehearsals/<stamp>/` 下留下 `summary.md`、`record.json`、各项检查、导出和截图，脚本会让该目录不进入 git。已经带有从文档中存储的凭据的卡片没有填写表单，演练会把它记录为一次停止，而不是覆盖它。`--warm-from <project>` 会把另一个项目的 redactor wheel 和模型卷复制到 bed 中，这样首次启动不必重新下载。
+
+#### 公司演示环境
+
+决赛演示在一家合成公司 Kestrel Supply Co. 中运行三名数字员工：收入运营（revenue operations）、财务结账（finance close）和物流调度台（logistics desk）。这家公司中凡是能放进仓库的内容都在 `bed/company/` 下；其中没有任何秘密，每个页面都注明公司是合成的。
+
+| 路径 | 内容 |
+|---|---|
+| `bed/company/folder/` | 文件夹来源读取的十三个页面：带共享系统表的 onboarding 页面、每个角色一本 handbook（写明该角色的 Linear team、project 和 Slack 频道）、各 runbook，以及 Looker pipeline tile、Northstar CRM 和 NetLedger 的系统页（后两者刻意没有获批的连接方式） |
+| `bed/company/notion/` | 两个 Notion 页面 `Linear automation` 与 `Slack automation policy`，以及粘贴方法 |
+| `bed/company/linear.json` | 十张演示工单的原话，以及每张工单被复位到的状态 |
+| `bed/company/slack-asks.md` | 运行期间由你手动发出的三条 Slack 请求 |
+| `bed/company/answers.md` | manager 对每个角色 Day-1 的回答，以及物流重试时给出的备注 |
+
+从一个全新 clone 开始：
+
+```bash
+./setup.sh --route featherless --company
+```
+
+这就是普通的 real-mode 安装，之后执行 `pnpm bed:company docs`：把十三个页面复制进 `docs-local/`，并删除 setup 的占位页面（除非传入 `--replace`，否则它绝不覆盖不是它写入的页面）；然后打印手工步骤，并运行 `pnpm bed:company check`。
+
+手工步骤每个 workspace 只做一次，由你完成，因为它们是只有你持有的账户中的管理员操作：
+
+1. **Linear**，以 workspace 管理员身份：team `REVOPS`（project `Q3 close`）、`FIN` "Finance close"（project `September close`）和 `LOG` "Logistics desk"（project `Shipment exceptions`），每个 team 都有 `Todo`、`In Progress`、`Done` 三个工作流状态。把这三个 project 中较早的工单归档或移出：intake 会读取文档所记录 project 中的每一张工单，`check` 会列出每一张不属于演示环境的工单。
+2. **Slack**：公开频道 `#revops-asks`、`#revops`、`#finance-close`、`#logistics-desk` 和 `#ops-requests`（intake 只读取公开频道），以及一个应用，即共享 bot；除常规 scope 外还需要 `chat:write.customize`，让每名员工以自己的名字发帖；把它邀请进全部五个频道。删除早先运行遗留的请求：新部署的首次轮询会读取频道的全部历史。
+3. **Notion**：把 `bed/company/notion/` 下的两个页面粘贴到一个与你的 integration 共享的父页面之下，并把占位符换成 Linear key（见 [`bed/company/notion/README.md`](bed/company/notion/README.md)）。
+4. **`.env.local`**：`DAY0_BED_LINEAR_API_KEY`、`DAY0_BED_SLACK_BOT_TOKEN` 和 `DAY0_BED_NOTION_TOKEN`。只有 `pnpm bed:company` 读取它们，且不会打印其中任何一个。
+
+然后：
+
+```bash
+pnpm bed:company check    # 逐项读回手工步骤；每个缺口都会说明如何补上
+pnpm bed:company seed     # 创建或复位工单，删除演示环境的 bot 消息，tile 回到 68%
+```
+
+`check` 读取 Linear 的 team、project 与状态，频道与应用的 scope，经由内置 Notion 组件读取的 Notion 页面（除 token 行外逐行与 `bed/company/notion/` 比较），以及 tile。`seed` 只处理带有其标记的内容：描述以 `day0-demo-key: <key>` 结尾的工单才属于演示环境；它只删除带有服务端来源标记（provenance trailer）的评论和 bot 消息，而消息只限本 clone 首次 seed 之后发出的。每次录制前运行一次。运行期间，`pnpm bed:company post log-sh4480` 在对应步骤提交那张迟到的工单；结束后，`pnpm bed:company teardown` 归档演示工单并删除演示环境的 bot 消息，使 Linear 和 Slack 回到 `seed` 之前的样子。
+
+在 `/documentation` 上链接文件夹（`.`）和 Notion 来源。同步后有十三个文件夹页面和三个 Notion 页面（父页面及其两个子页面），存储的凭据只有 tile 的登录和 Linear token。
+
+脱敏模型以整页为单位读取页面，措辞改动可能让它把频道名或方法名当成 token，随后 owner 级精确值层会把它从每个页面中删除。因此修改过的页面要重新经过模型检查：`tests/bed/company-docs.test.ts` 回放模型记录下的回答，遇到没有记录的页面就会失败，直到你运行 `DAY0_REDACTOR_URL=<可访问的组件地址> pnpm bed:record-spans` 并确认它存储了什么。
 
 #### 停止
 
