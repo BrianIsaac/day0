@@ -110,6 +110,7 @@ describe('label-only spans and pairs', (): void => {
 
   it('reads a user / password pair as a username and a secret', (): void => {
     expect(splitUserPasswordPair('revops / hunter2')).toEqual({ username: 'revops', password: 'hunter2' });
+    expect(splitUserPasswordPair('revops / sunshine')).toEqual({ username: 'revops', password: 'sunshine' });
     expect(splitUserPasswordPair('revops/Sunny-Day-42')).toEqual({ username: 'revops', password: 'Sunny-Day-42' });
     expect(splitUserPasswordPair('docs / runbooks / archive')).toBeUndefined();
     expect(splitUserPasswordPair('Looker tile')).toBeUndefined();
@@ -319,6 +320,7 @@ describe('structural identifiers the deployed model took for tokens on 18 Septem
     for (const name of ['postMessage', 'save_comment', 'listOriginalConnectedChannelInfo']) {
       const text = `Call ${name} for the workflow.`;
       expect(guardSecretSpan(text, spanOf(text, name), 'access token')).toBeUndefined();
+      expect(guardReason(name)).toBe('runbook word');
     }
   });
 });

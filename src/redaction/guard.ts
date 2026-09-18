@@ -354,7 +354,7 @@ export function splitUserPasswordPair(value: string): { username: string; passwo
   const pair = USER_PASSWORD_PAIR.exec(value);
   if (!pair) return undefined;
   const password = pair[2].replace(TRAILING_PUNCTUATION, '');
-  if (!password || guardReason(password)) return undefined;
+  if (!password || guardReason(password, { assigned: true })) return undefined;
   return { username: pair[1], password };
 }
 
@@ -406,5 +406,6 @@ export function guardReason(value: string, context: GuardContext = {}): string |
     shapeRejects(candidate, value, context.assigned === true),
   )?.name;
   if (shape) return shape;
+  if (!context.assigned && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value)) return 'runbook word';
   return NEVER_REDACT.has(value) ? 'never-redact list' : undefined;
 }

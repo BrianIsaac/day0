@@ -52,11 +52,12 @@ export const bySourceForStore = internalQuery({
     revokedAt?: number;
     ciphertext: string;
     iv: string;
+    explicitlyAssigned?: boolean;
   } | null> => {
     const row = fakeCredentialState().rows.get(
       fakeCredentialKey(args.userId, String(args.sourceId), args.ref),
     );
-    return row ? { _id: row._id, kind: 'value', label: row.label, revokedAt: row.revokedAt, ...encrypt(row.plaintext, process.env.DAY0_CREDENTIAL_KEY!) } : null;
+    return row ? { _id: row._id, kind: 'value', label: row.label, revokedAt: row.revokedAt, explicitlyAssigned: row.explicitlyAssigned, ...encrypt(row.plaintext, process.env.DAY0_CREDENTIAL_KEY!) } : null;
   },
 });
 

@@ -287,3 +287,30 @@ it('stores long opaque name-spelled credentials and removes them from another pa
     expect(repeated.markdown.includes(value)).toBe(false);
   }
 });
+
+it('drops old page-derived runbook words from exact removal but keeps an assigned word token', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
+    userId: 'owner', label: 'Runbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+  }));
+  for (const [index, value] of ['postMessage', 'save_comment'].entries()) {
+    const id = await insertRow(harness, { userId: 'owner', label: 'slack token', plaintext: value });
+    await harness.run(async (ctx) => await ctx.db.patch(id, { source: { sourceId, ref: `old-${index}.md` } }));
+  }
+  const before = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  expect(before.includes('postMessage')).toBe(false);
+  expect(before.includes('save_comment')).toBe(false);
+
+  const text = 'token: lookupByEmail';
+  const model = new ScriptedSpanModel((body) => {
+    const start = body.indexOf('lookupByEmail');
+    return start < 0 ? [] : [{ start, end: start + 'lookupByEmail'.length, label: 'access token', score: 0.99 }];
+  });
+  const extracted = await redactCredentials(text, 'Access', { model });
+  expect(extracted.credentials).toHaveLength(1);
+  await harness.action(internal.credentials.store, {
+    userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: 'assigned.md' },
+  });
+  const after = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  expect(after.includes('lookupByEmail')).toBe(true);
+});
