@@ -50,6 +50,7 @@ import {
   markedDescription,
   readBedIssues,
   readForeignIssues,
+  readRunIssues,
   readLabel,
   readWorkspace,
   unarchiveIssue,
@@ -57,6 +58,7 @@ import {
   type BedIssue,
   type BedLabel,
   type ProjectIssue,
+  type RunIssue,
   type Workspace,
 } from './linear';
 import {
@@ -368,6 +370,10 @@ class BedLinear {
     return retryOnce('project ticket read', this.retry, () => readForeignIssues(this.client, projectIds));
   }
 
+  runIssues(teamIds: readonly string[]): Promise<RunIssue[]> {
+    return retryOnce('run-filed ticket read', this.retry, () => readRunIssues(this.client, teamIds));
+  }
+
   label(name: string): Promise<BedLabel | undefined> {
     return retryOnce('label read', this.retry, () => readLabel(this.client, name));
   }
@@ -605,8 +611,18 @@ async function checkLinear(io: CompanyIo, spec: BedSpec, set: string | undefined
       report.line('ok', `${ticket.key} ${issue.identifier} "${issue.title}" (${issue.stateName})`);
     }
   }
+  // A ticket a run filed is the run's own, not a stranger's: it is named once,
+  // with what removes it, and left out of the by-hand list below.
+  const runFiled = await linear.runIssues(workspace.teams.map((team) => team.id));
+  for (const filed of runFiled) {
+    report.line(
+      'gap',
+      `${filed.identifier} "${filed.title}" was filed by a Day0 run (its description ends with a provenance trailer); teardown archives it if it was filed since this clone's first seed, otherwise archive it by hand`,
+    );
+  }
+  const runFiledIds = new Set(runFiled.map((filed) => filed.id));
   const projectIds = [...targets.values()].map((target) => target.projectId);
-  for (const foreign of await linear.foreignIssues(projectIds)) {
+  for (const foreign of (await linear.foreignIssues(projectIds)).filter((issue) => !runFiledIds.has(issue.id))) {
     report.line(
       'gap',
       `${foreign.identifier} "${foreign.title}" is in project "${foreign.projectName}" and is not a bed ticket; intake would read it. Archive it, or move it to another project, by hand`,
@@ -1278,6 +1294,7 @@ async function teardownLinear(linear: BedLinear, spec: BedSpec, state: CompanySt
       report.line('gap', failure(`${issue.identifier} archive`, error));
     }
   }
+  await archiveRunIssues(linear, spec, state, report);
   if (!state.labelId && !state.ownsLabel) return;
   let label: BedLabel | undefined;
   try {
@@ -1292,6 +1309,32 @@ async function teardownLinear(linear: BedLinear, spec: BedSpec, state: CompanySt
     report.line('ok', `deleted label ${spec.label}, which seed created`);
   } catch (error) {
     report.line('gap', failure('label delete', error));
+  }
+}
+
+/**
+ * Archive the tickets a Day0 run filed in the bed's teams since this clone's
+ * first seed. The epoch is the same bound the Slack half uses for the bot's
+ * messages: a ticket filed before it belongs to an earlier clone or to a
+ * person's own use of the workspace, and is left alone.
+ */
+async function archiveRunIssues(linear: BedLinear, spec: BedSpec, state: CompanyState, report: Report): Promise<void> {
+  const since = Number(state.epoch) * 1000;
+  let filed: RunIssue[];
+  try {
+    const workspace = await linear.workspace(spec.teams.map((team) => team.key));
+    filed = await linear.runIssues(workspace.teams.map((team) => team.id));
+  } catch (error) {
+    report.line('gap', `${failure('run-filed ticket read', error)}; no run-filed ticket was archived`);
+    return;
+  }
+  for (const issue of filed.filter((candidate) => Date.parse(candidate.createdAt) >= since)) {
+    try {
+      await linear.archive(issue);
+      report.line('ok', `archived ${issue.identifier}, which a Day0 run filed`);
+    } catch (error) {
+      report.line('gap', failure(`${issue.identifier} archive`, error));
+    }
   }
 }
 

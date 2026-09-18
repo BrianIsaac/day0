@@ -20,6 +20,7 @@ import { comparePage, NOTION_READER_SCRIPT, parseNotionRead } from '../../script
 import { standingAsksFromFile } from '../../scripts/bed/slack';
 import { loadBedSpec } from '../../scripts/bed/spec';
 import { DOCS_STUB } from '../../scripts/setup';
+import { REFUSED_CREATE_ACTION } from '../fixtures/refused-ticket-create-2026-09-19';
 
 const LINEAR_KEY = `${['lin', 'api'].join('_')}_bedTestKey0123456789`;
 const SLACK_TOKEN = `${['xox', 'b'].join('')}-1111-bedTestToken0123456789`;
@@ -45,6 +46,8 @@ interface FakeIssue {
   assigneeId: string | null;
   labelIds: string[];
   comments: Array<{ id: string; body: string; createdAt: string }>;
+  /** When the issue was filed; absent reads as long before any clone seeded. */
+  createdAt?: string;
 }
 
 /**
@@ -126,6 +129,7 @@ class FakeLinear {
       assigneeId: issue.assigneeId ?? null,
       labelIds: issue.labelIds ?? [],
       comments: issue.comments ?? [],
+      ...(issue.createdAt ? { createdAt: issue.createdAt } : {}),
     };
     this.issues.push(created);
     return created;
@@ -182,6 +186,23 @@ class FakeLinear {
             pageInfo: { hasNextPage: false, endCursor: null },
           },
         };
+      case 'BedRunIssues': {
+        const teamIds = variables.teamIds as string[];
+        return {
+          issues: {
+            nodes: this.issues
+              .filter((issue) => issue.archivedAt === null && teamIds.includes(issue.teamId) && issue.description.includes('(Day0) · run '))
+              .map((issue) => ({
+                id: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                description: issue.description,
+                createdAt: issue.createdAt ?? '2026-01-01T00:00:00.000Z',
+              })),
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        };
+      }
       case 'BedProjectIssues': {
         const projectIds = variables.projectIds as string[];
         return {
@@ -774,6 +795,57 @@ describe('teardown', (): void => {
     await run(h, ['seed']);
     await run(h, ['teardown']);
     expect(h.linear.labels).toEqual([{ id: 'label-own', name: 'day0-demo', description: 'made by hand' }]);
+  });
+});
+
+describe('a ticket a run filed, signed in its description (19 Sep run, finding N)', (): void => {
+  const FILED = `${JSON.parse(REFUSED_CREATE_ACTION.args.toolArgsJson ?? '{}').description}\n\n${TRAILER}`;
+  const TITLE = 'Refresh the Looker pipeline tile to the standup figure';
+
+  it('check names it as the run\'s own, once, and says teardown archives it', async (): Promise<void> => {
+    const h = harness();
+    expect(await run(h, ['seed'])).toBe(0);
+    const loose = h.linear.addIssue({ team: 'REVOPS', title: TITLE, description: FILED, projectId: null, createdAt: '2026-09-18T01:10:00.000Z' });
+    const inProject = h.linear.addIssue({ team: 'REVOPS', title: 'Filed into the project', description: FILED, createdAt: '2026-09-18T01:11:00.000Z' });
+    h.logs.length = 0;
+    expect(await run(h, ['check'])).toBe(1);
+    const gaps = h.logs.filter((line) => line.includes('GAP ')).join('\n');
+    expect(gaps).toContain(`${loose.identifier} "${TITLE}" was filed by a Day0 run (its description ends with a provenance trailer); teardown archives it`);
+    expect(gaps).toContain(`${inProject.identifier} "Filed into the project" was filed by a Day0 run`);
+    expect(gaps).not.toContain(`${inProject.identifier} "Filed into the project" is in project`);
+  });
+
+  it('teardown archives the ones filed since this clone seeded, and nothing else', async (): Promise<void> => {
+    const h = harness();
+    const earlier = h.linear.addIssue({ team: 'REVOPS', title: 'Filed before this clone', description: FILED, projectId: null, createdAt: '2026-09-18T00:59:59.000Z' });
+    expect(await run(h, ['seed'])).toBe(0);
+    const filed = h.linear.addIssue({ team: 'REVOPS', title: TITLE, description: FILED, projectId: null, createdAt: '2026-09-18T01:10:00.000Z' });
+    const quoting = h.linear.addIssue({
+      team: 'REVOPS',
+      title: 'A person quoting a trailer',
+      description: `Someone pasted this:\n\n${TRAILER}\n\nand then wrote more.`,
+      projectId: null,
+      createdAt: '2026-09-18T01:12:00.000Z',
+    });
+    const human = h.linear.addIssue({ team: 'REVOPS', title: 'A person\'s ticket', projectId: null, createdAt: '2026-09-18T01:13:00.000Z' });
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(filed.archivedAt).not.toBeNull();
+    expect(h.logs.join('\n')).toContain(`archived ${filed.identifier}, which a Day0 run filed`);
+    expect(earlier.archivedAt).toBeNull();
+    expect(quoting.archivedAt).toBeNull();
+    expect(human.archivedAt).toBeNull();
+  });
+
+  it('keeps the state file when the run-filed read fails, so the next teardown finishes', async (): Promise<void> => {
+    const h = harness();
+    expect(await run(h, ['seed'])).toBe(0);
+    const filed = h.linear.addIssue({ team: 'REVOPS', title: TITLE, description: FILED, projectId: null, createdAt: '2026-09-18T01:10:00.000Z' });
+    h.linear.fail('BedRunIssues', { kind: 'status', status: 503, body: 'unavailable' }, { kind: 'status', status: 503, body: 'unavailable' });
+    expect(await run(h, ['teardown'])).toBe(1);
+    expect(filed.archivedAt).toBeNull();
+    expect(existsSync(join(h.root, STATE_FILE))).toBe(true);
+    expect(await run(h, ['teardown'])).toBe(0);
+    expect(filed.archivedAt).not.toBeNull();
   });
 });
 

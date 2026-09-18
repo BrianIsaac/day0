@@ -230,6 +230,7 @@ const CREATE_TOOL_WORDS = new Set(['save', 'create', 'add', 'file', 'upsert']);
 /** The argument names a ticket write names its ticket under. */
 export const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'];
 const TRAILER_MARK = /--\s[^\n]*\(Day0\)\s·\srun\s/;
+const TRAILER_END = /(?:^|\n)--\s[^\n]*\(Day0\)\s·\srun\s[^\s/]+\/[^\s/]+\s*$/;
 
 export type JsonObject = Record<string, unknown>;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -1191,6 +1192,21 @@ export function provenanceTrailer(agentName: string, workItemId: string, runId: 
  */
 export function containsProvenanceTrailer(text: string): boolean {
   return TRAILER_MARK.test(text);
+}
+
+/**
+ * Whether text ends with a provenance trailer, as the server leaves it: the
+ * trailer is always the last line of what it signs. A trailer quoted in the
+ * middle of someone's words is not a signature.
+ *
+ * Args:
+ *   text: A comment body, a message or a ticket description.
+ *
+ * Returns:
+ *   True when the last line is a trailer.
+ */
+export function endsWithProvenanceTrailer(text: string): boolean {
+  return TRAILER_END.test(text);
 }
 
 /**
