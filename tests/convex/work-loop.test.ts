@@ -669,10 +669,15 @@ describe('checking for new work on demand', (): void => {
     expect(jobs.map((job) => job.name)).toEqual([
       'intakeActions:pollSurface',
       'intakeActions:pollSurface',
+      'work:readmitSatisfiedDeferrals',
     ]);
-    expect(jobs.map((job) => (job.args[0] as { surfaceId: string }).surfaceId).sort()).toEqual(
-      surfaceIds,
-    );
+    expect(
+      jobs
+        .filter((job) => job.name === 'intakeActions:pollSurface')
+        .map((job) => (job.args[0] as { surfaceId: string }).surfaceId)
+        .sort(),
+    ).toEqual(surfaceIds);
+    expect(jobs.at(-1)?.args[0]).toEqual({ agentId });
 
     vi.advanceTimersByTime(30_000);
     const again = await harness

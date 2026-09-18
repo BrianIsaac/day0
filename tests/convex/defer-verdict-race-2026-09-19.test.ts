@@ -2,7 +2,7 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { internal } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -65,6 +65,7 @@ vi.stubGlobal(
 );
 
 type Harness = TestConvex<typeof schema>;
+const OWNER = { subject: 'owner' };
 const TILE = 'looker-pipeline-tile';
 
 afterEach((): void => {
@@ -561,5 +562,127 @@ describe('the other verdicts that wait on something', (): void => {
     expect(row).toMatchObject({ state: 'deferred', verdict });
     expect(row).not.toHaveProperty('reevaluation');
     expect(await eventsOf(harness, 'work.requeued')).toEqual([]);
+  });
+});
+
+describe('Check for new work and a defer that is already satisfied', (): void => {
+  it('re-admits the run\'s stranded REVOPS-27 and leaves REVOPS-29 waiting on the absent CRM', async (): Promise<void> => {
+    useRealModeWithBrowser();
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId } = await seedPriya(harness, { tileConnected: true });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'northstar-crm',
+        displayName: 'Northstar CRM',
+        class: 'crm',
+        verdict: 'absent',
+        credentialLanded: false,
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+    });
+    const stranded = await insertRow(harness, agentId, 'REVOPS-27', {
+      state: 'deferred',
+      verdict: deferOnTile,
+    });
+    const waiting = await insertRow(harness, agentId, 'REVOPS-29', {
+      title: 'Reconcile Northstar CRM ownership for Aster Works',
+      state: 'deferred',
+      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar-crm' },
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId });
+    const job = (await pendingJobs(harness)).find(
+      (pending) => pending.name === 'work:readmitSatisfiedDeferrals',
+    );
+    expect(job).toEqual({ name: 'work:readmitSatisfiedDeferrals', args: { agentId } });
+    // The check's own job, run by hand: draining would also run the provider polls.
+    const result = await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
+
+    expect(result).toMatchObject({ readmitted: 1 });
+    const row = await readItem(harness, stranded);
+    expect(row.state).toBe('discovered');
+    expect(row).not.toHaveProperty('verdict');
+    expect(row.reevaluation?.trigger).toBe('check');
+    expect((await readItem(harness, waiting)).state).toBe('deferred');
+    expect((await eventsOf(harness, 'work.requeued')).map((event) => event.payload)).toEqual([
+      expect.objectContaining({
+        workItemId: stranded,
+        trigger: 'check',
+        previousState: 'deferred',
+        previousMissingSurface: TILE,
+      }),
+    ]);
+    expect(await pendingJobs(harness)).toContainEqual({
+      name: 'workActions:evaluateWorkItemInternal',
+      args: { workItemId: stranded },
+    });
+  });
+
+  it('does not re-admit the same row twice for the same connection', async (): Promise<void> => {
+    useRealModeWithBrowser();
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId } = await seedPriya(harness, { tileConnected: true });
+    const workItemId = await insertRow(harness, agentId, 'REVOPS-27', {
+      state: 'deferred',
+      verdict: deferOnTile,
+    });
+
+    await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'deferred', verdict: deferOnTile });
+    });
+    const again = await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
+
+    expect(again).toMatchObject({ readmitted: 0 });
+    expect((await readItem(harness, workItemId)).state).toBe('deferred');
+  });
+
+  it('reaches a satisfied row behind a full batch of rows still waiting', async (): Promise<void> => {
+    useRealModeWithBrowser();
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId } = await seedPriya(harness, { tileConnected: true });
+    for (let index = 0; index < 100; index += 1) {
+      await insertRow(harness, agentId, `REVOPS-${100 + index}`, {
+        state: 'deferred',
+        verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar-crm' },
+      });
+    }
+    const stranded = await insertRow(harness, agentId, 'REVOPS-27', {
+      state: 'deferred',
+      verdict: deferOnTile,
+    });
+
+    const first = await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
+    expect(first).toEqual({ readmitted: 0, examined: 100, continued: true });
+    const [continuation] = await pendingJobs(harness);
+    expect(continuation.name).toBe('work:readmitSatisfiedDeferrals');
+    const rest = await harness.mutation(
+      internal.work.readmitSatisfiedDeferrals,
+      continuation.args as { agentId: Id<'agents'>; after: { deferred: number } },
+    );
+
+    expect(rest).toEqual({ readmitted: 1, examined: 1, continued: false });
+    expect((await readItem(harness, stranded)).state).toBe('discovered');
+  });
+
+  it('takes a re-admitted row through its evaluation to a plan', async (): Promise<void> => {
+    useRealModeWithBrowser();
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId } = await seedPriya(harness, { tileConnected: true });
+    const workItemId = await insertRow(harness, agentId, 'REVOPS-27', {
+      state: 'deferred',
+      verdict: deferOnTile,
+    });
+
+    await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
+    await drain(harness);
+
+    expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
   });
 });

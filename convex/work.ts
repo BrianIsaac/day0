@@ -828,6 +828,12 @@ async function waitSatisfiedBy(
   return undefined;
 }
 
+/** The employee to check and the creation-time watermarks a continuation resumes from. */
+interface ReadmitSatisfiedArgs {
+  agentId: Id<'agents'>;
+  after?: { deferred?: number; needsSkill?: number };
+}
+
 /** The `work.requeued` event of a row re-admitted because its wait is over. */
 async function logSatisfiedRequeue(
   ctx: MutationCtx,
@@ -850,6 +856,98 @@ async function logSatisfiedRequeue(
     createdAt: now,
   });
 }
+
+/**
+ * Re-admit the parked rows whose wait is already over.
+ *
+ * A row deferred on a surface that has since connected, or on grants that
+ * are all live, or parked at `needs-skill` naming a skill that is registered,
+ * goes back to `discovered` for a fresh evaluation. Each row returns once
+ * per key of the thing it waited on, so a row the evaluator parks again for
+ * the same connection stays parked until the connection changes. A batch of
+ * `REEVALUATION_BATCH` rows per state is examined; when a batch fills, the
+ * rest is scheduled as a continuation carrying creation-time watermarks.
+ *
+ * Args:
+ *   ctx: Mutation context.
+ *   args: The employee and, for a continuation, where to resume.
+ *   now: The instant to judge liveness against and to stamp.
+ *
+ * Returns:
+ *   How many rows were re-admitted and examined, and whether a continuation was scheduled.
+ */
+async function readmitSatisfiedInTransaction(
+  ctx: MutationCtx,
+  args: ReadmitSatisfiedArgs,
+  now: number,
+): Promise<{ readmitted: number; examined: number; continued: boolean }> {
+  const after: ReadmitSatisfiedArgs['after'] = { ...args.after };
+  let readmitted = 0;
+  let examined = 0;
+  let continued = false;
+  for (const [state, mark] of [
+    ['deferred', 'deferred'],
+    ['needs-skill', 'needsSkill'],
+  ] as const) {
+    const watermark = after[mark];
+    const rows = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (index) => {
+        const range = index.eq('agentId', args.agentId).eq('state', state);
+        return watermark === undefined ? range : range.gt('_creationTime', watermark);
+      })
+      .take(REEVALUATION_BATCH);
+    for (const row of rows) {
+      examined += 1;
+      if (isRevocationTrialRow(row)) continue;
+      const waited = (row.verdict ?? {}) as WaitingVerdict;
+      const satisfied = await waitSatisfiedBy(ctx, args.agentId, waited, now);
+      if (!satisfied || row.reevaluation?.key === satisfied.key) continue;
+      await ctx.db.patch(row._id, {
+        state: 'discovered',
+        verdict: undefined,
+        reevaluation: { trigger: 'check', key: satisfied.key, at: now },
+      });
+      await logSatisfiedRequeue(ctx, row, 'check', satisfied.key, waited, now);
+      await scheduleNextStep(ctx, { ...row, state: 'discovered', verdict: undefined });
+      readmitted += 1;
+    }
+    if (rows.length === REEVALUATION_BATCH) {
+      after[mark] = rows[rows.length - 1]._creationTime;
+      continued = true;
+    } else {
+      delete after[mark];
+    }
+  }
+  if (continued) {
+    await ctx.scheduler.runAfter(0, internal.work.readmitSatisfiedDeferrals, {
+      agentId: args.agentId,
+      after,
+    });
+  }
+  return { readmitted, examined, continued };
+}
+
+const readmitSatisfiedAfter = v.object({
+  deferred: v.optional(v.number()),
+  needsSkill: v.optional(v.number()),
+});
+
+/**
+ * The dashboard's Check for new work, for the work already here: a parked row
+ * whose reason is no longer true gets its way out. Real mode only, like the
+ * check that schedules it.
+ */
+export const readmitSatisfiedDeferrals = internalMutation({
+  args: { agentId: v.id('agents'), after: v.optional(readmitSatisfiedAfter) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ readmitted: number; examined: number; continued: boolean }> => {
+    if (SURFACE_MODE !== 'real') return { readmitted: 0, examined: 0, continued: false };
+    return await readmitSatisfiedInTransaction(ctx, args, Date.now());
+  },
+});
 
 /**
  * Record an evaluation verdict and move the row to where it puts it.
