@@ -1,0 +1,263 @@
+import { describe, expect, it } from 'vitest';
+import {
+  approvedChannelNames,
+  approvedLinearScope,
+  emptyScopeReason,
+  groundScopePicks,
+  presentIntakeScope,
+  scopeCandidates,
+  scopeDrift,
+  scopeFieldsFor,
+  sentenceScopePicks,
+  type ScopeCandidate,
+  type ScopePage,
+} from '../../../src/surfaces/intake-scope';
+import { companyPage } from '../../fixtures/company-bed';
+
+const REVOPS = companyPage('revops/handbook.md');
+const FINANCE = companyPage('finance/handbook.md');
+
+/** The two handbooks in one order or the other, as one documentation set. */
+function pages(order: 'revops-first' | 'finance-first'): ScopePage[] {
+  const both = [REVOPS, FINANCE].map(
+    (page): ScopePage => ({ sourceId: 'source-folder', ref: page.ref, markdown: page.markdown }),
+  );
+  return order === 'revops-first' ? both : [...both].reverse();
+}
+
+/** The value of each candidate for one field, from one page. */
+function valuesOn(candidates: readonly ScopeCandidate[], field: string, ref: string): string[] {
+  return candidates
+    .filter((candidate): boolean => candidate.field === field && candidate.ref === ref)
+    .map((candidate): string => candidate.value);
+}
+
+describe('intake scope candidates', (): void => {
+  it.fails('reads the fields a work-bearing class has, and none for any other class', (): void => {
+    expect(scopeFieldsFor('kanban')).toEqual(['team', 'project']);
+    expect(scopeFieldsFor('chat')).toEqual(['channel']);
+    expect(scopeFieldsFor('analytics')).toEqual([]);
+  });
+
+  it.fails('extracts each documented value per page, with the line that states it', (): void => {
+    const linear = scopeCandidates(pages('revops-first'), ['team', 'project']);
+    expect(valuesOn(linear, 'team', 'revops/handbook.md')).toEqual(['REVOPS']);
+    expect(valuesOn(linear, 'project', 'revops/handbook.md')).toEqual(['Q3 close']);
+    expect(valuesOn(linear, 'team', 'finance/handbook.md')).toEqual(['FIN']);
+    expect(valuesOn(linear, 'project', 'finance/handbook.md')).toEqual(['September close']);
+    expect(linear).toContainEqual({
+      field: 'team',
+      value: 'FIN',
+      sourceId: 'source-folder',
+      ref: 'finance/handbook.md',
+      quote: '- Team: `FIN`',
+    });
+    expect(linear).toContainEqual({
+      field: 'project',
+      value: 'September close',
+      sourceId: 'source-folder',
+      ref: 'finance/handbook.md',
+      quote: '- Project: `September close`',
+    });
+
+    const slack = scopeCandidates(pages('revops-first'), ['channel']);
+    expect(valuesOn(slack, 'channel', 'revops/handbook.md')).toEqual([
+      'revops-asks',
+      'revops',
+      'ops-requests',
+    ]);
+    expect(valuesOn(slack, 'channel', 'finance/handbook.md')).toEqual([
+      'finance-close',
+      'ops-requests',
+    ]);
+    expect(slack).toContainEqual({
+      field: 'channel',
+      value: 'finance-close',
+      sourceId: 'source-folder',
+      ref: 'finance/handbook.md',
+      quote: '- Channels: #finance-close, #ops-requests',
+    });
+    expect(slack.some((candidate): boolean => candidate.field !== 'channel')).toBe(false);
+  });
+
+  it.fails('reads a project named inline and a team named by its identifier', (): void => {
+    const candidates = scopeCandidates(
+      [
+        {
+          ref: 'linear.md',
+          markdown: [
+            '# Linear automation',
+            '- Team: `RevOps`, identifier `REVOPS`.',
+            'Work in project `Q3 close` only.',
+          ].join('\n'),
+        },
+      ],
+      ['team', 'project'],
+    );
+    expect(candidates).toEqual([
+      { field: 'team', value: 'REVOPS', ref: 'linear.md', quote: '- Team: `RevOps`, identifier `REVOPS`.' },
+      { field: 'team', value: 'RevOps', ref: 'linear.md', quote: '- Team: `RevOps`, identifier `REVOPS`.' },
+      { field: 'project', value: 'Q3 close', ref: 'linear.md', quote: 'Work in project `Q3 close` only.' },
+    ]);
+  });
+});
+
+describe('grounding a pick on its page line', (): void => {
+  it.fails('keeps a pick only when the cited page states the value, and says why it dropped the rest', (): void => {
+    const candidates = scopeCandidates(pages('revops-first'), ['team', 'project']);
+    const scope = groundScopePicks(
+      [
+        { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
+        { field: 'project', value: 'Q4 plan', ref: 'finance/handbook.md' },
+        { field: 'team', value: 'FIN', ref: 'revops/handbook.md' },
+      ],
+      candidates,
+    );
+    expect(scope.team).toEqual({
+      value: 'FIN',
+      sourceId: 'source-folder',
+      ref: 'finance/handbook.md',
+      quote: '- Team: `FIN`',
+    });
+    expect(scope.project?.value).toBe('September close');
+    expect(scope.notes).toEqual([
+      'Dropped project `Q4 plan`: finance/handbook.md does not state it.',
+      'Dropped team `FIN`: revops/handbook.md does not state it.',
+    ]);
+  });
+
+  it.fails('never takes a value that differs from the page by case or by invention', (): void => {
+    const candidates = scopeCandidates(pages('finance-first'), ['team', 'project']);
+    const scope = groundScopePicks(
+      [
+        { field: 'project', value: 'september close', ref: 'finance/handbook.md' },
+        { field: 'team', value: 'FINANCE', ref: 'finance/handbook.md' },
+      ],
+      candidates,
+    );
+    expect(scope.team).toBeUndefined();
+    expect(scope.project).toBeUndefined();
+    expect(scope.notes).toHaveLength(2);
+  });
+
+  it.fails('keeps one team and one project, and every grounded channel once', (): void => {
+    const linear = scopeCandidates(pages('revops-first'), ['team', 'project']);
+    const twoProjects = groundScopePicks(
+      [
+        { field: 'project', value: 'Q3 close', ref: 'revops/handbook.md' },
+        { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
+      ],
+      linear,
+    );
+    expect(twoProjects.project?.value).toBe('Q3 close');
+    expect(twoProjects.notes).toEqual([
+      'Dropped project `September close`: intake reads one project, and `Q3 close` was picked first.',
+    ]);
+
+    const slack = scopeCandidates(pages('revops-first'), ['channel']);
+    const channels = groundScopePicks(
+      [
+        { field: 'channel', value: '#finance-close', ref: 'finance/handbook.md' },
+        { field: 'channel', value: 'ops-requests', ref: 'finance/handbook.md' },
+        { field: 'channel', value: 'ops-requests', ref: 'revops/handbook.md' },
+        { field: 'channel', value: 'revops-asks', ref: 'finance/handbook.md' },
+      ],
+      slack,
+    );
+    expect(approvedChannelNames(channels)).toEqual(['finance-close', 'ops-requests']);
+    expect(channels.notes).toEqual([
+      'Dropped #revops-asks: finance/handbook.md does not state it.',
+    ]);
+  });
+
+  it.fails('gives each role its own project whichever handbook comes first', (): void => {
+    for (const order of ['revops-first', 'finance-first'] as const) {
+      const candidates = scopeCandidates(pages(order), ['team', 'project']);
+      const finance = groundScopePicks(
+        sentenceScopePicks(['Linear, team FIN, project September close, for the close tickets.'], candidates),
+        candidates,
+      );
+      const revops = groundScopePicks(
+        sentenceScopePicks(
+          ['Linear for the real work, team REVOPS, project Q3 close: the audit note is a ticket.'],
+          candidates,
+        ),
+        candidates,
+      );
+      expect(approvedLinearScope(finance)).toEqual({ team: 'FIN', project: 'September close' });
+      expect(approvedLinearScope(revops)).toEqual({ team: 'REVOPS', project: 'Q3 close' });
+      expect(finance.project?.ref).toBe('finance/handbook.md');
+      expect(revops.project?.ref).toBe('revops/handbook.md');
+    }
+  });
+
+  it.fails("takes the channels the manager's sentence names, and no other role's", (): void => {
+    for (const order of ['revops-first', 'finance-first'] as const) {
+      const candidates = scopeCandidates(pages(order), ['channel']);
+      const finance = groundScopePicks(
+        sentenceScopePicks(
+          ['Slack: #finance-close is ours, and #ops-requests is the shared request channel.'],
+          candidates,
+        ),
+        candidates,
+      );
+      expect(approvedChannelNames(finance)).toEqual(['finance-close', 'ops-requests']);
+    }
+    expect(sentenceScopePicks([], scopeCandidates(pages('revops-first'), ['channel']))).toEqual([]);
+  });
+});
+
+describe('the scope an approved card reads', (): void => {
+  const candidates = scopeCandidates(pages('revops-first'), ['team', 'project', 'channel']);
+  const finance = groundScopePicks(
+    [
+      { field: 'team', value: 'FIN', ref: 'finance/handbook.md' },
+      { field: 'project', value: 'September close', ref: 'finance/handbook.md' },
+      { field: 'channel', value: 'finance-close', ref: 'finance/handbook.md' },
+      { field: 'channel', value: 'ops-requests', ref: 'finance/handbook.md' },
+    ],
+    candidates,
+  );
+
+  it.fails('reads the stored values, and nothing from an empty scope', (): void => {
+    expect(approvedLinearScope(finance)).toEqual({ team: 'FIN', project: 'September close' });
+    expect(approvedChannelNames(finance)).toEqual(['finance-close', 'ops-requests']);
+    expect(approvedLinearScope({})).toEqual({});
+    expect(approvedChannelNames({})).toEqual([]);
+  });
+
+  it.fails('presents the reads line with its quotes, and says why an empty scope reads nothing', (): void => {
+    expect(presentIntakeScope('Linear', 'kanban', finance)).toEqual({
+      line: 'Reads: Linear team FIN, project September close',
+      empty: false,
+      quotes: [finance.team, finance.project],
+      notes: [],
+    });
+    expect(presentIntakeScope('Slack', 'chat', finance).line).toBe(
+      'Reads: Slack #finance-close, #ops-requests',
+    );
+    const empty = presentIntakeScope('Slack', 'chat', { notes: ['Dropped #revops: x does not state it.'] });
+    expect(empty).toEqual({
+      line: emptyScopeReason('Slack', 'chat'),
+      empty: true,
+      quotes: [],
+      notes: ['Dropped #revops: x does not state it.'],
+    });
+    expect(emptyScopeReason('Linear', 'kanban')).toBe(
+      'Reads nothing from Linear: no documented team or project was picked for this role.',
+    );
+  });
+
+  it.fails('names a value whose page line has changed since the card was approved', (): void => {
+    const edited = pages('revops-first').map(
+      (page): ScopePage =>
+        page.ref === 'finance/handbook.md'
+          ? { ...page, markdown: page.markdown.replace('- Project: `September close`', '- Project: `October close`') }
+          : page,
+    );
+    expect(scopeDrift(finance, pages('revops-first'))).toEqual([]);
+    expect(scopeDrift(finance, edited)).toEqual([finance.project]);
+    expect(scopeDrift(finance, edited.filter((page): boolean => page.ref !== 'finance/handbook.md'))).toHaveLength(4);
+  });
+});
