@@ -71,6 +71,7 @@ export const persistEncrypted = internalMutation({
     label: v.string(),
     ciphertext: v.string(),
     iv: v.string(),
+    explicitlyAssigned: v.optional(v.boolean()),
     source: credentialSource,
     appId: v.optional(v.string()),
     reactivate: v.boolean(),
@@ -103,6 +104,7 @@ export const persistEncrypted = internalMutation({
         label: args.label,
         ciphertext: args.ciphertext,
         iv: args.iv,
+        explicitlyAssigned: args.explicitlyAssigned,
         source: args.source,
         appId: args.appId,
         createdAt: Date.now(),
@@ -113,6 +115,7 @@ export const persistEncrypted = internalMutation({
       label: args.label,
       ciphertext: args.ciphertext,
       iv: args.iv,
+      explicitlyAssigned: args.explicitlyAssigned,
       appId: args.appId,
       lastUsedAt: args.reactivate ? undefined : existing.lastUsedAt,
       revokedAt: args.reactivate ? undefined : existing.revokedAt,
@@ -130,12 +133,14 @@ export const updateMetadata = internalMutation({
     kind: credentialKind,
     label: v.string(),
     appId: v.optional(v.string()),
+    explicitlyAssigned: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<void> => {
     await ctx.db.patch(args.credentialId, {
       kind: args.kind,
       label: args.label,
       appId: args.appId,
+      explicitlyAssigned: args.explicitlyAssigned,
       status: undefined,
       statusReason: undefined,
     });
@@ -176,7 +181,7 @@ export const activeValuesForOwner = internalQuery({
   handler: async (
     ctx,
     args,
-  ): Promise<{ overflow: boolean; rows: Array<{ _id: Id<'credentials'>; ciphertext: string; iv: string; label: string; pageDerived: boolean }> }> => {
+  ): Promise<{ overflow: boolean; rows: Array<{ _id: Id<'credentials'>; ciphertext: string; iv: string; label: string; pageDerived: boolean; explicitlyAssigned?: boolean }> }> => {
     const rows = await ctx.db
       .query('credentials')
       .withIndex('by_userId', (index) => index.eq('userId', args.userId))
@@ -185,7 +190,7 @@ export const activeValuesForOwner = internalQuery({
       overflow: rows.length > OWNER_KNOWN_VALUE_CAP,
       rows: rows.flatMap((row) =>
         !row.revokedAt && !row.status && row.ciphertext !== undefined && row.iv !== undefined
-          ? [{ _id: row._id, ciphertext: row.ciphertext, iv: row.iv, label: row.label, pageDerived: typeof row.source !== 'string' }]
+          ? [{ _id: row._id, ciphertext: row.ciphertext, iv: row.iv, label: row.label, pageDerived: typeof row.source !== 'string', explicitlyAssigned: row.explicitlyAssigned }]
           : [],
       ),
     };
@@ -278,6 +283,7 @@ export const store = internalAction({
     kind: credentialKind,
     label: v.string(),
     plaintext: v.optional(v.string()),
+    explicitlyAssigned: v.optional(v.boolean()),
     source: credentialSource,
     appId: v.optional(v.string()),
   },
@@ -317,6 +323,7 @@ export const store = internalAction({
           kind: args.kind,
           label: args.label,
           appId: args.appId,
+          explicitlyAssigned: args.explicitlyAssigned,
         });
         return existing._id;
       }
@@ -328,6 +335,7 @@ export const store = internalAction({
       label: args.label,
       source: args.source,
       appId: args.appId,
+      explicitlyAssigned: args.explicitlyAssigned,
       ...encrypted,
       reactivate: existing !== null,
     });

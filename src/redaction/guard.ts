@@ -23,34 +23,70 @@ export interface NeverASecret {
 }
 
 const PERMISSION_SCOPE = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_.-]*$/;
+/**
+ * A Slack channel reference: a hash, then the lowercase letters, digits,
+ * hyphens and underscores a channel name is made of.
+ */
+const CHANNEL_REFERENCE = /^#[a-z0-9][a-z0-9_-]{0,79}$/;
+/**
+ * A dotted name: two or more identifier segments of letters and underscores
+ * (a version segment allowed), which is what a Web API method
+ * (`users.lookupByEmail`, `oauth.v2.access`), a code path (`process.env.HOME`)
+ * or a file name (`README.md`) looks like. A segment with a digit in it is not
+ * one, so a token with dots in it keeps its chance of being a secret.
+ */
+const DOTTED_IDENTIFIER = /^[A-Za-z_]+(?:\.(?:[A-Za-z_]+|v\d+))+$/;
+
+function characterEntropy(value: string): number {
+  const counts = new Map<string, number>();
+  for (const character of value) counts.set(character, (counts.get(character) ?? 0) + 1);
+  return [...counts.values()].reduce((sum, count) => {
+    const probability = count / value.length;
+    return sum - probability * Math.log2(probability);
+  }, 0);
+}
 
 /** Scope segments are names; long, varied opaque segments can still be secrets. */
 function isPermissionScope(value: string): boolean {
   if (!PERMISSION_SCOPE.test(value)) return false;
   return value.split(/[:_.-]/).every((part) => {
     if (part.length < 16) return true;
-    const counts = new Map<string, number>();
-    for (const character of part) counts.set(character, (counts.get(character) ?? 0) + 1);
-    const entropy = [...counts.values()].reduce((sum, count) => {
-      const probability = count / part.length;
-      return sum - probability * Math.log2(probability);
-    }, 0);
-    return entropy < 3.5;
+    return characterEntropy(part) < 3.5;
   });
 }
 
 /**
  * What a guard knows about where a value sits.
  *
- * A scope identifier is a name, and a name-shaped value is not a secret
- * unless something says it is: an explicit password or secret assignment
- * ("password: 'ops:hunter2'", "login: svc / ops:hunter2") does, so under one
- * the scope shape does not apply. A stored row carries that context as a
- * password-class label.
+ * A scope identifier, a channel reference and a dotted name are names, and a
+ * name-shaped value is not a secret unless something says it is: an explicit
+ * password or secret assignment ("password: 'ops:hunter2'", "login: svc /
+ * ops:hunter2") does, so under one the name shapes do not apply. A stored
+ * row carries that context as a password-class label.
  */
 export interface GuardContext {
   /** The value sits under an explicit credential assignment. */
   assigned?: boolean;
+}
+
+/** The shapes that are names, and so do not apply under an explicit assignment. */
+const NAME_SHAPES: ReadonlySet<string> = new Set(['permission scope', 'channel reference', 'hostname', 'dotted identifier']);
+
+/**
+ * Whether one shape rejects a value where it sits.
+ *
+ * Args:
+ *   shape: The shape to try.
+ *   value: The trimmed candidate.
+ *   assigned: Whether the value sits under an explicit credential assignment.
+ *
+ * Returns:
+ *   True when the shape applies and matches.
+ */
+function shapeRejects(shape: NeverASecret, value: string, assigned: boolean): boolean {
+  if (NAME_SHAPES.has(shape.name) && assigned) return false;
+  if (shape.name === 'permission scope') return isPermissionScope(value);
+  return shape.pattern.test(value);
 }
 
 /** A stored row's label that records an explicit password assignment on the page. */
@@ -73,6 +109,7 @@ export function assignedByLabel(label: string): boolean {
 /** Shapes a secret value never has, tried against the trimmed span text. */
 export const NEVER_A_SECRET: readonly NeverASecret[] = [
   { name: 'permission scope', pattern: PERMISSION_SCOPE },
+  { name: 'channel reference', pattern: CHANNEL_REFERENCE },
   { name: 'reference', pattern: /^(?:<[^>]*>|\$\{[^}]*\}|\{\{[^}]*\}\})$/ },
   { name: 'marker or placeholder inside', pattern: /<credential:|\{\{|\$\{/ },
   { name: 'upper-case name', pattern: /^[A-Z][A-Z_]{2,}$/ },
@@ -87,6 +124,7 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
   { name: 'placeholder', pattern: /^[a-z]{1,4}[-_](?:test|live|example|sample|dummy|placeholder|changeme)$/i },
   /** Dot-separated lowercase labels ending in an alphabetic top label: an address, not a value. */
   { name: 'hostname', pattern: /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/ },
+  { name: 'dotted identifier', pattern: DOTTED_IDENTIFIER },
   /** A ticket key then a slug: the branch a ticket tracker names for its issue. */
   { name: 'branch name', pattern: /^[a-z]+-\d+(?:-[a-z0-9]+)+$/ },
   { name: 'uuid', pattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i },
@@ -105,7 +143,12 @@ export const NEVER_A_SECRET: readonly NeverASecret[] = [
 const LABEL_THEN_VALUE =
   /^(?:[^\s:=]+\s+){0,3}(?:password|passwd|pwd|passcode|pin|token|key|secret|login|credential|密码|口令|令牌|密钥|秘钥|凭证)s?\s*(?:\bis\b|=|:|：|是|为)?\s*[`'"]?([^\s`'"，。]+)[`'"，。]?$/i;
 const PASSWORD_LABEL = /(?:^|\s)(?:password|passwd|pwd|passcode|pin|密码|口令)$/i;
-const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+)$/;
+/** A word of a runbook or of code: lowercase, Capitalised, snake_case or camelCase letters, no digit. */
+const RUNBOOK_WORD = /^(?:[a-z]{4,}|[A-Z][a-z]{3,}|[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+)$/;
+/** Long alphabetic values with enough character variety are plausible opaque credentials. */
+function opaqueRunbookWord(value: string): boolean {
+  return value.length >= 24 && characterEntropy(value) >= 4;
+}
 /**
  * A word that names a credential, on its own or as the tail of a longer name
  * (`LOOKER_PASSWORD`, `X-Auth-Token`, `secret key`, `GH_PAT`).
@@ -140,6 +183,7 @@ const USER_PASSWORD_PAIR = /^([^\s/`'"]+)[ \t]*\/[ \t]*([^\s/`'"]+)$/;
 const USERNAME_DESIGNATOR = /(?:\blogin[ \t]+is|(?:\buser ?name|\buser|\baccount)[ \t]*(?:\bis\b|[:=：]))[ \t]*[`'"]?$/i;
 /** JSON keys whose string values are identifiers by construction. */
 const IDENTIFIER_KEY = /"(?:id|identifier|branchName|branch|slug|url|name|title|ts|channel|team|state|status|key)"[ \t]*:[ \t]*"$/;
+const IDENTIFIER_KEY_ASSIGNMENT = /\b(?:channel|method)[ \t]+key[ \t]*[:=][ \t]*[`'"]?$/i;
 const LEADING_PUNCTUATION = /^[(\[{'"`]+/;
 /** Sentence punctuation a model swallows; `!` and `?` stay, a password may end in one. */
 const TRAILING_PUNCTUATION = /[.,;:)\]}'"`]+$/;
@@ -178,9 +222,33 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   const scope = isPermissionScope(text.slice(tokenStart, tokenEnd));
   const scopeContext = /[\[,'"`]\s*$/.test(text.slice(0, tokenStart)) ||
     /^\s*[\],'"`]/.test(text.slice(tokenEnd));
-  const assigned =
-    SECRET_ASSIGNMENT.test(text.slice(0, tokenStart)) || PASSWORD_ASSIGNMENT.test(text.slice(0, tokenStart));
+  const assignedAt = (index: number): boolean =>
+    SECRET_ASSIGNMENT.test(text.slice(0, index)) || PASSWORD_ASSIGNMENT.test(text.slice(0, index));
+  const columnAssigned = inCredentialColumn(text, start, end);
+  const assigned = assignedAt(tokenStart) || columnAssigned;
   if (scope && scopeContext && !assigned && text[tokenEnd] !== '@') return undefined;
+  // A partial span of a channel reference (`ops-requests` of `#ops-requests`)
+  // or of a dotted name (`lookupByEmail` of `users.lookupByEmail`) is the
+  // whole name's to judge, and a name is not a secret unless a label says so.
+  const token = text.slice(tokenStart, tokenEnd);
+  const hashed = text[tokenStart - 1] === '#' && !/[A-Za-z0-9_#]/.test(text[tokenStart - 2] ?? '');
+  const wholeToken = hashed ? `#${token}` : token;
+  if (IDENTIFIER_KEY_ASSIGNMENT.test(text.slice(0, hashed ? tokenStart - 1 : tokenStart)) &&
+    (CHANNEL_REFERENCE.test(wholeToken) || DOTTED_IDENTIFIER.test(token))) return undefined;
+  if (hashed && CHANNEL_REFERENCE.test(`#${token}`) && !assignedAt(tokenStart - 1) && !columnAssigned) return undefined;
+  if (DOTTED_IDENTIFIER.test(token) && !assigned) return undefined;
+  const assignedTokenStart = hashed ? tokenStart - 1 : tokenStart;
+  if ((assignedAt(assignedTokenStart) || columnAssigned) &&
+    (start > assignedTokenStart || end < tokenEnd)) {
+    start = assignedTokenStart;
+    end = tokenEnd;
+    value = text.slice(start, end);
+    const terminal = TRAILING_PUNCTUATION.exec(value);
+    if (terminal) {
+      end -= terminal[0].length;
+      value = text.slice(start, end);
+    }
+  }
   // Some detectors return the assignment label rather than its value.
   // Only extend a password label across explicit assignment syntax.
   if (label === 'password' && PASSWORD_LABEL.test(value)) {
@@ -214,18 +282,26 @@ export function guardSecretSpan(text: string, span: Span, label: string): Span |
   // Tool names and prose are not credentials merely because a detector
   // labels them as such. Explicit assignments still protect weak passwords.
   const wholeWord = !/[A-Za-z0-9_]$/.test(before) && !/^[A-Za-z0-9_]/.test(text.slice(end));
-  if (wholeWord && RUNBOOK_WORD.test(value) && !SECRET_ASSIGNMENT.test(before) && !inCredentialColumn(text, start, end)) {
+  if (wholeWord && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value) &&
+    !SECRET_ASSIGNMENT.test(before) && !inCredentialColumn(text, start, end)) {
     return undefined;
   }
   if (NEVER_REDACT.has(value)) return undefined;
+  const assignedValue = assignedAt(start) || columnAssigned;
   const rejected = NEVER_A_SECRET.find((shape: NeverASecret): boolean => {
     if (shape.name === 'permission scope') return false;
     if (explicitPassword && (shape.name === 'too short' || (shape.name === 'figure' && /^\d+$/.test(value)))) {
       return false;
     }
-    return shape.pattern.test(value);
+    return shapeRejects(shape, value, assignedValue);
   });
   return rejected ? undefined : { start, end };
+}
+
+/** Preserve the explicit page context that a generated credential label cannot encode. */
+export function explicitlyAssignedCredential(text: string, start: number, end: number): boolean {
+  const before = text.slice(0, start);
+  return SECRET_ASSIGNMENT.test(before) || PASSWORD_ASSIGNMENT.test(before) || inCredentialColumn(text, start, end);
 }
 
 /**
@@ -282,7 +358,7 @@ export function splitUserPasswordPair(value: string): { username: string; passwo
   const pair = USER_PASSWORD_PAIR.exec(value);
   if (!pair) return undefined;
   const password = pair[2].replace(TRAILING_PUNCTUATION, '');
-  if (!password || guardReason(password)) return undefined;
+  if (!password || guardReason(password, { assigned: true })) return undefined;
   return { username: pair[1], password };
 }
 
@@ -323,17 +399,17 @@ export function personalDataGuardReason(kind: string, value: string): string | u
  *
  * Args:
  *   value: A candidate value.
- *   context: Where the value sits; under an explicit assignment the scope
- *     shape does not apply.
+ *   context: Where the value sits; under an explicit assignment the name
+ *     shapes (scope, channel reference, dotted identifier) do not apply.
  *
  * Returns:
  *   The rule name, or undefined when the value passes.
  */
 export function guardReason(value: string, context: GuardContext = {}): string | undefined {
   const shape = NEVER_A_SECRET.find((candidate: NeverASecret): boolean =>
-    candidate.pattern.test(value) &&
-    (candidate.name !== 'permission scope' || (!context.assigned && isPermissionScope(value))),
+    shapeRejects(candidate, value, context.assigned === true),
   )?.name;
   if (shape) return shape;
+  if (!context.assigned && RUNBOOK_WORD.test(value) && !opaqueRunbookWord(value)) return 'runbook word';
   return NEVER_REDACT.has(value) ? 'never-redact list' : undefined;
 }

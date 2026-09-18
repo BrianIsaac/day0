@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { guardReason, guardSecretSpan, splitUserPasswordPair } from '../../../src/redaction/guard';
 import { NEVER_REDACT } from '../../../src/redaction/policy';
+import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 
 function spanOf(text: string, value: string): { start: number; end: number } {
   const start = text.indexOf(value);
@@ -109,6 +110,7 @@ describe('label-only spans and pairs', (): void => {
 
   it('reads a user / password pair as a username and a secret', (): void => {
     expect(splitUserPasswordPair('revops / hunter2')).toEqual({ username: 'revops', password: 'hunter2' });
+    expect(splitUserPasswordPair('revops / sunshine')).toEqual({ username: 'revops', password: 'sunshine' });
     expect(splitUserPasswordPair('revops/Sunny-Day-42')).toEqual({ username: 'revops', password: 'Sunny-Day-42' });
     expect(splitUserPasswordPair('docs / runbooks / archive')).toBeUndefined();
     expect(splitUserPasswordPair('Looker tile')).toBeUndefined();
@@ -199,4 +201,135 @@ it('keeps long and versioned permission identifiers without treating opaque halv
     expect(guardSecretSpan(text, spanOf(text, value), 'credential')).toEqual(spanOf(text, value));
     expect(guardReason(value)).toBeUndefined();
   }
+});
+
+describe('structural identifiers the deployed model took for tokens on 18 September', (): void => {
+  it.each([
+    ['#ops-requests', 'channel reference'],
+    ['#revops-asks', 'channel reference'],
+    ['#finance_close-2026', 'channel reference'],
+    ['users.lookupByEmail', 'dotted identifier'],
+    ['chat.postMessage', 'dotted identifier'],
+    ['admin.conversations.ekm.listOriginalConnectedChannelInfo', 'dotted identifier'],
+    ['process.env.HOME', 'dotted identifier'],
+    ['README.md', 'dotted identifier'],
+  ])('rejects %s as %s wherever it sits without a credential label', (value: string, reason: string): void => {
+    expect(guardReason(value)).toBe(reason);
+    for (const text of [`Use \`${value}\` for that.`, `${value}, then the rest`, `(${value})`, `| ${value} | all teams |`]) {
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), text).toBeUndefined();
+    }
+  });
+
+  it('rejects an all-lowercase method name by the hostname shape, which comes first', (): void => {
+    for (const value of ['auth.test', 'oauth.v2.access', 'conversations.history']) {
+      expect(guardReason(value), value).toBe('hostname');
+      const text = `Methods automations use: \`${value}\`, then the rest.`;
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), value).toBeUndefined();
+    }
+  });
+
+  it('rejects a bare camelCase identifier the way it rejects a snake_case one, outside an assignment', (): void => {
+    for (const value of ['lookupByEmail', 'postMessage', 'save_comment']) {
+      const listed = `Call \`${value}\` first.`;
+      expect(guardSecretSpan(listed, spanOf(listed, value), 'access token'), value).toBeUndefined();
+      const labelled = `token: ${value}`;
+      expect(guardSecretSpan(labelled, spanOf(labelled, value), 'access token'), value).toEqual(spanOf(labelled, value));
+    }
+  });
+
+  it('rejects a partial span of either: the name without its hash, one segment of a method', (): void => {
+    const channel = 'Requests arrive in `#ops-requests` and `#revops`.';
+    expect(guardSecretSpan(channel, spanOf(channel, 'ops-requests'), 'access token')).toBeUndefined();
+    const method = 'Call `users.lookupByEmail` first, then `conversations.open`.';
+    expect(guardSecretSpan(method, spanOf(method, 'lookupByEmail'), 'access token')).toBeUndefined();
+    expect(guardSecretSpan(method, spanOf(method, 'conversations'), 'access token')).toBeUndefined();
+  });
+
+  it('keeps every token-shaped value, dots and digits included, with or without a label', (): void => {
+    for (const value of [
+      CORPUS_SLOTS.slack_bot_token,
+      CORPUS_SLOTS.linear_token,
+      CORPUS_SLOTS.client_secret,
+      CORPUS_SLOTS.jwt,
+      ['q7Mz', '2Kv9', 'Tx4W'].join('.'),
+      '#Summer2026!',
+      'hunter2.local1',
+    ]) {
+      expect(guardReason(value), value).toBeUndefined();
+      expect(guardReason(value, { assigned: true }), value).toBeUndefined();
+      const text = `Use \`${value}\` for that.`;
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token'), value).toEqual(spanOf(text, value));
+    }
+  });
+
+  it('keeps a labelled secret that has the shape of a channel or a dotted name', (): void => {
+    const dotted = ['Ops', 'Desk', 'Winter'].join('.');
+    expect(guardReason(dotted)).toBe('dotted identifier');
+    expect(guardReason(dotted, { assigned: true })).toBeUndefined();
+    expect(guardReason('#summer2026')).toBe('channel reference');
+    expect(guardReason('#summer2026', { assigned: true })).toBeUndefined();
+    for (const [text, value, label] of [
+      [`Looker password: \`${dotted}\``, dotted, 'password'],
+      [`password = ${dotted}`, dotted, 'password'],
+      ['token: "#summer2026"', '#summer2026', 'credential'],
+      [`Slack bot token: ${CORPUS_SLOTS.slack_bot_token}`, CORPUS_SLOTS.slack_bot_token, 'access token'],
+    ] as const) {
+      expect(guardSecretSpan(text, spanOf(text, value), label), text).toEqual(spanOf(text, value));
+    }
+    // A label that swallowed the value narrows to it and still keeps it.
+    const swallowed = `password: ${dotted}`;
+    expect(guardSecretSpan(swallowed, { start: 0, end: swallowed.length }, 'password')).toEqual(spanOf(swallowed, dotted));
+  });
+
+  it('keeps a name-shaped token in a credential table column', (): void => {
+    const value = ['#', 'cobalt', 'harbor'].join('');
+    const table = `| Service | Service token |\n|---|---|\n| Bot | ${value} |`;
+    expect(guardSecretSpan(table, spanOf(table, value), 'access token')).toEqual(spanOf(table, value));
+  });
+
+  it('keeps a lowercase dotted password when its label assigns it explicitly', (): void => {
+    const value = ['winter', 'spring'].join('.');
+    const text = `Password: ${value}`;
+    expect(guardSecretSpan(text, spanOf(text, value), 'password')).toEqual(spanOf(text, value));
+    expect(guardReason(value)).toBe('hostname');
+    expect(guardReason(value, { assigned: true })).toBeUndefined();
+  });
+
+  it('keeps the full assigned secret when a span covers only its part after a hash or dot', (): void => {
+    const hashed = ['#', 'cobalt-harbor'].join('');
+    const hashText = `token: ${hashed}`;
+    expect(guardSecretSpan(hashText, spanOf(hashText, 'cobalt-harbor'), 'access token'))
+      .toEqual(spanOf(hashText, hashed));
+    const dotted = ['Cobalt', 'Harbor', 'Winter'].join('.');
+    const dotText = `token: ${dotted}`;
+    expect(guardSecretSpan(dotText, spanOf(dotText, 'Winter'), 'access token'))
+      .toEqual(spanOf(dotText, dotted));
+  });
+
+  it('keeps long opaque camelCase and snake_case secret values without a label', (): void => {
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+    const letters = (offset: number, count: number): string =>
+      Array.from({ length: count }, (_, index) => alphabet[(offset + index * 7) % alphabet.length]).join('');
+    const camel = [letters(0, 7), letters(1, 6), letters(2, 6), letters(3, 6), letters(4, 6)]
+      .map((part, index) => index === 0 ? part : `${part[0].toUpperCase()}${part.slice(1)}`).join('');
+    const snake = [letters(5, 14), letters(9, 14)].join('_');
+    for (const value of [camel, snake]) {
+      const text = `Use ${value} for the integration.`;
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token')).toEqual(spanOf(text, value));
+    }
+    for (const name of ['postMessage', 'save_comment', 'listOriginalConnectedChannelInfo']) {
+      const text = `Call ${name} for the workflow.`;
+      expect(guardSecretSpan(text, spanOf(text, name), 'access token')).toBeUndefined();
+      expect(guardReason(name)).toBe('runbook word');
+    }
+  });
+
+  it('keeps channel and method identifiers when a documentation key names the identifier', (): void => {
+    for (const [text, value] of [
+      ['Channel key: #ops-requests', '#ops-requests'],
+      ['Method key: users.lookupByEmail', 'users.lookupByEmail'],
+    ]) {
+      expect(guardSecretSpan(text, spanOf(text, value), 'access token')).toBeUndefined();
+    }
+  });
 });

@@ -13,6 +13,7 @@ import * as credentialsModule from '../../convex/credentials';
 import * as eventsModule from '../../convex/events';
 import * as exportActions from '../../convex/exportActions';
 import { redactCredentials } from '../../src/docs/redaction';
+import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
 import { ScriptedSpanModel } from '../fixtures/redaction-double';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { OWNER_KNOWN_VALUE_CAP, OWNER_KNOWN_VALUES_CAP_REASON } from '../../src/redaction/known-values';
@@ -175,4 +176,141 @@ it('lets resync repair an old scope row instead of redacting it as a known value
   // Explicitly entered material still participates in exact-value protection.
   await insertRow(harness, { userId: 'owner', label: 'Entered value', plaintext: 'users:read' });
   expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toEqual(['users:read']);
+});
+
+it('leaves a stored channel name or method name out of exact removal while every real secret stays in', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const dotted = ['Ops', 'Desk', 'Winter'].join('.');
+  // The rows a sync at 0acb98f left behind: the two originals, and the copies the
+  // owner-wide removal itself stored under other pages' refs.
+  const stored = {
+    channel: await insertRow(harness, { userId: 'owner', label: 'revenue operations token', plaintext: '#ops-requests' }),
+    method: await insertRow(harness, { userId: 'owner', label: 'slack token', plaintext: 'users.lookupByEmail' }),
+    spread: await insertRow(harness, { userId: 'owner', label: 'slack credential', plaintext: '#ops-requests' }),
+    slack: await insertRow(harness, { userId: 'owner', label: 'slack bot token', plaintext: CORPUS_SLOTS.slack_bot_token }),
+    linear: await insertRow(harness, { userId: 'owner', label: 'linear service token', plaintext: CORPUS_SLOTS.linear_token }),
+    generic: await insertRow(harness, { userId: 'owner', label: 'warehouse api key', plaintext: CORPUS_SLOTS.client_secret }),
+    dotted: await insertRow(harness, { userId: 'owner', label: 'looker password', plaintext: dotted }),
+  };
+  await harness.run(async (ctx) => {
+    const sourceId = await ctx.db.insert('docSources', {
+      userId: 'owner', label: 'Handbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+    });
+    for (const [ref, id] of Object.entries(stored)) await ctx.db.patch(id, { source: { sourceId, ref: `${ref}.md` } });
+  });
+  const values = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  expect([...values].sort()).toEqual(
+    [CORPUS_SLOTS.slack_bot_token, CORPUS_SLOTS.linear_token, CORPUS_SLOTS.client_secret, dotted].sort(),
+  );
+  const rows = await harness.run(async (ctx) => ({
+    channel: (await ctx.db.get(stored.channel))!,
+    method: (await ctx.db.get(stored.method))!,
+    dotted: (await ctx.db.get(stored.dotted))!,
+  }));
+  expect(cryptoActions.storedCredentialGuardReason(rows.channel)).toBe('channel reference');
+  expect(cryptoActions.storedCredentialGuardReason(rows.method)).toBe('dotted identifier');
+  expect(cryptoActions.storedCredentialGuardReason(rows.dotted)).toBeUndefined();
+  // A value a person typed in is theirs to protect, whatever its shape.
+  await insertRow(harness, { userId: 'owner', label: 'Entered value', plaintext: '#ops-requests' });
+  expect(await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' })).toContain('#ops-requests');
+});
+
+it('keeps explicitly assigned name-shaped tokens in owner-wide removal after page storage', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
+    userId: 'owner', label: 'Access', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+  }));
+  const cases = [
+    { value: ['#', 'cobalt', 'harbor'].join(''), line: 'Service token:', swallowed: false },
+    { value: ['Cobalt', 'Harbor', 'Winter'].join('.'), line: 'Service token:', swallowed: false },
+    { value: ['winter', 'spring'].join('.'), line: 'Service token:', swallowed: false },
+    { value: ['#', 'silver', 'meadow'].join(''), line: 'token:', swallowed: true },
+    { value: ['Silver', 'Meadow', 'Spring'].join('.'), line: '| Bot |', swallowed: false },
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const text = entry.line === '| Bot |'
+      ? `| Service | Service token |\n|---|---|\n| Bot | ${entry.value} |`
+      : `${entry.line} ${entry.value}`;
+    const model = new ScriptedSpanModel((body) => {
+      const candidate = entry.swallowed ? text : entry.value;
+      const start = body.indexOf(candidate);
+      return start < 0 ? [] : [{ start, end: start + candidate.length, label: 'access token', score: 0.99 }];
+    });
+    const extracted = await redactCredentials(text, 'Access', { model });
+    expect(extracted.credentials).toHaveLength(1);
+    await harness.action(internal.credentials.store, {
+      userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: `page-${index}.md` },
+    });
+  }
+  const known = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  for (const { value } of cases) {
+    expect(known.includes(value)).toBe(true);
+    const repeated = `The same token is mentioned here: ${value}`;
+    const result = await redactCredentials(repeated, 'Other page', {
+      model: new ScriptedSpanModel(() => []), known,
+    });
+    expect(result.markdown.includes(value)).toBe(false);
+  }
+});
+
+it('stores long opaque name-spelled credentials and removes them from another page', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
+    userId: 'owner', label: 'Access', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+  }));
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+  const letters = (offset: number, count: number): string =>
+    Array.from({ length: count }, (_, index) => alphabet[(offset + index * 7) % alphabet.length]).join('');
+  const values = [
+    [letters(0, 7), letters(1, 6), letters(2, 6), letters(3, 6), letters(4, 6)]
+      .map((part, index) => index === 0 ? part : `${part[0].toUpperCase()}${part.slice(1)}`).join(''),
+    [letters(5, 14), letters(9, 14)].join('_'),
+  ];
+  for (const [index, value] of values.entries()) {
+    const text = `Use ${value} for the integration.`;
+    const model = new ScriptedSpanModel((body) => {
+      const start = body.indexOf(value);
+      return start < 0 ? [] : [{ start, end: start + value.length, label: 'access token', score: 0.99 }];
+    });
+    const extracted = await redactCredentials(text, 'Access', { model });
+    expect(extracted.credentials.map((row) => row.plaintext)).toEqual([value]);
+    await harness.action(internal.credentials.store, {
+      userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: `opaque-${index}.md` },
+    });
+  }
+  const known = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  for (const value of values) {
+    expect(known.includes(value)).toBe(true);
+    const repeated = await redactCredentials(`Repeated: ${value}`, 'Other page', {
+      model: new ScriptedSpanModel(() => []), known,
+    });
+    expect(repeated.markdown.includes(value)).toBe(false);
+  }
+});
+
+it('drops old page-derived runbook words from exact removal but keeps an assigned word token', async () => {
+  const harness = convexTest(schema, allConvexModules());
+  const sourceId = await harness.run(async (ctx) => await ctx.db.insert('docSources', {
+    userId: 'owner', label: 'Runbook', kind: 'folder', locator: '.', status: 'synced', createdAt: 1, updatedAt: 1,
+  }));
+  for (const [index, value] of ['postMessage', 'save_comment'].entries()) {
+    const id = await insertRow(harness, { userId: 'owner', label: 'slack token', plaintext: value });
+    await harness.run(async (ctx) => await ctx.db.patch(id, { source: { sourceId, ref: `old-${index}.md` } }));
+  }
+  const before = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  expect(before.includes('postMessage')).toBe(false);
+  expect(before.includes('save_comment')).toBe(false);
+
+  const text = 'token: lookupByEmail';
+  const model = new ScriptedSpanModel((body) => {
+    const start = body.indexOf('lookupByEmail');
+    return start < 0 ? [] : [{ start, end: start + 'lookupByEmail'.length, label: 'access token', score: 0.99 }];
+  });
+  const extracted = await redactCredentials(text, 'Access', { model });
+  expect(extracted.credentials).toHaveLength(1);
+  await harness.action(internal.credentials.store, {
+    userId: 'owner', kind: 'value', ...extracted.credentials[0], source: { sourceId, ref: 'assigned.md' },
+  });
+  const after = await harness.action(internal.credentialCryptoActions.ownerValues, { userId: 'owner' });
+  expect(after.includes('lookupByEmail')).toBe(true);
 });

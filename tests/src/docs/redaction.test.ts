@@ -207,3 +207,34 @@ it('retains protection for assignments, bearer headers and userinfo', async () =
     expect(result.credentials.map((credential) => credential.plaintext), text).toContain(value);
   }
 });
+
+it('stores an entire assigned name-shaped value when detection covers only a segment', async () => {
+  for (const [value, segment] of [
+    [['#', 'cobalt-harbor'].join(''), 'cobalt-harbor'],
+    [['Cobalt', 'Harbor', 'Winter'].join('.'), 'Winter'],
+  ]) {
+    const text = `token: ${value}`;
+    const model = new ScriptedSpanModel((body) => {
+      const start = body.indexOf(segment);
+      return start < 0 ? [] : [{ start, end: start + segment.length, label: 'access token', score: 0.99 }];
+    });
+    const result = await redactCredentials(text, 'Access', { model });
+    expect(result.credentials.map((credential) => credential.plaintext)).toEqual([value]);
+    expect(result.markdown.includes(value)).toBe(false);
+  }
+});
+
+it('preserves identifier values under channel-key and method-key documentation labels', async () => {
+  for (const [text, value] of [
+    ['Channel key: #ops-requests', '#ops-requests'],
+    ['Method key: users.lookupByEmail', 'users.lookupByEmail'],
+  ]) {
+    const model = new ScriptedSpanModel((body) => {
+      const start = body.indexOf(value);
+      return start < 0 ? [] : [{ start, end: start + value.length, label: 'access token', score: 0.99 }];
+    });
+    const result = await redactCredentials(text, 'Access', { model });
+    expect(result.markdown).toBe(text);
+    expect(result.credentials).toEqual([]);
+  }
+});
