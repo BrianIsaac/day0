@@ -887,6 +887,9 @@ export const finishPlanGroundingRead = internalMutation({
   },
 });
 
+/** The most events `planGroundingReads` walks back through before it gives up. */
+const GROUNDING_READ_SCAN_LIMIT = 2_000;
+
 /**
  * The current plan-grounding read of a work item: the most recent one whose
  * ledger row was attached, as the event stored it (already redacted). The
@@ -898,19 +901,22 @@ export const planGroundingReads = internalQuery({
   handler: async (ctx, args): Promise<Array<{ action: unknown; applied: unknown }>> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) return [];
-    const events = await ctx.db
+    // Newest first and stopped at the first match, within a bound: the
+    // events table is indexed by agent alone, and an item with no read in
+    // reach simply has none to cite.
+    const newestFirst = ctx.db
       .query('events')
       .withIndex('by_agent', (q) => q.eq('agentId', row.agentId).gt('_creationTime', row._creationTime))
-      .order('desc')
-      .collect();
-    const latest = events.find((event) => {
-      if (event.type !== 'work.plan-grounding-read') return false;
-      const payload = event.payload as { workItemId?: string; action?: unknown; applied?: unknown };
-      return payload.workItemId === args.workItemId && payload.action !== undefined && payload.applied != null;
-    });
-    if (!latest) return [];
-    const { action, applied } = latest.payload as { action: unknown; applied: unknown };
-    return [{ action, applied }];
+      .order('desc');
+    let scanned = 0;
+    for await (const event of newestFirst) {
+      scanned += 1;
+      if (scanned > GROUNDING_READ_SCAN_LIMIT) break;
+      if (event.type !== 'work.plan-grounding-read') continue;
+      const { workItemId, action, applied } = event.payload as { workItemId?: string; action?: unknown; applied?: unknown };
+      if (workItemId === args.workItemId && action !== undefined && applied != null) return [{ action, applied }];
+    }
+    return [];
   },
 });
 
