@@ -3,34 +3,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { convexTest } from 'convex-test';
-import { anyApi } from 'convex/server';
 import { afterEach, describe, expect, it } from 'vitest';
+import { api } from '../../convex/_generated/api';
 import type { Id, TableNames } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { recomputeFromExport, runRecompute } from '../../scripts/recompute-metrics';
 import { allConvexModules } from '../convex/all-modules';
-
-/** The script's surface as the tests use it; imported by path until it exists. */
-interface RecomputeModule {
-  recomputeFromExport(
-    path: string,
-    options?: { owner?: string },
-  ): {
-    owner: string;
-    figures: {
-      employees: Array<{ agentId: string; name: string; metrics: Record<string, unknown> }>;
-      company: Record<string, unknown>;
-      excludedAgents: number;
-      omittedEmployees: number;
-    };
-    anchor: { at: number; source: string } | null;
-    timeline: Array<{ at: number; offsetMs: number; employee: string; type: string }>;
-  };
-  runRecompute(argv: string[], io: { log(line: string): void; error(line: string): void }): number;
-}
-
-const SCRIPT = '../../scripts/recompute-metrics.ts';
-const loadScript = async (): Promise<RecomputeModule> =>
-  (await import(/* @vite-ignore */ SCRIPT)) as RecomputeModule;
 
 const OWNER = 'company-owner';
 const temporary: string[] = [];
@@ -66,8 +44,20 @@ async function companyBackend(): Promise<ReturnType<typeof convexTest>> {
       completedAt: 950,
     });
     const employees = [
-      { name: 'Priya', bossEmail: 'boss@day0.local', deployedAt: 1_000, approvedAt: 61_000, waits: [4_000, 6_000] },
-      { name: 'Mateo', bossEmail: 'boss@day0.local', deployedAt: 2_000, approvedAt: 122_000, waits: [30_000] },
+      {
+        name: 'Priya',
+        bossEmail: 'boss@day0.local',
+        deployedAt: 1_000,
+        approvedAt: 61_000,
+        waits: [4_000, 6_000],
+      },
+      {
+        name: 'Mateo',
+        bossEmail: 'boss@day0.local',
+        deployedAt: 2_000,
+        approvedAt: 122_000,
+        waits: [30_000],
+      },
       {
         name: 'Day0 revocation evaluation',
         bossEmail: 'eval-revocation-20260918t080000@day0.local',
@@ -130,7 +120,11 @@ async function companyBackend(): Promise<ReturnType<typeof convexTest>> {
           { workItemId, decisionId: `${employee.name}-${index}`, kind: 'plan' },
           requestedAt,
         );
-        await addEvent('work.plan-approved', { workItemId, decidedVia: 'dashboard' }, requestedAt + wait);
+        await addEvent(
+          'work.plan-approved',
+          { workItemId, decidedVia: 'dashboard' },
+          requestedAt + wait,
+        );
       }
     }
   });
@@ -165,17 +159,20 @@ async function exportDirectory(harness: ReturnType<typeof convexTest>): Promise<
   return directory;
 }
 
-function capture(): { io: { log(line: string): void; error(line: string): void }; out: string[]; err: string[] } {
+function capture(): {
+  io: { log(line: string): void; error(line: string): void };
+  out: string[];
+  err: string[];
+} {
   const out: string[] = [];
   const err: string[] = [];
   return { io: { log: (line) => out.push(line), error: (line) => err.push(line) }, out, err };
 }
 
 describe('recomputing the supervision figures from an export', (): void => {
-  it.fails('reproduces metrics:forOwner exactly from an export of two employees and an evaluation agent', async (): Promise<void> => {
-    const { recomputeFromExport } = await loadScript();
+  it('reproduces metrics:forOwner exactly from an export of two employees and an evaluation agent', async (): Promise<void> => {
     const harness = await companyBackend();
-    const live = await harness.withIdentity({ subject: OWNER }).query(anyApi.metrics.forOwner, {});
+    const live = await harness.withIdentity({ subject: OWNER }).query(api.metrics.forOwner, {});
     const directory = await exportDirectory(harness);
 
     const recomputed = recomputeFromExport(directory, { owner: OWNER });
@@ -193,8 +190,7 @@ describe('recomputing the supervision figures from an export', (): void => {
     });
   });
 
-  it.fails('reads the zip Convex writes as it reads the directory', async (): Promise<void> => {
-    const { recomputeFromExport } = await loadScript();
+  it('reads the zip Convex writes as it reads the directory', async (): Promise<void> => {
     const directory = await exportDirectory(await companyBackend());
     const archive = join(mkdtempSync(join(tmpdir(), 'day0-recompute-zip-')), 'export.zip');
     temporary.push(resolve(archive, '..'));
@@ -205,8 +201,7 @@ describe('recomputing the supervision figures from an export', (): void => {
     );
   });
 
-  it.fails('anchors the timeline on the owner’s first documentation sync and names each employee', async (): Promise<void> => {
-    const { recomputeFromExport } = await loadScript();
+  it('anchors the timeline on the owner’s first documentation sync and names each employee', async (): Promise<void> => {
     const directory = await exportDirectory(await companyBackend());
 
     const { anchor, timeline } = recomputeFromExport(directory, { owner: OWNER });
@@ -221,8 +216,7 @@ describe('recomputing the supervision figures from an export', (): void => {
     expect(timeline.some((row) => row.employee === 'Day0 revocation evaluation')).toBe(false);
   });
 
-  it.fails('passes an --expect file that names every field and fails naming each field that differs', async (): Promise<void> => {
-    const { recomputeFromExport, runRecompute } = await loadScript();
+  it('passes an --expect file that names every field and fails naming each field that differs', async (): Promise<void> => {
     const directory = await exportDirectory(await companyBackend());
     const { figures } = recomputeFromExport(directory, { owner: OWNER });
     const expectations = mkdtempSync(join(tmpdir(), 'day0-recompute-expect-'));
@@ -234,7 +228,10 @@ describe('recomputing the supervision figures from an export', (): void => {
       wrong,
       JSON.stringify({
         company: { decisions: { medianLatencyMs: 5_000 }, auditTrail: { total: 3 } },
-        employees: [{ name: 'Priya' }, { name: 'Mateo', metrics: { charter: { timeToFirstApprovedMs: 1 } } }],
+        employees: [
+          { name: 'Priya' },
+          { name: 'Mateo', metrics: { charter: { timeToFirstApprovedMs: 1 } } },
+        ],
       }),
     );
 
@@ -245,15 +242,16 @@ describe('recomputing the supervision figures from an export', (): void => {
 
     const fail = capture();
     expect(runRecompute([directory, '--owner', OWNER, '--expect', wrong], fail.io)).toBe(1);
-    expect(fail.err.join('\n')).toContain('company.decisions.medianLatencyMs: expected 5000, got 6000');
+    expect(fail.err.join('\n')).toContain(
+      'company.decisions.medianLatencyMs: expected 5000, got 6000',
+    );
     expect(fail.err.join('\n')).toContain(
       'employees.1.metrics.charter.timeToFirstApprovedMs: expected 1, got 120000',
     );
     expect(fail.err.join('\n')).not.toContain('auditTrail');
   });
 
-  it.fails('refuses a path that is not an export and an unknown flag with usage', async (): Promise<void> => {
-    const { runRecompute } = await loadScript();
+  it('refuses a path that is not an export and an unknown flag with usage', async (): Promise<void> => {
     const empty = mkdtempSync(join(tmpdir(), 'day0-recompute-empty-'));
     temporary.push(empty);
 
@@ -275,16 +273,18 @@ describe('recomputing the supervision figures from an export', (): void => {
 const RECORDING_EXPORT = resolve('docs/plans/progress/recording-run-2026-09-17/export.zip');
 
 describe.skipIf(!existsSync(RECORDING_EXPORT))('the 17 September recording export', (): void => {
-  it.fails('reproduces its own Supervision card from the zip', async (): Promise<void> => {
-    const { recomputeFromExport } = await loadScript();
-
+  it('reproduces its own Supervision card from the zip', async (): Promise<void> => {
     const { figures, anchor, timeline } = recomputeFromExport(RECORDING_EXPORT);
 
     expect(figures.employees.map((row) => row.name)).toEqual(['ops worker']);
     expect(figures.excludedAgents).toBe(0);
     // numbers.md, "Supervision card (metrics:forAgent)".
     const card = {
-      charter: { timesToFirstApprovedMs: [66_924], medianTimeToFirstApprovedMs: 66_924, approvedEmployees: 1 },
+      charter: {
+        timesToFirstApprovedMs: [66_924],
+        medianTimeToFirstApprovedMs: 66_924,
+        approvedEmployees: 1,
+      },
       decisions: {
         requested: 2,
         approved: 2,
