@@ -255,6 +255,45 @@ describe('the protected volumes and projects', (): void => {
 });
 
 describe('snapshot and restore run through a throwaway container', (): void => {
+  it('discards a tar if a holder starts while the snapshot runs', (): void => {
+    const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-race-'));
+    const bin = join(scratch, 'bin');
+    const count = join(scratch, 'ps-called');
+    const target = join(scratch, '.demo-bed', 'snapshots', 'race.tar.gz');
+    mkdirSync(bin);
+    const docker = join(bin, 'docker');
+    writeFileSync(docker, [
+      '#!/bin/sh',
+      'if [ "$1" = volume ] && [ "$2" = inspect ]; then exit 0; fi',
+      'if [ "$1" = ps ]; then',
+      '  if [ -f "$DOCKER_RACE_COUNT" ]; then printf "trial-backend-1\\n"; else touch "$DOCKER_RACE_COUNT"; fi',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = run ]; then printf "tar" > "$DOCKER_RACE_TARGET"; exit 0; fi',
+      'exit 99',
+      '',
+    ].join('\n'));
+    chmodSync(docker, 0o755);
+    writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    try {
+      const result = spawnSync(join(process.cwd(), 'node_modules/.bin/tsx'), [
+        join(process.cwd(), 'scripts/demo-bed.ts'), 'snapshot', '--from-volume',
+        'day0-p11r-test_convex_data', '--snapshot', target,
+      ], {
+        cwd: scratch,
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`,
+          DOCKER_RACE_COUNT: count, DOCKER_RACE_TARGET: target },
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('started while the snapshot ran');
+      expect(existsSync(target)).toBe(false);
+      expect(existsSync(`${target}.sha256`)).toBe(false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a protected project in the file before restore or down can call Docker', (): void => {
     const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-contract-'));
     const bin = join(scratch, 'bin');

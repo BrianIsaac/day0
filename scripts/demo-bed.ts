@@ -29,7 +29,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -1666,6 +1666,18 @@ function snapshot(options: DemoBedOptions): void {
     run('docker', snapshotCommand(source, directory, basename(target)), { inherit: true }),
     'tar',
   );
+  let holdersAfter: string[];
+  try {
+    holdersAfter = volumeHeldByRunning(source);
+  } catch (error) {
+    rmSync(target, { force: true });
+    throw error;
+  }
+  if (holdersAfter.length > 0) {
+    rmSync(target, { force: true });
+    throw new Error(`${holdersAfter.join(', ')} started while the snapshot ran; discarded the tar. ` +
+      `Stop the backend and keep it stopped until snapshot finishes, then retry.`);
+  }
   const digest = sha256(target);
   writeFileSync(`${target}.sha256`, `${digest}  ${basename(target)}\n`, 'utf8');
   const size = statSync(target).size;
