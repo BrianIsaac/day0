@@ -37,6 +37,12 @@ import {
 } from '../../convex/orientationActions';
 import { allConvexModules } from './all-modules';
 import { sanitisedNotionPage, type NotionPageName } from '../fixtures/notion-pages';
+import { companyPage, companyPages } from '../fixtures/company-bed';
+import {
+  reconcileDocumentedSystems,
+  type CharterSystemSeed,
+  type DocumentedSystemSeed,
+} from '../../convex/surfaces';
 import {
   fakeCredentialState,
   resetFakeCredentials,
@@ -1534,6 +1540,288 @@ describe('the browser floor in orientation', (): void => {
     await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 0, absent: 1 });
     expect((await surfacesBySlug(harness, agentId))['northstar-crm']).toMatchObject({
       verdict: 'absent',
+    });
+  });
+});
+
+/** What each role's manager said about each system, from the company bed's `answers.md`. */
+const ROLE_CHARTERS = {
+  revops: {
+    proposedFunction:
+      'Revops coordinator for the Q3 close: triage what comes in, work the tickets in Linear, keep the audit notes on them and draft updates for the manager.',
+    namedSystems: [
+      {
+        name: 'Linear',
+        class: 'kanban',
+        whereMentioned:
+          'Linear for the real work, team REVOPS, project Q3 close: the audit note, the Looker pipeline tile refresh and the Northstar reconcile are all tickets in Linear.',
+      },
+      {
+        name: 'Slack',
+        class: 'chat',
+        whereMentioned:
+          'Asks come in on Slack in #revops-asks and in #ops-requests, the shared request channel; #revops is the team channel.',
+      },
+      {
+        name: 'Looker pipeline tile',
+        class: 'analytics',
+        whereMentioned: 'The pipeline numbers live on the Looker pipeline tile, web only.',
+      },
+      {
+        name: 'Northstar CRM',
+        class: 'crm',
+        whereMentioned: "Northstar CRM has the accounts but we've got no approved way in yet.",
+      },
+    ],
+  },
+  finance: {
+    proposedFunction:
+      'Close coordinator: post the close status note on its ticket in Linear and answer questions in #finance-close about where the close stands.',
+    namedSystems: [
+      {
+        name: 'Linear',
+        class: 'kanban',
+        whereMentioned: 'Linear, team FIN, project September close, for the close tickets.',
+      },
+      {
+        name: 'Slack',
+        class: 'chat',
+        whereMentioned:
+          'Slack: #finance-close is ours, and #ops-requests is the shared request channel.',
+      },
+      {
+        name: 'NetLedger',
+        class: 'other',
+        whereMentioned:
+          "NetLedger is the books, but you've got no approved way in; anything that needs NetLedger comes to me.",
+      },
+    ],
+  },
+  logistics: {
+    proposedFunction:
+      'Logistics desk for shipment exceptions: work the exception tickets in Linear and record each one with the customer notice from the handbook.',
+    namedSystems: [
+      {
+        name: 'Linear',
+        class: 'kanban',
+        whereMentioned: 'Linear, team LOG, project Shipment exceptions.',
+      },
+      {
+        name: 'Slack',
+        class: 'chat',
+        whereMentioned:
+          "Slack: #logistics-desk is the desk's channel and #ops-requests is the shared request channel.",
+      },
+    ],
+  },
+} as const;
+
+type CompanyRole = keyof typeof ROLE_CHARTERS;
+
+/** The systems documentation discovery finds in the company set, per source. */
+function companySystems(source: 'folder' | 'notion'): DocumentedSystemSeed[] {
+  const onboarding = companyPage('onboarding.md').markdown.split('\n');
+  const row = (system: string): string =>
+    onboarding.find((line): boolean => line.startsWith(`| ${system} |`)) ?? system;
+  if (source === 'notion') {
+    return [
+      { slug: 'linear', displayName: 'Linear', class: 'kanban', ref: 'notion-linear-automation', quote: '# Linear automation' },
+      { slug: 'slack', displayName: 'Slack', class: 'chat', ref: 'notion-slack-automation-policy', quote: '# Slack automation policy' },
+    ];
+  }
+  return [
+    { slug: 'linear', displayName: 'Linear', class: 'kanban', ref: 'onboarding.md', quote: row('Linear') },
+    { slug: 'slack', displayName: 'Slack', class: 'chat', ref: 'onboarding.md', quote: row('Slack') },
+    {
+      slug: 'looker-pipeline-tile',
+      displayName: 'Looker pipeline tile',
+      class: 'analytics',
+      ref: 'systems/looker-pipeline-tile.md',
+      quote: '# Looker pipeline tile',
+    },
+    { slug: 'northstar-crm', displayName: 'Northstar CRM', class: 'crm', ref: 'systems/northstar-crm.md', quote: '# Northstar CRM' },
+    { slug: 'netledger', displayName: 'NetLedger', class: 'other', ref: 'systems/netledger.md', quote: '# NetLedger' },
+  ];
+}
+
+/**
+ * Bring up the company: one folder source and one Notion source carrying the
+ * company's pages, and one employee per role whose charter is approved.
+ *
+ * Documentation discovery reconciles every documented system into each
+ * employee's surfaces, then charter approval seeds the systems each charter
+ * names, which is the order the product runs them in.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   charters: The charter body per role; a role left out is not deployed.
+ *
+ * Returns:
+ *   The agent id per deployed role.
+ */
+async function seedCompany(
+  harness: TestConvex<typeof schema>,
+  charters: Partial<Record<CompanyRole, { proposedFunction: string; namedSystems: readonly CharterSystemSeed[] }>>,
+): Promise<Partial<Record<CompanyRole, Id<'agents'>>>> {
+  const agents = await harness.run(async (ctx): Promise<Partial<Record<CompanyRole, Id<'agents'>>>> => {
+    const sources = {
+      folder: await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Kestrel Supply folder',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+      notion: await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Kestrel Supply handbook',
+        kind: 'mcp',
+        serverKind: 'notion',
+        locator: 'http://docs-notion-mcp:3000/mcp',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    };
+    for (const page of companyPages()) {
+      await ctx.db.insert('docPages', {
+        sourceId: sources[page.source],
+        ref: page.ref,
+        title: page.title,
+        markdown: page.markdown,
+        updatedAt: 1,
+      });
+    }
+    const agents: Partial<Record<CompanyRole, Id<'agents'>>> = {};
+    for (const [role, charter] of Object.entries(charters) as Array<
+      [CompanyRole, { proposedFunction: string; namedSystems: readonly CharterSystemSeed[] }]
+    >) {
+      // Discovery schedules orientation only for an active employee; the
+      // charter's approval is what makes it active, so it is seeded after.
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@kestrel.example',
+        name: role,
+        userId: 'owner',
+        state: 'charter-pending',
+        createdAt: 1,
+      });
+      for (const source of ['folder', 'notion'] as const) {
+        await reconcileDocumentedSystems(ctx, {
+          agentId,
+          sourceId: sources[source],
+          systems: companySystems(source),
+          now: 2,
+        });
+      }
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.0',
+        body: { version: '0.0', ...charter },
+        approved: true,
+        approvedAt: 3,
+        createdAt: 3,
+      });
+      await ctx.db.patch(agentId, { state: 'active' });
+      agents[role] = agentId;
+    }
+    return agents;
+  });
+  for (const [role, agentId] of Object.entries(agents) as Array<[CompanyRole, Id<'agents'>]>) {
+    await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: [...(charters[role]?.namedSystems ?? [])],
+    });
+  }
+  return agents;
+}
+
+/** Each surface's verdict by slug. */
+function verdicts(surfaces: Record<string, Doc<'surfaces'>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(surfaces).map(([slug, surface]): [string, string] => [slug, surface.verdict]),
+  );
+}
+
+/** The model paths the company's documentation supports, per system. */
+function companyPath(system: string): DraftPath {
+  if (system === 'Linear') return 'mcp';
+  if (system === 'Slack') return 'documented-api';
+  if (system === 'Looker pipeline tile') return 'browser-driven';
+  return 'escalate';
+}
+
+describe('each employee reads its own role', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+  });
+
+  it.fails("proposes only the systems each employee's charter names over one company page set", async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, ROLE_CHARTERS);
+    for (const agentId of Object.values(agents)) await orientDeclared(harness, agentId);
+
+    expect(verdicts(await surfacesBySlug(harness, agents.revops!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'proposed',
+      'northstar-crm': 'absent',
+      netledger: 'declared',
+    });
+    expect(verdicts(await surfacesBySlug(harness, agents.finance!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'declared',
+      'northstar-crm': 'declared',
+      netledger: 'absent',
+    });
+    expect(verdicts(await surfacesBySlug(harness, agents.logistics!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'declared',
+      'northstar-crm': 'declared',
+      netledger: 'declared',
+    });
+    // No model call is spent on a system the employee's charter does not name.
+    expect(model.prompts.filter((prompt): boolean => /^System: Looker pipeline tile$/m.test(prompt))).toHaveLength(1);
+    const oriented = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (index) => index.eq('agentId', agents.finance!))
+          .collect(),
+    );
+    expect(
+      oriented
+        .filter((event): boolean => event.type === 'surface.oriented')
+        .map((event): string => (event.payload as { verdict: string }).verdict)
+        .sort(),
+    ).toEqual(['absent', 'proposed', 'proposed']);
+  });
+
+  it('orients every documented system, as before, when the charter names no work system', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = companyPath;
+    const harness = convexTest(schema, orientationModules());
+    const agents = await seedCompany(harness, {
+      finance: {
+        proposedFunction: ROLE_CHARTERS.finance.proposedFunction,
+        namedSystems: [
+          { name: 'Notion', class: 'docs', whereMentioned: 'The handbook is in Notion.' },
+        ],
+      },
+    });
+    await orientDeclared(harness, agents.finance!);
+    expect(verdicts(await surfacesBySlug(harness, agents.finance!))).toEqual({
+      linear: 'proposed',
+      slack: 'proposed',
+      'looker-pipeline-tile': 'proposed',
+      'northstar-crm': 'absent',
+      netledger: 'absent',
     });
   });
 });
