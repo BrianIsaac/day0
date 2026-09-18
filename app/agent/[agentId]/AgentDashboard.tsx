@@ -1458,18 +1458,20 @@ export function RegisteredSkillsPanel({
                       past the card's edge. */}
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-[var(--color-fg)] break-words">{s.name}</div>
-                    <div className="text-[var(--color-muted)] text-xs break-words">
-                      {/* Three different things, and the row used to say the
-                          first for two of them: a run working on it now, whose
-                          log is the previous attempt's; a run that died holding
-                          it, which the lease has since released; and no run at
-                          all, where the log is this skill's own verdict. */}
-                      {holdsLiveAuthoringClaim(s, now)
-                        ? 'authoring now · a run holds this skill'
-                        : s.authoringRunId
-                          ? 'a run stopped without reporting · Retry takes the skill over'
-                          : (s.verificationLog ?? s.description)}
-                    </div>
+                    {/* Three different things, and the row used to say the
+                        first for two of them: a run working on it now, whose
+                        log is the previous attempt's; a run that died holding
+                        it, which the lease has since released; and no run at
+                        all, where the log is this skill's own verdict. */}
+                    <SkillStatusLine
+                      text={
+                        holdsLiveAuthoringClaim(s, now)
+                          ? 'authoring now · a run holds this skill'
+                          : s.authoringRunId
+                            ? 'a run stopped without reporting · Retry takes the skill over'
+                            : (s.verificationLog ?? s.description)
+                      }
+                    />
                     <SkillInputs body={s.body || s.refusedBody || ''} />
                     <RefusedDraftDetails skill={s} />
                   </div>
@@ -1509,6 +1511,28 @@ export function RegisteredSkillsPanel({
         </div>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * What an unregistered skill's row says under its name.
+ *
+ * A one-line reason stays prose. A sandbox's log keeps its line breaks, in a
+ * box bounded in height that scrolls: a traceback collapsed into one run of
+ * text cannot be read, and one left unbounded makes the card as tall as the
+ * traceback. `break-words` still wraps a caret line, so Retry stays inside.
+ */
+function SkillStatusLine({ text }: { text: string }) {
+  if (!text.includes('\n')) {
+    return <div className="text-[var(--color-muted)] text-xs break-words">{text}</div>;
+  }
+  return (
+    <div
+      className="mt-0.5 text-[var(--color-muted)] text-[11px] leading-snug font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2"
+      data-skill-log="multiline"
+    >
+      {text}
+    </div>
   );
 }
 

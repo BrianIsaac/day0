@@ -1237,4 +1237,31 @@ describe('what Retry does to an unregistered skill', (): void => {
       expect(panel([failed])).toMatch(/<code[^>]*>&lt;closing-state&gt;<\/code> \(added by Day0\)/);
     });
   });
+
+  // The author's open item 3: a traceback rendered as one run of text cannot be read on camera.
+  describe('a verification log with line breaks', (): void => {
+    const log = [
+      'verification in the local sandbox (local:1f2e) failed - smoke test exited 1',
+      '',
+      'stderr:',
+      'smoke harness: run() raised KeyError on case 2',
+      '  File "authored_smoke.py", line 8, in run',
+      "KeyError: 'closing-state'",
+    ].join('\n');
+
+    it('keeps its line breaks, in a box bounded in height that scrolls, still wrapping a line with no spaces', (): void => {
+      const markup = panel([{ ...refused, verificationLog: log } as unknown as Doc<'skills'>]);
+      const block = /<div class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(markup);
+      expect(block).not.toBeNull();
+      const classes = block![1]!.split(' ');
+      expect(classes).toEqual(expect.arrayContaining(['whitespace-pre-wrap', 'break-words', 'max-h-40', 'overflow-y-auto', 'font-mono']));
+      expect(block![2]).toContain('failed - smoke test exited 1\n\nstderr:\nsmoke harness: run() raised KeyError on case 2\n  File');
+    });
+
+    it('leaves a one-line reason as the prose it was', (): void => {
+      const markup = panel([refused]);
+      expect(markup).not.toContain('data-skill-log="multiline"');
+      expect(markup).toMatch(/<div class="[^"]*\bbreak-words\b[^"]*">the authored skill is not a reusable procedure/);
+    });
+  });
 });
