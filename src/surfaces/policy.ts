@@ -85,11 +85,16 @@ const PATH_REFUSAL = /^(?:mcp\.call|http\.request) is not allowed on surface pat
  *   reason: The reason on a ledger row.
  *
  * Returns:
- *   True when the reason begins with one of the gate's refusal constants.
+ *   True when the reason is one of the gate's refusal constants, with or without its detail.
  */
 export function isGateRefusal(reason: string | undefined): boolean {
   if (!reason) return false;
-  return GATE_REFUSAL_REASONS.some((known) => reason.startsWith(known)) || PATH_REFUSAL.test(reason);
+  // The constant alone, or with its bracketed detail: a provider's own words
+  // may open the same way ("unknown tool save_isue") and are not the gate's.
+  return (
+    GATE_REFUSAL_REASONS.some((known) => reason === known || reason.startsWith(`${known} (`)) ||
+    PATH_REFUSAL.test(reason)
+  );
 }
 
 /** Emoji every message through a shared chat credential carries as its avatar. */
@@ -1399,7 +1404,11 @@ export function provenanceRefusal(
 ): string | undefined {
   if (parsed.kind === 'mcp.call') {
     if (isTicketCreate(parsed, surface)) {
-      return containsProvenanceTrailer(parsed.toolArgs.description as string)
+      // The signature is the last line of the description; a trailer anywhere
+      // else in the create, its title included, could name another employee.
+      return Object.values(parsed.toolArgs).some(
+        (value) => typeof value === 'string' && containsProvenanceTrailer(value),
+      )
         ? TRAILER_REFUSED
         : undefined;
     }
@@ -1468,8 +1477,8 @@ export function sharedWriteWithoutAttribution(
  * message through a shared chat credential also carries the employee's name
  * and icon so it stays attributable. Both are added by the server, never by
  * the skill: a skill-supplied trailer or `username` is refused rather than
- * merged, because either could name another employee. A dedicated `oauth` app posts as itself,
- * so nothing is added for it.
+ * merged, because either could name another employee. A dedicated `oauth` app
+ * posts as itself, so nothing is added for it.
  *
  * Args:
  *   parsed: A parsed surface action.

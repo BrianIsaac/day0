@@ -89,6 +89,15 @@ describe('a ticket create through a shared credential (19 Sep run, finding N)', 
       reason: TRAILER_REFUSED,
     });
   });
+
+  it('refuses a trailer in any other field of the create, such as its title', (): void => {
+    const forged = saveIssue({
+      team: 'REVOPS',
+      title: `Refresh the tile ${provenanceTrailer('Mateo', 'wi_9', 'run_9')}`,
+      description: 'Ask from the thread.',
+    });
+    expect(provenanceRefusal(forged, linear)).toBe(TRAILER_REFUSED);
+  });
 });
 
 describe('what the attribution rule still refuses', (): void => {

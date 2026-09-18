@@ -5203,6 +5203,11 @@ describe('a step the gate refuses does not strand the rest of the run (19 Sep ru
     const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
     expect(metrics.actions).toMatchObject({ refused: 1, held: 0, rejected: 0 });
 
+    // The activity feed labels the event as the card labels the item.
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    const failedEvent = events.find((event) => event.type === 'work.failed');
+    expect((failedEvent?.payload as { stopped?: boolean }).stopped).toBe(true);
+
     // Work landed, so the manager is told what landed, in one sentence that says "stopped" once.
     const notes = await harness.run(async (ctx) => await ctx.db.query('managerNotes').collect());
     expect(notes.map((note) => note.kind)).toEqual(['landed']);

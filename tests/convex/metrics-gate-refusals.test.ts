@@ -104,6 +104,10 @@ describe('telling a gate refusal from any other reason', (): void => {
     expect(isGateRefusal(undefined)).toBe(false);
     expect(isGateRefusal('HTTP 500')).toBe(false);
     expect(isGateRefusal('the provider said: no grant for this token')).toBe(false);
+    // A provider's own words may open like one of the constants; only the constant, alone or with its bracketed detail, counts.
+    expect(isGateRefusal('unknown tool save_isue; did you mean save_issue?')).toBe(false);
+    expect(isGateRefusal('no grant: token lacks the write scope')).toBe(false);
+    expect(isGateRefusal('unknown tool')).toBe(true);
     expect(isGateRefusal(WITHHELD_AFTER_FAILED_WRITE)).toBe(false);
   });
 });

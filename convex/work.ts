@@ -76,7 +76,7 @@ import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { landedWork, stopDetail, stoppedReason } from '../src/work/stop';
+import { isStopped, landedWork, stopDetail, stoppedReason } from '../src/work/stop';
 import {
   digestText,
   landedNoteText,
@@ -3038,7 +3038,7 @@ export const setFailed = internalMutation({
       payload: {
         workItemId: args.workItemId,
         reason,
-        ...(stopped ? { stopped: true } : {}),
+        ...(stopped || isStopped(reason) ? { stopped: true } : {}),
         ...(args.output !== undefined ? { output: args.output } : {}),
       },
       createdAt: Date.now(),
