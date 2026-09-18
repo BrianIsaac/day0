@@ -750,10 +750,16 @@ export const authorAndRegisterSkill = action({
           body,
         });
         if (!progress.held) return { ok: false, reason: SUPERSEDED };
-        verificationLog = `ran in ${backend} (${sandboxId})\n\nstdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\nok: ${result.ok}`;
+        // What the sandbox printed is the author's: its cases' values and the
+        // lines of its source a traceback quotes. It is redacted as a draft
+        // is, and only it: the frame around it is this action's own words,
+        // and a span model that reads a sandbox id as a secret should not get
+        // the chance.
+        const [stdout, stderr] = await redactAuthoringTexts(ctx, skill.agentId, [result.stdout, result.stderr]);
+        verificationLog = `ran in ${backend} (${sandboxId})\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}\nok: ${result.ok}`;
         if (!result.ok) {
           verificationFailure = result.failureReason ?? 'sandbox verification failed';
-          failedVerificationLog = `stderr:\n${result.stderr.trim()}\n\nstdout:\n${result.stdout.trim()}`;
+          failedVerificationLog = `stderr:\n${stderr!.trim()}\n\nstdout:\n${stdout!.trim()}`;
         }
       }
     } catch (err) {
@@ -782,11 +788,10 @@ export const authorAndRegisterSkill = action({
           eventType: 'skill.verification-failed',
         });
       }
-      const [failedLog] = await redactAuthoringTexts(ctx, skill.agentId, [failedVerificationLog]);
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
         rowReason: noted(
           `verification in ${backend} (${sandboxId}) failed - ${verificationFailure}\n\n` +
-            clipRefusedDraft(failedLog!.trim(), FAILED_VERIFICATION_LOG_CHARS),
+            clipRefusedDraft(failedVerificationLog, FAILED_VERIFICATION_LOG_CHARS),
         ),
         reason: `skill authored but verification failed - ${verificationFailure}`,
         eventType: 'skill.verification-failed',
@@ -813,12 +818,11 @@ export const authorAndRegisterSkill = action({
     // requeue of the work item that asked for the skill either all land or none
     // of them do. Anything that fails here leaves the row in a state the skills
     // panel lists and the next claim accepts.
-    const [registeredLog] = await redactAuthoringTexts(ctx, skill.agentId, [noted(verificationLog)]);
     const { registered } = await ctx.runMutation(internal.skills.completeRegistration, {
       skillId: args.skillId,
       runId,
       body,
-      verificationLog: registeredLog!,
+      verificationLog: noted(verificationLog),
     });
     if (!registered) return { ok: false, reason: SUPERSEDED };
 
