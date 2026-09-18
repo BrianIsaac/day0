@@ -118,6 +118,7 @@ export interface CompanyIo {
   run(command: string, args: readonly string[], options?: RunOptions): RunResult;
   log(line: string): void;
   now(): number;
+  sleep(ms: number): Promise<void>;
 }
 
 const USAGE = `Usage: pnpm bed:company <verb>
@@ -1000,6 +1001,7 @@ export function consoleIo(cwd: string = process.cwd()): CompanyIo {
       console.log(line);
     },
     now: (): number => Date.now(),
+    sleep: (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms)),
   };
 }
 

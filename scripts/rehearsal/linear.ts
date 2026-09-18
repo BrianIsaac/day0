@@ -12,11 +12,46 @@ interface GraphqlResponse<T> {
   errors?: Array<{ message: string }>;
 }
 
+/** The pause before the one retry when Linear did not say how long to wait. */
+export const RETRY_PAUSE_MS = 2_000;
+/** The longest wait a retry honours; Linear asking for more is reported instead. */
+export const MAX_RETRY_WAIT_MS = 60_000;
+
+/** A Linear call that failed, and whether a second attempt could succeed. */
+export class LinearRequestError extends Error {
+  constructor(
+    message: string,
+    readonly reason: string,
+    readonly transient: boolean,
+    readonly waitMs?: number,
+  ) {
+    super(message);
+    this.name = 'LinearRequestError';
+  }
+}
+
+/** Where a retry says what it is doing, and how it waits. */
+export interface RetryIo {
+  say(line: string): void;
+  sleep(ms: number): Promise<void>;
+}
+
+/** Not yet implemented: runs the first attempt only. */
+export async function retryOnce<T>(
+  _what: string,
+  _io: RetryIo,
+  first: () => Promise<T>,
+  _again: (failure: LinearRequestError) => Promise<T> = first,
+): Promise<T> {
+  return await first();
+}
+
 /** A GraphQL client over one API key and an injectable fetch. */
 export class LinearClient {
   constructor(
     private readonly apiKey: string,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly now: () => number = Date.now,
   ) {}
 
   /**
