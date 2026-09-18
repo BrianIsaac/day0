@@ -228,6 +228,9 @@ describe('signed-in landing', () => {
 });
 
 describe('the employee list', (): void => {
+  /** The list as the manager reads it: the queue line is several unbreakable parts in the markup. */
+  const readAs = (markup: string): string => markup.replace(/<[^>]+>/g, '');
+
   const signedIn = (): string => {
     authState.signedIn = true;
     try {
@@ -247,9 +250,9 @@ describe('the employee list', (): void => {
       expect(list).toContain(row.name);
       expect(list).toContain(row.roleLine);
     }
-    expect(list).toContain('3 open \u00b7 1 needs you');
-    expect(list).toContain('2 open \u00b7 2 need you');
-    expect(list).toContain('0 open \u00b7 0 need you');
+    expect(readAs(list)).toContain('3 open \u00b7 1 needs you');
+    expect(readAs(list)).toContain('2 open \u00b7 2 need you');
+    expect(readAs(list)).toContain('0 open \u00b7 0 need you');
     expect(list.match(/acts on its own/g)).toHaveLength(1);
     expect(list.match(/asks first/g)).toHaveLength(2);
   });
@@ -269,9 +272,9 @@ describe('the employee list', (): void => {
     try {
       const html = signedIn();
       const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
-      expect(list).toContain('0 open \u00b7 3 parked \u00b7 2 need you');
-      expect(list).toContain('0 open \u00b7 1 parked \u00b7 0 need you');
-      expect(list).toContain('0 open \u00b7 0 need you');
+      expect(readAs(list)).toContain('0 open \u00b7 3 parked \u00b7 2 need you');
+      expect(readAs(list)).toContain('0 open \u00b7 1 parked \u00b7 0 need you');
+      expect(readAs(list)).toContain('0 open \u00b7 0 need you');
       expect(list).toContain('Parked: waiting on a connection, a permission, a skill or a free slot');
     } finally {
       shownRoster = roster;
@@ -287,9 +290,9 @@ describe('the employee list', (): void => {
     try {
       const html = signedIn();
       const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
-      expect(list).toContain('0 open \u00b7 2 stopped \u00b7 2 need you');
-      expect(list).toContain('1 open \u00b7 1 parked \u00b7 1 stopped \u00b7 1 needs you');
-      expect(list).toContain('0 open \u00b7 0 need you');
+      expect(readAs(list)).toContain('0 open \u00b7 2 stopped \u00b7 2 need you');
+      expect(readAs(list)).toContain('1 open \u00b7 1 parked \u00b7 1 stopped \u00b7 1 needs you');
+      expect(readAs(list)).toContain('0 open \u00b7 0 need you');
       expect(list).toContain(
         'title="Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
       );
@@ -297,6 +300,7 @@ describe('the employee list', (): void => {
         'title="Parked: waiting on a connection, a permission, a skill or a free slot. The ones only you can release count under need you. Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
       );
       expect(list.match(/title="[^"]*Stopped/g)).toHaveLength(2);
+      expect(list).toContain('<span class="whitespace-nowrap">1 stopped \u00b7</span> <span class="whitespace-nowrap">1 needs you</span>');
     } finally {
       shownRoster = roster;
     }
