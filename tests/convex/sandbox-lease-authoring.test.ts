@@ -6,6 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
+import { holdSandboxLease } from '../../convex/skillActions';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -122,7 +123,60 @@ describe('an authoring run and the verification sandbox lease', (): void => {
   });
 
   afterEach((): void => {
+    vi.useRealTimers();
     restoreSurfaceMode();
+  });
+
+  it('gives up at five minutes without taking a lease freed at the deadline', async (): Promise<void> => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const ctx = {
+      runMutation: vi.fn(async (_reference: unknown, args: Record<string, unknown>) => {
+        if ('runId' in args) {
+          attempts += 1;
+          return { taken: attempts === 61, heldForMs: 10_000 };
+        }
+        return null;
+      }),
+    } as unknown as Parameters<typeof holdSandboxLease>[0];
+    const pending = holdSandboxLease(ctx, {
+      skillId: 'skill' as Id<'skills'>,
+      agentId: 'agent' as Id<'agents'>,
+      name: 'queued skill',
+      runId: 'run' as Id<'events'>,
+    });
+    await vi.advanceTimersByTimeAsync(300_000);
+    await expect(pending).resolves.toMatchObject({ held: false, waitedMs: 300_000 });
+    expect(attempts).toBe(60);
+  });
+
+  it('releases a lease granted by a slow take after the wait deadline', async (): Promise<void> => {
+    vi.useFakeTimers();
+    let releases = 0;
+    let mutations = 0;
+    const ctx = {
+      runMutation: vi.fn(async (_reference: unknown, args: Record<string, unknown>) => {
+        if ('runId' in args && 'skillId' in args) {
+          mutations += 1;
+          if (mutations === 2) {
+            releases += 1;
+            return { released: true };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 300_000));
+          return { taken: true };
+        }
+        return null;
+      }),
+    } as unknown as Parameters<typeof holdSandboxLease>[0];
+    const pending = holdSandboxLease(ctx, {
+      skillId: 'skill' as Id<'skills'>,
+      agentId: 'agent' as Id<'agents'>,
+      name: 'queued skill',
+      runId: 'run' as Id<'events'>,
+    });
+    await vi.advanceTimersByTimeAsync(300_000);
+    await expect(pending).resolves.toMatchObject({ held: false, waitedMs: 300_000 });
+    expect(releases).toBe(1);
   });
 
   it('holds the lease across its verification and releases it when the skill registers', async (): Promise<void> => {

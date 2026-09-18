@@ -308,7 +308,7 @@ const SANDBOX_WAIT_LIMIT_MS = 5 * 60_000;
  * Returns:
  *   Whether this run holds the lease, and how long it waited.
  */
-async function holdSandboxLease(
+export async function holdSandboxLease(
   ctx: ActionCtx,
   skill: { skillId: Id<'skills'>; agentId: Id<'agents'>; name: string; runId: Id<'events'> },
 ): Promise<{ held: boolean; waitedMs: number }> {
@@ -316,11 +316,24 @@ async function holdSandboxLease(
   const startedAt = Date.now();
   let waiting = false;
   for (;;) {
+    if (waiting && Date.now() - startedAt >= SANDBOX_WAIT_LIMIT_MS) {
+      return { held: false, waitedMs: Date.now() - startedAt };
+    }
     const attempt = await ctx.runMutation(internal.sandboxLease.take, {
       skillId: skill.skillId,
       runId: skill.runId,
     });
-    if (attempt.taken) return { held: true, waitedMs: Date.now() - startedAt };
+    if (attempt.taken) {
+      const waitedMs = Date.now() - startedAt;
+      if (waitedMs >= SANDBOX_WAIT_LIMIT_MS) {
+        await ctx.runMutation(internal.sandboxLease.release, {
+          skillId: skill.skillId,
+          runId: skill.runId,
+        });
+        return { held: false, waitedMs };
+      }
+      return { held: true, waitedMs };
+    }
     if (!waiting) {
       waiting = true;
       await ctx.runMutation(internal.events.log, {
