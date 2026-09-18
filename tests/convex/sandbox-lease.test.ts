@@ -61,7 +61,7 @@ async function seedSkill(
 }
 
 describe('one verification at a time', (): void => {
-  it.fails('gives the lease to one holder and refuses the next, naming who holds it', async (): Promise<void> => {
+  it('gives the lease to one holder and refuses the next, naming who holds it', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
     const first = await seedSkill(harness, 'kanban-comment-and-close');
@@ -76,7 +76,7 @@ describe('one verification at a time', (): void => {
     expect(refused.heldForMs).toBeGreaterThanOrEqual(0);
   });
 
-  it.fails('is taken by the waiter as soon as the holder releases it', async (): Promise<void> => {
+  it('is taken by the waiter as soon as the holder releases it', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
     const first = await seedSkill(harness, 'kanban-comment-and-close');
@@ -105,7 +105,7 @@ describe('one verification at a time', (): void => {
     expect((await harness.mutation(internal.sandboxLease.take, second)).taken).toBe(false);
   });
 
-  it.fails('is taken over once the holder\'s lease has expired, so a dead run cannot hold the queue', async (): Promise<void> => {
+  it('is taken over once the holder\'s lease has expired, so a dead run cannot hold the queue', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());

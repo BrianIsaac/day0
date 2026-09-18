@@ -19,6 +19,8 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 const recorded = vi.hoisted(() => ({
   outputs: [] as Array<{ body: string; smokeTest: string }>,
   sandboxRuns: 0,
+  /** Resolved by the sandbox mock when a verification starts. */
+  started: undefined as (() => void) | undefined,
   /** Held open while a verification is "running" in the sandbox. */
   gate: undefined as Promise<void> | undefined,
   sandbox: undefined as SkillSandboxRun | undefined,
@@ -37,6 +39,7 @@ vi.mock('../../src/lib/mastra', () => ({
 vi.mock('../../src/lib/skill-sandbox', () => ({
   authorAndVerifySkill: async (): Promise<SkillSandboxRun> => {
     recorded.sandboxRuns += 1;
+    recorded.started?.();
     await recorded.gate;
     if (!recorded.sandbox) throw new Error('no sandbox result queued');
     return recorded.sandbox;
@@ -102,6 +105,7 @@ describe('an authoring run and the verification sandbox lease', (): void => {
     useSurfaceMode('mock');
     recorded.outputs.length = 0;
     recorded.sandboxRuns = 0;
+    recorded.started = undefined;
     recorded.gate = undefined;
     recorded.sandbox = {
       backend: 'local',
@@ -117,11 +121,10 @@ describe('an authoring run and the verification sandbox lease', (): void => {
     restoreSurfaceMode();
   });
 
-  it.fails('holds the lease across its verification and releases it when the skill registers', async (): Promise<void> => {
+  it('holds the lease across its verification and releases it when the skill registers', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const skillId = await seedApprovedSkill(harness, 'Priya');
     recorded.outputs.push({ body: reusableBody, smokeTest });
-    let heldDuringVerification: unknown;
     const otherSkillId = await seedApprovedSkill(harness, 'Mateo');
     const otherRunId = await harness.run(
       async (ctx) =>
@@ -132,16 +135,26 @@ describe('an authoring run and the verification sandbox lease', (): void => {
           createdAt: 1,
         }),
     );
-    recorded.gate = (async (): Promise<void> => {
-      heldDuringVerification = await harness.mutation(internal.sandboxLease.take, {
-        skillId: otherSkillId,
-        runId: otherRunId,
-      });
-    })();
+    // The sandbox mock holds the verification open until the test has looked
+    // at the lease, which is the only moment the claim is about.
+    const verificationStarted = new Promise<void>((resolve): void => {
+      recorded.started = resolve;
+    });
+    let releaseVerification = (): void => {};
+    recorded.gate = new Promise<void>((resolve): void => {
+      releaseVerification = resolve;
+    });
 
-    await expect(
-      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
-    ).resolves.toEqual({ ok: true });
+    const run = harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+    await verificationStarted;
+    const heldDuringVerification = await harness.mutation(internal.sandboxLease.take, {
+      skillId: otherSkillId,
+      runId: otherRunId,
+    });
+    releaseVerification();
+    await expect(run).resolves.toEqual({ ok: true });
 
     expect(heldDuringVerification).toMatchObject({ taken: false, heldBy: skillId });
     expect((await readSkill(harness, skillId)).state).toBe('registered');
@@ -174,7 +187,7 @@ describe('an authoring run and the verification sandbox lease', (): void => {
     expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual([]);
   });
 
-  it.fails('waits for the holder rather than queueing on the socket, and records the wait', async (): Promise<void> => {
+  it('waits for the holder rather than queueing on the socket, and records the wait', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const waiting = await seedApprovedSkill(harness, 'Priya');
     recorded.outputs.push({ body: reusableBody, smokeTest });
@@ -200,14 +213,19 @@ describe('an authoring run and the verification sandbox lease', (): void => {
       .finally((): void => {
         settled = true;
       });
-    // The run reaches the sandbox, finds the lease held, and waits.
-    for (let tick = 0; tick < 5 && !settled; tick += 1) {
-      await new Promise((resolve) => setImmediate(resolve));
+    // The run authors, reaches the sandbox, finds the lease held, and waits.
+    const waitingEventsNow = async (): Promise<Doc<'events'>[]> =>
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+        (event) => event.type === 'skill.sandbox-waiting',
+      );
+    const deadline = Date.now() + 15_000;
+    let waitingEvents = await waitingEventsNow();
+    while (waitingEvents.length === 0 && !settled && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      waitingEvents = await waitingEventsNow();
     }
     expect(settled).toBe(false);
     expect(recorded.sandboxRuns).toBe(0);
-    const waitingEvents = (await harness.run(async (ctx) => await ctx.db.query('events').collect()))
-      .filter((event) => event.type === 'skill.sandbox-waiting');
     expect(waitingEvents).toHaveLength(1);
     expect(waitingEvents[0]!.payload).toMatchObject({ skillId: waiting });
 

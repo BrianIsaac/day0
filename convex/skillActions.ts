@@ -24,6 +24,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { redactOutcome } from '../src/surfaces/redact';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { SANDBOX_LEASE_MS, SANDBOX_LEASE_RETRY_MS } from './sandboxLease';
 import { spanModelFromEnv } from '../src/redaction/client';
 import { ownerKnownValues } from '../src/redaction/known-values';
 
@@ -277,6 +278,65 @@ export async function verifyAuthoredSkill(
 }
 
 /**
+ * How long a run waits for the sandbox lease before giving the skill back.
+ *
+ * Long enough to outlast a verification that runs to the sandbox's 60 s cap
+ * with a couple of others ahead of it; short enough that the manager is not
+ * left with a skill stuck in authoring when the sandbox has stopped serving.
+ */
+const SANDBOX_WAIT_LIMIT_MS = 5 * 60_000;
+
+/**
+ * Hold the verification sandbox for this run, waiting for whoever has it.
+ *
+ * Three employees authoring together used to queue on the sandbox's own
+ * socket, where a smoke test at the 60 s cap makes every request behind it
+ * wait and a second one pushes them past the client's 75 s wait - which reads
+ * as "the sandbox threw" and parks a skill whose own smoke test was never
+ * run. Waiting here instead costs the same time and says what it is waiting
+ * for: the wait is a row, an event and a reason on the skill, and each
+ * request still reaches the sandbox alone.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   skill: The skill being verified, its agent and the authoring run.
+ *
+ * Returns:
+ *   Whether this run holds the lease, and how long it waited.
+ */
+async function holdSandboxLease(
+  ctx: ActionCtx,
+  skill: { skillId: Id<'skills'>; agentId: Id<'agents'>; name: string; runId: Id<'events'> },
+): Promise<{ held: boolean; waitedMs: number }> {
+  const startedAt = Date.now();
+  let waiting = false;
+  for (;;) {
+    const attempt = await ctx.runMutation(internal.sandboxLease.take, {
+      skillId: skill.skillId,
+      runId: skill.runId,
+    });
+    if (attempt.taken) return { held: true, waitedMs: Date.now() - startedAt };
+    if (!waiting) {
+      waiting = true;
+      await ctx.runMutation(internal.events.log, {
+        agentId: skill.agentId,
+        type: 'skill.sandbox-waiting',
+        payload: {
+          skillId: skill.skillId,
+          name: skill.name,
+          heldForMs: attempt.heldForMs ?? 0,
+          retryInMs: SANDBOX_LEASE_RETRY_MS,
+        },
+      });
+    }
+    if (Date.now() - startedAt >= SANDBOX_WAIT_LIMIT_MS) {
+      return { held: false, waitedMs: Date.now() - startedAt };
+    }
+    await new Promise((resolve) => setTimeout(resolve, SANDBOX_LEASE_RETRY_MS));
+  }
+}
+
+/**
  * What a run reports when the skill it was authoring is no longer its own. The
  * result is discarded rather than written, so the state the boss sees is
  * whichever decision replaced this run: another run's, or the boss's own
@@ -454,6 +514,31 @@ export const authorAndRegisterSkill = action({
     // Named in every message below, because "verification failed" means
     // different things to a boss depending on which sandbox said so.
     let backend = 'the sandbox';
+    // One verification at a time across every employee: the sandbox is serial
+    // and the client's wait is finite, so the queue is a lease here rather
+    // than a backlog on its socket.
+    const lease = await holdSandboxLease(ctx, {
+      skillId: args.skillId,
+      agentId: skill.agentId,
+      name: skill.name,
+      runId,
+    });
+    if (!lease.held) {
+      const waitedFor = `${Math.round(lease.waitedMs / 60_000)} minutes`;
+      const reason =
+        `the verification sandbox was busy with another skill for ${waitedFor}; ` +
+        'the body is kept and Retry runs the smoke test when it is free';
+      const { recorded } = await ctx.runMutation(internal.skills.parkUnverified, {
+        skillId: args.skillId,
+        runId,
+        sandboxId: '(skipped)',
+        body,
+        verificationLog: noted(reason),
+        reason,
+      });
+      if (!recorded) return { ok: false, reason: SUPERSEDED };
+      return { ok: false, reason: `sandbox verification unavailable: ${reason}` };
+    }
     try {
       const verification = await verifyAuthoredSkill({
         skillName: skill.name,
@@ -494,6 +579,10 @@ export const authorAndRegisterSkill = action({
     } catch (err) {
       skipReason = `${backend} threw: ${(err as Error).message}`;
       verificationLog = skipReason;
+    } finally {
+      // Released whichever way the check went, so the next employee's
+      // authoring run does not wait out the lease for a run that is over.
+      await ctx.runMutation(internal.sandboxLease.release, { skillId: args.skillId, runId });
     }
 
     // Recorded outside the try: a failure while recording a failure must not be
