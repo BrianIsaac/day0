@@ -417,7 +417,7 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(reply).not.toContain('68%');
   }, 30_000);
 
-  it.fails('stops the resumed run when the re-read cannot be made, and nothing of the closing set is written', async (): Promise<void> => {
+  it('stops the resumed run when the re-read cannot be made, and nothing of the closing set is written', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const workItemId = await seed(t);
     await failAtClosingWithTheTileDown(t, workItemId);
@@ -445,6 +445,73 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     // The row keeps the resumable ledger, so Retry resumes at the closing phase again.
     expect(stopped.output).toMatchObject({ phase: 'dependent-authoring', resumedClosing: true, applied: carried.applied });
     expect(before.skipReason).not.toBe(stopped.skipReason);
+  }, 30_000);
+
+  // The carried ledger holds a landed refresh: the re-read replays the
+  // sign-in and reads the page, and never enters or saves a figure again.
+  it('sends nothing on resume but the carried read and the sign-in it needs', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const fixture = await import('../fixtures/browser-phase-split-2026-09-16');
+    const [navigate, signIn, clickSignIn, snapshot] = fixture.slackPhaseOne;
+    const [fill, save] = fixture.slackClosing;
+    const firstRun = 'k57bfirstattempt0000000000000000';
+    const workItemId = await seed(t);
+    const key = (index: number): string => `${workItemId}:${firstRun}:${index}`;
+    const reply = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body: JSON.stringify({ channel: REPLY_CHANNEL, thread_ts: REPLY_THREAD, text: 'The tile reads 74%.' }),
+      },
+    } satisfies MockAction;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason: '1 of 1 actions did not change the work environment: http.request (HTTP 500)',
+        output: {
+          draft: '',
+          notes: '',
+          needsDependentPhase: false,
+          actions: [navigate, signIn, clickSignIn, fill, save, snapshot, reply],
+          applied: [
+            ...[0, 1, 2, 3, 4].map((index): AppliedAction => ({
+              tool: 'mcp.call', ok: true, authority: 'autonomous', effect: 'landed on looker', idempotencyKey: key(index),
+            })),
+            {
+              tool: 'mcp.call', ok: true, authority: 'autonomous',
+              effect: 'browser_snapshot on looker · visible figure 74% · Last updated by revops at 2026-09-16 21:07:34 UTC',
+              idempotencyKey: key(5),
+            },
+            { tool: 'http.request', ok: false, reason: 'HTTP 500', idempotencyKey: key(6) },
+          ],
+          planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) => ({
+            ...outcome, evidence: 'Ledger rows 0-5: signed in, refreshed to 74% and read back.',
+          })),
+          prerequisiteCount: 6,
+          procedureTrails: [],
+        },
+      });
+    });
+    saveSeventyFour();
+    const tileBefore = { ...recorded.driver!.tile };
+
+    const resumed = await retryAtClosing(t, workItemId);
+    const secondRun = resumed.executionRunId!;
+    expect(ledger(resumed).map((row) => row.idempotencyKey)).toEqual([
+      key(0), key(1), key(2), key(3), key(4), `${workItemId}:${secondRun}:5`,
+    ]);
+    const sent = recorded.driver!.calls.map((call) => [call.tool, JSON.stringify(call.args)]);
+    expect(sent.map(([tool]) => tool).filter((tool) => tool !== 'browser_snapshot')).toEqual([
+      'browser_navigate',
+      'browser_fill_form',
+      'browser_click',
+    ]);
+    expect(sent.some(([, args]) => args!.includes('Pipeline coverage') || args!.includes('Save'))).toBe(false);
+    expect(recorded.driver!.tile).toEqual(tileBefore);
+    expect(recorded.http).toEqual([]);
   }, 30_000);
 
   // Phase one opened the tile and signed in but took no snapshot, so there

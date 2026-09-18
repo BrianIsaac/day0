@@ -62,6 +62,7 @@ import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-value
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { ledgerRunIds } from '../src/surfaces/browser-session';
+import { carriedReadIndexes, rereadStopReason, withRereads, type FailedReread } from '../src/surfaces/rereads';
 import { verdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponent } from '../src/surfaces/browser';
@@ -616,8 +617,23 @@ async function executeApprovedPlanHandler(
   // a comment on a target one of them carries is reused, never sent again.
   const landedWrites = SURFACE_MODE === 'real' ? landedWritesOf(item.output) : [];
   if (SURFACE_MODE === 'real' && resume?.resumedClosing && resume.phase === 'dependent-authoring') {
+    // The carried reads were taken before the retry; the closing set is
+    // authored from what they read now, or not at all.
+    const reread = await refreshCarriedReads(ctx, {
+      workItemId: args.workItemId, agentId, runId: claim.runId, resume,
+    });
+    if (!reread.ok) {
+      await ctx.runMutation(internal.work.setFailed, {
+        workItemId: args.workItemId,
+        runId: claim.runId,
+        reason: reread.failed.reason,
+        stopped: true,
+        output: { ...resume, failedReread: reread.failed },
+      });
+      return { ok: false, reason: reread.failed.reason };
+    }
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
-      workItemId: args.workItemId, runId: claim.runId, output: withLandedWrites(resume, landedWrites),
+      workItemId: args.workItemId, runId: claim.runId, output: withLandedWrites(reread.output, landedWrites),
     });
     return { ok: prepared.prepared, reason: 'resuming closing actions from the previous ledger' };
   }
@@ -634,6 +650,85 @@ async function executeApprovedPlanHandler(
     managerAnswers: managerAnswersOf(item),
     landedWrites,
   });
+}
+
+/**
+ * Apply a resumed closing phase's carried reads again, under the new run.
+ *
+ * The reads go out in one invocation of the apply path, with the rules and
+ * the transport check every read passes, in the auto phase: a read needs its
+ * grant now. On a browser-driven surface the run's own sign-in is replayed
+ * first, under the authority each replayed row landed with. Each re-read
+ * keeps its carried index, so its key is `<item>:<new run>:<index>`, below
+ * the closing offset and never an earlier run's, and it replaces the carried
+ * row in the ledger the closing phase reads. The old rows stay on the
+ * earlier run's `work.failed` record. Nothing but reads and the replay is
+ * sent: every other carried row is passed through as already decided.
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   args: The work item, its agent, the new run and the resumed ledger.
+ *
+ * Returns:
+ *   The resumed ledger with its reads taken again, or the first re-read that
+ *   did not land with every row the attempt recorded.
+ */
+async function refreshCarriedReads(
+  ctx: ActionCtx,
+  args: {
+    workItemId: Id<'workItems'>;
+    agentId: Id<'agents'>;
+    runId: Id<'events'>;
+    resume: DependentAuthoringOutput;
+  },
+): Promise<{ ok: true; output: DependentAuthoringOutput } | { ok: false; failed: FailedReread }> {
+  const surfaces = await loadSurfaces(ctx, args.agentId);
+  const { actions, applied } = args.resume;
+  const indexes = carriedReadIndexes(actions, applied, surfaces);
+  if (indexes.length === 0) return { ok: true, output: args.resume };
+  const reread = new Set(indexes);
+  try {
+    const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
+    if (!agent) throw new Error('agent not found');
+    const knownValues = await knownValuesForAgent(ctx, agent);
+    const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(internal.agents.grantedScopes, {
+      agentId: args.agentId,
+    });
+    const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
+    const rows = await applySurfaceActions(
+      ctx,
+      SURFACE_MODE,
+      surfaces,
+      { agentId: args.agentId, agentName: agent.name, workItemId: args.workItemId, runId: args.runId },
+      actions,
+      {
+        deps: realAdapterDeps(
+          authorityBeforeTransport(ctx, args.agentId, 'auto', browserMcpUrl),
+          browserMcpUrl,
+          knownValues,
+        ),
+        grants: new Set(grantRows.map((grant) => grant.scope)),
+        approvedIndexes: reread,
+        priorLedger: applied.map((row, index) => (reread.has(index) ? undefined : row)),
+        resumedRunIds: ledgerRunIds(applied),
+        autoPhase: true,
+        autonomousActions: autonomousActionsOn(agent),
+      },
+    );
+    const refreshed = withRereads({ actions, applied }, scrubKnownValues(rows, knownValues), indexes, Date.now());
+    return refreshed.ok ? { ok: true, output: { ...args.resume, applied: refreshed.applied } } : refreshed;
+  } catch (error) {
+    const surfaceNames = [...new Set(indexes.map((index) => String(actions[index]!.args.surface)))];
+    return {
+      ok: false,
+      failed: {
+        reason: rereadStopReason(surfaceNames.join(', '), error instanceof Error ? error.message : String(error)),
+        at: Date.now(),
+        actions: indexes.map((index) => actions[index]!),
+        applied: [],
+      },
+    };
+  }
 }
 
 /** An output with the writes earlier runs landed on it, when there are any. */
@@ -902,6 +997,8 @@ interface DependentAuthoringOutput extends ExecutionOutput {
   initialFailure?: string;
   /** The closing set a gate refused, kept with its reason; see `RefusedClosing`. */
   refusedClosing?: RefusedClosing;
+  /** A re-read on resume that did not land: the run stopped before its closing set. */
+  failedReread?: FailedReread;
 }
 
 interface DependentPendingOutput extends DependentExecutionOutput {
