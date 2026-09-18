@@ -8,6 +8,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { agentJson, makeAgent } from '../src/lib/mastra';
 import {
   authorAndVerifySkill,
+  configuredSkillSandboxBackend,
   type AuthorSkillArgs,
   type SkillSandboxRun,
 } from '../src/lib/skill-sandbox';
@@ -24,7 +25,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { redactOutcome } from '../src/surfaces/redact';
 import type { SurfaceMode, SurfaceRecord } from '../src/surfaces/types';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import { SANDBOX_LEASE_MS, SANDBOX_LEASE_RETRY_MS } from './sandboxLease';
+import { SANDBOX_LEASE_RETRY_MS } from './sandboxLease';
 import { spanModelFromEnv } from '../src/redaction/client';
 import { ownerKnownValues } from '../src/redaction/known-values';
 
@@ -297,6 +298,9 @@ const SANDBOX_WAIT_LIMIT_MS = 5 * 60_000;
  * for: the wait is a row, an event and a reason on the skill, and each
  * request still reaches the sandbox alone.
  *
+ * Only the bundled sandbox is serial. Daytona runs one per verification, so
+ * a deployment configured for it takes no lease and waits for nobody.
+ *
  * Args:
  *   ctx: Convex action context.
  *   skill: The skill being verified, its agent and the authoring run.
@@ -308,6 +312,7 @@ async function holdSandboxLease(
   ctx: ActionCtx,
   skill: { skillId: Id<'skills'>; agentId: Id<'agents'>; name: string; runId: Id<'events'> },
 ): Promise<{ held: boolean; waitedMs: number }> {
+  if (configuredSkillSandboxBackend() !== 'local') return { held: true, waitedMs: 0 };
   const startedAt = Date.now();
   let waiting = false;
   for (;;) {
@@ -582,6 +587,8 @@ export const authorAndRegisterSkill = action({
     } finally {
       // Released whichever way the check went, so the next employee's
       // authoring run does not wait out the lease for a run that is over.
+      // `release` only frees a lease this run holds, so the hosted path,
+      // which took none, frees nobody else's.
       await ctx.runMutation(internal.sandboxLease.release, { skillId: args.skillId, runId });
     }
 

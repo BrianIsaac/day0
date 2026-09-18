@@ -19,6 +19,8 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 const recorded = vi.hoisted(() => ({
   outputs: [] as Array<{ body: string; smokeTest: string }>,
   sandboxRuns: 0,
+  /** Which backend the deployment is configured for. */
+  backend: 'local' as 'local' | 'daytona',
   /** Resolved by the sandbox mock when a verification starts. */
   started: undefined as (() => void) | undefined,
   /** Held open while a verification is "running" in the sandbox. */
@@ -37,6 +39,7 @@ vi.mock('../../src/lib/mastra', () => ({
 }));
 
 vi.mock('../../src/lib/skill-sandbox', () => ({
+  configuredSkillSandboxBackend: (): string => recorded.backend,
   authorAndVerifySkill: async (): Promise<SkillSandboxRun> => {
     recorded.sandboxRuns += 1;
     recorded.started?.();
@@ -105,6 +108,7 @@ describe('an authoring run and the verification sandbox lease', (): void => {
     useSurfaceMode('mock');
     recorded.outputs.length = 0;
     recorded.sandboxRuns = 0;
+    recorded.backend = 'local';
     recorded.started = undefined;
     recorded.gate = undefined;
     recorded.sandbox = {
@@ -185,6 +189,38 @@ describe('an authoring run and the verification sandbox lease', (): void => {
     expect(result.ok).toBe(false);
     expect((await readSkill(harness, skillId)).state).toBe('failed');
     expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual([]);
+  });
+
+  it('does not queue behind a lease when the hosted sandbox is the one configured', async (): Promise<void> => {
+    // Daytona runs a sandbox per verification, so serialising employees there
+    // would buy nothing and cost each of them the wait.
+    recorded.backend = 'daytona';
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await seedApprovedSkill(harness, 'Priya');
+    recorded.outputs.push({ body: reusableBody, smokeTest });
+    const holderSkillId = await seedApprovedSkill(harness, 'Mateo');
+    const holderRunId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('events', {
+          agentId: (await ctx.db.get(holderSkillId))!.agentId,
+          type: 'skill.authoring-claimed',
+          payload: { skillId: holderSkillId },
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.sandboxLease.take, {
+      skillId: holderSkillId,
+      runId: holderRunId,
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    expect(recorded.sandboxRuns).toBe(1);
+    // The other run's lease is untouched, and this run took none.
+    const rows = await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.skillId).toBe(holderSkillId);
   });
 
   it('waits for the holder rather than queueing on the socket, and records the wait', async (): Promise<void> => {
