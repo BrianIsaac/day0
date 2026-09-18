@@ -240,7 +240,7 @@ export const rosterForUser = query({
   returns: v.array(rosterRowValidator),
   handler: async (ctx): Promise<RosterRow[]> => {
     const identity = await getCaller(ctx);
-    if (!identity) return [];
+    if (!identity?.subject) return [];
     const agents = (
       await ctx.db
         .query('agents')

@@ -730,6 +730,22 @@ describe('the employee roster', (): void => {
     ]);
   });
 
+  it('does not let a caller with an empty subject read malformed owner rows', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Malformed owner',
+        userId: '',
+        state: 'deployed',
+        createdAt: 1,
+      });
+    });
+    await expect(
+      harness.withIdentity({ subject: '' }).query(api.agents.rosterForUser, {}),
+    ).resolves.toEqual([]);
+  });
+
   it('shows each of the owner\'s employees with its role, open work, what needs the manager and its autonomy, and nobody else', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
