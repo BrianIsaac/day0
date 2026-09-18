@@ -579,6 +579,27 @@ describe('releasing a claim', (): void => {
       expect.objectContaining({ workItemId: taken }),
     ]);
   });
+
+  it.fails('re-admits what a stale claim refused, so the refusal names the new holder', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const aiko = await seedEmployee(harness, { name: 'Aiko' });
+    const { mateo, held, refused } = await heldAndRefused(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(held, { state: 'cancelled' });
+    });
+
+    const taken = await seedAsk(harness, aiko);
+    await drain(harness);
+
+    expect((await readItem(harness, taken)).state).toBe('plan-pending');
+    const again = await readItem(harness, refused);
+    expect(again.state).toBe('skipped');
+    expect(again.skipReason).toBe(`claimed-by-colleague: Aiko holds it (${OPS_ASK_TITLE})`);
+    expect(again.verdict).toMatchObject({ claimedBy: { agentId: aiko, workItemId: taken } });
+    expect(await eventsOf(harness, 'work.requeued', mateo)).toHaveLength(1);
+  });
 });
 
 describe('what claims nothing', (): void => {
